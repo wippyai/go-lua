@@ -217,7 +217,16 @@ func CheckWithImportsResolverAndGlobals(source string, imports, globals map[stri
 
 // CheckWithImportsResolverAndGlobalsAndRelations consumes project-selected
 // finite module result relations alongside their ordinary export types.
-func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, globals map[string]typ.Type, resolver typeannotation.Resolver, relations map[string]exportrelation.Summary) (result Result, err error) {
+func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, globals map[string]typ.Type, resolver typeannotation.Resolver, relations map[string]exportrelation.Summary) (Result, error) {
+	result, _, err := checkWithWorkBudget(source, imports, globals, resolver, relations, defaultWorkBudget)
+	return result, err
+}
+
+// checkWithWorkBudget is the single evaluation path. The budget is a parameter
+// rather than a constant read so the bound itself is testable: an analysis
+// whose verdict is a function of its work budget can be shown to flip at one
+// reproducible budget and nowhere else.
+func checkWithWorkBudget(source string, imports, globals map[string]typ.Type, resolver typeannotation.Resolver, relations map[string]exportrelation.Summary, limit uint64) (result Result, budget *workBudget, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("%w: %v", ErrInternalPanic, recovered)
@@ -226,17 +235,18 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 	}()
 	compilation, parseElapsed, compileResult, err := compileCheck(source, resolver)
 	if err != nil || compileResult.Diagnostics != nil {
-		return compileResult, err
+		return compileResult, nil, err
 	}
 	artifact := compilation.Artifact
 	evaluateStarted := time.Now()
 	binding, err := bindCheckEntry(artifact, imports)
 	if err != nil {
-		return Result{}, err
+		return Result{}, nil, err
 	}
-	fileContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	fileContext, cancel := context.WithTimeout(context.Background(), hangGuardTimeout)
 	defer cancel()
-	lexical := newLexicalEvaluator(compilation)
+	budget = newWorkBudget(limit)
+	lexical := newLexicalEvaluator(compilation, budget)
 	lexical.setImportedTypes(imports)
 	lexical.setImportedRelations(relations)
 	lexical.setGlobalTypes(globals)
@@ -246,14 +256,34 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 	if err != nil {
 		var failed conservativeEvaluationError
 		if !errors.As(err, &failed) {
-			return Result{}, err
+			return Result{}, budget, err
 		}
 		result = diagnosticResult("analysis/conservative", failed.error)
 		result.Timings = Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)}
-		return result, nil
+		return result, budget, nil
 	}
-	return projectCheck(compilation, lexical, closure, transactions, parseElapsed, time.Since(evaluateStarted)), nil
+	// An exhausted budget is decided at the file boundary, not only where it was
+	// drawn. A nested body that reports no error to its caller still leaves the
+	// budget overspent, so this check keeps a truncated evaluation from being
+	// published as a complete one.
+	if budgetErr := lexical.budget.err(); budgetErr != nil {
+		result = diagnosticResult("analysis/conservative", budgetErr)
+		result.Timings = Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)}
+		return result, budget, nil
+	}
+	return projectCheck(compilation, lexical, closure, transactions, parseElapsed, time.Since(evaluateStarted)), budget, nil
 }
+
+// hangGuardTimeout is a last-resort guard against an evaluation that does not
+// terminate at all, not an analysis budget. The deterministic bound on
+// analysis is defaultWorkBudget.
+//
+// The deadline is deliberately far longer than the wall time that budget
+// permits. A shorter deadline would decide the verdict for programs whose work
+// lies between what the machine can do in that time and what the budget
+// allows, which is exactly the load-dependent verdict a deterministic budget
+// exists to remove.
+const hangGuardTimeout = 120 * time.Second
 
 type conservativeEvaluationError struct{ error }
 
@@ -2194,7 +2224,7 @@ func registry(lexical *lexicalEvaluator, imported map[string]bool) (*equation.Ke
 		if err != nil {
 			return nil, err
 		}
-		bindings = append(bindings, equation.KernelBinding{KernelID: kernelID, ContractID: contract, Kernel: spec.kernel})
+		bindings = append(bindings, equation.KernelBinding{KernelID: kernelID, ContractID: contract, Kernel: lexical.meterKernel(spec.kernel)})
 	}
 	result, err := equation.NewKernelRegistry(bindings)
 	if err != nil {
@@ -2211,7 +2241,7 @@ func cyclicRegistry(lexical *lexicalEvaluator, imported map[string]bool) (*equat
 		if err != nil {
 			return nil, err
 		}
-		bindings = append(bindings, equation.CyclicKernelBinding{KernelID: kernelID, ContractID: contract, Kernel: cyclicKernel(spec.kernel)})
+		bindings = append(bindings, equation.CyclicKernelBinding{KernelID: kernelID, ContractID: contract, Kernel: cyclicKernel(lexical.meterKernel(spec.kernel))})
 	}
 	result, err := equation.NewCyclicKernelRegistry(bindings)
 	if err != nil {
@@ -2428,6 +2458,7 @@ type lexicalEvaluator struct {
 	selectEvidence    map[string][]DiagnosticEvidence
 	childPublished    map[string]PublishedDiagnostic
 	ctx               context.Context
+	budget            *workBudget
 	table             *interproc.ProjectedTable
 	coordinator       *interproc.RecursionCoordinator
 	admissions        map[string]lexicalSCCAdmission
@@ -2650,9 +2681,9 @@ func hasProjectableTableResult(child front.Compilation) bool {
 	return !typ.ContainsRecursive(child.WIR.Type(child.Boundary.DeclaredReturns[0]))
 }
 
-func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
+func newLexicalEvaluator(root front.Compilation, budget *workBudget) *lexicalEvaluator {
 	table := interproc.NewProjectedTable()
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions)}
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), budget: budget, table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions)}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
 		l.byBody[compilation.Body] = compilation

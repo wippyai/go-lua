@@ -243,6 +243,16 @@ func PartitionFromClosuresWithGuards(guards []Guard, closures ...OutputClosure) 
 	return Partition{closure: canonical, guards: canonicalGuards(guards)}, nil
 }
 
+// FactCount reports how many closed facts this partition presents to a
+// kernel. It is a work measure rather than a semantic query: no fact key,
+// value, or guard is exposed, so it cannot participate in any type decision.
+// A kernel's cost is at least linear in this count -- every partition read
+// filters and clones the whole fact lane -- which makes it the unit an
+// evaluation budget charges.
+func (p Partition) FactCount() int {
+	return len(p.closure.Values) + len(p.closure.Outcomes) + len(p.closure.Diagnostics)
+}
+
 func (p Partition) Values() []Fact { return visibleFacts(p.closure.Values, p.closure.Values, p.guards) }
 func (p Partition) Outcomes() []Fact {
 	return visibleFacts(p.closure.Outcomes, p.closure.Values, p.guards)
