@@ -352,10 +352,15 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 		}
 		switch {
 		case operands.display == "ownership.store" && (index == 0 || index == 1):
-			// The ownership contract proves both the stored graph and its owner
-			// are retained past the caller frame. No opaque fallback is needed
-			// for either exact contract argument.
-			facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventOwned))
+			// The ownership contract names both arguments, so neither needs the
+			// opaque fallback. Only the stored graph is retained past the caller
+			// frame; the owner merely receives it and keeps whatever placement
+			// its own allocation proves. This is the same split the imported
+			// wrapper relation publishes for a declared store.
+			facts = append(facts, placementContractFact(allocation.Identity, "retain", operation.Target.Name))
+			if index == 0 {
+				facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventOwned))
+			}
 		case (operands.display == "process.send" && index == 2) || (operands.method == "send" && index == 0 && typedChannelReceiver(operands.receiver, partition)):
 			// The send boundary is the sealing event for its closed transfer
 			// payload. Both conclusions are emitted from the same proved call

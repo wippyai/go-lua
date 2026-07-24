@@ -8887,11 +8887,13 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if kind == "claim-kind/3" && claimTypeIsAny(targetType) {
 		closure.Values = append(closure.Values, explicitAnyBoundaryFact(target, operation.Target.Name))
 	}
-	// A claim can refine its own target without erasing the explicit boundary
+	// A claim can refine a separate path without erasing the explicit boundary
 	// value it consumed. Preserve that exact existing fact for a later branch
 	// or assignment on a member path; Top values and ordinary refinements are
-	// deliberately not forwarded as boundary evidence.
-	if strings.HasPrefix(string(source), "path/") && isExplicitAnyValue(value) {
+	// deliberately not forwarded as boundary evidence. An in-place annotation
+	// reads and writes one cell, so its refinement is the only value this
+	// operation may publish for that cell.
+	if string(source) != target && strings.HasPrefix(string(source), "path/") && isExplicitAnyValue(value) {
 		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(source) + "/" + operation.Target.Name, Value: append([]byte(nil), value...)})
 	}
 	// An annotation is an assignment contract.  Only a concrete scalar that

@@ -224,19 +224,45 @@ shared.payload = alias`)
 	}
 }
 
+// TestCheckPlacementOwnershipStoreRetainsOwnerAndStoredGraph pins the two
+// halves of the ownership.store contract apart. The owner graph is three
+// tables and the stored graph is two, so the counts identify each side. Both
+// sides are retained -- neither keeps the opaque-call blocker -- but only the
+// stored graph outlives the caller frame and acquires an owner obligation.
 func TestCheckPlacementOwnershipStoreRetainsOwnerAndStoredGraph(t *testing.T) {
-	result, err := engine.Check(`local box = { items = {} }
+	result, err := engine.Check(`local box = { items = {}, index = {} }
 local item = { child = { route = "owned" } }
 ownership.store(item, box)`)
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	if result.Placement == nil || len(result.Placement.Allocations) != 4 {
-		t.Fatalf("placement = %#v, want four allocations", result.Placement)
+	if result.Placement == nil || !result.Placement.Complete || len(result.Placement.Allocations) != 5 {
+		t.Fatalf("placement = %#v, want the complete five-allocation plan", result.Placement)
 	}
+	owner, stored, ownedDepth := 0, 0, 0
 	for _, item := range result.Placement.Allocations {
-		if item.Placement != placement.OwnedHeap || !item.OwnerIdentity {
-			t.Fatalf("allocation = %#v, want owned placement", item)
+		if !item.Complete || len(item.Blockers) != 0 {
+			t.Fatalf("allocation = %#v, want a complete allocation with no blocker", item)
 		}
+		switch item.Placement {
+		case placement.Stack:
+			if item.OwnerIdentity {
+				t.Fatalf("allocation = %#v, want the owner graph to keep its frame placement", item)
+			}
+			owner++
+		case placement.OwnedHeap:
+			if !item.OwnerIdentity {
+				t.Fatalf("allocation = %#v, want an owner obligation on the stored graph", item)
+			}
+			if item.Depth > ownedDepth {
+				ownedDepth = item.Depth
+			}
+			stored++
+		default:
+			t.Fatalf("allocation = %#v, want stack or owned-heap placement", item)
+		}
+	}
+	if owner != 3 || stored != 2 || ownedDepth != 2 {
+		t.Fatalf("owner=%d stored=%d owned depth=%d, want the three-table owner and the two-table stored graph", owner, stored, ownedDepth)
 	}
 }

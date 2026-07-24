@@ -2552,3 +2552,37 @@ func hasFact(facts []equation.Fact, prefix, value string) bool {
 	}
 	return false
 }
+
+// TestCheckPublishesAnyBoundaryViolationForInPlaceCastAnnotation covers the
+// lowering where a cast and its annotation share one destination cell. The
+// annotation refines the same path it reads, so the operation may publish only
+// its own refinement for that cell; publishing the consumed boundary value
+// under the same key would make the transaction conflict with itself and abort
+// the whole file.
+func TestCheckPublishesAnyBoundaryViolationForInPlaceCastAnnotation(t *testing.T) {
+	result, err := engine.Check(`
+local casted: {id: string, retries: number} = ({id = "r2", retries = 3} :: any)
+return casted
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if diagnostic.Key == "analysis/conservative" {
+			t.Fatalf("in-place cast annotation aborted evaluation: %s", diagnostic.Value)
+		}
+	}
+	violations := 0
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code != "type.assignment" {
+			continue
+		}
+		if !strings.Contains(diagnostic.Message, "casted") || !strings.Contains(diagnostic.Message, "comes from any/unknown") {
+			t.Fatalf("assignment diagnostic = %q, want the unvalidated any boundary for casted", diagnostic.Message)
+		}
+		violations++
+	}
+	if violations != 1 {
+		t.Fatalf("published diagnostics = %#v, want exactly one any-boundary assignment violation", result.PublishedDiagnostics)
+	}
+}
