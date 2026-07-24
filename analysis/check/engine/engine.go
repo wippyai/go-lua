@@ -32,6 +32,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -46,6 +47,7 @@ var errUnknownScalar = errors.New("engine: unknown scalar")
 var ErrInternalPanic = errors.New("engine: internal panic")
 
 const branchPredicatePrefix = "front/branch-predicate/v1/"
+const branchEvidencePrefix = "front/branch-evidence/v1/"
 
 const memberMissingPrefix = "shape/member-missing/v1/"
 
@@ -62,6 +64,10 @@ const (
 	heapTableClosedPrefix    = "heap/table-closed/"
 	heapMemberPrefix         = "heap/member/"
 	heapMemberIdentityPrefix = "heap/member-identity/"
+	heapIndexPresencePrefix  = "heap/index-presence/"
+	heapIndexRevokePrefix    = "heap/index-revoke/"
+	heapIndexLowerPrefix     = "heap/index-lower/"
+	heapIndexUpperPrefix     = "heap/index-upper/"
 )
 
 // branchPredicateWire mirrors the front's closed predicate wire vocabulary.
@@ -2087,12 +2093,29 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			equation.Fact{Key: "epoch/" + string(root) + "/entry", Value: []byte("entry")},
 			equation.Fact{Key: "type/" + string(root) + "/entry", Value: append([]byte(nil), declaredTypes[name]...)},
 		)
+		if declaredIndexableContainer(declared) {
+			identity := []byte("declared-table-entry/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + base64.RawURLEncoding.EncodeToString(root))
+			values = append(values, heapIdentityFact(string(root), "entry", identity))
+		}
 		if _, channel := ambient.ChannelPayloadType(declared); channel {
 			identity := []byte("scalar/channel-entry/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + base64.RawURLEncoding.EncodeToString(root))
 			values = append(values, equation.Fact{Key: "identity/" + string(root) + "/entry", Value: identity})
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+func declaredIndexableContainer(value typ.Type) bool {
+	value = unwrap.Alias(value)
+	if value == nil {
+		return false
+	}
+	switch value.Kind() {
+	case kind.Array, kind.Map, kind.ReadonlyMap, kind.Tuple:
+		return true
+	default:
+		return false
+	}
 }
 
 func closureHandleFor(term []byte, partition equation.Partition) (closureHandle, bool) {
@@ -3978,6 +4001,8 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 		if suffix, exact := tableMemberSuffix(key, []byte("suffix/")); keyErr == nil && exact {
 			if member, found := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); found {
 				values[0].Value = member
+			} else if heapTableClosed(identity, partition) {
+				values[0].Value = []byte("scalar/nil")
 			}
 			if memberIdentity, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, suffix, partition); found {
 				values = append(values, heapIdentityFact(target, operation.Target.Name, memberIdentity))
@@ -4024,6 +4049,11 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	if !ok {
 		return nil, false
 	}
+	if indexPresenceProven(container, key, partition) {
+		if present := typetable.PresentReadonlyEntryValue(result); present != nil {
+			result = present
+		}
+	}
 	return finiteReturnWitnessValue(result)
 }
 
@@ -4040,6 +4070,48 @@ func castTargetWitness(term []byte, partition equation.Partition) (typ.Type, boo
 		return nil, false
 	}
 	return shapefact.DecodeTarget(witness)
+}
+
+// heapIndexSubject binds an index proof to the sealed table identity when one
+// exists. Falling back to the exact term remains conservative: no unproven
+// alias can inherit a path-local proof.
+func heapIndexSubject(container []byte, partition equation.Partition) string {
+	if identity, found := tableIdentityForTerm(container, partition); found {
+		return "identity/" + base64.RawURLEncoding.EncodeToString(identity)
+	}
+	return "term/" + base64.RawURLEncoding.EncodeToString(container)
+}
+
+// indexPresenceProven accepts only a current guarded proof for this container
+// and key. Any later dynamic write through the same heap identity revokes it.
+func indexPresenceProven(container, index []byte, partition equation.Partition) bool {
+	subject := heapIndexSubject(container, partition)
+	prefix := heapIndexPresencePrefix + subject + "/" + base64.RawURLEncoding.EncodeToString(index) + "/"
+	proof := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "proven" && fact.Key > proof {
+			proof = fact.Key
+		}
+	}
+	if proof == "" {
+		return false
+	}
+	revokePrefix := heapIndexRevokePrefix + subject + "/"
+	revocation := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, revokePrefix) && string(fact.Value) == "revoked" && fact.Key > revocation {
+			revocation = fact.Key
+		}
+	}
+	return revocation == "" || factOperation(proof) > factOperation(revocation)
+}
+
+func factOperation(key string) string {
+	_, operation, found := strings.Cut(key, "/op-")
+	if !found {
+		return ""
+	}
+	return "op-" + operation
 }
 
 // claimKernel makes user claims explicit checked refinements. An unproven
@@ -4943,10 +5015,18 @@ func pathInvalidationKernel(operation equation.BoundEquation, partition equation
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	if _, err := requiredOperandsByRole(operation.Operands, "container", "key", "suffix"); err != nil {
+	operands, err := requiredOperandsByRole(operation.Operands, "container", "key", "suffix")
+	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	return equation.TransactionResult{Complete: true}, nil
+	// A dynamic write may address the element that justified an earlier
+	// in-range read. Revoke that publication by the resolved heap identity so
+	// aliases observe the same transition; without an identity, the exact
+	// container path is still the only available conservative subject.
+	subject := heapIndexSubject(operands["container"], partition)
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
+		Key: heapIndexRevokePrefix + subject + "/" + operation.Target.Name, Value: []byte("revoked"),
+	}}}}, nil
 }
 
 // frozenMutationDiagnostic is deliberately fact-only: a prior freeze epoch,
@@ -5243,6 +5323,11 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	} else if recognized {
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
+	if closure, recognized, err := typedIndexBranchClosure(operation, partition); err != nil {
+		return equation.TransactionResult{}, err
+	} else if recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	frozenCondition := false
 	for _, operand := range operation.Operands {
 		if operand.Role == "predicate" && frozenPredicate(operand.Value) {
@@ -5374,6 +5459,130 @@ func runtimeTypeValidationProves(source []byte, targetType string, partition equ
 		}
 	}
 	return false
+}
+
+// typedIndexBranchClosure carries normalized numeric/index relations through
+// an unknown runtime branch as guarded facts. The branch remains bifurcated;
+// only the true edge receives a presence fact, and that fact is tied to the
+// existing table identity (or, when no identity is available, its exact path).
+func typedIndexBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
+	hasConsumer := false
+	predicates := make([]branchPredicateWire, 0, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		if operand.Role == "index-presence-consumer" && string(operand.Value) == "scalar/bool/true" {
+			hasConsumer = true
+		}
+		predicate, trueEdge, ok := branchEvidencePredicate(operand)
+		if !ok || !trueEdge {
+			continue
+		}
+		switch predicate.Kind {
+		case "num-ge", "index-in-range":
+			predicates = append(predicates, predicate)
+		}
+	}
+	hasIndexBound := false
+	for _, predicate := range predicates {
+		hasIndexBound = hasIndexBound || predicate.Kind == "index-in-range"
+	}
+	if !hasIndexBound && !hasConsumer {
+		return equation.OutputClosure{}, false, nil
+	}
+	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
+	closure := equation.OutputClosure{Outcomes: []equation.Fact{
+		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/true"), Guards: []equation.Guard{guard}},
+		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/false"), Guards: []equation.Guard{{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/false")}}},
+		{Key: "narrowing/" + operation.Target.Name, Value: []byte("index/true"), Guards: []equation.Guard{guard}},
+		{Key: "narrowing/" + operation.Target.Name, Value: []byte("index/false"), Guards: []equation.Guard{{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/false")}}},
+	}}
+	lower, upper := publishedIndexRelations(partition)
+	for _, predicate := range predicates {
+		if predicate.Negated || predicate.Path == "" {
+			continue
+		}
+		index := []byte("path/" + predicate.Path)
+		encodedIndex := base64.RawURLEncoding.EncodeToString(index)
+		switch predicate.Kind {
+		case "num-ge":
+			if predicate.NumFloor < 1 {
+				continue
+			}
+			lower[encodedIndex] = index
+			closure.Values = append(closure.Values, equation.Fact{Key: heapIndexLowerPrefix + encodedIndex + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
+		case "index-in-range":
+			if predicate.OtherPath == "" {
+				continue
+			}
+			container := []byte("path/" + predicate.OtherPath)
+			encodedContainer := base64.RawURLEncoding.EncodeToString(container)
+			upper[encodedIndex+"/"+encodedContainer] = struct{ index, container []byte }{index, container}
+			closure.Values = append(closure.Values, equation.Fact{Key: heapIndexUpperPrefix + encodedIndex + "/" + encodedContainer + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
+		}
+	}
+	for relation, pair := range upper {
+		encodedIndex, _, _ := strings.Cut(relation, "/")
+		if _, found := lower[encodedIndex]; !found {
+			continue
+		}
+		closure.Values = append(closure.Values, equation.Fact{
+			Key:   heapIndexPresencePrefix + heapIndexSubject(pair.container, partition) + "/" + encodedIndex + "/" + operation.Target.Name,
+			Value: []byte("proven"), Guards: []equation.Guard{guard},
+		})
+	}
+	return closure, true, nil
+}
+
+func publishedIndexRelations(partition equation.Partition) (map[string][]byte, map[string]struct{ index, container []byte }) {
+	lower := make(map[string][]byte)
+	upper := make(map[string]struct{ index, container []byte })
+	for _, fact := range partition.Values() {
+		if string(fact.Value) != "proven" {
+			continue
+		}
+		if rest, found := strings.CutPrefix(fact.Key, heapIndexLowerPrefix); found {
+			index, _, valid := strings.Cut(rest, "/")
+			if decoded, err := base64.RawURLEncoding.DecodeString(index); valid && err == nil {
+				lower[index] = decoded
+			}
+			continue
+		}
+		rest, found := strings.CutPrefix(fact.Key, heapIndexUpperPrefix)
+		if !found {
+			continue
+		}
+		parts := strings.Split(rest, "/")
+		if len(parts) < 3 {
+			continue
+		}
+		index, indexErr := base64.RawURLEncoding.DecodeString(parts[0])
+		container, containerErr := base64.RawURLEncoding.DecodeString(parts[1])
+		if indexErr == nil && containerErr == nil {
+			upper[parts[0]+"/"+parts[1]] = struct{ index, container []byte }{index, container}
+		}
+	}
+	return lower, upper
+}
+
+func branchEvidencePredicate(operand equation.BoundOperand) (branchPredicateWire, bool, bool) {
+	encoded := operand.Value
+	if strings.HasPrefix(string(encoded), branchEvidencePrefix) {
+		rest := strings.TrimPrefix(string(encoded), branchEvidencePrefix)
+		parts := strings.SplitN(rest, "/", 3)
+		if len(parts) != 3 || parts[0] != "true" || parts[1] != "true" {
+			return branchPredicateWire{}, false, false
+		}
+		encoded = []byte(parts[2])
+	} else if operand.Role != "predicate" {
+		return branchPredicateWire{}, false, false
+	}
+	if !strings.HasPrefix(string(encoded), branchPredicatePrefix) {
+		return branchPredicateWire{}, false, false
+	}
+	var predicate branchPredicateWire
+	if json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate) != nil || predicate.Kind == "" {
+		return branchPredicateWire{}, false, false
+	}
+	return predicate, true, true
 }
 
 // typedLiteralBranchClosure consumes a value type already carried by an
@@ -8090,7 +8299,7 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 		default:
 			// Evidence, arm boundaries, and difference constraints are closed
 			// branch metadata. They are intentionally not alternate selectors.
-			if operand.Role != "predicate-display" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") {
+			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") {
 				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}

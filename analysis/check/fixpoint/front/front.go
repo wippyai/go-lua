@@ -830,6 +830,10 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 		return equation.Artifact{}, fmt.Errorf("front: WIR body has %d entry operations, want one", entries)
 	}
 	drafts := make([]equation.Draft, 0, len(operations))
+	hasDynamicIndexRead := false
+	for _, operation := range operations {
+		hasDynamicIndexRead = hasDynamicIndexRead || operation.instruction.Op == wir.OpDynamicIndexRead
+	}
 	branchTargets := make(map[cfg.Point]equation.Coordinate)
 	for _, operation := range operations {
 		if operation.instruction.Op == wir.OpBranch {
@@ -1047,6 +1051,9 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			operands, err := branchOperands(body, instruction)
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: branch %s: %w", operation.target.Name, err)
+			}
+			if hasDynamicIndexRead {
+				operands = append(operands, equation.Operand{Role: "index-presence-consumer", Term: equation.ClosedTerm([]byte("scalar/bool/true"))})
 			}
 			draft.Operands = operands
 		case instruction.Op == wir.OpCall:
