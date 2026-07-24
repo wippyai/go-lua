@@ -264,6 +264,9 @@ func fixtureHostManifest(path string) *manifest.Manifest {
 	if path == "stream" {
 		return fixtureStreamHostManifest()
 	}
+	if path == "time" {
+		return fixtureTimeHostManifest()
+	}
 	m := manifest.New(path)
 	m.SetExport(typ.Any)
 	return m
@@ -278,6 +281,25 @@ func fixtureStreamHostManifest() *manifest.Manifest {
 	m.DefineType("Stream", streamType)
 	m.SetExport(moduleType)
 	m.DefineGlobalType("stream", moduleType)
+	return m
+}
+
+// fixtureTimeHostManifest is the published host contract used by the runtime
+// fixtures. Time values remain opaque; only the methods declared by the host
+// manifest can contribute a result witness to a checked program.
+func fixtureTimeHostManifest() *manifest.Manifest {
+	m := manifest.New("time")
+	durationType := typ.NewInterface("time.Duration", []typ.Method{
+		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
+	})
+	timeType := typ.NewInterface("time.Time", []typ.Method{
+		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("t", typ.Self).Returns(durationType).Build()},
+		{Name: "add", Type: typ.Func().Param("self", typ.Self).Param("d", durationType).Returns(typ.Self).Build()},
+		{Name: "unix", Type: typ.Func().Param("self", typ.Self).Returns(typ.Integer).Build()},
+	})
+	m.DefineType("Time", timeType)
+	m.DefineType("Duration", durationType)
+	m.SetExport(typetable.NewRecord().Field("now", typ.Func().Returns(timeType).Build()).Build())
 	return m
 }
 

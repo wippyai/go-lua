@@ -112,6 +112,30 @@ func TestAcyclicBoundEvaluatorCopiedStoreWitness(t *testing.T) {
 	}
 }
 
+func TestPartitionFromClosuresMatchesSequentialClosedJoin(t *testing.T) {
+	body := testBody(51)
+	guard := Guard{Body: body, Encoding: []byte("branch")}
+	closures := []OutputClosure{
+		{Values: []Fact{{Key: "seed", Value: []byte("one")}}, Diagnostics: []Fact{{Key: "note", Value: []byte("seen"), Guards: []Guard{guard}}}},
+		{Values: []Fact{{Key: "next", Value: []byte("two")}, {Key: "seed", Value: []byte("one")}}, Outcomes: []Fact{{Key: "return", Value: []byte("ok")}}, AllocationRekeys: []AllocationRekey{{From: "formal", To: "actual"}}},
+	}
+	want := OutputClosure{}
+	for _, closure := range closures {
+		var err error
+		want, err = mergeClosure(want, closure)
+		if err != nil {
+			t.Fatalf("sequential closed join: %v", err)
+		}
+	}
+	partition, err := PartitionFromClosures(closures...)
+	if err != nil {
+		t.Fatalf("aggregate closed join: %v", err)
+	}
+	if !want.Equal(partition.closure) {
+		t.Fatalf("aggregate closure = %#v, want sequential %#v", partition.closure, want)
+	}
+}
+
 func TestAcyclicBoundEvaluatorDoesNotPublishPartialTransaction(t *testing.T) {
 	artifact, entry, contracts := stage3Artifact(t)
 	registry, err := NewKernelRegistry([]KernelBinding{

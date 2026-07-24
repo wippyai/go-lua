@@ -230,13 +230,16 @@ type Partition struct {
 // partition.  It is intentionally a value constructor: neither VM exposes
 // mutable evaluator state through this bridge.
 func PartitionFromClosures(closures ...OutputClosure) (Partition, error) {
+	// A cyclic snapshot can contribute many predecessor leaves.  They are all
+	// already closed publications, so aggregate their fact lanes before the
+	// single canonical merge.  Re-canonicalizing after each append is the same
+	// lattice join, but turns one snapshot read into a quadratic sort/copy path.
 	combined := OutputClosure{}
-	var err error
 	for _, closure := range closures {
-		combined, err = mergeClosure(combined, closure)
-		if err != nil {
-			return Partition{}, err
-		}
+		combined.Values = append(combined.Values, closure.Values...)
+		combined.Outcomes = append(combined.Outcomes, closure.Outcomes...)
+		combined.Diagnostics = append(combined.Diagnostics, closure.Diagnostics...)
+		combined.AllocationRekeys = append(combined.AllocationRekeys, closure.AllocationRekeys...)
 	}
 	canonical, err := canonicalClosure(combined)
 	if err != nil {
