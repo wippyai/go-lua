@@ -698,6 +698,111 @@ func OptionalTypeHasConcreteValue(t typ.Type) bool {
 	return value != nil && !typ.IsNever(value)
 }
 
+// TruthinessSplit partitions t into the values a Lua condition treats as truthy
+// and the values it treats as falsy. Lua's falsy set is exactly nil and false,
+// so the split is exact for every closed type. Either side may come back
+// typ.Never, which proves the corresponding edge of a condition on t is
+// unreachable.
+//
+// It is inconclusive for a gradual, unresolved, or opaque type: such a type has
+// no value set this projection can partition, and reporting one would let a
+// guard refine a value the checker never proved anything about.
+func TruthinessSplit(t typ.Type) (truthy, falsy typ.Type, ok bool) {
+	return truthinessSplitSeen(t, &typegraph.Path{})
+}
+
+func truthinessSplitSeen(t typ.Type, active *typegraph.Path) (typ.Type, typ.Type, bool) {
+	if t == nil {
+		return nil, nil, false
+	}
+	t = unwrap.Annotated(t)
+	if t == nil || typ.IsTopLike(t) {
+		return nil, nil, false
+	}
+	if typ.IsNever(t) {
+		return typ.Never, typ.Never, true
+	}
+	if !active.Enter(t, 0) {
+		return nil, nil, false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
+	case *typ.Alias:
+		return truthinessSplitSeen(v.UnaliasedTarget(), active)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return nil, nil, false
+		}
+		return truthinessSplitSeen(v.Body, active)
+	case *typ.Instantiated:
+		expanded, expandedOK := subst.ExpandInstantiatedChanged(v)
+		if !expandedOK {
+			return nil, nil, false
+		}
+		return truthinessSplitSeen(expanded, active)
+	case *typ.Intersection:
+		// An intersection holds every member's values at once, so one member
+		// that admits no falsy value proves the whole intersection truthy.
+		for _, member := range v.Members {
+			truthy, falsy, ok := truthinessSplitSeen(member, active)
+			if ok && typ.IsNever(falsy) && !typ.IsNever(truthy) {
+				return t, typ.Never, true
+			}
+		}
+		return nil, nil, false
+	case *typ.Optional:
+		truthy, falsy, ok := truthinessSplitSeen(v.Inner, active)
+		if !ok {
+			return nil, nil, false
+		}
+		return truthy, normalize.UnionForEvidence(typ.Nil, falsy), true
+	case *typ.Union:
+		truthyMembers := make([]typ.Type, 0, len(v.Members))
+		falsyMembers := make([]typ.Type, 0, len(v.Members))
+		for _, member := range v.Members {
+			truthy, falsy, ok := truthinessSplitSeen(member, active)
+			if !ok {
+				return nil, nil, false
+			}
+			if !typ.IsNever(truthy) {
+				truthyMembers = append(truthyMembers, truthy)
+			}
+			if !typ.IsNever(falsy) {
+				falsyMembers = append(falsyMembers, falsy)
+			}
+		}
+		return unionOrNever(truthyMembers), unionOrNever(falsyMembers), true
+	case *typ.Literal:
+		if v.Base == kind.Boolean {
+			if truth, isBool := v.Value.(bool); isBool && !truth {
+				return typ.Never, typ.False, true
+			}
+		}
+		return t, typ.Never, true
+	}
+	switch t.Kind() {
+	case kind.Nil:
+		return typ.Never, typ.Nil, true
+	case kind.Boolean:
+		return typ.True, typ.False, true
+	case kind.String, kind.Number, kind.Integer, kind.Function, kind.Record, kind.Array, kind.Map, kind.ReadonlyMap, kind.Tuple, kind.Interface, kind.Generic:
+		// Every value of these kinds is truthy in Lua: only nil and false are not.
+		return t, typ.Never, true
+	default:
+		return nil, nil, false
+	}
+}
+
+func unionOrNever(members []typ.Type) typ.Type {
+	if len(members) == 0 {
+		return typ.Never
+	}
+	if len(members) == 1 {
+		return members[0]
+	}
+	return normalize.UnionForEvidence(members...)
+}
+
 // OptionalTruthinessPartitionsNilValue reports whether truthiness checks can
 // split an optional-like type into nil and value cases. If the value arm may be
 // false, truthiness cannot prove the nil arm was handled.

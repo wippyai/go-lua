@@ -35,6 +35,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -3803,6 +3804,45 @@ func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equ
 	return facts
 }
 
+// placementDeclaredScalarLocalWitnesses projects the body's own declarations. A
+// local whose declared type is a closed scalar holds no object identity: there
+// is nothing for another frame, actor, or send boundary to retain, so its
+// storage is the frame that declares it whatever the body then does with the
+// value. The claim's sealed shape target is the sole authority; a claim without
+// one, or one whose target is not a closed scalar, contributes nothing.
+func placementDeclaredScalarLocalWitnesses(child front.Compilation) []equation.Fact {
+	var facts []equation.Fact
+	seen := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "claim" {
+			continue
+		}
+		claimKind, hasKind := artifactOperand(operation.Operands, "kind")
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		shape, hasShape := artifactOperand(operation.Operands, "shape-target")
+		if !hasKind || !hasTarget || !hasShape || string(claimKind) != "claim-kind/"+strconv.Itoa(int(wir.ClaimAnnotation)) {
+			continue
+		}
+		declared, decoded := shapefact.DecodeTarget(shape)
+		if !decoded || !placementClosedScalarType(declared) {
+			continue
+		}
+		identity := "scalar/declaration/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s", child.Body, target)))
+		if seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		encoded, err := encodePlacementAllocation(placementAllocationFact{
+			Identity: identity, Result: "placement/scalar/" + base64.RawURLEncoding.EncodeToString([]byte(identity)), Kind: "lua.scalar", Complete: true,
+		})
+		if err != nil {
+			continue
+		}
+		facts = append(facts, equation.Fact{Key: placementAllocationFactKey(identity), Value: encoded})
+	}
+	return facts
+}
+
 // placementReturnedClosureWitnesses projects only facts whose two authorities
 // are already published: the enclosing module returns this exact closure, and
 // the child artifact stores one declared table formal into one of its captured
@@ -3810,7 +3850,11 @@ func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equ
 // store is a prospective shared-input boundary, not a reconstruction from the
 // function's source spelling.
 func placementReturnedClosureWitnesses(child front.Compilation, partition equation.Partition) []equation.Fact {
-	if child.WIR == nil || child.Cyclic != nil {
+	// This projection reads the child's boundary and its frozen artifact only.
+	// Both are published for every admitted body, so a loop inside the child
+	// changes nothing it inspects: the cyclic signal selects an execution path,
+	// not the availability of the static store evidence.
+	if child.WIR == nil {
 		return nil
 	}
 	captures := make(map[string]bool, len(child.Boundary.Captures))
@@ -7788,6 +7832,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	}
 	if lexical.publishesClosureReturn(operation.Target.Body, result) {
 		closure.Values = append(closure.Values, placementReturnedClosureWitnesses(child, partition)...)
+		closure.Values = append(closure.Values, placementDeclaredScalarLocalWitnesses(child)...)
 	}
 	// Lifecycle epochs are self-contained proof facts: a channel created and
 	// consumed within a declared body needs no caller value to establish its
@@ -8491,6 +8536,18 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				break
 			}
 		}
+		if errors.Is(er, errUnknownScalar) {
+			// Neither short-circuit is decided, so both results stay reachable.
+			// An undecided operand is not an evaluation failure: the expression
+			// publishes the join of the two reachable outcomes.
+			right, rightErr := resolve("right")
+			if rightErr != nil {
+				return equation.TransactionResult{}, rightErr
+			}
+			boundarySources = append(boundarySources, by["left"], by["right"])
+			value = undecidedLogicalValue(left, right, wir.Operator(op))
+			break
+		}
 		if er != nil {
 			return equation.TransactionResult{}, er
 		}
@@ -8513,6 +8570,12 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		switch wir.Operator(op) {
 		case wir.UnNot:
 			truth, er := luaTruthy(operand)
+			if errors.Is(er, errUnknownScalar) {
+				// not on an undecided operand still yields a boolean; which one
+				// it yields is exactly what remains unknown.
+				value = []byte("scalar/boolean")
+				break
+			}
 			err = er
 			value = []byte("scalar/bool/" + strconv.FormatBool(!truth))
 		case wir.UnLen:
@@ -9810,6 +9873,13 @@ func assignmentShapeRelation(lexical *lexicalEvaluator, source, value, encodedTa
 		if resolved, found := lexical.typeOrigin(encodedTarget); found {
 			target = resolved
 		}
+		// The imported declaration is this path's contract, not its current
+		// content. A published witness that lies inside that contract is a
+		// refinement established after the import -- a guard narrowing it, for
+		// instance -- and it is the type the assignment actually sees.
+		if witness, known := scalarWitnessType(value); known && subtype.IsSubtype(witness, authoritative) {
+			authoritative = witness
+		}
 		if subtype.IsSubtype(authoritative, target) {
 			return shapeProven
 		}
@@ -10539,31 +10609,11 @@ func literalValue(literal *typ.Literal) string {
 // proven failure.  Type-shape and richer subtype evidence can extend this
 // predicate as those axes become available to this kernel.
 func assignmentMismatchProven(value []byte, targetType string) bool {
-	if isUnknownScalar(value) {
-		return false
-	}
 	target, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
 	if err != nil {
 		return false
 	}
-	switch target {
-	case "nil":
-		return string(value) != "scalar/nil"
-	case "boolean":
-		return !strings.HasPrefix(string(value), "scalar/bool/") && string(value) != "scalar/boolean"
-	case "string":
-		return !strings.HasPrefix(string(value), "scalar/string/")
-	case "number":
-		return !strings.HasPrefix(string(value), "scalar/number/")
-	case "integer":
-		if !strings.HasPrefix(string(value), "scalar/number/") {
-			return true
-		}
-		_, err := strconv.ParseInt(strings.TrimPrefix(string(value), "scalar/number/"), 10, 64)
-		return err != nil
-	default:
-		return false
-	}
+	return provenValueNotSubtype(value, target)
 }
 
 // optionalAssignmentSource renders recursive optional values by their decisive
@@ -11621,6 +11671,11 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure = appendClosedGuardAdvice(closure, operation, partition)
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
+	if closure, recognized, err := typeWitnessBranchClosure(operation, partition); err != nil {
+		return equation.TransactionResult{}, err
+	} else if recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	frozenCondition := false
 	for _, operand := range operation.Operands {
 		if operand.Role == "predicate" && frozenPredicate(operand.Value) {
@@ -11808,6 +11863,80 @@ func compoundBranchOutcome(operation equation.BoundEquation, truth bool) equatio
 			Value: []byte("proven"),
 		}},
 	}
+}
+
+// typeWitnessBranchClosure refines a falsiness branch whose selector resolves to
+// a published type witness instead of a decided value. A type is not a value: it
+// cannot select an arm, so both arms stay reachable and each publishes the
+// projection of the guarded path under its own edge guard. When one projection
+// is empty the witness does decide the branch, and the ordinary scalar rule owns
+// that case together with the constant-guard advice it publishes.
+func typeWitnessBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
+	predicate, found, err := soleBranchPredicate(operation)
+	if err != nil || !found || predicate.Path == "" {
+		return equation.OutputClosure{}, false, err
+	}
+	switch predicate.Kind {
+	case "truthy", "falsy":
+	default:
+		return equation.OutputClosure{}, false, nil
+	}
+	term := []byte("path/" + predicate.Path)
+	value, err := resolveCurrentValue(term, partition)
+	if err != nil {
+		return equation.OutputClosure{}, false, err
+	}
+	witness, decoded := shapefact.DecodeTarget(value)
+	if !decoded {
+		return equation.OutputClosure{}, false, nil
+	}
+	selected, rejected, split := proof.TruthinessSplit(witness)
+	if !split || selected == nil || rejected == nil || typ.IsNever(selected) || typ.IsNever(rejected) {
+		return equation.OutputClosure{}, false, nil
+	}
+	if predicate.Kind == "falsy" {
+		selected, rejected = rejected, selected
+	}
+	if predicate.Negated {
+		selected, rejected = rejected, selected
+	}
+	closure := equation.OutputClosure{}
+	for _, edge := range [2]struct {
+		name  string
+		type_ typ.Type
+	}{{"true", selected}, {"false", rejected}} {
+		encoded, ok := shapefact.EncodeTarget(edge.type_)
+		if !ok {
+			return equation.OutputClosure{}, false, nil
+		}
+		guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/" + edge.name)}
+		closure.Outcomes = append(closure.Outcomes,
+			equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge.name), Guards: []equation.Guard{guard}},
+			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("type-witness/" + edge.name), Guards: []equation.Guard{guard}},
+		)
+		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(term) + "/" + operation.Target.Name, Value: encoded, Guards: []equation.Guard{guard}})
+	}
+	return closure, true, nil
+}
+
+// soleBranchPredicate returns the branch's single predicate operand. A branch
+// carrying more than one predicate has no single selector to project.
+func soleBranchPredicate(operation equation.BoundEquation) (branchPredicateWire, bool, error) {
+	var predicate branchPredicateWire
+	found := false
+	for _, operand := range operation.Operands {
+		if operand.Role != "predicate" {
+			continue
+		}
+		if found || !strings.HasPrefix(string(operand.Value), branchPredicatePrefix) {
+			return branchPredicateWire{}, false, nil
+		}
+		if err := json.Unmarshal(operand.Value[len(branchPredicatePrefix):], &predicate); err != nil {
+			return branchPredicateWire{}, false, fmt.Errorf("engine: decode branch predicate: %w", err)
+		}
+		found = true
+	}
+	return predicate, found, nil
 }
 
 func typePredicateBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool) {
@@ -12942,7 +13071,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if known && genericConstraintRefuted(argument, expected) {
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), strings.TrimSpace(strings.SplitN(expected, ":", 2)[1]))), nil
 		}
-		if !known || !provenScalarNotSubtype(argument, expected) {
+		if !known || !provenValueNotSubtype(argument, expected) {
 			continue
 		}
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), expected)), nil
@@ -15156,30 +15285,46 @@ func resolveKnownCurrentValue(term []byte, partition equation.Partition) ([]byte
 	return shapeMemberValue(term, partition)
 }
 
-func provenScalarNotSubtype(value []byte, expected string) bool {
-	if isUnknownScalar(value) || expected == "any" || expected == "unknown" {
+// provenValueNotSubtype refutes a declared primitive contract from a published
+// value. The value is decoded into the type whose values it witnesses and
+// judged by the subtype relation, so a published type witness is measured by
+// what it holds rather than by how it is encoded. A spelling that is not a
+// closed primitive contract refutes nothing, and neither does a value this
+// engine cannot place in the type domain.
+func provenValueNotSubtype(value []byte, spelling string) bool {
+	if isUnknownScalar(value) {
 		return false
 	}
-	if strings.HasSuffix(expected, "?") {
-		return string(value) != "scalar/nil" && provenScalarNotSubtype(value, strings.TrimSuffix(expected, "?"))
+	declared, resolved := primitiveContractType(spelling)
+	if !resolved {
+		return false
 	}
-	switch expected {
-	case "nil":
-		return string(value) != "scalar/nil"
-	case "boolean":
-		return !strings.HasPrefix(string(value), "scalar/bool/")
-	case "string":
-		return !strings.HasPrefix(string(value), "scalar/string/")
-	case "number":
-		return !strings.HasPrefix(string(value), "scalar/number/")
-	case "integer":
-		if !strings.HasPrefix(string(value), "scalar/number/") {
-			return true
+	if witness, known := scalarWitnessType(value); known {
+		return !subtype.IsSubtype(witness, declared)
+	}
+	// A table or a callable carries no scalar witness type, and no primitive
+	// contract admits either of them.
+	return shapefact.IsTable(value) || string(value) == "scalar/table" ||
+		string(value) == "scalar/function" || strings.HasPrefix(string(value), "scalar/function/")
+}
+
+// primitiveContractType resolves the closed primitive spellings a published
+// value can be judged against, including their optional forms. Any other
+// spelling names a declaration whose contract this comparison does not own.
+func primitiveContractType(spelling string) (typ.Type, bool) {
+	spelling = strings.TrimSpace(spelling)
+	if inner := strings.TrimSuffix(spelling, "?"); inner != spelling {
+		resolved, ok := primitiveContractType(inner)
+		if !ok {
+			return nil, false
 		}
-		_, err := strconv.ParseInt(strings.TrimPrefix(string(value), "scalar/number/"), 10, 64)
-		return err != nil
+		return normalize.Optional(resolved), true
+	}
+	switch spelling {
+	case "nil", "boolean", "string", "number", "integer":
+		return typ.BuiltinPrimitiveType(spelling)
 	default:
-		return false
+		return nil, false
 	}
 }
 
@@ -18175,12 +18320,18 @@ func luaTruthy(value []byte) (bool, error) {
 		return false, errUnknownScalar
 	}
 	if target, ok := shapefact.DecodeTarget(value); ok {
-		target = unwrap.Alias(target)
-		if target.Kind() == kind.Nil {
-			return false, nil
+		// A published type is not a value. It decides a condition only when one
+		// side of Lua's falsy partition is empty; a type that holds both truthy
+		// and falsy values -- boolean above all -- keeps both edges reachable.
+		truthy, falsy, split := proof.TruthinessSplit(target)
+		if !split {
+			return false, errUnknownScalar
 		}
-		if !subtype.IsSubtype(typ.Nil, target) {
+		if typ.IsNever(falsy) {
 			return true, nil
+		}
+		if typ.IsNever(truthy) {
+			return false, nil
 		}
 		return false, errUnknownScalar
 	}
@@ -18200,6 +18351,74 @@ func luaTruthy(value []byte) (bool, error) {
 		}
 		return false, fmt.Errorf("engine: malformed scalar value %q", value)
 	}
+}
+
+// scalarWitnessType resolves a published engine value to the type whose value
+// set it witnesses. It is the single decoder used wherever a stored value has
+// to be compared in the type domain instead of by its encoding. An unknown
+// scalar, a local claim, and a table shape carry no such type.
+func scalarWitnessType(value []byte) (typ.Type, bool) {
+	if target, ok := shapefact.DecodeTarget(value); ok && target != nil {
+		return target, true
+	}
+	encoded := string(value)
+	switch encoded {
+	case "scalar/nil":
+		return typ.Nil, true
+	case "scalar/boolean":
+		return typ.Boolean, true
+	case "scalar/bool/true":
+		return typ.True, true
+	case "scalar/bool/false":
+		return typ.False, true
+	}
+	switch {
+	case strings.HasPrefix(encoded, "scalar/number/"):
+		text := strings.TrimPrefix(encoded, "scalar/number/")
+		if integer, err := strconv.ParseInt(text, 10, 64); err == nil {
+			return typ.LiteralInt(integer), true
+		}
+		if number, err := strconv.ParseFloat(text, 64); err == nil {
+			return typ.LiteralNumber(number), true
+		}
+		return nil, false
+	case strings.HasPrefix(encoded, "scalar/string/"):
+		text, err := strconv.Unquote(strings.TrimPrefix(encoded, "scalar/string/"))
+		if err != nil {
+			return nil, false
+		}
+		return typ.LiteralString(text), true
+	}
+	return nil, false
+}
+
+// undecidedLogicalValue joins the two outcomes of a short-circuit whose left
+// operand's truth is not decided: the surviving projection of the left operand
+// and the whole right operand. A side with no type witness leaves the result
+// unknown rather than committing the expression to one arm.
+func undecidedLogicalValue(left, right []byte, operator wir.Operator) []byte {
+	leftType, leftKnown := scalarWitnessType(left)
+	rightType, rightKnown := scalarWitnessType(right)
+	if !leftKnown || !rightKnown {
+		return []byte("scalar/top")
+	}
+	truthy, falsy, split := proof.TruthinessSplit(leftType)
+	if !split {
+		return []byte("scalar/top")
+	}
+	survivor := falsy
+	if operator == wir.LogOr {
+		survivor = truthy
+	}
+	members := []typ.Type{rightType}
+	if !typ.IsNever(survivor) {
+		members = append([]typ.Type{survivor}, members...)
+	}
+	encoded, ok := shapefact.EncodeTarget(normalize.UnionForEvidence(members...))
+	if !ok {
+		return []byte("scalar/top")
+	}
+	return encoded
 }
 
 func isUnknownScalar(value []byte) bool {
