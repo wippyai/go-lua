@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/lint"
+	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -251,6 +252,48 @@ target()
 	nonCallable, ok := got["type.call.direct.not_callable"]
 	if !ok || len(nonCallable.Evidence) != 1 || nonCallable.Evidence[0].Message != "target has literal value 1" || !strings.Contains(nonCallable.Help, "replace `target`") {
 		t.Fatalf("non-callable diagnostic = %#v, want canonical callable explanation", nonCallable)
+	}
+}
+
+func TestFixtureNilableDirectCallsPublishStructuredProjection(t *testing.T) {
+	expected := map[string]int{
+		"realworld/agent-workflow-engine-soundness":         24,
+		"realworld/notification-delivery-runtime-soundness": 50,
+	}
+	suites, err := discoverFixtures(corpusRepositoryRoot(t) + "/testdata/fixtures")
+	if err != nil {
+		t.Fatalf("discover fixtures: %v", err)
+	}
+	for _, suite := range suites {
+		line, selected := expected[suite.Name]
+		if !selected {
+			continue
+		}
+		diagnostics, _, _, err := fixtureDiagnostics(suite)
+		if err != nil {
+			t.Fatalf("%s: fixture diagnostics: %v", suite.Name, err)
+		}
+		var expectation fixtureDiagnosticExpectation
+		for _, candidate := range suite.Suite.Check.Diagnostics {
+			if candidate.Code == "type.call.direct.argument_type" && candidate.Line == line {
+				expectation = candidate
+				break
+			}
+		}
+		for _, item := range diagnostics {
+			if item.Code != "type.call.direct.argument_type" || item.Position.Line != line {
+				continue
+			}
+			evidence := item.Explanation.Evidence()
+			if !strings.Contains(item.Message, "cannot pass") || len(evidence) != 3 || !strings.Contains(evidence[0].Message, "can be time.Time or nil") || evidence[2].Reason.String() != "boundary validation missing" || evidence[2].Trust.String() != "refuted" || len(item.Labels) != 1 || item.Help == "" || !matchesDiagnosticExpectation(expectation, item, "main.lua", renderOptions(suite, "main.lua")) {
+				t.Fatalf("%s:%d nilable call projection = %#v\n%s", suite.Name, line, item, diag.Render(item, renderOptions(suite, "main.lua")))
+			}
+			delete(expected, suite.Name)
+			break
+		}
+	}
+	if len(expected) != 0 {
+		t.Fatalf("nilable direct-call projections missing for %#v", expected)
 	}
 }
 

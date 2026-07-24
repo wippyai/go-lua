@@ -1483,17 +1483,22 @@ func concatOperandIndex(subject string) (int, bool) {
 }
 
 func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject string, operands map[string]string, values []equation.Fact) PublishedDiagnostic {
-	message := item.Message
-	start := strings.Index(message, " is ")
-	end := strings.LastIndex(message, ", not ")
-	if start < 0 || end <= start+4 {
-		return item
-	}
 	argumentIndex, suffix, ok := callArgumentSubject(subject)
 	if !ok {
 		return item
 	}
-	value, expected := message[start+4:end], message[end+6:]
+	message := item.Message
+	value, expected, nilable := "", "", false
+	if before, after, found := strings.Cut(message, " may be nil, not "); found && before == fmt.Sprintf("argument %d%s", argumentIndex, suffix) && after != "" {
+		value, expected, nilable = "may be nil", after, true
+	} else {
+		start := strings.Index(message, " is ")
+		end := strings.LastIndex(message, ", not ")
+		if start < 0 || end <= start+4 {
+			return item
+		}
+		value, expected = message[start+4:end], message[end+6:]
+	}
 	argument := fmt.Sprintf("argument %d", argumentIndex) + suffix
 	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
 		argument += " (" + display + ")"
@@ -1516,7 +1521,7 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 		item.Help = fmt.Sprintf("Validate or narrow `%s` before passing it; any/unknown values do not prove parameter contracts.", display)
 		return item
 	}
-	if value == "may be nil" {
+	if nilable {
 		display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]
 		if display == "" {
 			display = argument
@@ -1525,10 +1530,10 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 		item.Evidence = []DiagnosticEvidence{
 			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s can be %s or nil here", argument, expected)},
 			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d expects %s", callee, argumentIndex, expected)},
-			{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no guard on this path proves %s is non-nil", display)},
+			{Span: item.Span, Kind: "missing proof", Trust: "refuted", Reason: "boundary validation missing", Message: fmt.Sprintf("no guard on this path proves %s is non-nil", display)},
 		}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "argument value"}}
-		item.Help = fmt.Sprintf("Guard `%s` with a nil check or provide a non-nil value before this call.", display)
+		item.Help = fmt.Sprintf("Guard `%s` with a nil check, provide a default argument value, or change the parameter type to accept nil.", display)
 		return item
 	}
 	item.Message = fmt.Sprintf("%s is %s, not %s", argument, value, expected)
