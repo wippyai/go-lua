@@ -117,7 +117,7 @@ func publishedNativeFacts(artifact equation.Artifact, values, outcomes, diagnost
 // operand representation leaves the row absent.
 func publishedNativeFactsForCompilation(compilation front.Compilation, values, outcomes, diagnostics []equation.Fact) *NativeFactIndex {
 	index := publishedNativeFacts(compilation.Artifact, values, outcomes, diagnostics)
-	index.derived = numericNativeFacts(compilation)
+	index.derived = append(numericNativeFacts(compilation), tableNativeFacts(compilation)...)
 	return index
 }
 
