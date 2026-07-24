@@ -2,9 +2,11 @@ package equation
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // ErrIncompleteTransaction is returned when a canonical kernel cannot produce
@@ -250,9 +252,13 @@ func PartitionFromClosures(closures ...OutputClosure) (Partition, error) {
 	return Partition{closure: canonical}, nil
 }
 
-func (p Partition) Values() []Fact      { return visibleFacts(p.closure.Values, p.guards) }
-func (p Partition) Outcomes() []Fact    { return visibleFacts(p.closure.Outcomes, p.guards) }
-func (p Partition) Diagnostics() []Fact { return visibleFacts(p.closure.Diagnostics, p.guards) }
+func (p Partition) Values() []Fact { return visibleFacts(p.closure.Values, p.closure.Values, p.guards) }
+func (p Partition) Outcomes() []Fact {
+	return visibleFacts(p.closure.Outcomes, p.closure.Values, p.guards)
+}
+func (p Partition) Diagnostics() []Fact {
+	return visibleFacts(p.closure.Diagnostics, p.closure.Values, p.guards)
+}
 
 // AllValues is deliberately an explicit escape hatch for a consumer that is
 // joining mutually exclusive values at a post-dominator.  Ordinary reads use
@@ -270,7 +276,8 @@ func cloneFacts(facts []Fact) []Fact {
 	return out
 }
 
-func visibleFacts(facts []Fact, active []Guard) []Fact {
+func visibleFacts(facts, evidence []Fact, active []Guard) []Fact {
+	active = resolvedBranchGuards(evidence, active)
 	out := make([]Fact, 0, len(facts))
 	for _, fact := range facts {
 		if guardsIncluded(fact.Guards, active) {
@@ -278,6 +285,47 @@ func visibleFacts(facts []Fact, active []Guard) []Fact {
 		}
 	}
 	return out
+}
+
+// resolvedBranchGuards promotes only an already-published deterministic branch
+// edge whose own enclosing guards are visible. This is the post-dominator
+// bridge for a branch proven constant by the kernel: facts from its sole live
+// arm become visible after the branch, while unknown or alternate edges remain
+// guarded and therefore unavailable.
+func resolvedBranchGuards(evidence []Fact, active []Guard) []Guard {
+	resolved := cloneGuards(active)
+	for changed := true; changed; {
+		changed = false
+		for _, fact := range evidence {
+			if !guardsIncluded(fact.Guards, resolved) || string(fact.Value) != "proven" {
+				continue
+			}
+			guard, ok := branchProofGuard(fact.Key)
+			if !ok || guardsIncluded([]Guard{guard}, resolved) {
+				continue
+			}
+			resolved = append(resolved, guard)
+			changed = true
+		}
+	}
+	return canonicalGuards(resolved)
+}
+
+func branchProofGuard(key string) (Guard, bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) != 4 || parts[0] != "branch-proof" || parts[1] == "" || parts[2] == "" || (parts[3] != "true" && parts[3] != "false") {
+		return Guard{}, false
+	}
+	body, err := hex.DecodeString(parts[1])
+	if err != nil || len(body) != len(BodyID{}) {
+		return Guard{}, false
+	}
+	var id BodyID
+	copy(id[:], body)
+	if !id.Valid() {
+		return Guard{}, false
+	}
+	return Guard{Body: id, Encoding: []byte("front/branch/" + parts[2] + "/" + parts[3])}, true
 }
 
 func cloneGuards(in []Guard) []Guard {

@@ -219,6 +219,51 @@ local answer: number = object:answer()`
 	}
 }
 
+func TestCheckRetainsCallableMemberCapabilityThroughIndexedReplacement(t *testing.T) {
+	result, err := engine.Check(`
+type Message = { _topic: string, topic: (self: Message) -> string }
+local messages: {[string]: Message} = {}
+if not messages["root"] then
+  messages["root"] = {
+    _topic = "installed",
+    topic = function(self: Message): string return self._topic end,
+  }
+end
+local installed: string = messages["root"]:topic()
+local cached = messages["root"]
+if cached then
+  local cached_topic: string = cached:topic()
+end
+assert(messages["root"])
+local asserted: string = messages["root"]:topic()
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.HasPrefix(diagnostic.Key, "claim/unproven/") || strings.HasPrefix(diagnostic.Key, "type.assignment/") {
+			t.Fatalf("indexed replacement lost callable member capability: %#v", result.Diagnostics)
+		}
+	}
+}
+
+func TestCheckPublishesGenericReturnWhenItsDeclarationIsNotStructural(t *testing.T) {
+	result, err := engine.Check(`
+local function first<T>(items: {T}): T?
+  return items[1]
+end
+local value = first({"ready"})
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.HasPrefix(diagnostic.Key, "lint.analysis.conservative/") {
+			t.Fatalf("generic return declaration prevented publication: %#v", result.Diagnostics)
+		}
+	}
+}
+
 func TestCheckWithImportsRetainsExplicitAnyResultAtEachAssignmentSite(t *testing.T) {
 	source := `
 local provider = require("provider")

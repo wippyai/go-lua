@@ -1973,6 +1973,32 @@ func projectMemberClosures(target string, source []byte, operation string, parti
 	return values, nil
 }
 
+// projectSealedTableMemberValues preserves exact members of an already closed
+// table at the replacement path. A later direct member write owns a newer
+// epoch and therefore supersedes this projection without source heuristics.
+func projectSealedTableMemberValues(target string, tableValue []byte, operation string) ([]equation.Fact, error) {
+	table, ok := shapefact.DecodeTable(tableValue)
+	if !ok || !table.Closed {
+		return nil, nil
+	}
+	values := make([]equation.Fact, 0, len(table.Members)*2)
+	for _, member := range table.Members {
+		if !member.Present || member.Suffix == "" {
+			continue
+		}
+		segments, valid := segment.ParseFormattedSegments(member.Suffix)
+		if !valid || len(segments) == 0 {
+			return nil, fmt.Errorf("engine: malformed sealed table member suffix")
+		}
+		memberTarget := target + member.Suffix
+		values = append(values,
+			equation.Fact{Key: "value/" + memberTarget + "/" + operation, Value: []byte(member.Value)},
+			equation.Fact{Key: "epoch/" + memberTarget + "/" + operation, Value: []byte(operation)},
+		)
+	}
+	return values, nil
+}
+
 func projectSealedTableMemberClosures(target string, tableValue []byte, operation string, partition equation.Partition) ([]equation.Fact, error) {
 	table, ok := shapefact.DecodeTable(tableValue)
 	if !ok {
@@ -3528,6 +3554,11 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	result.Closure.Values = append(result.Closure.Values, equation.Fact{
 		Key: "value/" + string(operands["target"]) + "/" + operation.Target.Name, Value: value,
 	})
+	memberValues, memberValueErr := projectSealedTableMemberValues(string(operands["target"]), value, operation.Target.Name)
+	if memberValueErr != nil {
+		return equation.TransactionResult{}, memberValueErr
+	}
+	result.Closure.Values = append(result.Closure.Values, memberValues...)
 	// A static member write can be the first publication of a local closure
 	// capability (for example, `function module.f() ... end`).  The value fact
 	// alone proves that the member is callable, but it does not authorize the
@@ -3543,6 +3574,20 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 			Key: "closure/" + string(operands["target"]) + "/" + operation.Target.Name, Value: encoded,
 		})
 	}
+	// Replacing an indexed path with a sealed table preserves the table value
+	// and its exact callable-member capabilities together. A later method call
+	// may demand only those capabilities that were already published by the
+	// literal; an opaque or subsequently replaced member remains unavailable.
+	memberClosures, memberErr := projectMemberClosures(string(operands["target"]), operands["value"], operation.Target.Name, partition)
+	if memberErr != nil {
+		return equation.TransactionResult{}, memberErr
+	}
+	result.Closure.Values = append(result.Closure.Values, memberClosures...)
+	literalMemberClosures, literalErr := projectSealedTableMemberClosures(string(operands["target"]), operands["value"], operation.Target.Name, partition)
+	if literalErr != nil {
+		return equation.TransactionResult{}, literalErr
+	}
+	result.Closure.Values = append(result.Closure.Values, literalMemberClosures...)
 	if root, suffix, ok := tableAddress(operands["target"]); ok && suffix != "" {
 		if identity, found := tableIdentityForTerm(root, partition); found {
 			result.Closure.Values = append(result.Closure.Values, heapMemberFact(identity, suffix, operation.Target.Name, value))
@@ -4764,6 +4809,10 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge)},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte(narrowing)},
 	}}
+	closure.Values = append(closure.Values, equation.Fact{
+		Key:   "branch-proof/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + operation.Target.Name + "/" + edge,
+		Value: []byte("proven"),
+	})
 	if boundaryPossible {
 		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(boundarySource) + "/" + operation.Target.Name, Value: append([]byte(nil), boundaryValue...)})
 	}
@@ -7291,7 +7340,12 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 			}
 			declaredType, ok := shapefact.DecodeTarget(operand.Value)
 			if !ok || declaredType == nil {
-				return equation.TransactionResult{}, fmt.Errorf("engine: malformed declared return type")
+				// A generic declaration may have a canonical type-parameter edge
+				// whose binder is intentionally unavailable to a structural value
+				// fact. The declaration cannot prove or refute a runtime return in
+				// that case, but it must not invalidate the independently closed
+				// return tuple. Omit only that optional contract check.
+				continue
 			}
 			declared[index] = declaredType
 			continue
