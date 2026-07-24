@@ -17,6 +17,7 @@ import (
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -246,15 +247,38 @@ func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, *engine.PlacementPlan,
 	// resolved through lint's derived manifests, so each require observes the
 	// producer's closed static export rather than the former Any placeholder.
 	for _, pkg := range s.Suite.Packages {
-		m := manifest.New(pkg)
-		m.SetExport(typ.Any)
-		input.Manifests = append(input.Manifests, m)
+		input.Manifests = append(input.Manifests, fixtureHostManifest(pkg))
 	}
 	result, err := lint.CheckProject(context.Background(), input)
 	if err != nil {
 		return nil, nil, files[len(files)-1], err
 	}
 	return result.Diagnostics, result.Placement, files[len(files)-1], nil
+}
+
+// fixtureHostManifest is the fixture adapter's host-publication registry.
+// Entries are manifests, not source-derived assumptions: an unknown package
+// remains an explicit Any boundary, while a declared host supplies its own
+// types and globals through the normal manifest channels.
+func fixtureHostManifest(path string) *manifest.Manifest {
+	if path == "stream" {
+		return fixtureStreamHostManifest()
+	}
+	m := manifest.New(path)
+	m.SetExport(typ.Any)
+	return m
+}
+
+func fixtureStreamHostManifest() *manifest.Manifest {
+	m := manifest.New("stream")
+	streamType := typetable.NewRecord().Field("id", typ.String).Build()
+	moduleType := typetable.NewRecord().
+		Field("open", typ.Func().Param("name", typ.String).Returns(streamType).Build()).
+		Build()
+	m.DefineType("Stream", streamType)
+	m.SetExport(moduleType)
+	m.DefineGlobalType("stream", moduleType)
+	return m
 }
 
 func fixtureDiagnosticPolicy(check *fixtureCheck) (diag.Policy, error) {

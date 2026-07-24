@@ -172,6 +172,14 @@ func CheckWithImports(source string, imports map[string]typ.Type) (result Result
 // only rehydrates annotations whose module manifests were already selected by
 // the project boundary.
 func CheckWithImportsAndResolver(source string, imports map[string]typ.Type, resolver typeannotation.Resolver) (result Result, err error) {
+	return CheckWithImportsResolverAndGlobals(source, imports, nil, resolver)
+}
+
+// CheckWithImportsResolverAndGlobals admits project-selected host globals in
+// addition to resolved module exports. Global values are a separate capability:
+// they are not require results and therefore cannot be reconstructed from an
+// import path or source spelling.
+func CheckWithImportsResolverAndGlobals(source string, imports, globals map[string]typ.Type, resolver typeannotation.Resolver) (result Result, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("%w: %v", ErrInternalPanic, recovered)
@@ -192,6 +200,7 @@ func CheckWithImportsAndResolver(source string, imports map[string]typ.Type, res
 	defer cancel()
 	lexical := newLexicalEvaluator(compilation)
 	lexical.setImportedTypes(imports)
+	lexical.setGlobalTypes(globals)
 	lexical.setTypeOrigins(compilation)
 	lexical.ctx = fileContext
 	closure, transactions, err := evaluateCheck(compilation, binding, lexical, fileContext)
@@ -1532,6 +1541,7 @@ type lexicalEvaluator struct {
 	// this evaluator and exists only for exact result paths published by those
 	// imports; no structural reconstruction is admitted as an authority.
 	importedTypes       map[string]typ.Type
+	globalTypes         map[string]typ.Type
 	importedAuthorities map[string]typ.Type
 	typeOrigins         map[string]typ.Type
 	importedAuthorityMu sync.RWMutex
@@ -1547,6 +1557,20 @@ func (l *lexicalEvaluator) setImportedTypes(types map[string]typ.Type) {
 	for path, value := range types {
 		if path != "" && value != nil {
 			l.importedTypes[path] = value
+		}
+	}
+}
+
+func (l *lexicalEvaluator) setGlobalTypes(types map[string]typ.Type) {
+	if l == nil || len(types) == 0 {
+		return
+	}
+	l.importedAuthorityMu.Lock()
+	defer l.importedAuthorityMu.Unlock()
+	l.globalTypes = make(map[string]typ.Type, len(types))
+	for name, value := range types {
+		if name != "" && value != nil {
+			l.globalTypes[name] = value
 		}
 	}
 }
@@ -1596,6 +1620,16 @@ func (l *lexicalEvaluator) importedType(path string) (typ.Type, bool) {
 	l.importedAuthorityMu.RLock()
 	defer l.importedAuthorityMu.RUnlock()
 	value, ok := l.importedTypes[path]
+	return value, ok
+}
+
+func (l *lexicalEvaluator) globalType(name string) (typ.Type, bool) {
+	if l == nil || name == "" {
+		return nil, false
+	}
+	l.importedAuthorityMu.RLock()
+	defer l.importedAuthorityMu.RUnlock()
+	value, ok := l.globalTypes[name]
 	return value, ok
 }
 
@@ -7511,6 +7545,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if contract, ok := providerResultValue(provider, index, argumentTerms, partition); ok {
 					value = contract
 				}
+				if host, ok := hostGlobalProviderResultType(lexical, provider, index, argumentTerms, partition); ok {
+					value, _ = providerReturnTypeValue(host)
+					importedSummary = host
+					lexical.setImportedAuthority(string(result), host)
+				}
 				if imported, ok := importedProviderResultValue(lexical, provider, index, argumentTerms, partition); ok {
 					value = imported
 				}
@@ -7904,6 +7943,35 @@ func importedProviderResultValue(lexical *lexicalEvaluator, provider []byte, ind
 	return importedReturnValue(result)
 }
 
+// hostGlobalProviderResultType resolves a host-installed global only from the
+// project-selected GlobalTypes publication. The provider name is emitted by
+// the front from the global symbol/path, while the callable and its result are
+// still read exclusively from the host's exact manifest type.
+func hostGlobalProviderResultType(lexical *lexicalEvaluator, provider []byte, index int, arguments map[int][]byte, partition equation.Partition) (typ.Type, bool) {
+	name := providerName(provider)
+	root, suffix, found := strings.Cut(name, ".")
+	if !found || root == "" || suffix == "" {
+		return nil, false
+	}
+	global, ok := lexical.globalType(root)
+	if !ok {
+		return nil, false
+	}
+	segments, valid := segment.ParseFormattedSegments("." + suffix)
+	if !valid || len(segments) == 0 {
+		return nil, false
+	}
+	callee, found := variant.FieldAtPath(global, segments)
+	if !found {
+		return nil, false
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(callee)).(*typ.Function)
+	if !ok || function == nil || index < 0 || index >= len(function.Returns) {
+		return nil, false
+	}
+	return instantiateProviderReturn(function, arguments, partition, index)
+}
+
 // importedProviderResultType is the exact resolved return slot of a module
 // provider. It is derived solely from the require-seeded entry export and
 // closed call arguments, so callers may carry it as summary metadata without
@@ -7995,7 +8063,12 @@ func instantiateProviderReturn(function *typ.Function, arguments map[int][]byte,
 	}
 	for name := range params {
 		if bindings[name] == nil {
-			return nil, false
+			// A zero-argument generic constructor has no call-site evidence for
+			// this parameter. Preserve the provider's exact return graph while
+			// making only that unbound slot unknown; parameter-independent
+			// members (for example Collection<T>.count) remain available, while
+			// T-dependent members still cannot prove a concrete claim.
+			bindings[name] = typ.Unknown
 		}
 	}
 	return subst.Substitute(function.Returns[index], bindings), true

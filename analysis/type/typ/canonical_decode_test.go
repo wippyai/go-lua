@@ -135,6 +135,30 @@ func TestDecodeCanonicalStructuralRoundTripsRecursiveGraph(t *testing.T) {
 	}
 }
 
+func TestDecodeCanonicalStructuralRoundTripsRecursiveGenericGraph(t *testing.T) {
+	param := NewTypeParam("T", nil)
+	collection := NewGeneric("Collection", []*TypeParam{param}, nil)
+	collection.SetBody(RebuildRecord(RecordParts{
+		Fields: []Field{{Name: "next", Type: Instantiate(collection, param)}},
+	}))
+
+	encoded, err := EncodeCanonical(context.Background(), collection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeCanonicalStructural(context.Background(), encoded)
+	if err != nil {
+		t.Fatalf("DecodeCanonicalStructural: %v", err)
+	}
+	if !TypeEquals(collection, decoded) {
+		t.Fatalf("decoded generic graph = %v, want structural equality with %v", decoded, collection)
+	}
+	roundTrip, err := EncodeCanonical(context.Background(), decoded)
+	if err != nil || !bytes.Equal(encoded, roundTrip) {
+		t.Fatalf("structural generic bytes changed: %x / %x / %v", encoded, roundTrip, err)
+	}
+}
+
 func TestDecodeCanonicalRejectsMalformedTrailingAndImpossibleCounts(t *testing.T) {
 	valid := mustCanonical(t, NewTuple(String, Number))
 	trailing := append(append([]byte(nil), valid...), 0)

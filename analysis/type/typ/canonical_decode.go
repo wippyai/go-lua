@@ -282,6 +282,11 @@ func materializeCanonicalStructuralGraph(ctx context.Context, nodes []decodedCan
 	built := make([]Type, len(nodes))
 	ready := make([]bool, len(nodes))
 	recursive := make([]bool, len(nodes))
+	generic := make([]bool, len(nodes))
+	genericBodies := make([]int, len(nodes))
+	for index := range genericBodies {
+		genericBodies[index] = -1
+	}
 	var steps uint64
 
 	for index, node := range nodes {
@@ -313,6 +318,45 @@ func materializeCanonicalStructuralGraph(ctx context.Context, nodes []decodedCan
 			if ready[index] {
 				continue
 			}
+			tag, ok := canonicalNodeTag(node.scalar)
+			if !ok {
+				return nil, fmt.Errorf("%w: empty scalar", ErrInvalidCanonicalType)
+			}
+			if tag == canonicalGeneric {
+				name, paramCount, hasBody, err := canonicalGenericHeader(node.scalar)
+				if err != nil {
+					return nil, err
+				}
+				childCount := paramCount
+				if hasBody {
+					childCount++
+				}
+				if len(node.edges) != childCount {
+					return nil, fmt.Errorf("%w: generic child shape", ErrInvalidCanonicalType)
+				}
+				params := make([]*TypeParam, paramCount)
+				for position := range params {
+					child := node.edges[position]
+					if child < 0 || child >= len(nodes) || !ready[child] {
+						params = nil
+						break
+					}
+					param, valid := built[child].(*TypeParam)
+					if !valid || param == nil {
+						return nil, fmt.Errorf("%w: generic type parameter", ErrInvalidCanonicalType)
+					}
+					params[position] = param
+				}
+				if params == nil {
+					continue
+				}
+				built[index] = NewGeneric(name, params, nil)
+				ready[index], generic[index], progress = true, true, true
+				if hasBody {
+					genericBodies[index] = node.edges[paramCount]
+				}
+				continue
+			}
 			children := make([]Type, len(node.edges))
 			allReady := true
 			for position, child := range node.edges {
@@ -339,6 +383,13 @@ func materializeCanonicalStructuralGraph(ctx context.Context, nodes []decodedCan
 	for index, node := range nodes {
 		if !ready[index] {
 			return nil, ErrCanonicalRecursiveIdentityUnavailable
+		}
+		if generic[index] && genericBodies[index] >= 0 {
+			body := built[genericBodies[index]]
+			if body == nil {
+				return nil, fmt.Errorf("%w: generic body", ErrInvalidCanonicalType)
+			}
+			built[index].(*Generic).SetBody(body)
 		}
 		if !recursive[index] || len(node.edges) == 0 {
 			continue
@@ -371,6 +422,21 @@ func canonicalRecursiveHeader(scalar []byte) (string, bool, error) {
 		return "", false, fmt.Errorf("%w: recursive shape", ErrInvalidCanonicalType)
 	}
 	return string(name), hasBody, nil
+}
+
+func canonicalGenericHeader(scalar []byte) (string, int, bool, error) {
+	r := canonicalRawReader{raw: scalar}
+	tag, ok := r.byte()
+	if !ok || tag != canonicalGeneric {
+		return "", 0, false, fmt.Errorf("%w: generic scalar", ErrInvalidCanonicalType)
+	}
+	name, nameOK := r.frame()
+	paramCount, paramsOK := r.uvarint()
+	hasBody, bodyOK := r.bool()
+	if !nameOK || !paramsOK || !bodyOK || paramCount > uint64(maxInt()) || r.at != len(r.raw) {
+		return "", 0, false, fmt.Errorf("%w: generic shape", ErrInvalidCanonicalType)
+	}
+	return string(name), int(paramCount), hasBody, nil
 }
 
 func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Type, steps *uint64) (Type, error) {

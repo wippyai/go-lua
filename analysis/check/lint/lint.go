@@ -224,6 +224,17 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 	resolved := make(map[string]*manifest.Manifest, len(entries))
 	results := make(map[string]EntryResult, len(entries))
 	visiting := make(map[string]bool, len(entries))
+	hostGlobals := make(map[string]typ.Type)
+	for _, item := range external {
+		if item == nil {
+			continue
+		}
+		for name, value := range item.GlobalTypes {
+			if name != "" && value != nil {
+				hostGlobals[name] = item.ScopeType(value)
+			}
+		}
+	}
 	var visit func(string) error
 	visit = func(module string) error {
 		if _, done := results[module]; done {
@@ -274,8 +285,11 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 				importManifests = append(importManifests, resolvedImport.Manifest)
 			}
 		}
-		typeSource := typelookup.Source{Manifests: importManifests, Aliases: requireAliases(entry.Source, imports)}
-		result, checkErr := engine.CheckWithImportsAndResolver(entry.Source, importBindings, typeSource)
+		typeManifests := make([]*manifest.Manifest, 0, len(external)+len(importManifests))
+		typeManifests = append(typeManifests, external...)
+		typeManifests = append(typeManifests, importManifests...)
+		typeSource := typelookup.Source{Manifests: typeManifests, Aliases: requireAliases(entry.Source, imports)}
+		result, checkErr := engine.CheckWithImportsResolverAndGlobals(entry.Source, importBindings, hostGlobals, typeSource)
 		if checkErr != nil {
 			return fmt.Errorf("lint: check %s: %w", entry.Path, checkErr)
 		}
