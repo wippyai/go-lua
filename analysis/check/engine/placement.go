@@ -270,7 +270,7 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 			// are retained past the caller frame. No opaque fallback is needed
 			// for either exact contract argument.
 			facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventOwned))
-		case operands.display == "process.send" && index == 2:
+		case (operands.display == "process.send" && index == 2) || (operands.method == "send" && index == 0 && typedChannelReceiver(operands.receiver, partition)):
 			// The send boundary is the sealing event for its closed transfer
 			// payload. Both conclusions are emitted from the same proved call
 			// contract, so a later source mutation cannot masquerade as a
@@ -286,6 +286,17 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 		}
 	}
 	return facts
+}
+
+// typedChannelReceiver admits the channel send placement boundary only when
+// the receiver's payload contract has already been published. An untyped
+// lookalike send remains opaque and therefore cannot gain a sharing proof.
+func typedChannelReceiver(receiver []byte, partition equation.Partition) bool {
+	if len(receiver) == 0 {
+		return false
+	}
+	_, ok := typedChannelPayload(receiver, partition)
+	return ok
 }
 
 // placementFactsFromChild transports only already-closed allocation conclusions

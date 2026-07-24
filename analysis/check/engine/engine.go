@@ -4069,6 +4069,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				Help:     item.Help,
 			}
 		}
+		if typedChannelSendBoundary {
+			closure.Values = append(closure.Values, placementFactsFromChild(outcome.Values)...)
+		}
 	}
 	// A closure with no formals or captures has a fully closed body at its
 	// allocation boundary.  Its placement conclusions are independent of the
