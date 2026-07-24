@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
@@ -668,6 +669,31 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		if display := claimDeclaredDisplay(operation, operands["type"]); display != "" {
 			declared = display
+		}
+		if strings.HasSuffix(item.Message, " because it may be nil") {
+			targetSpan := claimTargetSpans[name]
+			if !targetSpan.Valid() {
+				targetSpan = item.Span
+			}
+			concrete := "value"
+			if witness, ok := shapefact.DecodeTarget(value); ok && witness != nil {
+				concrete = typeformat.Short(proof.ProjectionWithoutNil(witness))
+			}
+			item.Evidence = []DiagnosticEvidence{
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s can be %s or nil here", sourceDisplay, concrete)},
+				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+			}
+			missing := fmt.Sprintf("no guard on this path proves %s is non-nil", sourceDisplay)
+			if dot := strings.LastIndex(sourceDisplay, "."); dot > 0 && strings.Contains(sourceDisplay[:dot], "[") {
+				parent := sourceDisplay[:dot]
+				item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s may be nil before reading %s", parent, sourceDisplay[dot:])})
+				missing = fmt.Sprintf("%s is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here", sourceDisplay)
+			}
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: missing})
+			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value may be nil"}, {Span: targetSpan, Message: "declared type " + declared}}
+			item.Help = fmt.Sprintf("Guard `%s` with a nil check before assigning it, or change the target type to accept nil.", sourceDisplay)
+			out = append(out, item)
+			continue
 		}
 		valueDescription := assignmentEvidenceValue(value)
 		if surface, found := assignmentMemberSurface(name, closure.Values); found {
@@ -4103,6 +4129,12 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			break
 		}
 		truth, er := luaTruthy(left)
+		if errors.Is(er, errUnknownScalar) && string(left) == optionalNilComparison {
+			if wir.Operator(op) == wir.LogAnd {
+				value, err = resolve("right")
+				break
+			}
+		}
 		if er != nil {
 			return equation.TransactionResult{}, er
 		}
@@ -4424,6 +4456,9 @@ func numberValue(v float64) []byte {
 func basicBinary(op wir.Operator, a, b []byte) ([]byte, error) {
 	switch op {
 	case wir.BinEq:
+		if (optionalConcreteWitness(a) && string(b) == "scalar/nil") || (optionalConcreteWitness(b) && string(a) == "scalar/nil") {
+			return []byte(optionalNilComparison), nil
+		}
 		return []byte("scalar/bool/" + strconv.FormatBool(bytes.Equal(a, b))), nil
 	case wir.BinNe:
 		return []byte("scalar/bool/" + strconv.FormatBool(!bytes.Equal(a, b))), nil
@@ -4462,6 +4497,17 @@ func basicBinary(op wir.Operator, a, b []byte) ([]byte, error) {
 	default:
 		return []byte("scalar/top"), nil
 	}
+}
+
+func optionalConcreteWitness(value []byte) bool {
+	witness, ok := shapefact.DecodeTarget(value)
+	return ok && optionalConcreteWitnessType(witness)
+}
+
+const optionalNilComparison = "scalar/bool/optional-nil-comparison"
+
+func optionalConcreteWitnessType(witness typ.Type) bool {
+	return witness != nil && proof.OptionalTypeHasConcreteValue(witness)
 }
 
 // The path-store families are admitted whole-file operations. Their current
@@ -4632,7 +4678,10 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	if !ok && strings.HasPrefix(string(containerValue), "scalar/claim/claim-kind/1/") {
 		containerType, ok = castTargetWitness(container, partition)
 	}
-	if !ok || containerType == nil || !finiteReturnWitness(containerType, make(map[typ.Type]bool)) {
+	// A published type witness may have unrelated open members. RuntimeIndex
+	// still derives only the selected member, so an exact selected member stays
+	// available without treating the container itself as a closed return value.
+	if !ok || containerType == nil {
 		return nil, false
 	}
 	keyValue, err := resolveCurrentValue(key, partition)
@@ -4737,9 +4786,13 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		return equation.TransactionResult{}, err
 	}
 	shapeRelation := shapeUnknown
-	var memberSurface []byte
+	var (
+		memberSurface []byte
+		shapeTarget   []byte
+	)
 	for _, operand := range operation.Operands {
 		if operand.Role == "shape-target" {
+			shapeTarget = operand.Value
 			shapeRelation = assignmentShapeRelation(lexical, source, value, operand.Value, partition)
 			if shapeRelation == shapeRefuted {
 				if target, ok := shapefact.DecodeTarget(operand.Value); ok {
@@ -4837,6 +4890,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			}
 		}
 		if optionalSource {
+			message = "cannot assign " + sourceDisplay + " because it may be nil"
+		}
+		if !anySource && optionalAssignmentWitness(source, value, shapeTarget) {
 			message = "cannot assign " + sourceDisplay + " because it may be nil"
 		}
 		closure.Diagnostics = []equation.Fact{{
@@ -5035,6 +5091,24 @@ func lexicalMemberCallableSurface(lexical *lexicalEvaluator, source []byte, targ
 		}
 	}
 	return nil, shapeUnknown
+}
+
+// optionalAssignmentWitness accepts only a sealed source type that explicitly
+// admits nil and a concrete declared target that excludes it. An annotation,
+// Top, or an unsealed scalar remains unproven and follows the ordinary path.
+func optionalAssignmentWitness(path, value, encodedTarget []byte) bool {
+	if !derivedIndexedPath(path) {
+		return false
+	}
+	witness, ok := shapefact.DecodeTarget(value)
+	if !ok || witness == nil || !proof.OptionalTypeHasConcreteValue(witness) {
+		return false
+	}
+	declared, ok := shapefact.DecodeTarget(encodedTarget)
+	if !ok || declared == nil {
+		return false
+	}
+	return !subtype.IsSubtype(typ.Nil, declared)
 }
 
 func valueAgainstType(value []byte, target typ.Type) shapeRelation {
@@ -9816,6 +9890,9 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 			return false, false, err
 		}
 		truth, err := luaTruthy(value)
+		if errors.Is(err, errUnknownScalar) && optionalConcreteWitness(value) {
+			return true, false, nil
+		}
 		return truth, false, err
 	}
 	if predicate == nil {
@@ -10350,6 +10427,11 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		return nil, false
 	}
 	field, found := variant.FieldAtPath(source, suffix)
+	if !found && hasIndexSegment(suffix) {
+		if indexed, indexedFound := typedPathSegments(source, suffix); indexedFound && optionalConcreteWitnessType(indexed) {
+			field, found = indexed, true
+		}
+	}
 	if !found {
 		if !closedMemberSurface(source) {
 			return []byte("scalar/top"), true
@@ -10358,6 +10440,74 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 	}
 	value, ok := shapefact.EncodeTarget(field)
 	return value, ok
+}
+
+// typedPathSegments walks a sealed static path one segment at a time so an
+// indexed read can use the existing RuntimeIndex relation. Any optional
+// receiver is projected only for that step and then restored in the result;
+// no path access manufactures presence proof.
+func typedPathSegments(source typ.Type, suffix []segment.Segment) (typ.Type, bool) {
+	current := source
+	optional := false
+	for _, item := range suffix {
+		if optionalConcreteWitnessType(current) {
+			current = proof.ProjectionWithoutNil(current)
+			optional = true
+		}
+		if current == nil {
+			return nil, false
+		}
+		var next typ.Type
+		var found bool
+		switch item.Kind {
+		case segment.SegmentField:
+			next, found = variant.FieldAtPath(current, []segment.Segment{item})
+		case segment.SegmentIndexString:
+			if !closedSequence(current) {
+				return nil, false
+			}
+			next, found = access.RuntimeIndex(current, typ.LiteralString(item.Name))
+		case segment.SegmentIndexInt:
+			if !closedSequence(current) {
+				return nil, false
+			}
+			next, found = access.RuntimeIndex(current, typ.LiteralNumber(float64(item.Index)))
+		default:
+			return nil, false
+		}
+		if !found || next == nil {
+			return nil, false
+		}
+		current = next
+	}
+	if optional {
+		current = typ.MaterializeOptional(current)
+	}
+	return current, true
+}
+
+func closedSequence(value typ.Type) bool {
+	value = unwrap.Alias(subst.ExpandInstantiated(value))
+	switch value.(type) {
+	case *typ.Array, *typ.Tuple:
+		return true
+	default:
+		return false
+	}
+}
+
+func hasIndexSegment(items []segment.Segment) bool {
+	for _, item := range items {
+		switch item.Kind {
+		case segment.SegmentIndexString, segment.SegmentIndexInt:
+			return true
+		}
+	}
+	return false
+}
+
+func derivedIndexedPath(term []byte) bool {
+	return strings.HasPrefix(string(term), "path/") && strings.Contains(string(term), "[")
 }
 
 func closedMemberSurface(value typ.Type) bool {
@@ -10508,7 +10658,7 @@ func luaTruthy(value []byte) (bool, error) {
 		return true, nil
 	}
 	switch string(value) {
-	case "scalar/boolean":
+	case "scalar/boolean", optionalNilComparison:
 		return false, errUnknownScalar
 	case "scalar/nil", "scalar/bool/false":
 		return false, nil
