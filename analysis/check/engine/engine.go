@@ -3908,22 +3908,25 @@ func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.Compilation, 
 }
 
 // publishStaticNilCallDiagnostic projects a call contract from an existing
-// closure capture only when the child itself has already published the
-// argument's exact nil write. The guarded call remains a possible path, so
-// its parameter mismatch is source-owned; no branch truth, call result, or
-// inferred alias is manufactured here.
-func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.OutputClosure, child front.Compilation, captures []string, partition equation.Partition) {
+// closure capture only when either the child has already published the
+// argument's exact nil write or the allocating body published an unconditional
+// nil write to that capture. A nested body's guard does not transport the
+// enclosing body's branch correlation across the closure boundary. The guarded
+// call remains a possible path, so its parameter mismatch is source-owned; no
+// branch truth, call result, or inferred alias is manufactured here.
+func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.OutputClosure, child front.Compilation, parentOperations []equation.Equation, allocationTarget string, captures []string, partition equation.Partition) {
 	if l == nil || closure == nil || child.Cyclic != nil || len(child.Boundary.Captures) == 0 || len(child.Boundary.Captures) != len(captures) {
 		return
 	}
 	captured := make(map[string][]byte, len(captures))
+	captureSources := make(map[string][]byte, len(captures))
 	for index, capture := range child.Boundary.Captures {
 		term := captures[index]
+		captureSources[boundaryTerm(capture.Symbol)] = []byte(term)
 		value, known := resolveKnownCurrentValue([]byte(term), partition)
-		if !known || isUnknownScalar(value) {
-			return
+		if known && !isUnknownScalar(value) {
+			captured[boundaryTerm(capture.Symbol)] = value
 		}
-		captured[boundaryTerm(capture.Symbol)] = value
 	}
 	for _, item := range child.Artifact.Equations {
 		if item.Occurrence.Kind != "apply" || len(item.Guards) == 0 {
@@ -3944,7 +3947,11 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 				continue
 			}
 			expected, accepts := callableParameterAt(signature, index)
-			if !accepts || !callableParameterRejectsNil(expected) || !latestPriorWriteIsNilOnCallPath(child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, item.Guards) {
+			capturedNil := string(captured[string(operand.Term.Encoding)]) == "scalar/nil"
+			capturedSource := captureSources[string(operand.Term.Encoding)]
+			capturedUnconditionalNil := latestUnconditionalNilWriteBefore(parentOperations, capturedSource, allocationTarget)
+			childNilWrite := latestPriorWriteIsNilOnCallPath(child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, item.Guards)
+			if !accepts || !callableParameterRejectsNil(expected) || (!capturedNil && !capturedUnconditionalNil && !childNilWrite) {
 				continue
 			}
 			fact := equation.Fact{
@@ -3964,6 +3971,80 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 			return
 		}
 	}
+	for _, nested := range child.Nested {
+		for _, item := range child.Artifact.Equations {
+			captures, matches := nestedClosureAllocationCaptures(item, nested.PrototypeName)
+			if !matches {
+				continue
+			}
+			l.publishStaticNilCallDiagnostic(closure, nested, child.Artifact.Equations, item.Target.Name, captures, partition)
+		}
+	}
+}
+
+// nestedClosureAllocationCaptures exposes the front's sealed capture list for
+// one nested closure allocation. It accepts only an exact object-materialization
+// publication whose prototype is already catalogued by the front; malformed or
+// reordered capture roles leave the nested body dormant.
+func nestedClosureAllocationCaptures(operation equation.Equation, prototype string) ([]string, bool) {
+	if operation.Occurrence.Kind != "object-materialization" || prototype == "" {
+		return nil, false
+	}
+	encodedPrototype, found := artifactOperand(operation.Operands, "prototype")
+	if !found || string(encodedPrototype) != "prototype/"+prototype {
+		return nil, false
+	}
+	type captureOperand struct {
+		index int
+		value string
+	}
+	items := make([]captureOperand, 0)
+	for _, operand := range operation.Operands {
+		if !strings.HasPrefix(operand.Role, "capture-") {
+			continue
+		}
+		index, err := strconv.Atoi(strings.TrimPrefix(operand.Role, "capture-"))
+		if err != nil || index < 0 {
+			return nil, false
+		}
+		items = append(items, captureOperand{index: index, value: string(operand.Term.Encoding)})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].index < items[j].index })
+	for index, item := range items {
+		if item.index != index || item.value == "" {
+			return nil, false
+		}
+	}
+	captures := make([]string, len(items))
+	for index, item := range items {
+		captures[index] = item.value
+	}
+	return captures, true
+}
+
+// latestUnconditionalNilWriteBefore reads only the allocating body's exact
+// environment-write publications. A guarded write cannot replace this nil at
+// a nested closure boundary because its branch relation belongs to the parent
+// body and is not a fact in the child's independent guard space. An alias, a
+// dynamic value, or a later unconditional write makes the result unavailable.
+func latestUnconditionalNilWriteBefore(operations []equation.Equation, target []byte, before string) bool {
+	if len(target) == 0 {
+		return false
+	}
+	latest := ""
+	nilValue := false
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "environment-write" || len(operation.Guards) != 0 || operation.Target.Name >= before || operation.Target.Name <= latest {
+			continue
+		}
+		writeTarget, hasTarget := artifactOperand(operation.Operands, "target")
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		if !hasTarget || !hasValue || !bytes.Equal(writeTarget, target) {
+			continue
+		}
+		latest, nilValue = operation.Target.Name, string(value) == "scalar/nil"
+	}
+	return latest != "" && nilValue
 }
 
 // publishCapturedOptionalMemberCallDiagnostic follows only a closed front
@@ -6222,7 +6303,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// published parameter contract can refute the call even if the surrounding
 	// branch is not selected at allocation time. This is a path-local fact: a
 	// later write, an opaque callee, or an unclosed capture leaves it dormant.
-	lexical.publishStaticNilCallDiagnostic(&closure, child, captures, partition)
+	if parent, found := lexical.byBody[operation.Target.Body]; found {
+		lexical.publishStaticNilCallDiagnostic(&closure, child, parent.Artifact.Equations, operation.Target.Name, captures, partition)
+	}
 	lexical.publishCapturedOptionalMemberCallDiagnostic(&closure, child, captures, partition)
 	// A parameter-free child is closed at allocation time. A capture-free child
 	// whose entire boundary is explicitly any is closed too: each formal has a

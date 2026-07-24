@@ -226,6 +226,45 @@ return run
 	t.Fatalf("inverted guard let an optional value reach a string call: diagnostics=%#v", result.PublishedDiagnostics)
 }
 
+func TestCheckRejectsOptionalCaptureAtNestedGuardedCall(t *testing.T) {
+	result, err := engine.Check(`
+local function load(): string
+    return "loaded"
+end
+
+local function use(value: string): string
+    return value
+end
+
+local function run(ok: boolean): string?
+    local x: string?
+    if ok then
+        x = load()
+    end
+
+    local function later(): string?
+        if ok then
+            return use(x)
+        end
+        return nil
+    end
+
+    return later()
+end
+
+return run
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.call.direct.argument_type" && diagnostic.Span.StartLine == 18 && strings.Contains(diagnostic.Message, "may be nil") {
+			return
+		}
+	}
+	t.Fatalf("nested function reused an outer guard for an optional capture: diagnostics=%#v", result.PublishedDiagnostics)
+}
+
 func TestCheckProjectProvesImportedSealedNestedRecordAssignment(t *testing.T) {
 	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{
 		{Path: "types.lua", ModulePath: "types", Source: `
