@@ -3941,6 +3941,166 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 	}
 }
 
+// publishCapturedOptionalMemberCallDiagnostic follows only a closed front
+// dataflow chain: a captured typed provider's direct static call result is
+// written to a local, whose static optional member is passed to another
+// captured typed provider. The guarded call is still a possible source path;
+// this helper merely publishes the two existing member contracts without
+// choosing any intervening branch.
+func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *equation.OutputClosure, child front.Compilation, captures []string, partition equation.Partition) {
+	// This allocation-time projector is deliberately bounded. Large bodies are
+	// evaluated only through ordinary demanded flow so this source-only scan
+	// cannot consume the solver budget needed by their recursive summaries.
+	if l == nil || closure == nil || child.Cyclic != nil || len(child.Artifact.Equations) > 128 || len(child.Boundary.Captures) == 0 || len(child.Boundary.Captures) != len(captures) {
+		return
+	}
+	captured := make(map[string][]byte, len(captures))
+	for index, capture := range child.Boundary.Captures {
+		value, known := resolveKnownCurrentValue([]byte(captures[index]), partition)
+		if !known || isUnknownScalar(value) {
+			return
+		}
+		if imported, found := l.importedAuthority(captures[index]); found {
+			encoded, encodedOK := shapefact.EncodeTarget(imported)
+			if !encodedOK {
+				return
+			}
+			value = encoded
+		}
+		captured[boundaryTerm(capture.Symbol)] = value
+	}
+	for _, item := range child.Artifact.Equations {
+		if item.Occurrence.Kind != "apply" || len(item.Guards) == 0 {
+			continue
+		}
+		callee, hasCallee := artifactOperand(item.Operands, "callee")
+		function, callable := capturedStaticFunction(callee, captured)
+		if !hasCallee || !callable {
+			continue
+		}
+		for _, operand := range item.Operands {
+			index, err := callArgumentIndex(operand.Role)
+			if err != nil || index >= len(function.Params) || function.Params[index].Type == nil || !callableParameterRejectsNil(function.Params[index].Type.String()) {
+				continue
+			}
+			if !capturedCallResultOptionalMember(l, child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, captured, partition) {
+				continue
+			}
+			fact := equation.Fact{
+				Key:   "type.call.direct.argument_type/" + item.Target.Name + "/" + indexedCallSubject("argument", index),
+				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(function.Params[index].Type.String()))),
+			}
+			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, []equation.Fact{fact})
+			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + published.Fact.Key
+				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), published.Fact.Value...)})
+				if published.Span.Valid() {
+					l.diagnosticSpans[key] = published.Span
+				}
+				published.Fact.Key = key
+				l.childPublished[key] = published
+			}
+			return
+		}
+	}
+}
+
+func capturedStaticFunction(callee []byte, captured map[string][]byte) (*typ.Function, bool) {
+	root, suffix, member := tableAddress(callee)
+	segments, static := segment.ParseFormattedSegments(suffix)
+	value, available := captured[string(root)]
+	if !member || !static || len(segments) == 0 || !available {
+		return nil, false
+	}
+	receiver, decoded := shapefact.DecodeTarget(value)
+	if !decoded {
+		table, sealed := shapefact.DecodeTable(value)
+		if !sealed || len(segments) < 2 {
+			return nil, false
+		}
+		first := segment.FormatSegments(segments[:1])
+		for _, member := range table.Members {
+			if member.Suffix != first || !member.Present {
+				continue
+			}
+			receiver, decoded = shapefact.DecodeTarget([]byte(member.Value))
+			break
+		}
+		if !decoded {
+			return nil, false
+		}
+		segments = segments[1:]
+	}
+	calleeType, found := variant.FieldAtPath(receiver, segments)
+	if !found {
+		return nil, false
+	}
+	function, callable := unwrap.Alias(subst.ExpandInstantiated(calleeType)).(*typ.Function)
+	return function, callable && function != nil
+}
+
+func capturedCallResultOptionalMember(lexical *lexicalEvaluator, operations []equation.Equation, argument []byte, before string, captured map[string][]byte, partition equation.Partition) bool {
+	root, suffix, member := tableAddress(argument)
+	segments, static := segment.ParseFormattedSegments(suffix)
+	if !member || !static || len(segments) == 0 {
+		return false
+	}
+	latest, value := "", []byte(nil)
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "environment-write" || operation.Target.Name >= before {
+			continue
+		}
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		written, hasValue := artifactOperand(operation.Operands, "value")
+		if hasTarget && hasValue && bytes.Equal(target, root) && operation.Target.Name > latest {
+			latest, value = operation.Target.Name, written
+		}
+	}
+	if latest == "" || !strings.HasPrefix(string(value), "temp/") {
+		return false
+	}
+	for _, result := range operations {
+		if result.Occurrence.Kind != "call-results" {
+			continue
+		}
+		application, hasApplication := artifactOperand(result.Operands, "application")
+		resultValue, hasResult := artifactOperand(result.Operands, "result-00000000")
+		if !hasApplication || !hasResult || !bytes.Equal(resultValue, value) {
+			continue
+		}
+		applyName, valid := strings.CutPrefix(string(application), "call/")
+		if !valid {
+			return false
+		}
+		provider, hasProvider := artifactOperand(result.Operands, "provider")
+		if hasProvider {
+			if returned, found := hostGlobalProviderResultType(lexical, provider, 0, nil, partition); found {
+				field, projected := typedPathSegments(returned, segments)
+				return projected && optionalConcreteWitnessType(field)
+			}
+			if signature, found := (signaturelookup.Source{IncludeStdlib: true}).LookupView(providerName(provider)); found && signature.Type != nil {
+				if returned, instantiated := instantiateProviderReturn(signature.Type, nil, partition, 0); instantiated {
+					field, projected := typedPathSegments(returned, segments)
+					return projected && optionalConcreteWitnessType(field)
+				}
+			}
+		}
+		for _, apply := range operations {
+			if apply.Target.Name != applyName || apply.Occurrence.Kind != "apply" {
+				continue
+			}
+			callee, found := artifactOperand(apply.Operands, "callee")
+			function, callable := capturedStaticFunction(callee, captured)
+			if !found || !callable || len(function.Returns) == 0 || function.Returns[0] == nil {
+				return false
+			}
+			field, found := typedPathSegments(function.Returns[0], segments)
+			return found && optionalConcreteWitnessType(field)
+		}
+	}
+	return false
+}
+
 // latestPriorWriteIsNilOnCallPath accepts nil only when it is the last write
 // that can reach the guarded call. A later write under the same edge of a
 // boolean that was directly inverted before the call is excluded: the two
@@ -6031,6 +6191,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// branch is not selected at allocation time. This is a path-local fact: a
 	// later write, an opaque callee, or an unclosed capture leaves it dormant.
 	lexical.publishStaticNilCallDiagnostic(&closure, child, captures, partition)
+	lexical.publishCapturedOptionalMemberCallDiagnostic(&closure, child, captures, partition)
 	// A parameter-free child is closed at allocation time. A capture-free child
 	// whose entire boundary is explicitly any is closed too: each formal has a
 	// concrete precision-boundary fact, rather than an invented top value.
@@ -11087,7 +11248,8 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// intentionally Top.  Reuse that existing pair of publications to
 		// reject only the proven nilability conflict; neither an annotation nor
 		// an unknown scalar is treated as evidence for this boundary.
-		if callableParameterRejectsNil(expected) && ((!hasCallee && optionalArgumentMayBeNil(term, partition)) || (declaredEntryBoundary(operation.Target.Body, partition) && optionalProviderArgumentMayBeNil(term, partition))) {
+		if callableParameterRejectsNil(expected) && ((!hasCallee && optionalArgumentMayBeNil(term, partition)) ||
+			(declaredEntryBoundary(operation.Target.Body, partition) && optionalProviderArgumentMayBeNil(term, partition))) {
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))), nil
 		}
 		argument, known := resolveKnownCurrentValue(term, partition)
