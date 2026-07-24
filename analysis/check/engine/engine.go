@@ -1434,6 +1434,15 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 			item.Help = "Remove the extra arguments, or change the callee signature if they are valid."
 		}
 	case "not_callable":
+		if item.Message == fmt.Sprintf("cannot call %s because it may be nil", callee) {
+			item.Evidence = []DiagnosticEvidence{
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has a callable type, but may also be nil", callee)},
+				{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no guard on this path proves %s is non-nil before this call", callee)},
+			}
+			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "call target"}}
+			item.Help = fmt.Sprintf("Guard `%s` with a nil check before calling it.", callee)
+			return item
+		}
 		value, found := strings.CutSuffix(item.Message, ", not callable")
 		if !found {
 			return item
@@ -9176,6 +9185,9 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 		return equation.TransactionResult{Complete: true}, nil
 	}
+	if hasCallee && !typedMethodContract && optionalCallableValue(callee) {
+		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("cannot call %s because it may be nil", operands.display)), nil
+	}
 	if !typedMethodContract && !isUnknownScalar(callee) && !isCallableValue(callee) {
 		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("%s is %s, not callable", operands.display, callDisplayValue(callee))), nil
 	}
@@ -10401,6 +10413,41 @@ func declaredOptionalMemberValue(term []byte, partition equation.Partition) ([]b
 	return value, ok
 }
 
+// declaredOptionalMapReadValue carries the existing typed entry witness for a
+// static callable read from a declared map. A concrete heap cell can describe
+// one write retained through a fluent self-return, but it is not a presence
+// proof for a later handler lookup: the declared map contract still makes that
+// selected callable optional. The final segment must be an exact bracket index
+// over a declared map and its non-nil projection must be a function, so other
+// map reads and ordinary child publication remain on their existing
+// fail-closed paths.
+func declaredOptionalMapReadValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	_, segments, source, ok := typedAncestor(term, partition)
+	if !ok || source == nil || len(segments) == 0 {
+		return nil, false
+	}
+	last := segments[len(segments)-1]
+	if last.Kind != segment.SegmentIndexString && last.Kind != segment.SegmentIndexInt {
+		return nil, false
+	}
+	container, ok := luatypeprojection.ApplySegments(source, segments[:len(segments)-1])
+	if !ok || container == nil {
+		return nil, false
+	}
+	base := unwrap.Alias(subst.ExpandInstantiated(container))
+	if base == nil || (base.Kind() != kind.Map && base.Kind() != kind.ReadonlyMap) {
+		return nil, false
+	}
+	value, ok := luatypeprojection.ApplySegments(source, segments)
+	if !ok || !optionalConcreteWitnessType(value) {
+		return nil, false
+	}
+	if _, callable := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(value))).(*typ.Function); !callable {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(value)
+}
+
 // closedLiteralDeclaredOptionalMemberSource identifies the one optional value
 // produced by declaredOptionalMemberValue. Its diagnostic is a nilability
 // failure, while other optional values retain their established diagnostics.
@@ -10722,6 +10769,19 @@ func optionalMethodReceiver(receiverTerm, receiver []byte, method string) bool {
 		return false
 	}
 	_, callable := unwrap.Alias(subst.ExpandInstantiated(callee)).(*typ.Function)
+	return callable
+}
+
+// optionalCallableValue accepts a direct call target only when its existing
+// value publication is an optional type whose non-nil projection is callable.
+// It is a diagnostic predicate, not a dispatch fallback: the call remains
+// rejected until a guard publishes the non-nil projection.
+func optionalCallableValue(value []byte) bool {
+	witness, ok := shapefact.DecodeTarget(value)
+	if !ok || !optionalConcreteWitnessType(witness) {
+		return false
+	}
+	_, callable := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(witness))).(*typ.Function)
 	return callable
 }
 
@@ -12950,6 +13010,9 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	if value, found := selectPayloadValue(term, partition); found {
 		return value, nil
 	}
+	if value, found := declaredOptionalMapReadValue(term, partition); found {
+		return value, nil
+	}
 	if value, found := heapMemberValue(term, partition); found {
 		return value, nil
 	}
@@ -13001,6 +13064,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 		return value, nil
 	}
 	if value, found := correlationConeCurrentValue(term, partition); found {
+		return value, nil
+	}
+	if value, found := declaredOptionalMapReadValue(term, partition); found {
 		return value, nil
 	}
 	if value, found := heapMemberValue(term, partition); found {
