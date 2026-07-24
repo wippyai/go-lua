@@ -1264,6 +1264,33 @@ end
 	t.Fatalf("exact dynamic variant write did not update the aliased member: %#v", result.PublishedDiagnostics)
 }
 
+func TestCheckExactBracketVariantWriteUpdatesDotMember(t *testing.T) {
+	result, err := engine.Check(`
+type FileSlot = { kind: "file", path: string }
+type TimerSlot = { kind: "timer", seconds: number }
+type Slot = { value: FileSlot | TimerSlot }
+type Slots = {[string]: Slot}
+local slots: Slots = { active = { value = {kind = "file", path = "/tmp/active"} } }
+if slots.active.value.kind == "file" then
+    local before: string = slots["active"].value.path
+    slots["active"].value = {kind = "timer", seconds = 10}
+    local stale_path: string = slots.active.value.path
+    local stale_seconds: number = before
+end
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingMember, staleBefore := false, false
+	for _, diagnostic := range result.PublishedDiagnostics {
+		missingMember = missingMember || diagnostic.Code == "type.member.missing" && strings.Contains(diagnostic.Message, `has no member "path"`)
+		staleBefore = staleBefore || diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, `cannot assign before because it is "/tmp/active", not number`)
+	}
+	if !missingMember || !staleBefore {
+		t.Fatalf("exact bracket write publications missing member=%v before=%v: %#v", missingMember, staleBefore, result.PublishedDiagnostics)
+	}
+}
+
 func TestCheckTriviallyTrueBranchPublishesTruthinessNarrowing(t *testing.T) {
 	result, err := engine.Check(`
 local value = 1

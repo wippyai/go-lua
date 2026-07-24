@@ -53,6 +53,7 @@ const branchPredicatePrefix = "front/branch-predicate/v1/"
 const branchEvidencePrefix = "front/branch-evidence/v1/"
 
 const memberMissingPrefix = "shape/member-missing/v1/"
+const literalDiagnosticPrefix = "diagnostic/literal-source/"
 
 const summaryTypePrefix = "summary-type/"
 const channelPayloadPrefix = "channel-payload/"
@@ -75,6 +76,7 @@ const (
 	heapTableClosedPrefix    = "heap/table-closed/"
 	heapMemberPrefix         = "heap/member/"
 	heapMemberIdentityPrefix = "heap/member-identity/"
+	heapStaticReplacePrefix  = "heap/static-replace/"
 	memberCellPrefix         = "heap/member-cell/"
 	heapMemberOriginPrefix   = "heap/member-origin/"
 	heapMetaAttachedPrefix   = "heap/meta-attached/"
@@ -809,11 +811,15 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
 		} else {
+			targetSpan := claimTargetSpans[name]
+			if !targetSpan.Valid() {
+				targetSpan = item.Span
+			}
 			item.Evidence = []DiagnosticEvidence{
 				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", sourceDisplay, valueDescription)},
-				{Span: item.Span, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
-			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: item.Span, Message: "declared type " + declared}}
+			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
 		}
 		if hasResultDisplay && strings.HasPrefix(string(value), "scalar/") && string(value) != "scalar/nil" {
 			item.Message = fmt.Sprintf("cannot assign %s because it is %s, not %s", sourceDisplay, valueDescription, declared)
@@ -2644,7 +2650,7 @@ func closureHandleFor(term []byte, partition equation.Partition) (closureHandle,
 // that parent identity, so consulting M's old flattened .dep.get cell would
 // revive a superseded callable capability.
 func memberCellForTerm(term []byte, partition equation.Partition) (memberCellWire, bool) {
-	root, suffix, member := tableAddress(term)
+	root, suffix, member := heapTableAddress(term)
 	if !member || suffix == "" {
 		return memberCellWire{}, false
 	}
@@ -4505,6 +4511,13 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		{Key: "value/" + target + "/" + operation.Target.Name, Value: value},
 		{Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 	}
+	// A literal read through a resolved static bracket member carries exact
+	// source evidence independently of the destination binding. Preserve that
+	// narrow publication for the immediate annotation diagnostic; ordinary
+	// scalar assignments retain their existing type-level presentation.
+	if staticBracketMemberPath(operands["value"]) && scalarLiteralDiagnosticValue(value) {
+		values = append(values, equation.Fact{Key: literalDiagnosticPrefix + target + "/" + operation.Target.Name, Value: append([]byte(nil), value...)})
+	}
 	var diagnostics []equation.Fact
 	if memberMissing(value) {
 		root, _, declaredSource := tableAddress(operands["value"])
@@ -4589,7 +4602,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			}
 		}
 	}
-	if root, suffix, ok := tableAddress([]byte(target)); ok && suffix != "" {
+	if root, suffix, ok := heapTableAddress([]byte(target)); ok && suffix != "" {
 		if parent, found := tableIdentityForTerm(root, partition); found {
 			values = append(values, heapMemberFact(parent, suffix, operation.Target.Name, value))
 			memberIdentity, _ := tableIdentityForTerm(operands["value"], partition)
@@ -5011,6 +5024,43 @@ func expressionValueType(value []byte) (typ.Type, bool) {
 	return nil, false
 }
 
+// sealedShapeReceiverType reconstructs a diagnostic-only receiver type from
+// an already sealed literal table. It accepts no open members, aliases, or
+// inferred paths: every retained field must be a direct, present member with
+// an independently concrete value. The result therefore explains an absent
+// member without turning an untracked Lua table access into a type proof.
+func sealedShapeReceiverType(value []byte) (typ.Type, bool) {
+	if valueType, known := expressionValueType(value); known {
+		return valueType, true
+	}
+	table, sealed := shapefact.DecodeTable(value)
+	if !sealed || !table.Closed {
+		return nil, false
+	}
+	builder := typetable.NewRecord()
+	for _, member := range table.Members {
+		segments, valid := segment.ParseFormattedSegments(member.Suffix)
+		if !valid || len(segments) != 1 || !member.Present {
+			return nil, false
+		}
+		memberType, concrete := sealedShapeReceiverType([]byte(member.Value))
+		if !concrete {
+			return nil, false
+		}
+		switch item := segments[0]; item.Kind {
+		case segment.SegmentField:
+			builder.Field(item.Name, memberType)
+		case segment.SegmentIndexString:
+			builder.StaticStringIndex(item.Name, memberType)
+		case segment.SegmentIndexInt:
+			builder.StaticIntIndex(int64(item.Index), memberType)
+		default:
+			return nil, false
+		}
+	}
+	return builder.Build(), true
+}
+
 func expressionOperatorText(operator wir.Operator) (string, bool) {
 	switch operator {
 	case wir.BinAdd:
@@ -5230,7 +5280,7 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 		return equation.TransactionResult{}, literalErr
 	}
 	result.Closure.Values = append(result.Closure.Values, literalMemberClosures...)
-	if root, suffix, ok := tableAddress(operands["target"]); ok && suffix != "" {
+	if root, suffix, ok := heapTableAddress(operands["target"]); ok && suffix != "" {
 		if identity, found := tableIdentityForTerm(root, partition); found {
 			writeIdentity := identity
 			// Lua dispatches a write to a missing key through a table-valued
@@ -5257,6 +5307,18 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 			if writeIdentity == nil || string(writeIdentity) == string(identity) {
 				if len(memberIdentity) != 0 {
 					result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
+				}
+			}
+			// A complete static path can cross an already-published member identity
+			// before it reaches its final slot. Mirror the exact replacement at
+			// that nested identity so an equivalent alias observes the same write.
+			// The walk accepts only existing heap links; an unresolved prefix keeps
+			// the replacement local to its original source path.
+			if nestedIdentity, nestedSuffix, nested := nestedHeapMemberAddress(identity, suffix, partition); nested {
+				result.Closure.Values = append(result.Closure.Values, heapMemberFact(nestedIdentity, nestedSuffix, operation.Target.Name, value))
+				if len(memberIdentity) != 0 {
+					result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(nestedIdentity, nestedSuffix, operation.Target.Name, memberIdentity))
+					result.Closure.Values = append(result.Closure.Values, heapStaticReplacementFact(memberIdentity, operation.Target.Name))
 				}
 			}
 		}
@@ -5586,7 +5648,11 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
 		optionalSource := optionalAssignmentSource(value, targetType)
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
-			message = "cannot assign " + sourceDisplay + " because it is " + assignmentValueType(value) + ", not " + declared
+			actual := assignmentValueType(value)
+			if literal, found := literalDiagnosticValue(source, partition); found {
+				actual = assignmentEvidenceValue(literal)
+			}
+			message = "cannot assign " + sourceDisplay + " because it is " + actual + ", not " + declared
 		}
 		for _, operand := range operation.Operands {
 			if operand.Role != "shape-target" {
@@ -9151,6 +9217,20 @@ func heapTableClosed(identity []byte, partition equation.Partition) bool {
 	return false
 }
 
+func heapStaticReplacementFact(identity []byte, operation string) equation.Fact {
+	return equation.Fact{Key: heapStaticReplacePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("static")}
+}
+
+func heapStaticReplacement(identity []byte, partition equation.Partition) bool {
+	prefix := heapStaticReplacePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "static" {
+			return true
+		}
+	}
+	return false
+}
+
 // tableAddress splits a source path into the root table lens and its static
 // suffix.  A dynamic read is represented by its own result term, so only the
 // WIR's canonical static path spelling is admitted here.
@@ -9170,11 +9250,79 @@ func tableAddress(term []byte) ([]byte, string, bool) {
 	return []byte("path/" + root), suffix, true
 }
 
+func staticBracketMemberPath(term []byte) bool {
+	_, suffix, member := tableAddress(term)
+	if !member || suffix == "" {
+		return false
+	}
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid {
+		return false
+	}
+	for _, item := range segments {
+		if item.Kind == segment.SegmentIndexString {
+			return true
+		}
+	}
+	return false
+}
+
+func scalarLiteralDiagnosticValue(value []byte) bool {
+	return strings.HasPrefix(string(value), "scalar/string/") || strings.HasPrefix(string(value), "scalar/number/") || strings.HasPrefix(string(value), "scalar/bool/")
+}
+
+func literalDiagnosticValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	prefix := literalDiagnosticPrefix + string(term) + "/"
+	var value []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest && scalarLiteralDiagnosticValue(fact.Value) {
+			value, latest = append([]byte(nil), fact.Value...), fact.Key
+		}
+	}
+	return value, value != nil
+}
+
+// heapTableAddress is the auxiliary heap lens for Lua's equivalent static
+// member spellings. Source paths retain their structural bracket segments for
+// type projection and diagnostics; only identity-backed heap reads and writes
+// canonicalize valid bracket-string keys to the same slot as dot access.
+func heapTableAddress(term []byte) ([]byte, string, bool) {
+	root, suffix, ok := tableAddress(term)
+	if !ok || suffix == "" {
+		return root, suffix, ok
+	}
+	return root, fieldCanonicalTableSuffix(suffix), true
+}
+
+// fieldCanonicalTableSuffix gives Lua's equivalent static member spellings a
+// shared heap lens. A bracket string key that is a valid field name addresses
+// the same table slot as its dotted spelling, so it may consume facts already
+// published for that exact slot. Non-identifier keys and dynamic reads retain
+// their distinct, fail-closed paths.
+func fieldCanonicalTableSuffix(suffix string) string {
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid {
+		return suffix
+	}
+	changed := false
+	for index, item := range segments {
+		if item.Kind == segment.SegmentIndexString && tableFieldName(item.Name) {
+			segments[index] = segment.Segment{Kind: segment.SegmentField, Name: item.Name}
+			changed = true
+		}
+	}
+	if !changed {
+		return suffix
+	}
+	return segment.FormatSegments(segments)
+}
+
 func tableIdentityForTerm(term []byte, partition equation.Partition) ([]byte, bool) {
 	if identity, ok := currentEpochFact(heapTableIdentityPrefix, term, partition); ok {
 		return identity, true
 	}
-	root, suffix, ok := tableAddress(term)
+	root, suffix, ok := heapTableAddress(term)
 	if !ok || suffix == "" {
 		return nil, false
 	}
@@ -9205,7 +9353,7 @@ func tableIdentityForTerm(term []byte, partition equation.Partition) ([]byte, bo
 }
 
 func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
-	root, suffix, ok := tableAddress(term)
+	root, suffix, ok := heapTableAddress(term)
 	if !ok || suffix == "" {
 		return nil, false
 	}
@@ -9217,6 +9365,8 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 	if !valid || len(segments) == 0 {
 		return nil, false
 	}
+	var sealedReceiver typ.Type
+	indexedPath := false
 	for len(segments) != 0 {
 		matched := false
 		for count := 1; count <= len(segments); count++ {
@@ -9224,6 +9374,25 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 			next, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, prefix, partition)
 			if !found {
 				continue
+			}
+			for _, item := range segments[:count] {
+				if item.Kind == segment.SegmentIndexString || item.Kind == segment.SegmentIndexInt {
+					indexedPath = true
+					break
+				}
+			}
+			// The identity edge is usable only alongside its already-published
+			// concrete member value. Retain that sealed receiver so a later
+			// absent member can be reported as a missing-member fact, rather
+			// than being conflated with Lua's untyped nil fallback.
+			if member, present := heapMemberCurrent(heapMemberPrefix, identity, prefix, partition); present && !indexedPath {
+				if receiver, decoded := sealedShapeReceiverType(member); decoded {
+					sealedReceiver = receiver
+				} else {
+					sealedReceiver = nil
+				}
+			} else {
+				sealedReceiver = nil
 			}
 			identity, segments, matched = next, segments[count:], true
 			break
@@ -9236,6 +9405,11 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 			return value, true
 		}
 		if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) {
+			if sealedReceiver != nil && heapStaticReplacement(identity, partition) {
+				if missing, encoded := memberMissingValue(sealedReceiver); encoded {
+					return missing, true
+				}
+			}
 			return []byte("scalar/nil"), true
 		}
 		return nil, false
