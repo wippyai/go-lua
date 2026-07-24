@@ -62,6 +62,23 @@ end`)
 	}
 }
 
+func TestStage1RedUncalledTypePredicateRejectsUnvalidatedAny(t *testing.T) {
+	source := `
+type Point = {x: number, y: number}
+local function validate(data: any)
+    if not Point:is(data) then
+        local p: Point = data
+    end
+	end`
+	r := checkChildAdmission(t, source)
+	for _, diagnostic := range r.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 5 {
+			return
+		}
+	}
+	t.Fatalf("type predicate false edge did not retain any boundary: diagnostics=%#v published=%#v", r.Diagnostics, r.PublishedDiagnostics)
+}
+
 func TestStage1RedUncalledDeclaredStdlibOptionalConcatPublishesWarning(t *testing.T) {
 	r := checkChildAdmission(t, `
 local function unguarded(s: string): string

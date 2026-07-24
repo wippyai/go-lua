@@ -5197,6 +5197,11 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	values := []equation.Fact{{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value}}
+	if wir.Op(kind) == wir.OpUnOp && wir.Operator(op) == wir.UnNot {
+		if boundary, ok := gradualAnyBoundaryFact(string(result), by["value"], operation.Target.Name, partition.Values()); ok {
+			values = append(values, boundary)
+		}
+	}
 	if wir.Op(kind) == wir.OpBinOp && (wir.Operator(op) == wir.BinEq || wir.Operator(op) == wir.BinNe) {
 		for _, role := range []string{"left", "right"} {
 			if allocation, found := placementAllocationForTerm(by[role], partition); found {
@@ -10842,11 +10847,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				values = append(values, equation.Fact{Key: iteratorKeyPrefix + string(result) + "/" + operation.Target.Name, Value: key})
 			}
 		}
-		// A type predicate's error slot is the closed control witness for its
+		// A type predicate's result is the closed control witness for its
 		// validated value. When the exact predicate argument is explicitly any,
-		// retain that boundary on the error slot so a possible success arm is
+		// retain that boundary on the control result so a possible arm is
 		// evaluated without turning the value result into a type witness.
-		if string(value) == "scalar/top" && typePredicateErrorTarget != nil && key == "00000001" {
+		if string(value) == "scalar/top" && typePredicateErrorTarget != nil && (key == "00000001" || (key == "00000000" && len(resultTerms) == 1)) {
 			if argument, found := argumentTerms[0]; found {
 				if root, _, ok := explicitAnySourceFact(argument, partition.Values()); ok {
 					values = append(values, equation.Fact{Key: "gradual-any/" + string(result) + "/" + operation.Target.Name, Value: root})

@@ -2675,10 +2675,10 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 }
 
 // typePredicateErrorTarget records the closed type-value `T:is(value)`
-// contract that owns its second (error) result. The target is a resolved WIR
-// type, never recovered from a provider name or source spelling.
+// contract that owns its result. The target is a resolved WIR type, never
+// recovered from a provider name or source spelling.
 func typePredicateErrorTarget(body *wir.Body, instruction wir.Instruction) (equation.Term, bool) {
-	if body == nil || instruction.Call.Method == 0 || instruction.Type == 0 || instruction.Results.Len < 2 || len(body.Operands(instruction.List)) != 1 {
+	if body == nil || instruction.Call.Method == 0 || instruction.Type == 0 || instruction.Results.Len == 0 || len(body.Operands(instruction.List)) != 1 {
 		return equation.Term{}, false
 	}
 	method := body.Const(instruction.Call.Method)
