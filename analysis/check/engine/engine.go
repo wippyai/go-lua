@@ -524,7 +524,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		// raw.id).  The scalar read can still retain a literal heap fact, but the
 		// ancestor boundary is the authoritative assignment source and is itself
 		// sufficient closed evidence for the diagnostic projection.
-		anySource := (available && isExplicitAnyValue(value)) || sourceHasExplicitAny(operands["value"], closure.Values)
+		anySource := (available && isExplicitAnyValue(value)) || sourceHasAnyBoundary(operands["value"], closure.Values)
 		if !available && anySource {
 			value, available = []byte("scalar/claim/claim-kind/3/\"any\""), true
 		}
@@ -1574,6 +1574,7 @@ type childEntryWire struct {
 	Seeds              []entrySeed              `json:"seeds"`
 	ClosureSeeds       []entryClosureSeed       `json:"closure_seeds,omitempty"`
 	MemberClosureSeeds []entryMemberClosureSeed `json:"member_closure_seeds,omitempty"`
+	GradualAnyTerms    []string                 `json:"gradual_any_terms,omitempty"`
 }
 
 type entrySeed struct {
@@ -1892,8 +1893,12 @@ func encodeChildEntry(seeds []entrySeed, closureSeeds ...entryClosureSeed) ([]by
 	return encodeChildEntryWithCapabilities(seeds, closureSeeds, nil)
 }
 
-func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClosureSeed, memberClosureSeeds []entryMemberClosureSeed) ([]byte, error) {
-	wire := childEntryWire{Version: 3, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...)}
+func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClosureSeed, memberClosureSeeds []entryMemberClosureSeed, gradualAnyTerms ...[]string) ([]byte, error) {
+	var terms []string
+	for _, supplied := range gradualAnyTerms {
+		terms = append(terms, supplied...)
+	}
+	wire := childEntryWire{Version: 3, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), GradualAnyTerms: terms}
 	sort.Slice(wire.Seeds, func(i, j int) bool { return wire.Seeds[i].Term < wire.Seeds[j].Term })
 	for index := range wire.Seeds {
 		if !validEntrySeed(wire.Seeds[index]) || (index > 0 && wire.Seeds[index-1].Term == wire.Seeds[index].Term) {
@@ -1916,6 +1921,12 @@ func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClo
 		if seed.Term == "" || seed.Wire.Suffix == "" || !validClosureHandle(seed.Wire.Handle) ||
 			(index > 0 && wire.MemberClosureSeeds[index-1].Term == seed.Term && wire.MemberClosureSeeds[index-1].Wire.Suffix == seed.Wire.Suffix) {
 			return nil, fmt.Errorf("engine: malformed child entry member closure seed")
+		}
+	}
+	sort.Strings(wire.GradualAnyTerms)
+	for index, term := range wire.GradualAnyTerms {
+		if !strings.HasPrefix(term, "path/") || (index > 0 && wire.GradualAnyTerms[index-1] == term) {
+			return nil, fmt.Errorf("engine: malformed child gradual-any boundary")
 		}
 	}
 	encoded, err := json.Marshal(wire)
@@ -2010,7 +2021,7 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry wire")
 		}
 	}
-	values := make([]equation.Fact, 0, len(wire.Seeds)+len(wire.ClosureSeeds)+len(declaredRoots)*4)
+	values := make([]equation.Fact, 0, len(wire.Seeds)+len(wire.ClosureSeeds)+len(wire.GradualAnyTerms)+len(declaredRoots)*4)
 	seen := make(map[string]bool, len(wire.Seeds))
 	for _, seed := range wire.Seeds {
 		if !validEntrySeed(seed) || seen[seed.Term] {
@@ -2021,6 +2032,12 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			equation.Fact{Key: "value/" + seed.Term + "/entry", Value: append([]byte(nil), seed.Value...)},
 			equation.Fact{Key: "epoch/" + seed.Term + "/entry", Value: []byte("entry")},
 		)
+	}
+	for _, term := range wire.GradualAnyTerms {
+		if !seen[term] {
+			return equation.TransactionResult{}, fmt.Errorf("engine: gradual-any boundary has no entry seed")
+		}
+		values = append(values, equation.Fact{Key: "gradual-any/" + term + "/entry", Value: []byte(term)})
 	}
 	closureTerms := make(map[string]bool, len(wire.ClosureSeeds))
 	for _, seed := range wire.ClosureSeeds {
@@ -2360,6 +2377,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		return equation.TransactionResult{}, fmt.Errorf("engine: unsupported exact lexical boundary for %q", handle.Prototype)
 	}
 	seeds := make([]entrySeed, 0, len(operands.arguments)+len(handle.Captures))
+	gradualAnyTerms := make([]string, 0)
 	closureSeedByTerm := make(map[string]closureHandle)
 	for index, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg {
@@ -2375,11 +2393,14 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		// declared formal contract and the published boundary fact are both
 		// available.  The child is not entered with a forged typed seed.
 		declared := unwrap.Alias(subst.ExpandInstantiated(child.WIR.Type(parameter.Type)))
-		if (isExplicitAnyValue(value) || sourceHasExplicitAny(arguments[index], partition.Values()) || declaredExplicitAny(arguments[index], partition)) && typeRequiresBoundaryProof(declared) {
+		if (isExplicitAnyValue(value) || sourceHasAnyBoundary(arguments[index], partition.Values()) || declaredExplicitAny(arguments[index], partition)) && typeRequiresBoundaryProof(declared) {
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, typeformat.Short(declared))), nil
 		}
 		term := boundaryTerm(parameter.Symbol)
 		seeds = append(seeds, entrySeed{Term: term, Value: value})
+		if declared != nil && declared.Kind() == kind.Any {
+			gradualAnyTerms = append(gradualAnyTerms, term)
+		}
 		if callback, found := closureHandleFor(arguments[index], partition); found {
 			closureSeedByTerm[term] = callback
 		}
@@ -2409,7 +2430,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	entrySeeds := append([]entrySeed(nil), boundarySeeds...)
 	entrySeeds = append(entrySeeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
 	memberClosureSeeds := childEntryMemberClosureSeeds(entrySeeds, partition)
-	entry, err := encodeChildEntryWithCapabilities(entrySeeds, closureSeeds, memberClosureSeeds)
+	entry, err := encodeChildEntryWithCapabilities(entrySeeds, closureSeeds, memberClosureSeeds, gradualAnyTerms)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
@@ -3307,6 +3328,9 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		{Key: "value/" + target + "/" + operation.Target.Name, Value: value},
 		{Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 	}
+	if boundary, ok := gradualAnyBoundaryFact(target, operands["value"], operation.Target.Name, partition.Values()); ok {
+		values = append(values, boundary)
+	}
 	if authority, ok := lexical.importedAuthority(string(operands["value"])); ok {
 		lexical.setImportedAuthority(target, authority)
 	}
@@ -4058,7 +4082,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// an explicit-any boundary, but it cannot discharge a later declared
 	// assignment contract. The boundary itself is already-published evidence
 	// and remains authoritative until validation supplies a separate proof.
-	anySource := isExplicitAnyValue(value) || sourceHasExplicitAny(source, partition.Values())
+	anySource := isExplicitAnyValue(value) || sourceHasAnyBoundary(source, partition.Values())
 	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !runtimeTypeValidationProves(source, targetType, partition)
 	if available && !boundaryRequiresProof && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
@@ -4655,15 +4679,100 @@ func sourceHasExplicitAny(source []byte, values []equation.Fact) bool {
 	return found
 }
 
+// sourceHasAnyBoundary reads only the solved type facts for the exact source
+// path and its structural ancestors. A concrete value at such a path is not a
+// validation proof: the declared any boundary remains authoritative until a
+// runtime guard publishes a proof for that same path.
+func sourceHasAnyBoundary(source []byte, values []equation.Fact) bool {
+	if sourceHasExplicitAny(source, values) {
+		return true
+	}
+	path := strings.TrimPrefix(string(source), "path/")
+	if path == string(source) || path == "" {
+		return false
+	}
+	for {
+		prefix := "type/path/" + path + "/"
+		for _, fact := range values {
+			if !strings.HasPrefix(fact.Key, prefix) {
+				continue
+			}
+			declared, ok := shapefact.DecodeTarget(fact.Value)
+			if ok && declared != nil && unwrap.Alias(subst.ExpandInstantiated(declared)).Kind() == kind.Any {
+				return true
+			}
+		}
+		cut := strings.LastIndexAny(path, ".[")
+		if cut < 0 {
+			return false
+		}
+		path = path[:cut]
+	}
+}
+
+func gradualAnyBoundaryFact(target string, source []byte, operation string, values []equation.Fact) (equation.Fact, bool) {
+	root, found := gradualAnySourceFact(source, values)
+	if !found {
+		return equation.Fact{}, false
+	}
+	return equation.Fact{Key: "gradual-any/" + target + "/" + operation, Value: root}, true
+}
+
+func gradualAnySourceFact(source []byte, values []equation.Fact) ([]byte, bool) {
+	term := string(source)
+	path := strings.TrimPrefix(term, "path/")
+	if (path == term || path == "") && !strings.HasPrefix(term, "temp/") {
+		return nil, false
+	}
+	for {
+		candidate := term
+		if strings.HasPrefix(term, "path/") {
+			candidate = "path/" + path
+		}
+		prefix := "gradual-any/" + candidate + "/"
+		var root []byte
+		latest := ""
+		for _, fact := range values {
+			if strings.HasPrefix(fact.Key, prefix) && strings.HasPrefix(string(fact.Value), "path/") && (root == nil || fact.Key > latest) {
+				root, latest = append([]byte(nil), fact.Value...), fact.Key
+			}
+		}
+		if root != nil {
+			return root, true
+		}
+		if !strings.HasPrefix(term, "path/") {
+			return nil, false
+		}
+		cut := strings.LastIndexAny(path, ".[")
+		if cut < 0 {
+			return nil, false
+		}
+		path = path[:cut]
+	}
+}
+
 // explicitAnySourceFact returns only an already-published exact source or
 // ancestor fact. It is used to retain a precision boundary through a closed
 // equation handoff, never to infer a value for an unrecorded member read.
 func explicitAnySourceFact(source []byte, values []equation.Fact) ([]byte, []byte, bool) {
+	if root, found := gradualAnySourceFact(source, values); found {
+		return root, []byte("scalar/claim/claim-kind/3/\"any\""), true
+	}
 	path := strings.TrimPrefix(string(source), "path/")
 	if path == string(source) || path == "" {
 		return nil, nil, false
 	}
 	for {
+		declaredPrefix := "declared-type/path/" + path + "/"
+		for _, fact := range values {
+			if !strings.HasPrefix(fact.Key, declaredPrefix) {
+				continue
+			}
+			declared, ok := shapefact.DecodeTarget(fact.Value)
+			if ok && declared != nil && unwrap.Alias(subst.ExpandInstantiated(declared)).Kind() == kind.Any {
+				return []byte("path/" + path), []byte("scalar/claim/claim-kind/3/\"any\""), true
+			}
+		}
 		prefix := "value/path/" + path + "/"
 		var value []byte
 		latest := ""
@@ -5142,13 +5251,13 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		}
 	}
 	boundaryPossible := false
-	var boundarySource, boundaryValue []byte
+	var boundarySource, boundaryValue, boundaryConsumer []byte
 	acceptBoundary := func(source []byte) bool {
 		term, value, found := explicitAnySourceFact(source, partition.Values())
 		if !found {
 			return false
 		}
-		boundaryPossible, boundarySource, boundaryValue = true, term, value
+		boundaryPossible, boundarySource, boundaryValue, boundaryConsumer = true, term, value, append([]byte(nil), source...)
 		return true
 	}
 	for _, operand := range operation.Operands {
@@ -5207,6 +5316,9 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	})
 	if boundaryPossible {
 		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(boundarySource) + "/" + operation.Target.Name, Value: append([]byte(nil), boundaryValue...)})
+		if strings.HasPrefix(string(boundaryConsumer), "path/") {
+			closure.Values = append(closure.Values, equation.Fact{Key: "gradual-any/" + string(boundaryConsumer) + "/" + operation.Target.Name, Value: append([]byte(nil), boundarySource...)})
+		}
 	}
 	if frozenGuard && truth {
 		closure.Outcomes = append(closure.Outcomes, equation.Fact{Key: "frozen-branch/" + operation.Target.Name, Value: []byte("proven")})
@@ -5672,7 +5784,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// typed parameter contract.  The argument may retain a concrete shape
 		// from its allocation, but that shape crossed the boundary without
 		// validation and cannot discharge this call's declared requirement.
-		if known && (isExplicitAnyValue(argument) || sourceHasExplicitAny(term, partition.Values()) || declaredExplicitAny(term, partition)) && callableParameterRequiresProof(signature.Params[index]) {
+		if known && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && callableParameterRequiresProof(signature.Params[index]) {
 			expected := callableParameterType(signature.Params[index])
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, expected)), nil
 		}
