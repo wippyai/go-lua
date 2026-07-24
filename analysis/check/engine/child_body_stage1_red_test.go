@@ -180,6 +180,26 @@ local host: string = cfg.host`)
 	t.Fatalf("optional tuple slot did not reach the local assignment: diagnostics=%#v values=%#v facts=%#v", r.PublishedDiagnostics, r.Values, r.ValueFacts)
 }
 
+func TestStage1RedCapturedOptionalResultMethodWithoutGuardIsRejected(t *testing.T) {
+	r := checkChildAdmission(t, `
+type DB = {release: fun(self)}
+local real_db: DB = {release = function(self) end}
+local function fetch(ok: boolean): (DB?, string?)
+  if not ok then return nil, "failed" end
+  return real_db
+end
+local function use(ok: boolean)
+  local db, err = fetch(ok)
+  db:release()
+end`)
+	for _, diagnostic := range r.PublishedDiagnostics {
+		if diagnostic.Code == "type.call.direct.not_callable" && strings.Contains(diagnostic.Message, "db.release may be nil") {
+			return
+		}
+	}
+	t.Fatalf("unguarded captured optional result call was not rejected: diagnostics=%#v", r.PublishedDiagnostics)
+}
+
 func TestStage1RedClosedMethodContractFillsUnavailableChildResult(t *testing.T) {
 	r := checkChildAdmission(t, `
 local Counter = {count = 0}

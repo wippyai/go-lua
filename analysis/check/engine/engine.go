@@ -3162,7 +3162,47 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 	for _, capture := range child.Boundary.Captures {
 		captures[boundaryTerm(capture.Symbol)] = true
 	}
-	hasAssignment, hasResultCall := false, false
+	// A result slot is owned only by a captured local call's exact
+	// apply -> call-results -> write chain. A subsequent unguarded method call
+	// may consume that slot's declared optional contract, but no other local
+	// can enter this declaration-only boundary.
+	capturedCalls := make(map[string]bool)
+	callResults := make(map[string]bool)
+	callPaths := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "apply":
+			callee, arity := "", ""
+			for _, operand := range operation.Operands {
+				if operand.Role == "callee" {
+					callee = string(operand.Term.Encoding)
+				}
+				if operand.Role == "result-arity" {
+					arity = string(operand.Term.Encoding)
+				}
+			}
+			if captures[callee] && arity != "" && arity != "0" {
+				capturedCalls["call/"+operation.Target.Name] = true
+			}
+		case "call-results":
+			application, found := artifactOperand(operation.Operands, "application")
+			if !found || !capturedCalls[string(application)] {
+				continue
+			}
+			for _, operand := range operation.Operands {
+				if strings.HasPrefix(operand.Role, "result-") && operand.Role != "result-display" {
+					callResults[string(operand.Term.Encoding)] = true
+				}
+			}
+		case "environment-write":
+			value, hasValue := artifactOperand(operation.Operands, "value")
+			target, hasTarget := artifactOperand(operation.Operands, "target")
+			if hasValue && hasTarget && callResults[string(value)] {
+				callPaths[string(target)] = true
+			}
+		}
+	}
+	hasAssignment, hasResultCall, hasOptionalMethod := false, false, false
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "claim":
@@ -3172,11 +3212,17 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 				}
 			}
 		case "apply":
-			callee := ""
-			resultArity := ""
+			callee, receiver := "", ""
+			resultArity, method := "", ""
 			for _, operand := range operation.Operands {
 				if operand.Role == "callee" {
 					callee = string(operand.Term.Encoding)
+				}
+				if operand.Role == "receiver" {
+					receiver = string(operand.Term.Encoding)
+				}
+				if operand.Role == "method" {
+					method = string(operand.Term.Encoding)
 				}
 				if operand.Role == "result-arity" {
 					resultArity = string(operand.Term.Encoding)
@@ -3184,6 +3230,10 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 			}
 			if resultArity == "" {
 				return nil, false
+			}
+			if method != "" && receiver != "" && callPaths[receiver] && resultArity == "0" {
+				hasOptionalMethod = true
+				continue
 			}
 			if resultArity == "0" {
 				// A no-result static member call cannot supply a value or a
@@ -3204,7 +3254,7 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 			return nil, false
 		}
 	}
-	if !hasAssignment || (!hasResultCall && !hasCapturedNoResultCall(child.Artifact.Equations, captures)) {
+	if (!hasAssignment && !hasOptionalMethod) || (!hasResultCall && !hasCapturedNoResultCall(child.Artifact.Equations, captures)) {
 		return nil, false
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
@@ -3220,6 +3270,26 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
 	return seeds, true
+}
+
+// uncalledStaticOptionalMethodDiagnostic admits only the call failure owned by
+// an unguarded method application that the static boundary already proved to
+// consume a captured call result. It cannot publish a result, a refinement, or
+// a diagnostic from an unrelated method call.
+func uncalledStaticOptionalMethodDiagnostic(artifact equation.Artifact, diagnostic equation.Fact) bool {
+	if !strings.HasPrefix(diagnostic.Key, "type.call.direct.not_callable/") {
+		return false
+	}
+	name := diagnosticOperationName(diagnostic.Key)
+	for _, operation := range artifact.Equations {
+		if operation.Target.Name != name || operation.Occurrence.Kind != "apply" || len(operation.Guards) != 0 {
+			continue
+		}
+		receiver, hasReceiver := artifactOperand(operation.Operands, "receiver")
+		method, hasMethod := artifactOperand(operation.Operands, "method")
+		return hasReceiver && hasMethod && strings.HasPrefix(string(receiver), "path/") && strings.HasPrefix(string(method), "method/")
+	}
+	return false
 }
 
 // uncalledStaticCapturedMemberCall recognizes the no-result counterpart to a
@@ -4334,7 +4404,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
 			}
-			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key) {
+			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, diagnostic) {
 				continue
 			}
 			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
@@ -4362,7 +4432,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticMemberReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
 				continue
 			}
-			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, item.Fact.Key) {
+			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, item.Fact.Key) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, item.Fact) {
 				continue
 			}
 			if indexedReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
@@ -8654,6 +8724,9 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if !receiverKnown {
 			return equation.TransactionResult{Complete: true}, nil
 		}
+		if (strings.HasPrefix(string(operands.receiver), "temp/") || len(operation.Guards) == 0) && optionalMethodReceiver(operands.receiver, receiver, operands.method) {
+			return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("cannot call method on an optional value without a nil check: %s may be nil", operands.display)), nil
+		}
 		if payload, channel := typedChannelPayload(operands.receiver, partition); channel && operands.method == "send" && !operands.spread && len(operands.arguments) == 1 {
 			if argument, available := resolveKnownCurrentValue(operands.arguments[0], partition); available {
 				if subject, actual, expected, mismatch := firstChannelPayloadMismatch(argument, payload, "argument-00000000"); mismatch {
@@ -8673,9 +8746,6 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			}
 		}
 		if !known {
-			if optionalMethodReceiver(operands.receiver, receiver, operands.method) {
-				return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("cannot call method on an optional value without a nil check: %s may be nil", operands.display)), nil
-			}
 			// A typed receiver's member contract is a published value witness,
 			// even when the receiver is an opaque interface rather than a sealed
 			// table.  Reuse that canonical member contract for argument checking;
@@ -10227,10 +10297,9 @@ func currentMethodCallable(receiverTerm, receiver []byte, method string, partiti
 // already-published optional receiver type: a method exists on its non-nil
 // projection, but this call has not established that projection.
 func optionalMethodReceiver(receiverTerm, receiver []byte, method string) bool {
-	// The front preserves an immediately indexed expression as a temporary.
-	// A named path can have a dominating truthiness guard that has already
-	// refined its presence, so its value alone is not enough to reject a call.
-	if !strings.HasPrefix(string(receiverTerm), "temp/") {
+	// The caller restricts named paths to unguarded calls. A temporary is an
+	// immediate expression receiver; either form is an exact source boundary.
+	if !strings.HasPrefix(string(receiverTerm), "temp/") && !strings.HasPrefix(string(receiverTerm), "path/") {
 		return false
 	}
 	receiverType, ok := shapefact.DecodeTarget(receiver)
