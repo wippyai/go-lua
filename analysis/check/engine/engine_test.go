@@ -279,6 +279,45 @@ local answer: string = res.answer`)
 	}
 }
 
+func TestCheckPublishesReassignedMemberCallableAssignmentEvidence(t *testing.T) {
+	result, err := engine.Check(`
+type Res = { answer: string }
+
+local M = {
+	dep = {
+		get = function()
+			return nil
+		end,
+	},
+}
+
+function M.run()
+	return M.dep.get()
+end
+
+M.run = function()
+	return nil
+end
+
+local f: fun(): Res = M.run`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code != "type.assignment" || !strings.Contains(diagnostic.Message, "cannot assign M.run because it is fun() -> nil, not fun() -> Res") {
+			continue
+		}
+		if len(diagnostic.Evidence) != 2 || diagnostic.Evidence[0].Kind != "abstract fact" || diagnostic.Evidence[0].Message != "M.run has type fun() -> nil" || diagnostic.Evidence[1].Kind != "user assertion" || diagnostic.Evidence[1].Message != "f is declared as fun() -> Res" {
+			t.Fatalf("reassigned member assignment evidence = %#v", diagnostic.Evidence)
+		}
+		if len(diagnostic.Labels) != 2 || !strings.Contains(diagnostic.Help, "change the target type") {
+			t.Fatalf("reassigned member assignment labels/help = %#v / %q", diagnostic.Labels, diagnostic.Help)
+		}
+		return
+	}
+	t.Fatalf("reassigned member callable assignment was not published: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckPublishesUncalledExplicitAnyBoundaryViolation(t *testing.T) {
 	result, err := engine.Check(`
 local function validate(data: any)

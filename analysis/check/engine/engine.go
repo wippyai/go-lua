@@ -708,14 +708,15 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			continue
 		}
 		valueDescription := assignmentEvidenceValue(value)
-		if surface, found := assignmentMemberSurface(name, closure.Values); found {
+		memberSurface, hasMemberSurface := assignmentMemberSurface(name, closure.Values)
+		if hasMemberSurface {
 			if actual, expected, ok := assignmentDiagnosticFunctionTypes(item.Message); ok {
 				valueDescription, declared = actual, expected
 				if source, ok := assignmentDiagnosticSource(item.Message); ok {
 					sourceDisplay = source
 				}
 			} else {
-				valueDescription = "fun() -> " + assignmentEvidenceValue(surface)
+				valueDescription = "fun() -> " + assignmentEvidenceValue(memberSurface)
 			}
 		}
 		structuralMismatch := assignmentMismatch{}
@@ -767,6 +768,19 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			item.Evidence = []DiagnosticEvidence{
 				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", sourceDisplay, valueDescription)},
 				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", sourceDisplay, declared)},
+			}
+			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
+		} else if hasMemberSurface {
+			// The callable result comes from a closed member-surface publication.
+			// Keep that expression as the proven evidence subject; the annotation
+			// target is an independent user claim with its own source span.
+			targetSpan := claimTargetSpans[name]
+			if !targetSpan.Valid() {
+				targetSpan = item.Span
+			}
+			item.Evidence = []DiagnosticEvidence{
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", sourceDisplay, valueDescription)},
+				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
 		} else if _, typed := shapefact.DecodeTarget(value); typed || string(value) == "scalar/nil" {
