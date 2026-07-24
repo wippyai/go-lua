@@ -294,6 +294,7 @@ type Instruction struct {
 	CallArgs             CallArgumentMetaRange
 	CallTypeArgs         TypeRefRange
 	ReturnValues         ReturnValueMetaRange
+	ConcatOperands       ConcatOperandMetaRange
 
 	// ExprSpan is source-only metadata for the expression lowered by this
 	// instruction when downstream diagnostics need the whole expression range

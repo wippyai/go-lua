@@ -1668,8 +1668,8 @@ func (b *builder) lowerExprInto(dst wir.Operand, e ast.Expr) {
 	case *ast.RelationalOpExpr:
 		b.emitRelOp(dst, e)
 	case *ast.StringConcatOpExpr:
-		ops := b.flattenConcat(e)
-		b.emit(wir.Instruction{Op: wir.OpConcat, Dst: dst, List: b.body.AppendOperands(ops)})
+		ops, meta := b.flattenConcat(e)
+		b.emit(wir.Instruction{Op: wir.OpConcat, Dst: dst, List: b.body.AppendOperands(ops), ConcatOperands: b.body.AppendConcatOperandMeta(meta), ExprID: expressionid.Of(e), ExprSpan: wirSpanFromSource(ast.SpanOf(e))})
 	case *ast.UnaryMinusOpExpr:
 		b.emitUnOp(dst, wir.UnNeg, e.Expr)
 	case *ast.UnaryNotOpExpr:
@@ -2218,8 +2218,9 @@ func lastFieldIndex(fields []*ast.Field) int {
 	return -1
 }
 
-func (b *builder) flattenConcat(e *ast.StringConcatOpExpr) []wir.Operand {
+func (b *builder) flattenConcat(e *ast.StringConcatOpExpr) ([]wir.Operand, []wir.ConcatOperandMeta) {
 	var ops []wir.Operand
+	var meta []wir.ConcatOperandMeta
 	var walk func(x ast.Expr)
 	walk = func(x ast.Expr) {
 		if c, ok := x.(*ast.StringConcatOpExpr); ok {
@@ -2228,10 +2229,15 @@ func (b *builder) flattenConcat(e *ast.StringConcatOpExpr) []wir.Operand {
 			return
 		}
 		ops = append(ops, b.lowerExpr(x))
+		label := ""
+		if path, ok := pathexpr.Resolve(x, b.bindings); ok {
+			label = path.String()
+		}
+		meta = append(meta, wir.ConcatOperandMeta{Span: wirSpanFromSource(ast.SpanOf(x)), Label: label})
 	}
 	walk(e.Lhs)
 	walk(e.Rhs)
-	return ops
+	return ops, meta
 }
 
 // ---- operand encoding ---------------------------------------------------

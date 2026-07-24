@@ -466,6 +466,9 @@ func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, 
 	if code == "effect.freeze.mutation" || code == "effect.lifecycle.unreleased" || code == "typestate.unproven_requirement" {
 		result.Severity = diagnostic.SeverityWarning
 	}
+	if code == "type.operator.concat_operand" {
+		result.Severity = diagnostic.SeverityWarning
+	}
 	if code == "channel.select.exhaustiveness" || code == "lint.union.exhaustiveness" {
 		result.Severity = diagnostic.SeverityWarning
 	}

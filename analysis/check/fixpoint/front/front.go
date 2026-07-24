@@ -96,6 +96,7 @@ type Compilation struct {
 	CallSpans                 map[string]wir.Span
 	BranchSpans               map[string]wir.Span
 	EffectSpans               map[string]wir.Span
+	ExpressionSpans           map[string]wir.Span
 	QualifiedClaimSpans       map[SpanKey]wir.Span
 	QualifiedClaimTargetSpans map[SpanKey]wir.Span
 	QualifiedCallSpans        map[SpanKey]wir.Span
@@ -155,7 +156,7 @@ func Compile(source string) (Compilation, error) {
 		return Compilation{}, err
 	}
 	claimSpans, claimTargetSpans := claimSpans(body, artifact)
-	compilation := newCompilation(rootBody, 0, "", body.LexicalPath(), body.Boundary(), body, artifact, claimSpans, claimTargetSpans, callSpans(body, artifact), branchSpans(body, artifact), effectSpans(body, artifact))
+	compilation := newCompilation(rootBody, 0, "", body.LexicalPath(), body.Boundary(), body, artifact, claimSpans, claimTargetSpans, callSpans(body, artifact), branchSpans(body, artifact), effectSpans(body, artifact), expressionSpans(body, artifact))
 	cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 	if err != nil {
 		return Compilation{}, err
@@ -177,12 +178,12 @@ func Compile(source string) (Compilation, error) {
 	return compilation, nil
 }
 
-func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, prototypeName string, lexicalPath []uint32, boundary wir.BodyBoundary, wirBody *wir.Body, artifact equation.Artifact, claims, claimTargets, calls, branches, effects map[string]wir.Span) Compilation {
+func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, prototypeName string, lexicalPath []uint32, boundary wir.BodyBoundary, wirBody *wir.Body, artifact equation.Artifact, claims, claimTargets, calls, branches, effects, expressions map[string]wir.Span) Compilation {
 	return Compilation{
 		Artifact: artifact, WIR: wirBody, Body: body, Prototype: prototype, PrototypeName: prototypeName,
 		LexicalPath: append([]uint32(nil), lexicalPath...), Boundary: boundary, RebindsBoundary: bodyRebindsBoundary(wirBody, boundary),
 		ClaimSpans: claims, ClaimTargetSpans: claimTargets, CallSpans: calls,
-		BranchSpans: branches, EffectSpans: effects,
+		BranchSpans: branches, EffectSpans: effects, ExpressionSpans: expressions,
 		QualifiedClaimSpans:       qualifySpans(body, claims),
 		QualifiedClaimTargetSpans: qualifySpans(body, claimTargets),
 		QualifiedCallSpans:        qualifySpans(body, calls),
@@ -238,7 +239,7 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
 		}
 		claimSpans, claimTargetSpans := claimSpans(proto.Body, artifact)
-		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, proto.Body, artifact, claimSpans, claimTargetSpans, callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effectSpans(proto.Body, artifact))
+		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, proto.Body, artifact, claimSpans, claimTargetSpans, callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effectSpans(proto.Body, artifact), expressionSpans(proto.Body, artifact))
 		cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
 		if err != nil {
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
@@ -339,6 +340,46 @@ func effectSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 		}
 	}
 	return out
+}
+
+// expressionSpans binds expression-owned diagnostics to the source span of
+// the exact operand whose already-closed value refuted the operation. The
+// metadata is carried by WIR, not rediscovered from source after evaluation.
+func expressionSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
+	if body == nil {
+		return nil
+	}
+	expressions := make([]wir.Instruction, 0)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpConcat {
+			expressions = append(expressions, instruction)
+		}
+	}
+	out := make(map[string]wir.Span)
+	expressionIndex := 0
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "expression" || !expressionIsConcat(operation) || expressionIndex >= len(expressions) {
+			continue
+		}
+		instruction := expressions[expressionIndex]
+		expressionIndex++
+		for index, meta := range body.ConcatOperandMeta(instruction.ConcatOperands) {
+			if meta.Span.Valid() {
+				out[operation.Target.Name+"/"+indexedRole("value", index)] = meta.Span
+			}
+		}
+	}
+	return out
+}
+
+func expressionIsConcat(operation equation.Equation) bool {
+	for _, operand := range operation.Operands {
+		if operand.Role == "kind" && string(operand.Term.Encoding) == strconv.Itoa(int(wir.OpConcat)) {
+			return true
+		}
+	}
+	return false
 }
 
 // callSpans binds source call anchors to their apply operations.  The apply
@@ -1481,9 +1522,16 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 		if len(values) < 2 {
 			return nil, fmt.Errorf("concat has %d operands", len(values))
 		}
+		meta := body.ConcatOperandMeta(instruction.ConcatOperands)
+		if len(meta) != 0 && len(meta) != len(values) {
+			return nil, fmt.Errorf("concat has %d operand anchors for %d operands", len(meta), len(values))
+		}
 		for i, value := range values {
 			if err := appendOperand(indexedRole("value", i), value); err != nil {
 				return nil, err
+			}
+			if len(meta) != 0 && meta[i].Label != "" {
+				operands = append(operands, equation.Operand{Role: indexedRole("value-display", i), Term: equation.ClosedTerm([]byte(meta[i].Label))})
 			}
 		}
 	default:
@@ -1652,6 +1700,13 @@ func externalProviderSeen(body *wir.Body, instruction wir.Instruction, seen map[
 	if operand.Kind != wir.OperandPath {
 		return equation.Term{}, false
 	}
+	// A closure materialized in this WIR body is an already-published local
+	// capability, never a host-global provider merely because its spelling is
+	// also legal as a global name. Preserve that closed lexical authority for
+	// the apply kernel instead of replacing it with an opaque boundary.
+	if localClosurePath(body, operand) {
+		return equation.Term{}, false
+	}
 	path := body.Path(wir.PathRef(operand.Ref))
 	if path.IsEmpty() || path.Symbol == 0 {
 		return equation.Term{}, false
@@ -1672,6 +1727,19 @@ func externalProviderSeen(body *wir.Body, instruction wir.Instruction, seen map[
 		return equation.Term{}, false
 	}
 	return equation.ClosedTerm([]byte("provider/global/" + strconv.Quote(name))), true
+}
+
+func localClosurePath(body *wir.Body, operand wir.Operand) bool {
+	if body == nil || operand.Kind != wir.OperandPath {
+		return false
+	}
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpClosure && instruction.Dst == operand {
+			return true
+		}
+	}
+	return false
 }
 
 type moduleProviderWire struct {

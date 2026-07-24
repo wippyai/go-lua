@@ -236,14 +236,14 @@ func CheckWithImports(source string, imports map[string]typ.Type) (result Result
 		}
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	}
-	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, compilation.EffectSpans, closure.Diagnostics)
+	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, compilation.EffectSpans, compilation.ExpressionSpans, closure.Diagnostics)
 	for key, span := range lexical.diagnosticSpans {
 		if diagnosticSpans == nil {
 			diagnosticSpans = make(map[string]wir.Span)
 		}
 		diagnosticSpans[key] = span
 	}
-	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, compilation.BranchSpans, lexical.lifecycleEvidence, lexical.selectEvidence)
+	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, compilation.BranchSpans, compilation.ExpressionSpans, lexical.lifecycleEvidence, lexical.selectEvidence)
 	published = mergeChildPublishedDiagnostics(published, lexical.childPublished)
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
@@ -270,8 +270,8 @@ func cloneFacts(in []equation.Fact) []equation.Fact {
 	return out
 }
 
-func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
-	if (len(claimSpans) == 0 && len(callSpans) == 0 && len(branchSpans) == 0 && len(effectSpans) == 0) || len(diagnostics) == 0 {
+func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expressionSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
+	if (len(claimSpans) == 0 && len(callSpans) == 0 && len(branchSpans) == 0 && len(effectSpans) == 0 && len(expressionSpans) == 0) || len(diagnostics) == 0 {
 		return nil
 	}
 	out := make(map[string]wir.Span)
@@ -333,6 +333,16 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]
 				}
 			}
 			continue
+		case strings.HasPrefix(item.Key, "type.operator.concat_operand/"):
+			if name := diagnosticOperationName(item.Key); name != "" {
+				parts := strings.Split(item.Key, "/")
+				if len(parts) == 3 {
+					if span, ok := expressionSpans[name+"/"+parts[2]]; ok {
+						out[item.Key] = span
+					}
+				}
+			}
+			continue
 		default:
 			continue
 		}
@@ -348,12 +358,14 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]
 // claim operation that produced it and to the abstract value already closed by
 // the VM.  In particular, it neither evaluates source nor manufactures a
 // diagnostic that is absent from closure.Diagnostics.
-func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans, branchSpans map[string]wir.Span, lifecycleEvidence, selectEvidence map[string][]DiagnosticEvidence) []PublishedDiagnostic {
+func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans, branchSpans, expressionSpans map[string]wir.Span, lifecycleEvidence, selectEvidence map[string][]DiagnosticEvidence) []PublishedDiagnostic {
+	_ = expressionSpans // spans are resolved before this source-facing projection.
 	if len(closure.Diagnostics) == 0 {
 		return nil
 	}
 	claims := make(map[string]equation.Equation)
 	applies := make(map[string]equation.Equation)
+	expressions := make(map[string]equation.Equation)
 	for _, operation := range artifact.Equations {
 		if operation.Occurrence.Kind == "claim" {
 			claims[operation.Target.Name] = operation
@@ -361,12 +373,17 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		if operation.Occurrence.Kind == "apply" {
 			applies[operation.Target.Name] = operation
 		}
+		if operation.Occurrence.Kind == "expression" {
+			expressions[operation.Target.Name] = operation
+		}
 	}
 	out := make([]PublishedDiagnostic, 0, len(closure.Diagnostics))
 	for _, fact := range closure.Diagnostics {
 		item := PublishedDiagnostic{Fact: cloneFact(fact), Code: diagnosticCode(fact.Key), Span: spans[fact.Key], Message: string(fact.Value)}
+		key := fact.Key
 		if inner, ok := childDiagnosticKey(fact.Key); ok {
 			item.Code = diagnosticCode(inner)
+			key = inner
 		}
 		if isChannelLifecycleDiagnostic(fact.Key) {
 			out = append(out, enrichChannelLifecycleDiagnostic(item))
@@ -398,6 +415,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.") {
 			out = append(out, enrichDirectCallDiagnostic(item, operation))
+			continue
+		}
+		if operation, ok := expressions[diagnosticOperationName(key)]; ok && strings.HasPrefix(key, "type.operator.concat_operand/") {
+			out = append(out, enrichConcatOperandDiagnostic(item, operation))
 			continue
 		}
 		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
@@ -781,8 +802,11 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 }
 
 func diagnosticOperationName(key string) string {
-	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/", "effect.lifecycle.unreleased/", "channel.send.closed/", "channel.close.closed/", "typestate.invalid_requirement/", "typestate.invalid_transition/"} {
+	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/", "effect.lifecycle.unreleased/", "channel.send.closed/", "channel.close.closed/", "typestate.invalid_requirement/", "typestate.invalid_transition/", "type.operator.concat_operand/"} {
 		if name, ok := strings.CutPrefix(key, prefix); ok {
+			if prefix == "type.operator.concat_operand/" {
+				name, _, _ = strings.Cut(name, "/")
+			}
 			return name
 		}
 	}
@@ -846,6 +870,60 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 		item.Help = fmt.Sprintf("Call a function value, or replace `%s` with a callable expression before this call.", callee)
 	}
 	return item
+}
+
+// enrichConcatOperandDiagnostic renders a nilability warning from the closed
+// operand fact and its WIR-provided source anchor. It does not inspect source
+// or guess a value type after equation evaluation.
+func enrichConcatOperandDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
+	_, _, subject, ok := concatOperandDiagnosticParts(item.Fact.Key)
+	if !ok {
+		return item
+	}
+	index, ok := concatOperandIndex(subject)
+	if !ok {
+		return item
+	}
+	display := "value"
+	for _, operand := range operation.Operands {
+		if operand.Role == fmt.Sprintf("value-display-%08d", index) && len(operand.Term.Encoding) != 0 {
+			display = string(operand.Term.Encoding)
+			break
+		}
+	}
+	side := "left"
+	if index > 0 {
+		side = "right"
+	}
+	item.Message = fmt.Sprintf("%s operand `%s` of `..` may be nil", side, display)
+	item.Evidence = []DiagnosticEvidence{
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s operand `%s` has type nil", side, display)},
+		{Span: item.Span, Kind: "missing proof", Trust: "unknown", Message: fmt.Sprintf("no guard on this path proves %s is non-nil", display)},
+	}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "value may be nil"}}
+	item.Help = fmt.Sprintf("Guard `%s` or provide a default string before using `..`.", display)
+	return item
+}
+
+func concatOperandDiagnosticParts(key string) (code, operation, subject string, ok bool) {
+	if inner, child := childDiagnosticKey(key); child {
+		key = inner
+	}
+	const prefix = "type.operator.concat_operand/"
+	if !strings.HasPrefix(key, prefix) {
+		return "", "", "", false
+	}
+	operation, subject, ok = strings.Cut(strings.TrimPrefix(key, prefix), "/")
+	return "concat_operand", operation, subject, ok && operation != "" && subject != ""
+}
+
+func concatOperandIndex(subject string) (int, bool) {
+	encoded, ok := strings.CutPrefix(subject, "value-")
+	if !ok || len(encoded) != 8 {
+		return 0, false
+	}
+	index, err := strconv.Atoi(encoded)
+	return index, err == nil && index >= 0
 }
 
 func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject string, operands map[string]string) PublishedDiagnostic {
@@ -986,6 +1064,8 @@ func diagnosticCode(key string) string {
 		return "type.assignment"
 	case strings.HasPrefix(key, "type.member.missing/"):
 		return "type.member.missing"
+	case strings.HasPrefix(key, "type.operator.concat_operand/"):
+		return "type.operator.concat_operand"
 	case strings.HasPrefix(key, "send.isolation/"):
 		return "send.isolation"
 	case strings.HasPrefix(key, "effect.freeze.mutation/"):
@@ -1520,7 +1600,7 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 		// Capture/writeback and escaping nested closures retain their established
 		// body admission. Ordinary capture-free calls are admitted separately
 		// only when their sealed result tuple has a caller-owned slot.
-		required := len(compilation.Boundary.Captures) != 0
+		required := len(compilation.Boundary.Captures) != 0 || compilationRequiresDiagnosticPublication(compilation)
 		if lexicalRequiresHeapTransport(compilation) && !compilation.RebindsBoundary {
 			required = false
 		}
@@ -1534,6 +1614,24 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	}
 	mark(root)
 	return l
+}
+
+// compilationRequiresDiagnosticPublication admits a lexical body when one of
+// its equation-owned diagnostic templates needs the body's closed entry facts.
+// This is a template property, not a source scan: the child remains dormant
+// unless its local capability is actually applied by the enclosing closure.
+func compilationRequiresDiagnosticPublication(compilation front.Compilation) bool {
+	for _, operation := range compilation.Artifact.Equations {
+		if operation.Occurrence.Kind != "expression" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role == "kind" && string(operand.Term.Encoding) == strconv.Itoa(int(wir.OpConcat)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // lexicalRequiresHeapTransport identifies child effects the value-only bridge
@@ -2135,7 +2233,18 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		// Check closure is still the sole publication point, while the qualified
 		// key lets DiagnosticSpans retain the child operation's source location.
 		body := fmt.Sprintf("%x", child.Body)
-		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, closure.Diagnostics)
+		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, closure.Diagnostics)
+		for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+			l.childPublished["child/"+body+"/"+item.Fact.Key] = PublishedDiagnostic{
+				Fact:     equation.Fact{Key: "child/" + body + "/" + item.Fact.Key, Value: append([]byte(nil), item.Fact.Value...)},
+				Code:     item.Code,
+				Span:     item.Span,
+				Message:  item.Message,
+				Evidence: append([]DiagnosticEvidence(nil), item.Evidence...),
+				Labels:   append([]DiagnosticLabel(nil), item.Labels...),
+				Help:     item.Help,
+			}
+		}
 		for _, diagnostic := range closure.Diagnostics {
 			key := "child/" + body + "/" + diagnostic.Key
 			projected.Diagnostics = append(projected.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
@@ -2375,7 +2484,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
-			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, outcome.Diagnostics)
+			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, outcome.Diagnostics)
 			if span, ok := spans[diagnostic.Key]; ok {
 				lexical.diagnosticSpans[key] = span
 			}
@@ -2408,7 +2517,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
-			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, outcome.Diagnostics)
+			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, outcome.Diagnostics)
 			if span, ok := spans[diagnostic.Key]; ok {
 				lexical.diagnosticSpans[key] = span
 			}
@@ -2437,8 +2546,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		if evaluateErr != nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: select child %q: %w", prototype, evaluateErr)
 		}
-		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, outcome.Diagnostics)
-		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, nil, nil)
+		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, outcome.Diagnostics)
+		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil)
 		for _, diagnostic := range outcome.Diagnostics {
 			if !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
@@ -2842,6 +2951,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		return resolveCurrentValue(value, partition)
 	}
 	var value []byte
+	var diagnostics []equation.Fact
 	var err error
 	switch wir.Op(kind) {
 	case wir.OpLogical:
@@ -2914,6 +3024,14 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				value = v
 				break
 			}
+			if concatOperandMayBeNil(v) {
+				diagnostics = append(diagnostics, equation.Fact{
+					Key:   fmt.Sprintf("type.operator.concat_operand/%s/value-%08d", operation.Target.Name, i),
+					Value: []byte("concat operand may be nil"),
+				})
+				value = []byte("scalar/top")
+				break
+			}
 			var s string
 			if strings.HasPrefix(string(v), "scalar/string/") {
 				s, er = scalarString(v)
@@ -2960,7 +3078,23 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			}
 		}
 	}
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
+}
+
+// concatOperandMayBeNil accepts only a closed nil value or an explicit
+// optional annotation fact. Top and other gradual values remain silent: they
+// have no proof that a nil can reach the operand.
+func concatOperandMayBeNil(value []byte) bool {
+	if string(value) == "scalar/nil" {
+		return true
+	}
+	const marker = "claim-type/"
+	index := strings.LastIndex(string(value), marker)
+	if index < 0 {
+		return false
+	}
+	declared, err := strconv.Unquote(string(value)[index+len(marker):])
+	return err == nil && strings.HasSuffix(declared, "?")
 }
 
 func numberValue(v float64) []byte {

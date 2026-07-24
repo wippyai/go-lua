@@ -38,6 +38,7 @@ type Body struct {
 	segments             []segment.Segment
 	callArgMeta          []CallArgumentMeta
 	returnMeta           []ReturnValueMeta
+	concatMeta           []ConcatOperandMeta
 	rootTypes            []RootType
 	impliedChecks        []ImpliedCheck
 	armGroups            []ImpliedCheckRange
@@ -170,6 +171,14 @@ type ReturnValueMeta struct {
 	Label string
 }
 
+// ConcatOperandMeta records the source anchor for one flattened concat
+// operand. It is diagnostic metadata only: expression evaluation still uses
+// the ordinary operand list and never consults it for a value.
+type ConcatOperandMeta struct {
+	Span  Span
+	Label string
+}
+
 // ExpressionEvaluation records a structural expression-evaluation anchor at a
 // CFG point. It carries only neutral source identity and span metadata; body
 // readmodels join ExprID back to their source AST when they still need syntax
@@ -233,6 +242,12 @@ type CallArgumentMetaRange struct {
 
 // ReturnValueMetaRange is a [Start, Start+Len) window into Body.returnMeta.
 type ReturnValueMetaRange struct {
+	Start uint32
+	Len   uint32
+}
+
+// ConcatOperandMetaRange is a [Start, Start+Len) window into Body.concatMeta.
+type ConcatOperandMetaRange struct {
 	Start uint32
 	Len   uint32
 }
@@ -686,6 +701,14 @@ func (b *Body) ReturnValueMeta(r ReturnValueMetaRange) []ReturnValueMeta {
 		return nil
 	}
 	return b.returnMeta[r.Start : r.Start+r.Len]
+}
+
+// ConcatOperandMeta returns metadata for one flattened concat expression.
+func (b *Body) ConcatOperandMeta(r ConcatOperandMetaRange) []ConcatOperandMeta {
+	if r.Len == 0 {
+		return nil
+	}
+	return b.concatMeta[r.Start : r.Start+r.Len]
 }
 
 // ImpliedChecks returns the branch-implied check slice for a variadic range.
@@ -1160,6 +1183,16 @@ func (b *Body) AppendReturnValueMeta(meta []ReturnValueMeta) ReturnValueMetaRang
 	start := uint32(len(b.returnMeta))
 	b.returnMeta = append(b.returnMeta, meta...)
 	return ReturnValueMetaRange{Start: start, Len: uint32(len(meta))}
+}
+
+// AppendConcatOperandMeta copies concat operand anchors into the shared pool.
+func (b *Body) AppendConcatOperandMeta(meta []ConcatOperandMeta) ConcatOperandMetaRange {
+	if len(meta) == 0 {
+		return ConcatOperandMetaRange{}
+	}
+	start := uint32(len(b.concatMeta))
+	b.concatMeta = append(b.concatMeta, meta...)
+	return ConcatOperandMetaRange{Start: start, Len: uint32(len(meta))}
 }
 
 // AppendImpliedChecks copies checks into the shared branch-implied-check pool
