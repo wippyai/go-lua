@@ -1600,14 +1600,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				return equation.Artifact{}, fmt.Errorf("front: generic-for %s: %w", operation.target.Name, err)
 			}
 			draft.Occurrence = occurrence("generic-for")
-			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
-			// A branch in this loop body can route one arm back to the iterator
-			// header (for example, the false arm of `if i > limit then break`).
-			// That branch consumes the iterator binding, so guarding the binding
-			// with its own later outcome creates a cyclic read with no initial
-			// completed write.  Keep outer branch guards, but remove only guards
-			// from branches reachable after this header in the same CFG cycle.
-			draft.Guards = loopHeaderGuards(draft.Guards, instruction.Point, graph, guardReachability, branchTargets)
+			draft.Guards = loopHeaderGuards(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = operands
 		case instruction.Op == wir.OpSelect:
 			result, err := selectResultTerm(instruction.Dst)
@@ -3272,33 +3265,30 @@ func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.
 	return guards
 }
 
-// loopHeaderGuards retains guards that control entry to an iterator while
-// dropping only a later branch from the iterator's own recurrence.  The latter
-// cannot guard the binding it needs to evaluate; treating it as an outer guard
-// would make the first fixed-point visit read an unavailable carried value.
-func loopHeaderGuards(guards []equation.Guard, header cfg.Point, graph cfg.Graph, reachability *reachabilityCache, branches map[cfg.Point]branchGuardTarget) []equation.Guard {
+// loopHeaderGuards removes only branch guards that are proved to feed the
+// current iteration header through a back-edge. The iterator transaction is
+// the completed write at the start of each iteration, before such a body
+// predicate is evaluated. Ordinary outer branch guards remain intact.
+func loopHeaderGuards(graph cfg.Graph, reachability *reachabilityCache, point cfg.Point, body equation.BodyID, branches map[cfg.Point]branchGuardTarget) []equation.Guard {
+	guards := guardsForPoint(graph, reachability, point, body, branches)
 	if len(guards) == 0 {
 		return nil
 	}
-	drop := make(map[string]bool)
+	backEdges := make(map[string]bool)
 	for branch, target := range branches {
-		if reachability.reaches(header, branch) {
-			drop["front/branch/"+target.target.Name+"/"] = true
+		if !reachability.reaches(point, branch) {
+			continue
 		}
-	}
-	if len(drop) == 0 {
-		return guards
-	}
-	kept := make([]equation.Guard, 0, len(guards))
-	for _, guard := range guards {
-		remove := false
-		for prefix := range drop {
-			if strings.HasPrefix(string(guard.Encoding), prefix) {
-				remove = true
-				break
+		for _, successor := range graph.Successors(branch) {
+			if branchEdge, isBranchEdge := graph.EdgeCond(branch, successor); isBranchEdge && reachability.reaches(successor, point) {
+				backEdges[target.target.Name+"/"+strconv.FormatBool(branchEdge)] = true
 			}
 		}
-		if !remove {
+	}
+	kept := guards[:0]
+	for _, guard := range guards {
+		parts := strings.Split(string(guard.Encoding), "/")
+		if len(parts) != 4 || !backEdges[parts[2]+"/"+parts[3]] {
 			kept = append(kept, guard)
 		}
 	}
