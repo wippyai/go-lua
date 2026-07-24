@@ -5652,7 +5652,7 @@ func externalCallKernel(operation equation.BoundEquation, partition equation.Par
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external call arguments")
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
-		Values: placementExternalSendFacts(operation, operands["provider"], arguments, partition),
+		Values: placementExternalOwnershipFacts(operation, operands["provider"], arguments, partition),
 	}}, nil
 }
 

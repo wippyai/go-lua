@@ -439,7 +439,8 @@ var registry = map[string]signature.Function{
 	"coroutine.create": sig(typ.Func().
 		Param("f", typ.Any).
 		Returns(typ.Any).
-		Build()),
+		Build(),
+		ownership.Send{FromParam: 0}),
 	"coroutine.isyieldable": sig(typ.Func().
 		OptParam("co", typ.Any).
 		Returns(typ.Boolean).
@@ -460,7 +461,8 @@ var registry = map[string]signature.Function{
 	"coroutine.wrap": suspendingSig(typ.Func().
 		Param("f", typ.Any).
 		Returns(typ.Any).
-		Build()),
+		Build(),
+		ownership.Send{FromParam: 0}),
 	"coroutine.yield": suspendingSig(typ.Func().
 		Variadic(typ.Any).
 		Returns(typ.Any).

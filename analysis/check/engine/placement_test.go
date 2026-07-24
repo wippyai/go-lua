@@ -39,6 +39,43 @@ coroutine.resume(nil, payload)`)
 	}
 }
 
+func TestCheckPlacementUsesPublishedExternalCoroutineSend(t *testing.T) {
+	result, err := engine.Check(`local callback = function() end
+coroutine.create(callback)`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Placement == nil || len(result.Placement.Allocations) != 1 {
+		t.Fatalf("placement = %#v, want one callback allocation", result.Placement)
+	}
+	item := result.Placement.Allocations[0]
+	if item.Placement != placement.SharedHeap || len(item.Blockers) != 0 {
+		t.Fatalf("allocation = %#v, want the callback transferred to the coroutine", item)
+	}
+}
+
+func TestCheckPlacementUsesPublishedExternalOwnershipRetain(t *testing.T) {
+	result, err := engine.Check(`local object = {}
+local meta = {}
+setmetatable(object, meta)`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Placement == nil || len(result.Placement.Allocations) != 2 {
+		t.Fatalf("placement = %#v, want object and metatable allocations", result.Placement)
+	}
+	for _, item := range result.Placement.Allocations {
+		if item.Placement != placement.OwnedHeap {
+			continue
+		}
+		if !item.OwnerIdentity || len(item.Blockers) != 0 {
+			t.Fatalf("allocation = %#v, want the externally retained metatable", item)
+		}
+		return
+	}
+	t.Fatal("placement omitted the metatable allocation")
+}
+
 func TestCheckAcceptsSealedEmptyMapAtDeclaredBoundary(t *testing.T) {
 	result, err := engine.Check(`local registry: {[string]: {value: string}} = {}`)
 	if err != nil {

@@ -102,15 +102,16 @@ func placementContainmentFact(parent, child, operation string) equation.Fact {
 	return equation.Fact{Key: placementContainmentPrefix + base64.RawURLEncoding.EncodeToString([]byte(parent)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(child)) + "/" + operation, Value: []byte("proven")}
 }
 
-func placementContractFact(identity, operation string) equation.Fact {
-	return equation.Fact{Key: placementContractPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/send/" + operation, Value: []byte("proven")}
+func placementContractFact(identity, boundary, operation string) equation.Fact {
+	return equation.Fact{Key: placementContractPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + boundary + "/" + operation, Value: []byte("proven")}
 }
 
-// placementExternalSendFacts consumes ownership-send labels from the published
-// provider signature. The external-call factor has the exact provider identity
-// and the matching apply coordinate, so it can discharge only the opaque-call
-// fallback emitted for that same application. Unknown providers stay blocked.
-func placementExternalSendFacts(operation equation.BoundEquation, provider []byte, arguments [][]byte, partition equation.Partition) []equation.Fact {
+// placementExternalOwnershipFacts consumes retaining ownership labels from the
+// published provider signature. The external-call factor has the exact
+// provider identity and matching apply coordinate, so it can discharge only
+// the opaque-call fallback emitted for that same application. Unknown
+// providers, unlabelled calls, and non-retaining labels stay blocked.
+func placementExternalOwnershipFacts(operation equation.BoundEquation, provider []byte, arguments [][]byte, partition equation.Partition) []equation.Fact {
 	name, found := placementGlobalProviderName(provider)
 	if !found {
 		return nil
@@ -126,15 +127,25 @@ func placementExternalSendFacts(operation equation.BoundEquation, provider []byt
 	var facts []equation.Fact
 	for _, label := range signature.Effect.Labels {
 		var from int
+		boundary, event := "", ""
 		switch value := effect.NormalizeLabel(label).(type) {
 		case ownership.Send:
 			from = value.FromParam
+			boundary, event = "send", placementEventShared
 		case ownership.SendParam:
 			var resolved bool
 			from, resolved = effect.ResolveParamIndex(value.Param, len(arguments))
 			if !resolved {
 				continue
 			}
+			boundary, event = "send", placementEventShared
+		case ownership.Retain:
+			var resolved bool
+			from, resolved = effect.ResolveParamIndex(value.Param, len(arguments))
+			if !resolved {
+				continue
+			}
+			boundary, event = "retain", placementEventOwned
 		default:
 			continue
 		}
@@ -142,13 +153,16 @@ func placementExternalSendFacts(operation equation.BoundEquation, provider []byt
 			continue
 		}
 		for index := from; index < len(arguments); index++ {
+			if boundary == "retain" && index != from {
+				break
+			}
 			allocation, exists := placementAllocationForTerm(arguments[index], partition)
 			if !exists {
 				continue
 			}
 			facts = append(facts,
-				placementEventFact(allocation.Identity, application, placementEventShared),
-				placementContractFact(allocation.Identity, application),
+				placementEventFact(allocation.Identity, application, event),
+				placementContractFact(allocation.Identity, boundary, application),
 			)
 		}
 	}
@@ -381,7 +395,7 @@ func publishedPlacement(facts []equation.Fact) *PlacementPlan {
 			}
 		case strings.HasPrefix(fact.Key, placementContractPrefix):
 			parts := strings.Split(fact.Key, "/")
-			if len(parts) == 5 && parts[3] == "send" && string(fact.Value) == "proven" {
+			if len(parts) == 5 && (parts[3] == "send" || parts[3] == "retain") && string(fact.Value) == "proven" {
 				identity, err := base64.RawURLEncoding.DecodeString(parts[2])
 				if err == nil {
 					if contracts[string(identity)] == nil {
