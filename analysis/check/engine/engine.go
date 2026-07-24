@@ -1549,9 +1549,10 @@ func cyclicRegistry(lexical *lexicalEvaluator, imported map[string]bool) (*equat
 // by the entry transaction and becomes ordinary body-local seed facts; no
 // caller partition is ever shared with a child evaluator.
 type childEntryWire struct {
-	Version      uint8              `json:"version"`
-	Seeds        []entrySeed        `json:"seeds"`
-	ClosureSeeds []entryClosureSeed `json:"closure_seeds,omitempty"`
+	Version            uint8                    `json:"version"`
+	Seeds              []entrySeed              `json:"seeds"`
+	ClosureSeeds       []entryClosureSeed       `json:"closure_seeds,omitempty"`
+	MemberClosureSeeds []entryMemberClosureSeed `json:"member_closure_seeds,omitempty"`
 }
 
 type entrySeed struct {
@@ -1565,6 +1566,15 @@ type entrySeed struct {
 type entryClosureSeed struct {
 	Term   string        `json:"term"`
 	Handle closureHandle `json:"handle"`
+}
+
+// entryMemberClosureSeed carries a callable-member capability only with the
+// exact sealed receiver value that published it.  It is a distinct transport
+// lane because a table shape proves member presence/value but cannot authorize
+// evaluation of a local member body by itself.
+type entryMemberClosureSeed struct {
+	Term string            `json:"term"`
+	Wire memberClosureWire `json:"wire"`
 }
 
 type closureHandle struct {
@@ -1858,7 +1868,11 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 }
 
 func encodeChildEntry(seeds []entrySeed, closureSeeds ...entryClosureSeed) ([]byte, error) {
-	wire := childEntryWire{Version: 2, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...)}
+	return encodeChildEntryWithCapabilities(seeds, closureSeeds, nil)
+}
+
+func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClosureSeed, memberClosureSeeds []entryMemberClosureSeed) ([]byte, error) {
+	wire := childEntryWire{Version: 3, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...)}
 	sort.Slice(wire.Seeds, func(i, j int) bool { return wire.Seeds[i].Term < wire.Seeds[j].Term })
 	for index := range wire.Seeds {
 		if !validEntrySeed(wire.Seeds[index]) || (index > 0 && wire.Seeds[index-1].Term == wire.Seeds[index].Term) {
@@ -1871,11 +1885,23 @@ func encodeChildEntry(seeds []entrySeed, closureSeeds ...entryClosureSeed) ([]by
 			return nil, fmt.Errorf("engine: malformed child entry closure seed")
 		}
 	}
+	sort.Slice(wire.MemberClosureSeeds, func(i, j int) bool {
+		if wire.MemberClosureSeeds[i].Term != wire.MemberClosureSeeds[j].Term {
+			return wire.MemberClosureSeeds[i].Term < wire.MemberClosureSeeds[j].Term
+		}
+		return wire.MemberClosureSeeds[i].Wire.Suffix < wire.MemberClosureSeeds[j].Wire.Suffix
+	})
+	for index, seed := range wire.MemberClosureSeeds {
+		if seed.Term == "" || seed.Wire.Suffix == "" || !validClosureHandle(seed.Wire.Handle) ||
+			(index > 0 && wire.MemberClosureSeeds[index-1].Term == seed.Term && wire.MemberClosureSeeds[index-1].Wire.Suffix == seed.Wire.Suffix) {
+			return nil, fmt.Errorf("engine: malformed child entry member closure seed")
+		}
+	}
 	encoded, err := json.Marshal(wire)
 	if err != nil {
 		return nil, fmt.Errorf("engine: encode child entry: %w", err)
 	}
-	return append([]byte("front/child-entry/v2/"), encoded...), nil
+	return append([]byte("front/child-entry/v3/"), encoded...), nil
 }
 
 // importEntryValue makes project-resolved exports ordinary entry seeds. The
@@ -1949,13 +1975,17 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 	}
 	const prefixV1 = "front/child-entry/v1/"
 	const prefixV2 = "front/child-entry/v2/"
+	const prefixV3 = "front/child-entry/v3/"
 	var wire childEntryWire
-	if strings.HasPrefix(string(entryValue), prefixV1) || strings.HasPrefix(string(entryValue), prefixV2) {
+	if strings.HasPrefix(string(entryValue), prefixV1) || strings.HasPrefix(string(entryValue), prefixV2) || strings.HasPrefix(string(entryValue), prefixV3) {
 		prefix := prefixV1
 		if strings.HasPrefix(string(entryValue), prefixV2) {
 			prefix = prefixV2
 		}
-		if err := json.Unmarshal(entryValue[len(prefix):], &wire); err != nil || (prefix == prefixV1 && wire.Version != 1) || (prefix == prefixV2 && wire.Version != 2) {
+		if strings.HasPrefix(string(entryValue), prefixV3) {
+			prefix = prefixV3
+		}
+		if err := json.Unmarshal(entryValue[len(prefix):], &wire); err != nil || (prefix == prefixV1 && wire.Version != 1) || (prefix == prefixV2 && wire.Version != 2) || (prefix == prefixV3 && wire.Version != 3) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry wire")
 		}
 	}
@@ -1982,6 +2012,19 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		}
 		closureTerms[seed.Term] = true
 		values = append(values, equation.Fact{Key: "closure/" + seed.Term + "/entry", Value: encoded})
+	}
+	memberClosures := make(map[string]bool, len(wire.MemberClosureSeeds))
+	for index, seed := range wire.MemberClosureSeeds {
+		key := seed.Term + "\x00" + seed.Wire.Suffix
+		if !seen[seed.Term] || seed.Wire.Suffix == "" || !validClosureHandle(seed.Wire.Handle) || memberClosures[key] {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry member closure seed")
+		}
+		encoded, err := json.Marshal(seed.Wire)
+		if err != nil {
+			return equation.TransactionResult{}, err
+		}
+		memberClosures[key] = true
+		values = append(values, equation.Fact{Key: fmt.Sprintf("member-closure/%s/entry/%08d", seed.Term, index), Value: encoded})
 	}
 	for name, root := range declaredRoots {
 		declared, ok := shapefact.DecodeTarget(declaredTypes[name])
@@ -2300,11 +2343,15 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	for term, closure := range closureSeedByTerm {
 		closureSeeds = append(closureSeeds, entryClosureSeed{Term: term, Handle: closure})
 	}
-	entry, err := encodeChildEntry(seeds, closureSeeds...)
+	boundarySeeds := append([]entrySeed(nil), seeds...)
+	entrySeeds := append([]entrySeed(nil), boundarySeeds...)
+	entrySeeds = append(entrySeeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
+	memberClosureSeeds := childEntryMemberClosureSeeds(entrySeeds, partition)
+	entry, err := encodeChildEntryWithCapabilities(entrySeeds, closureSeeds, memberClosureSeeds)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	closure, err := l.resolveSCCChild(child, entry, seeds, arguments, handle, operands, operation.Target.Name)
+	closure, err := l.resolveSCCChild(child, entry, boundarySeeds, arguments, handle, operands, operation.Target.Name)
 	if err != nil {
 		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
 	}
@@ -2460,6 +2507,91 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: projected}, nil
+}
+
+// childEntryDescendantSeeds preserves exact path facts below a captured entry
+// root. A child already shares that lexical root; omitting a caller-published
+// descendant would silently roll the child back to the root's older literal
+// shape. Only completed value facts are copied, keyed by their existing path
+// identity; unknown facts remain explicit Top rather than being refined.
+func childEntryDescendantSeeds(roots []entrySeed, partition equation.Partition) []entrySeed {
+	rootTerms := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if strings.HasPrefix(root.Term, "path/") {
+			rootTerms = append(rootTerms, root.Term)
+		}
+	}
+	if len(rootTerms) == 0 {
+		return nil
+	}
+	latest := make(map[string]equation.Fact)
+	for _, fact := range partition.Values() {
+		rest := strings.TrimPrefix(fact.Key, "value/")
+		cut := strings.LastIndexByte(rest, '/')
+		if cut <= 0 || cut == len(rest)-1 {
+			continue
+		}
+		term := rest[:cut]
+		if !strings.HasPrefix(term, "path/") {
+			continue
+		}
+		isDescendant := false
+		for _, root := range rootTerms {
+			isDescendant = strings.HasPrefix(term, root+".") || strings.HasPrefix(term, root+"[")
+			if isDescendant {
+				break
+			}
+		}
+		if !isDescendant {
+			continue
+		}
+		if prior, exists := latest[term]; !exists || fact.Key > prior.Key {
+			latest[term] = fact
+		}
+	}
+	terms := make([]string, 0, len(latest))
+	for term := range latest {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	seeds := make([]entrySeed, 0, len(terms))
+	for _, term := range terms {
+		fact := latest[term]
+		seed := entrySeed{Term: term, Value: append([]byte(nil), fact.Value...)}
+		if validEntrySeed(seed) {
+			seeds = append(seeds, seed)
+		}
+	}
+	return seeds
+}
+
+// childEntryMemberClosureSeeds transports only member capabilities already
+// published at one of the exact child entry terms.  The child still receives
+// the corresponding sealed value seed; no receiver type, annotation, or
+// source spelling can manufacture a local-body capability.
+func childEntryMemberClosureSeeds(seeds []entrySeed, partition equation.Partition) []entryMemberClosureSeed {
+	byTerm := make(map[string][]memberClosureWire, len(seeds))
+	for _, seed := range seeds {
+		if !validEntrySeed(seed) {
+			continue
+		}
+		wires := memberClosuresFor([]byte(seed.Term), partition)
+		if len(wires) != 0 {
+			byTerm[seed.Term] = wires
+		}
+	}
+	terms := make([]string, 0, len(byTerm))
+	for term := range byTerm {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	out := make([]entryMemberClosureSeed, 0)
+	for _, term := range terms {
+		for _, wire := range byTerm[term] {
+			out = append(out, entryMemberClosureSeed{Term: term, Wire: wire})
+		}
+	}
+	return out
 }
 
 func uniqueStrings(items []string) []string {
