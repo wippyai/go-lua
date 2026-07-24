@@ -116,6 +116,31 @@ return value`)
 	}
 }
 
+func TestCheckPublishesCyclicStackPlacementWitness(t *testing.T) {
+	result, err := engine.Check(`type Message = { id: string }
+local cache: {[string]: Message} = {}
+local function collect(batch: {Message})
+  for _, message in ipairs(batch) do
+    local scratch = { id = message.id }
+    cache[message.id] = message
+    print(scratch.id)
+  end
+end
+return collect`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Placement == nil {
+		t.Fatal("placement = nil, want cyclic stack witness")
+	}
+	for _, item := range result.Placement.Allocations {
+		if item.Kind == "lua.table" && item.Placement == placement.Stack && item.Complete {
+			return
+		}
+	}
+	t.Fatalf("placement = %#v, want a complete stack table from the cyclic child", result.Placement)
+}
+
 func TestCheckPlacementRetainsLexicalClosureCapture(t *testing.T) {
 	result, err := engine.Check(`local state = { value = 1 }
 local read = function() return state.value end

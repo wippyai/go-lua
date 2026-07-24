@@ -3154,6 +3154,33 @@ func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
 	return seeds, true
 }
 
+// cyclicPlacementWitnessEntry supplies only declaration-owned parameter facts
+// to a cyclic lexical body. Captures are added exclusively by
+// uncalledChildEntry from the allocating partition's published values. The
+// result is filtered to boundary-free stack witnesses, so no uncalled body can
+// claim a retain, share, or caller-visible graph.
+func cyclicPlacementWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
+	if child.WIR == nil || child.Cyclic == nil || len(child.Boundary.Parameters) == 0 {
+		return nil, false
+	}
+	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			return nil, false
+		}
+		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
+		if declared == nil || declared.Kind() == kind.Any {
+			return nil, false
+		}
+		value, ok := shapefact.EncodeTarget(declared)
+		if !ok {
+			return nil, false
+		}
+		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
+	}
+	return seeds, true
+}
+
 // uncalledDeclaredBoundary materializes only the checker-owned type witnesses
 // already present on a capture-free function boundary. These are not runtime
 // values and carry no invented member facts: the shape encoder preserves the
@@ -4798,6 +4825,22 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			return equation.TransactionResult{}, fmt.Errorf("engine: closed lexical child %q: %w", prototype, evaluateErr)
 		}
 		closure.Values = append(closure.Values, placementFactsFromChild(outcome.Values)...)
+	}
+	// The cyclic evaluator may establish a local allocation while traversing a
+	// loop even though the closure is not invoked at this allocation site. Its
+	// declared formals and already-published captures form a closed entry; only
+	// stack witnesses without any boundary evidence cross the child projector.
+	if seeds, eligible := cyclicPlacementWitnessEntry(child); eligible {
+		entry, admitted, entryErr := lexical.uncalledChildEntry(child, seeds, partition, true)
+		if entryErr != nil {
+			return equation.TransactionResult{}, entryErr
+		}
+		if admitted {
+			outcome, _, evaluateErr := lexical.evaluate(child, entry)
+			if evaluateErr == nil {
+				closure.Values = append(closure.Values, placementStackWitnessFacts(outcome.Values)...)
+			}
+		}
 	}
 	// Lifecycle epochs are self-contained proof facts: a channel created and
 	// consumed within a declared body needs no caller value to establish its

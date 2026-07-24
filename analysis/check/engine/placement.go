@@ -494,6 +494,57 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 	return projected
 }
 
+// placementStackWitnessFacts projects only complete child allocations with no
+// observed ownership boundary. The child evaluator has already established
+// the allocation identity and its entire local graph; retaining, sharing,
+// containment, contracts, and blockers all disqualify the fact because those
+// conclusions require a caller-owned invocation boundary.
+func placementStackWitnessFacts(facts []equation.Fact) []equation.Fact {
+	allocations := make(map[string]equation.Fact)
+	boundary := make(map[string]bool)
+	for _, fact := range facts {
+		switch {
+		case strings.HasPrefix(fact.Key, placementAllocationPrefix):
+			var allocation placementAllocationFact
+			if json.Unmarshal(fact.Value, &allocation) == nil && allocation.Identity != "" && allocation.Complete {
+				allocations[allocation.Identity] = cloneFact(fact)
+			}
+		case strings.HasPrefix(fact.Key, placementEventPrefix), strings.HasPrefix(fact.Key, placementBlockerPrefix), strings.HasPrefix(fact.Key, placementContractPrefix):
+			parts := strings.Split(fact.Key, "/")
+			if len(parts) != 5 || string(fact.Value) != "proven" {
+				continue
+			}
+			identity, err := base64.RawURLEncoding.DecodeString(parts[2])
+			if err == nil {
+				boundary[string(identity)] = true
+			}
+		case strings.HasPrefix(fact.Key, placementContainmentPrefix):
+			parts := strings.Split(fact.Key, "/")
+			if len(parts) != 5 || string(fact.Value) != "proven" {
+				continue
+			}
+			for _, encoded := range parts[2:4] {
+				identity, err := base64.RawURLEncoding.DecodeString(encoded)
+				if err == nil {
+					boundary[string(identity)] = true
+				}
+			}
+		}
+	}
+	identities := make([]string, 0, len(allocations))
+	for identity := range allocations {
+		if !boundary[identity] {
+			identities = append(identities, identity)
+		}
+	}
+	sort.Strings(identities)
+	witnesses := make([]equation.Fact, 0, len(identities))
+	for _, identity := range identities {
+		witnesses = append(witnesses, allocations[identity])
+	}
+	return placementFactsFromChild(witnesses)
+}
+
 type publishedPlacementFacts struct {
 	allocations       map[string]placementAllocationFact
 	bindings          map[string]string
