@@ -2817,7 +2817,7 @@ func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
 }
 
 // uncalledDeclaredBoundary materializes only the checker-owned type witnesses
-// already present on a capture-free function boundary.  These are not runtime
+// already present on a capture-free function boundary. These are not runtime
 // values and carry no invented member facts: the shape encoder preserves the
 // declared union/optional relation for the child's ordinary claim and branch
 // consumers. A missing, variadic, recursive, or captured boundary stays
@@ -2849,7 +2849,7 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 		memberCalls["call/"+operation.Target.Name] = true
 		hasDirectMethod = hasDirectMethod || hasDeclaredFormalMethodCall(child, operation, formals)
 	}
-	hasBranch, hasDeclaredMemberRead, hasDeclaredMemberCall := false, false, false
+	hasBranch, hasDeclaredMemberRead, hasDeclaredMemberCall, hasDeclaredAssignment := false, false, false, false
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "apply":
@@ -2868,6 +2868,7 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 			hasBranch = true
 		case "claim":
 			hasDeclaredMemberRead = hasDeclaredMemberRead || uncalledDeclaredFormalMemberRead(child, operation, formals)
+			hasDeclaredAssignment = hasDeclaredAssignment || uncalledDeclaredFormalAssignment(child, operation, formals)
 		}
 	}
 	// A declared method return can depend on a branch-local refinement. Its
@@ -2876,7 +2877,7 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 	if hasDirectMethod && hasBranch {
 		return nil, false, false
 	}
-	if !hasDeclaredMemberRead && !hasDeclaredMemberCall {
+	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment {
 		return nil, false, false
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
@@ -2892,6 +2893,22 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
 	return seeds, true, hasDirectMethod
+}
+
+// uncalledDeclaredFormalAssignment identifies an annotation claim from a
+// static member path of a declared formal. The value has the same
+// declaration-owned witness as an admitted missing-member read; arbitrary
+// locals and branch-only refinements remain demand-driven.
+func uncalledDeclaredFormalAssignment(child front.Compilation, operation equation.Equation, formals map[string]bool) bool {
+	if !uncalledDeclaredFormalMemberRead(child, operation, formals) {
+		return false
+	}
+	for _, operand := range operation.Operands {
+		if operand.Role == "kind" && string(operand.Term.Encoding) == "claim-kind/3" {
+			return true
+		}
+	}
+	return false
 }
 
 // uncalledDeclaredFormalMemberRead identifies an annotation claim whose value
@@ -3772,12 +3789,19 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// Demand either form privately and qualify its facts by body before they
 	// enter the root publication closure.
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
-	declaredBoundary, declaredMethodBoundary, staticAssignmentBoundary, indexedReadBoundary := false, false, false, false
+	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, staticAssignmentBoundary, indexedReadBoundary := false, false, false, false, false
 	if declaredSeeds, admitted, methodBoundary := uncalledDeclaredBoundary(child); admitted {
 		uncalledSeeds = declaredSeeds
 		explicitAnyBoundary = false
 		declaredBoundary = true
 		declaredMethodBoundary = methodBoundary
+		formals := make(map[string]bool, len(child.Boundary.Parameters))
+		for _, parameter := range child.Boundary.Parameters {
+			formals[boundaryTerm(parameter.Symbol)] = true
+		}
+		for _, childOperation := range child.Artifact.Equations {
+			declaredAssignmentBoundary = declaredAssignmentBoundary || uncalledDeclaredFormalAssignment(child, childOperation, formals)
+		}
 	}
 	if staticSeeds, admitted := uncalledStaticAssignmentBoundary(child); admitted {
 		uncalledSeeds = staticSeeds
@@ -3829,7 +3853,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			// from a reachable declared union arm. Other obligations may depend on
 			// a call-specific refinement and therefore remain demand-driven.
 			if declaredBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") &&
-				(!declaredMethodBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) {
+				(!declaredMethodBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) &&
+				(!declaredAssignmentBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment/")) {
 				continue
 			}
 			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
@@ -3856,7 +3881,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				continue
 			}
 			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") &&
-				(!declaredMethodBoundary || !strings.HasPrefix(item.Fact.Key, "type.return.contract/")) {
+				(!declaredMethodBoundary || !strings.HasPrefix(item.Fact.Key, "type.return.contract/")) &&
+				(!declaredAssignmentBoundary || !strings.HasPrefix(item.Fact.Key, "type.assignment/")) {
 				continue
 			}
 			if staticMemberReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {

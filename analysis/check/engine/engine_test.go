@@ -547,6 +547,28 @@ return pick
 	t.Fatalf("uncalled declared index diagnostic = %#v", result.Diagnostics)
 }
 
+func TestCheckPublishesUncalledDeclaredBranchAssignmentContract(t *testing.T) {
+	result, err := engine.Check(`
+type A = {tag: "a", value: string}
+type B = {tag: "b", value: number}
+local function check(r: A | B)
+  if r.tag == "a" then
+    return
+  end
+  local s: string = r.value
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 8 && strings.Contains(diagnostic.Message, "cannot assign r.value") {
+			return
+		}
+	}
+	t.Fatalf("uncalled declared branch assignment diagnostic = %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckPublishesExplicitAnyBoundaryViolationThroughGuardedMemberRead(t *testing.T) {
 	result, err := engine.Check(`
 local raw: any = {kind = "task", route_id = "start"}
