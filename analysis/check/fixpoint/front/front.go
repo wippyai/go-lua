@@ -1833,6 +1833,16 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 	// target tuple would incorrectly certify a selective result flow.
 	operands := make([]equation.Operand, 1, 1+len(results)*2)
 	operands[0] = equation.Operand{Role: "application", Term: equation.ClosedTerm([]byte("call/" + apply.Name))}
+	// A direct callee's sealed function value is an independently published
+	// return contract. Keep that fact beside the result owner; method calls
+	// retain their existing receiver/method form below.
+	if instruction.Call.Method == 0 {
+		callee, err := scalarTerm(body, instruction.Call.Callee)
+		if err != nil {
+			return nil, fmt.Errorf("call result callee: %w", err)
+		}
+		operands = append(operands, equation.Operand{Role: "callee", Term: callee})
+	}
 	if len(provider.Encoding) != 0 {
 		if provider.Entry {
 			return nil, fmt.Errorf("provider result contract has entry term")

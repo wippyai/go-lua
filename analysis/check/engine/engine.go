@@ -2998,6 +2998,21 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	result.Closure.Values = append(result.Closure.Values, equation.Fact{
 		Key: "value/" + string(operands["target"]) + "/" + operation.Target.Name, Value: value,
 	})
+	// A static member write can be the first publication of a local closure
+	// capability (for example, `function module.f() ... end`).  The value fact
+	// alone proves that the member is callable, but it does not authorize the
+	// lexical evaluator to demand that particular closed body.  Forward only
+	// the already-published handle from the written value; an opaque callable
+	// remains a value-only fact and cannot acquire local-body authority here.
+	if handle, found := closureHandleFor(operands["value"], partition); found {
+		encoded, marshalErr := json.Marshal(handle)
+		if marshalErr != nil {
+			return equation.TransactionResult{}, marshalErr
+		}
+		result.Closure.Values = append(result.Closure.Values, equation.Fact{
+			Key: "closure/" + string(operands["target"]) + "/" + operation.Target.Name, Value: encoded,
+		})
+	}
 	if root, suffix, ok := tableAddress(operands["target"]); ok && suffix != "" {
 		if identity, found := tableIdentityForTerm(root, partition); found {
 			result.Closure.Values = append(result.Closure.Values, heapMemberFact(identity, suffix, operation.Target.Name, value))
@@ -5460,6 +5475,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	hasApplication := false
 	var application []byte
 	var provider []byte
+	var callee []byte
 	var receiver []byte
 	var method []byte
 	for _, operand := range operation.Operands {
@@ -5475,6 +5491,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				return equation.TransactionResult{}, fmt.Errorf("engine: duplicate call result provider")
 			}
 			provider = operand.Value
+		case operand.Role == "callee":
+			if callee != nil || (!strings.HasPrefix(string(operand.Value), "path/") && !strings.HasPrefix(string(operand.Value), "temp/") && !strings.HasPrefix(string(operand.Value), "scalar/")) {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result callee")
+			}
+			callee = operand.Value
 		case strings.HasPrefix(operand.Role, "argument-"):
 			index, err := callArgumentIndex(operand.Role)
 			if err != nil || argumentTerms[index] != nil {
@@ -5523,6 +5544,14 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			value = []byte("scalar/boolean")
 		}
 		if index, err := strconv.Atoi(key); err == nil {
+			// A local child result is the most precise existing publication. Only
+			// when it is absent may the result owner use the direct callee's sealed
+			// function contract; an opaque callable has no such witness.
+			if string(value) == "scalar/top" {
+				if contract, ok := sealedCallableResultValue(lexical, callee, index, partition); ok {
+					value = contract
+				}
+			}
 			if contract, ok := stdlibMethodResultValue(receiver, method, index, partition); ok {
 				value = contract
 			}
@@ -5566,6 +5595,34 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+// sealedCallableResultValue bridges the one local boundary that the private
+// evaluator deliberately cannot enter: a declared vararg child. Its sealed
+// function type is already published at the closure allocation; no source
+// annotation or open callable is admitted. Other local bodies retain their
+// concrete publication path, preserving body diagnostics and refinements.
+func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index int, partition equation.Partition) ([]byte, bool) {
+	if lexical == nil || callee == nil || index < 0 {
+		return nil, false
+	}
+	handle, local := closureHandleFor(callee, partition)
+	if !local || !lexical.hasVarargBoundary(handle.Prototype) {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(callee, partition)
+	if err != nil {
+		return nil, false
+	}
+	decoded, ok := sealedFunctionType(value)
+	if !ok {
+		return nil, false
+	}
+	function, ok := unwrap.Alias(decoded).(*typ.Function)
+	if !ok || function == nil || len(function.TypeParams) != 0 || index >= len(function.Returns) {
+		return nil, false
+	}
+	return providerReturnTypeValue(function.Returns[index])
 }
 
 // stdlibMethodResultValue crosses only a sealed receiver fact into the
