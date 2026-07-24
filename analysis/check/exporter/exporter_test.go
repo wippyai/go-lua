@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/exporter"
+	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -128,5 +129,36 @@ return M`
 	make, ok := summary.Function("make", 0)
 	if !ok || len(make.Return.Table) != 2 || !make.Valid() {
 		t.Fatalf("export = %v; literal relation = %#v", summary.Type, make)
+	}
+}
+
+func TestDeriveSummaryWithImportsPreservesPublishedFreshTableRelation(t *testing.T) {
+	source := `local upstream = require("upstream")
+local M = {}
+function M.make(id: string)
+  local packet = { id = id, meta = { route = "worker" } }
+  return packet
+end
+function M.forward(id: string) return upstream.make(id) end
+return M`
+	result, err := engine.Check(source)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	parameter := 0
+	upstream := exportrelation.Summary{Type: typ.Unknown, Functions: []exportrelation.Function{{
+		Path:  "make",
+		Arity: 1,
+		Return: exportrelation.Value{Table: []exportrelation.Member{
+			{Suffix: ".id", Value: exportrelation.Value{Parameter: &parameter}},
+			{Suffix: ".meta", Value: exportrelation.Value{Table: []exportrelation.Member{{Suffix: ".route", Value: exportrelation.Value{Scalar: `scalar/string/"worker"`}}}}},
+		}},
+	}}}
+	summary := exporter.DeriveSummaryWithImports(result, source, map[string]exportrelation.Summary{"upstream": upstream}, map[string]string{"upstream": "upstream"})
+	for _, name := range []string{"make", "forward"} {
+		function, ok := summary.Function(name, 1)
+		if !ok || len(function.Return.Table) != 2 || len(function.Return.Table[1].Value.Table) != 1 {
+			t.Fatalf("%s relation = %#v, want closed nested table witness", name, function)
+		}
 	}
 }

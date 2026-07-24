@@ -45,10 +45,19 @@ func Derive(result engine.Result) typ.Type {
 // body; unsupported control flow and expressions simply publish no relation.
 func DeriveSummary(result engine.Result, source string) exportrelation.Summary {
 	export := Derive(result)
-	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export)}
+	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, nil, nil)}
 }
 
-func deriveFunctions(source string, export typ.Type) []exportrelation.Function {
+// DeriveSummaryWithImports preserves an already-published imported return
+// relation through a one-step forwarding wrapper. Both the wrapper's exported
+// callable surface and the imported relation must be present; source spelling
+// alone never creates a cross-module result witness.
+func DeriveSummaryWithImports(result engine.Result, source string, imports map[string]exportrelation.Summary, aliases map[string]string) exportrelation.Summary {
+	export := Derive(result)
+	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, imports, aliases)}
+}
+
+func deriveFunctions(source string, export typ.Type, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
 	stmts, err := parse.ParseString(source, "<export-relation>")
 	if err != nil {
 		return nil
@@ -110,7 +119,7 @@ func deriveFunctions(source string, export typ.Type) []exportrelation.Function {
 		if cut := strings.IndexByte(path, '.'); cut > 0 {
 			relative = path[cut+1:]
 		}
-		if relation, ok := functionRelation(relative, functions[path]); ok && publishedFunction(export, relative, relation.Arity) {
+		if relation, ok := functionRelation(relative, functions[path], imports, aliases); ok && publishedFunction(export, relative, relation.Arity) {
 			out = append(out, relation)
 		}
 	}
@@ -174,7 +183,7 @@ func memberPath(expr ast.Expr) (string, bool) {
 	}
 }
 
-func functionRelation(path string, fn *ast.FunctionExpr) (exportrelation.Function, bool) {
+func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Function, bool) {
 	if fn == nil || fn.ParList == nil || fn.ParList.HasVargs {
 		return exportrelation.Function{}, false
 	}
@@ -185,12 +194,94 @@ func functionRelation(path string, fn *ast.FunctionExpr) (exportrelation.Functio
 	relation := exportrelation.Function{Path: path, Arity: len(params)}
 	if len(fn.Stmts) == 1 {
 		if ret, ok := fn.Stmts[0].(*ast.ReturnStmt); ok && len(ret.Exprs) == 1 {
-			value, ok := templateValue(ret.Exprs[0], params)
-			relation.Return = value
-			return relation, ok && relation.Valid()
+			if value, ok := templateValue(ret.Exprs[0], params); ok {
+				relation.Return = value
+				return relation, relation.Valid()
+			}
+			if value, ok := forwardedImportedReturn(ret.Exprs[0], params, imports, aliases); ok {
+				relation.Return = value
+				return relation, relation.Valid()
+			}
+		}
+	}
+	if len(fn.Stmts) == 2 {
+		local, localOK := fn.Stmts[0].(*ast.LocalAssignStmt)
+		ret, returnOK := fn.Stmts[1].(*ast.ReturnStmt)
+		if localOK && returnOK && len(local.Names) == 1 && len(local.Exprs) == 1 && len(ret.Exprs) == 1 {
+			if returned, ok := ret.Exprs[0].(*ast.IdentExpr); ok && returned.Value == local.Names[0] {
+				value, ok := templateValue(local.Exprs[0], params)
+				relation.Return = value
+				return relation, ok && relation.Valid()
+			}
 		}
 	}
 	return exportrelation.Function{}, false
+}
+
+func forwardedImportedReturn(expr ast.Expr, params map[string]int, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Value, bool) {
+	call, ok := expr.(*ast.FuncCallExpr)
+	if !ok || call.Receiver != nil || call.Method != "" {
+		return exportrelation.Value{}, false
+	}
+	callee, ok := call.Func.(*ast.AttrGetExpr)
+	if !ok {
+		return exportrelation.Value{}, false
+	}
+	module, ok := callee.Object.(*ast.IdentExpr)
+	if !ok || aliases == nil || imports == nil {
+		return exportrelation.Value{}, false
+	}
+	modulePath, found := aliases[module.Value]
+	if !found {
+		return exportrelation.Value{}, false
+	}
+	name := ast.KeyName(callee.Key)
+	summary, found := imports[modulePath]
+	if !found || name == "" {
+		return exportrelation.Value{}, false
+	}
+	function, found := summary.Function(name, len(call.Args))
+	if !found {
+		return exportrelation.Value{}, false
+	}
+	arguments := make([]int, len(call.Args))
+	for index, argument := range call.Args {
+		identifier, ok := argument.(*ast.IdentExpr)
+		if !ok {
+			return exportrelation.Value{}, false
+		}
+		parameter, ok := params[identifier.Value]
+		if !ok {
+			return exportrelation.Value{}, false
+		}
+		arguments[index] = parameter
+	}
+	return remapParameters(function.Return, arguments)
+}
+
+func remapParameters(value exportrelation.Value, arguments []int) (exportrelation.Value, bool) {
+	if value.Parameter != nil {
+		if *value.Parameter < 0 || *value.Parameter >= len(arguments) {
+			return exportrelation.Value{}, false
+		}
+		parameter := arguments[*value.Parameter]
+		return exportrelation.Value{Parameter: &parameter}, true
+	}
+	if value.Scalar != "" {
+		return exportrelation.Value{Scalar: value.Scalar}, true
+	}
+	if len(value.Table) == 0 {
+		return exportrelation.Value{}, false
+	}
+	out := exportrelation.Value{Table: make([]exportrelation.Member, 0, len(value.Table))}
+	for _, member := range value.Table {
+		child, ok := remapParameters(member.Value, arguments)
+		if !ok {
+			return exportrelation.Value{}, false
+		}
+		out.Table = append(out.Table, exportrelation.Member{Suffix: member.Suffix, Value: child})
+	}
+	return out, true
 }
 
 func templateValue(expr ast.Expr, params map[string]int) (exportrelation.Value, bool) {

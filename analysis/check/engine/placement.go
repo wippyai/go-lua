@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 )
 
@@ -238,6 +239,47 @@ func placementAllocationByIdentity(identity string, partition equation.Partition
 		}
 	}
 	return placementAllocationFact{}, false
+}
+
+// placementImportedReturnFacts instantiates the finite table graph carried by
+// an exact imported return relation. The relation is admitted only after the
+// module exporter has validated its callable surface, and call-results has
+// matched it to this provider and return slot. These are fresh allocation
+// witnesses at this call boundary, not aliases reconstructed from a result
+// type or source spelling.
+func placementImportedReturnFacts(template exportrelation.Value, result, application string) []equation.Fact {
+	if result == "" || application == "" || len(template.Table) == 0 {
+		return nil
+	}
+	var facts []equation.Fact
+	var instantiate func(exportrelation.Value, string, string) string
+	instantiate = func(value exportrelation.Value, target, suffix string) string {
+		if len(value.Table) == 0 {
+			return ""
+		}
+		identity := "allocation/imported/" + base64.RawURLEncoding.EncodeToString([]byte(application)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix))
+		children := make([]string, 0)
+		for _, member := range value.Table {
+			if len(member.Value.Table) == 0 {
+				continue
+			}
+			childSuffix := suffix + member.Suffix
+			childTarget := "placement/imported/" + base64.RawURLEncoding.EncodeToString([]byte(identity+"/"+member.Suffix))
+			if instantiate(member.Value, childTarget, childSuffix) != "" {
+				children = append(children, childTarget)
+			}
+		}
+		encoded, err := encodePlacementAllocation(placementAllocationFact{
+			Identity: identity, Result: target, Kind: "manifest.allocation", Complete: true, Children: children,
+		})
+		if err == nil {
+			facts = append(facts, equation.Fact{Key: placementAllocationFactKey(identity), Value: encoded})
+			return identity
+		}
+		return ""
+	}
+	instantiate(template, result, "root")
+	return facts
 }
 
 func placementBindingForTerm(term string, partition equation.Partition) (string, bool) {

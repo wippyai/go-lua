@@ -10055,9 +10055,10 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if imported, ok := importedProviderResultValue(lexical, provider, index, argumentTerms, partition); ok {
 					value = imported
 				}
-				if relation, parameterized, ok := importedProviderRelationValue(lexical, provider, application, index, argumentTerms, partition); ok {
+				if relation, template, parameterized, ok := importedProviderRelationValue(lexical, provider, application, index, argumentTerms, partition); ok {
 					value = relation
 					importedRelation = parameterized
+					values = append(values, placementImportedReturnFacts(template, string(result), strings.TrimPrefix(string(application), "call/"))...)
 				}
 				if summary, ok := importedProviderResultType(lexical, provider, index, argumentTerms, partition); ok {
 					importedSummary = summary
@@ -10558,31 +10559,31 @@ func hostGlobalProviderResultType(lexical *lexicalEvaluator, provider []byte, in
 // provider. It is derived solely from the require-seeded entry export and
 // closed call arguments, so callers may carry it as summary metadata without
 // turning an absent provider result into a type witness.
-func importedProviderRelationValue(lexical *lexicalEvaluator, provider, application []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool, bool) {
+func importedProviderRelationValue(lexical *lexicalEvaluator, provider, application []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, exportrelation.Value, bool, bool) {
 	if lexical == nil || index != 0 {
-		return nil, false, false
+		return nil, exportrelation.Value{}, false, false
 	}
 	module, suffix, load, ok := importedProviderTarget(provider)
 	if !ok || load || suffix == "" {
-		return nil, false, false
+		return nil, exportrelation.Value{}, false, false
 	}
 	suffix = strings.TrimPrefix(suffix, ".")
 	lexical.importedAuthorityMu.RLock()
 	summary, found := lexical.importedRelations[module]
 	lexical.importedAuthorityMu.RUnlock()
 	if !found {
-		return nil, false, false
+		return nil, exportrelation.Value{}, false, false
 	}
 	function, found := summary.Function(suffix, len(arguments))
 	if !found {
-		return nil, false, false
+		return nil, exportrelation.Value{}, false, false
 	}
 	declared, found := importedProviderResultType(lexical, provider, index, arguments, partition)
 	if found && !relationReturnTypeSafe(declared, make(map[typ.Type]bool)) {
-		return nil, false, false
+		return nil, exportrelation.Value{}, false, false
 	}
 	value, ok := materializeImportedReturn(function.Return, application, arguments, partition)
-	return value, templateUsesParameter(function.Return), ok
+	return value, function.Return, templateUsesParameter(function.Return), ok
 }
 
 func templateUsesParameter(template exportrelation.Value) bool {
