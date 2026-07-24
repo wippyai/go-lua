@@ -682,6 +682,36 @@ local value = first({"ready"})
 	}
 }
 
+func TestCheckWithImportsRetainsChainedGenericArrayResult(t *testing.T) {
+	item := typ.NewTypeParam("T", nil)
+	u := typ.NewTypeParam("U", nil)
+	a := typ.NewTypeParam("A", nil)
+	mapper := typ.Func().Param("item", item).Returns(u).Build()
+	reducer := typ.Func().Param("acc", a).Param("item", item).Returns(a).Build()
+	predicate := typ.Func().Param("item", item).Returns(typ.Boolean).Build()
+	iter := typetable.NewRecord().
+		Field("filter", typ.Func().TypeParamRef(item).Param("arr", typ.NewArray(item)).Param("predicate", predicate).Returns(typ.NewArray(item)).Build()).
+		Field("map", typ.Func().TypeParamRef(item).TypeParamRef(u).Param("arr", typ.NewArray(item)).Param("fn", mapper).Returns(typ.NewArray(u)).Build()).
+		Field("reduce", typ.Func().TypeParamRef(item).TypeParamRef(a).Param("arr", typ.NewArray(item)).Param("fn", reducer).Param("initial", a).Returns(a).Build()).
+		Build()
+	result, err := engine.CheckWithImports(`
+local iter = require("iter")
+local words: {string} = {"Ada", "Bob"}
+local filtered = iter.filter(words, function(name: string): boolean return #name > 0 end)
+local names = iter.map(filtered, function(name: string): string return name end)
+local named: {string} = names
+local lengths = iter.map(names, function(name: string): number return #name end)
+local measured: {number} = lengths
+local total: number = iter.reduce(lengths, function(acc: number, length: number): number return acc + length end, 0)
+`, map[string]typ.Type{"iter": iter})
+	if err != nil {
+		t.Fatalf("CheckWithImports: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("chained generic array result diagnostics = %#v published=%#v", result.Diagnostics, result.PublishedDiagnostics)
+	}
+}
+
 func TestCheckWithImportsRetainsExplicitAnyResultAtEachAssignmentSite(t *testing.T) {
 	source := `
 local provider = require("provider")

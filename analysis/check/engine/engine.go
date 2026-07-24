@@ -7610,6 +7610,9 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			}
 		}
 		if !known {
+			if optionalMethodReceiver(operands.receiver, receiver, operands.method) {
+				return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("cannot call method on an optional value without a nil check: %s may be nil", operands.display)), nil
+			}
 			if receiverType, declared := declaredTypeForTerm(operands.receiver, partition); declared && declaredMethodMissing(receiverType, operands.method) {
 				if missing, encoded := memberMissingValue(receiverType); encoded {
 					return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
@@ -8916,6 +8919,36 @@ func currentMethodCallable(receiverTerm, receiver []byte, method string, partiti
 	return methodCallable(receiver, method)
 }
 
+// optionalMethodReceiver proves only the failure that follows from an
+// already-published optional receiver type: a method exists on its non-nil
+// projection, but this call has not established that projection.
+func optionalMethodReceiver(receiverTerm, receiver []byte, method string) bool {
+	// The front preserves an immediately indexed expression as a temporary.
+	// A named path can have a dominating truthiness guard that has already
+	// refined its presence, so its value alone is not enough to reject a call.
+	if !strings.HasPrefix(string(receiverTerm), "temp/") {
+		return false
+	}
+	receiverType, ok := shapefact.DecodeTarget(receiver)
+	if !ok || !optionalConcreteWitnessType(receiverType) || method == "" {
+		return false
+	}
+	projected := proof.ProjectionWithoutNil(receiverType)
+	if projected == nil {
+		return false
+	}
+	segments := []segment.Segment{{Kind: segment.SegmentField, Name: method}}
+	callee, found := variant.FieldAtPath(projected, segments)
+	if !found {
+		callee, found = access.Field(projected, method)
+	}
+	if !found || callee == nil {
+		return false
+	}
+	_, callable := unwrap.Alias(subst.ExpandInstantiated(callee)).(*typ.Function)
+	return callable
+}
+
 func isClaimRefinement(value []byte) bool {
 	return strings.HasPrefix(string(value), "scalar/claim/")
 }
@@ -10216,7 +10249,13 @@ func inferImportedTypeArgs(expected, actual typ.Type, params map[string]bool, bi
 	}
 	if parameter, ok := expected.(*typ.TypeParam); ok && params[parameter.Name] {
 		if prior := bindings[parameter.Name]; prior != nil {
-			return typ.TypeEquals(prior, actual)
+			// A later concrete argument may be a narrower inhabitant of an
+			// already-bound generic parameter.  The binding itself remains the
+			// published contract: accepting only an actual subtype cannot widen
+			// it or manufacture a result witness.  This is needed for ordinary
+			// reducers whose callback fixes A as number while their literal seed
+			// is an integer.
+			return typ.TypeEquals(prior, actual) || subtype.IsSubtype(actual, prior)
 		}
 		bindings[parameter.Name] = actual
 		return true
