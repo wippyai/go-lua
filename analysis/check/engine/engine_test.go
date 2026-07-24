@@ -276,6 +276,29 @@ end
 	}
 }
 
+func TestCheckInstantiatesGenericOptionalStdlibResult(t *testing.T) {
+	result, err := engine.Check(`
+local items: {string} = {"one", "two"}
+local removed: string? = table.remove(items)
+local required: string = table.remove(items)
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	var requiredRefuted bool
+	for _, item := range result.Diagnostics {
+		if strings.HasPrefix(item.Key, "claim/unproven/") && strings.Contains(string(item.Value), `"string?"`) {
+			t.Fatalf("optional table.remove result remained unproven: %#v", result.Diagnostics)
+		}
+		if strings.HasPrefix(item.Key, "type.assignment/") && strings.Contains(string(item.Value), "required") && strings.Contains(string(item.Value), "not string") {
+			requiredRefuted = true
+		}
+	}
+	if !requiredRefuted {
+		t.Fatalf("generic optional stdlib result = values %#v diagnostics %#v", result.Values, result.Diagnostics)
+	}
+}
+
 func TestCheckPublishesFrozenTableMutation(t *testing.T) {
 	result, err := engine.Check(`
 local root = { value = 1 }

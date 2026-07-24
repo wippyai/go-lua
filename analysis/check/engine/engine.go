@@ -6943,6 +6943,16 @@ func providerResultValue(provider []byte, index int, arguments map[int][]byte, p
 			return providerReturnTypeValue(condition.ResultType)
 		}
 	}
+	// A global provider's declared function is the same closed authority used
+	// for its finite result slots.  Instantiate it only from exact argument
+	// facts already published at this call boundary.  This preserves optional
+	// results (for example table.remove) without promoting an unresolved
+	// generic parameter or an open call into a proof.
+	if signature, found := (signaturelookup.Source{IncludeStdlib: true}).LookupView(name); found && signature.Type != nil {
+		if result, instantiated := instantiateProviderReturn(signature.Type, arguments, partition, index); instantiated {
+			return providerReturnTypeValue(result)
+		}
+	}
 	result, ok := signaturelookup.StdlibResultSlot(name, index)
 	if !ok {
 		return nil, false
@@ -7015,7 +7025,7 @@ func importedProviderResultType(provider []byte, index int, arguments map[int][]
 	if !ok || function == nil || index < 0 || index >= len(function.Returns) || function.Returns[index] == nil {
 		return nil, false
 	}
-	returnType, ok := instantiateImportedReturn(function, arguments, partition, index)
+	returnType, ok := instantiateProviderReturn(function, arguments, partition, index)
 	if !ok {
 		return nil, false
 	}
@@ -7033,10 +7043,11 @@ func importedReturnValue(result typ.Type) ([]byte, bool) {
 	return providerReturnTypeValue(result)
 }
 
-// instantiateImportedReturn unifies only closed argument types already
-// published at this call boundary.  It is deliberately structural and
-// fail-closed: an incomplete generic match leaves the external result Top.
-func instantiateImportedReturn(function *typ.Function, arguments map[int][]byte, partition equation.Partition, index int) (typ.Type, bool) {
+// instantiateProviderReturn unifies only closed argument types already
+// published at this call boundary. It is deliberately structural and
+// fail-closed: an incomplete generic match leaves the provider result Top.
+// It serves both resolved module exports and standard-library providers.
+func instantiateProviderReturn(function *typ.Function, arguments map[int][]byte, partition equation.Partition, index int) (typ.Type, bool) {
 	if function == nil || index < 0 || index >= len(function.Returns) || function.Returns[index] == nil {
 		return nil, false
 	}
@@ -7060,7 +7071,7 @@ func instantiateImportedReturn(function *typ.Function, arguments map[int][]byte,
 		if !known {
 			continue
 		}
-		actual, decoded := shapefact.DecodeTarget(value)
+		actual, decoded := providerArgumentType(value)
 		if !decoded || !inferImportedTypeArgs(expected.Type, actual, params, bindings) {
 			return nil, false
 		}
@@ -7071,6 +7082,72 @@ func instantiateImportedReturn(function *typ.Function, arguments map[int][]byte,
 		}
 	}
 	return subst.Substitute(function.Returns[index], bindings), true
+}
+
+// providerArgumentType recovers a finite array witness from a sealed literal
+// only when every present top-level member is an integer-indexed, exact value.
+// This is the same evidence accepted by tableAgainstContainer; an open table,
+// object field, nested member, absent entry, or unknown element fails closed.
+func providerArgumentType(value []byte) (typ.Type, bool) {
+	if target, ok := shapefact.DecodeTarget(value); ok {
+		return target, true
+	}
+	table, ok := shapefact.DecodeTable(value)
+	if !ok || !table.Closed || len(table.Members) == 0 {
+		return nil, false
+	}
+	elements := make([]typ.Type, 0, len(table.Members))
+	for _, member := range table.Members {
+		segments, valid := segment.ParseFormattedSegments(member.Suffix)
+		if !valid || len(segments) != 1 || segments[0].Kind != segment.SegmentIndexInt || !member.Present {
+			return nil, false
+		}
+		element, known := expressionValueType([]byte(member.Value))
+		if !known {
+			return nil, false
+		}
+		elements = append(elements, element)
+	}
+	if base, uniform := uniformLiteralBase(elements); uniform {
+		return typ.NewArray(base), true
+	}
+	return typ.NewArray(typ.MaterializeUnion(elements)), true
+}
+
+// uniformLiteralBase widens only a homogeneous finite literal family. The
+// literal shape remains the authority for the inference; widening to its
+// common primitive merely expresses the array contract expected by a generic
+// provider. Mixed or non-literal entries retain their exact union instead.
+func uniformLiteralBase(values []typ.Type) (typ.Type, bool) {
+	if len(values) == 0 {
+		return nil, false
+	}
+	var base kind.Kind
+	set := false
+	for _, value := range values {
+		literal, ok := value.(*typ.Literal)
+		if !ok {
+			return nil, false
+		}
+		if !set {
+			base = literal.Base
+			set = true
+		} else if base != literal.Base {
+			return nil, false
+		}
+	}
+	switch base {
+	case kind.Boolean:
+		return typ.Boolean, true
+	case kind.String:
+		return typ.String, true
+	case kind.Integer:
+		return typ.Integer, true
+	case kind.Number:
+		return typ.Number, true
+	default:
+		return nil, false
+	}
 }
 
 func inferImportedTypeArgs(expected, actual typ.Type, params map[string]bool, bindings map[string]typ.Type) bool {
@@ -7175,13 +7252,12 @@ func providerReturnTypeValue(result typ.Type) ([]byte, bool) {
 	if result == nil {
 		return nil, false
 	}
-	// The value lattice can carry an exact declared shape, but it cannot make
-	// a multi-return's optional slot, or an unresolved generic parameter, into
-	// a concrete runtime scalar.  Leave those slots at Top: their declared
-	// contracts remain available to the ordinary signature checker without
-	// manufacturing a value fact or collapsing Lua's return expansion rules.
+	// The value lattice can carry an exact declared shape, including an
+	// optional result. The optional remains a value-level union with nil, so it
+	// cannot prove a non-optional claim. Unresolved generic parameters still
+	// have no concrete runtime witness and remain Top.
 	switch unwrap.Alias(result).Kind() {
-	case kind.Any, kind.Unknown, kind.Never, kind.Optional, kind.Union, kind.TypeParam:
+	case kind.Any, kind.Unknown, kind.Never, kind.Union, kind.TypeParam:
 		return nil, false
 	}
 	return shapefact.EncodeTarget(result)
