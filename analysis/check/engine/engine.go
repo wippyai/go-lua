@@ -2900,6 +2900,71 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 	return seeds, true, hasDirectMethod
 }
 
+// uncalledStaticAssignmentBoundary admits a straight-line lexical body whose
+// only externally callable values are its own captured local closures.  The
+// entry contains ordinary declared formal witnesses; captured closures are
+// supplied separately by uncalledChildEntry, which refuses an absent or opaque
+// capability.  This is deliberately narrower than a general declaration-only
+// execution: branch-selected facts, indexing, and channel operations still
+// require a caller-owned partition.
+//
+// Its sole publication consumer is an assignment claim in this same body.  A
+// direct local call must produce an owned result slot; the declaration-only
+// caller never imports a guard effect from a no-result helper.
+func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, bool) {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) == 0 || len(child.Boundary.Captures) == 0 {
+		return nil, false
+	}
+	captures := make(map[string]bool, len(child.Boundary.Captures))
+	for _, capture := range child.Boundary.Captures {
+		captures[boundaryTerm(capture.Symbol)] = true
+	}
+	hasAssignment, hasResultCall := false, false
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "claim":
+			for _, operand := range operation.Operands {
+				if operand.Role == "kind" && string(operand.Term.Encoding) == "claim-kind/3" {
+					hasAssignment = true
+				}
+			}
+		case "apply":
+			callee := ""
+			resultArity := ""
+			for _, operand := range operation.Operands {
+				if operand.Role == "callee" {
+					callee = string(operand.Term.Encoding)
+				}
+				if operand.Role == "result-arity" {
+					resultArity = string(operand.Term.Encoding)
+				}
+			}
+			if !captures[callee] || resultArity == "" || resultArity == "0" {
+				return nil, false
+			}
+			hasResultCall = true
+		case "branch-relations", "dynamic-index-read", "channel-select":
+			return nil, false
+		}
+	}
+	if !hasAssignment || !hasResultCall {
+		return nil, false
+	}
+	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			return nil, false
+		}
+		declared := child.WIR.Type(parameter.Type)
+		value, ok := shapefact.EncodeTarget(declared)
+		if !ok || declared == nil {
+			return nil, false
+		}
+		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
+	}
+	return seeds, true
+}
+
 func artifactOperand(operands []equation.Operand, role string) ([]byte, bool) {
 	for _, operand := range operands {
 		if operand.Role == role {
@@ -2970,7 +3035,7 @@ func hasDeclaredFormalMethodCall(child front.Compilation, operation equation.Equ
 // participate in later validation, while a sealed local closure contributes
 // only its already-published call capability. Unknown or non-callable captures
 // therefore leave the child dormant rather than receiving a synthetic entry.
-func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition) ([]byte, bool, error) {
+func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures bool) ([]byte, bool, error) {
 	seeds := append([]entrySeed(nil), formalSeeds...)
 	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
 	for _, capture := range child.Boundary.Captures {
@@ -2987,7 +3052,7 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 		if !found {
 			return nil, false, nil
 		}
-		if _, explicitAny := uncalledExplicitAnyBoundary(captured); !explicitAny {
+		if _, explicitAny := uncalledExplicitAnyBoundary(captured); !explicitAny && !allowTypedCaptures {
 			return nil, false, nil
 		}
 		seeds = append(seeds, entrySeed{Term: term, Value: value})
@@ -3637,12 +3702,17 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// Demand either form privately and qualify its facts by body before they
 	// enter the root publication closure.
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
-	declaredBoundary, declaredMethodBoundary := false, false
+	declaredBoundary, declaredMethodBoundary, staticAssignmentBoundary := false, false, false
 	if declaredSeeds, admitted, methodBoundary := uncalledDeclaredBoundary(child); admitted {
 		uncalledSeeds = declaredSeeds
 		explicitAnyBoundary = false
 		declaredBoundary = true
 		declaredMethodBoundary = methodBoundary
+	}
+	if staticSeeds, admitted := uncalledStaticAssignmentBoundary(child); admitted {
+		uncalledSeeds = staticSeeds
+		explicitAnyBoundary = false
+		staticAssignmentBoundary = true
 	}
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
 	staticSeeds, staticMemberReadBoundary := uncalledStaticMemberReadSeeds(child)
@@ -3655,7 +3725,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		if len(child.Boundary.Captures) == 0 {
 			entry, entryErr = encodeChildEntry(uncalledSeeds)
 		} else {
-			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition)
+			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, staticAssignmentBoundary)
 		}
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
@@ -3690,6 +3760,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
 			}
+			if staticAssignmentBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") {
+				continue
+			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			if span, ok := spans[diagnostic.Key]; ok {
@@ -3709,6 +3782,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				continue
 			}
 			if staticMemberReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
+				continue
+			}
+			if staticAssignmentBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") {
 				continue
 			}
 			key := "child/" + body + "/" + item.Fact.Key

@@ -436,6 +436,25 @@ end
 	}
 }
 
+func TestCheckPublishesUncalledStaticAssignmentThroughTypedClosedCapture(t *testing.T) {
+	result, err := engine.Check(`
+local function load(ok: boolean): string?
+  return nil
+end
+local function process(ok: boolean)
+  local x = load(ok)
+  local s: string = x
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(result.Diagnostics) != 1 || !strings.Contains(result.Diagnostics[0].Key, "/type.assignment/") ||
+		!strings.Contains(string(result.Diagnostics[0].Value), "cannot assign x") {
+		t.Fatalf("uncalled typed-capture assignment diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestCheckPublishesExplicitAnyBoundaryViolationThroughGuardedMemberRead(t *testing.T) {
 	result, err := engine.Check(`
 local raw: any = {kind = "task", route_id = "start"}
