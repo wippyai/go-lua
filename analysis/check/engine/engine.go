@@ -243,7 +243,7 @@ func CheckWithImports(source string, imports map[string]typ.Type) (result Result
 		}
 		diagnosticSpans[key] = span
 	}
-	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, lexical.lifecycleEvidence, lexical.selectEvidence)
+	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, compilation.BranchSpans, lexical.lifecycleEvidence, lexical.selectEvidence)
 	published = mergeChildPublishedDiagnostics(published, lexical.childPublished)
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
@@ -348,7 +348,7 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]
 // claim operation that produced it and to the abstract value already closed by
 // the VM.  In particular, it neither evaluates source nor manufactures a
 // diagnostic that is absent from closure.Diagnostics.
-func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans map[string]wir.Span, lifecycleEvidence, selectEvidence map[string][]DiagnosticEvidence) []PublishedDiagnostic {
+func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans, branchSpans map[string]wir.Span, lifecycleEvidence, selectEvidence map[string][]DiagnosticEvidence) []PublishedDiagnostic {
 	if len(closure.Diagnostics) == 0 {
 		return nil
 	}
@@ -413,7 +413,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			continue
 		}
 		if operation, ok := branchOperation(artifact, diagnosticOperationName(fact.Key)); ok && (strings.HasPrefix(fact.Key, "advice.always_true_guard/") || strings.HasPrefix(fact.Key, "lint.condition.redundant/")) {
-			out = append(out, enrichConstantGuardDiagnostic(item, operation, fact.Key))
+			out = append(out, enrichConstantGuardDiagnostic(item, operation, fact.Key, artifact, branchSpans))
 			continue
 		}
 		name, assignment := strings.CutPrefix(fact.Key, "type.assignment/")
@@ -1058,7 +1058,7 @@ func enrichRedundantCastDiagnostic(item PublishedDiagnostic, operation equation.
 	return item
 }
 
-func enrichConstantGuardDiagnostic(item PublishedDiagnostic, operation equation.Equation, key string) PublishedDiagnostic {
+func enrichConstantGuardDiagnostic(item PublishedDiagnostic, operation equation.Equation, key string, artifact equation.Artifact, branchSpans map[string]wir.Span) PublishedDiagnostic {
 	if strings.HasPrefix(key, "advice.always_true_guard/") {
 		item.Message = "condition is proven always true"
 		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "condition is proven to be true on every reachable path"}}
@@ -1074,10 +1074,72 @@ func enrichConstantGuardDiagnostic(item PublishedDiagnostic, operation equation.
 			item.Message = "condition is always false here"
 			item.Help = "Remove this unreachable branch, or change the prior guard if this path should still run."
 		}
-		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "condition is proven constant under its enclosing guard"}}
-		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "constant guard"}}
+		current, currentOK := branchPredicateDescription(operation)
+		prior, priorSpan, priorOK := enclosingBranchProof(operation, artifact, branchSpans)
+		if !currentOK || !priorOK {
+			item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "condition is proven constant under its enclosing guard"}}
+			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "constant guard"}}
+			return item
+		}
+		item.Evidence = []DiagnosticEvidence{
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "current check: " + current},
+			{Span: priorSpan, Kind: "abstract fact", Trust: "proven", Message: "prior guard established " + prior},
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: strings.Split(current, " ")[0] + " is unchanged between the prior guard and this check"},
+		}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "current check"}, {Span: priorSpan, Message: "prior guard"}}
 	}
 	return item
+}
+
+func branchPredicateDescription(operation equation.Equation) (string, bool) {
+	var predicate branchPredicateWire
+	display := ""
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "predicate":
+			if !strings.HasPrefix(string(operand.Term.Encoding), branchPredicatePrefix) || json.Unmarshal(operand.Term.Encoding[len(branchPredicatePrefix):], &predicate) != nil {
+				return "", false
+			}
+		case "predicate-display":
+			display = string(operand.Term.Encoding)
+		}
+	}
+	if display == "" || predicate.Literal == "" {
+		return "", false
+	}
+	literal, err := displayValue([]byte(predicate.Literal))
+	if err != nil {
+		return "", false
+	}
+	switch predicate.Kind {
+	case "literal-equal":
+		return display + " equals " + string(literal), true
+	case "literal-not":
+		return display + " does not equal " + string(literal), true
+	default:
+		return "", false
+	}
+}
+
+func enclosingBranchProof(operation equation.Equation, artifact equation.Artifact, spans map[string]wir.Span) (string, wir.Span, bool) {
+	for _, guard := range operation.Guards {
+		parts := strings.Split(string(guard.Encoding), "/")
+		if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || parts[3] != "true" {
+			continue
+		}
+		prior, found := branchOperation(artifact, parts[2])
+		if !found {
+			continue
+		}
+		description, ok := branchPredicateDescription(prior)
+		if !ok {
+			continue
+		}
+		if left, right, found := strings.Cut(description, " equals "); found {
+			return left + " is " + right, spans[parts[2]], true
+		}
+	}
+	return "", wir.Span{}, false
 }
 
 func assignmentEvidenceValue(value []byte) string {
@@ -2211,7 +2273,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			return equation.TransactionResult{}, fmt.Errorf("engine: select child %q: %w", prototype, evaluateErr)
 		}
 		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, outcome.Diagnostics)
-		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, nil, nil)
+		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, nil, nil)
 		for _, diagnostic := range outcome.Diagnostics {
 			if !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
@@ -5527,7 +5589,7 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 		default:
 			// Evidence, arm boundaries, and difference constraints are closed
 			// branch metadata. They are intentionally not alternate selectors.
-			if !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") {
+			if operand.Role != "predicate-display" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") {
 				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}

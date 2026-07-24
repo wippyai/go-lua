@@ -70,6 +70,9 @@ func branchOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Ope
 			return nil, err
 		}
 		operands = append(operands, equation.Operand{Role: "predicate", Term: predicate})
+		if display := check.Path.String(); display != "" {
+			operands = append(operands, equation.Operand{Role: "predicate-display", Term: equation.ClosedTerm([]byte(display))})
+		}
 	}
 	if instruction.A.Kind == wir.OperandNone && check.Kind == wir.CheckNone {
 		return nil, fmt.Errorf("branch has neither a scalar condition nor a normalized predicate")
