@@ -14,6 +14,25 @@ func TestStage1RedUncalledChildDiagnostics(t *testing.T) {
 	}
 }
 
+func TestStage1UncalledCapturedGenericReturnRejectsConcreteMismatch(t *testing.T) {
+	r := checkChildAdmission(t, `
+type Box<T> = {value: T}
+type StringBox = {value: string}
+local function make<T>(value: T): Box<T>
+  return {value = value}
+end
+local function build(): StringBox
+  return make(true)
+end
+return build`)
+	for _, diagnostic := range r.PublishedDiagnostics {
+		if strings.Contains(diagnostic.Fact.Key, "/type.return.contract/") && diagnostic.Span.StartLine == 8 {
+			return
+		}
+	}
+	t.Fatalf("captured generic return mismatch was not published: diagnostics=%#v published=%#v", r.Diagnostics, r.PublishedDiagnostics)
+}
+
 func TestTypedUncalledChildPublishesChannelSendPayloadViolation(t *testing.T) {
 	r := checkChildAdmission(t, `
 type Job = { id: string, meta: { attempt: number } }

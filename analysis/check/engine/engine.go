@@ -3789,6 +3789,46 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 	return seeds, true
 }
 
+// uncalledStaticCapturedReturnBoundary admits one parameter-free return
+// contract only when its sole captured dependency is an already-published
+// local closure and every call in the body targets that capability. The child
+// entry transports the capability itself; no callable, argument, result, or
+// return value is reconstructed from syntax. Branches, dynamic reads, and
+// external calls remain demand-driven.
+func (l *lexicalEvaluator) uncalledStaticCapturedReturnBoundary(child front.Compilation, partition equation.Partition) bool {
+	if l == nil || child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) != 0 || len(child.Boundary.Captures) != 1 || len(child.Boundary.DeclaredReturns) != 1 {
+		return false
+	}
+	capture := boundaryTerm(child.Boundary.Captures[0].Symbol)
+	if _, found := closureHandleFor([]byte(capture), partition); !found {
+		return false
+	}
+	called := false
+	applications := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "entry", "environment-write", "publication":
+			continue
+		case "apply":
+			callee, hasCallee := artifactOperand(operation.Operands, "callee")
+			arity, hasArity := artifactOperand(operation.Operands, "result-arity")
+			if !hasCallee || !hasArity || string(callee) != capture || string(arity) != "1" {
+				return false
+			}
+			called = true
+			applications["call/"+operation.Target.Name] = true
+		case "external-call", "call-results":
+			application, found := artifactOperand(operation.Operands, "application")
+			if !found || !applications[string(application)] {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return called
+}
+
 // uncalledStaticArithmeticBoundary admits a parameter-free closure only when
 // its entire call graph segment is already closed: imported member calls use a
 // project-published import authority and the local call targets a captured
@@ -5379,6 +5419,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		explicitAnyBoundary = false
 		localUnionReadBoundary = true
 	}
+	staticCapturedReturnBoundary := lexical.uncalledStaticCapturedReturnBoundary(child, partition)
 	arithmeticBoundary := lexical.uncalledStaticArithmeticBoundary(child, partition)
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
 	staticSeeds, staticMemberReadBoundary := uncalledStaticMemberReadSeeds(child)
@@ -5386,7 +5427,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		uncalledSeeds = staticSeeds
 		explicitAnyBoundary = false
 	}
-	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary) {
+	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary) {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
@@ -5395,7 +5436,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		} else if len(child.Boundary.Captures) == 0 {
 			entry, entryErr = encodeChildEntry(uncalledSeeds)
 		} else {
-			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, staticAssignmentBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary, staticAssignmentBoundary)
+			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, staticAssignmentBoundary || staticCapturedReturnBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary, staticAssignmentBoundary)
 		}
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
@@ -5439,6 +5480,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if arithmeticBoundary && !strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/") {
 				continue
 			}
+			if staticCapturedReturnBoundary && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
+				continue
+			}
 			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
 				continue
 			}
@@ -5472,6 +5516,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				continue
 			}
 			if arithmeticBoundary && !strings.HasPrefix(item.Fact.Key, "type.call.direct.argument_type/") {
+				continue
+			}
+			if staticCapturedReturnBoundary && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
 				continue
 			}
 			if indexedReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
