@@ -89,6 +89,7 @@ const (
 	heapIndexLowerPrefix       = "heap/index-lower/"
 	heapIndexUpperPrefix       = "heap/index-upper/"
 	indexReadDisplayPrefix     = "index-read-display/"
+	indexReadScalarPrefix      = "index-read-scalar/"
 )
 
 // branchPredicateWire mirrors the front's closed predicate wire vocabulary.
@@ -762,17 +763,19 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				targetSpan = item.Span
 			}
 			concrete := "value"
+			hasConcrete := false
 			if witness, ok := shapefact.DecodeTarget(value); ok && witness != nil {
-				concrete = typeformat.Short(proof.ProjectionWithoutNil(witness))
+				concrete, hasConcrete = optionalEvidenceDisplay(witness)
 			}
-			if declared, found := indexReadDeclaredDisplay(operands["value"], operation, closure.Values); found {
-				concrete = declared
+			if !hasConcrete {
+				concrete, hasConcrete = currentIndexScalarDisplay(operands["value"], operation, closure.Values)
 			}
 			if mapReadMissing {
 				concrete = "nil"
+				hasConcrete = false
 			}
 			valueEvidence := fmt.Sprintf("%s can be %s or nil here", sourceDisplay, concrete)
-			if concrete == "nil" {
+			if !hasConcrete || concrete == "nil" {
 				valueEvidence = fmt.Sprintf("%s can be nil here", sourceDisplay)
 			}
 			item.Message = fmt.Sprintf("cannot assign %s because it may be nil", sourceDisplay)
@@ -916,45 +919,94 @@ func diagnosticValueMayBeNil(value []byte) bool {
 	return ok && witness != nil && unwrap.IsOptionalLike(witness)
 }
 
-// indexReadDeclaredDisplay carries the already-resolved present element type
-// of one dynamic read through its exact write/claim chain. It is diagnostic
-// provenance, not a fallback type inference: callers receive no display when
-// the runtime index transaction did not publish the corresponding witness.
-func indexReadDeclaredDisplay(term []byte, operation equation.Equation, values []equation.Fact) (string, bool) {
-	if len(term) == 0 {
+// optionalEvidenceDisplay preserves a concrete spelling only for scalar
+// leaves. A canonical structural witness proves nilability, but it does not
+// retain a stable public name for an imported record or callable. Publishing
+// that reconstructed shape as an explanation would overstate what crossed the
+// transport, so those reads report only the proven nil possibility.
+func optionalEvidenceDisplay(witness typ.Type) (string, bool) {
+	witness = unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(witness)))
+	if !scalarEvidenceType(witness) {
 		return "", false
 	}
-	prefix := indexReadDisplayPrefix + string(term) + "/"
-	latest, display := "", ""
+	return typeformat.Short(witness), true
+}
+
+func scalarEvidenceType(witness typ.Type) bool {
+	if witness == nil {
+		return false
+	}
+	switch witness.Kind() {
+	case kind.Boolean, kind.Number, kind.Integer, kind.String, kind.Literal:
+		return true
+	case kind.Union:
+		union, ok := unwrap.Alias(subst.ExpandInstantiated(witness)).(*typ.Union)
+		if !ok || union == nil || len(union.Members) == 0 {
+			return false
+		}
+		for _, member := range union.Members {
+			if !scalarEvidenceType(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// currentIndexScalarDisplay admits a diagnostic spelling only when the
+// producing index read explicitly classified its existing type witness as a
+// scalar leaf. The marker is carried through ordinary writes with the value's
+// current epoch, so an older display cannot survive reassignment.
+func currentIndexScalarDisplay(term []byte, operation equation.Equation, values []equation.Fact) (string, bool) {
+	valuePrefix := "value/" + string(term) + "/"
+	latest := ""
 	for _, fact := range values {
-		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest && len(fact.Value) != 0 {
-			latest, display = fact.Key, string(fact.Value)
+		if strings.HasPrefix(fact.Key, valuePrefix) && fact.Key > latest {
+			latest = fact.Key
 		}
 	}
-	if display != "" {
-		return display, true
+	if latest == "" {
+		return dependentIndexScalarDisplay(operation, values)
 	}
-	// An annotation can retain its original static path while the immediately
-	// preceding write owns the concrete read result. That write is an explicit
-	// claim dependency, so accept exactly one matching display publication and
-	// leave ambiguous graphs without a narrator.
+	operationName := strings.TrimPrefix(latest, valuePrefix)
+	marker := indexReadScalarPrefix + string(term) + "/" + operationName
+	display := indexReadDisplayPrefix + string(term) + "/" + operationName
+	for _, fact := range values {
+		if fact.Key == marker && string(fact.Value) == "scalar" {
+			for _, candidate := range values {
+				if candidate.Key == display && len(candidate.Value) != 0 {
+					return string(candidate.Value), true
+				}
+			}
+		}
+	}
+	return dependentIndexScalarDisplay(operation, values)
+}
+
+func dependentIndexScalarDisplay(operation equation.Equation, values []equation.Fact) (string, bool) {
+	display := ""
 	for _, dependency := range operation.Dependencies {
 		suffix := "/" + dependency.Name
-		found := ""
-		for _, fact := range values {
-			if !strings.HasPrefix(fact.Key, indexReadDisplayPrefix) || !strings.HasSuffix(fact.Key, suffix) || len(fact.Value) == 0 {
+		for _, marker := range values {
+			if !strings.HasPrefix(marker.Key, indexReadScalarPrefix) || !strings.HasSuffix(marker.Key, suffix) || string(marker.Value) != "scalar" {
 				continue
 			}
-			if found != "" && found != string(fact.Value) {
+			candidate := ""
+			for _, fact := range values {
+				if fact.Key == indexReadDisplayPrefix+strings.TrimPrefix(marker.Key, indexReadScalarPrefix) && len(fact.Value) != 0 {
+					candidate = string(fact.Value)
+					break
+				}
+			}
+			if candidate == "" || (display != "" && display != candidate) {
 				return "", false
 			}
-			found = string(fact.Value)
-		}
-		if found != "" {
-			return found, true
+			display = candidate
 		}
 	}
-	return "", false
+	return display, display != ""
 }
 
 func functionContractDiagnostic(operation string, facts []equation.Fact) bool {
@@ -5551,6 +5603,9 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 				Key:   indexReadDisplayPrefix + target + "/" + operation.Target.Name,
 				Value: []byte(typeformat.Short(proof.ProjectionWithoutNil(sourceType))),
 			})
+			if _, scalar := optionalEvidenceDisplay(sourceType); scalar {
+				values = append(values, equation.Fact{Key: indexReadScalarPrefix + target + "/" + operation.Target.Name, Value: []byte("scalar")})
+			}
 		}
 	}
 	var diagnostics []equation.Fact
@@ -5580,7 +5635,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// applied to the same heap cell. Without this fact, alias[key] loses the
 	// authority needed by indexMutationKernel and a subsequent static read can
 	// only fall back to an optional shape.
-	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, methodReturnSummaryPrefix, "select/origin/", heapTableIdentityPrefix, "local-call-result/", indexReadDisplayPrefix} {
+	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, methodReturnSummaryPrefix, "select/origin/", heapTableIdentityPrefix, "local-call-result/", indexReadDisplayPrefix, indexReadScalarPrefix} {
 		if inherited, ok := currentEpochFact(prefix, operands["value"], partition); ok {
 			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: inherited})
 		} else if prefix == "select/origin/" {
@@ -6518,9 +6573,12 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	// slot nilability, and providerReturnTypeValue rejects open, generic, and
 	// any-shaped answers before they can reach this result slot.
 	if string(values[0].Value) == "scalar/top" {
-		if projected, display, ok := typedRuntimeIndexResult(operands["container"], operands["key"], partition); ok {
+		if projected, display, scalar, ok := typedRuntimeIndexResult(operands["container"], operands["key"], partition); ok {
 			values[0].Value = projected
 			values = append(values, equation.Fact{Key: indexReadDisplayPrefix + target + "/" + operation.Target.Name, Value: []byte(display)})
+			if scalar {
+				values = append(values, equation.Fact{Key: indexReadScalarPrefix + target + "/" + operation.Target.Name, Value: []byte("scalar")})
+			}
 		}
 	}
 	if allocation, found := placementAllocationForTerm(operands["container"], partition); found {
@@ -6529,10 +6587,10 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
-func typedRuntimeIndexResult(container, key []byte, partition equation.Partition) ([]byte, string, bool) {
+func typedRuntimeIndexResult(container, key []byte, partition equation.Partition) ([]byte, string, bool, bool) {
 	containerValue, err := resolveCurrentValue(container, partition)
 	if err != nil {
-		return nil, "", false
+		return nil, "", false, false
 	}
 	containerType, ok := shapefact.DecodeTarget(containerValue)
 	if !ok && isUnknownScalar(containerValue) {
@@ -6549,23 +6607,31 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	if !ok && strings.HasPrefix(string(containerValue), "scalar/claim/claim-kind/1/") {
 		containerType, ok = castTargetWitness(container, partition)
 	}
+	// A conservative current scalar is not a structural refutation. When the
+	// exact path already has a published type summary, retain that independent
+	// authority for this one RuntimeIndex projection. The summary is produced
+	// by the normal import/call transport; absent such a publication, the read
+	// remains Top.
+	if !ok {
+		containerType, ok = typedPathType(container, partition)
+	}
 	// A published type witness may have unrelated open members. RuntimeIndex
 	// still derives only the selected member, so an exact selected member stays
 	// available without treating the container itself as a closed return value.
 	if !ok || containerType == nil {
-		return nil, "", false
+		return nil, "", false, false
 	}
 	keyValue, err := resolveCurrentValue(key, partition)
 	if err != nil {
-		return nil, "", false
+		return nil, "", false, false
 	}
 	keyType, ok := expressionValueType(keyValue)
 	if !ok || keyType == nil {
-		return nil, "", false
+		return nil, "", false, false
 	}
 	result, ok := access.RuntimeIndex(containerType, keyType)
 	if !ok {
-		return nil, "", false
+		return nil, "", false, false
 	}
 	if indexPresenceProven(container, key, partition) {
 		if present := typetable.PresentReadonlyEntryValue(result); present != nil {
@@ -6574,9 +6640,10 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	}
 	encoded, ok := finiteReturnWitnessValue(result)
 	if !ok {
-		return nil, "", false
+		return nil, "", false, false
 	}
-	return encoded, typeformat.Short(proof.ProjectionWithoutNil(result)), true
+	_, scalar := optionalEvidenceDisplay(result)
+	return encoded, typeformat.Short(proof.ProjectionWithoutNil(result)), scalar, true
 }
 
 func castTargetWitness(term []byte, partition equation.Partition) (typ.Type, bool) {
