@@ -662,6 +662,16 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			declared = display
 		}
 		valueDescription := assignmentEvidenceValue(value)
+		if surface, found := assignmentMemberSurface(name, closure.Values); found {
+			if actual, expected, ok := assignmentDiagnosticFunctionTypes(item.Message); ok {
+				valueDescription, declared = actual, expected
+				if source, ok := assignmentDiagnosticSource(item.Message); ok {
+					sourceDisplay = source
+				}
+			} else {
+				valueDescription = "fun() -> " + assignmentEvidenceValue(surface)
+			}
+		}
 		structuralMismatch := assignmentMismatch{}
 		hasStructuralMismatch := false
 		// An explicit-any boundary is the authoritative source fact. Its earlier
@@ -734,6 +744,34 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		out = append(out, item)
 	}
 	return out
+}
+
+func assignmentMemberSurface(operation string, facts []equation.Fact) ([]byte, bool) {
+	prefix := "assignment-member-surface/" + operation
+	for _, fact := range facts {
+		if fact.Key == prefix && len(fact.Value) != 0 {
+			return append([]byte(nil), fact.Value...), true
+		}
+	}
+	return nil, false
+}
+
+func assignmentDiagnosticFunctionTypes(message string) (actual, expected string, ok bool) {
+	_, tail, found := strings.Cut(message, " because it is ")
+	if !found {
+		return "", "", false
+	}
+	actual, expected, found = strings.Cut(tail, ", not ")
+	return actual, expected, found && strings.HasPrefix(actual, "fun() -> ") && strings.HasPrefix(expected, "fun() -> ")
+}
+
+func assignmentDiagnosticSource(message string) (string, bool) {
+	prefix := "cannot assign "
+	if !strings.HasPrefix(message, prefix) {
+		return "", false
+	}
+	source, _, found := strings.Cut(strings.TrimPrefix(message, prefix), " because it is ")
+	return source, found && source != ""
 }
 
 func enrichMissingStaticPathDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
@@ -1781,6 +1819,7 @@ type lexicalEvaluator struct {
 	globalTypes         map[string]typ.Type
 	importedAuthorities map[string]typ.Type
 	typeOrigins         map[string]typ.Type
+	typeDefinitions     map[string]typ.Type
 	importedAuthorityMu sync.RWMutex
 }
 
@@ -1955,7 +1994,7 @@ func hasProjectableTableResult(child front.Compilation) bool {
 
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	table := interproc.NewProjectedTable()
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission)}
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions)}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
 		if compilation.PrototypeName != "" {
@@ -2350,13 +2389,9 @@ func declaredIndexableContainer(value typ.Type) bool {
 }
 
 func closureHandleFor(term []byte, partition equation.Partition) (closureHandle, bool) {
-	if root, suffix, member := tableAddress(term); member && suffix != "" {
-		if identity, found := tableIdentityForTerm(root, partition); found {
-			if cell, found := currentMemberCell(identity, suffix, partition); found {
-				if cell.Handle != nil {
-					return *cell.Handle, true
-				}
-			}
+	if cell, found := memberCellForTerm(term, partition); found {
+		if cell.Handle != nil {
+			return *cell.Handle, true
 		}
 	}
 	prefix := "closure/" + string(term) + "/"
@@ -2372,6 +2407,30 @@ func closureHandleFor(term []byte, partition equation.Partition) (closureHandle,
 	}
 	var handle closureHandle
 	return handle, json.Unmarshal(encoded, &handle) == nil && validClosureHandle(handle)
+}
+
+// memberCellForTerm resolves the final static member through its current
+// parent identity. A nested replacement (for example M.dep = {...}) changes
+// that parent identity, so consulting M's old flattened .dep.get cell would
+// revive a superseded callable capability.
+func memberCellForTerm(term []byte, partition equation.Partition) (memberCellWire, bool) {
+	root, suffix, member := tableAddress(term)
+	if !member || suffix == "" {
+		return memberCellWire{}, false
+	}
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid || len(segments) == 0 {
+		return memberCellWire{}, false
+	}
+	parent := append([]byte(nil), root...)
+	if len(segments) > 1 {
+		parent = append(parent, []byte(segment.FormatSegments(segments[:len(segments)-1]))...)
+	}
+	identity, found := tableIdentityForTerm(parent, partition)
+	if !found {
+		return memberCellWire{}, false
+	}
+	return currentMemberCell(identity, segment.FormatSegments(segments[len(segments)-1:]), partition)
 }
 
 func validClosureHandle(handle closureHandle) bool {
@@ -3866,17 +3925,22 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 					memberValue = []byte(member.Value)
 				}
 				values = append(values, heapMemberFact(identity, member.Suffix, operation.Target.Name, memberValue))
-				if cell, published, cellErr := memberCellFact(identity, member.Suffix, operation.Target.Name, memberValue, partition); cellErr != nil {
+				memberSource, memberIdentity := memberValue, []byte(nil)
+				if allocationResult, found := operationOperand(operation.Operands, "allocation-result"); found {
+					if source, found := heapMemberOriginCurrent(allocationResult, member.Suffix, partition); found {
+						memberSource = source
+						if resolved, found := tableIdentityForTerm(source, partition); found {
+							memberIdentity = resolved
+						}
+					}
+				}
+				if cell, published, cellErr := memberCellFactWithSource(identity, member.Suffix, operation.Target.Name, memberValue, memberSource, memberIdentity, partition); cellErr != nil {
 					return equation.TransactionResult{}, cellErr
 				} else if published {
 					values = append(values, cell)
 				}
-				if allocationResult, found := operationOperand(operation.Operands, "allocation-result"); found {
-					if source, found := heapMemberOriginCurrent(allocationResult, member.Suffix, partition); found {
-						if memberIdentity, found := tableIdentityForTerm(source, partition); found {
-							values = append(values, heapMemberIdentityFact(identity, member.Suffix, operation.Target.Name, memberIdentity))
-						}
-					}
+				if len(memberIdentity) != 0 {
+					values = append(values, heapMemberIdentityFact(identity, member.Suffix, operation.Target.Name, memberIdentity))
 				}
 			}
 		}
@@ -3884,7 +3948,11 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if root, suffix, ok := tableAddress([]byte(target)); ok && suffix != "" {
 		if parent, found := tableIdentityForTerm(root, partition); found {
 			values = append(values, heapMemberFact(parent, suffix, operation.Target.Name, value))
-			if cell, published, cellErr := memberCellFact(parent, suffix, operation.Target.Name, value, partition); cellErr != nil {
+			memberIdentity, _ := tableIdentityForTerm(operands["value"], partition)
+			if hasIdentity {
+				memberIdentity = identity
+			}
+			if cell, published, cellErr := memberCellFactWithIdentity(parent, suffix, operation.Target.Name, value, memberIdentity, partition); cellErr != nil {
 				return equation.TransactionResult{}, cellErr
 			} else if published {
 				values = append(values, cell)
@@ -4451,13 +4519,17 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 				}
 			}
 			result.Closure.Values = append(result.Closure.Values, heapMemberFact(writeIdentity, suffix, operation.Target.Name, value))
-			if cell, published, cellErr := memberCellFact(writeIdentity, suffix, operation.Target.Name, value, partition); cellErr != nil {
+			memberIdentity, _ := tableIdentityForTerm(operands["value"], partition)
+			if len(memberIdentity) != 0 {
+				result.Closure.Values = append(result.Closure.Values, heapIdentityFact(string(operands["target"]), operation.Target.Name, memberIdentity))
+			}
+			if cell, published, cellErr := memberCellFactWithIdentity(writeIdentity, suffix, operation.Target.Name, value, memberIdentity, partition); cellErr != nil {
 				return equation.TransactionResult{}, cellErr
 			} else if published {
 				result.Closure.Values = append(result.Closure.Values, cell)
 			}
 			if writeIdentity == nil || string(writeIdentity) == string(identity) {
-				if memberIdentity, found := tableIdentityForTerm(operands["value"], partition); found {
+				if len(memberIdentity) != 0 {
 					result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
 				}
 			}
@@ -4639,9 +4711,15 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		return equation.TransactionResult{}, err
 	}
 	shapeRelation := shapeUnknown
+	var memberSurface []byte
 	for _, operand := range operation.Operands {
 		if operand.Role == "shape-target" {
 			shapeRelation = assignmentShapeRelation(lexical, source, value, operand.Value, partition)
+			if shapeRelation == shapeRefuted {
+				if target, ok := shapefact.DecodeTarget(operand.Value); ok {
+					memberSurface, _ = lexicalMemberCallableSurface(lexical, source, target, partition)
+				}
+			}
 			break
 		}
 	}
@@ -4726,11 +4804,18 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 		if anySource {
 			message = assignmentAnyMismatchMessage(sourceDisplay, targetType)
+		} else if memberSurface != nil {
+			if _, ok := lexicalMemberCallableDisplay(lexical, operation); ok {
+				message = "cannot assign " + sourceDisplay + " because it is fun() -> " + assignmentEvidenceValue(memberSurface) + ", not " + callableClaimDisplay(lexical, operation)
+			}
 		}
 		closure.Diagnostics = []equation.Fact{{
 			Key:   "type.assignment/" + operation.Target.Name,
 			Value: []byte(message),
 		}}
+		if memberSurface != nil {
+			closure.Values = append(closure.Values, equation.Fact{Key: "assignment-member-surface/" + operation.Target.Name, Value: memberSurface})
+		}
 	} else if (!isUnknownScalar(value) || !importedResultPath(string(source), imported) || targetType != "claim-type/\"string\"") && !claimTypeIsAny(targetType) && !callableRecordShape && !(kind == "claim-kind/3" && string(source) == target && string(value) == "scalar/nil") {
 		// The closure keys facts by identity, so separate unproven claims must
 		// retain their operation identity.
@@ -4821,10 +4906,13 @@ func assignmentShapeRelation(lexical *lexicalEvaluator, source, value, encodedTa
 		}
 		return shapeRefuted
 	}
-	if relation := valueAgainstType(value, target); relation != shapeUnknown {
+	if relation := valueAgainstType(value, target); relation == shapeProven {
+		return relation
+	} else if member := lexicalMemberCallableRelation(lexical, source, target, partition); member != shapeUnknown {
+		return member
+	} else {
 		return relation
 	}
-	return lexicalMemberCallableRelation(lexical, source, target, partition)
 }
 
 // lexicalMemberCallableRelation is the narrow callable-surface projection for
@@ -4833,12 +4921,61 @@ func assignmentShapeRelation(lexical *lexicalEvaluator, source, value, encodedTa
 // zero-argument function result.  It never derives a callable contract from a
 // member name, table shape, or annotation alone.
 func lexicalMemberCallableRelation(lexical *lexicalEvaluator, source []byte, target typ.Type, partition equation.Partition) shapeRelation {
+	_, relation := lexicalMemberCallableSurface(lexical, source, target, partition)
+	return relation
+}
+
+func lexicalMemberCallableDisplay(lexical *lexicalEvaluator, operation equation.BoundEquation) (string, bool) {
+	for _, operand := range operation.Operands {
+		if operand.Role != "shape-target" {
+			continue
+		}
+		target, ok := shapefact.DecodeTarget(operand.Value)
+		if !ok {
+			return "", false
+		}
+		function, ok := unwrap.Alias(subst.ExpandInstantiated(target)).(*typ.Function)
+		if !ok || function == nil || len(function.Params) != 0 || len(function.Returns) != 1 || function.Returns[0] == nil {
+			return "", false
+		}
+		return "fun() -> " + callableReturnDisplay(lexical, function.Returns[0]), true
+	}
+	return "", false
+}
+
+func callableClaimDisplay(lexical *lexicalEvaluator, operation equation.BoundEquation) string {
+	if display, ok := lexicalMemberCallableDisplay(lexical, operation); ok {
+		return display
+	}
+	return boundClaimDeclaredDisplay(operation, "")
+}
+
+func callableReturnDisplay(lexical *lexicalEvaluator, returned typ.Type) string {
+	if lexical != nil {
+		names := make([]string, 0, len(lexical.typeDefinitions))
+		for name := range lexical.typeDefinitions {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if typ.TypeEquals(lexical.typeDefinitions[name], returned) {
+				return name
+			}
+		}
+	}
+	return typeformat.Short(returned)
+}
+
+// lexicalMemberCallableSurface evaluates a locally published member closure
+// against its current captured cells. The resulting slot is an existing child
+// return publication, not a signature inferred from a member spelling.
+func lexicalMemberCallableSurface(lexical *lexicalEvaluator, source []byte, target typ.Type, partition equation.Partition) ([]byte, shapeRelation) {
 	if lexical == nil || !strings.HasPrefix(string(source), "path/") {
-		return shapeUnknown
+		return nil, shapeUnknown
 	}
 	function, ok := unwrap.Alias(subst.ExpandInstantiated(target)).(*typ.Function)
 	if !ok || function == nil || len(function.TypeParams) != 0 || len(function.Params) != 0 || function.Variadic != nil || len(function.Returns) != 1 || function.Returns[0] == nil {
-		return shapeUnknown
+		return nil, shapeUnknown
 	}
 	handle, found := closureHandleFor(source, partition)
 	if !found {
@@ -4847,23 +4984,27 @@ func lexicalMemberCallableRelation(lexical *lexicalEvaluator, source []byte, tar
 		}
 	}
 	if !found {
-		return shapeUnknown
+		return nil, shapeUnknown
 	}
 	child, found := lexical.byPrototype[handle.Prototype]
 	if !found || child.Cyclic != nil || len(child.Boundary.Parameters) != 0 || len(handle.Captures) != len(child.Boundary.Captures) {
-		return shapeUnknown
+		return nil, shapeUnknown
 	}
 	operation := equation.BoundEquation{Target: equation.Coordinate{Name: "member-surface"}}
 	projected, err := lexical.applyKnown(operation, directCallOperands{callee: source, resultArity: 1}, handle, partition)
 	if err != nil {
-		return shapeUnknown
+		return nil, shapeUnknown
 	}
 	for _, fact := range projected.Closure.Values {
 		if fact.Key == "call-result/member-surface/00000000" {
-			return valueAgainstType(fact.Value, function.Returns[0])
+			relation := valueAgainstType(fact.Value, function.Returns[0])
+			if relation == shapeUnknown && string(fact.Value) == "scalar/nil" && !unwrap.IsOptionalLike(function.Returns[0]) {
+				relation = shapeRefuted
+			}
+			return append([]byte(nil), fact.Value...), relation
 		}
 	}
-	return shapeUnknown
+	return nil, shapeUnknown
 }
 
 func valueAgainstType(value []byte, target typ.Type) shapeRelation {
