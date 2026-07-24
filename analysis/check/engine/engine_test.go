@@ -667,6 +667,29 @@ end
 	t.Fatalf("guarded explicit-any member read diagnostics = %#v", result.Diagnostics)
 }
 
+func TestCheckPreservesExplicitAnyBoundaryThroughSealedTableIteration(t *testing.T) {
+	result, err := engine.Check(`
+local unknownID: any = nil
+local pages = {{id = unknownID, route = "/ready"}}
+local routes: {[string]: string} = { ["/ready"] = "ready" }
+local accessible: {[string]: string} = {}
+for _, page in ipairs(pages) do
+	if routes[page.route] == page.id then
+		accessible[page.route] = page.id
+	end
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 8 && strings.Contains(diagnostic.Message, "is any, not string") {
+			return
+		}
+	}
+	t.Fatalf("explicit-any field boundary was lost through sealed table iteration: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckProvesClosedAnyArrayAnnotation(t *testing.T) {
 	result, err := engine.Check(`local values: {any} = {{kind = "task"}, {kind = "timer"}}`)
 	if err != nil {

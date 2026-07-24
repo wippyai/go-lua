@@ -5250,10 +5250,14 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		if er != nil {
 			return equation.TransactionResult{}, er
 		}
-		if string(left) == "scalar/top" || string(right) == "scalar/top" {
+		operator := wir.Operator(op)
+		boundaryComparison := (operator == wir.BinEq || operator == wir.BinNe) &&
+			(isExplicitAnyValue(left) || sourceHasAnyBoundary(by["left"], partition.Values()) ||
+				isExplicitAnyValue(right) || sourceHasAnyBoundary(by["right"], partition.Values()))
+		if string(left) == "scalar/top" || string(right) == "scalar/top" || boundaryComparison {
 			value = []byte("scalar/top")
 		} else {
-			value, err = basicBinary(wir.Operator(op), left, right)
+			value, err = basicBinary(operator, left, right)
 		}
 	default:
 		err = fmt.Errorf("engine: unsupported expression kind")
@@ -5294,6 +5298,16 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	if wir.Op(kind) == wir.OpBinOp && (wir.Operator(op) == wir.BinEq || wir.Operator(op) == wir.BinNe) {
+		// Equality against an explicit-any boundary has no concrete boolean
+		// result. Carry only the already-published boundary to the comparison
+		// result so branch evaluation can retain the possible arm; the boundary
+		// is not a type proof for either operand.
+		for _, role := range []string{"left", "right"} {
+			if root, _, found := explicitAnySourceFact(by[role], partition.Values()); found {
+				values = append(values, equation.Fact{Key: "gradual-any/" + string(result) + "/" + operation.Target.Name, Value: root})
+				break
+			}
+		}
 		for _, role := range []string{"left", "right"} {
 			if allocation, found := placementAllocationForTerm(by[role], partition); found {
 				values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "identity-compare"))
@@ -7410,6 +7424,8 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 	}
 	if diagnostic, found := closedDynamicWriteDiagnostic(operation, operands, partition); found {
 		result.Closure.Diagnostics = append(result.Closure.Diagnostics, diagnostic)
+	} else if diagnostic, found := declaredMapWriteDiagnostic(operation, operands, partition); found {
+		result.Closure.Diagnostics = append(result.Closure.Diagnostics, diagnostic)
 	}
 	if identity, found := tableIdentityForTerm(operands["container"], partition); found {
 		key, keyErr := resolveCurrentValue(operands["key"], partition)
@@ -7436,6 +7452,49 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 		}
 	}
 	return result, nil
+}
+
+// declaredMapWriteDiagnostic checks a dynamic write against the map value
+// contract already published for its exact container. A literal shape is not
+// required: the declaration itself is the authority. Unknown values remain
+// unreported, while an explicit-any boundary and a concrete refutation cannot
+// silently enter the homogeneous map.
+func declaredMapWriteDiagnostic(operation equation.BoundEquation, operands map[string][]byte, partition equation.Partition) (equation.Fact, bool) {
+	// A non-empty suffix writes through the selected map element (for example
+	// slots[key].value), so the map's value contract does not describe the
+	// assigned leaf. That case is owned by the existing path/heap projection.
+	if string(operands["suffix"]) != "suffix/" {
+		return equation.Fact{}, false
+	}
+	declared, found := declaredTypeForTerm(operands["container"], partition)
+	if !found || declared == nil {
+		return equation.Fact{}, false
+	}
+	mapping, ok := unwrap.Alias(subst.ExpandInstantiated(declared)).(*typ.Map)
+	if !ok || mapping == nil || mapping.Value == nil {
+		return equation.Fact{}, false
+	}
+	value, err := resolveCurrentValue(operands["value"], partition)
+	if err != nil {
+		return equation.Fact{}, false
+	}
+	anySource := isExplicitAnyValue(value) || sourceHasAnyBoundary(operands["value"], partition.Values())
+	if !anySource && valueAgainstType(value, mapping.Value) != shapeRefuted {
+		return equation.Fact{}, false
+	}
+	source := "value"
+	for _, operand := range operation.Operands {
+		if operand.Role == "source-display" && len(operand.Value) != 0 {
+			source = string(operand.Value)
+			break
+		}
+	}
+	expected := typeformat.Short(mapping.Value)
+	message := "cannot assign " + source + " because it is " + assignmentEvidenceValue(value) + ", not " + expected
+	if anySource {
+		message = "cannot assign " + source + " because it is any, not " + expected
+	}
+	return equation.Fact{Key: "type.assignment/" + operation.Target.Name, Value: []byte(message)}, true
 }
 
 // closedDynamicWriteDiagnostic rejects a broad write only when the exact
@@ -7690,6 +7749,17 @@ func iteratorElementWitness(provider []byte, arguments map[int][]byte, partition
 	if err != nil {
 		return nil, nil, false
 	}
+	// An unannotated, sealed array literal is already a published finite value
+	// shape.  Its indexed entries may carry an explicit-any boundary, which
+	// must remain authoritative after ipairs transports that exact element into
+	// the loop body.  Admit an element only when every direct integer entry is
+	// present and has the identical published value; mixed or open shapes stay
+	// unmodeled rather than receiving an invented array type.
+	if iterator.Kind == iteration.IterateIndexed {
+		if element, found := sealedIndexedIteratorElement(value); found {
+			return nil, element, true
+		}
+	}
 	source, decoded := shapefact.DecodeTarget(value)
 	if !decoded {
 		source, decoded = typedPathType(argument, partition)
@@ -7719,6 +7789,34 @@ func iteratorElementWitness(provider []byte, arguments map[int][]byte, partition
 	default:
 		return nil, nil, false
 	}
+}
+
+func sealedIndexedIteratorElement(value []byte) ([]byte, bool) {
+	table, ok := shapefact.DecodeTable(value)
+	if !ok || !table.Closed {
+		return nil, false
+	}
+	var element []byte
+	for _, member := range table.Members {
+		segments, valid := segment.ParseFormattedSegments(member.Suffix)
+		if !valid {
+			return nil, false
+		}
+		if len(segments) != 1 || segments[0].Kind != segment.SegmentIndexInt {
+			continue
+		}
+		if segments[0].Index < 1 || !member.Present {
+			return nil, false
+		}
+		if element == nil {
+			element = []byte(member.Value)
+			continue
+		}
+		if string(element) != member.Value {
+			return nil, false
+		}
+	}
+	return element, element != nil
 }
 
 func channelSelectKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
