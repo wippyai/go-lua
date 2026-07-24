@@ -163,6 +163,9 @@ type Evidence struct {
 	File    string
 	Span    Span
 	Message string
+	// CausalOrder is an optional producer-supplied dependency order for a
+	// closed evidence chain. Zero retains ordinary source ordering.
+	CausalOrder uint32
 }
 
 // Explanation is a copy-safe diagnostic explanation value.

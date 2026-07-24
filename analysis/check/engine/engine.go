@@ -162,11 +162,12 @@ type PublishedDiagnostic struct {
 // adapters. Kind and Trust use the diagnostic package's stable display
 // vocabulary without making the equation kernel depend on presentation types.
 type DiagnosticEvidence struct {
-	Span    wir.Span
-	Kind    string
-	Trust   string
-	Reason  string
-	Message string
+	Span        wir.Span
+	Kind        string
+	Trust       string
+	Reason      string
+	Message     string
+	CausalOrder uint32
 }
 
 // DiagnosticLabel is a source annotation emitted with a published diagnostic.
@@ -6169,6 +6170,166 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	return equation.TransactionResult{Complete: true, Closure: projected}, nil
 }
 
+// declaredBranchAssignmentDiagnostics checks one declaration-owned body
+// obligation at an exact local call boundary. An initialized-to-nil local
+// remains nil on the false edge of a declared boolean guard, even when this
+// particular invocation supplies a concrete true value. The helper consumes
+// the front's nil write, branch guard, and strict claim as one closed witness;
+// it does not extrapolate from a source name or from an uncalled body.
+func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.Compilation) (bool, equation.OutputClosure, error) {
+	claims := declaredFalseEdgeNilAssignmentClaims(child)
+	if len(claims) == 0 {
+		return false, equation.OutputClosure{}, nil
+	}
+	entry, err := encodeDeclaredChildEntry(nil)
+	if err != nil {
+		return false, equation.OutputClosure{}, err
+	}
+	closure, _, err := l.evaluate(child, entry)
+	if err != nil {
+		return false, equation.OutputClosure{}, err
+	}
+	for key, witness := range claims {
+		alternative, known := expressionValueType(witness.alternative)
+		if !known || alternative == nil {
+			continue
+		}
+		joined, encoded := shapefact.EncodeTarget(typ.MaterializeOptional(alternative))
+		if !encoded {
+			continue
+		}
+		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + witness.source + "/" + witness.predecessor, Value: joined})
+		for index := range closure.Diagnostics {
+			if closure.Diagnostics[index].Key == key {
+				closure.Diagnostics[index].Value = []byte("cannot assign " + witness.display + " because it may be nil")
+			}
+		}
+	}
+	spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
+	projected := equation.OutputClosure{}
+	body := fmt.Sprintf("%x", child.Body)
+	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+		if _, found := claims[item.Fact.Key]; !found {
+			continue
+		}
+		// This closed witness has a fact-to-claim-to-missing-proof dependency
+		// chain. Preserve that semantic order when the source declaration and
+		// value use share a line; ordinary evidence remains source ordered.
+		for index := range item.Evidence {
+			item.Evidence[index].CausalOrder = uint32(index + 1)
+		}
+		item.Help = "Guard `" + claims[item.Fact.Key].display + "` with a nil check, provide a default value, or change the target type to accept nil."
+		key := "child/" + body + "/" + item.Fact.Key
+		fact := equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)}
+		projected.Diagnostics = append(projected.Diagnostics, fact)
+		if item.Span.Valid() {
+			l.diagnosticSpans[key] = item.Span
+		}
+		item.Fact = fact
+		l.childPublished[key] = item
+	}
+	return true, projected, nil
+}
+
+type declaredNilAssignmentWitness struct {
+	source, predecessor, display string
+	alternative                  []byte
+}
+
+// declaredFalseEdgeNilAssignmentClaims recognizes the exact control-flow
+// shape whose merge must retain the declaration's Lua nil value: an
+// unconditional nil initialization, a truthy test of a declared formal, a
+// true-edge replacement of that same cell, and an unguarded strict assignment
+// claim that reads it afterwards. Each component is an existing front
+// publication, which keeps imported, captured, and arbitrary branch bodies
+// outside this declaration-only check.
+func declaredFalseEdgeNilAssignmentClaims(child front.Compilation) map[string]declaredNilAssignmentWitness {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
+		return nil
+	}
+	formals := make(map[string]bool, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Symbol == 0 {
+			return nil
+		}
+		formals[boundaryTerm(parameter.Symbol)] = true
+	}
+	nilWrites := make(map[string]bool)
+	trueWrites := make(map[string]map[string][]byte)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		if !hasTarget || !hasValue || !strings.HasPrefix(string(target), "path/") {
+			continue
+		}
+		if len(operation.Guards) == 0 && string(value) == "scalar/nil" {
+			nilWrites[string(target)] = true
+			continue
+		}
+		if len(operation.Guards) != 1 || string(value) == "scalar/nil" {
+			continue
+		}
+		parts := strings.Split(string(operation.Guards[0].Encoding), "/")
+		if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || parts[3] != "true" {
+			continue
+		}
+		if trueWrites[parts[2]] == nil {
+			trueWrites[parts[2]] = make(map[string][]byte)
+		}
+		trueWrites[parts[2]][string(target)] = append([]byte(nil), value...)
+	}
+	if len(nilWrites) == 0 || len(trueWrites) == 0 {
+		return nil
+	}
+	candidates := make(map[string][]byte)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "branch-relations" || len(operation.Guards) != 0 || trueWrites[operation.Target.Name] == nil {
+			continue
+		}
+		predicate, found := artifactOperand(operation.Operands, "predicate")
+		if !found || !strings.HasPrefix(string(predicate), branchPredicatePrefix) {
+			continue
+		}
+		var relation branchPredicateWire
+		if json.Unmarshal(predicate[len(branchPredicatePrefix):], &relation) != nil || relation.Kind != "truthy" || relation.Negated || relation.Path == "" || !formals["path/"+relation.Path] {
+			continue
+		}
+		for target, alternative := range trueWrites[operation.Target.Name] {
+			if nilWrites[target] {
+				candidates[target] = alternative
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	claims := make(map[string]declaredNilAssignmentWitness)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "claim" || len(operation.Guards) != 0 {
+			continue
+		}
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		kind, hasKind := artifactOperand(operation.Operands, "kind")
+		targetType, hasType := artifactOperand(operation.Operands, "type")
+		alternative, candidate := candidates[string(value)]
+		if !hasValue || !hasKind || !hasType || !candidate || string(kind) != "claim-kind/3" || !assignmentTargetRequiresProof(string(targetType)) || len(operation.Dependencies) != 1 {
+			continue
+		}
+		display := strings.TrimPrefix(string(value), "path/")
+		for _, operand := range operation.Operands {
+			if operand.Role == "source-display" && len(operand.Term.Encoding) != 0 {
+				display = string(operand.Term.Encoding)
+				break
+			}
+		}
+		claims["type.assignment/"+operation.Target.Name] = declaredNilAssignmentWitness{source: string(value), predecessor: operation.Dependencies[0].Name, display: display, alternative: alternative}
+	}
+	return claims
+}
+
 func (l *lexicalEvaluator) knownLexicalBoundary(operands directCallOperands, handle closureHandle) (front.Compilation, [][]byte, error) {
 	child, exists := l.byPrototype[handle.Prototype]
 	if !exists {
@@ -11796,6 +11957,13 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if lexical == nil || !localCallable || (operands.resultArity == 0 && !lexical.requiresBody[handle.Prototype]) ||
 			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] &&
 				((lexical.hasClaim(handle.Prototype) && !lexical.hasRuntimeCastClaim(handle.Prototype)) || lexical.hasTableAllocation(handle.Prototype) && tableProjectionUnsafe && !recursiveDemand) && !childHasSelect(child)) {
+			if lexical != nil && childKnown {
+				if declared, published, declaredErr := lexical.declaredBranchAssignmentDiagnostics(child); declaredErr != nil {
+					return equation.TransactionResult{}, false, declaredErr
+				} else if declared {
+					return equation.TransactionResult{Complete: true, Closure: published}, true, nil
+				}
+			}
 			return equation.TransactionResult{}, false, nil
 		}
 		outcome, err := lexical.applyKnown(operation, operands, handle, partition)

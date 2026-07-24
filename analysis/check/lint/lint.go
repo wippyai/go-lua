@@ -657,6 +657,7 @@ func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, 
 			Kind: evidenceKind(item.Kind), Trust: evidenceTrust(item.Trust),
 			Reason: evidenceReason(item.Reason),
 			Span:   spanForFact(entry.Source, item.Span), Message: item.Message,
+			CausalOrder: item.CausalOrder,
 		})
 	}
 	labels := make([]diagnostic.Label, 0, len(projection.Labels))

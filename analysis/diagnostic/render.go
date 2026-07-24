@@ -488,9 +488,19 @@ func orderWitnessTraceEvidence(items []Evidence, primaryFile string) []Evidence 
 }
 
 func witnessTraceSpanBefore(left, right Evidence, primaryFile string) bool {
-	// Witness traces have one ordering law: source file, then start line, then
-	// start column. Equal or unavailable positions retain input order; evidence
-	// kind and trust never participate in the ordering.
+	// A fully closed producer may provide causal order for one evidence chain;
+	// otherwise witness traces order by source file, line, then column.
+	if left.CausalOrder != 0 || right.CausalOrder != 0 {
+		if left.CausalOrder == 0 {
+			return false
+		}
+		if right.CausalOrder == 0 {
+			return true
+		}
+		if left.CausalOrder != right.CausalOrder {
+			return left.CausalOrder < right.CausalOrder
+		}
+	}
 	leftFile := evidenceOrderFile(left, primaryFile)
 	rightFile := evidenceOrderFile(right, primaryFile)
 	if leftFile != rightFile {
