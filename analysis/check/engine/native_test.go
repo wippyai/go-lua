@@ -1,11 +1,52 @@
 package engine
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 )
+
+func TestCheckPublishesNativeEntryContractsDeterministically(t *testing.T) {
+	source := `
+local function scale(x: number): number
+    return x * 2
+end
+local function fib(n: number): number
+    if n < 2 then return n end
+    return fib(n - 1) + fib(n - 2)
+end
+return scale(fib(4))`
+	first, err := Check(source)
+	if err != nil {
+		t.Fatalf("first check: %v", err)
+	}
+	second, err := Check(source)
+	if err != nil {
+		t.Fatalf("second check: %v", err)
+	}
+	if first.Native == nil || second.Native == nil {
+		t.Fatal("checked module did not publish native facts")
+	}
+	if !reflect.DeepEqual(first.Native.Facts(), second.Native.Facts()) {
+		t.Fatalf("native contract publication differs across identical runs:\nfirst=%#v\nsecond=%#v", first.Native.Facts(), second.Native.Facts())
+	}
+	var callee, entry, scc bool
+	for _, fact := range first.Native.Facts() {
+		switch fact.Family {
+		case "callee_set":
+			callee = true
+		case "function_entry":
+			entry = true
+		case "call_scc":
+			scc = true
+		}
+	}
+	if !callee || !entry || !scc {
+		t.Fatalf("missing native entry-contract families: callee=%t entry=%t scc=%t", callee, entry, scc)
+	}
+}
 
 func nativeTestArtifact() equation.Artifact {
 	var body equation.BodyID

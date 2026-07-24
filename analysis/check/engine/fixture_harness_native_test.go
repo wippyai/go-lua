@@ -351,7 +351,59 @@ func (exp fixtureNativeSelector) selectsValue(row nativeFactRow) bool {
 	if exp.Trust != "" && row.Fact.Trust != exp.Trust {
 		return false
 	}
-	return containsAll(value, exp.ValueContains)
+	return containsAllNativeValue(value, exp.ValueContains)
+}
+
+// Bare native selectors are atoms, not arbitrary substrings: `incomplete`
+// must never satisfy an assertion about `complete` merely because the latter
+// is its suffix. Structured selectors retain ordinary substring matching for
+// backward-compatible opaque fact content.
+func containsAllNativeValue(value string, needles []string) bool {
+	for _, needle := range needles {
+		if nativeBareSelector(needle) {
+			if !nativeValueToken(value, needle) {
+				return false
+			}
+			continue
+		}
+		if !strings.Contains(value, needle) {
+			return false
+		}
+	}
+	return true
+}
+
+func nativeBareSelector(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if !(r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func nativeValueToken(value, token string) bool {
+	for offset := 0; ; {
+		index := strings.Index(value[offset:], token)
+		if index < 0 {
+			return false
+		}
+		index += offset
+		before := index == 0 || !nativeTokenByte(value[index-1])
+		afterIndex := index + len(token)
+		after := afterIndex == len(value) || !nativeTokenByte(value[afterIndex])
+		if before && after {
+			return true
+		}
+		offset = afterIndex
+	}
+}
+
+func nativeTokenByte(value byte) bool {
+	return value == '_' || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
 }
 
 // selectsRevocation matches the epoch interval the closure published for a

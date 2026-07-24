@@ -349,6 +349,7 @@ func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding,
 
 func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, closure equation.OutputClosure, transactions int, parseElapsed, evaluateElapsed time.Duration) Result {
 	artifact := compilation.Artifact
+	closure.Values = append(closure.Values, publishedNativeContracts(compilation)...)
 	// An unbound annotation has a direct lexical diagnostic. Its unresolved
 	// reference must not also be presented as an ordinary failed type claim:
 	// no declared type witness exists to validate in the first place.
@@ -440,6 +441,33 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
 	}
+}
+
+// publishedNativeContracts is deliberately a closure publisher, not a side
+// channel. The descriptors were derived by front from binder/WIR topology and
+// become visible to every existing consumer only once the same evaluation has
+// closed successfully.
+func publishedNativeContracts(compilation front.Compilation) []equation.Fact {
+	if len(compilation.NativeContracts) == 0 {
+		return nil
+	}
+	values := make([]equation.Fact, 0, len(compilation.NativeContracts))
+	for index, contract := range compilation.NativeContracts {
+		if contract.Family == "" || contract.Value == "" {
+			continue
+		}
+		if len(contract.Revocations) == 0 {
+			values = append(values, equation.Fact{Key: fmt.Sprintf("%s/contract/%08d", contract.Family, index), Value: []byte(contract.Value)})
+			continue
+		}
+		for _, event := range contract.Revocations {
+			if event == "" {
+				continue
+			}
+			values = append(values, equation.Fact{Key: fmt.Sprintf("%s/contract/%08d/contract-revocation/%s", contract.Family, index, event), Value: []byte(contract.Value)})
+		}
+	}
+	return values
 }
 
 func publishedPolicyDiagnostics(diagnostics []front.ControlDiagnostic) []PublishedDiagnostic {

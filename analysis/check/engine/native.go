@@ -173,6 +173,16 @@ func (a *nativeAnchors) bindValidity(facts []NativeFact) {
 	}
 	for index := range facts {
 		fact := &facts[index]
+		// Native entry contracts carry a deopt *class*, rather than pretending
+		// that this compilation happened to execute a mutation at a particular
+		// coordinate.  The descriptor is emitted from binder-owned topology and
+		// reaches this projection through the ordinary value closure.  It is a
+		// semantic validity interval: consumers may install a guard for exactly
+		// this class, but cannot mistake it for an observed program event.
+		if event, ok := nativeContractRevocation(fact.Key); ok {
+			fact.Established, fact.Revoked, fact.Event = "contract", "contract/"+event, event
+			continue
+		}
 		if fact.Lane != NativeLaneValues || fact.Term == "" {
 			continue
 		}
@@ -204,6 +214,16 @@ func (a *nativeAnchors) bindValidity(facts []NativeFact) {
 			break
 		}
 	}
+}
+
+func nativeContractRevocation(key string) (string, bool) {
+	const marker = "/contract-revocation/"
+	index := strings.LastIndex(key, marker)
+	if index < 0 {
+		return "", false
+	}
+	event := key[index+len(marker):]
+	return event, event != "" && !strings.Contains(event, "/")
 }
 
 // nativeAnchors recovers the term and coordinate vocabulary of one artifact.

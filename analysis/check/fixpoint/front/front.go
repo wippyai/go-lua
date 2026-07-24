@@ -133,6 +133,9 @@ type Compilation struct {
 	// was named. It is source metadata for diagnostics that must cite where an
 	// optional field was declared; the resolved type stays the sole authority.
 	TypeFieldSpans map[string]map[string]wir.Span
+	// NativeContracts is binder-derived lexical topology. It is descriptive
+	// input to the engine's ordinary fact publication, never a second evaluator.
+	NativeContracts []NativeContract
 }
 
 // recordFieldNameSpans retains the authored field-name token of every
@@ -286,6 +289,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
 	compilation.TypeDefinitions = typeDefinitions
 	compilation.TypeFieldSpans = recordFieldNameSpans(stmts)
+	compilation.NativeContracts = nativeContracts(stmts, bindings)
 	return compilation, nil
 }
 
