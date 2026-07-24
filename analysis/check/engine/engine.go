@@ -56,6 +56,7 @@ const channelPayloadPrefix = "channel-payload/"
 // outrank a write made through an alias.
 const (
 	heapTableIdentityPrefix  = "heap/table-identity/"
+	heapTableClosedPrefix    = "heap/table-closed/"
 	heapMemberPrefix         = "heap/member/"
 	heapMemberIdentityPrefix = "heap/member-identity/"
 )
@@ -2919,6 +2920,9 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	if hasIdentity {
 		values = append(values, heapIdentityFact(target, operation.Target.Name, identity))
 		if table, ok := shapefact.DecodeTable(value); ok {
+			if table.Closed {
+				values = append(values, heapClosedFact(identity, operation.Target.Name))
+			}
 			for _, member := range table.Members {
 				memberValue := []byte("scalar/nil")
 				if member.Present {
@@ -3553,7 +3557,13 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 	// this scalar relation. Do not turn that missing compatibility proof into a
 	// diagnostic; apply can still emit only a proven call-contract violation.
 	callableRecordShape := shapefact.IsTable(value) && strings.Contains(targetType, "fun(")
-	if available && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
+	// A concrete member fact may describe the literal that happened to cross
+	// an explicit-any boundary, but it cannot discharge a later declared
+	// assignment contract. The boundary itself is already-published evidence
+	// and remains authoritative until validation supplies a separate proof.
+	anySource := isExplicitAnyValue(value) || sourceHasExplicitAny(source, partition.Values())
+	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !runtimeTypeValidationProves(source, targetType, partition)
+	if available && !boundaryRequiresProof && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
 		if kind == "claim-kind/1" {
 			closure.Diagnostics = []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven runtime claim")}}
@@ -3580,7 +3590,6 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 			break
 		}
 	}
-	anySource := isExplicitAnyValue(value) || sourceHasExplicitAny(source, partition.Values())
 	if kind == "claim-kind/3" && available && memberMissing(value) {
 		closure.Diagnostics = []equation.Fact{{
 			Key:   "type.member.missing/" + operation.Target.Name,
@@ -3932,7 +3941,10 @@ func tableAgainstContainer(value []byte, element, key typ.Type, comparison *shap
 			if !encoded {
 				return shapeRefuted
 			}
-			relation := valueAgainstTypeSeen(keyValue, key, comparison)
+			relation := shapeProven
+			if !acceptsEveryValue(key) {
+				relation = valueAgainstTypeSeen(keyValue, key, comparison)
+			}
 			if relation == shapeRefuted {
 				return shapeRefuted
 			}
@@ -3943,7 +3955,10 @@ func tableAgainstContainer(value []byte, element, key typ.Type, comparison *shap
 		if !member.Present {
 			continue
 		}
-		relation := valueAgainstTypeSeen([]byte(member.Value), element, comparison)
+		relation := shapeProven
+		if !acceptsEveryValue(element) {
+			relation = valueAgainstTypeSeen([]byte(member.Value), element, comparison)
+		}
 		if relation == shapeRefuted {
 			return shapeRefuted
 		}
@@ -3953,6 +3968,19 @@ func tableAgainstContainer(value []byte, element, key typ.Type, comparison *shap
 		return shapeUnknown
 	}
 	return shapeProven
+}
+
+// acceptsEveryValue recognizes only an already-resolved any target. It is
+// used within a sealed container comparison: each concrete member is present,
+// and any imposes no additional value or key obligation. It intentionally
+// does not make a top-level `any` claim proven, because that declaration is an
+// explicit precision boundary that claimKernel must retain.
+func acceptsEveryValue(target typ.Type) bool {
+	if target == nil {
+		return false
+	}
+	resolved := unwrap.Alias(subst.ExpandInstantiated(target))
+	return resolved != nil && resolved.Kind() == kind.Any
 }
 
 func containerKeyValue(entry segment.Segment) ([]byte, bool) {
@@ -4598,6 +4626,12 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	if frozenGuard && truth {
 		closure.Outcomes = append(closure.Outcomes, equation.Fact{Key: "frozen-branch/" + operation.Target.Name, Value: []byte("proven")})
 	}
+	if truth {
+		if path, typeName, proven := runtimeTypeBranchProof(operation); proven {
+			guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
+			closure.Values = append(closure.Values, equation.Fact{Key: runtimeTypeProofKey(path, typeName), Value: []byte("proven"), Guards: []equation.Guard{guard}})
+		}
+	}
 	if truth && !boundaryPossible {
 		closure.Diagnostics = []equation.Fact{{Key: "advice.always_true_guard/" + operation.Target.Name, Value: []byte("proven constant guard")}}
 	}
@@ -4605,6 +4639,44 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: "lint.condition.redundant/" + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+func runtimeTypeBranchProof(operation equation.BoundEquation) (path, typeName string, proven bool) {
+	for _, operand := range operation.Operands {
+		if operand.Role != "predicate" || !strings.HasPrefix(string(operand.Value), branchPredicatePrefix) {
+			continue
+		}
+		var predicate branchPredicateWire
+		if json.Unmarshal(operand.Value[len(branchPredicatePrefix):], &predicate) != nil || predicate.Kind != "type-equal" || predicate.Path == "" || predicate.TypeName == "" {
+			return "", "", false
+		}
+		switch predicate.TypeName {
+		case "nil", "boolean", "number", "string", "table", "function":
+			return predicate.Path, predicate.TypeName, true
+		}
+	}
+	return "", "", false
+}
+
+func runtimeTypeProofKey(path, typeName string) string {
+	return "runtime-type-proof/" + base64.RawURLEncoding.EncodeToString([]byte("path/"+path)) + "/" + typeName
+}
+
+// runtimeTypeValidationProves consumes only the fact emitted by a true edge
+// of `type(path) == name`. It never treats a literal value carried through an
+// any boundary as proof: sibling paths remain unvalidated.
+func runtimeTypeValidationProves(source []byte, targetType string, partition equation.Partition) bool {
+	name, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
+	if err != nil || source == nil || !strings.HasPrefix(string(source), "path/") {
+		return false
+	}
+	prefix := runtimeTypeProofKey(strings.TrimPrefix(string(source), "path/"), name)
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "proven" {
+			return true
+		}
+	}
+	return false
 }
 
 // typedLiteralBranchClosure consumes a value type already carried by an
@@ -5473,6 +5545,10 @@ func heapIdentityFact(term, operation string, identity []byte) equation.Fact {
 	return equation.Fact{Key: heapTableIdentityPrefix + string(term) + "/" + operation, Value: append([]byte(nil), identity...)}
 }
 
+func heapClosedFact(identity []byte, operation string) equation.Fact {
+	return equation.Fact{Key: heapTableClosedPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("closed")}
+}
+
 func heapFactKey(prefix string, identity []byte, suffix, operation string) string {
 	return prefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/" + operation
 }
@@ -5495,6 +5571,16 @@ func heapMemberCurrent(prefix string, identity []byte, suffix string, partition 
 		}
 	}
 	return append([]byte(nil), value...), value != nil
+}
+
+func heapTableClosed(identity []byte, partition equation.Partition) bool {
+	prefix := heapTableClosedPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "closed" {
+			return true
+		}
+	}
+	return false
 }
 
 // tableAddress splits a source path into the root table lens and its static
@@ -5534,7 +5620,7 @@ func tableIdentityForTerm(term []byte, partition equation.Partition) ([]byte, bo
 	}
 	for len(segments) != 0 {
 		matched := false
-		for count := len(segments); count > 0; count-- {
+		for count := 1; count <= len(segments); count++ {
 			prefix := segment.FormatSegments(segments[:count])
 			next, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, prefix, partition)
 			if !found {
@@ -5564,12 +5650,8 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		return nil, false
 	}
 	for len(segments) != 0 {
-		whole := segment.FormatSegments(segments)
-		if value, found := heapMemberCurrent(heapMemberPrefix, identity, whole, partition); found {
-			return value, true
-		}
 		matched := false
-		for count := len(segments) - 1; count > 0; count-- {
+		for count := 1; count <= len(segments); count++ {
 			prefix := segment.FormatSegments(segments[:count])
 			next, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, prefix, partition)
 			if !found {
@@ -5578,9 +5660,17 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 			identity, segments, matched = next, segments[count:], true
 			break
 		}
-		if !matched {
-			return nil, false
+		if matched {
+			continue
 		}
+		whole := segment.FormatSegments(segments)
+		if value, found := heapMemberCurrent(heapMemberPrefix, identity, whole, partition); found {
+			return value, true
+		}
+		if heapTableClosed(identity, partition) {
+			return []byte("scalar/nil"), true
+		}
+		return nil, false
 	}
 	return nil, false
 }

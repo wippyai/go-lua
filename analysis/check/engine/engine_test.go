@@ -110,6 +110,60 @@ end
 	}
 }
 
+func TestCheckPublishesExplicitAnyBoundaryViolationThroughGuardedMemberRead(t *testing.T) {
+	result, err := engine.Check(`
+local raw: any = {kind = "task", route_id = "start"}
+if raw.kind == "task" then
+	local routeID: string = raw.route_id
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.HasPrefix(diagnostic.Key, "type.assignment/") && strings.Contains(string(diagnostic.Value), "raw.route_id") {
+			return
+		}
+	}
+	t.Fatalf("guarded explicit-any member read diagnostics = %#v", result.Diagnostics)
+}
+
+func TestCheckProvesClosedAnyArrayAnnotation(t *testing.T) {
+	result, err := engine.Check(`local values: {any} = {{kind = "task"}, {kind = "timer"}}`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.HasPrefix(diagnostic.Key, "claim/unproven/") {
+			t.Fatalf("closed any-array annotation emitted unproven claim: %#v", result.Diagnostics)
+		}
+	}
+}
+
+func TestCheckInvalidatesMapEntryAliasAfterVariantWrite(t *testing.T) {
+	result, err := engine.Check(`
+type FileSlot = {kind: "file", path: string}
+type TimerSlot = {kind: "timer", seconds: number}
+type Slot = {value: FileSlot | TimerSlot}
+type Slots = {[string]: Slot}
+local slots: Slots = {active = {value = {kind = "file", path = "/tmp/active"}}}
+local alias = slots.active
+if alias.value.kind == "file" then
+  alias.value = {kind = "timer", seconds = 5}
+  local stale: string = slots.active.value.path
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.HasPrefix(diagnostic.Key, "type.assignment/") && strings.Contains(string(diagnostic.Value), "slots.active.value.path") {
+			return
+		}
+	}
+	t.Fatalf("stale map-entry alias diagnostics = %#v", result.Diagnostics)
+}
+
 func TestCheckWithImportsSeedsExactRequireExportAndOmitsAny(t *testing.T) {
 	source := `local provider = require("provider")
 local answer: string = provider.answer`
