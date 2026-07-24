@@ -69,7 +69,7 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 			name: Type,
 			want: typ.Func().
 				Param("v", typ.Any).
-				Returns(typ.String).
+				Returns(luaTypeName).
 				Build(),
 		},
 		{

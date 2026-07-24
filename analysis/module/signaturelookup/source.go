@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup/internal/stdlib"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Source is a narrow read view over effect-bearing function signatures.
@@ -138,4 +139,42 @@ func StdlibSignatureNames() []string {
 // and standard library tables without per-member declarations).
 func StdlibBareGlobals() []string {
 	return stdlib.BareGlobals()
+}
+
+// StdlibResultSlot returns one finite declared return slot from the Lua
+// standard-library contract.  It is intentionally independent of manifests:
+// provider-boundary projection consumes the runtime library specification, not
+// a module-local override.
+func StdlibResultSlot(name string, index int) (typ.Type, bool) {
+	return stdlib.ResultSlot(name, index)
+}
+
+// StdlibResultSlotCondition is a literal-argument refinement declared by the
+// Lua standard-library contract.
+type StdlibResultSlotCondition struct {
+	ResultIndex    int
+	ArgumentIndex  int
+	ArgumentString string
+	ResultType     typ.Type
+}
+
+// StdlibConditionalResultSlots exposes the declarative conditional slots for
+// one standard-library provider.
+func StdlibConditionalResultSlots(name string) []StdlibResultSlotCondition {
+	items := stdlib.ConditionalResultSlots(name)
+	out := make([]StdlibResultSlotCondition, len(items))
+	for index, item := range items {
+		out[index] = StdlibResultSlotCondition{
+			ResultIndex: item.ResultIndex, ArgumentIndex: item.ArgumentIndex,
+			ArgumentString: item.ArgumentString, ResultType: item.ResultType,
+		}
+	}
+	return out
+}
+
+// StdlibMethodProvider returns the canonical global name of a typed standard
+// library method.  The decision is owned by the standard-library contract
+// table, rather than by call-site name matching.
+func StdlibMethodProvider(receiver typ.Type, method string) (string, bool) {
+	return stdlib.MethodProvider(receiver, method)
 }

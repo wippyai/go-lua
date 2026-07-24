@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/stringlib"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 const (
@@ -78,7 +79,7 @@ var registry = map[string]signature.Function{
 	Type: sig(
 		typ.Func().
 			Param("v", typ.Any).
-			Returns(typ.String).
+			Returns(luaTypeName).
 			Build(),
 		ownership.BorrowAll{},
 	),
@@ -427,7 +428,7 @@ var registry = map[string]signature.Function{
 	"math.tan":       sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
 	"math.tanh":      sig(typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()),
 	"math.tointeger": sig(typ.Func().Param("x", typ.Any).Returns(normalize.Optional(typ.Integer)).Build()),
-	"math.type":      sig(typ.Func().Param("x", typ.Any).Returns(normalize.Optional(typ.String)).Build()),
+	"math.type":      sig(typ.Func().Param("x", typ.Any).Returns(normalize.Optional(mathTypeName)).Build()),
 	"math.ult":       sig(typ.Func().Param("m", typ.Integer).Param("n", typ.Integer).Returns(typ.Boolean).Build()),
 
 	// coroutine library.
@@ -509,6 +510,44 @@ var registry = map[string]signature.Function{
 		Build()),
 }
 
+// luaTypeName is the complete Lua 5.4 type-name result domain.  It is kept as
+// literals rather than string so a call-result consumer can retain the exact
+// contract instead of silently weakening type(v) to an arbitrary string.
+var luaTypeName = typ.MaterializeUnion([]typ.Type{
+	typ.LiteralString("nil"),
+	typ.LiteralString("boolean"),
+	typ.LiteralString("number"),
+	typ.LiteralString("string"),
+	typ.LiteralString("table"),
+	typ.LiteralString("function"),
+	typ.LiteralString("thread"),
+	typ.LiteralString("userdata"),
+})
+
+var mathTypeName = typ.MaterializeUnion([]typ.Type{
+	typ.LiteralString("integer"),
+	typ.LiteralString("float"),
+})
+
+// ResultSlotCondition is a declarative result refinement for one standard
+// library call.  The table is part of the Lua library contract; callers must
+// satisfy the literal argument predicate before consuming its result type.
+type ResultSlotCondition struct {
+	ResultIndex    int
+	ArgumentIndex  int
+	ArgumentString string
+	ResultType     typ.Type
+}
+
+var conditionalResultSlots = map[string][]ResultSlotCondition{
+	"select": {{
+		ResultIndex:    0,
+		ArgumentIndex:  0,
+		ArgumentString: "#",
+		ResultType:     typ.Integer,
+	}},
+}
+
 // Lookup returns a cloned effect signature for a known stdlib function name.
 // init registers the string-library methods from the canonical type/stringlib
 // table as string.<name> global signatures, so the global call and the colon
@@ -534,6 +573,41 @@ func Lookup(name string) (signature.Function, bool) {
 func LookupView(name string) (signature.Function, bool) {
 	sig, ok := registry[name]
 	return sig, ok
+}
+
+// ResultSlot returns the declared type of one finite result position. Dynamic
+// tails deliberately have no invented type; their owner remains conservative.
+func ResultSlot(name string, index int) (typ.Type, bool) {
+	sig, ok := LookupView(name)
+	if !ok || sig.Type == nil || index < 0 || index >= len(sig.Type.Returns) {
+		return nil, false
+	}
+	result := sig.Type.Returns[index]
+	return result, result != nil
+}
+
+// ConditionalResultSlots returns a copied view of result refinements declared
+// by the Lua standard-library contract.
+func ConditionalResultSlots(name string) []ResultSlotCondition {
+	items := conditionalResultSlots[name]
+	out := make([]ResultSlotCondition, len(items))
+	copy(out, items)
+	return out
+}
+
+// MethodProvider returns the canonical global provider name for a typed Lua
+// standard-library method.  It consults the string-library contract table;
+// arbitrary receiver methods are intentionally not recognized here.
+func MethodProvider(receiver typ.Type, method string) (string, bool) {
+	if method == "" || !typ.TypeEquals(unwrap.Alias(receiver), typ.String) {
+		return "", false
+	}
+	if _, ok := stringlib.Method(method); !ok {
+		return "", false
+	}
+	name := "string." + method
+	_, ok := LookupView(name)
+	return name, ok
 }
 
 // bareGlobals names every Lua standard global that is always present in the

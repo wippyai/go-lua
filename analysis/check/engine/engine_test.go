@@ -55,6 +55,34 @@ func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	}
 }
 
+func TestCheckProjectsStdlibProviderReturnSlots(t *testing.T) {
+	result, err := engine.Check(`
+local text: string = tostring(42)
+local kind: string = type(text)
+local magnitude: number = math.abs(42)
+local joined: string = table.concat({"a", "b"}, ",")
+local ok: boolean, value = pcall(tostring, 42)
+
+local function normalize(s: string): string
+    local out: string = s:upper():sub(1):rep(2)
+    return out
+end
+
+local function count(...: any): integer
+    local n: integer = select("#", ...)
+    return n
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range result.Diagnostics {
+		if strings.HasPrefix(item.Key, "lint.claim.unproven/") {
+			t.Fatalf("stdlib result contract remained unproven: diagnostics=%#v", result.Diagnostics)
+		}
+	}
+}
+
 func TestCheckPublishesFrozenTableMutation(t *testing.T) {
 	result, err := engine.Check(`
 local root = { value = 1 }

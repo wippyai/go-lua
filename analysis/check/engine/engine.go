@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/channelselect"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
@@ -2319,12 +2320,20 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			value = []byte("scalar/bool/" + strconv.FormatBool(!truth))
 		case wir.UnLen:
 			n, er := scalarLength(operand)
-			err = er
-			value = []byte("scalar/number/" + strconv.FormatInt(n, 10))
+			if errors.Is(er, errUnknownScalar) {
+				value = []byte("scalar/top")
+			} else {
+				err = er
+				value = []byte("scalar/number/" + strconv.FormatInt(n, 10))
+			}
 		case wir.UnNeg:
 			n, er := scalarNumber(operand)
-			err = er
-			value = numberValue(-n)
+			if errors.Is(er, errUnknownScalar) {
+				value = []byte("scalar/top")
+			} else {
+				err = er
+				value = numberValue(-n)
+			}
 		default:
 			err = fmt.Errorf("engine: unsupported unary operator")
 		}
@@ -4672,8 +4681,10 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	}
 	resultTerms := map[string][]byte{}
 	targetTerms := map[string][]byte{}
+	argumentTerms := map[int][]byte{}
 	hasApplication := false
 	var application []byte
+	var provider []byte
 	for _, operand := range operation.Operands {
 		switch {
 		case operand.Role == "application":
@@ -4682,6 +4693,17 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			}
 			hasApplication = true
 			application = operand.Value
+		case operand.Role == "provider":
+			if provider != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: duplicate call result provider")
+			}
+			provider = operand.Value
+		case strings.HasPrefix(operand.Role, "argument-"):
+			index, err := callArgumentIndex(operand.Role)
+			if err != nil || argumentTerms[index] != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result argument %q", operand.Role)
+			}
+			argumentTerms[index] = operand.Value
 		case strings.HasPrefix(operand.Role, "result-"):
 			resultTerms[strings.TrimPrefix(operand.Role, "result-")] = operand.Value
 		case strings.HasPrefix(operand.Role, "target-"):
@@ -4712,6 +4734,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		}
 		if key == "00000000" && hasValue(partition, "effect.call-bool/"+strings.TrimPrefix(string(application), "call/")) {
 			value = []byte("scalar/boolean")
+		}
+		if index, err := strconv.Atoi(key); err == nil && provider != nil {
+			if contract, ok := providerResultValue(provider, index, argumentTerms, partition); ok {
+				value = contract
+			}
 		}
 		values = append(values,
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
@@ -4744,6 +4771,58 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+// providerResultValue turns a finite, declared stdlib result slot into a
+// canonical type fact.  A malformed provider, unknown dynamic tail, or any
+// result type intentionally leaves the call-result owner at Top.
+func providerResultValue(provider []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
+	encoded := strings.TrimPrefix(string(provider), "provider/global/")
+	if encoded == string(provider) || encoded == "" {
+		return nil, false
+	}
+	name, err := strconv.Unquote(encoded)
+	if err != nil || name == "" {
+		return nil, false
+	}
+	for _, condition := range signaturelookup.StdlibConditionalResultSlots(name) {
+		if condition.ResultIndex != index {
+			continue
+		}
+		argument, exists := arguments[condition.ArgumentIndex]
+		if !exists {
+			continue
+		}
+		value, known := resolveKnownCurrentValue(argument, partition)
+		if !known || !strings.HasPrefix(string(value), "scalar/string/") {
+			continue
+		}
+		literal, literalErr := strconv.Unquote(strings.TrimPrefix(string(value), "scalar/string/"))
+		if literalErr == nil && literal == condition.ArgumentString {
+			return providerReturnTypeValue(condition.ResultType)
+		}
+	}
+	result, ok := signaturelookup.StdlibResultSlot(name, index)
+	if !ok {
+		return nil, false
+	}
+	return providerReturnTypeValue(result)
+}
+
+func providerReturnTypeValue(result typ.Type) ([]byte, bool) {
+	if result == nil {
+		return nil, false
+	}
+	// The value lattice can carry an exact declared shape, but it cannot make
+	// a multi-return's optional slot, or an unresolved generic parameter, into
+	// a concrete runtime scalar.  Leave those slots at Top: their declared
+	// contracts remain available to the ordinary signature checker without
+	// manufacturing a value fact or collapsing Lua's return expansion rules.
+	switch unwrap.Alias(result).Kind() {
+	case kind.Any, kind.Unknown, kind.Never, kind.Optional, kind.Union, kind.TypeParam:
+		return nil, false
+	}
+	return shapefact.EncodeTarget(result)
 }
 
 func hasValue(partition equation.Partition, key string) bool {
@@ -4973,6 +5052,22 @@ func scalarType(value []byte) (string, error) {
 	if isUnknownScalar(value) {
 		return "", errUnknownScalar
 	}
+	if target, ok := shapefact.DecodeTarget(value); ok {
+		switch unwrap.Alias(target).Kind() {
+		case kind.Nil:
+			return "nil", nil
+		case kind.Boolean:
+			return "boolean", nil
+		case kind.Integer, kind.Number:
+			return "number", nil
+		case kind.String:
+			return "string", nil
+		case kind.Record:
+			return "table", nil
+		default:
+			return "", errUnknownScalar
+		}
+	}
 	switch {
 	case shapefact.IsTable(value):
 		return "table", nil
@@ -4997,6 +5092,16 @@ func scalarString(value []byte) (string, error) {
 	if isUnknownScalar(value) {
 		return "", errUnknownScalar
 	}
+	if target, ok := shapefact.DecodeTarget(value); ok {
+		if literal, ok := unwrap.Alias(target).(*typ.Literal); ok && literal.Base == kind.String {
+			text, ok := literal.Value.(string)
+			if !ok {
+				return "", errUnknownScalar
+			}
+			return text, nil
+		}
+		return "", errUnknownScalar
+	}
 	if !strings.HasPrefix(string(value), "scalar/string/") {
 		return "", fmt.Errorf("engine: type predicate path is not a string")
 	}
@@ -5017,6 +5122,12 @@ func scalarLength(value []byte) (int64, error) {
 
 func scalarNumber(value []byte) (float64, error) {
 	if isUnknownScalar(value) {
+		return 0, errUnknownScalar
+	}
+	if target, ok := shapefact.DecodeTarget(value); ok {
+		if literal, ok := unwrap.Alias(target).(*typ.Literal); ok && (literal.Base == kind.Integer || literal.Base == kind.Number) {
+			return strconv.ParseFloat(literal.String(), 64)
+		}
 		return 0, errUnknownScalar
 	}
 	if !strings.HasPrefix(string(value), "scalar/number/") {
@@ -5455,6 +5566,16 @@ func latestValue(term []byte, partition equation.Partition) ([]byte, bool) {
 
 func luaTruthy(value []byte) (bool, error) {
 	if isUnknownScalar(value) {
+		return false, errUnknownScalar
+	}
+	if target, ok := shapefact.DecodeTarget(value); ok {
+		target = unwrap.Alias(target)
+		if target.Kind() == kind.Nil {
+			return false, nil
+		}
+		if !subtype.IsSubtype(typ.Nil, target) {
+			return true, nil
+		}
 		return false, errUnknownScalar
 	}
 	if shapefact.IsTable(value) {

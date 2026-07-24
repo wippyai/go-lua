@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -553,10 +554,11 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			// occurrences; it never manufactures or owns result slots.
 			apply := equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}
 			operations = append(operations, operation{instruction: instruction, target: apply})
-			if provider, ok := externalProvider(body, instruction); ok {
+			provider, external := externalProvider(body, instruction)
+			if external {
 				operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}, callApply: apply, external: provider})
 			}
-			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}, callResults: true, callApply: apply})
+			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}, callResults: true, callApply: apply, external: provider})
 		case wir.OpReturn:
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 		case wir.OpExit, wir.OpNoop:
@@ -790,7 +792,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			}
 			draft.Operands = operands
 		case instruction.Op == wir.OpCall:
-			if operation.external.Encoding != nil {
+			if operation.external.Encoding != nil && !operation.callResults {
 				operands, err := externalCallOperands(body, instruction, operation.callApply, operation.external)
 				if err != nil {
 					return equation.Artifact{}, fmt.Errorf("front: external call %s: %w", operation.target.Name, err)
@@ -807,7 +809,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 				draft.Operands = operands
 			} else {
-				operands, err := callResultOperands(body, instruction, operation.callApply)
+				operands, err := callResultOperands(body, instruction, operation.callApply, operation.external)
 				if err != nil {
 					return equation.Artifact{}, fmt.Errorf("front: call results %s: %w", operation.target.Name, err)
 				}
@@ -1619,13 +1621,26 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 // this body.  Local closures deliberately remain ordinary calls: converting
 // them into an external boundary would erase their body-local identity.
 func externalProvider(body *wir.Body, instruction wir.Instruction) (equation.Term, bool) {
+	return externalProviderSeen(body, instruction, make(map[uint32]bool))
+}
+
+func externalProviderSeen(body *wir.Body, instruction wir.Instruction, seen map[uint32]bool) (equation.Term, bool) {
 	if body == nil || instruction.Op != wir.OpCall {
 		return equation.Term{}, false
 	}
-	operand := instruction.Call.Callee
 	if instruction.Call.Method != 0 {
-		operand = instruction.Call.Receiver
+		method := body.Const(instruction.Call.Method).Str
+		if receiverType, ok := methodReceiverType(body, instruction, seen); ok {
+			if name, ok := signaturelookup.StdlibMethodProvider(receiverType, method); ok {
+				return equation.ClosedTerm([]byte("provider/global/" + strconv.Quote(name))), true
+			}
+		}
+		// Preserve the generic external boundary for a path receiver (for
+		// example library:fetch()).  Only a positively typed stdlib method is
+		// reclassified to its canonical library provider.
+		instruction.Call.Callee = instruction.Call.Receiver
 	}
+	operand := instruction.Call.Callee
 	if operand.Kind != wir.OperandPath {
 		return equation.Term{}, false
 	}
@@ -1646,6 +1661,51 @@ func externalProvider(body *wir.Body, instruction wir.Instruction) (equation.Ter
 		return equation.Term{}, false
 	}
 	return equation.ClosedTerm([]byte("provider/global/" + strconv.Quote(name))), true
+}
+
+// methodReceiverType recovers a method receiver's declared type directly or
+// from an earlier finite stdlib result.  The latter keeps s:lower():upper()
+// within the same contract system without any call-site method-name list.
+func methodReceiverType(body *wir.Body, instruction wir.Instruction, seen map[uint32]bool) (typ.Type, bool) {
+	if instruction.Type != 0 {
+		t := body.Type(instruction.Type)
+		return t, t != nil
+	}
+	receiver := instruction.Call.Receiver
+	if receiver.Kind != wir.OperandTemp || seen[receiver.Ref] {
+		return nil, false
+	}
+	seen[receiver.Ref] = true
+	defer delete(seen, receiver.Ref)
+	var result typ.Type
+	body.ForEachCall(func(candidate wir.Instruction) bool {
+		for index, slot := range body.Operands(candidate.Results) {
+			if slot != receiver {
+				continue
+			}
+			provider, ok := externalProviderSeen(body, candidate, seen)
+			if !ok {
+				return false
+			}
+			name, ok := globalProviderName(provider)
+			if !ok {
+				return false
+			}
+			result, ok = signaturelookup.StdlibResultSlot(name, index)
+			return !ok
+		}
+		return true
+	})
+	return result, result != nil
+}
+
+func globalProviderName(provider equation.Term) (string, bool) {
+	encoded := strings.TrimPrefix(string(provider.Encoding), "provider/global/")
+	if encoded == string(provider.Encoding) || encoded == "" {
+		return "", false
+	}
+	name, err := strconv.Unquote(encoded)
+	return name, err == nil && name != ""
 }
 
 // externalCallOperands closes the external boundary's entire source-side
@@ -1706,7 +1766,7 @@ func publicationOperands(body *wir.Body, instruction wir.Instruction) ([]equatio
 	return operands, nil
 }
 
-func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equation.Coordinate) ([]equation.Operand, error) {
+func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equation.Coordinate, provider equation.Term) ([]equation.Operand, error) {
 	results := body.Operands(instruction.Results)
 	targets := make([]wir.CallResultTarget, len(results))
 	completeTargets := len(results) != 0
@@ -1724,6 +1784,19 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 	// target tuple would incorrectly certify a selective result flow.
 	operands := make([]equation.Operand, 1, 1+len(results)*2)
 	operands[0] = equation.Operand{Role: "application", Term: equation.ClosedTerm([]byte("call/" + apply.Name))}
+	if len(provider.Encoding) != 0 {
+		if provider.Entry {
+			return nil, fmt.Errorf("provider result contract has entry term")
+		}
+		operands = append(operands, equation.Operand{Role: "provider", Term: provider})
+		for index, argument := range body.Operands(instruction.List) {
+			term, err := scalarTerm(body, argument)
+			if err != nil {
+				return nil, fmt.Errorf("provider argument %d: %w", index, err)
+			}
+			operands = append(operands, equation.Operand{Role: indexedRole("argument", index), Term: term})
+		}
+	}
 	for index, result := range results {
 		term, err := scalarTerm(body, result)
 		if err != nil {

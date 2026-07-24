@@ -70,7 +70,7 @@ var methods = map[string]*typ.Function{
 	"gmatch": typ.Func().
 		Param("s", typ.String).
 		Param("pattern", typ.String).
-		Returns(gmatchIterator(nil, true), typ.Any).
+		Returns(gmatchIterator(nil, true)).
 		Build(),
 	"gsub": typ.Func().
 		Param("s", typ.String).
