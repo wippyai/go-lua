@@ -89,41 +89,22 @@ type branchPredicateWire struct {
 	HasProducer    bool   `json:"has_producer,omitempty"`
 }
 
-// Result is the complete result published by Check. Values use source display
-// names for this small entrypoint; outcomes and diagnostics retain their
-// equation-kernel candidate keys.
 type Result struct {
 	Artifact equation.Artifact
 	Values   []equation.Fact
 	Outcomes []equation.Fact
-	// ReturnCandidates retains the closed, equation-owned return facts before
-	// their source-display projection. Tables and callable values remain sealed
-	// here even when Outcomes renders them as "unknown". Module-boundary
-	// exporters consume this evidence without re-evaluating source.
+	// ReturnCandidates remain equation-owned closed facts for module exporters.
 	ReturnCandidates []equation.Fact
-	// ValueFacts is the complete closed value partition. It lets module export
-	// projection retain static writes made to a returned table after allocation
-	// without consulting source syntax.
+	// ValueFacts retain the complete closed partition for module exporters.
 	ValueFacts  []equation.Fact
 	Diagnostics []equation.Fact
-	// PublishedDiagnostics is the source-facing projection of diagnostic facts.
-	// Diagnostics remains the canonical equation publication; this companion
-	// projection attaches only information already present in the closed
-	// artifact and closure so hosts do not need to re-run analysis to render a
-	// useful diagnostic.
+	// PublishedDiagnostics projects canonical diagnostic facts without re-analysis.
 	PublishedDiagnostics []PublishedDiagnostic
-	// DiagnosticSpans maps an operation-scoped diagnostic fact key to the WIR
-	// source span that produced it. It is intentionally source-only metadata:
-	// equation facts remain portable and position-free.
+	// DiagnosticSpans are source-only metadata; equation facts remain portable.
 	DiagnosticSpans map[string]wir.Span
-	// Placement is the conservative allocation plan projected from placement
-	// facts in the completed equation closure. A nil plan means the closure
-	// established no allocation-site fact; callers must not substitute a
-	// source-derived guess.
+	// Placement is nil unless the closure establishes an allocation-site fact.
 	Placement *PlacementPlan
-	// TypeDefinitions are the provider-owned declaration graph admitted during
-	// compilation. They are published by module hosts without re-resolving
-	// source, preserving recursive and generic identity at consumers.
+	// TypeDefinitions preserve provider-owned declaration identity at consumers.
 	TypeDefinitions map[string]typ.Type
 	Transactions    int
 	Timings         Timings
@@ -194,77 +175,105 @@ func CheckWithImportsAndResolver(source string, imports map[string]typ.Type, res
 			result = Result{}
 		}
 	}()
-	parseStarted := time.Now()
-	compilation, err := front.CompileWithResolver(source, resolver)
-	parseElapsed := time.Since(parseStarted)
-	if err != nil {
-		result = diagnosticResult("analysis/front", err)
-		result.Timings.ParseBindLower = parseElapsed
-		return result, nil
+	compilation, parseElapsed, compileResult, err := compileCheck(source, resolver)
+	if err != nil || compileResult.Diagnostics != nil {
+		return compileResult, err
 	}
 	artifact := compilation.Artifact
-	if len(artifact.Equations) == 0 {
-		return Result{}, fmt.Errorf("engine: front returned an empty artifact")
-	}
 	evaluateStarted := time.Now()
-	entry := artifact.Equations[0].Entry
-	boundEntry, entryErr := importEntryValue(imports)
-	if entryErr != nil {
-		return Result{}, entryErr
+	binding, err := bindCheckEntry(artifact, imports)
+	if err != nil {
+		return Result{}, err
 	}
-	binding := equation.EntryBinding{Parameter: entry, Value: boundEntry}
 	fileContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	lexical := newLexicalEvaluator(compilation)
 	lexical.setImportedTypes(imports)
 	lexical.setTypeOrigins(compilation)
 	lexical.ctx = fileContext
-	closure := equation.OutputClosure{}
-	transactions := 0
-	if compilation.Cyclic == nil {
-		bound, bindErr := equation.BindEntry(artifact, binding)
-		if bindErr != nil {
-			return Result{}, fmt.Errorf("engine: bind entry: %w", bindErr)
+	closure, transactions, err := evaluateCheck(compilation, binding, lexical, fileContext)
+	if err != nil {
+		var failed conservativeEvaluationError
+		if !errors.As(err, &failed) {
+			return Result{}, err
 		}
-		kernelRegistry, registryErr := registry(lexical, importedResultPaths(artifact))
-		if registryErr != nil {
-			return Result{}, registryErr
-		}
-		vm, vmErr := equation.NewAcyclicVM(kernelRegistry)
-		if vmErr != nil {
-			return Result{}, vmErr
-		}
-		evaluation, evaluateErr := vm.Evaluate(bound)
-		if evaluateErr != nil {
-			result = diagnosticResult("analysis/conservative", evaluateErr)
-			result.Timings = Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)}
-			return result, nil
-		}
-		closure, transactions = evaluation.Closure, evaluation.Transactions
-	} else {
-		if _, compileErr := equation.CompileCyclicArtifact(*compilation.Cyclic); compileErr != nil {
-			return Result{}, fmt.Errorf("engine: compile cyclic artifact: %w", compileErr)
-		}
-		bound, bindErr := equation.BindCyclicEntry(*compilation.Cyclic, binding)
-		if bindErr != nil {
-			return Result{}, fmt.Errorf("engine: bind cyclic entry: %w", bindErr)
-		}
-		kernelRegistry, registryErr := cyclicRegistry(lexical, importedResultPaths(artifact))
-		if registryErr != nil {
-			return Result{}, registryErr
-		}
-		vm, vmErr := equation.NewCyclicVM(kernelRegistry)
-		if vmErr != nil {
-			return Result{}, vmErr
-		}
-		evaluation, evaluateErr := vm.Evaluate(fileContext, bound, []string{"published"})
-		if evaluateErr != nil {
-			result = diagnosticResult("analysis/conservative", evaluateErr)
-			result.Timings = Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)}
-			return result, nil
-		}
-		closure, transactions = evaluation.Closure, evaluation.Transactions
+		result = diagnosticResult("analysis/conservative", failed.error)
+		result.Timings = Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)}
+		return result, nil
 	}
+	return projectCheck(compilation, lexical, closure, transactions, parseElapsed, time.Since(evaluateStarted)), nil
+}
+
+type conservativeEvaluationError struct{ error }
+
+func compileCheck(source string, resolver typeannotation.Resolver) (front.Compilation, time.Duration, Result, error) {
+	started := time.Now()
+	compilation, err := front.CompileWithResolver(source, resolver)
+	elapsed := time.Since(started)
+	if err != nil {
+		result := diagnosticResult("analysis/front", err)
+		result.Timings.ParseBindLower = elapsed
+		return front.Compilation{}, elapsed, result, nil
+	}
+	if len(compilation.Artifact.Equations) == 0 {
+		return front.Compilation{}, elapsed, Result{}, fmt.Errorf("engine: front returned an empty artifact")
+	}
+	return compilation, elapsed, Result{}, nil
+}
+
+func bindCheckEntry(artifact equation.Artifact, imports map[string]typ.Type) (equation.EntryBinding, error) {
+	value, err := importEntryValue(imports)
+	if err != nil {
+		return equation.EntryBinding{}, err
+	}
+	return equation.EntryBinding{Parameter: artifact.Equations[0].Entry, Value: value}, nil
+}
+
+func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding, lexical *lexicalEvaluator, ctx context.Context) (equation.OutputClosure, int, error) {
+	artifact := compilation.Artifact
+	if compilation.Cyclic == nil {
+		bound, err := equation.BindEntry(artifact, binding)
+		if err != nil {
+			return equation.OutputClosure{}, 0, fmt.Errorf("engine: bind entry: %w", err)
+		}
+		kernels, err := registry(lexical, importedResultPaths(artifact))
+		if err != nil {
+			return equation.OutputClosure{}, 0, err
+		}
+		vm, err := equation.NewAcyclicVM(kernels)
+		if err != nil {
+			return equation.OutputClosure{}, 0, err
+		}
+		evaluation, err := vm.Evaluate(bound)
+		if err != nil {
+			return equation.OutputClosure{}, 0, conservativeEvaluationError{err}
+		}
+		return evaluation.Closure, evaluation.Transactions, nil
+	}
+	if _, err := equation.CompileCyclicArtifact(*compilation.Cyclic); err != nil {
+		return equation.OutputClosure{}, 0, fmt.Errorf("engine: compile cyclic artifact: %w", err)
+	}
+	bound, err := equation.BindCyclicEntry(*compilation.Cyclic, binding)
+	if err != nil {
+		return equation.OutputClosure{}, 0, fmt.Errorf("engine: bind cyclic entry: %w", err)
+	}
+	kernels, err := cyclicRegistry(lexical, importedResultPaths(artifact))
+	if err != nil {
+		return equation.OutputClosure{}, 0, err
+	}
+	vm, err := equation.NewCyclicVM(kernels)
+	if err != nil {
+		return equation.OutputClosure{}, 0, err
+	}
+	evaluation, err := vm.Evaluate(ctx, bound, []string{"published"})
+	if err != nil {
+		return equation.OutputClosure{}, 0, conservativeEvaluationError{err}
+	}
+	return evaluation.Closure, evaluation.Transactions, nil
+}
+
+func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, closure equation.OutputClosure, transactions int, parseElapsed, evaluateElapsed time.Duration) Result {
+	artifact := compilation.Artifact
 	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, compilation.EffectSpans, compilation.ExpressionSpans, compilation.ReturnSpans, closure.Diagnostics)
 	for key, span := range lexical.diagnosticSpans {
 		if diagnosticSpans == nil {
@@ -281,7 +290,7 @@ func CheckWithImportsAndResolver(source string, imports map[string]typ.Type, res
 		}
 		diagnosticSpans[diagnostic.Key] = diagnostic.Span
 	}
-	result = Result{
+	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
 		ReturnCandidates:     cloneFacts(closure.Outcomes),
@@ -291,9 +300,8 @@ func CheckWithImportsAndResolver(source string, imports map[string]typ.Type, res
 		Placement:            publishedPlacement(closure.Values),
 		TypeDefinitions:      cloneTypeDefinitions(compilation.TypeDefinitions),
 		Transactions:         transactions,
-		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
+		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
 	}
-	return result, nil
 }
 
 func cloneTypeDefinitions(in map[string]typ.Type) map[string]typ.Type {
@@ -441,56 +449,16 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			item.Code = diagnosticCode(inner)
 			key = inner
 		}
-		if isChannelLifecycleDiagnostic(fact.Key) {
-			out = append(out, enrichChannelLifecycleDiagnostic(item))
+		if projected, ok := projectLifecycleDiagnostic(item, fact, lifecycleEvidence); ok {
+			out = append(out, projected)
 			continue
 		}
-		if isResourceTypestateDiagnostic(fact.Key) {
-			out = append(out, enrichResourceTypestateDiagnostic(item))
+		if projected, ok := projectSelectDiagnostic(item, fact, selectEvidence); ok {
+			out = append(out, projected)
 			continue
 		}
-		if inner, _ := childDiagnosticKey(fact.Key); strings.HasPrefix(inner, "channel.select.exhaustiveness/") || strings.HasPrefix(inner, "lint.union.exhaustiveness/") {
-			item.Evidence = append([]DiagnosticEvidence(nil), selectEvidence[fact.Key]...)
-			if strings.HasPrefix(inner, "lint.union.exhaustiveness/") {
-				item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "union case check"}}
-				item.Help = "Handle each missing case, or add an else branch when a fallback is valid."
-			} else {
-				item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel case check"}}
-				item.Help = "Add an elseif branch for each missing case, or add a default branch when a fallback is valid."
-			}
-			out = append(out, item)
-			continue
-		}
-		if inner, _ := childDiagnosticKey(fact.Key); strings.HasPrefix(inner, "effect.lifecycle.unreleased/") {
-			out = append(out, enrichUnreleasedLifecycleDiagnostic(item, lifecycleEvidence[fact.Key]))
-			continue
-		}
-		if strings.HasPrefix(fact.Key, "effect.freeze.mutation/") {
-			out = append(out, enrichFrozenMutationDiagnostic(item, artifact, callSpans))
-			continue
-		}
-		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.") {
-			out = append(out, enrichDirectCallDiagnostic(item, operation))
-			continue
-		}
-		if operation, ok := expressions[diagnosticOperationName(key)]; ok && strings.HasPrefix(key, "type.operator.concat_operand/") {
-			out = append(out, enrichConcatOperandDiagnostic(item, operation))
-			continue
-		}
-		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
-			out = append(out, enrichRedundantCastDiagnostic(item, operation, callSpans))
-			continue
-		}
-		if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "send.isolation/") {
-			out = append(out, enrichSendIsolationDiagnostic(item, operation))
-			continue
-		}
-		if operation, ok := claims[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
-			out = append(out, enrichRedundantClaimDiagnostic(item, operation))
-			continue
-		}
-		if operation, ok := branchOperation(artifact, diagnosticOperationName(fact.Key)); ok && (strings.HasPrefix(fact.Key, "advice.always_true_guard/") || strings.HasPrefix(fact.Key, "lint.condition.redundant/")) {
-			out = append(out, enrichConstantGuardDiagnostic(item, operation, fact.Key, artifact, branchSpans))
+		if projected, ok := projectOperationDiagnostic(item, fact, key, artifact, claims, applies, expressions, callSpans, branchSpans); ok {
+			out = append(out, projected)
 			continue
 		}
 		name, assignment := strings.CutPrefix(fact.Key, "type.assignment/")
@@ -588,6 +556,60 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		out = append(out, item)
 	}
 	return out
+}
+
+func projectLifecycleDiagnostic(item PublishedDiagnostic, fact equation.Fact, evidence map[string][]DiagnosticEvidence) (PublishedDiagnostic, bool) {
+	if isChannelLifecycleDiagnostic(fact.Key) {
+		return enrichChannelLifecycleDiagnostic(item), true
+	}
+	if isResourceTypestateDiagnostic(fact.Key) {
+		return enrichResourceTypestateDiagnostic(item), true
+	}
+	if inner, _ := childDiagnosticKey(fact.Key); strings.HasPrefix(inner, "effect.lifecycle.unreleased/") {
+		return enrichUnreleasedLifecycleDiagnostic(item, evidence[fact.Key]), true
+	}
+	return PublishedDiagnostic{}, false
+}
+
+func projectSelectDiagnostic(item PublishedDiagnostic, fact equation.Fact, evidence map[string][]DiagnosticEvidence) (PublishedDiagnostic, bool) {
+	inner, _ := childDiagnosticKey(fact.Key)
+	if !strings.HasPrefix(inner, "channel.select.exhaustiveness/") && !strings.HasPrefix(inner, "lint.union.exhaustiveness/") {
+		return PublishedDiagnostic{}, false
+	}
+	item.Evidence = append([]DiagnosticEvidence(nil), evidence[fact.Key]...)
+	if strings.HasPrefix(inner, "lint.union.exhaustiveness/") {
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "union case check"}}
+		item.Help = "Handle each missing case, or add an else branch when a fallback is valid."
+	} else {
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel case check"}}
+		item.Help = "Add an elseif branch for each missing case, or add a default branch when a fallback is valid."
+	}
+	return item, true
+}
+
+func projectOperationDiagnostic(item PublishedDiagnostic, fact equation.Fact, key string, artifact equation.Artifact, claims, applies, expressions map[string]equation.Equation, callSpans, branchSpans map[string]wir.Span) (PublishedDiagnostic, bool) {
+	if strings.HasPrefix(fact.Key, "effect.freeze.mutation/") {
+		return enrichFrozenMutationDiagnostic(item, artifact, callSpans), true
+	}
+	if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.") {
+		return enrichDirectCallDiagnostic(item, operation), true
+	}
+	if operation, ok := expressions[diagnosticOperationName(key)]; ok && strings.HasPrefix(key, "type.operator.concat_operand/") {
+		return enrichConcatOperandDiagnostic(item, operation), true
+	}
+	if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
+		return enrichRedundantCastDiagnostic(item, operation, callSpans), true
+	}
+	if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "send.isolation/") {
+		return enrichSendIsolationDiagnostic(item, operation), true
+	}
+	if operation, ok := claims[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
+		return enrichRedundantClaimDiagnostic(item, operation), true
+	}
+	if operation, ok := branchOperation(artifact, diagnosticOperationName(fact.Key)); ok && (strings.HasPrefix(fact.Key, "advice.always_true_guard/") || strings.HasPrefix(fact.Key, "lint.condition.redundant/")) {
+		return enrichConstantGuardDiagnostic(item, operation, fact.Key, artifact, branchSpans), true
+	}
+	return PublishedDiagnostic{}, false
 }
 
 func enrichFrozenMutationDiagnostic(item PublishedDiagnostic, artifact equation.Artifact, callSpans map[string]wir.Span) PublishedDiagnostic {
@@ -1342,234 +1364,106 @@ func diagnosticResult(code string, cause error) Result {
 	}}}
 }
 
+type kernelBindingSpec struct {
+	kind   string
+	kernel equation.Kernel
+}
+
+func kernelBindingSpecs(lexical *lexicalEvaluator, imported map[string]bool) []kernelBindingSpec {
+	return []kernelBindingSpec{
+		{"entry", equation.KernelFunc(entryKernel)}, {"allocation-template", equation.KernelFunc(allocationTemplateKernel)},
+		{"object-materialization", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
+			return objectMaterializationKernel(lexical, o, p)
+		})},
+		{"environment-write", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
+			return writeKernel(lexical, o, p)
+		})},
+		{"path-replacement", equation.KernelFunc(pathReplacementKernel)}, {"dynamic-index-read", equation.KernelFunc(dynamicIndexReadKernel)}, {"path-invalidation", equation.KernelFunc(pathInvalidationKernel)}, {"index-mutation", equation.KernelFunc(indexMutationKernel)},
+		{"branch-relations", equation.KernelFunc(branchKernel)}, {"apply", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
+			return applyKernel(lexical, o, p)
+		})},
+		{"external-call", equation.KernelFunc(externalCallKernel)}, {"call-results", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
+			return callResultsKernel(lexical, o, p)
+		})},
+		{"generic-for", equation.KernelFunc(genericForKernel)}, {"channel-select", equation.KernelFunc(channelSelectKernel)}, {"publication", equation.KernelFunc(publicationKernel)},
+		{"claim", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
+			return claimKernel(lexical, o, p, imported)
+		})}, {"expression", equation.KernelFunc(expressionKernel)},
+	}
+}
+
+func kernelIDs(kind string) (string, equation.ContentID, error) {
+	kernelID, known := front.KernelID(kind)
+	contract, contracted := front.ContractID(kind)
+	if !known || !contracted {
+		return "", equation.ContentID{}, fmt.Errorf("engine: missing front kernel contract for %q", kind)
+	}
+	return kernelID, contract, nil
+}
+
 func registry(lexical *lexicalEvaluator, imported map[string]bool) (*equation.KernelRegistry, error) {
-	binding := func(kind string, kernel equation.Kernel) (equation.KernelBinding, error) {
-		kernelID, known := front.KernelID(kind)
-		contract, contracted := front.ContractID(kind)
-		if !known || !contracted {
-			return equation.KernelBinding{}, fmt.Errorf("engine: missing front kernel contract for %q", kind)
+	specs := kernelBindingSpecs(lexical, imported)
+	bindings := make([]equation.KernelBinding, 0, len(specs))
+	for _, spec := range specs {
+		kernelID, contract, err := kernelIDs(spec.kind)
+		if err != nil {
+			return nil, err
 		}
-		return equation.KernelBinding{KernelID: kernelID, ContractID: contract, Kernel: kernel}, nil
+		bindings = append(bindings, equation.KernelBinding{KernelID: kernelID, ContractID: contract, Kernel: spec.kernel})
 	}
-	entry, err := binding("entry", equation.KernelFunc(entryKernel))
-	if err != nil {
-		return nil, err
-	}
-	allocationTemplate, err := binding("allocation-template", equation.KernelFunc(allocationTemplateKernel))
-	if err != nil {
-		return nil, err
-	}
-	objectMaterialization, err := binding("object-materialization", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return objectMaterializationKernel(lexical, operation, partition)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	write, err := binding("environment-write", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return writeKernel(lexical, operation, partition)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	claim, err := binding("claim", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return claimKernel(lexical, operation, partition, imported)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	expression, err := binding("expression", equation.KernelFunc(expressionKernel))
-	if err != nil {
-		return nil, err
-	}
-	branch, err := binding("branch-relations", equation.KernelFunc(branchKernel))
-	if err != nil {
-		return nil, err
-	}
-	apply, err := binding("apply", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return applyKernel(lexical, operation, partition)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	results, err := binding("call-results", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return callResultsKernel(lexical, operation, partition)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	external, err := binding("external-call", equation.KernelFunc(externalCallKernel))
-	if err != nil {
-		return nil, err
-	}
-	publication, err := binding("publication", equation.KernelFunc(publicationKernel))
-	if err != nil {
-		return nil, err
-	}
-	pathReplacement, err := binding("path-replacement", equation.KernelFunc(pathReplacementKernel))
-	if err != nil {
-		return nil, err
-	}
-	dynamicIndexRead, err := binding("dynamic-index-read", equation.KernelFunc(dynamicIndexReadKernel))
-	if err != nil {
-		return nil, err
-	}
-	pathInvalidation, err := binding("path-invalidation", equation.KernelFunc(pathInvalidationKernel))
-	if err != nil {
-		return nil, err
-	}
-	indexMutation, err := binding("index-mutation", equation.KernelFunc(indexMutationKernel))
-	if err != nil {
-		return nil, err
-	}
-	genericFor, err := binding("generic-for", equation.KernelFunc(genericForKernel))
-	if err != nil {
-		return nil, err
-	}
-	channelSelect, err := binding("channel-select", equation.KernelFunc(channelSelectKernel))
-	if err != nil {
-		return nil, err
-	}
-	registry, err := equation.NewKernelRegistry([]equation.KernelBinding{
-		entry, allocationTemplate, objectMaterialization, write,
-		pathReplacement, dynamicIndexRead, pathInvalidation, indexMutation,
-		branch, apply, external, results, genericFor, channelSelect, publication, claim, expression,
-	})
+	result, err := equation.NewKernelRegistry(bindings)
 	if err != nil {
 		return nil, fmt.Errorf("engine: build kernel registry: %w", err)
 	}
-	return registry, nil
+	return result, nil
 }
 
-// cyclicRegistry binds the same source-owned semantic kernels to the cyclic
-// transaction interface. The adapter materializes the immutable snapshot as
-// the ordinary kernel partition, so no cyclic-only transfer semantics can
-// diverge from the established publication path.
 func cyclicRegistry(lexical *lexicalEvaluator, imported map[string]bool) (*equation.CyclicKernelRegistry, error) {
-	binding := func(kind string, kernel equation.Kernel) (equation.CyclicKernelBinding, error) {
-		kernelID, known := front.KernelID(kind)
-		contract, contracted := front.ContractID(kind)
-		if !known || !contracted {
-			return equation.CyclicKernelBinding{}, fmt.Errorf("engine: missing front cyclic kernel contract for %q", kind)
+	specs := kernelBindingSpecs(lexical, imported)
+	bindings := make([]equation.CyclicKernelBinding, 0, len(specs))
+	for _, spec := range specs {
+		kernelID, contract, err := kernelIDs(spec.kind)
+		if err != nil {
+			return nil, err
 		}
-		return equation.CyclicKernelBinding{
-			KernelID: kernelID, ContractID: contract,
-			Kernel: equation.CyclicKernelFunc(func(ctx context.Context, operation equation.BoundCyclicEquation, snapshot equation.CyclicSnapshot) (equation.TransactionResult, error) {
-				if err := ctx.Err(); err != nil {
-					return equation.TransactionResult{}, err
-				}
-				closures := make([]equation.OutputClosure, 0)
-				seen := make(map[equation.CellID]bool)
-				var collect func(equation.CellID)
-				collect = func(cell equation.CellID) {
-					if seen[cell] {
-						return
-					}
-					seen[cell] = true
-					for _, predecessor := range snapshot.Predecessors(cell) {
-						collect(predecessor)
-					}
-					for _, leaf := range snapshot.Read(cell).Leaves {
-						closures = append(closures, leaf.Closure)
-					}
-				}
-				for _, predecessor := range snapshot.Predecessors(operation.Cell) {
-					collect(predecessor)
-				}
-				partition, err := equation.PartitionFromClosures(closures...)
-				if err != nil {
-					return equation.TransactionResult{}, fmt.Errorf("engine: cyclic snapshot partition: %w", err)
-				}
-				return kernel.Execute(operation.Equation, partition)
-			}),
-		}, nil
+		bindings = append(bindings, equation.CyclicKernelBinding{KernelID: kernelID, ContractID: contract, Kernel: cyclicKernel(spec.kernel)})
 	}
-	entry, err := binding("entry", equation.KernelFunc(entryKernel))
-	if err != nil {
-		return nil, err
-	}
-	allocationTemplate, err := binding("allocation-template", equation.KernelFunc(allocationTemplateKernel))
-	if err != nil {
-		return nil, err
-	}
-	objectMaterialization, err := binding("object-materialization", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return objectMaterializationKernel(lexical, operation, partition)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	write, err := binding("environment-write", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return writeKernel(lexical, operation, partition)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	claim, err := binding("claim", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return claimKernel(lexical, operation, partition, imported)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	expression, err := binding("expression", equation.KernelFunc(expressionKernel))
-	if err != nil {
-		return nil, err
-	}
-	pathReplacement, err := binding("path-replacement", equation.KernelFunc(pathReplacementKernel))
-	if err != nil {
-		return nil, err
-	}
-	dynamicIndexRead, err := binding("dynamic-index-read", equation.KernelFunc(dynamicIndexReadKernel))
-	if err != nil {
-		return nil, err
-	}
-	pathInvalidation, err := binding("path-invalidation", equation.KernelFunc(pathInvalidationKernel))
-	if err != nil {
-		return nil, err
-	}
-	indexMutation, err := binding("index-mutation", equation.KernelFunc(indexMutationKernel))
-	if err != nil {
-		return nil, err
-	}
-	branch, err := binding("branch-relations", equation.KernelFunc(branchKernel))
-	if err != nil {
-		return nil, err
-	}
-	apply, err := binding("apply", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return applyKernel(lexical, operation, partition)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	results, err := binding("call-results", equation.KernelFunc(func(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-		return callResultsKernel(lexical, operation, partition)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	external, err := binding("external-call", equation.KernelFunc(externalCallKernel))
-	if err != nil {
-		return nil, err
-	}
-	genericFor, err := binding("generic-for", equation.KernelFunc(genericForKernel))
-	if err != nil {
-		return nil, err
-	}
-	channelSelect, err := binding("channel-select", equation.KernelFunc(channelSelectKernel))
-	if err != nil {
-		return nil, err
-	}
-	publication, err := binding("publication", equation.KernelFunc(publicationKernel))
-	if err != nil {
-		return nil, err
-	}
-	registry, err := equation.NewCyclicKernelRegistry([]equation.CyclicKernelBinding{
-		entry, allocationTemplate, objectMaterialization, write,
-		pathReplacement, dynamicIndexRead, pathInvalidation, indexMutation,
-		branch, apply, external, results, genericFor, channelSelect, publication, claim, expression,
-	})
+	result, err := equation.NewCyclicKernelRegistry(bindings)
 	if err != nil {
 		return nil, fmt.Errorf("engine: build cyclic kernel registry: %w", err)
 	}
-	return registry, nil
+	return result, nil
+}
+
+func cyclicKernel(kernel equation.Kernel) equation.CyclicKernel {
+	return equation.CyclicKernelFunc(func(ctx context.Context, operation equation.BoundCyclicEquation, snapshot equation.CyclicSnapshot) (equation.TransactionResult, error) {
+		if err := ctx.Err(); err != nil {
+			return equation.TransactionResult{}, err
+		}
+		closures := make([]equation.OutputClosure, 0)
+		seen := make(map[equation.CellID]bool)
+		var collect func(equation.CellID)
+		collect = func(cell equation.CellID) {
+			if seen[cell] {
+				return
+			}
+			seen[cell] = true
+			for _, predecessor := range snapshot.Predecessors(cell) {
+				collect(predecessor)
+			}
+			for _, leaf := range snapshot.Read(cell).Leaves {
+				closures = append(closures, leaf.Closure)
+			}
+		}
+		for _, predecessor := range snapshot.Predecessors(operation.Cell) {
+			collect(predecessor)
+		}
+		partition, err := equation.PartitionFromClosures(closures...)
+		if err != nil {
+			return equation.TransactionResult{}, fmt.Errorf("engine: cyclic snapshot partition: %w", err)
+		}
+		return kernel.Execute(operation.Equation, partition)
+	})
 }
 
 // childEntryWire is deliberately a closed entry payload.  It is decoded only
@@ -1905,16 +1799,27 @@ func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClo
 		terms = append(terms, supplied...)
 	}
 	wire := childEntryWire{Version: 3, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), GradualAnyTerms: terms}
+	if err := validateChildEntryWire(&wire); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return nil, fmt.Errorf("engine: encode child entry: %w", err)
+	}
+	return append([]byte("front/child-entry/v3/"), encoded...), nil
+}
+
+func validateChildEntryWire(wire *childEntryWire) error {
 	sort.Slice(wire.Seeds, func(i, j int) bool { return wire.Seeds[i].Term < wire.Seeds[j].Term })
 	for index := range wire.Seeds {
 		if !validEntrySeed(wire.Seeds[index]) || (index > 0 && wire.Seeds[index-1].Term == wire.Seeds[index].Term) {
-			return nil, fmt.Errorf("engine: malformed child entry seed")
+			return fmt.Errorf("engine: malformed child entry seed")
 		}
 	}
 	sort.Slice(wire.ClosureSeeds, func(i, j int) bool { return wire.ClosureSeeds[i].Term < wire.ClosureSeeds[j].Term })
 	for index, seed := range wire.ClosureSeeds {
 		if seed.Term == "" || !validClosureHandle(seed.Handle) || (index > 0 && wire.ClosureSeeds[index-1].Term == seed.Term) {
-			return nil, fmt.Errorf("engine: malformed child entry closure seed")
+			return fmt.Errorf("engine: malformed child entry closure seed")
 		}
 	}
 	sort.Slice(wire.MemberClosureSeeds, func(i, j int) bool {
@@ -1926,20 +1831,31 @@ func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClo
 	for index, seed := range wire.MemberClosureSeeds {
 		if seed.Term == "" || seed.Wire.Suffix == "" || !validClosureHandle(seed.Wire.Handle) ||
 			(index > 0 && wire.MemberClosureSeeds[index-1].Term == seed.Term && wire.MemberClosureSeeds[index-1].Wire.Suffix == seed.Wire.Suffix) {
-			return nil, fmt.Errorf("engine: malformed child entry member closure seed")
+			return fmt.Errorf("engine: malformed child entry member closure seed")
 		}
 	}
 	sort.Strings(wire.GradualAnyTerms)
 	for index, term := range wire.GradualAnyTerms {
 		if !strings.HasPrefix(term, "path/") || (index > 0 && wire.GradualAnyTerms[index-1] == term) {
-			return nil, fmt.Errorf("engine: malformed child gradual-any boundary")
+			return fmt.Errorf("engine: malformed child gradual-any boundary")
 		}
 	}
-	encoded, err := json.Marshal(wire)
-	if err != nil {
-		return nil, fmt.Errorf("engine: encode child entry: %w", err)
+	return nil
+}
+
+func decodeChildEntryWire(value []byte) (childEntryWire, error) {
+	for version := uint8(1); version <= 3; version++ {
+		prefix := fmt.Sprintf("front/child-entry/v%d/", version)
+		if !strings.HasPrefix(string(value), prefix) {
+			continue
+		}
+		var wire childEntryWire
+		if err := json.Unmarshal(value[len(prefix):], &wire); err != nil || wire.Version != version {
+			return childEntryWire{}, fmt.Errorf("engine: malformed child entry wire")
+		}
+		return wire, nil
 	}
-	return append([]byte("front/child-entry/v3/"), encoded...), nil
+	return childEntryWire{}, nil
 }
 
 // importEntryValue makes project-resolved exports ordinary entry seeds. The
@@ -2011,21 +1927,9 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 	if entryValue == nil || len(declaredRoots) != len(declaredTypes) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed entry operands")
 	}
-	const prefixV1 = "front/child-entry/v1/"
-	const prefixV2 = "front/child-entry/v2/"
-	const prefixV3 = "front/child-entry/v3/"
-	var wire childEntryWire
-	if strings.HasPrefix(string(entryValue), prefixV1) || strings.HasPrefix(string(entryValue), prefixV2) || strings.HasPrefix(string(entryValue), prefixV3) {
-		prefix := prefixV1
-		if strings.HasPrefix(string(entryValue), prefixV2) {
-			prefix = prefixV2
-		}
-		if strings.HasPrefix(string(entryValue), prefixV3) {
-			prefix = prefixV3
-		}
-		if err := json.Unmarshal(entryValue[len(prefix):], &wire); err != nil || (prefix == prefixV1 && wire.Version != 1) || (prefix == prefixV2 && wire.Version != 2) || (prefix == prefixV3 && wire.Version != 3) {
-			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry wire")
-		}
+	wire, err := decodeChildEntryWire(entryValue)
+	if err != nil {
+		return equation.TransactionResult{}, err
 	}
 	values := make([]equation.Fact, 0, len(wire.Seeds)+len(wire.ClosureSeeds)+len(wire.GradualAnyTerms)+len(declaredRoots)*4)
 	seen := make(map[string]bool, len(wire.Seeds))
@@ -2388,16 +2292,9 @@ func uncalledTypedChannelSendDiagnostic(diagnostic equation.Fact) bool {
 // entry or child failure returns an error, so the surrounding VM publishes no
 // partial child result.
 func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) (equation.TransactionResult, error) {
-	child, exists := l.byPrototype[handle.Prototype]
-	if !exists {
-		return equation.TransactionResult{}, fmt.Errorf("engine: known lexical target %q is unavailable", handle.Prototype)
-	}
-	arguments := operands.arguments
-	if operands.receiver != nil {
-		arguments = append([][]byte{operands.receiver}, arguments...)
-	}
-	if operands.spread || len(arguments) != len(child.Boundary.Parameters) || len(handle.Captures) != len(child.Boundary.Captures) {
-		return equation.TransactionResult{}, fmt.Errorf("engine: unsupported exact lexical boundary for %q", handle.Prototype)
+	child, arguments, err := l.knownLexicalBoundary(operands, handle)
+	if err != nil {
+		return equation.TransactionResult{}, err
 	}
 	seeds := make([]entrySeed, 0, len(operands.arguments)+len(handle.Captures))
 	gradualAnyTerms := make([]string, 0)
@@ -2465,15 +2362,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	if err != nil {
 		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
 	}
-	projected := equation.OutputClosure{}
-	for index, value := range returns {
-		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("call-result/%s/%08d", operation.Target.Name, index), Value: value})
-	}
-	// A lexical child has already closed these facts through its own
-	// publication path. Projecting that finite proof set is required for the
-	// caller's public result to describe allocations reached by an evaluated
-	// local call; private frame bindings never cross the boundary.
-	projected.Values = append(projected.Values, placementFactsFromChild(closure.Values)...)
+	projected := projectCallResults(operation, returns, closure)
 	// Publication is the only child return authority. Its member-capability
 	// facts retain local closure handles for sealed table results without
 	// changing the table's ordinary callable/member facts.
@@ -2584,35 +2473,50 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			}
 		}
 	}
-	// A nested body's residual has a different entry lens and cannot be
-	// attributed to this call boundary. It is demanded at its own closure site;
-	// only direct-child residuals can cross this outcome boundary.
-	if len(child.Nested) == 0 && l.requiresBody[handle.Prototype] {
-		// Child diagnostics are projected with a body-qualified key. The final
-		// Check closure is still the sole publication point, while the qualified
-		// key lets DiagnosticSpans retain the child operation's source location.
-		body := fmt.Sprintf("%x", child.Body)
-		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
-		for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
-			l.childPublished["child/"+body+"/"+item.Fact.Key] = PublishedDiagnostic{
-				Fact:     equation.Fact{Key: "child/" + body + "/" + item.Fact.Key, Value: append([]byte(nil), item.Fact.Value...)},
-				Code:     item.Code,
-				Span:     item.Span,
-				Message:  item.Message,
-				Evidence: append([]DiagnosticEvidence(nil), item.Evidence...),
-				Labels:   append([]DiagnosticLabel(nil), item.Labels...),
-				Help:     item.Help,
-			}
-		}
-		for _, diagnostic := range closure.Diagnostics {
-			key := "child/" + body + "/" + diagnostic.Key
-			projected.Diagnostics = append(projected.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
-			if span, ok := spans[diagnostic.Key]; ok {
-				l.diagnosticSpans[key] = span
-			}
+	l.projectChildDiagnostics(&projected, child, handle, closure)
+	return equation.TransactionResult{Complete: true, Closure: projected}, nil
+}
+
+func (l *lexicalEvaluator) knownLexicalBoundary(operands directCallOperands, handle closureHandle) (front.Compilation, [][]byte, error) {
+	child, exists := l.byPrototype[handle.Prototype]
+	if !exists {
+		return front.Compilation{}, nil, fmt.Errorf("engine: known lexical target %q is unavailable", handle.Prototype)
+	}
+	arguments := operands.arguments
+	if operands.receiver != nil {
+		arguments = append([][]byte{operands.receiver}, arguments...)
+	}
+	if operands.spread || len(arguments) != len(child.Boundary.Parameters) || len(handle.Captures) != len(child.Boundary.Captures) {
+		return front.Compilation{}, nil, fmt.Errorf("engine: unsupported exact lexical boundary for %q", handle.Prototype)
+	}
+	return child, arguments, nil
+}
+
+func projectCallResults(operation equation.BoundEquation, returns [][]byte, closure equation.OutputClosure) equation.OutputClosure {
+	projected := equation.OutputClosure{}
+	for index, value := range returns {
+		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("call-result/%s/%08d", operation.Target.Name, index), Value: value})
+	}
+	projected.Values = append(projected.Values, placementFactsFromChild(closure.Values)...)
+	return projected
+}
+
+func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClosure, child front.Compilation, handle closureHandle, closure equation.OutputClosure) {
+	if len(child.Nested) != 0 || !l.requiresBody[handle.Prototype] {
+		return
+	}
+	body := fmt.Sprintf("%x", child.Body)
+	spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
+	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+		l.childPublished["child/"+body+"/"+item.Fact.Key] = PublishedDiagnostic{Fact: equation.Fact{Key: "child/" + body + "/" + item.Fact.Key, Value: append([]byte(nil), item.Fact.Value...)}, Code: item.Code, Span: item.Span, Message: item.Message, Evidence: append([]DiagnosticEvidence(nil), item.Evidence...), Labels: append([]DiagnosticLabel(nil), item.Labels...), Help: item.Help}
+	}
+	for _, diagnostic := range closure.Diagnostics {
+		key := "child/" + body + "/" + diagnostic.Key
+		projected.Diagnostics = append(projected.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
+		if span, ok := spans[diagnostic.Key]; ok {
+			l.diagnosticSpans[key] = span
 		}
 	}
-	return equation.TransactionResult{Complete: true, Closure: projected}, nil
 }
 
 // childEntryDescendantSeeds preserves exact path facts below a captured entry
