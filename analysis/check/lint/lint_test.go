@@ -166,6 +166,30 @@ return count`,
 	t.Fatalf("placement = %#v, want a closed scalar-return stack witness", result.Placement)
 }
 
+func TestCheckProjectPublishesClosedScalarMemberReturnPlacementWitness(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{{
+		Path:       "main.lua",
+		ModulePath: "main",
+		Source: `local M = {}
+function M.count(): integer
+    return 1
+end
+return M`,
+	}}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if result.Placement == nil {
+		t.Fatal("placement = nil, want a closed scalar-member-return witness")
+	}
+	for _, allocation := range result.Placement.Allocations {
+		if allocation.Identity == "return-scalar/main/count" && allocation.Kind == "lua.scalar" && allocation.Placement.String() == "stack" && allocation.FrameLocal {
+			return
+		}
+	}
+	t.Fatalf("placement = %#v, want a closed scalar-member-return stack witness", result.Placement)
+}
+
 func TestCheckProjectResolvesAProviderExportInsteadOfAny(t *testing.T) {
 	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
 		{Path: "provider.lua", ModulePath: "provider", Source: `return { answer = 42 }`},

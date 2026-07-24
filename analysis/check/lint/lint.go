@@ -418,15 +418,28 @@ func relationHasTableReturn(summary exportrelation.Summary) bool {
 // placementScalarReturnWitnesses turns a closed exported scalar result into a
 // stack placement witness. The module export is the publication authority: a
 // body-local spelling, aggregate return, union, or unresolved result cannot
-// contribute a witness. Scalar values carry no allocation graph and cannot
-// cross the module boundary by retaining an object identity.
+// contribute a witness. Exported members additionally require their validated
+// relation; a callable type alone is not a producer witness. Scalar values
+// carry no allocation graph and cannot cross the module boundary by retaining
+// an object identity.
 func placementScalarReturnWitnesses(module string, summary exportrelation.Summary) []engine.PlacementAllocation {
+	var out []engine.PlacementAllocation
 	function, ok := unwrap.Alias(summary.Type).(*typ.Function)
-	if !ok || function == nil || len(function.Returns) != 1 || !closedScalarReturn(function.Returns[0]) {
-		return nil
+	if ok && function != nil && len(function.Returns) == 1 && closedScalarReturn(function.Returns[0]) {
+		out = append(out, scalarReturnWitness("return-scalar/"+module))
 	}
-	return []engine.PlacementAllocation{{
-		Identity:                "return-scalar/" + module,
+	for _, relation := range summary.Functions {
+		if !relation.Valid() || !closedScalarMemberReturn(summary.Type, relation.Path) {
+			continue
+		}
+		out = append(out, scalarReturnWitness("return-scalar/"+module+"/"+relation.Path))
+	}
+	return out
+}
+
+func scalarReturnWitness(identity string) engine.PlacementAllocation {
+	return engine.PlacementAllocation{
+		Identity:                identity,
 		Kind:                    "lua.scalar",
 		Placement:               placement.Stack,
 		Complete:                true,
@@ -434,7 +447,26 @@ func placementScalarReturnWitnesses(module string, summary exportrelation.Summar
 		FrameLocal:              true,
 		DiesBeforeSuspension:    true,
 		HasDiesBeforeSuspension: true,
-	}}
+	}
+}
+
+func closedScalarMemberReturn(value typ.Type, path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, name := range strings.Split(path, ".") {
+		record, ok := unwrap.Alias(value).(*typ.Record)
+		if !ok || record == nil {
+			return false
+		}
+		field := record.GetField(name)
+		if field == nil || field.Optional || field.Type == nil {
+			return false
+		}
+		value = field.Type
+	}
+	function, ok := unwrap.Alias(value).(*typ.Function)
+	return ok && function != nil && len(function.Returns) == 1 && closedScalarReturn(function.Returns[0])
 }
 
 func closedScalarReturn(value typ.Type) bool {
