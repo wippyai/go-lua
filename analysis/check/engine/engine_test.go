@@ -1450,11 +1450,11 @@ end`)
 		t.Fatal(err)
 	}
 	for _, diagnostic := range result.PublishedDiagnostics {
-		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "cannot assign raw.items because it is any, not string[]") {
+		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "cannot assign raw.items because it is (\"ok\", 42), not string[]") {
 			return
 		}
 	}
-	t.Fatalf("element guard manufactured an array-wide proof: %#v", result.PublishedDiagnostics)
+	t.Fatalf("element guard did not retain the sealed array counterexample: %#v", result.PublishedDiagnostics)
 }
 
 func TestCheckTriviallyTrueBranchPublishesTruthinessNarrowing(t *testing.T) {

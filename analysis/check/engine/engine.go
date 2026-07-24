@@ -1857,6 +1857,61 @@ func assignmentEvidenceValue(value []byte) string {
 	return assignmentValueType(value)
 }
 
+// boundaryShapeEvidenceValue formats a closed explicit-any boundary's already
+// published literal shape solely as a counterexample. It is never used as a
+// compatibility proof: incomplete or non-literal shapes use the ordinary
+// abstract-value rendering.
+func boundaryShapeEvidenceValue(value []byte) string {
+	table, ok := shapefact.DecodeTable(value)
+	if !ok || !table.Closed || len(table.Members) == 0 {
+		return assignmentEvidenceValue(value)
+	}
+	type entry struct {
+		segment segment.Segment
+		value   string
+	}
+	entries := make([]entry, 0, len(table.Members))
+	for _, member := range table.Members {
+		segments, valid := segment.ParseFormattedSegments(member.Suffix)
+		if !valid || len(segments) != 1 || !member.Present {
+			return assignmentEvidenceValue(value)
+		}
+		display, err := displayValue([]byte(member.Value))
+		if err != nil {
+			return assignmentEvidenceValue(value)
+		}
+		entries = append(entries, entry{segment: segments[0], value: string(display)})
+	}
+	array := true
+	for index, item := range entries {
+		if item.segment.Kind != segment.SegmentIndexInt || item.segment.Index != index+1 {
+			array = false
+			break
+		}
+	}
+	if array {
+		values := make([]string, len(entries))
+		for index, item := range entries {
+			values[index] = item.value
+		}
+		return "(" + strings.Join(values, ", ") + ")"
+	}
+	fields := make([]string, 0, len(entries))
+	for _, item := range entries {
+		var key string
+		switch item.segment.Kind {
+		case segment.SegmentField:
+			key = item.segment.Name
+		case segment.SegmentIndexString:
+			key = strconv.Quote(item.segment.Name)
+		default:
+			return assignmentEvidenceValue(value)
+		}
+		fields = append(fields, key+": "+item.value)
+	}
+	return "{" + strings.Join(fields, ", ") + "}"
+}
+
 // diagnosticResult is the whole-file recovery boundary for source-driven
 // limitations.  The front and equation VM deliberately reject incomplete
 // representations rather than fabricate a precise fact.  At the public API
@@ -6033,7 +6088,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// surrounding aggregate.
 	boundaryShape := []byte(nil)
 	if anySource {
-		if sealed, found := heapMemberValue(source, partition); found && shapefact.IsTable(sealed) {
+		if shapefact.IsTable(value) {
+			boundaryShape = append([]byte(nil), value...)
+		} else if sealed, found := heapMemberValue(source, partition); found && shapefact.IsTable(sealed) {
 			boundaryShape = sealed
 		}
 	}
@@ -6139,7 +6196,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			message = assignmentAnyMismatchMessage(sourceDisplay, targetType)
 			if len(boundaryShape) != 0 {
 				if declared, decoded := shapefact.DecodeTarget(shapeTarget); decoded && declared != nil && valueAgainstType(boundaryShape, declared) == shapeRefuted {
-					message = "cannot assign " + sourceDisplay + " because it is " + assignmentEvidenceValue(boundaryShape) + ", not " + typeformat.Short(declared)
+					message = "cannot assign " + sourceDisplay + " because it is " + boundaryShapeEvidenceValue(boundaryShape) + ", not " + typeformat.Short(declared)
 				}
 			}
 		} else if memberSurface != nil {
