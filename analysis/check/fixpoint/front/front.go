@@ -121,9 +121,27 @@ type Compilation struct {
 }
 
 type ControlDiagnostic struct {
-	Key     string
-	Message string
+	Key      string
+	Code     string
+	Message  string
+	Span     wir.Span
+	Evidence []ControlDiagnosticEvidence
+	Help     string
+	Labels   []ControlDiagnosticLabel
+}
+
+// ControlDiagnosticEvidence and ControlDiagnosticLabel retain source-owned
+// lexical evidence without making the front depend on a presentation package.
+type ControlDiagnosticEvidence struct {
 	Span    wir.Span
+	Kind    string
+	Trust   string
+	Message string
+}
+
+type ControlDiagnosticLabel struct {
+	Span    wir.Span
+	Message string
 }
 
 // SpanKey makes source anchors unambiguous across lexical bodies, whose local
@@ -205,7 +223,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 		return Compilation{}, err
 	}
 	compilation.Catalog = catalog
-	compilation.ControlDiagnostics = controlDiagnostics
+	compilation.ControlDiagnostics = append(controlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
 	compilation.TypeDefinitions = typeDefinitions
 	return compilation, nil
 }
@@ -317,6 +335,305 @@ func validateControl(stmts []ast.Stmt) []ControlDiagnostic {
 
 func controlDiagnostic(kind, message string, span ast.Span) ControlDiagnostic {
 	return ControlDiagnostic{Key: "control." + kind, Message: message, Span: wir.Span{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
+}
+
+// unresolvedReferenceDiagnostics reports lexical misses before equation
+// evaluation.  A missing value still has Lua's nil read semantics, while a
+// missing type has no type witness at all; neither condition is an engine
+// transaction failure.  We intentionally report only a bare value use: calls
+// and namespace receivers retain their existing provider/stdlib boundaries.
+func unresolvedReferenceDiagnostics(stmts []ast.Stmt, bindings *bind.Result, resolver *typeresolve.Resolver) []ControlDiagnostic {
+	if bindings == nil || resolver == nil {
+		return nil
+	}
+	var out []ControlDiagnostic
+	seen := make(map[string]bool)
+	declaredTypes := declaredTypeNames(stmts)
+	add := func(code, name, message, help string, span ast.Span) {
+		if name == "" || !span.Valid() {
+			return
+		}
+		key := code + "/" + strconv.Itoa(span.StartLine) + "/" + strconv.Itoa(span.StartCol)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		wireSpan := wir.Span{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}
+		out = append(out, ControlDiagnostic{
+			Key: key, Code: code, Message: message, Span: wireSpan, Help: help,
+			Evidence: []ControlDiagnosticEvidence{{Span: wireSpan, Kind: "abstract fact", Trust: "proven", Message: evidenceMessage(code, name)}},
+			Labels:   []ControlDiagnosticLabel{{Span: wireSpan, Message: message}},
+		})
+	}
+	var visitType func(ast.TypeExpr)
+	visitType = func(expr ast.TypeExpr) {
+		if expr == nil {
+			return
+		}
+		switch item := expr.(type) {
+		case *ast.PrimitiveTypeExpr:
+			if !typ.BuiltinPrimitiveName(item.Name) {
+				if _, ambientType := ambient.Lookup(item.Name); !ambientType && declaredTypes[item.Name] {
+					if _, found := bindings.PrimitiveTypeRef(item); !found {
+						add("type.reference.unresolved", item.Name, "unknown type "+item.Name, "Declare the type in scope", ast.SpanOf(item))
+					}
+				}
+			}
+		case *ast.TypeRefExpr:
+			if len(item.Path) == 1 && declaredTypes[item.Path[0]] {
+				if _, found := bindings.TypeRef(item); !found {
+					add("type.reference.unresolved", item.Path[0], "unknown type "+item.Path[0], "Declare the type in scope", ast.SpanOf(item))
+				}
+			}
+		}
+		switch item := expr.(type) {
+		case *ast.OptionalTypeExpr:
+			visitType(item.Inner)
+		case *ast.UnionTypeExpr:
+			for _, value := range item.Types {
+				visitType(value)
+			}
+		case *ast.IntersectionTypeExpr:
+			for _, value := range item.Types {
+				visitType(value)
+			}
+		case *ast.ArrayTypeExpr:
+			visitType(item.Element)
+		case *ast.MapTypeExpr:
+			visitType(item.Key)
+			visitType(item.Value)
+		case *ast.RecordTypeExpr:
+			for _, field := range item.Fields {
+				visitType(field.Type)
+			}
+		case *ast.FunctionTypeExpr:
+			for _, param := range item.TypeParams {
+				visitType(param.Constraint)
+			}
+			for _, param := range item.Params {
+				visitType(param.Type)
+			}
+			visitType(item.Variadic)
+			for _, value := range item.Returns {
+				visitType(value)
+			}
+		case *ast.GenericTypeExpr:
+			for _, value := range item.Args {
+				visitType(value)
+			}
+		case *ast.MetaTypeExpr:
+			visitType(item.Inner)
+		case *ast.TupleTypeExpr:
+			for _, value := range item.Elements {
+				visitType(value)
+			}
+		}
+	}
+	var visitStmts func([]ast.Stmt)
+	var visitExpr func(ast.Expr, bool)
+	visitExpr = func(expr ast.Expr, reportBare bool) {
+		switch item := expr.(type) {
+		case *ast.IdentExpr:
+			if reportBare && bindings.IsImplicitGlobalUse(item) {
+				if _, typeValue := bindings.TypeValueRef(item); typeValue {
+					return
+				}
+				add("value.reference.unresolved", item.Value, "unknown value "+item.Value, "Declare the value", ast.SpanOf(item))
+			}
+		case *ast.AttrGetExpr:
+			visitExpr(item.Object, false)
+			if item.KeySyntax != ast.AttrKeyDot {
+				visitExpr(item.Key, false)
+			}
+		case *ast.FuncCallExpr:
+			visitExpr(item.Func, false)
+			visitExpr(item.Receiver, false)
+			for _, arg := range item.Args {
+				visitExpr(arg, false)
+			}
+			for _, arg := range item.TypeArgs {
+				visitType(arg)
+			}
+		case *ast.LogicalOpExpr:
+			visitExpr(item.Lhs, false)
+			visitExpr(item.Rhs, false)
+		case *ast.RelationalOpExpr:
+			visitExpr(item.Lhs, false)
+			visitExpr(item.Rhs, false)
+		case *ast.StringConcatOpExpr:
+			visitExpr(item.Lhs, false)
+			visitExpr(item.Rhs, false)
+		case *ast.ArithmeticOpExpr:
+			visitExpr(item.Lhs, true)
+			visitExpr(item.Rhs, true)
+		case *ast.UnaryMinusOpExpr:
+			visitExpr(item.Expr, true)
+		case *ast.UnaryNotOpExpr:
+			visitExpr(item.Expr, false)
+		case *ast.UnaryLenOpExpr:
+			visitExpr(item.Expr, false)
+		case *ast.UnaryBNotOpExpr:
+			visitExpr(item.Expr, true)
+		case *ast.CastExpr:
+			visitExpr(item.Expr, false)
+			visitType(item.Type)
+		case *ast.NonNilAssertExpr:
+			visitExpr(item.Expr, false)
+		case *ast.TableExpr:
+			for _, field := range item.Fields {
+				if field != nil {
+					visitExpr(field.Key, false)
+					visitExpr(field.Value, false)
+				}
+			}
+		case *ast.FunctionExpr:
+			for _, value := range item.ReturnTypes {
+				visitType(value)
+			}
+			visitStmts(item.Stmts)
+		}
+	}
+	visitStmts = func(items []ast.Stmt) {
+		for _, statement := range items {
+			switch item := statement.(type) {
+			case *ast.LocalAssignStmt:
+				for _, value := range item.Types {
+					visitType(value)
+				}
+				for _, value := range item.Exprs {
+					visitExpr(value, false)
+				}
+			case *ast.AssignStmt:
+				for _, value := range item.Lhs {
+					visitExpr(value, false)
+				}
+				for _, value := range item.Rhs {
+					visitExpr(value, false)
+				}
+			case *ast.FuncCallStmt:
+				visitExpr(item.Expr, false)
+			case *ast.ReturnStmt:
+				for _, value := range item.Exprs {
+					visitExpr(value, false)
+				}
+			case *ast.DoBlockStmt:
+				visitStmts(item.Stmts)
+			case *ast.WhileStmt:
+				visitExpr(item.Condition, false)
+				visitStmts(item.Stmts)
+			case *ast.RepeatStmt:
+				visitStmts(item.Stmts)
+				visitExpr(item.Condition, false)
+			case *ast.IfStmt:
+				visitExpr(item.Condition, false)
+				visitStmts(item.Then)
+				visitStmts(item.Else)
+			case *ast.NumberForStmt:
+				visitExpr(item.Init, false)
+				visitExpr(item.Limit, false)
+				visitExpr(item.Step, false)
+				visitStmts(item.Stmts)
+			case *ast.GenericForStmt:
+				for _, value := range item.Exprs {
+					visitExpr(value, false)
+				}
+				visitStmts(item.Stmts)
+			case *ast.FuncDefStmt:
+				if item.Func != nil {
+					visitExpr(item.Func, false)
+				}
+			case *ast.TypeDefStmt:
+				visitType(item.Type)
+			case *ast.InterfaceDefStmt:
+				for _, parent := range item.Extends {
+					visitType(parent)
+				}
+				for _, field := range item.Fields {
+					visitType(field.Type)
+				}
+				for _, method := range item.Methods {
+					if method.Type != nil {
+						visitType(method.Type)
+					}
+				}
+			}
+		}
+	}
+	visitStmts(stmts)
+	return out
+}
+
+// declaredTypeNames provides the minimal lexical-miss boundary needed here:
+// only a name that exists in the file but is unavailable at this use site is
+// a source-local unresolved reference. Other unbound names remain an explicit
+// opaque type boundary, preserving the existing gradual annotation contract.
+func declaredTypeNames(stmts []ast.Stmt) map[string]bool {
+	names := make(map[string]bool)
+	var visitExpr func(ast.Expr)
+	var visit func([]ast.Stmt)
+	visitExpr = func(expr ast.Expr) {
+		switch item := expr.(type) {
+		case *ast.FunctionExpr:
+			visit(item.Stmts)
+		case *ast.FuncCallExpr:
+			visitExpr(item.Func)
+			visitExpr(item.Receiver)
+			for _, arg := range item.Args {
+				visitExpr(arg)
+			}
+		case *ast.TableExpr:
+			for _, field := range item.Fields {
+				if field != nil {
+					visitExpr(field.Key)
+					visitExpr(field.Value)
+				}
+			}
+		}
+	}
+	visit = func(items []ast.Stmt) {
+		for _, statement := range items {
+			switch item := statement.(type) {
+			case *ast.TypeDefStmt:
+				names[item.Name] = true
+			case *ast.InterfaceDefStmt:
+				names[item.Name] = true
+			case *ast.DoBlockStmt:
+				visit(item.Stmts)
+			case *ast.WhileStmt:
+				visit(item.Stmts)
+			case *ast.RepeatStmt:
+				visit(item.Stmts)
+			case *ast.IfStmt:
+				visit(item.Then)
+				visit(item.Else)
+			case *ast.NumberForStmt:
+				visit(item.Stmts)
+			case *ast.GenericForStmt:
+				visit(item.Stmts)
+			case *ast.FuncDefStmt:
+				if item.Func != nil {
+					visitExpr(item.Func)
+				}
+			case *ast.LocalAssignStmt:
+				for _, expr := range item.Exprs {
+					visitExpr(expr)
+				}
+			case *ast.AssignStmt:
+				for _, expr := range item.Rhs {
+					visitExpr(expr)
+				}
+			}
+		}
+	}
+	visit(stmts)
+	return names
+}
+
+func evidenceMessage(code, name string) string {
+	if code == "type.reference.unresolved" {
+		return "no type named " + name + " is declared in this scope"
+	}
+	return "no value named " + name + " is declared, predeclared, imported, or configured global in this scope"
 }
 
 func visitNestedFunctions(expr ast.Expr, visit func([]ast.Stmt)) {
@@ -1858,6 +2175,13 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 			// expression transaction complete with Top so it cannot invent a
 			// concrete value or decide a branch from missing syntax evidence.
 			operands = append(operands, equation.Operand{Role: role, Term: equation.ClosedTerm([]byte("scalar/top"))})
+			return nil
+		}
+		// Lua reads an undeclared global as nil.  Keep that semantic value in
+		// the expression graph; the lexical front publishes the corresponding
+		// unresolved-reference diagnostic separately.
+		if implicitGlobalPath(body, value) {
+			operands = append(operands, equation.Operand{Role: role, Term: equation.ClosedTerm([]byte("scalar/nil"))})
 			return nil
 		}
 		term, err := scalarTerm(body, value)

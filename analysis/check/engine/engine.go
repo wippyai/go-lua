@@ -307,6 +307,39 @@ func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding,
 
 func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, closure equation.OutputClosure, transactions int, parseElapsed, evaluateElapsed time.Duration) Result {
 	artifact := compilation.Artifact
+	// An unbound annotation has a direct lexical diagnostic. Its unresolved
+	// reference must not also be presented as an ordinary failed type claim:
+	// no declared type witness exists to validate in the first place.
+	if len(compilation.ControlDiagnostics) != 0 {
+		unresolvedTypes := make(map[string]bool)
+		for _, diagnostic := range compilation.ControlDiagnostics {
+			if diagnostic.Code != "type.reference.unresolved" {
+				continue
+			}
+			if name := strings.TrimPrefix(diagnostic.Message, "unknown type "); name != "" {
+				unresolvedTypes[name] = true
+			}
+		}
+		if len(unresolvedTypes) != 0 {
+			kept := closure.Diagnostics[:0]
+			for _, diagnostic := range closure.Diagnostics {
+				if strings.HasPrefix(diagnostic.Key, "claim/unproven/") {
+					suppressed := false
+					for name := range unresolvedTypes {
+						if strings.Contains(string(diagnostic.Value), `"`+name+`"`) {
+							suppressed = true
+							break
+						}
+					}
+					if suppressed {
+						continue
+					}
+				}
+				kept = append(kept, diagnostic)
+			}
+			closure.Diagnostics = kept
+		}
+	}
 	// Static-member-read facts are produced while a child closure is evaluated
 	// so object materialization can selectively publish its declared-boundary
 	// result. A root write has no allocation boundary to authorize that extra
@@ -323,11 +356,22 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, compilation.BranchSpans, compilation.ExpressionSpans, lexical.lifecycleEvidence, lexical.selectEvidence)
 	published = mergeChildPublishedDiagnostics(published, lexical.childPublished)
 	for _, diagnostic := range compilation.ControlDiagnostics {
-		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: diagnostic.Key, Value: []byte(diagnostic.Message)})
+		fact := equation.Fact{Key: diagnostic.Key, Value: []byte(diagnostic.Message)}
+		closure.Diagnostics = append(closure.Diagnostics, fact)
 		if diagnosticSpans == nil {
 			diagnosticSpans = make(map[string]wir.Span)
 		}
 		diagnosticSpans[diagnostic.Key] = diagnostic.Span
+		if diagnostic.Code != "" {
+			item := PublishedDiagnostic{Fact: fact, Code: diagnostic.Code, Span: diagnostic.Span, Message: diagnostic.Message, Help: diagnostic.Help}
+			for _, evidence := range diagnostic.Evidence {
+				item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: evidence.Span, Kind: evidence.Kind, Trust: evidence.Trust, Message: evidence.Message})
+			}
+			for _, label := range diagnostic.Labels {
+				item.Labels = append(item.Labels, DiagnosticLabel{Span: label.Span, Message: label.Message})
+			}
+			published = append(published, item)
+		}
 	}
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
@@ -1469,6 +1513,21 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 		}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "argument value any"}}
 		item.Help = fmt.Sprintf("Validate or narrow `%s` before passing it; any/unknown values do not prove parameter contracts.", display)
+		return item
+	}
+	if value == "may be nil" {
+		display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]
+		if display == "" {
+			display = argument
+		}
+		item.Message = fmt.Sprintf("cannot pass %s as argument %d because it may be nil", display, argumentIndex)
+		item.Evidence = []DiagnosticEvidence{
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s can be %s or nil here", argument, expected)},
+			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d expects %s", callee, argumentIndex, expected)},
+			{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no guard on this path proves %s is non-nil", display)},
+		}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "argument value"}}
+		item.Help = fmt.Sprintf("Guard `%s` with a nil check or provide a non-nil value before this call.", display)
 		return item
 	}
 	item.Message = fmt.Sprintf("%s is %s, not %s", argument, value, expected)
@@ -5833,9 +5892,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// A declaration without an initializer reads its own Lua nil slot. That
 		// slot establishes the declared local's downstream contract; it is not an
 		// assignment of nil to the declaration type.
-	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil") && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted) {
+	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil") && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted || publishedOptionalAssignmentWitness(source, shapeTarget, partition)) {
 		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
-		optionalSource := optionalAssignmentSource(value, targetType) || closedLiteralDeclaredOptionalMemberSource(source, value, shapeTarget, partition)
+		optionalSource := optionalAssignmentSource(value, targetType) || closedLiteralDeclaredOptionalMemberSource(source, value, shapeTarget, partition) || publishedOptionalAssignmentWitness(source, shapeTarget, partition)
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
 			actual := assignmentValueType(value)
 			if literal, found := literalDiagnosticValue(source, partition); found {
@@ -8106,11 +8165,23 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 	if err := json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate); err != nil {
 		return equation.OutputClosure{}, false, fmt.Errorf("engine: decode typed literal branch predicate: %w", err)
 	}
-	if (predicate.Kind != "literal-equal" && predicate.Kind != "literal-not") || predicate.Path == "" || predicate.Literal == "" || predicate.Negated {
+	if predicate.Path == "" || predicate.Negated {
 		return equation.OutputClosure{}, false, nil
 	}
-	literal, literalOK := literalType(predicate.Literal)
-	if !literalOK {
+	literal := typ.Type(nil)
+	switch predicate.Kind {
+	case "literal-equal", "literal-not":
+		if predicate.Literal == "" {
+			return equation.OutputClosure{}, false, nil
+		}
+		var literalOK bool
+		literal, literalOK = literalType(predicate.Literal)
+		if !literalOK {
+			return equation.OutputClosure{}, false, nil
+		}
+	case "truthy", "falsy":
+		literal = typ.LiteralBool(true)
+	default:
 		return equation.OutputClosure{}, false, nil
 	}
 	root, suffix, source, ok := typedAncestor([]byte("path/"+predicate.Path), partition)
@@ -8119,7 +8190,7 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 	}
 	trueType, trueOK := variant.NarrowByPathLiteral(source, suffix, literal)
 	falseType, falseOK := variant.NarrowByPathLiteralNot(source, suffix, literal)
-	if predicate.Kind == "literal-not" {
+	if predicate.Kind == "literal-not" || predicate.Kind == "falsy" {
 		trueType, falseType = falseType, trueType
 		trueOK, falseOK = falseOK, trueOK
 	}
@@ -8479,7 +8550,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			// even when the receiver is an opaque interface rather than a sealed
 			// table.  Reuse that canonical member contract for argument checking;
 			// do not materialize a member value or inspect a provider body.
-			if signature, available := typedMethodCallableSignature(operands.receiver, operands.method, partition); available && hasSummaryAnyArgument(operands.arguments, partition.Values()) {
+			if signature, available := typedMethodCallableSignature(operands.receiver, operands.method, partition); available && (hasSummaryAnyArgument(operands.arguments, partition.Values()) || hasPublishedOptionalArgument(operands.arguments, partition)) {
 				typedMethodSignature, typedMethodContract = signature, true
 			} else {
 				if receiverType, declared := declaredTypeForTerm(operands.receiver, partition); declared && declaredMethodMissing(receiverType, operands.method) {
@@ -8543,6 +8614,14 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		expected, accepts := callableParameterAt(signature, index)
 		if !accepts {
 			break
+		}
+		// A method contract from a published receiver keeps its canonical
+		// parameter type even when the selected argument's runtime value is
+		// intentionally Top.  Reuse that existing pair of publications to
+		// reject only the proven nilability conflict; neither an annotation nor
+		// an unknown scalar is treated as evidence for this boundary.
+		if !hasCallee && callableParameterRejectsNil(expected) && optionalArgumentMayBeNil(term, partition) {
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))), nil
 		}
 		argument, known := resolveKnownCurrentValue(term, partition)
 		// An explicit any is a published precision boundary, not a proof of a
@@ -10481,6 +10560,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		receiverResultTerm := receiver
 		setMetatableReceiver := []byte(nil)
 		var importedSummary typ.Type
+		var methodSummary typ.Type
 		// A known lexical apply seals its child outcome under the same
 		// application coordinate. call-results is the sole owner of caller
 		// result terms, so it consumes that private projection rather than
@@ -10535,6 +10615,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				}
 			}
 			if string(value) == "scalar/top" {
+				if summary, ok := typedMethodReturnType(receiver, method, index, partition); ok {
+					methodSummary = summary
+				}
 				if contract, ok := typedMethodResultValue(receiver, method, index, partition); ok {
 					value = contract
 				}
@@ -10588,6 +10671,13 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				Key:   "imported-relation-result/" + base64.RawURLEncoding.EncodeToString(result) + "/" + operation.Target.Name,
 				Value: []byte("scalar/bool/true"),
 			})
+		}
+		if methodSummary != nil {
+			encoded, encodeErr := typ.EncodeCanonical(context.Background(), methodSummary)
+			if encodeErr != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: encode typed method result summary: %w", encodeErr)
+			}
+			values = append(values, equation.Fact{Key: summaryTypePrefix + string(result) + "/" + operation.Target.Name, Value: encoded})
 		}
 		if receiverResult {
 			if identity, found := tableIdentityForTerm(receiverResultTerm, partition); found {
@@ -10886,6 +10976,18 @@ func sealedStaticMemberReceiverResultValue(lexical *lexicalEvaluator, callee []b
 // resolve through the canonical type graph and its return slot must still be a
 // concrete provider value, so optional, union, and generic slots remain Top.
 func typedMethodResultValue(receiver, method []byte, index int, partition equation.Partition) ([]byte, bool) {
+	result, ok := typedMethodReturnType(receiver, method, index, partition)
+	if !ok {
+		return nil, false
+	}
+	return providerReturnTypeValue(result)
+}
+
+// typedMethodReturnType projects a method return from an existing published
+// receiver witness. The caller decides whether the type is materializable as a
+// value or must remain a diagnostic-only summary; a union is never fabricated
+// as a runtime shape merely to retain its member contracts.
+func typedMethodReturnType(receiver, method []byte, index int, partition equation.Partition) (typ.Type, bool) {
 	if receiver == nil || method == nil || index < 0 {
 		return nil, false
 	}
@@ -10915,7 +11017,7 @@ func typedMethodResultValue(receiver, method []byte, index int, partition equati
 	if !ok || function == nil || index >= len(function.Returns) || function.Returns[index] == nil {
 		return nil, false
 	}
-	return providerReturnTypeValue(function.Returns[index])
+	return function.Returns[index], true
 }
 
 // typedMethodCallableSignature exposes a callable contract only from the
@@ -10999,6 +11101,45 @@ func typedMethodCallableSignature(receiver []byte, method string, partition equa
 		signature.TypeParams = append(signature.TypeParams, item)
 	}
 	return signature, true
+}
+
+// callableParameterRejectsNil reads the closed signature spelling already
+// attached to this call. Optional parameters are normalized with a trailing
+// question mark by the type formatter; nil and top-like parameters impose no
+// non-nil proof obligation.
+func callableParameterRejectsNil(parameter string) bool {
+	expected := callableParameterType(parameter)
+	return expected != "" && expected != "any" && expected != "unknown" && expected != "nil" && !strings.HasSuffix(expected, "?")
+}
+
+// optionalArgumentMayBeNil accepts only a current published path type whose
+// concrete type includes nil. It never treats scalar Top or a local claim as
+// evidence, preserving the engine's ordinary fail-closed gradual boundary.
+func optionalArgumentMayBeNil(argument []byte, partition equation.Partition) bool {
+	actual, available := typedPathType(argument, partition)
+	return available && actual != nil && proof.OptionalTypeHasConcreteValue(actual)
+}
+
+func hasPublishedOptionalArgument(arguments [][]byte, partition equation.Partition) bool {
+	for _, argument := range arguments {
+		if optionalArgumentMayBeNil(argument, partition) {
+			return true
+		}
+	}
+	return false
+}
+
+// publishedOptionalAssignmentWitness is the assignment counterpart of the
+// call boundary above. The source and target are both existing canonical type
+// publications: an optional source can refute only a target that excludes
+// nil, while untyped and annotation-only paths remain unavailable.
+func publishedOptionalAssignmentWitness(source, encodedTarget []byte, partition equation.Partition) bool {
+	actual, available := typedPathType(source, partition)
+	if !available || !proof.OptionalTypeHasConcreteValue(actual) {
+		return false
+	}
+	target, decoded := shapefact.DecodeTarget(encodedTarget)
+	return decoded && target != nil && !subtype.IsSubtype(typ.Nil, target)
 }
 
 func sealedFunctionResultValue(value []byte, index int) ([]byte, bool) {
@@ -12466,6 +12607,16 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		}
 	}
 	if !found {
+		// A summary union is a contract over several possible method results,
+		// not proof that every member path exists at runtime. Leave an
+		// unselected arm Top so only the established branch machinery can make
+		// it concrete; emitting a missing-member fact here would reject a valid
+		// discriminant-guarded consumer.
+		if _, summary := currentEpochFact(summaryTypePrefix, root, partition); summary {
+			if _, union := unwrap.Alias(subst.ExpandInstantiated(source)).(*typ.Union); union {
+				return []byte("scalar/top"), true
+			}
+		}
 		if !closedMemberSurface(source) {
 			return []byte("scalar/top"), true
 		}
@@ -12623,6 +12774,15 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 			return nil, nil, nil, false
 		}
 		rootTerm := []byte("path/" + root)
+		// A guarded branch publication is the current value on that edge and
+		// therefore takes precedence over the broader module summary. This is
+		// what lets an existing discriminant proof select one union arm without
+		// discarding the summary on the opposite edge.
+		if value, found := latestValue(rootTerm, partition); found {
+			if typeValue, decoded := shapefact.DecodeTarget(value); decoded {
+				return rootTerm, segs, typeValue, true
+			}
+		}
 		if encoded, found := currentEpochFact(summaryTypePrefix, rootTerm, partition); found {
 			typeValue, decodeErr := typ.DecodeCanonical(context.Background(), encoded)
 			if decodeErr == nil && typeValue != nil {
