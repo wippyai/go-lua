@@ -5485,7 +5485,9 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 			return nil, false, nil
 		}
 		if _, explicitAny := uncalledExplicitAnyBoundary(captured); !explicitAny && !allowTypedCaptures {
-			return nil, false, nil
+			if !l.uncalledTypePredicateCaptureBoundary(child, term, handle) {
+				return nil, false, nil
+			}
 		}
 		seeds = append(seeds, entrySeed{Term: term, Value: value})
 		closureSeeds = append(closureSeeds, entryClosureSeed{Term: term, Handle: handle})
@@ -5531,6 +5533,145 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 		return nil, false, err
 	}
 	return entry, true, nil
+}
+
+// uncalledTypePredicateCaptureBoundary recognizes the closed two-result path
+// through a local wrapper around a front-published T:is(value) relation. The
+// enclosing child must consume the exact captured helper, write both result
+// slots, and guard a strict claim with the helper's error slot. This admits no
+// arbitrary uncalled helper: any extra operation, an open result tuple, or a
+// missing predicate target leaves the child dormant.
+func (l *lexicalEvaluator) uncalledTypePredicateCaptureBoundary(child front.Compilation, capture string, handle closureHandle) bool {
+	if l == nil || child.Cyclic != nil || capture == "" {
+		return false
+	}
+	helper, found := l.byPrototype[handle.Prototype]
+	if !found || !uncalledTypePredicateHelper(helper) {
+		return false
+	}
+	application, valueResult, errorResult := "", "", ""
+	valuePath, errorPath := "", ""
+	branch := ""
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "entry":
+			continue
+		case "apply":
+			callee, hasCallee := artifactOperand(operation.Operands, "callee")
+			arity, hasArity := artifactOperand(operation.Operands, "result-arity")
+			if application != "" || !hasCallee || string(callee) != capture || !hasArity || string(arity) != "2" {
+				return false
+			}
+			application = "call/" + operation.Target.Name
+		case "external-call":
+			candidate, found := artifactOperand(operation.Operands, "application")
+			if !found || application == "" || string(candidate) != application {
+				return false
+			}
+		case "call-results":
+			candidate, found := artifactOperand(operation.Operands, "application")
+			if !found || application == "" || string(candidate) != application || valueResult != "" || errorResult != "" {
+				return false
+			}
+			value, hasValue := artifactOperand(operation.Operands, "result-00000000")
+			err, hasError := artifactOperand(operation.Operands, "result-00000001")
+			if !hasValue || !hasError {
+				return false
+			}
+			valueResult, errorResult = string(value), string(err)
+		case "environment-write":
+			target, hasTarget := artifactOperand(operation.Operands, "target")
+			value, hasValue := artifactOperand(operation.Operands, "value")
+			if !hasTarget || !hasValue {
+				return false
+			}
+			switch string(value) {
+			case valueResult:
+				if valuePath != "" {
+					return false
+				}
+				valuePath = string(target)
+			case errorResult:
+				if errorPath != "" {
+					return false
+				}
+				errorPath = string(target)
+			case valuePath:
+				// This is the strict assignment's source write. The following
+				// claim verifies its target and branch guard below.
+			default:
+				return false
+			}
+		case "branch-relations":
+			if branch != "" || errorPath == "" || !uncalledNotNilBranch(operation, errorPath) {
+				return false
+			}
+			branch = operation.Target.Name
+		case "claim":
+			value, hasValue := artifactOperand(operation.Operands, "value")
+			if branch == "" || !hasValue || string(value) != valuePath || !hasGuardEncoding(operation.Guards, "front/branch/"+branch+"/true") {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return application != "" && valueResult != "" && errorResult != "" && valuePath != "" && errorPath != "" && branch != ""
+}
+
+func uncalledTypePredicateHelper(child front.Compilation) bool {
+	if child.Cyclic != nil || child.WIR == nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) != 1 {
+		return false
+	}
+	application, result := "", ""
+	hasTarget, hasReturn := false, false
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "entry":
+			continue
+		case "apply":
+			arity, found := artifactOperand(operation.Operands, "result-arity")
+			if application != "" || !found || string(arity) != "1" {
+				return false
+			}
+			application = "call/" + operation.Target.Name
+		case "external-call":
+			candidate, found := artifactOperand(operation.Operands, "application")
+			if !found || application == "" || string(candidate) != application {
+				return false
+			}
+		case "call-results":
+			candidate, found := artifactOperand(operation.Operands, "application")
+			value, hasValue := artifactOperand(operation.Operands, "result-00000000")
+			target, hasTargetOperand := artifactOperand(operation.Operands, "type-predicate-error-target")
+			if !found || application == "" || string(candidate) != application || !hasValue || result != "" || !hasTargetOperand {
+				return false
+			}
+			if _, valid := shapefact.DecodeTarget(target); !valid {
+				return false
+			}
+			result, hasTarget = string(value), true
+		case "publication":
+			value, found := artifactOperand(operation.Operands, "return-value-00000000")
+			if hasReturn || !found || result == "" || string(value) != result {
+				return false
+			}
+			hasReturn = true
+		default:
+			return false
+		}
+	}
+	return application != "" && result != "" && hasTarget && hasReturn
+}
+
+func uncalledNotNilBranch(operation equation.Equation, errorPath string) bool {
+	for _, operand := range operation.Operands {
+		predicate, trueEdge, ok := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
+		if ok && trueEdge && !predicate.Negated && predicate.Kind == "not-nil" && "path/"+predicate.Path == errorPath {
+			return true
+		}
+	}
+	return false
 }
 
 // publishUncalledFalseEdgeAnyAssignment admits one declaration-owned

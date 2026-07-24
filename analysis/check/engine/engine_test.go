@@ -1945,6 +1945,29 @@ end
 	}
 }
 
+func TestCheckTypePredicateWrapperFalseEdgeRejectsValue(t *testing.T) {
+	result, err := engine.Check(`
+type Point = {x: number, y: number}
+local function isPoint(value)
+    return Point:is(value)
+end
+function validate(data: any)
+    local value, err = isPoint(data)
+    if err ~= nil then
+        local point: Point = value
+    end
+end`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 9 && strings.Contains(diagnostic.Message, "value because it is nil") {
+			return
+		}
+	}
+	t.Fatalf("type predicate wrapper false edge did not publish its invalid value: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckNumericBranchPredicate(t *testing.T) {
 	result, err := engine.Check(`
 local count = 3
