@@ -329,6 +329,40 @@ func TestCheckPublishesValidityAndProvenanceForACheckedModule(t *testing.T) {
 	}
 }
 
+func TestCheckNonNilAssertionAndItsCopyStayClaimed(t *testing.T) {
+	result, err := Check(`
+local optional: string? = "found"
+local asserted = optional!
+local downstream = asserted
+`)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if result.Native == nil {
+		t.Fatal("checked module published no fact index")
+	}
+	trust := make(map[string][]string)
+	for _, fact := range result.Native.Facts() {
+		if fact.Lane == NativeLaneValues && fact.Family == "value" {
+			trust[fact.Subject] = append(trust[fact.Subject], fact.Trust)
+		}
+	}
+	for _, subject := range []string{"asserted", "downstream"} {
+		if !containsTrust(trust[subject], NativeTrustClaimed) || containsTrust(trust[subject], NativeTrustProven) {
+			t.Fatalf("%s trust = %#v, want claimed and no proven publication", subject, trust[subject])
+		}
+	}
+}
+
+func containsTrust(trust []string, want string) bool {
+	for _, got := range trust {
+		if got == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCheckPublishesNativeFactsForACheckedModule(t *testing.T) {
 	result, err := Check("local config = { retries = 3 }\nlocal function scale(factor: integer): integer\nreturn factor * 2\nend\nreturn scale(config.retries)\n")
 	if err != nil {

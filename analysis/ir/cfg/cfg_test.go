@@ -65,6 +65,7 @@ func TestAddNode(t *testing.T) {
 		{"join", NodeJoin},
 		{"return", NodeReturn},
 		{"noop", NodeNoop},
+		{"eval", NodeEval},
 	}
 
 	for _, tt := range tests {

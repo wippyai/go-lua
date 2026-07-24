@@ -15,7 +15,7 @@ var FrozenKinds = []string{
 	"channel-select", "branch-relations", "call-results", "presence-implications",
 	"loop-control", "generic-for", "root-assignment", "covariant-exposure",
 	"contribution", "external-call", "outcome", "nonreturning", "definition",
-	"resource", "entry", "publication", "expression",
+	"resource", "entry", "publication", "expression", "eval-node",
 	"claim",
 }
 

@@ -2238,7 +2238,7 @@ func kernelBindingSpecs(lexical *lexicalEvaluator, imported map[string]bool) []k
 		{"generic-for", equation.KernelFunc(genericForKernel)}, {"channel-select", equation.KernelFunc(channelSelectKernel)}, {"publication", equation.KernelFunc(publicationKernel)},
 		{"claim", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
 			return claimKernel(lexical, o, p, imported)
-		})}, {"expression", equation.KernelFunc(expressionKernel)},
+		})}, {"expression", equation.KernelFunc(expressionKernel)}, {"eval-node", equation.KernelFunc(evalNodeKernel)},
 	}
 }
 
@@ -9781,6 +9781,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if (!strings.HasPrefix(target, "path/") && !strings.HasPrefix(target, "temp/")) || !validClaimKind(kind) || !validClaimType(kind, targetType) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed claim")
 	}
+	throwTemplate := claimAssertThrowTemplate(operation, kind)
 	value, available, err := resolveClaimValue(source, partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
@@ -9840,6 +9841,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	castFromAnyBoundary := kind == "claim-kind/1" && sourceHasAnyBoundary(source, partition.Values())
 	if available && !boundaryRequiresProof && !castFromAnyBoundary && (claimProven(value, kind, targetType) || shapeRelation == shapeProven || channelCastFromNil) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
+		if throwTemplate.Key != "" {
+			closure.Values = append(closure.Values, throwTemplate)
+		}
 		// A successfully checked annotation is a closed type publication for
 		// this exact binding. Later aggregate literals may consume that
 		// publication through their recorded member origins; an unproven claim
@@ -9875,6 +9879,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	refined := []byte("scalar/claim/" + kind + "/" + targetType)
 	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}}}
+	if throwTemplate.Key != "" {
+		closure.Values = append(closure.Values, throwTemplate)
+	}
 	if kind == "claim-kind/1" {
 		for _, operand := range operation.Operands {
 			if operand.Role != "shape-target" {
@@ -9976,6 +9983,41 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		closure.Diagnostics = []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}}
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+// claimAssertThrowTemplate publishes the terminal behavior that the existing
+// claim occurrence proves structurally. It is not a value refinement: an
+// unchecked assertion still leaves its result claimed, while the operation's
+// nil throw arm remains a proven property of the lowered ClaimAssert itself.
+func claimAssertThrowTemplate(operation equation.BoundEquation, kind string) equation.Fact {
+	if kind != "claim-kind/2" {
+		return equation.Fact{}
+	}
+	return equation.Fact{
+		Key:   "throw_template/" + operation.Target.Name,
+		Value: []byte("allocates=false;false_arm=passes;kind=claim_assert;nil_arm=throws;preserves_word_on_success=true"),
+	}
+}
+
+// evalNodeKernel publishes only the structural operation named by a NodeEval
+// coordinate. It deliberately carries no type, dispatch, lifetime, or
+// reachability conclusion.
+func evalNodeKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	if !guardsHold(operation.Guards, partition) {
+		return equation.TransactionResult{Complete: true}, nil
+	}
+	operands, err := requiredOperandsByRole(operation.Operands, "operation")
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	name := string(operands["operation"])
+	if name != "closure" && name != "length" {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed evaluation node")
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
+		Key:   "eval_node/" + operation.Target.Name,
+		Value: []byte("operation=" + name),
+	}}}}, nil
 }
 
 // guardedLocalCallResultClaim recognizes an annotation immediately consuming a

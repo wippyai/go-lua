@@ -32,8 +32,9 @@ const (
 	NativeTrustProven = "proven"
 	// NativeTrustClaimed is an undischarged source assertion — a cast, a
 	// declared type or a non-nil assertion the closure could not prove. The
-	// encoding is carried in the value itself, so every later read, copy and
-	// merge of the value stays claimed: trust never rises by propagation.
+	// encoding is carried in the value itself, or in the artifact's explicit
+	// non-nil-assertion lineage. Every later copy of either stays claimed:
+	// trust never rises by propagation.
 	NativeTrustClaimed = "claimed"
 	// NativeTrustUnknown is a row with no proof content: the closure's opaque
 	// value, or an unvalidated gradual boundary.
@@ -503,11 +504,12 @@ func nativeContractRevocation(key string) (string, bool) {
 type nativeAnchors struct {
 	terms      map[string]string
 	operations map[string]string
+	claimed    map[string]struct{}
 	longest    int
 }
 
 func newNativeAnchors(artifact equation.Artifact) *nativeAnchors {
-	anchors := &nativeAnchors{terms: make(map[string]string), operations: make(map[string]string)}
+	anchors := &nativeAnchors{terms: make(map[string]string), operations: make(map[string]string), claimed: claimedAssertionTerms(artifact)}
 	for _, operation := range artifact.Equations {
 		anchors.operations[operation.Target.Name] = operation.Occurrence.Kind
 		byRole := make(map[string][]byte, len(operation.Operands))
@@ -597,15 +599,61 @@ func (a *nativeAnchors) project(lane string, fact equation.Fact) NativeFact {
 			}
 		}
 	}
+	if lane == NativeLaneValues {
+		if _, claimed := a.claimed[row.Term]; claimed {
+			row.Trust = NativeTrustClaimed
+		}
+	}
 	return row
+}
+
+// claimedAssertionTerms follows only declared value flow: a non-nil assertion
+// is source authority, and an environment write copies that authority from its
+// recorded value term to its recorded target term. This is an artifact
+// projection, not an inferred proof: an assertion stays claimed until a
+// validating operation publishes a separate fact.
+func claimedAssertionTerms(artifact equation.Artifact) map[string]struct{} {
+	claimed := make(map[string]struct{})
+	for changed := true; changed; {
+		changed = false
+		for _, operation := range artifact.Equations {
+			operands, err := artifactOperandsByRole(operation.Operands, "target")
+			if err != nil {
+				continue
+			}
+			target := string(operands["target"])
+			if operation.Occurrence.Kind == "claim" {
+				kind, err := artifactOperandsByRole(operation.Operands, "kind")
+				if err == nil && string(kind["kind"]) == "claim-kind/2" {
+					if _, found := claimed[target]; !found {
+						claimed[target] = struct{}{}
+						changed = true
+					}
+				}
+				continue
+			}
+			if operation.Occurrence.Kind != "environment-write" {
+				continue
+			}
+			value, err := artifactOperandsByRole(operation.Operands, "value")
+			if err != nil {
+				continue
+			}
+			if _, inherited := claimed[string(value["value"])]; inherited {
+				if _, found := claimed[target]; !found {
+					claimed[target] = struct{}{}
+					changed = true
+				}
+			}
+		}
+	}
+	return claimed
 }
 
 // nativeFactTrust classifies a published value by the same predicates the
 // closure itself uses to decide whether a value is authority. It reads the
-// published encoding and nothing else: a claim the closure refused to
-// discharge is carried as a claim refinement inside the value, which is why an
-// assignment, a merge or a later read of that value cannot launder it into a
-// proof.
+// published encoding and nothing else; explicit non-nil assertion lineage is
+// joined separately from the artifact coordinates that publish each row.
 //
 // Only the value lane carries value encodings. Outcome and diagnostic rows are
 // display and report projections whose spellings this vocabulary does not

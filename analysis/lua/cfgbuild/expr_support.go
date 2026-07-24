@@ -155,7 +155,7 @@ func (b *builder) appendShortCircuitValueCalls(state flowState, stmt ast.Stmt, e
 	join := b.graph.AddNode(cfg.NodeJoin)
 	region := ShortCircuitRegion{Guard: branch, Join: join, RHSOnTrue: rhsCond}
 	if len(rhsCalls) == 0 {
-		eval := b.graph.AddNode(cfg.NodeNoop)
+		eval := b.graph.AddNode(cfg.NodeEval)
 		b.graph.AddEdge(branch, eval, rhsCond)
 		b.shortCircuits.SetEvaluation(eval, ExpressionEvaluation{Expr: expr.Rhs})
 		b.graph.AddEdge(eval, join, false)

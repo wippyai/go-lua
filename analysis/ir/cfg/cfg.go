@@ -52,6 +52,10 @@ const (
 	NodeJoin                   // Join point where multiple paths merge
 	NodeReturn                 // Return statement
 	NodeNoop                   // Structural no-op used where a source statement needs a CFG point
+	// NodeEval is a control-linear expression evaluation point. It preserves a
+	// real RHS operation in short-circuit topology without conflating it with a
+	// structural no-op.
+	NodeEval
 )
 
 // Node represents a CFG topology node.

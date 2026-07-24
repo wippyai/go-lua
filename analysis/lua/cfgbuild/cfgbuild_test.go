@@ -997,7 +997,7 @@ func TestBuildChunkValueShortCircuitPureRHSGetsEvaluationPoint(t *testing.T) {
 	if eval == 0 {
 		t.Fatalf("missing expression evaluation point")
 	}
-	requirePointKind(t, graph, eval, cfg.NodeNoop)
+	requirePointKind(t, graph, eval, cfg.NodeEval)
 	requireEdge(t, graph, graph.Entry(), branch, false)
 	requireEdge(t, graph, branch, eval, true)
 	requireEdge(t, graph, eval, join, false)

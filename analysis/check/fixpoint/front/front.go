@@ -55,6 +55,7 @@ const (
 	publicationKernel           = "front/publication/v1"
 	claimKernel                 = "front/claim/v1"
 	expressionKernel            = "front/expression/v1"
+	evalNodeKernel              = "front/eval-node/v1"
 	entryName                   = "entry"
 )
 
@@ -1327,7 +1328,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		switch instruction.Op {
-		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpBranch, wir.OpClaim, wir.OpSelect, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpLogical:
+		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpBranch, wir.OpClaim, wir.OpSelect, wir.OpBinOp, wir.OpConcat, wir.OpLogical:
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 			if instruction.Op == wir.OpEntry {
 				entries++
@@ -1379,6 +1380,14 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 						allocationEntry: &entry,
 					})
 				}
+			}
+			if instruction.Op == wir.OpClosure && isEvaluationPoint(graph, instruction.Point) {
+				operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}, family: "eval-node"})
+			}
+		case wir.OpUnOp:
+			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
+			if wir.Operator(instruction.Operator) == wir.UnLen && isEvaluationPoint(graph, instruction.Point) {
+				operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}, family: "eval-node"})
 			}
 		case wir.OpCall:
 			// Calls exclusively own their application/result pair.  An external
@@ -1436,6 +1445,22 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			draft.Dependencies = []equation.Coordinate{operations[index-1].target}
 		}
 		switch {
+		case operation.family == "eval-node":
+			operationName := ""
+			switch instruction.Op {
+			case wir.OpClosure:
+				operationName = "closure"
+			case wir.OpUnOp:
+				if wir.Operator(instruction.Operator) != wir.UnLen {
+					return equation.Artifact{}, fmt.Errorf("front: evaluation node %s has unsupported unary operation", operation.target.Name)
+				}
+				operationName = "length"
+			default:
+				return equation.Artifact{}, fmt.Errorf("front: evaluation node %s has unsupported instruction %d", operation.target.Name, instruction.Op)
+			}
+			draft.Occurrence = occurrence("eval-node")
+			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
+			draft.Operands = []equation.Operand{{Role: "operation", Term: equation.ClosedTerm([]byte(operationName))}}
 		case operation.family == "allocation-template" || operation.family == "object-materialization":
 			terms, err := allocationOperands(body, instruction, operation.allocationSite)
 			if err != nil {
@@ -1826,6 +1851,10 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure expression compiler: %w", err)
 	}
+	compiler, err = compiler.With("eval-node", equation.BindExistingKernel(evalNodeKernel))
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: configure evaluation-node compiler: %w", err)
+	}
 	artifact, err := compiler.Compile(equation.Source{Drafts: drafts})
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: compile equations: %w", err)
@@ -1953,12 +1982,17 @@ func occurrence(kind string) equation.Occurrence {
 
 func operationName(index int) string { return fmt.Sprintf("op-%08d", index) }
 
+func isEvaluationPoint(graph cfg.Graph, point cfg.Point) bool {
+	node := graph.Node(point)
+	return node != nil && node.Kind == cfg.NodeEval
+}
+
 // ContractID returns the contract identity admitted by this front for kind.
 // The engine uses this exact content identity when registering its canonical
 // kernels; unknown kinds deliberately have no binding.
 func ContractID(kind string) (equation.ContentID, bool) {
 	switch kind {
-	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "dynamic-index-read", "path-invalidation", "index-mutation", "branch-relations", "apply", "call-results", "external-call", "generic-for", "channel-select", "publication", "claim", "expression":
+	case "entry", "environment-write", "allocation-template", "object-materialization", "path-replacement", "dynamic-index-read", "path-invalidation", "index-mutation", "branch-relations", "apply", "call-results", "external-call", "generic-for", "channel-select", "publication", "claim", "expression", "eval-node":
 		return equation.ContentID(sha256.Sum256([]byte("front/contract/v1/" + kind))), true
 	default:
 		return equation.ContentID{}, false
@@ -2003,6 +2037,8 @@ func KernelID(kind string) (string, bool) {
 		return claimKernel, true
 	case "expression":
 		return expressionKernel, true
+	case "eval-node":
+		return evalNodeKernel, true
 	default:
 		return "", false
 	}
@@ -3649,6 +3685,11 @@ func cyclicOperationCells(artifact equation.Artifact, body *wir.Body, graph cfg.
 		switch instruction.Op {
 		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpDynamicIndexRead, wir.OpBranch, wir.OpClaim, wir.OpSelect, wir.OpBinOp, wir.OpUnOp, wir.OpConcat, wir.OpLogical, wir.OpAssign, wir.OpIterate, wir.OpReturn:
 			count = 1
+			if instruction.Op == wir.OpUnOp && wir.Operator(instruction.Operator) == wir.UnLen {
+				if isEvaluationPoint(graph, instruction.Point) {
+					count++
+				}
+			}
 			if instruction.Op == wir.OpAssign && instruction.A.Kind == wir.OperandNone && loopBindingPoints[instruction.Point] {
 				count = 0
 			}
@@ -3656,6 +3697,9 @@ func cyclicOperationCells(artifact equation.Artifact, body *wir.Body, graph cfg.
 			count = 2
 		case wir.OpMakeTable, wir.OpClosure:
 			count = 3
+			if instruction.Op == wir.OpClosure && isEvaluationPoint(graph, instruction.Point) {
+				count++
+			}
 			if instruction.Op == wir.OpMakeTable && instruction.Dst.Kind == wir.OperandPath {
 				count += len(body.TableEntries(instruction.TableEntries))
 			}
