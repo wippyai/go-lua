@@ -2963,6 +2963,15 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, "select/origin/", heapTableIdentityPrefix} {
 		if inherited, ok := currentEpochFact(prefix, operands["value"], partition); ok {
 			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: inherited})
+		} else if prefix == "select/origin/" {
+			if _, stale := currentEpochFact(prefix, []byte(target), partition); !stale {
+				continue
+			}
+			// A select correlation belongs to the value currently bound at this
+			// path.  A later ordinary write must publish its revocation, otherwise
+			// currentEpochFact can resurrect the former select's arm constraint
+			// after the result record has been replaced.
+			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: nil})
 		}
 	}
 	if _, inherited := currentEpochFact(summaryTypePrefix, operands["value"], partition); !inherited {
