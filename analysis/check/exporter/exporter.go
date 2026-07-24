@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // Derive returns the sound static type of a module's first return value. It
@@ -202,11 +203,14 @@ func scalarType(value []byte) typ.Type {
 		if err != nil {
 			return unknownFunction()
 		}
-		function, err := typ.DecodeCanonical(context.Background(), canonical)
+		// This payload is the front's closed function publication. Recursive
+		// aliases in a signature are structural here: the exported manifest
+		// needs their graph, not the producer's declaration identity.
+		function, err := typ.DecodeCanonicalStructural(context.Background(), canonical)
 		if err != nil {
 			return unknownFunction()
 		}
-		if _, ok := function.(*typ.Function); ok {
+		if _, ok := unwrap.Alias(function).(*typ.Function); ok {
 			return function
 		}
 		return unknownFunction()

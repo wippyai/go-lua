@@ -3556,7 +3556,11 @@ func sealedFunctionType(value []byte) (typ.Type, bool) {
 	if err != nil {
 		return nil, false
 	}
-	function, err := typ.DecodeCanonical(context.Background(), canonical)
+	// A front function value is a closed publication. Its canonical payload
+	// may contain recursive aliases from its declared signature; structural
+	// decoding restores their graph without pretending to recreate source
+	// declaration identity.
+	function, err := typ.DecodeCanonicalStructural(context.Background(), canonical)
 	if err != nil || function == nil {
 		return nil, false
 	}
@@ -5884,6 +5888,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					value = contract
 				}
 			}
+			if string(value) == "scalar/top" {
+				if contract, ok := typedMethodResultValue(receiver, method, index, partition); ok {
+					value = contract
+				}
+			}
 			if contract, ok := stdlibMethodResultValue(receiver, method, index, partition); ok {
 				value = contract
 			}
@@ -5989,6 +5998,39 @@ func sealedMethodResultValue(lexical *lexicalEvaluator, receiver, method []byte,
 		return nil, false
 	}
 	return sealedFunctionResultValue(callee, index)
+}
+
+// typedMethodResultValue transports a scalar result contract from an already
+// published typed receiver surface. Such surfaces are produced by closed
+// module/import or control-flow publications; an annotation claim is encoded
+// as a claim refinement and therefore cannot enter this path. The field must
+// resolve through the canonical type graph and its return slot must still be a
+// concrete provider value, so optional, union, and generic slots remain Top.
+func typedMethodResultValue(receiver, method []byte, index int, partition equation.Partition) ([]byte, bool) {
+	if receiver == nil || method == nil || index < 0 {
+		return nil, false
+	}
+	name, ok := callMethodName(method)
+	if !ok {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(receiver, partition)
+	if err != nil {
+		return nil, false
+	}
+	receiverType, ok := shapefact.DecodeTarget(value)
+	if !ok {
+		return nil, false
+	}
+	callee, ok := variant.FieldAtPath(receiverType, []segment.Segment{{Kind: segment.SegmentField, Name: name}})
+	if !ok {
+		return nil, false
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(callee)).(*typ.Function)
+	if !ok || function == nil || index >= len(function.Returns) || function.Returns[index] == nil {
+		return nil, false
+	}
+	return providerReturnTypeValue(function.Returns[index])
 }
 
 func sealedFunctionResultValue(value []byte, index int) ([]byte, bool) {

@@ -150,6 +150,21 @@ local answer: string = provider.answer()`
 	t.Fatalf("typed imported callable diagnostic = %#v", typed.Diagnostics)
 }
 
+func TestCheckWithImportsProjectsTypedReceiverMethodResult(t *testing.T) {
+	source := `local provider = require("provider")
+local object = provider.new()
+local answer: number = object:answer()`
+	widget := typetable.NewRecord().Field("answer", typ.Func().Returns(typ.LiteralInt(42)).Build()).Build()
+	provider := typetable.NewRecord().Field("new", typ.Func().Returns(widget).Build()).Build()
+	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	if err != nil {
+		t.Fatalf("CheckWithImports typed receiver: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("typed imported receiver method diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestCheckWithImportsRetainsExplicitAnyResultAtEachAssignmentSite(t *testing.T) {
 	source := `
 local provider = require("provider")

@@ -70,6 +70,25 @@ return M`)
 	}
 }
 
+func TestDeriveRetainsRecursiveCallableSignatureOnReturnedModuleTable(t *testing.T) {
+	result, err := engine.Check(`
+type Node = { next: Node? }
+local M = {}
+function M.new(): Node return { next = nil } end
+return M`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	record, ok := exporter.Derive(result).(*typ.Record)
+	if !ok || record.GetField("new") == nil {
+		t.Fatalf("export = %T %[1]v, want module new field", exporter.Derive(result))
+	}
+	function, ok := record.GetField("new").Type.(*typ.Function)
+	if !ok || len(function.Returns) != 1 || function.Returns[0] == typ.Unknown {
+		t.Fatalf("new export = %T %[1]v, want recursive callable signature", record.GetField("new").Type)
+	}
+}
+
 func TestDeriveUnionsReachableReturnCandidates(t *testing.T) {
 	result, err := engine.Check("for i = 1, 1 do return \"loop\" end\nreturn 2")
 	if err != nil {
