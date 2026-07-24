@@ -6734,10 +6734,11 @@ func lexicalMemberCallableSurface(lexical *lexicalEvaluator, source []byte, targ
 // optionalAssignmentWitness accepts only a sealed source type that explicitly
 // admits nil and a concrete declared target that excludes it. Indexed reads
 // retain their established missing-slot witness; a non-indexed field needs the
-// narrower exact local-call result publication below. An annotation, Top, or
-// an unsealed scalar remains unproven and follows the ordinary path.
+// narrower exact local-call result or exact method-return publication below.
+// An annotation, Top, or an unsealed scalar remains unproven and follows the
+// ordinary path.
 func optionalAssignmentWitness(path, value, encodedTarget []byte, partition equation.Partition) bool {
-	if !derivedIndexedPath(path) && !localCallableResultAncestor(path, partition) {
+	if !derivedIndexedPath(path) && !localCallableResultAncestor(path, partition) && !methodReturnSummaryAncestor(path, partition) {
 		return false
 	}
 	witness, ok := shapefact.DecodeTarget(value)
@@ -6763,6 +6764,29 @@ func localCallableResultAncestor(term []byte, partition equation.Partition) bool
 		}
 		root, suffix, member := tableAddress(term)
 		if !member || suffix == "" {
+			return false
+		}
+		term = root
+	}
+}
+
+// methodReturnSummaryAncestor follows a static result descendant only to the
+// current method-return summary that owns it. The summary is emitted at the
+// call-results boundary and carried by the immediately following write, so a
+// method declaration, stale write, or arbitrary optional annotation cannot
+// become a consumer-side nilability witness. Restricting this bridge to an
+// optional record keeps it aligned with the existing root-method guard rule:
+// a scalar or open result has no closed member path to republish.
+func methodReturnSummaryAncestor(term []byte, partition equation.Partition) bool {
+	for {
+		if encoded, current := currentEpochFact(methodReturnSummaryPrefix, term, partition); current {
+			summary, err := typ.DecodeCanonical(context.Background(), encoded)
+			if err == nil && rootOptionalRecordSummary(summary) {
+				return true
+			}
+		}
+		root, suffix, _, found := typedAncestor(term, partition)
+		if !found || len(suffix) == 0 {
 			return false
 		}
 		term = root
@@ -7582,7 +7606,26 @@ func resolveClaimValue(term []byte, partition equation.Partition) ([]byte, bool,
 	if err != nil {
 		return nil, false, nil
 	}
+	// A method-result summary can prove an optional static member only at the
+	// consuming claim that owns both that member path and its declared target.
+	// Keeping this projection out of general reads prevents an optional receiver
+	// from changing iteration, branch, or intermediate expression semantics.
+	if projected, found := methodReturnOptionalClaimValue(term, partition); found {
+		value = projected
+	}
 	return value, true, nil
+}
+
+func methodReturnOptionalClaimValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	root, suffix, source, ok := typedAncestor(term, partition)
+	if !ok || len(suffix) == 0 || !methodReturnSummaryAncestor(root, partition) || !optionalConcreteWitnessType(source) {
+		return nil, false
+	}
+	projected, found := typedPathSegments(source, suffix)
+	if !found {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(projected)
 }
 
 func claimProven(value []byte, kind, targetType string) bool {

@@ -249,6 +249,80 @@ local answer: string = provider.answer()
 	}
 }
 
+func TestCheckProjectRepublishesExactOptionalMethodResultAtConsumer(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
+		{Path: "store.lua", ModulePath: "store", Source: `
+type Item = { content: string }
+type Store = { lookup: (self: Store, key: string) -> Item? }
+local Store = {}
+function Store:lookup(_key: string): Item?
+    return nil
+end
+local M = {}
+function M.new(): Store
+    return { lookup = Store.lookup }
+end
+return M`},
+		{Path: "main.lua", ModulePath: "main", Source: `
+local store_factory = require("store")
+local store = store_factory.new()
+local cached = store:lookup("missing")
+local content: string = cached.content
+`},
+	}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != "type.assignment" || !strings.Contains(result.Diagnostics[0].Message, "cached.content") || !strings.Contains(result.Diagnostics[0].Message, "may be nil") {
+		t.Fatalf("diagnostics = %#v, want exact optional method-result assignment", result.Diagnostics)
+	}
+}
+
+func TestCheckProjectRepublishesImportedMapCallableAtConsumer(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
+		{Path: "protocol.lua", ModulePath: "protocol", Source: `
+type State = { id: string }
+type Call = { id: string }
+type Policy = { label: string }
+type Result = { ok: true, value: string } | { ok: false, error: string }
+type Handler = (State, Call, Policy) -> Result
+local M = {}
+M.Handler = Handler
+return M`},
+		{Path: "runtime.lua", ModulePath: "runtime", Source: `
+local protocol = require("protocol")
+type Runtime = {
+    handlers: {[string]: protocol.Handler},
+    register: (self: Runtime, name: string, handler: protocol.Handler) -> Runtime,
+}
+local Runtime = {}
+Runtime.__index = Runtime
+local M = {}
+function M.new(): Runtime
+    local self: Runtime = { handlers = {}, register = Runtime.register }
+    setmetatable(self, Runtime)
+    return self
+end
+function Runtime:register(name: string, handler: protocol.Handler): Runtime
+    self.handlers[name] = handler
+    return self
+end
+return M`},
+		{Path: "main.lua", ModulePath: "main", Source: `
+local runtime = require("runtime")
+local app = runtime.new()
+local handler = app.handlers["missing"]
+handler({ id = "state" }, { id = "call" }, { label = "policy" })
+`},
+	}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != "type.call.direct.not_callable" || !strings.Contains(result.Diagnostics[0].Message, "handler") || !strings.Contains(result.Diagnostics[0].Message, "may be nil") {
+		t.Fatalf("diagnostics = %#v, want imported map-call nilability diagnostic", result.Diagnostics)
+	}
+}
+
 func TestCheckProjectRehydratesImportedQualifiedTypeDefinitions(t *testing.T) {
 	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
 		{Path: "provider.lua", ModulePath: "provider", Source: `
