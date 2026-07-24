@@ -392,10 +392,18 @@ func nativeValueToken(value, token string) bool {
 			return false
 		}
 		index += offset
-		before := index == 0 || !nativeTokenByte(value[index-1])
+		// A bare selector names an atomic *value*, not a structured field name.
+		// It therefore matches `state=complete` but not `complete=false` as a
+		// positive complete verdict. Structured selectors such as
+		// `complete=false` retain their exact substring contract above.
+		before := index == 0 || value[index-1] == '=' || !nativeTokenByte(value[index-1])
 		afterIndex := index + len(token)
 		after := afterIndex == len(value) || !nativeTokenByte(value[afterIndex])
-		if before && after {
+		// A structured boolean key is selected by its positive verdict only:
+		// `exhaustive` means `exhaustive=true`, while the exact structured
+		// selector `exhaustive=false` remains available for the negative fact.
+		positiveBoolean := afterIndex+5 <= len(value) && value[afterIndex:afterIndex+5] == "=true"
+		if before && after && (afterIndex == len(value) || value[afterIndex] != '=' || positiveBoolean) {
 			return true
 		}
 		offset = afterIndex

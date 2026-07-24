@@ -290,7 +290,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
 	compilation.TypeDefinitions = typeDefinitions
 	compilation.TypeFieldSpans = recordFieldNameSpans(stmts)
-	compilation.NativeContracts = nativeContracts(stmts, bindings)
+	compilation.NativeContracts = append(nativeContracts(stmts, bindings), nativeWIRContracts(compilation)...)
 	return compilation, nil
 }
 
