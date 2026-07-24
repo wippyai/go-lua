@@ -2330,6 +2330,9 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 			equation.Operand{Role: "method", Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
 		)
 	}
+	if target, ok := typePredicateErrorTarget(body, instruction); ok {
+		operands = append(operands, equation.Operand{Role: "type-predicate-error-target", Term: target})
+	}
 	for index, result := range results {
 		term, err := scalarTerm(body, result)
 		if err != nil {
@@ -2345,6 +2348,24 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 		}
 	}
 	return operands, nil
+}
+
+// typePredicateErrorTarget records the closed type-value `T:is(value)`
+// contract that owns its second (error) result. The target is a resolved WIR
+// type, never recovered from a provider name or source spelling.
+func typePredicateErrorTarget(body *wir.Body, instruction wir.Instruction) (equation.Term, bool) {
+	if body == nil || instruction.Call.Method == 0 || instruction.Type == 0 || instruction.Results.Len < 2 || len(body.Operands(instruction.List)) != 1 {
+		return equation.Term{}, false
+	}
+	method := body.Const(instruction.Call.Method)
+	if method.Kind != wir.ConstString || method.Str != "is" {
+		return equation.Term{}, false
+	}
+	target, ok := shapefact.EncodeTarget(body.Type(instruction.Type))
+	if !ok {
+		return equation.Term{}, false
+	}
+	return equation.ClosedTerm(target), true
 }
 
 func directCallDisplay(body *wir.Body, instruction wir.Instruction) (string, bool) {

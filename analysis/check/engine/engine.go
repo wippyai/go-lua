@@ -3303,7 +3303,7 @@ func uncalledExplicitAnyDiagnostic(artifact equation.Artifact, diagnostic equati
 		return true
 	}
 	name, unproven := strings.CutPrefix(diagnostic.Key, "claim/unproven/")
-	if !unproven {
+	if !unproven || typePredicateResultClaim(artifact, name) {
 		return false
 	}
 	for _, operation := range artifact.Equations {
@@ -3314,6 +3314,68 @@ func uncalledExplicitAnyDiagnostic(artifact equation.Artifact, diagnostic equati
 			if operand.Role == "kind" {
 				return string(operand.Term.Encoding) == "claim-kind/3"
 			}
+		}
+	}
+	return false
+}
+
+// typePredicateResultClaim recognizes an annotation sourced from the first
+// result slot of an already-published T:is(value) call. The relation follows
+// only the front's exact call-results -> write -> claim chain, so an arbitrary
+// value named like a predicate result cannot suppress an unproven-claim fact.
+func typePredicateResultClaim(artifact equation.Artifact, claim string) bool {
+	var source string
+	for _, operation := range artifact.Equations {
+		if operation.Target.Name != claim || operation.Occurrence.Kind != "claim" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role == "value" {
+				source = string(operand.Term.Encoding)
+				break
+			}
+		}
+	}
+	if source == "" {
+		return false
+	}
+	var result string
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		var target, value string
+		for _, operand := range operation.Operands {
+			switch operand.Role {
+			case "target":
+				target = string(operand.Term.Encoding)
+			case "value":
+				value = string(operand.Term.Encoding)
+			}
+		}
+		if target == source && strings.HasPrefix(value, "temp/") {
+			result = value
+			break
+		}
+	}
+	if result == "" {
+		return false
+	}
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		predicate, firstResult := false, ""
+		for _, operand := range operation.Operands {
+			switch operand.Role {
+			case "type-predicate-error-target":
+				predicate = true
+			case "result-00000000":
+				firstResult = string(operand.Term.Encoding)
+			}
+		}
+		if predicate && firstResult == result {
+			return true
 		}
 	}
 	return false
@@ -10349,6 +10411,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	var callee []byte
 	var receiver []byte
 	var method []byte
+	var typePredicateErrorTarget []byte
 	for _, operand := range operation.Operands {
 		switch {
 		case operand.Role == "application":
@@ -10383,6 +10446,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result method")
 			}
 			method = operand.Value
+		case operand.Role == "type-predicate-error-target":
+			if _, ok := shapefact.DecodeTarget(operand.Value); typePredicateErrorTarget != nil || !ok {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed type predicate error target")
+			}
+			typePredicateErrorTarget = operand.Value
 		case operand.Role == "result-display":
 			// Source display is descriptive only. It is emitted by the front
 			// alongside this exact call-result publication and is never used as
@@ -10556,6 +10624,17 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			values = append(values, equation.Fact{Key: iteratorElementPrefix + string(result) + "/" + operation.Target.Name, Value: element})
 			if len(key) != 0 {
 				values = append(values, equation.Fact{Key: iteratorKeyPrefix + string(result) + "/" + operation.Target.Name, Value: key})
+			}
+		}
+		// A type predicate's error slot is the closed control witness for its
+		// validated value. When the exact predicate argument is explicitly any,
+		// retain that boundary on the error slot so a possible success arm is
+		// evaluated without turning the value result into a type witness.
+		if string(value) == "scalar/top" && typePredicateErrorTarget != nil && key == "00000001" {
+			if argument, found := argumentTerms[0]; found {
+				if root, _, ok := explicitAnySourceFact(argument, partition.Values()); ok {
+					values = append(values, equation.Fact{Key: "gradual-any/" + string(result) + "/" + operation.Target.Name, Value: root})
+				}
 			}
 		}
 		heapKey := "call-heap-identity/" + strings.TrimPrefix(string(application), "call/") + "/" + key
