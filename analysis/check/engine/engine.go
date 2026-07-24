@@ -3204,6 +3204,22 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 	if target == nil || isUnknownScalar(value) {
 		return shapeUnknown
 	}
+	// A literal table carries its sealed member evidence alongside its broad
+	// table type. Prefer that finite evidence for structural targets: reducing
+	// it to the broad type first would refute an empty map or an all-optional
+	// record even though the closed literal proves the assignment.
+	resolvedTarget := unwrap.Alias(subst.ExpandInstantiated(target))
+	if resolvedTarget == nil {
+		return shapeUnknown
+	}
+	if shapefact.IsTable(value) && resolvedTarget.Kind() == kind.Record {
+		return tableAgainstRecord(value, resolvedTarget)
+	}
+	if resolvedTarget.Kind() == kind.Map {
+		if table, ok := shapefact.DecodeTable(value); ok && table.Closed && len(table.Members) == 0 {
+			return tableAgainstMap(value, resolvedTarget)
+		}
+	}
 	if source, ok := shapefact.DecodeTarget(value); ok {
 		if subtype.IsSubtype(source, target) {
 			return shapeProven
@@ -3226,10 +3242,7 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 	// so stopping after Alias would discard the only concrete record shape that
 	// can prove the claim. Expand first, then retain the existing alias policy;
 	// malformed or recursive forms still fall through to unknown.
-	target = unwrap.Alias(subst.ExpandInstantiated(target))
-	if target == nil {
-		return shapeUnknown
-	}
+	target = resolvedTarget
 	switch target.Kind() {
 	case kind.Optional:
 		optional, ok := target.(*typ.Optional)
@@ -3349,6 +3362,24 @@ func sealedFunctionType(value []byte) (typ.Type, bool) {
 		return nil, false
 	}
 	return function, true
+}
+
+// tableAgainstMap proves the one case that needs no inferred key or value
+// relation: a sealed empty literal has no map entries that could violate the
+// declared homogeneous contract. Non-empty literals remain unknown until an
+// exact entry projection supplies both sides of that relation.
+func tableAgainstMap(value []byte, target typ.Type) shapeRelation {
+	if _, ok := unwrap.Alias(target).(*typ.Map); !ok {
+		return shapeUnknown
+	}
+	table, ok := shapefact.DecodeTable(value)
+	if !ok {
+		return knownScalarRelation(value, false)
+	}
+	if table.Closed && len(table.Members) == 0 {
+		return shapeProven
+	}
+	return shapeUnknown
 }
 
 func tableAgainstRecord(value []byte, target typ.Type) shapeRelation {
@@ -5488,7 +5519,13 @@ func externalCallKernel(operation equation.BoundEquation, partition equation.Par
 		}
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external call role %q", operand.Role)
 	}
-	return equation.TransactionResult{Complete: true}, nil
+	arguments, complete := placementExternalArguments(operation)
+	if !complete {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external call arguments")
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
+		Values: placementExternalSendFacts(operation, operands["provider"], arguments, partition),
+	}}, nil
 }
 
 // callResultsKernel publishes explicit Top facts for unresolved owned result

@@ -4,10 +4,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 )
 
 // PlacementPlan is the public, read-only projection of placement facts closed
@@ -50,6 +54,7 @@ const (
 	placementEventPrefix       = "placement/event/"
 	placementBlockerPrefix     = "placement/blocker/"
 	placementContainmentPrefix = "placement/contains/"
+	placementContractPrefix    = "placement/contract/"
 
 	placementEventOwned  = "owned"
 	placementEventShared = "shared"
@@ -95,6 +100,98 @@ func placementBlockerFact(identity, operation, blocker string) equation.Fact {
 
 func placementContainmentFact(parent, child, operation string) equation.Fact {
 	return equation.Fact{Key: placementContainmentPrefix + base64.RawURLEncoding.EncodeToString([]byte(parent)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(child)) + "/" + operation, Value: []byte("proven")}
+}
+
+func placementContractFact(identity, operation string) equation.Fact {
+	return equation.Fact{Key: placementContractPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/send/" + operation, Value: []byte("proven")}
+}
+
+// placementExternalSendFacts consumes ownership-send labels from the published
+// provider signature. The external-call factor has the exact provider identity
+// and the matching apply coordinate, so it can discharge only the opaque-call
+// fallback emitted for that same application. Unknown providers stay blocked.
+func placementExternalSendFacts(operation equation.BoundEquation, provider []byte, arguments [][]byte, partition equation.Partition) []equation.Fact {
+	name, found := placementGlobalProviderName(provider)
+	if !found {
+		return nil
+	}
+	signature, found := (signaturelookup.Source{IncludeStdlib: true}).LookupView(name)
+	if !found || !signature.Effect.IsClosed() {
+		return nil
+	}
+	application := strings.TrimPrefix(string(operationOperandValue(operation, "application")), "call/")
+	if application == "" {
+		return nil
+	}
+	var facts []equation.Fact
+	for _, label := range signature.Effect.Labels {
+		var from int
+		switch value := effect.NormalizeLabel(label).(type) {
+		case ownership.Send:
+			from = value.FromParam
+		case ownership.SendParam:
+			var resolved bool
+			from, resolved = effect.ResolveParamIndex(value.Param, len(arguments))
+			if !resolved {
+				continue
+			}
+		default:
+			continue
+		}
+		if from < 0 || from >= len(arguments) {
+			continue
+		}
+		for index := from; index < len(arguments); index++ {
+			allocation, exists := placementAllocationForTerm(arguments[index], partition)
+			if !exists {
+				continue
+			}
+			facts = append(facts,
+				placementEventFact(allocation.Identity, application, placementEventShared),
+				placementContractFact(allocation.Identity, application),
+			)
+		}
+	}
+	return facts
+}
+
+func placementGlobalProviderName(provider []byte) (string, bool) {
+	encoded := strings.TrimPrefix(string(provider), "provider/global/")
+	if encoded == string(provider) || encoded == "" {
+		return "", false
+	}
+	name, err := strconv.Unquote(encoded)
+	return name, err == nil && name != ""
+}
+
+func operationOperandValue(operation equation.BoundEquation, role string) []byte {
+	for _, operand := range operation.Operands {
+		if operand.Role == role {
+			return operand.Value
+		}
+	}
+	return nil
+}
+
+func placementExternalArguments(operation equation.BoundEquation) ([][]byte, bool) {
+	indexed := make(map[int][]byte)
+	for _, operand := range operation.Operands {
+		if !strings.HasPrefix(operand.Role, "argument-") || operand.Role == "argument-spread" || strings.HasPrefix(operand.Role, "argument-display-") {
+			continue
+		}
+		index, err := callArgumentIndex(operand.Role)
+		if err != nil || indexed[index] != nil {
+			return nil, false
+		}
+		indexed[index] = operand.Value
+	}
+	arguments := make([][]byte, len(indexed))
+	for index := range arguments {
+		if arguments[index] = indexed[index]; arguments[index] == nil {
+			return nil, false
+		}
+	}
+	return arguments, true
 }
 
 func placementAllocationForTerm(term []byte, partition equation.Partition) (placementAllocationFact, bool) {
@@ -201,7 +298,7 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 				continue
 			}
 			projected = append(projected, equation.Fact{Key: placementAllocationFactKey(allocation.Identity), Value: append([]byte(nil), fact.Value...)})
-		case strings.HasPrefix(fact.Key, placementEventPrefix), strings.HasPrefix(fact.Key, placementBlockerPrefix):
+		case strings.HasPrefix(fact.Key, placementEventPrefix), strings.HasPrefix(fact.Key, placementBlockerPrefix), strings.HasPrefix(fact.Key, placementContractPrefix):
 			parts := strings.Split(fact.Key, "/")
 			if len(parts) != 5 || string(fact.Value) != "proven" {
 				continue
@@ -235,6 +332,8 @@ func publishedPlacement(facts []equation.Fact) *PlacementPlan {
 	bindings := make(map[string]string)
 	events := make(map[string]map[string]bool)
 	blockers := make(map[string]map[string]bool)
+	blockerOperations := make(map[string]map[string]map[string]bool)
+	contracts := make(map[string]map[string]bool)
 	containment := make(map[string][]string)
 	for _, fact := range facts {
 		switch {
@@ -271,6 +370,24 @@ func publishedPlacement(facts []equation.Fact) *PlacementPlan {
 						blockers[string(identity)] = make(map[string]bool)
 					}
 					blockers[string(identity)][parts[3]] = true
+					if blockerOperations[string(identity)] == nil {
+						blockerOperations[string(identity)] = make(map[string]map[string]bool)
+					}
+					if blockerOperations[string(identity)][parts[3]] == nil {
+						blockerOperations[string(identity)][parts[3]] = make(map[string]bool)
+					}
+					blockerOperations[string(identity)][parts[3]][parts[4]] = true
+				}
+			}
+		case strings.HasPrefix(fact.Key, placementContractPrefix):
+			parts := strings.Split(fact.Key, "/")
+			if len(parts) == 5 && parts[3] == "send" && string(fact.Value) == "proven" {
+				identity, err := base64.RawURLEncoding.DecodeString(parts[2])
+				if err == nil {
+					if contracts[string(identity)] == nil {
+						contracts[string(identity)] = make(map[string]bool)
+					}
+					contracts[string(identity)][parts[4]] = true
 				}
 			}
 		case strings.HasPrefix(fact.Key, placementContainmentPrefix):
@@ -348,6 +465,15 @@ func publishedPlacement(facts []equation.Fact) *PlacementPlan {
 			}
 		}
 		for blocker := range blockers[identity] {
+			if blocker == "opaque-call" {
+				allContracted := len(blockerOperations[identity][blocker]) != 0
+				for operation := range blockerOperations[identity][blocker] {
+					allContracted = allContracted && contracts[identity][operation]
+				}
+				if allContracted {
+					continue
+				}
+			}
 			item.Blockers = append(item.Blockers, blocker)
 		}
 		sort.Strings(item.Blockers)

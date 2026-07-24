@@ -23,6 +23,32 @@ return total`)
 	}
 }
 
+func TestCheckPlacementUsesPublishedExternalOwnershipSend(t *testing.T) {
+	result, err := engine.Check(`local payload = { meta = { route = "worker" } }
+coroutine.resume(nil, payload)`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Placement == nil || len(result.Placement.Allocations) != 2 {
+		t.Fatalf("placement = %#v, want the two payload allocations", result.Placement)
+	}
+	for _, item := range result.Placement.Allocations {
+		if item.Placement != placement.SharedHeap || len(item.Blockers) != 0 {
+			t.Fatalf("allocation = %#v, want the externally contracted shared graph", item)
+		}
+	}
+}
+
+func TestCheckAcceptsSealedEmptyMapAtDeclaredBoundary(t *testing.T) {
+	result, err := engine.Check(`local registry: {[string]: {value: string}} = {}`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want the sealed empty map to prove the declaration", result.Diagnostics)
+	}
+}
+
 func TestCheckPlacementFailsClosedAtOpaqueCall(t *testing.T) {
 	result, err := engine.Check(`local value = { a = 1 }
 unknown(value)`)
