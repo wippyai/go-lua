@@ -6327,6 +6327,8 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result %q", key)
 		}
 		value := []byte("scalar/top")
+		receiverResult := false
+		receiverResultTerm := receiver
 		var importedSummary typ.Type
 		// A known lexical apply seals its child outcome under the same
 		// application coordinate. call-results is the sole owner of caller
@@ -6343,6 +6345,15 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			value = []byte("scalar/boolean")
 		}
 		if index, err := strconv.Atoi(key); err == nil {
+			// A demanded local child may already have published the returned table
+			// value. If its closed self-return contract identifies that table with
+			// the receiver, restore the receiver's identity and member capabilities
+			// below instead of treating the materialized child table as opaque.
+			if shapefact.IsTable(value) {
+				if contract, ok := sealedMethodReceiverResultValue(lexical, receiver, method, index, partition); ok {
+					value, receiverResult = contract, true
+				}
+			}
 			// A local child result is the most precise existing publication. Only
 			// when it is absent may the result owner use the direct callee's sealed
 			// function contract; an opaque callable has no such witness.
@@ -6354,6 +6365,16 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if string(value) == "scalar/top" {
 				if contract, ok := sealedMethodResultValue(lexical, receiver, method, index, partition); ok {
 					value = contract
+				}
+			}
+			if string(value) == "scalar/top" {
+				if contract, ok := sealedMethodReceiverResultValue(lexical, receiver, method, index, partition); ok {
+					value, receiverResult = contract, true
+				}
+			}
+			if string(value) == "scalar/top" {
+				if contract, receiverTerm, ok := sealedStaticMemberReceiverResultValue(lexical, callee, index, partition); ok {
+					value, receiverResult, receiverResultTerm = contract, true, receiverTerm
 				}
 			}
 			if string(value) == "scalar/top" {
@@ -6380,6 +6401,16 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
 			equation.Fact{Key: "epoch/" + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		)
+		if receiverResult {
+			if identity, found := tableIdentityForTerm(receiverResultTerm, partition); found {
+				values = append(values, heapIdentityFact(string(result), operation.Target.Name, identity))
+			}
+			members, memberErr := projectMemberClosures(string(result), receiverResultTerm, operation.Target.Name, partition)
+			if memberErr != nil {
+				return equation.TransactionResult{}, memberErr
+			}
+			values = append(values, members...)
+		}
 		if importedSummary != nil && !requiresLocalUnionProof(importedSummary) {
 			encoded, encodeErr := typ.EncodeCanonical(context.Background(), importedSummary)
 			if encodeErr != nil {
@@ -6477,6 +6508,76 @@ func sealedMethodResultValue(lexical *lexicalEvaluator, receiver, method []byte,
 		return nil, false
 	}
 	return sealedFunctionResultValue(callee, index)
+}
+
+// sealedMethodReceiverResultValue transports an exact sealed receiver through
+// a local method only when its already-published callable contract accepts
+// that receiver as the sole result. This preserves the table identity and
+// member capabilities required by fluent recursive method chains; it does not
+// construct a record from an annotation or apply to an open/imported method.
+func sealedMethodReceiverResultValue(lexical *lexicalEvaluator, receiver, method []byte, index int, partition equation.Partition) ([]byte, bool) {
+	if lexical == nil || receiver == nil || index != 0 {
+		return nil, false
+	}
+	name, ok := callMethodName(method)
+	if !ok {
+		return nil, false
+	}
+	handle, local := methodClosureHandleFor(receiver, name, partition)
+	if !local {
+		return nil, false
+	}
+	if _, available := lexical.byPrototype[handle.Prototype]; !available {
+		return nil, false
+	}
+	receiverValue, err := resolveCurrentValue(receiver, partition)
+	if err != nil {
+		return nil, false
+	}
+	if isClaimRefinement(receiverValue) {
+		var found bool
+		receiverValue, found = priorSealedTableValue(receiver, partition)
+		if !found {
+			return nil, false
+		}
+	}
+	if !shapefact.IsTable(receiverValue) {
+		return nil, false
+	}
+	callee, found := currentMethodCallable(receiver, receiverValue, name, partition)
+	if !found {
+		return nil, false
+	}
+	functionType, ok := sealedFunctionType(callee)
+	if !ok {
+		return nil, false
+	}
+	function, ok := unwrap.Alias(functionType).(*typ.Function)
+	if !ok || function == nil || len(function.TypeParams) != 0 || len(function.Params) == 0 || function.Params[0].Type == nil || len(function.Returns) != 1 || function.Returns[0] == nil {
+		return nil, false
+	}
+	// The canonical self parameter and sole return slot are the closed method
+	// contract. Mutual subtype proof admits separately decoded recursive nodes
+	// while still rejecting an arbitrary record-returning method.
+	return receiverValue, subtype.IsSubtype(function.Params[0].Type, function.Returns[0]) && subtype.IsSubtype(function.Returns[0], function.Params[0].Type)
+}
+
+// sealedStaticMemberReceiverResultValue is the normalized-call counterpart of
+// sealedMethodReceiverResultValue. The front may encode obj:method() as a
+// direct call to path/obj.method, but the receiver path remains an existing
+// closed fact rather than source-derived dispatch information.
+func sealedStaticMemberReceiverResultValue(lexical *lexicalEvaluator, callee []byte, index int, partition equation.Partition) ([]byte, []byte, bool) {
+	if !strings.HasPrefix(string(callee), "path/") {
+		return nil, nil, false
+	}
+	cut := strings.LastIndex(string(callee), ".")
+	if cut <= len("path/") || cut == len(callee)-1 {
+		return nil, nil, false
+	}
+	receiver := append([]byte(nil), callee[:cut]...)
+	method := []byte("method/" + strconv.Quote(string(callee[cut+1:])))
+	value, ok := sealedMethodReceiverResultValue(lexical, receiver, method, index, partition)
+	return value, receiver, ok
 }
 
 // typedMethodResultValue transports a scalar result contract from an already

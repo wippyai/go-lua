@@ -638,6 +638,7 @@ func TestCheckMethodCallUsesSealedMemberCallable(t *testing.T) {
 type Object = {
     method: (self: Object, value: number) -> number
 }
+
 local object: Object = {
     method = function(self: Object, value: number): number
         return value
@@ -657,6 +658,32 @@ local result = object:method("wrong")
 		}
 	}
 	t.Fatalf("method argument mismatch was not proven: %#v", result.Diagnostics)
+}
+
+func TestCheckSelfReturningMethodPreservesSealedReceiverForMethodChain(t *testing.T) {
+	result, err := engine.Check(`
+type Builder = {
+    f: (self: Builder) -> Builder,
+    g: (self: Builder) -> number,
+}
+local b: Builder = {
+    f = function(self: Builder): Builder
+        return self
+    end,
+    g = function(self: Builder): number
+        return 1
+    end,
+}
+local n: number = b:f():g()
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, fact := range result.Diagnostics {
+		if strings.HasPrefix(fact.Key, "claim/unproven/") {
+			t.Fatalf("self-returning method chain emitted an unproven annotation: %#v", result.Diagnostics)
+		}
+	}
 }
 
 func TestCheckMethodCallProvesNonCallableSealedMember(t *testing.T) {
