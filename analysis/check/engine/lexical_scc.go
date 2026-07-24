@@ -1,0 +1,341 @@
+package engine
+
+// This file is the deliberately narrow bridge between lexical evaluation and
+// interproc.  In particular it never gives an in-flight table cell to an
+// equation kernel: callback execution may only obtain a candidate through
+// RecursiveValues.Read.
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/interproc"
+)
+
+const lexicalSCCDemand interproc.DemandKey = "engine/lexical-closed-output/v1"
+
+type lexicalSCCAdmission struct {
+	compilation front.Compilation
+	artifact    interproc.DemandedBodyArtifact
+	entry       []byte // private application sidecar, never part of an outcome
+}
+
+type lexicalSCCRun struct {
+	discovered map[string]interproc.InstanceKey
+	values     *interproc.RecursiveValues
+}
+
+type lexicalSCCFact struct {
+	Key   string `json:"key"`
+	Value []byte `json:"value"`
+}
+
+// lexicalSCCWire is intentionally smaller than OutputClosure: diagnostics,
+// spans, transaction counts, and caller lenses are replay-only information.
+// Values and outcomes use body-owned coordinate names and are re-bound only by
+// applyKnown after a cell has closed.
+type lexicalSCCWire struct {
+	Version  uint8            `json:"version"`
+	Values   []lexicalSCCFact `json:"values"`
+	Outcomes []lexicalSCCFact `json:"outcomes"`
+}
+
+func lexicalSCCMapKey(key interproc.InstanceKey) string { return string(key.CanonicalBytes()) }
+
+func (l *lexicalEvaluator) resolveSCCChild(child front.Compilation, rawEntry []byte, seeds []entrySeed, arguments [][]byte, handle closureHandle, operands directCallOperands, target string) (equation.OutputClosure, error) {
+	key, admission, err := l.admitSCC(child, rawEntry, seeds, arguments, handle)
+	if err != nil {
+		return equation.OutputClosure{}, err
+	}
+	if l.run != nil {
+		if l.run.discovered != nil {
+			l.run.discovered[lexicalSCCMapKey(key)] = key
+			return lexicalSCCTopClosure(operands, target), nil
+		}
+		if l.run.values == nil {
+			return equation.OutputClosure{}, fmt.Errorf("engine: malformed recursive lexical run")
+		}
+		candidate, err := l.run.values.Read(key)
+		if err != nil {
+			return equation.OutputClosure{}, err
+		}
+		return decodeLexicalSCCOutcome(candidate)
+	}
+	if l.coordinator == nil {
+		return equation.OutputClosure{}, fmt.Errorf("engine: lexical SCC coordinator is unavailable")
+	}
+	ctx := l.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	outcome, err := l.coordinator.Resolve(ctx, key, lexicalSCCEvaluator{lexical: l}, lexicalSCCLattice{height: lexicalSCCHeight(admission.compilation)})
+	if err != nil {
+		return equation.OutputClosure{}, err
+	}
+	closed, err := decodeLexicalSCCOutcome(outcome)
+	if err != nil {
+		return equation.OutputClosure{}, err
+	}
+	// Diagnostics are deliberately outside the approximation lattice.  Replay
+	// only after Resolve has atomically closed the reachable SCC; nested calls
+	// are table hits at this point, never partial reads.
+	replay, _, err := l.evaluate(admission.compilation, admission.entry)
+	if err != nil {
+		return equation.OutputClosure{}, err
+	}
+	closed.Diagnostics = replay.Diagnostics
+	return closed, nil
+}
+
+// admitSCC constructs the certified semantic entry.  The raw child-entry
+// packet is retained only for the VM bind; the key contains boundary ordinals,
+// exact value encodings, and alias classes, never caller path spellings.
+func (l *lexicalEvaluator) admitSCC(child front.Compilation, rawEntry []byte, seeds []entrySeed, arguments [][]byte, handle closureHandle) (interproc.InstanceKey, lexicalSCCAdmission, error) {
+	artifact, err := lexicalSCCArtifact(child)
+	if err != nil {
+		return interproc.InstanceKey{}, lexicalSCCAdmission{}, err
+	}
+	if len(seeds) != len(child.Boundary.Parameters)+len(child.Boundary.Captures) {
+		return interproc.InstanceKey{}, lexicalSCCAdmission{}, fmt.Errorf("engine: incomplete lexical SCC boundary")
+	}
+	classes := make(map[string]uint64)
+	nextClass := uint64(0)
+	values := make([]interproc.EntryValue, 0, len(seeds))
+	for index, seed := range seeds {
+		lens := ""
+		if index < len(arguments) {
+			lens = string(arguments[index])
+		} else {
+			lens = handle.Captures[index-len(arguments)]
+		}
+		class, ok := classes[lens]
+		if !ok {
+			class, classes[lens], nextClass = nextClass, nextClass, nextClass+1
+		}
+		encoded, marshalErr := json.Marshal(struct {
+			Value []byte `json:"value"`
+			Alias uint64 `json:"alias"`
+		}{Value: seed.Value, Alias: class})
+		if marshalErr != nil {
+			return interproc.InstanceKey{}, lexicalSCCAdmission{}, marshalErr
+		}
+		values = append(values, interproc.EntryValue{Selector: lexicalSCCSelector(index), Encoding: encoded})
+	}
+	entry, err := interproc.NewEntryBinding(values)
+	if err != nil {
+		return interproc.InstanceKey{}, lexicalSCCAdmission{}, err
+	}
+	key, err := interproc.NewInstanceKey(artifact, entry)
+	if err != nil {
+		return interproc.InstanceKey{}, lexicalSCCAdmission{}, err
+	}
+	admission := lexicalSCCAdmission{compilation: child, artifact: artifact, entry: append([]byte(nil), rawEntry...)}
+	id := lexicalSCCMapKey(key)
+	if prior, exists := l.admissions[id]; exists {
+		if string(prior.entry) != string(admission.entry) || prior.compilation.Body != child.Body {
+			return interproc.InstanceKey{}, lexicalSCCAdmission{}, fmt.Errorf("engine: non-identical lexical entry collided after certification")
+		}
+		return key, prior, nil
+	}
+	l.admissions[id] = admission
+	return key, admission, nil
+}
+
+func lexicalSCCSelector(index int) interproc.EntrySelector {
+	return interproc.EntrySelector(fmt.Sprintf("boundary/%08d", index))
+}
+
+func lexicalSCCArtifact(compilation front.Compilation) (interproc.DemandedBodyArtifact, error) {
+	if !compilation.Body.Valid() || compilation.Frozen.CanonicalBytes() == nil {
+		return interproc.DemandedBodyArtifact{}, fmt.Errorf("engine: lexical body lacks frozen SCC artifact")
+	}
+	n := len(compilation.Boundary.Parameters) + len(compilation.Boundary.Captures)
+	selectors := make([]interproc.EntrySelector, n)
+	for index := range selectors {
+		selectors[index] = lexicalSCCSelector(index)
+	}
+	schema, err := interproc.NewParameterSchema("lexical/"+fmt.Sprintf("%x", compilation.Body), selectors)
+	if err != nil {
+		return interproc.DemandedBodyArtifact{}, err
+	}
+	certificate, err := interproc.NewReadProjectionCertificate(lexicalSCCDemand, interproc.ReadCertificateInputs{Semantic: selectors, EntrySeeding: selectors, CallEntry: selectors})
+	if err != nil {
+		return interproc.DemandedBodyArtifact{}, err
+	}
+	bodyID := interproc.ContentIDFromCanonicalBytes(compilation.Frozen.CanonicalBytes())
+	manifest, err := interproc.NewDependencyManifest([]interproc.Dependency{{Kind: "lexical-frozen-body", ID: bodyID}})
+	if err != nil {
+		return interproc.DemandedBodyArtifact{}, err
+	}
+	solver := interproc.ContentIDFromCanonicalBytes([]byte("engine/lexical-scc-lattice/v1"))
+	return interproc.NewDemandedBodyArtifact(compilation.Frozen, schema, lexicalSCCDemand, certificate, solver, manifest, nil)
+}
+
+type lexicalSCCEvaluator struct{ lexical *lexicalEvaluator }
+
+func (e lexicalSCCEvaluator) Discover(ctx context.Context, key interproc.InstanceKey) ([]interproc.InstanceKey, error) {
+	admission, ok := e.lexical.admissions[lexicalSCCMapKey(key)]
+	if !ok {
+		return nil, fmt.Errorf("engine: recursive lexical admission is unavailable")
+	}
+	run := &lexicalSCCRun{discovered: make(map[string]interproc.InstanceKey)}
+	if _, _, err := e.lexical.runSCCBody(ctx, admission, run); err != nil {
+		return nil, err
+	}
+	delete(run.discovered, lexicalSCCMapKey(key))
+	out := make([]interproc.InstanceKey, 0, len(run.discovered))
+	for _, callee := range run.discovered {
+		out = append(out, callee)
+	}
+	sort.Slice(out, func(i, j int) bool { return string(out[i].CanonicalBytes()) < string(out[j].CanonicalBytes()) })
+	return out, nil
+}
+
+func (e lexicalSCCEvaluator) Evaluate(ctx context.Context, key interproc.InstanceKey, values interproc.RecursiveValues) (interproc.ClosedOutcome, error) {
+	admission, ok := e.lexical.admissions[lexicalSCCMapKey(key)]
+	if !ok {
+		return interproc.ClosedOutcome{}, fmt.Errorf("engine: recursive lexical admission is unavailable")
+	}
+	closure, _, err := e.lexical.runSCCBody(ctx, admission, &lexicalSCCRun{values: &values})
+	if err != nil {
+		return interproc.ClosedOutcome{}, err
+	}
+	return encodeLexicalSCCOutcome(closure)
+}
+
+func (l *lexicalEvaluator) runSCCBody(ctx context.Context, admission lexicalSCCAdmission, run *lexicalSCCRun) (equation.OutputClosure, int, error) {
+	priorRun, priorCtx := l.run, l.ctx
+	l.run, l.ctx = run, ctx
+	defer func() { l.run, l.ctx = priorRun, priorCtx }()
+	return l.evaluate(admission.compilation, admission.entry)
+}
+
+func lexicalSCCTopClosure(operands directCallOperands, target string) equation.OutputClosure {
+	closure := equation.OutputClosure{}
+	for index := 0; index < operands.resultArity; index++ {
+		closure.Values = append(closure.Values, equation.Fact{Key: fmt.Sprintf("call-result/%s/%08d", target, index), Value: []byte("scalar/top")})
+	}
+	return closure
+}
+
+func encodeLexicalSCCOutcome(closure equation.OutputClosure) (interproc.ClosedOutcome, error) {
+	wire := lexicalSCCWire{Version: 1, Values: lexicalSCCFacts(closure.Values), Outcomes: lexicalSCCFacts(closure.Outcomes)}
+	bytes, err := json.Marshal(wire)
+	if err != nil {
+		return interproc.ClosedOutcome{}, err
+	}
+	return interproc.NewClosedOutcome(bytes)
+}
+
+func decodeLexicalSCCOutcome(outcome interproc.ClosedOutcome) (equation.OutputClosure, error) {
+	var wire lexicalSCCWire
+	if !outcome.Valid() || json.Unmarshal(outcome.CanonicalBytes(), &wire) != nil || wire.Version != 1 {
+		return equation.OutputClosure{}, fmt.Errorf("engine: malformed recursive lexical summary")
+	}
+	values, err := lexicalSCCDecodeFacts(wire.Values)
+	if err != nil {
+		return equation.OutputClosure{}, err
+	}
+	outcomes, err := lexicalSCCDecodeFacts(wire.Outcomes)
+	if err != nil {
+		return equation.OutputClosure{}, err
+	}
+	return equation.OutputClosure{Values: values, Outcomes: outcomes}, nil
+}
+
+func lexicalSCCFacts(facts []equation.Fact) []lexicalSCCFact {
+	out := make([]lexicalSCCFact, len(facts))
+	for index, fact := range facts {
+		out[index] = lexicalSCCFact{Key: fact.Key, Value: append([]byte(nil), fact.Value...)}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
+func lexicalSCCDecodeFacts(facts []lexicalSCCFact) ([]equation.Fact, error) {
+	out := make([]equation.Fact, len(facts))
+	for index, fact := range facts {
+		if fact.Key == "" || fact.Value == nil || index > 0 && facts[index-1].Key >= fact.Key {
+			return nil, fmt.Errorf("engine: malformed recursive lexical summary fact")
+		}
+		out[index] = equation.Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...)}
+	}
+	return out, nil
+}
+
+type lexicalSCCLattice struct{ height uint64 }
+
+func lexicalSCCHeight(compilation front.Compilation) uint64 {
+	// The frozen body supplies a finite coordinate inventory.  Each coordinate
+	// may move bottom -> exact -> top, hence two strict ascents.
+	n := len(compilation.Frozen.Artifact.Equations)*8 + len(compilation.Boundary.Parameters) + len(compilation.Boundary.Captures) + 1
+	return uint64(2 * n)
+}
+func (l lexicalSCCLattice) Height() uint64 { return l.height }
+func (l lexicalSCCLattice) Bottom(key interproc.InstanceKey) (interproc.ClosedOutcome, error) {
+	return encodeLexicalSCCOutcome(equation.OutputClosure{})
+}
+func (l lexicalSCCLattice) Join(key interproc.InstanceKey, previous, candidate interproc.ClosedOutcome) (interproc.ClosedOutcome, bool, error) {
+	left, err := decodeLexicalSCCOutcome(previous)
+	if err != nil {
+		return interproc.ClosedOutcome{}, false, err
+	}
+	right, err := decodeLexicalSCCOutcome(candidate)
+	if err != nil {
+		return interproc.ClosedOutcome{}, false, err
+	}
+	values, changed, err := lexicalSCCJoinFacts(left.Values, right.Values, false)
+	if err != nil {
+		return interproc.ClosedOutcome{}, false, err
+	}
+	outcomes, outcomeChanged, err := lexicalSCCJoinFacts(left.Outcomes, right.Outcomes, true)
+	if err != nil {
+		return interproc.ClosedOutcome{}, false, err
+	}
+	next, err := encodeLexicalSCCOutcome(equation.OutputClosure{Values: values, Outcomes: outcomes})
+	return next, changed || outcomeChanged, err
+}
+
+func lexicalSCCJoinFacts(previous, candidate []equation.Fact, strict bool) ([]equation.Fact, bool, error) {
+	all := make(map[string][]byte, len(previous)+len(candidate))
+	for _, fact := range previous {
+		if fact.Key == "" || fact.Value == nil {
+			return nil, false, fmt.Errorf("engine: malformed recursive fact")
+		}
+		all[fact.Key] = append([]byte(nil), fact.Value...)
+	}
+	changed := false
+	for _, fact := range candidate {
+		if fact.Key == "" || fact.Value == nil {
+			return nil, false, fmt.Errorf("engine: malformed recursive fact")
+		}
+		prior, exists := all[fact.Key]
+		if !exists {
+			all[fact.Key] = append([]byte(nil), fact.Value...)
+			changed = true
+			continue
+		}
+		if string(prior) == string(fact.Value) || string(prior) == "scalar/top" {
+			continue
+		}
+		if strict || len(prior) == 0 {
+			return nil, false, fmt.Errorf("engine: incompatible recursive outcome coordinate %q", fact.Key)
+		}
+		all[fact.Key] = []byte("scalar/top")
+		changed = true
+	}
+	keys := make([]string, 0, len(all))
+	for key := range all {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]equation.Fact, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, equation.Fact{Key: key, Value: all[key]})
+	}
+	return out, changed, nil
+}

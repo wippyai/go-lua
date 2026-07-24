@@ -80,6 +80,20 @@ func TestStage1RedSelfAndMutualRecursion(t *testing.T) {
 	}
 }
 
+func TestStage1RedDirectAndCapturedRecursion(t *testing.T) {
+	for name, source := range map[string]string{
+		"direct":  `local f; f = function() return f() end; return f()`,
+		"capture": `local n = 1; local f; f = function() local keep = n; return f() end; return f()`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := checkChildAdmission(t, source)
+			if len(r.Diagnostics) != 0 || valuesByName(r.Outcomes)["return/arity"] != "1" {
+				t.Fatalf("recursive lexical body did not close: diagnostics=%#v outcomes=%#v", r.Diagnostics, r.Outcomes)
+			}
+		})
+	}
+}
+
 func TestStage1RedMixedKnownUnknownTargets(t *testing.T) {
 	r := checkChildAdmission(t, `local f = function() return 1 end; local g = unknown and f or provider; return g()`)
 	if len(r.Diagnostics) != 1 || r.Diagnostics[0].Key != "analysis/conservative" || len(r.Values) != 0 || len(r.Outcomes) != 0 {

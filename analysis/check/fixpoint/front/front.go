@@ -65,6 +65,11 @@ const (
 type Compilation struct {
 	Artifact equation.Artifact
 	Cyclic   *equation.CyclicArtifact
+	// Frozen is retained for every admitted body, including acyclic bodies.
+	// Cyclic remains the execution-path signal; consumers that need a stable
+	// interprocedural identity must use this certificate instead of rebuilding
+	// a schedule from the artifact.
+	Frozen equation.CyclicArtifact
 	// WIR is the immutable lowered body that owns source topology.  Consumers
 	// may inspect it only as descriptive input; evaluation remains exclusively
 	// owned by Artifact and the engine kernels.
@@ -150,11 +155,12 @@ func Compile(source string) (Compilation, error) {
 	}
 	claimSpans, claimTargetSpans := claimSpans(body, artifact)
 	compilation := newCompilation(rootBody, 0, "", body.LexicalPath(), body.Boundary(), body, artifact, claimSpans, claimTargetSpans, callSpans(body, artifact), branchSpans(body, artifact), effectSpans(body, artifact))
+	cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
+	if err != nil {
+		return Compilation{}, err
+	}
+	compilation.Frozen = cyclic
 	if graphHasCycle(built.Graph) {
-		cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
-		if err != nil {
-			return Compilation{}, err
-		}
 		compilation.Cyclic = &cyclic
 	}
 	nested, err := compileNestedBodies(body, rootBody)
@@ -232,11 +238,12 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 		}
 		claimSpans, claimTargetSpans := claimSpans(proto.Body, artifact)
 		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, proto.Body, artifact, claimSpans, claimTargetSpans, callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effectSpans(proto.Body, artifact))
+		cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
+		if err != nil {
+			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
+		}
+		child.Frozen = cyclic
 		if graphHasCycle(proto.Graph) {
-			cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
-			if err != nil {
-				return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
-			}
 			child.Cyclic = &cyclic
 		}
 		child.Nested, err = compileNestedBodies(proto.Body, root)

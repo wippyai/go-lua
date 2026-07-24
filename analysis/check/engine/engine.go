@@ -15,6 +15,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/interproc"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
@@ -167,7 +168,10 @@ func Check(source string) (result Result, err error) {
 	evaluateStarted := time.Now()
 	entry := artifact.Equations[0].Entry
 	binding := equation.EntryBinding{Parameter: entry, Value: []byte(entryValue)}
+	fileContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	lexical := newLexicalEvaluator(compilation)
+	lexical.ctx = fileContext
 	closure := equation.OutputClosure{}
 	transactions := 0
 	if compilation.Cyclic == nil {
@@ -206,7 +210,7 @@ func Check(source string) (result Result, err error) {
 		if vmErr != nil {
 			return Result{}, vmErr
 		}
-		evaluation, evaluateErr := vm.Evaluate(context.Background(), bound, []string{"published"})
+		evaluation, evaluateErr := vm.Evaluate(fileContext, bound, []string{"published"})
 		if evaluateErr != nil {
 			result = diagnosticResult("analysis/conservative", evaluateErr)
 			result.Timings = Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)}
@@ -1144,7 +1148,11 @@ type lexicalEvaluator struct {
 	lifecycleEvidence map[string][]DiagnosticEvidence
 	selectEvidence    map[string][]DiagnosticEvidence
 	childPublished    map[string]PublishedDiagnostic
-	active            map[equation.BodyID]bool
+	ctx               context.Context
+	table             *interproc.ProjectedTable
+	coordinator       *interproc.RecursionCoordinator
+	admissions        map[string]lexicalSCCAdmission
+	run               *lexicalSCCRun
 }
 
 func (l *lexicalEvaluator) hasVarargBoundary(prototype string) bool {
@@ -1192,7 +1200,8 @@ func (l *lexicalEvaluator) hasTableAllocation(prototype string) bool {
 }
 
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), active: make(map[equation.BodyID]bool)}
+	table := interproc.NewProjectedTable()
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission)}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
 		if compilation.PrototypeName != "" {
@@ -1241,14 +1250,6 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 	if l == nil || !compilation.Body.Valid() || len(compilation.Artifact.Equations) == 0 {
 		return equation.OutputClosure{}, 0, fmt.Errorf("engine: incomplete lexical body admission")
 	}
-	if l.active[compilation.Body] {
-		// The existing evaluator has no SCC coordinator yet.  Treating this as
-		// a transaction failure preserves atomicity: no in-flight child closure
-		// is exposed as a partial recursive summary.
-		return equation.OutputClosure{}, 0, fmt.Errorf("engine: recursive lexical body requires SCC coordination")
-	}
-	l.active[compilation.Body] = true
-	defer delete(l.active, compilation.Body)
 	entry := compilation.Artifact.Equations[0].Entry
 	binding := equation.EntryBinding{Parameter: entry, Value: append([]byte(nil), entryValue...)}
 	if compilation.Cyclic == nil {
@@ -1285,7 +1286,11 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 	if err != nil {
 		return equation.OutputClosure{}, 0, err
 	}
-	evaluation, err := vm.Evaluate(context.Background(), bound, []string{"published"})
+	ctx := l.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	evaluation, err := vm.Evaluate(ctx, bound, []string{"published"})
 	if err != nil {
 		return equation.OutputClosure{}, 0, err
 	}
@@ -1522,7 +1527,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	closure, _, err := l.evaluate(child, entry)
+	closure, err := l.resolveSCCChild(child, entry, seeds, arguments, handle, operands, operation.Target.Name)
 	if err != nil {
 		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
 	}
