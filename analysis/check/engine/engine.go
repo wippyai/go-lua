@@ -56,6 +56,7 @@ const memberMissingPrefix = "shape/member-missing/v1/"
 const literalDiagnosticPrefix = "diagnostic/literal-source/"
 
 const summaryTypePrefix = "summary-type/"
+const methodReturnSummaryPrefix = "method-return-summary/"
 const channelPayloadPrefix = "channel-payload/"
 const iteratorElementPrefix = "iterator-element/"
 const iteratorKeyPrefix = "iterator-key/"
@@ -4753,7 +4754,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// applied to the same heap cell. Without this fact, alias[key] loses the
 	// authority needed by indexMutationKernel and a subsequent static read can
 	// only fall back to an optional shape.
-	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, "select/origin/", heapTableIdentityPrefix, "local-call-result/"} {
+	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, methodReturnSummaryPrefix, "select/origin/", heapTableIdentityPrefix, "local-call-result/"} {
 		if inherited, ok := currentEpochFact(prefix, operands["value"], partition); ok {
 			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: inherited})
 		} else if prefix == "select/origin/" {
@@ -8184,18 +8185,41 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 	default:
 		return equation.OutputClosure{}, false, nil
 	}
-	root, suffix, source, ok := typedAncestor([]byte("path/"+predicate.Path), partition)
-	if !ok || len(suffix) == 0 {
-		return equation.OutputClosure{}, false, nil
-	}
-	trueType, trueOK := variant.NarrowByPathLiteral(source, suffix, literal)
-	falseType, falseOK := variant.NarrowByPathLiteralNot(source, suffix, literal)
-	if predicate.Kind == "literal-not" || predicate.Kind == "falsy" {
-		trueType, falseType = falseType, trueType
-		trueOK, falseOK = falseOK, trueOK
-	}
-	if !trueOK || !falseOK {
-		return equation.OutputClosure{}, false, nil
+	term := []byte("path/" + predicate.Path)
+	root, suffix, source, ok := typedAncestor(term, partition)
+	trueType, falseType := typ.Type(nil), typ.Type(nil)
+	if ok && len(suffix) != 0 {
+		var trueOK, falseOK bool
+		trueType, trueOK = variant.NarrowByPathLiteral(source, suffix, literal)
+		falseType, falseOK = variant.NarrowByPathLiteralNot(source, suffix, literal)
+		if predicate.Kind == "literal-not" || predicate.Kind == "falsy" {
+			trueType, falseType = falseType, trueType
+			trueOK, falseOK = falseOK, trueOK
+		}
+		if !trueOK || !falseOK {
+			return equation.OutputClosure{}, false, nil
+		}
+	} else {
+		// A root truthiness guard has no member suffix for typedAncestor to
+		// traverse. It may still narrow an exact method-result summary that is
+		// current for this path. The false edge conservatively retains the
+		// broader source type, so false-like concrete values cannot be lost.
+		if predicate.Kind != "truthy" {
+			return equation.OutputClosure{}, false, nil
+		}
+		encoded, found := currentEpochFact(methodReturnSummaryPrefix, term, partition)
+		if !found {
+			return equation.OutputClosure{}, false, nil
+		}
+		var decodeErr error
+		source, decodeErr = typ.DecodeCanonical(context.Background(), encoded)
+		if decodeErr != nil || !proof.OptionalTypeHasConcreteValue(source) {
+			return equation.OutputClosure{}, false, nil
+		}
+		trueType, falseType, root = proof.ProjectionWithoutNil(source), source, term
+		if trueType == nil || typ.IsNever(trueType) {
+			return equation.OutputClosure{}, false, nil
+		}
 	}
 	closure := equation.OutputClosure{}
 	for _, edge := range []struct {
@@ -10678,6 +10702,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				return equation.TransactionResult{}, fmt.Errorf("engine: encode typed method result summary: %w", encodeErr)
 			}
 			values = append(values, equation.Fact{Key: summaryTypePrefix + string(result) + "/" + operation.Target.Name, Value: encoded})
+			values = append(values, equation.Fact{Key: methodReturnSummaryPrefix + string(result) + "/" + operation.Target.Name, Value: encoded})
 		}
 		if receiverResult {
 			if identity, found := tableIdentityForTerm(receiverResultTerm, partition); found {
