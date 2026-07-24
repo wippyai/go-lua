@@ -2436,7 +2436,11 @@ type lexicalEvaluator struct {
 	table             *interproc.ProjectedTable
 	coordinator       *interproc.RecursionCoordinator
 	admissions        map[string]lexicalSCCAdmission
-	run               *lexicalSCCRun
+	// captureWrites holds, per prototype, the captured boundary cells whose
+	// members that body statically writes. It is a compilation property, so it
+	// is computed once with the body catalog rather than at every application.
+	captureWrites map[string]map[string]bool
+	run           *lexicalSCCRun
 	// Imported authority is selected at the project boundary. It is scoped to
 	// this evaluator and exists only for exact result paths published by those
 	// imports; no structural reconstruction is admitted as an authority.
@@ -2657,7 +2661,7 @@ func hasProjectableTableResult(child front.Compilation) bool {
 
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	table := interproc.NewProjectedTable()
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions)}
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), captureWrites: make(map[string]map[string]bool), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions)}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
 		l.byBody[compilation.Body] = compilation
@@ -2678,14 +2682,22 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 		// body admission. Ordinary capture-free calls are admitted separately
 		// only when their sealed result tuple has a caller-owned slot.
 		diagnosticRelay := compilationRequiresDiagnosticPublication(compilation)
+		captureWrites := capturedMemberWriteTerms(compilation)
 		required := len(compilation.Boundary.Captures) != 0 || diagnosticRelay
-		if lexicalRequiresHeapTransport(compilation) && !compilation.RebindsBoundary && !diagnosticRelay {
+		// A body that statically writes a member of one of its own captures owns
+		// an effect the caller can observe. Its writeback is exactly the capture
+		// lens this evaluator already transports, so it keeps body admission
+		// rather than degrading to the fail-closed revocation.
+		if lexicalRequiresHeapTransport(compilation) && !compilation.RebindsBoundary && !diagnosticRelay && len(captureWrites) == 0 {
 			required = false
 		}
 		for _, child := range compilation.Nested {
 			required = mark(child) || required
 		}
 		if compilation.PrototypeName != "" {
+			if len(captureWrites) != 0 {
+				l.captureWrites[compilation.PrototypeName] = captureWrites
+			}
 			l.requiresBody[compilation.PrototypeName] = required
 		}
 		return required
@@ -2801,6 +2813,83 @@ func forwardedStaticMemberContractBoundary(compilation front.Compilation) bool {
 // lexicalRequiresHeapTransport identifies child effects the value-only bridge
 // cannot preserve. Those bodies stay on the established root path unless they
 // also rebind a boundary cell, which is the one effect this bridge transports.
+// capturedMemberWriteTerms lists the captured boundary cells whose members a
+// body statically writes. The caller holds an allocation-time closed shape for
+// those cells; once this body runs, that shape can no longer prove any member
+// absent. Detection is keyed to the exact captured boundary term, so writes
+// through parameters, temporaries, and dynamic keys are not part of the relation.
+func capturedMemberWriteTerms(compilation front.Compilation) map[string]bool {
+	if len(compilation.Boundary.Captures) == 0 {
+		return nil
+	}
+	captured := make(map[string]bool, len(compilation.Boundary.Captures))
+	for _, capture := range compilation.Boundary.Captures {
+		captured[boundaryTerm(capture.Symbol)] = true
+	}
+	var written map[string]bool
+	for _, item := range compilation.Artifact.Equations {
+		if item.Occurrence.Kind != "path-replacement" && item.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		target, found := artifactOperand(item.Operands, "target")
+		if !found {
+			continue
+		}
+		root, suffix, ok := heapTableAddress(target)
+		if !ok || suffix == "" || !captured[string(root)] {
+			continue
+		}
+		if written == nil {
+			written = make(map[string]bool, len(captured))
+		}
+		written[string(root)] = true
+	}
+	return written
+}
+
+// capturedMemberWriteInvalidations revokes the caller's closed-table proof for
+// every capture the callee statically writes a member of. It is the fail-closed
+// transport for a body this application does not evaluate: the written member is
+// never invented, but the table stops proving that any member is absent.
+func (l *lexicalEvaluator) capturedMemberWriteInvalidations(handle closureHandle, operation string, partition equation.Partition) []equation.Fact {
+	if l == nil {
+		return nil
+	}
+	written := l.captureWrites[handle.Prototype]
+	if len(written) == 0 {
+		return nil
+	}
+	child, known := l.byPrototype[handle.Prototype]
+	if !known || len(child.Boundary.Captures) != len(handle.Captures) {
+		return nil
+	}
+	var facts []equation.Fact
+	for index, capture := range child.Boundary.Captures {
+		if !written[boundaryTerm(capture.Symbol)] {
+			continue
+		}
+		callerTerm := handle.Captures[index]
+		value, resolved := resolveKnownCurrentValue([]byte(callerTerm), partition)
+		if !resolved {
+			continue
+		}
+		table, sealed := shapefact.DecodeTable(value)
+		if !sealed || !table.Closed {
+			continue
+		}
+		table.Closed = false
+		opened, encoded := shapefact.EncodeTable(table)
+		if !encoded {
+			continue
+		}
+		facts = append(facts,
+			equation.Fact{Key: "value/" + callerTerm + "/" + operation, Value: opened},
+			equation.Fact{Key: "epoch/" + callerTerm + "/" + operation, Value: []byte(operation)},
+		)
+	}
+	return facts
+}
+
 func lexicalRequiresHeapTransport(compilation front.Compilation) bool {
 	for _, item := range compilation.Artifact.Equations {
 		switch item.Occurrence.Kind {
@@ -3336,6 +3425,64 @@ func projectSealedTableMemberValues(target string, tableValue []byte, operation 
 		)
 	}
 	return values, nil
+}
+
+// returnMemberClosures collects the member capabilities a table carries out of
+// the body that built it. A member closure wire published against the table is
+// one source; a static member definition, which publishes its capability at the
+// exact member path rather than against the table, is the other. Both are
+// existing publications of this partition and a member's latest publication
+// wins. The union is computed only where a value leaves its partition, so
+// dispatch inside the body keeps consuming the member-path fact directly.
+func returnMemberClosures(term []byte, partition equation.Partition) []memberClosureWire {
+	prefix := "closure/" + string(term)
+	direct := partition.ValuesPrefix(prefix)
+	published := memberClosuresFor(term, partition)
+	if len(direct) == 0 {
+		return published
+	}
+	bySuffix := make(map[string]struct {
+		key  string
+		wire memberClosureWire
+	}, len(published)+len(direct))
+	for _, wire := range published {
+		bySuffix[wire.Suffix] = struct {
+			key  string
+			wire memberClosureWire
+		}{wire: wire}
+	}
+	for _, fact := range direct {
+		rest := strings.TrimPrefix(fact.Key, prefix)
+		cut := strings.LastIndex(rest, "/")
+		if cut <= 0 {
+			continue
+		}
+		suffix := rest[:cut]
+		if !segment.ValidFormattedSegments(suffix) {
+			continue
+		}
+		var handle closureHandle
+		if json.Unmarshal(fact.Value, &handle) != nil || !validClosureHandle(handle) {
+			continue
+		}
+		if prior, exists := bySuffix[suffix]; exists && prior.key > fact.Key {
+			continue
+		}
+		bySuffix[suffix] = struct {
+			key  string
+			wire memberClosureWire
+		}{key: fact.Key, wire: memberClosureWire{Suffix: suffix, Handle: handle}}
+	}
+	suffixes := make([]string, 0, len(bySuffix))
+	for suffix := range bySuffix {
+		suffixes = append(suffixes, suffix)
+	}
+	sort.Strings(suffixes)
+	out := make([]memberClosureWire, 0, len(suffixes))
+	for _, suffix := range suffixes {
+		out = append(out, bySuffix[suffix].wire)
+	}
+	return out
 }
 
 func projectSealedTableMemberClosures(target string, tableValue []byte, operation string, partition equation.Partition) ([]equation.Fact, error) {
@@ -6093,11 +6240,25 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		projected.Values = append(projected.Values, values...)
 		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("call-member-closure/%s/%08d/%s", strings.TrimPrefix(operation.Target.Name, "call/"), resultIndex, parts[2]), Value: encoded})
 	}
+	// The child snapshot is only needed to read a capture cell back, so it is
+	// built once on demand rather than for every application.
+	childPartition, childPartitionBuilt := equation.Partition{}, false
 	for index, capture := range child.Boundary.Captures {
 		value, found := latestClosedValue([]byte(boundaryTerm(capture.Symbol)), closure.Values)
 		if !found {
 			return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q omitted capture cell %q", handle.Prototype, capture.Name)
 		}
+		// A static member write inside the child advances that heap cell without
+		// republishing the capture's aggregate value. Consume the child's member
+		// authority so the writeback carries the mutation the callee made.
+		if !childPartitionBuilt {
+			built, partitionErr := equation.PartitionFromClosuresWithGuards(nil, closure)
+			if partitionErr != nil {
+				return equation.TransactionResult{}, partitionErr
+			}
+			childPartition, childPartitionBuilt = built, true
+		}
+		value = heapMemberSurface([]byte(boundaryTerm(capture.Symbol)), value, childPartition)
 		// A capture cell may be the same caller cell as another capture or a
 		// formal.  The entry contains the complete pre-call relation below, so
 		// a write through this lens must update every possible caller alias.
@@ -6130,6 +6291,25 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		if !parameterAliasesCapture {
 			for _, alias := range aliases {
 				projected.Values = append(projected.Values, equation.Fact{Key: "value/" + alias + "/" + operation.Target.Name, Value: value})
+			}
+			// A member defined on the captured table inside the child is a
+			// capability of the caller's cell once the call completes. Rebind each
+			// published capability to caller spellings; nothing is admitted that
+			// the child did not itself publish.
+			for wireIndex, wire := range returnMemberClosures([]byte(boundaryTerm(capture.Symbol)), childPartition) {
+				rebound, values, rebindErr := rebindEscapingClosure(operation, child, arguments, handle, closure, wire.Handle)
+				if rebindErr != nil {
+					return equation.TransactionResult{}, rebindErr
+				}
+				wire.Handle = rebound
+				encoded, marshalErr := json.Marshal(wire)
+				if marshalErr != nil {
+					return equation.TransactionResult{}, marshalErr
+				}
+				projected.Values = append(projected.Values, values...)
+				for _, alias := range aliases {
+					projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("member-closure/%s/%s/capture-%08d", alias, operation.Target.Name, wireIndex), Value: encoded})
+				}
 			}
 		}
 	}
@@ -8522,8 +8702,15 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 		if hasChild {
 			result.Closure.Values = append(result.Closure.Values, placementBindingFact(string(operands["target"]), operation.Target.Name, child.Identity))
 		}
-		if hasParent && hasChild && parent.Identity != child.Identity {
+		switch {
+		case hasParent && hasChild && parent.Identity != child.Identity:
 			result.Closure.Values = append(result.Closure.Values, placementContainmentFact(parent.Identity, child.Identity, operation.Target.Name))
+		case hasChild && !hasParent:
+			// The destination container has no allocation in this frame: it is a
+			// boundary cell, an import, or a global. The stored allocation therefore
+			// outlives this frame and cannot keep a stack lifetime. Ownership follows
+			// the container, so record the retain rather than a lifetime blocker.
+			result.Closure.Values = append(result.Closure.Values, placementEventFact(child.Identity, operation.Target.Name, placementEventOwned))
 		}
 	}
 	if isChannelIdentity(value) {
@@ -11859,11 +12046,16 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	var placementFacts []equation.Fact
 	var metatableFacts []equation.Fact
 	var argumentFacts []equation.Fact
+	// captureInvalidations revokes the caller proofs that a callee this
+	// application does not evaluate would otherwise keep refuting. They publish
+	// with the call's other completed outputs so the revocation shares its epoch.
+	var captureInvalidations []equation.Fact
 	defer func() {
 		if err == nil && result.Complete {
 			result.Closure.Values = append(result.Closure.Values, placementFacts...)
 			result.Closure.Values = append(result.Closure.Values, metatableFacts...)
 			result.Closure.Values = append(result.Closure.Values, argumentFacts...)
+			result.Closure.Values = append(result.Closure.Values, captureInvalidations...)
 		}
 	}()
 	if closure, recognized, freezeErr := freezeCallEpoch(operation, partition); freezeErr != nil {
@@ -11964,6 +12156,9 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if lexical == nil || !localCallable || (operands.resultArity == 0 && !lexical.requiresBody[handle.Prototype]) ||
 			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] &&
 				((lexical.hasClaim(handle.Prototype) && !lexical.hasRuntimeCastClaim(handle.Prototype)) || lexical.hasTableAllocation(handle.Prototype) && tableProjectionUnsafe && !recursiveDemand) && !childHasSelect(child)) {
+			if localCallable {
+				captureInvalidations = lexical.capturedMemberWriteInvalidations(handle, operation.Target.Name, partition)
+			}
 			if lexical != nil && childKnown {
 				if declared, published, declaredErr := lexical.declaredBranchAssignmentDiagnostics(child); declaredErr != nil {
 					return equation.TransactionResult{}, false, declaredErr
@@ -11986,6 +12181,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			// An incomplete local boundary is indistinguishable from an unresolved
 			// callable at this result owner. Keep its slots at Top rather than
 			// publishing a partial child result or a synthetic diagnostic.
+			captureInvalidations = lexical.capturedMemberWriteInvalidations(handle, operation.Target.Name, partition)
 			return equation.TransactionResult{}, false, nil
 		}
 		return outcome, true, nil
@@ -13317,8 +13513,8 @@ func heapExternalCallbackFact(identity []byte, operation string) equation.Fact {
 
 func heapHasExternalCallback(identity []byte, partition equation.Partition) bool {
 	prefix := heapExternalCallbackPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "may-mutate" {
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		if string(fact.Value) == "may-mutate" {
 			return true
 		}
 	}
@@ -15726,15 +15922,39 @@ func importedParameterSurface(term, value []byte, partition equation.Partition) 
 		return value
 	}
 	identity, found := tableIdentityForTerm(term, partition)
-	if !found || !heapTableClosed(identity, partition) || heapHasExternalCallback(identity, partition) {
+	if !found || !heapTableClosed(identity, partition) {
+		return value
+	}
+	return heapMemberSurface(term, value, partition)
+}
+
+// heapMemberSurface republishes a sealed table value with the current member
+// publications of its heap identity. A static member write advances the member
+// cell rather than the aggregate value fact, so a read inside the writing
+// partition consumes the write while the aggregate still carries the
+// allocation-time shape. A consumer that transports the aggregate out of that
+// partition must consume the same member authority; otherwise the closed table
+// would prove the absence of a member it demonstrably has. An externally exposed
+// heap keeps its original broad value.
+func heapMemberSurface(term, value []byte, partition equation.Partition) []byte {
+	table, sealed := shapefact.DecodeTable(value)
+	if !sealed || !table.Closed {
+		return value
+	}
+	// A static member write publishes the written cell at its exact member path.
+	// The absence of any such publication proves this partition performed no
+	// static member write on this term, so the aggregate is already current and
+	// the heap walk is skipped.
+	if _, written := partition.LatestValuePrefix("value/" + string(term) + "."); !written {
+		return value
+	}
+	identity, found := tableIdentityForTerm(term, partition)
+	if !found || heapHasExternalCallback(identity, partition) {
 		return value
 	}
 	prefix := heapMemberPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	latest := make(map[string]equation.Fact)
-	for _, fact := range partition.Values() {
-		if !strings.HasPrefix(fact.Key, prefix) {
-			continue
-		}
+	for _, fact := range partition.ValuesPrefix(prefix) {
 		rest := strings.TrimPrefix(fact.Key, prefix)
 		encodedSuffix, _, ok := strings.Cut(rest, "/")
 		if !ok {
@@ -16292,7 +16512,10 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		if err != nil {
 			return equation.TransactionResult{}, err
 		}
-		values[index] = value
+		// A return leaves the partition that owns this body's member writes, so
+		// the returned value consumes the heap member authority here rather than
+		// handing the caller the allocation-time template.
+		values[index] = heapMemberSurface(operand.Value, value, partition)
 	}
 	for index, value := range values {
 		if value == nil {
@@ -16326,7 +16549,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 	outcomes = append(outcomes, equation.Fact{Key: prefix + "arity", Value: []byte(strconv.Itoa(len(values)))})
 	for index, value := range values {
 		outcomes = append(outcomes, equation.Fact{Key: prefix + strconv.Itoa(index), Value: value})
-		for memberIndex, wire := range memberClosuresFor(operation.Operands[index].Value, partition) {
+		for memberIndex, wire := range returnMemberClosures(operation.Operands[index].Value, partition) {
 			encoded, err := json.Marshal(wire)
 			if err != nil {
 				return equation.TransactionResult{}, err

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -157,6 +158,38 @@ func TestPartitionPointLookupsKeepGuardedFactsPrivate(t *testing.T) {
 	}
 	if _, ok := partition.Value("epoch/path/item/9999"); ok {
 		t.Fatal("point lookup exposed a fact outside the active guards")
+	}
+}
+
+func TestPartitionValuesPrefixMatchesFilteredVisibleValues(t *testing.T) {
+	body := testBody(53)
+	visible := Guard{Body: body, Encoding: []byte("visible")}
+	hidden := Guard{Body: body, Encoding: []byte("hidden")}
+	partition := Partition{closure: OutputClosure{Values: []Fact{
+		{Key: "heap/member/a/0001", Value: []byte("first"), Guards: []Guard{visible}},
+		{Key: "heap/member/a/0002", Value: []byte("second"), Guards: []Guard{visible}},
+		{Key: "heap/member/a/9999", Value: []byte("guarded"), Guards: []Guard{hidden}},
+		{Key: "heap/member/b/0001", Value: []byte("other"), Guards: []Guard{visible}},
+	}}, guards: []Guard{visible}}
+
+	got := partition.ValuesPrefix("heap/member/a/")
+	want := make([]Fact, 0, 2)
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, "heap/member/a/") {
+			want = append(want, fact)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("prefix scan = %#v, want the same facts as a filtered full scan %#v", got, want)
+	}
+	for index := range got {
+		if got[index].Key != want[index].Key || string(got[index].Value) != string(want[index].Value) {
+			t.Fatalf("prefix scan item %d = %#v, want %#v", index, got[index], want[index])
+		}
+	}
+	got[0].Value[0] = 'X'
+	if fact, ok := partition.Value("heap/member/a/0001"); !ok || string(fact.Value) != "first" {
+		t.Fatalf("prefix scan leaked mutable snapshot storage: %#v, %v", fact, ok)
 	}
 }
 

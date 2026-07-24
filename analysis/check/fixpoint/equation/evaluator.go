@@ -283,6 +283,20 @@ func (p Partition) Value(key string) (Fact, bool) {
 	return Fact{}, false
 }
 
+// ValuesPrefix returns the visible value publications whose keys start with
+// prefix. It is the prefix-scoped form of Values: a consumer that reads one
+// fact family must not have to copy the whole partition in order to filter it.
+func (p Partition) ValuesPrefix(prefix string) []Fact {
+	active := resolvedBranchGuards(p.closure.Values, p.guards)
+	var out []Fact
+	for _, fact := range p.closure.Values {
+		if strings.HasPrefix(fact.Key, prefix) && guardsIncluded(fact.Guards, active) {
+			out = append(out, cloneFact(fact))
+		}
+	}
+	return out
+}
+
 // LatestValuePrefix returns the lexically latest visible publication under
 // prefix.  Versioned engine facts encode their current epoch in the key, so
 // this preserves the same selection as a Values scan without materializing
