@@ -307,6 +307,33 @@ local direct: Node = root.child
 	t.Fatalf("optional recursive assignment did not render nilability: %#v", result.PublishedDiagnostics)
 }
 
+func TestCheckKeepsGuardedRecursiveParentPresent(t *testing.T) {
+	result, err := engine.Check(`
+type Tree = {
+	id: string,
+	parent: Tree?,
+	children: {Tree},
+}
+local root: Tree = { id = "root", parent = nil, children = {} }
+local child: Tree = { id = "child", parent = root, children = {} }
+table.insert(root.children, child)
+local first = root.children[1]
+if first then
+	if first.parent then
+		local parentID: string = first.parent.id
+	end
+end
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "first.parent.id") {
+			t.Fatalf("guarded recursive parent read was treated as nil: %#v", result.PublishedDiagnostics)
+		}
+	}
+}
+
 func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	result, err := engine.Check(`local value: string = provider()`)
 	if err != nil {

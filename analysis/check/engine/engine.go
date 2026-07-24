@@ -8003,7 +8003,11 @@ func tableInsertEpoch(operation equation.BoundEquation, operands directCallOpera
 		next = segments[0].Index + 1
 	}
 	suffix := segment.FormatSegments([]segment.Segment{{Kind: segment.SegmentIndexInt, Index: next}})
-	return equation.OutputClosure{Values: []equation.Fact{heapMemberFact(identity, suffix, operation.Target.Name, value)}}, true
+	values := []equation.Fact{heapMemberFact(identity, suffix, operation.Target.Name, value)}
+	if memberIdentity, found := tableIdentityForTerm(operands.arguments[1], partition); found {
+		values = append(values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
+	}
+	return equation.OutputClosure{Values: values}, true
 }
 
 const channelLifecyclePrefix = "effect.lifecycle.channel/"
