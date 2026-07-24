@@ -59,6 +59,12 @@ const channelPayloadPrefix = "channel-payload/"
 const iteratorElementPrefix = "iterator-element/"
 const iteratorKeyPrefix = "iterator-key/"
 
+// correlationConeValuePrefix carries a branch-local projection whose authority
+// is the exact set of path versions that established it.  It is deliberately
+// separate from ordinary value facts: a correlation is not a heap write and
+// must disappear as soon as any path in its own proof cone is replaced.
+const correlationConeValuePrefix = "correlation-cone/value/"
+
 // Heap facts are deliberately keyed by a sealed allocation identity, never by
 // a source path.  Paths are merely lenses: assignments copy an identity and
 // member/index writes update the object reached by every such lens.  Keeping
@@ -7230,6 +7236,11 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
+	if closure, recognized, err := correlationBranchClosure(operation, partition); err != nil {
+		return equation.TransactionResult{}, err
+	} else if recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	if closure, recognized, err := selectBranchClosure(operation, partition); err != nil {
 		return equation.TransactionResult{}, err
 	} else if recognized {
@@ -7338,6 +7349,232 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: "lint.condition.redundant/" + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+type correlationConeEpoch struct {
+	Term  string `json:"term"`
+	Epoch string `json:"epoch,omitempty"`
+}
+
+// correlationConeValue is a guarded branch projection, not a replacement
+// value.  Its epoch rows are the complete proof cone: the guarded member, its
+// equal peer, and every enclosing path segment of each.  An absent epoch is
+// meaningful--a later write creates one and therefore revokes the projection.
+type correlationConeValue struct {
+	Value  []byte                 `json:"value"`
+	Epochs []correlationConeEpoch `json:"epochs"`
+}
+
+// correlationBranchClosure publishes the one existing fact that a true
+// equality/non-nil branch proves: an equal member has the same non-nil type as
+// the guarded member.  It accepts only closed front evidence, requires equal
+// current member surfaces, and keeps the projection under the branch's true
+// guard.  No alias is inferred from source spelling or from a declaration.
+func correlationBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
+	equal := make(map[string]map[string]bool)
+	nonNil := make(map[string]bool)
+	for _, operand := range operation.Operands {
+		predicate, trueEdge, ok := branchEvidencePredicate(operand)
+		if !ok || !trueEdge || predicate.Negated {
+			continue
+		}
+		switch predicate.Kind {
+		case "path-equal":
+			if predicate.Path == "" || predicate.OtherPath == "" {
+				continue
+			}
+			if equal[predicate.Path] == nil {
+				equal[predicate.Path] = make(map[string]bool)
+			}
+			if equal[predicate.OtherPath] == nil {
+				equal[predicate.OtherPath] = make(map[string]bool)
+			}
+			equal[predicate.Path][predicate.OtherPath] = true
+			equal[predicate.OtherPath][predicate.Path] = true
+		case "not-nil":
+			if predicate.Path != "" {
+				nonNil[predicate.Path] = true
+			}
+		}
+	}
+	if len(equal) == 0 || len(nonNil) == 0 {
+		return equation.OutputClosure{}, false, nil
+	}
+
+	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
+	closure := equation.OutputClosure{Outcomes: []equation.Fact{
+		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/true"), Guards: []equation.Guard{guard}},
+		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/false"), Guards: []equation.Guard{{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/false")}}},
+		{Key: "narrowing/" + operation.Target.Name, Value: []byte("correlation/true"), Guards: []equation.Guard{guard}},
+		{Key: "narrowing/" + operation.Target.Name, Value: []byte("correlation/false"), Guards: []equation.Guard{{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/false")}}},
+	}}
+	sourcePaths := make([]string, 0, len(nonNil))
+	for sourcePath := range nonNil {
+		sourcePaths = append(sourcePaths, sourcePath)
+	}
+	sort.Strings(sourcePaths)
+	for _, sourcePath := range sourcePaths {
+		source := []byte("path/" + sourcePath)
+		if !derivedPathTerm(source) {
+			continue
+		}
+		sourceType, sourceKnown := correlationMemberType(source, partition)
+		if !sourceKnown || sourceType == nil || !subtype.IsSubtype(typ.Nil, sourceType) {
+			continue
+		}
+		for _, targetPath := range correlatedPathTargets(sourcePath, equal) {
+			if targetPath == sourcePath {
+				continue
+			}
+			target := []byte("path/" + targetPath)
+			if !derivedPathTerm(target) {
+				continue
+			}
+			targetType, targetKnown := correlationMemberType(target, partition)
+			if !targetKnown || targetType == nil || !typ.TypeEquals(sourceType, targetType) {
+				continue
+			}
+			narrowed := proof.ProjectionWithoutNil(targetType)
+			if narrowed == nil || typ.IsNever(narrowed) {
+				continue
+			}
+			value, encoded := shapefact.EncodeTarget(narrowed)
+			if !encoded {
+				continue
+			}
+			epochs, complete := correlationConeEpochs(sourcePath, targetPath, partition)
+			if !complete {
+				continue
+			}
+			wire, marshalErr := json.Marshal(correlationConeValue{Value: value, Epochs: epochs})
+			if marshalErr != nil {
+				return equation.OutputClosure{}, false, marshalErr
+			}
+			closure.Values = append(closure.Values, equation.Fact{
+				Key:   correlationConeValuePrefix + base64.RawURLEncoding.EncodeToString(target) + "/" + operation.Target.Name,
+				Value: wire, Guards: []equation.Guard{guard},
+			})
+		}
+	}
+	if len(closure.Values) == 0 {
+		return equation.OutputClosure{}, false, nil
+	}
+	return closure, true, nil
+}
+
+// correlatedPathTargets extends an equality over the exact suffix already
+// guarded by a non-nil predicate. Thus `p == q` relates `p.f` and `q.f`, while
+// `p.inner == q.inner` relates `p.inner.x` and `q.inner.x`; a textual prefix
+// that cuts through a path segment is never an alias.
+func correlatedPathTargets(source string, equal map[string]map[string]bool) []string {
+	targets := make(map[string]bool)
+	for base := range equal {
+		suffix, matches := correlationPathSuffix(source, base)
+		if !matches {
+			continue
+		}
+		for _, peer := range equalityCone(base, equal) {
+			if peer != base {
+				targets[peer+suffix] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(targets))
+	for target := range targets {
+		out = append(out, target)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func correlationPathSuffix(path, prefix string) (string, bool) {
+	if prefix == "" || !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+	suffix := strings.TrimPrefix(path, prefix)
+	if suffix == "" || (suffix[0] != '.' && suffix[0] != '[') || !segment.ValidFormattedSegments(suffix) {
+		return "", false
+	}
+	return suffix, true
+}
+
+// correlationMemberType reads an existing current value witness first.  A
+// declared root is the only fallback: it is a front-published contract, and
+// the cone snapshot below binds that contract to the exact current path
+// versions.  No local source annotation or synthesized alias can enter here.
+func correlationMemberType(term []byte, partition equation.Partition) (typ.Type, bool) {
+	if value, err := resolveCurrentValue(term, partition); err == nil {
+		if valueType, known := expressionValueType(value); known && valueType != nil {
+			return valueType, true
+		}
+	}
+	if valueType, known := typedPathType(term, partition); known && valueType != nil {
+		return valueType, true
+	}
+	root, suffix, valid := tableAddress(term)
+	if !valid || suffix == "" {
+		return nil, false
+	}
+	declared, found := declaredTypeForTerm(root, partition)
+	if !found || declared == nil {
+		return nil, false
+	}
+	segments, parsed := segment.ParseFormattedSegments(suffix)
+	if !parsed || len(segments) == 0 {
+		return nil, false
+	}
+	projected, projectedOK := luatypeprojection.ApplySegments(declared, segments)
+	return projected, projectedOK && projected != nil
+}
+
+func equalityCone(source string, equal map[string]map[string]bool) []string {
+	seen := map[string]bool{source: true}
+	queue := []string{source}
+	for len(queue) != 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for next := range equal[current] {
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for path := range seen {
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func correlationConeEpochs(source, target string, partition equation.Partition) ([]correlationConeEpoch, bool) {
+	terms := make(map[string]bool)
+	for _, path := range []string{source, target} {
+		root, suffix, ok := tableAddress([]byte("path/" + path))
+		if !ok || suffix == "" {
+			return nil, false
+		}
+		segments, valid := segment.ParseFormattedSegments(suffix)
+		if !valid || len(segments) == 0 {
+			return nil, false
+		}
+		terms[string(root)] = true
+		for index := range segments {
+			terms[string(root)+segment.FormatSegments(segments[:index+1])] = true
+		}
+	}
+	ordered := make([]string, 0, len(terms))
+	for term := range terms {
+		ordered = append(ordered, term)
+	}
+	sort.Strings(ordered)
+	epochs := make([]correlationConeEpoch, 0, len(ordered))
+	for _, term := range ordered {
+		epoch, _ := currentEpoch([]byte(term), partition)
+		epochs = append(epochs, correlationConeEpoch{Term: term, Epoch: epoch})
+	}
+	return epochs, true
 }
 
 func runtimeTypeBranchProof(operation equation.BoundEquation) (path, typeName string, proven bool) {
@@ -11318,6 +11555,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 	if value, found := selectPayloadValue(term, partition); found {
 		return value, nil
 	}
+	if value, found := correlationConeCurrentValue(term, partition); found {
+		return value, nil
+	}
 	if value, found := heapMemberValue(term, partition); found {
 		return value, nil
 	}
@@ -11349,6 +11589,49 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 		return nil, fmt.Errorf("engine: value path %q has no completed write", term)
 	}
 	return append([]byte(nil), value...), nil
+}
+
+// correlationConeCurrentValue selects only a currently valid guarded
+// correlation projection.  A malformed row and a stale row are both ignored:
+// neither can become an ordinary value witness.  This is intentionally a read
+// filter rather than a broad invalidation pass, so a write to one path revokes
+// only cones that recorded that exact path in their published proof boundary.
+func correlationConeCurrentValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	if !derivedPathTerm(term) {
+		return nil, false
+	}
+	prefix := correlationConeValuePrefix + base64.RawURLEncoding.EncodeToString(term) + "/"
+	var value []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) || fact.Key <= latest {
+			continue
+		}
+		var wire correlationConeValue
+		if json.Unmarshal(fact.Value, &wire) != nil || len(wire.Value) == 0 || len(wire.Epochs) == 0 || !correlationConeEpochsCurrent(wire.Epochs, partition) {
+			continue
+		}
+		if _, decoded := shapefact.DecodeTarget(wire.Value); !decoded {
+			continue
+		}
+		value, latest = append([]byte(nil), wire.Value...), fact.Key
+	}
+	return value, value != nil
+}
+
+func correlationConeEpochsCurrent(epochs []correlationConeEpoch, partition equation.Partition) bool {
+	seen := make(map[string]bool, len(epochs))
+	for _, item := range epochs {
+		if item.Term == "" || seen[item.Term] || (!strings.HasPrefix(item.Term, "path/") && !strings.HasPrefix(item.Term, "temp/")) {
+			return false
+		}
+		seen[item.Term] = true
+		current, _ := currentEpoch([]byte(item.Term), partition)
+		if current != item.Epoch {
+			return false
+		}
+	}
+	return true
 }
 
 // joinedGuardedValue is the only post-join fallback for ordinary values.  A
