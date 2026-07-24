@@ -690,9 +690,17 @@ local item: number = (value :: {number})[1]
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
+	// A mismatch that is only nilability renders as the canonical "may be nil"
+	// narration, and the optional witness itself is carried by the evidence
+	// chain rather than by spelling the source type in the headline.
 	for _, diagnostic := range result.PublishedDiagnostics {
-		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "item") && strings.Contains(diagnostic.Message, "number?") && strings.Contains(diagnostic.Message, "not number") {
-			return
+		if diagnostic.Code != "type.assignment" || diagnostic.Message != "cannot assign item because it may be nil" {
+			continue
+		}
+		for _, evidence := range diagnostic.Evidence {
+			if evidence.Trust == "proven" && evidence.Message == "item can be number or nil here" {
+				return
+			}
 		}
 	}
 	t.Fatalf("cast index optional witness did not reach assignment: %#v", result.PublishedDiagnostics)
@@ -964,9 +972,18 @@ end
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
+	// The composite guard proves neither element type, so the boundary still
+	// refuses the assignment; the closed constructor shape that crossed the any
+	// boundary refutes string[] outright, so the headline names that shape
+	// instead of the weaker "it is any" wording.
 	for _, diagnostic := range result.PublishedDiagnostics {
-		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 4 && strings.Contains(diagnostic.Message, "cannot assign raw.items because it is any, not string[]") {
-			return
+		if diagnostic.Code != "type.assignment" || diagnostic.Span.StartLine != 4 || diagnostic.Message != `cannot assign raw.items because it is ("ok", 99), not string[]` {
+			continue
+		}
+		for _, evidence := range diagnostic.Evidence {
+			if evidence.Reason == "explicit boundary validation" && evidence.Message == "raw.items comes from any/unknown" {
+				return
+			}
 		}
 	}
 	t.Fatalf("composite guarded explicit-any member read diagnostics = %#v", result.PublishedDiagnostics)
@@ -1184,6 +1201,37 @@ end`
 	}
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("indexed iterator lost the imported array element witness: %#v", result.Diagnostics)
+	}
+}
+
+func TestCheckReportsInvariantLoopReadOnlyForAStableReceiver(t *testing.T) {
+	rebound, err := engine.Check(`
+local rows = {{id = "a"}, {id = "b"}}
+for _, row in ipairs(rows) do
+	local id = row.id
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(rebound.Diagnostics)["advice.invariant_loop_read"]; got != "" {
+		t.Fatalf("member read off the loop control variable was called loop-invariant: %#v", rebound.Diagnostics)
+	}
+	stable, err := engine.Check(`
+local config = {limit = 3}
+local total = 0
+local i = 0
+while i < 3 do
+	local limit = config.limit
+	total = total + limit
+	i = i + 1
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(stable.Diagnostics)["advice.invariant_loop_read"]; got != "config.limit is loop-invariant and can be hoisted" {
+		t.Fatalf("receiver bound outside the loop lost its hoistable read advice: %#v", stable.Diagnostics)
 	}
 }
 
@@ -2417,7 +2465,11 @@ func TestCheckPublishesFrontAndConservativeFailuresAsDiagnostics(t *testing.T) {
 		wantAbsent bool
 	}{
 		{name: "admitted open table tail", source: `local values = { provider() }`, wantAbsent: true},
-		{name: "conservative", source: `local missing = absent_name + 1`, code: "analysis/conservative"},
+		// A bare unresolved value carries its own proof, so it is named at its
+		// own span instead of collapsing the file into a conservative bail; the
+		// conservative lane still owns a path whose write never completes.
+		{name: "unresolved value reference", source: `local missing = absent_name + 1`, code: "value.reference.unresolved/1/17"},
+		{name: "conservative", source: "if not_bound_here then\n\tlocal selected = true\nend\n", code: "analysis/conservative"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

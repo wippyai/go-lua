@@ -9,13 +9,27 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
 
+// adviceGraph pairs the immutable CFG with the graph layer's memoized
+// reachability. Every advice relation asks the same reachability questions
+// across the whole instruction list, so the pass resolves each source point
+// once instead of re-walking the graph per instruction.
+type adviceGraph struct {
+	cfg.Graph
+	reach *cfg.Reachability
+}
+
+func newAdviceGraph(graph cfg.Graph) adviceGraph {
+	return adviceGraph{Graph: graph, reach: cfg.NewReachability(graph)}
+}
+
 // adviceControlDiagnostics projects only finite WIR relations whose complete
 // source topology is already admitted by the front.  It deliberately uses
 // symbol/path identities and CFG reachability, never source spelling.
-func adviceControlDiagnostics(body *wir.Body, graph cfg.Graph) []ControlDiagnostic {
-	if body == nil || graph == nil {
+func adviceControlDiagnostics(body *wir.Body, source cfg.Graph) []ControlDiagnostic {
+	if body == nil || source == nil {
 		return nil
 	}
+	graph := newAdviceGraph(source)
 	var out []ControlDiagnostic
 	for i := 0; i < body.Len(); i++ {
 		birth := body.Instr(i)
@@ -46,10 +60,11 @@ func adviceControlDiagnostics(body *wir.Body, graph cfg.Graph) []ControlDiagnost
 // lowered body and CFG that authorize the existing advice family.  These facts
 // remain optional at the lint policy boundary; this pass only records proofs
 // that are complete in the source-owned graph.
-func advicePolicyDiagnostics(body *wir.Body, graph cfg.Graph) []ControlDiagnostic {
-	if body == nil || graph == nil || graphHasCycle(graph) {
+func advicePolicyDiagnostics(body *wir.Body, source cfg.Graph) []ControlDiagnostic {
+	if body == nil || source == nil || graphHasCycle(source) {
 		return nil
 	}
+	graph := newAdviceGraph(source)
 	var out []ControlDiagnostic
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
@@ -91,10 +106,10 @@ func adviceLocalDeclaration(body *wir.Body, inst wir.Instruction) (pathdom.Path,
 	return path, ok && kind == wir.SymbolLocal
 }
 
-func adviceRootReadAfter(body *wir.Body, graph cfg.Graph, root pathdom.Path, after cfg.Point) bool {
+func adviceRootReadAfter(body *wir.Body, graph adviceGraph, root pathdom.Path, after cfg.Point) bool {
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
-		if inst.Point != after && graphReachable(graph, after, inst.Point) && instructionReadsRoot(body, inst, root) {
+		if inst.Point != after && graph.reach.CanReach(after, inst.Point) && instructionReadsRoot(body, inst, root) {
 			return true
 		}
 	}
@@ -104,7 +119,7 @@ func adviceRootReadAfter(body *wir.Body, graph cfg.Graph, root pathdom.Path, aft
 // adviceDeadLocalAssignment proves that every path after a local declaration
 // reaches a replacement write or return before a read of that exact symbol.
 // An open exit, loop, call, or read leaves the fact unpublished.
-func adviceDeadLocalAssignment(body *wir.Body, graph cfg.Graph, root pathdom.Path, declaration wir.Instruction) (ControlDiagnostic, bool) {
+func adviceDeadLocalAssignment(body *wir.Body, graph adviceGraph, root pathdom.Path, declaration wir.Instruction) (ControlDiagnostic, bool) {
 	type terminal struct {
 		write      wir.Span
 		returnSpan wir.Span
@@ -223,14 +238,14 @@ func adviceDynamicWrite(body *wir.Body, root pathdom.Path) bool {
 	return false
 }
 
-func adviceSplitBirth(body *wir.Body, graph cfg.Graph, birth wir.Instruction, root pathdom.Path, writes []adviceWrite) (ControlDiagnostic, bool) {
+func adviceSplitBirth(body *wir.Body, graph adviceGraph, birth wir.Instruction, root pathdom.Path, writes []adviceWrite) (ControlDiagnostic, bool) {
 	for _, tag := range writes {
 		if !tag.isLiteral {
 			continue
 		}
 		for i := 0; i < body.Len(); i++ {
 			use := body.Instr(i)
-			if use.Op != wir.OpBranch || use.Check == 0 || !graphReachable(graph, tag.inst.Point, use.Point) {
+			if use.Op != wir.OpBranch || use.Check == 0 || !graph.reach.CanReach(tag.inst.Point, use.Point) {
 				continue
 			}
 			check := body.Check(use.Check)
@@ -239,7 +254,7 @@ func adviceSplitBirth(body *wir.Body, graph cfg.Graph, birth wir.Instruction, ro
 			}
 			var payload *adviceWrite
 			for j := range writes {
-				if writes[j].path != tag.path && graphReachable(graph, birth.Point, writes[j].inst.Point) {
+				if writes[j].path != tag.path && graph.reach.CanReach(birth.Point, writes[j].inst.Point) {
 					payload = &writes[j]
 					break
 				}
@@ -255,7 +270,7 @@ func adviceSplitBirth(body *wir.Body, graph cfg.Graph, birth wir.Instruction, ro
 	return ControlDiagnostic{}, false
 }
 
-func adviceShape(body *wir.Body, graph cfg.Graph, birth wir.Instruction, root pathdom.Path, writes []adviceWrite) (ControlDiagnostic, bool) {
+func adviceShape(body *wir.Body, graph adviceGraph, birth wir.Instruction, root pathdom.Path, writes []adviceWrite) (ControlDiagnostic, bool) {
 	var use wir.Instruction
 	found := false
 	for i := 0; i < body.Len(); i++ {
@@ -281,7 +296,7 @@ func adviceShape(body *wir.Body, graph cfg.Graph, birth wir.Instruction, root pa
 	}
 	fields := make([]adviceWrite, 0, len(writes))
 	for _, write := range writes {
-		if graphReachable(graph, birth.Point, write.inst.Point) && graphReachable(graph, write.inst.Point, use.Point) {
+		if graph.reach.CanReach(birth.Point, write.inst.Point) && graph.reach.CanReach(write.inst.Point, use.Point) {
 			fields = append(fields, write)
 		}
 	}
@@ -299,7 +314,7 @@ func adviceShape(body *wir.Body, graph cfg.Graph, birth wir.Instruction, root pa
 	return ControlDiagnostic{Key: "advice.shape.polymorphic", Code: "advice.shape.polymorphic", Message: root.String() + " has a path-dependent field shape", Span: use.ExprSpan, Evidence: evidence, Labels: labels, Help: "Construct all variants with one fixed-shape constructor (all fields present, absent ones nil/default)."}, true
 }
 
-func adviceRedundantGuards(body *wir.Body, graph cfg.Graph) []ControlDiagnostic {
+func adviceRedundantGuards(body *wir.Body, graph adviceGraph) []ControlDiagnostic {
 	var out []ControlDiagnostic
 	for i := 0; i < body.Len(); i++ {
 		inner := body.Instr(i)
@@ -348,7 +363,7 @@ func adviceRedundantGuards(body *wir.Body, graph cfg.Graph) []ControlDiagnostic 
 // edge of an earlier exact nil predicate dominates the later predicate and no
 // write or opaque call can intervene.  The proof is entirely WIR/CFG-owned;
 // it does not expose a child refinement to its caller.
-func adviceRedundantNilGuard(body *wir.Body, graph cfg.Graph, outer wir.Instruction, prior wir.Check, inner wir.Instruction, current wir.Check) (bool, bool) {
+func adviceRedundantNilGuard(body *wir.Body, graph adviceGraph, outer wir.Instruction, prior wir.Check, inner wir.Instruction, current wir.Check) (bool, bool) {
 	if current.Kind != wir.CheckNotNil || !adviceSamePath(prior.Path, current.Path) {
 		return false, false
 	}
@@ -361,14 +376,14 @@ func adviceRedundantNilGuard(body *wir.Body, graph cfg.Graph, outer wir.Instruct
 	return true, prior.Kind == wir.CheckNotNil
 }
 
-func adviceTrueEdgeDominates(graph cfg.Graph, branch, target cfg.Point) bool {
+func adviceTrueEdgeDominates(graph adviceGraph, branch, target cfg.Point) bool {
 	var trueSuccessors []cfg.Point
 	for _, next := range graph.Successors(branch) {
 		if truth, ok := graph.EdgeCond(branch, next); ok && truth {
 			trueSuccessors = append(trueSuccessors, next)
 		}
 	}
-	if len(trueSuccessors) != 1 || !graphReachable(graph, trueSuccessors[0], target) {
+	if len(trueSuccessors) != 1 || !graph.reach.CanReach(trueSuccessors[0], target) {
 		return false
 	}
 	seen := map[cfg.Point]bool{graph.Entry(): true}
@@ -392,11 +407,11 @@ func adviceTrueEdgeDominates(graph cfg.Graph, branch, target cfg.Point) bool {
 	return true
 }
 
-func advicePathMutatedBetween(body *wir.Body, graph cfg.Graph, from, to cfg.Point, path pathdom.Path) bool {
+func advicePathMutatedBetween(body *wir.Body, graph adviceGraph, from, to cfg.Point, path pathdom.Path) bool {
 	root := path.Root
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
-		if !graphReachable(graph, from, inst.Point) || !graphReachable(graph, inst.Point, to) {
+		if !graph.reach.CanReach(from, inst.Point) || !graph.reach.CanReach(inst.Point, to) {
 			continue
 		}
 		switch inst.Op {
@@ -415,7 +430,7 @@ func advicePathMutatedBetween(body *wir.Body, graph cfg.Graph, from, to cfg.Poin
 	return false
 }
 
-func adviceInvariantLoopReads(body *wir.Body, graph cfg.Graph) []ControlDiagnostic {
+func adviceInvariantLoopReads(body *wir.Body, graph adviceGraph) []ControlDiagnostic {
 	var out []ControlDiagnostic
 	for i := 0; i < body.Len(); i++ {
 		read := body.Instr(i)
@@ -452,7 +467,7 @@ func adviceInvariantLoopReads(body *wir.Body, graph cfg.Graph) []ControlDiagnost
 				}
 			}
 		}
-		if mutated {
+		if mutated || adviceRootReboundInLoop(body, graph, read.Point, path) {
 			continue
 		}
 		loop := adviceLoopHead(body, graph, read.Point)
@@ -461,23 +476,45 @@ func adviceInvariantLoopReads(body *wir.Body, graph cfg.Graph) []ControlDiagnost
 	return out
 }
 
-func advicePointInCycle(graph cfg.Graph, point cfg.Point) bool {
-	for _, next := range graph.Successors(point) {
-		if graphReachable(graph, next, point) {
-			return true
+// adviceRootReboundInLoop reports that the receiver of a member read takes a
+// new binding, or has its container replaced through a dynamic write, at a
+// point sitting on the same cycle as the read. A loop control variable is the
+// ordinary case: each iteration binds a different receiver, so the member read
+// observes a different value on every pass and is not loop-invariant.
+func adviceRootReboundInLoop(body *wir.Body, graph adviceGraph, read cfg.Point, root pathdom.Path) bool {
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Dst.Kind != wir.OperandPath {
+			continue
 		}
-	}
-	for _, prior := range graph.Predecessors(point) {
-		if graphReachable(graph, point, prior) {
+		target := body.Path(wir.PathRef(inst.Dst.Ref))
+		if len(target.Segments) != 0 || target.Symbol != root.Symbol || target.Root != root.Root {
+			continue
+		}
+		if graph.reach.CanReach(read, inst.Point) && graph.reach.CanReach(inst.Point, read) {
 			return true
 		}
 	}
 	return false
 }
-func adviceLoopHead(body *wir.Body, graph cfg.Graph, point cfg.Point) wir.Span {
+
+func advicePointInCycle(graph adviceGraph, point cfg.Point) bool {
+	for _, next := range graph.Successors(point) {
+		if graph.reach.CanReach(next, point) {
+			return true
+		}
+	}
+	for _, prior := range graph.Predecessors(point) {
+		if graph.reach.CanReach(point, prior) {
+			return true
+		}
+	}
+	return false
+}
+func adviceLoopHead(body *wir.Body, graph adviceGraph, point cfg.Point) wir.Span {
 	for i := 0; i < body.Len(); i++ {
 		inst := body.Instr(i)
-		if inst.Op == wir.OpBranch && advicePointInCycle(graph, inst.Point) && graphReachable(graph, inst.Point, point) {
+		if inst.Op == wir.OpBranch && advicePointInCycle(graph, inst.Point) && graph.reach.CanReach(inst.Point, point) {
 			return wir.Span{StartLine: inst.ExprSpan.StartLine, StartCol: 1, EndLine: inst.ExprSpan.EndLine, EndCol: inst.ExprSpan.EndCol}
 		}
 	}
@@ -504,25 +541,4 @@ func adviceSamePath(left, right pathdom.Path) bool {
 		}
 	}
 	return true
-}
-func graphReachable(graph cfg.Graph, from, to cfg.Point) bool {
-	if from == to {
-		return true
-	}
-	seen := map[cfg.Point]bool{from: true}
-	queue := []cfg.Point{from}
-	for len(queue) > 0 {
-		p := queue[0]
-		queue = queue[1:]
-		for _, next := range graph.Successors(p) {
-			if next == to {
-				return true
-			}
-			if !seen[next] {
-				seen[next] = true
-				queue = append(queue, next)
-			}
-		}
-	}
-	return false
 }
