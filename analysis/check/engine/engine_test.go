@@ -88,6 +88,22 @@ local entry: types.Entry = {
 	}
 }
 
+func TestCheckPublishesKeyedIteratorWitnessFromTypedMap(t *testing.T) {
+	result, err := engine.Check(`
+local notes: {[string]: string} = { ready = "ok" }
+for key, note in pairs(notes) do
+  local stable_key: string = key
+  local stable_note: string = note
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("keyed iterator diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestCheckRejectsConcreteReplacementOfTypedFunctionMember(t *testing.T) {
 	result, err := engine.Check(`
 local M = {}

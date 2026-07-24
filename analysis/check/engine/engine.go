@@ -57,6 +57,7 @@ const memberMissingPrefix = "shape/member-missing/v1/"
 const summaryTypePrefix = "summary-type/"
 const channelPayloadPrefix = "channel-payload/"
 const iteratorElementPrefix = "iterator-element/"
+const iteratorKeyPrefix = "iterator-key/"
 
 // Heap facts are deliberately keyed by a sealed allocation identity, never by
 // a source path.  Paths are merely lenses: assignments copy an identity and
@@ -2848,13 +2849,14 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 		memberCalls["call/"+operation.Target.Name] = true
 		hasDirectMethod = hasDirectMethod || hasDeclaredFormalMethodCall(child, operation, formals)
 	}
-	hasBranch, hasLiteralBranch := false, false
+	hasBranch, hasDeclaredMemberRead, hasDeclaredMemberCall := false, false, false
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "apply":
 			if !uncalledDeclaredMemberCall(child, operation, formals) {
 				return nil, false, false
 			}
+			hasDeclaredMemberCall = true
 		case "external-call":
 			application, found := artifactOperand(operation.Operands, "application")
 			if !found || !memberCalls[string(application)] {
@@ -2864,25 +2866,17 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 			return nil, false, false
 		case "branch-relations":
 			hasBranch = true
-			for _, operand := range operation.Operands {
-				if operand.Role != "predicate" || !strings.HasPrefix(string(operand.Term.Encoding), branchPredicatePrefix) {
-					continue
-				}
-				var predicate branchPredicateWire
-				if json.Unmarshal(operand.Term.Encoding[len(branchPredicatePrefix):], &predicate) == nil && (predicate.Kind == "literal-equal" || predicate.Kind == "literal-not") {
-					hasLiteralBranch = true
-				}
-			}
+		case "claim":
+			hasDeclaredMemberRead = hasDeclaredMemberRead || uncalledDeclaredFormalMemberRead(child, operation, formals)
 		}
 	}
-	// A direct declared method is self-contained only in a straight-line body.
-	// Once a branch exists, its result can depend on a path-specific refinement
-	// (for example string.byte's optional result), so retain the ordinary
-	// demand-driven boundary.
+	// A declared method return can depend on a branch-local refinement. Its
+	// allocation-time boundary is therefore limited to straight-line bodies;
+	// declared missing-member reads retain their independent diagnostic path.
 	if hasDirectMethod && hasBranch {
 		return nil, false, false
 	}
-	if !hasLiteralBranch && !hasDirectMethod {
+	if !hasDeclaredMemberRead && !hasDeclaredMemberCall {
 		return nil, false, false
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
@@ -2898,6 +2892,37 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
 	return seeds, true, hasDirectMethod
+}
+
+// uncalledDeclaredFormalMemberRead identifies an annotation claim whose value
+// is a static member lens of a declaration-owned formal. The child entry may
+// evaluate that narrow shape to publish an absent-member diagnostic. A branch
+// alone is not an obligation: its runtime predicate can be unknown even when
+// the formal's declared type is complete.
+func uncalledDeclaredFormalMemberRead(child front.Compilation, operation equation.Equation, formals map[string]bool) bool {
+	if operation.Occurrence.Kind != "claim" {
+		return false
+	}
+	value, found := artifactOperand(operation.Operands, "value")
+	if !found {
+		return false
+	}
+	root, suffix, member := tableAddress(value)
+	if !member || !formals[string(root)] {
+		return false
+	}
+	for _, parameter := range child.Boundary.Parameters {
+		if boundaryTerm(parameter.Symbol) != string(root) || parameter.Type == 0 {
+			continue
+		}
+		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
+		if declared == nil || declared.Kind() == kind.Any {
+			return false
+		}
+		break
+	}
+	segments, static := segment.ParseFormattedSegments(suffix)
+	return static && len(segments) != 0
 }
 
 // uncalledStaticAssignmentBoundary admits a straight-line lexical body whose
@@ -5206,6 +5231,13 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	castFromAnyBoundary := kind == "claim-kind/1" && sourceHasAnyBoundary(source, partition.Values())
 	if available && !boundaryRequiresProof && !castFromAnyBoundary && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
+		// A successfully checked annotation is a closed type publication for
+		// this exact binding. Later aggregate literals may consume that
+		// publication through their recorded member origins; an unproven claim
+		// deliberately publishes no type authority.
+		if kind == "claim-kind/3" && len(shapeTarget) != 0 {
+			closure.Values = append(closure.Values, equation.Fact{Key: "type/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), shapeTarget...)})
+		}
 		if kind == "claim-kind/3" && claimTypeIsAny(targetType) {
 			closure.Values = append(closure.Values, explicitAnyBoundaryFact(target, operation.Target.Name))
 		}
@@ -5385,11 +5417,85 @@ func assignmentShapeRelation(lexical *lexicalEvaluator, source, value, encodedTa
 	}
 	if relation := valueAgainstType(value, target); relation == shapeProven {
 		return relation
+	} else if relation == shapeUnknown {
+		if relation := publishedContainerOriginRelation(source, value, target, partition); relation != shapeUnknown {
+			return relation
+		}
 	} else if member := lexicalMemberCallableRelation(lexical, source, target, partition); member != shapeUnknown {
 		return member
 	} else {
 		return relation
 	}
+	return lexicalMemberCallableRelation(lexical, source, target, partition)
+}
+
+// publishedContainerOriginRelation transports an element relation only from
+// the literal's existing member-origin publications. A sealed container may
+// retain opaque imported element shapes, but its direct members still point to
+// the exact typed values from which it was built. Those already-published
+// types can prove the homogeneous element contract without inspecting source
+// spelling or assuming a type for an untracked table entry.
+func publishedContainerOriginRelation(source, value []byte, target typ.Type, partition equation.Partition) shapeRelation {
+	if !strings.HasPrefix(string(source), "path/") {
+		return shapeUnknown
+	}
+	table, ok := shapefact.DecodeTable(value)
+	if !ok || !table.Closed {
+		return shapeUnknown
+	}
+	resolved := unwrap.Alias(subst.ExpandInstantiated(target))
+	var element, key typ.Type
+	switch typed := resolved.(type) {
+	case *typ.Array:
+		element = typed.Element
+	case *typ.Map:
+		element, key = typed.Value, typed.Key
+	case *typ.ReadonlyMap:
+		element, key = typed.Value, typed.Key
+	default:
+		return shapeUnknown
+	}
+	if element == nil {
+		return shapeUnknown
+	}
+	for _, member := range table.Members {
+		segments, valid := segment.ParseFormattedSegments(member.Suffix)
+		if !valid || len(segments) != 1 {
+			return shapeUnknown
+		}
+		entry := segments[0]
+		if key == nil {
+			if entry.Kind != segment.SegmentIndexInt {
+				return shapeRefuted
+			}
+		} else if !acceptsEveryValue(key) {
+			keyValue, encoded := containerKeyValue(entry)
+			if !encoded {
+				return shapeRefuted
+			}
+			if relation := valueAgainstType(keyValue, key); relation != shapeProven {
+				return relation
+			}
+		}
+		if !member.Present {
+			continue
+		}
+		origin, found := heapMemberOriginCurrent(source, member.Suffix, partition)
+		if !found {
+			return shapeUnknown
+		}
+		originType, found := typedPathType(origin, partition)
+		if !found {
+			originType, found = declaredTypeForTerm(origin, partition)
+		}
+		if !found || originType == nil {
+			return shapeUnknown
+		}
+		if !subtype.IsSubtype(originType, element) {
+			return shapeRefuted
+		}
+	}
+	return shapeProven
 }
 
 // lexicalMemberCallableRelation is the narrow callable-surface projection for
@@ -6622,6 +6728,7 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	iteratorElement, indexedIterator := currentEpochFact(iteratorElementPrefix, operands["iterator"], partition)
+	iteratorKey, keyedIterator := currentEpochFact(iteratorKeyPrefix, operands["iterator"], partition)
 	values := make([]equation.Fact, 0)
 	for _, operand := range operation.Operands {
 		if !strings.HasPrefix(operand.Role, "result-") {
@@ -6632,7 +6739,17 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
 		}
 		resultValue := value
-		if indexedIterator {
+		if keyedIterator {
+			index, indexErr := strconv.Atoi(strings.TrimPrefix(operand.Role, "result-"))
+			if indexErr != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
+			}
+			if index == 0 {
+				resultValue = iteratorKey
+			} else if index == 1 {
+				resultValue = iteratorElement
+			}
+		} else if indexedIterator {
 			index, indexErr := strconv.Atoi(strings.TrimPrefix(operand.Role, "result-"))
 			if indexErr != nil {
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
@@ -6652,36 +6769,55 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
-// iteratorElementWitness reifies only an indexed iterator's declared element
-// relation. The iterator contract comes from the existing standard-library
-// signature registry and the element comes from the current closed source
-// value; unresolved, non-array, and open iterator sources remain unknown.
-func iteratorElementWitness(provider []byte, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
+// iteratorElementWitness reifies an iterator's declared result relation. The
+// iterator contract comes from the existing standard-library signature and
+// the key/value types come from an existing closed source or typed binding.
+func iteratorElementWitness(provider []byte, arguments map[int][]byte, partition equation.Partition) ([]byte, []byte, bool) {
 	signature, found := (signaturelookup.Source{IncludeStdlib: true}).LookupView(providerName(provider))
 	if !found {
-		return nil, false
+		return nil, nil, false
 	}
 	iterator, found := iteration.ActiveIterator(signature.Effect.Labels)
-	if !found || iterator.Kind != iteration.IterateIndexed {
-		return nil, false
+	if !found {
+		return nil, nil, false
 	}
 	argument, found := arguments[iterator.Source.Index]
 	if !found {
-		return nil, false
+		return nil, nil, false
 	}
 	value, err := resolveCurrentValue(argument, partition)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	source, decoded := shapefact.DecodeTarget(value)
+	if !decoded {
+		source, decoded = typedPathType(argument, partition)
+	}
+	if !decoded {
+		source, decoded = declaredTypeForTerm(argument, partition)
+	}
 	if !decoded || source == nil {
-		return nil, false
+		return nil, nil, false
 	}
-	array, ok := unwrap.Alias(subst.ExpandInstantiated(source)).(*typ.Array)
-	if !ok || array.Element == nil {
-		return nil, false
+	switch iterator.Kind {
+	case iteration.IterateIndexed:
+		array, ok := unwrap.Alias(subst.ExpandInstantiated(source)).(*typ.Array)
+		if !ok || array.Element == nil {
+			return nil, nil, false
+		}
+		element, ok := shapefact.EncodeTarget(array.Element)
+		return nil, element, ok
+	case iteration.IterateKeyed:
+		mapping, ok := unwrap.Alias(subst.ExpandInstantiated(source)).(*typ.Map)
+		if !ok || mapping.Key == nil || mapping.Value == nil {
+			return nil, nil, false
+		}
+		key, keyOK := shapefact.EncodeTarget(mapping.Key)
+		element, elementOK := shapefact.EncodeTarget(mapping.Value)
+		return key, element, keyOK && elementOK
+	default:
+		return nil, nil, false
 	}
-	return shapefact.EncodeTarget(array.Element)
 }
 
 func channelSelectKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -9330,8 +9466,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			values = append(values, equation.Fact{Key: summaryTypePrefix + string(result) + "/" + operation.Target.Name, Value: encoded})
 			values = append(values, channelPayloadSummaryFacts(string(result), operation.Target.Name, importedSummary)...)
 		}
-		if element, ok := iteratorElementWitness(provider, argumentTerms, partition); ok {
+		if key, element, ok := iteratorElementWitness(provider, argumentTerms, partition); ok {
 			values = append(values, equation.Fact{Key: iteratorElementPrefix + string(result) + "/" + operation.Target.Name, Value: element})
+			if len(key) != 0 {
+				values = append(values, equation.Fact{Key: iteratorKeyPrefix + string(result) + "/" + operation.Target.Name, Value: key})
+			}
 		}
 		heapKey := "call-heap-identity/" + strings.TrimPrefix(string(application), "call/") + "/" + key
 		for _, fact := range partition.Values() {
