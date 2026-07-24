@@ -157,7 +157,262 @@ func (index *NativeFactIndex) build() {
 		return facts[i].Value < facts[j].Value
 	})
 	anchors.bindValidity(facts)
+	// Contract rows are deliberately a publication projection, not another
+	// analysis. The substrate rows above remain available verbatim; the rows
+	// below only give already-closed evidence its native-contract vocabulary.
+	facts = append(facts, projectNativeContracts(facts)...)
+	sort.Slice(facts, func(i, j int) bool {
+		if facts[i].Lane != facts[j].Lane {
+			return facts[i].Lane < facts[j].Lane
+		}
+		if facts[i].Key != facts[j].Key {
+			return facts[i].Key < facts[j].Key
+		}
+		return facts[i].Value < facts[j].Value
+	})
 	index.facts = facts
+}
+
+// projectNativeContracts translates only contract vocabulary already witnessed
+// by the closed native fact set. It is one-way and fail-closed: a row appears
+// only when every fact it names was published by this evaluation.
+func projectNativeContracts(facts []NativeFact) []NativeFact {
+	const (
+		tableIdentityPrefix  = "heap/table-identity/"
+		tableClosedPrefix    = "heap/table-closed/"
+		memberPrefix         = "heap/member/"
+		memberIdentityPrefix = "heap/member-identity/"
+		metaAttachedPrefix   = "heap/meta-attached/"
+		indexPresencePrefix  = "heap/index-presence/"
+		freezePrefix         = "effect.freeze/"
+		branchProofPrefix    = "branch-proof/"
+	)
+	type identityAnchor struct{ term, subject string }
+
+	identityAnchors := make(map[string]identityAnchor)
+	closed := make(map[string]NativeFact)
+	attached := make(map[string]bool)
+	initialMembers := make(map[string]map[string]bool)
+	laterMembers := make(map[string]bool)
+	children := make(map[string]map[string]bool)
+	frozenTerms := make(map[string]bool)
+
+	for _, fact := range facts {
+		if fact.Lane != NativeLaneValues {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(fact.Key, tableIdentityPrefix):
+			if fact.Term != "" && fact.Value != "" {
+				identityAnchors[fact.Value] = identityAnchor{term: fact.Term, subject: fact.Subject}
+			}
+		case strings.HasPrefix(fact.Key, tableClosedPrefix) && fact.Value == "closed":
+			identity, occurrence, ok := nativeIdentityOccurrence(fact.Key, tableClosedPrefix)
+			if ok {
+				// Aliases can publish the same identity. Its earliest close names
+				// the allocation's complete initial key set.
+				if current, found := closed[identity]; !found || occurrence < current.Occurrence {
+					closed[identity] = fact
+				}
+			}
+		case strings.HasPrefix(fact.Key, metaAttachedPrefix) && fact.Value == "attached":
+			identity, _, ok := nativeIdentityOccurrence(fact.Key, metaAttachedPrefix)
+			if ok {
+				attached[identity] = true
+			}
+		case strings.HasPrefix(fact.Key, memberPrefix):
+			identity, member, occurrence, ok := nativeMemberOccurrence(fact.Key, memberPrefix)
+			if !ok {
+				continue
+			}
+			if close, found := closed[identity]; found && occurrence == close.Occurrence {
+				initialMembers[identity] = nativeSetAdd(initialMembers[identity], member)
+			}
+		case strings.HasPrefix(fact.Key, memberIdentityPrefix):
+			parent, _, _, ok := nativeMemberOccurrence(fact.Key, memberIdentityPrefix)
+			if ok && fact.Value != "" {
+				children[parent] = nativeSetAdd(children[parent], base64.RawURLEncoding.EncodeToString([]byte(fact.Value)))
+			}
+		case strings.HasPrefix(fact.Key, freezePrefix):
+			term, _, ok := nativeFreezeTerm(fact.Key, freezePrefix)
+			if ok {
+				frozenTerms[term] = true
+			}
+		}
+	}
+
+	// A member first published after the close changes the key set. Re-reads of
+	// a member that was already present do not invalidate the closed allocation.
+	for _, fact := range facts {
+		if fact.Lane != NativeLaneValues || !strings.HasPrefix(fact.Key, memberPrefix) {
+			continue
+		}
+		identity, member, occurrence, ok := nativeMemberOccurrence(fact.Key, memberPrefix)
+		if !ok {
+			continue
+		}
+		close, found := closed[identity]
+		if !found || occurrence <= close.Occurrence {
+			continue
+		}
+		if !initialMembers[identity][member] {
+			laterMembers[identity] = true
+		}
+	}
+
+	rows := make([]NativeFact, 0)
+	sealed := make(map[string]NativeFact)
+	for identity, source := range closed {
+		if attached[identity] || laterMembers[identity] {
+			continue
+		}
+		anchor, anchored := identityAnchors[nativeDecodedIdentity(identity)]
+		if !anchored {
+			continue
+		}
+		row := NativeFact{
+			Lane: NativeLaneValues, Family: "sealed_table",
+			Key:   "sealed_table/" + identity + "/" + source.Occurrence,
+			Value: "closed=true key_set=complete sealed=true",
+			Term:  anchor.term, Subject: anchor.subject, Occurrence: source.Occurrence,
+			Trust: NativeTrustProven,
+		}
+		sealed[identity] = row
+		rows = append(rows, row)
+	}
+
+	// The freeze fact is exact to its root term; ownership rows carry that fact
+	// only through the published graph to reachable already-sealed tables.
+	frozen := make(map[string]bool)
+	for identity, anchor := range identityAnchors {
+		if frozenTerms[anchor.term] {
+			markFrozenIdentity(base64.RawURLEncoding.EncodeToString([]byte(identity)), children, frozen)
+		}
+	}
+	for identity := range frozen {
+		row, found := sealed[identity]
+		if !found {
+			continue
+		}
+		row.Key = "sealed_table/" + identity + "/frozen/" + row.Occurrence
+		row.Value = "closed=true depth=deep frozen=true sealed=true key_set=complete"
+		rows = append(rows, row)
+	}
+
+	for _, fact := range facts {
+		if fact.Lane != NativeLaneValues || !strings.HasPrefix(fact.Key, indexPresencePrefix) || fact.Value != "proven" {
+			continue
+		}
+		identity, index, occurrence, ok := nativeIndexOccurrence(fact.Key, indexPresencePrefix)
+		if !ok {
+			continue
+		}
+		anchor, anchored := identityAnchors[nativeDecodedIdentity(identity)]
+		if !anchored {
+			continue
+		}
+		rows = append(rows, NativeFact{
+			Lane: NativeLaneValues, Family: "table_element",
+			Key:   "table_element/" + identity + "/" + index + "/" + occurrence,
+			Value: "presence=proven result_nilability=non_nil",
+			Term:  anchor.term, Subject: anchor.subject, Occurrence: occurrence,
+			Trust: NativeTrustProven,
+		})
+	}
+	for _, fact := range facts {
+		if fact.Lane != NativeLaneValues || !strings.HasPrefix(fact.Key, branchProofPrefix) || fact.Value != "proven" {
+			continue
+		}
+		body, occurrence, edge, ok := nativeBranchProof(fact.Key, branchProofPrefix)
+		if !ok {
+			continue
+		}
+		value := "partition=always_not_taken dead_arm=then dead_arm_reachable=false"
+		if edge == "true" {
+			value = "partition=always_taken dead_arm=else dead_arm_reachable=false"
+		}
+		rows = append(rows, NativeFact{
+			Lane: NativeLaneValues, Family: "branch_partition",
+			Key:   "branch_partition/" + body + "/" + occurrence,
+			Value: value, Occurrence: occurrence, Trust: NativeTrustProven,
+		})
+	}
+	return rows
+}
+
+func nativeSetAdd(set map[string]bool, value string) map[string]bool {
+	if set == nil {
+		set = make(map[string]bool)
+	}
+	set[value] = true
+	return set
+}
+
+func markFrozenIdentity(identity string, children map[string]map[string]bool, frozen map[string]bool) {
+	if frozen[identity] {
+		return
+	}
+	frozen[identity] = true
+	for child := range children[identity] {
+		markFrozenIdentity(child, children, frozen)
+	}
+}
+
+func nativeIdentityOccurrence(key, prefix string) (identity, occurrence string, ok bool) {
+	rest, found := strings.CutPrefix(key, prefix)
+	if !found {
+		return "", "", false
+	}
+	identity, occurrence, found = strings.Cut(rest, "/")
+	return identity, occurrence, found && identity != "" && occurrence != ""
+}
+
+func nativeMemberOccurrence(key, prefix string) (identity, member, occurrence string, ok bool) {
+	rest, found := strings.CutPrefix(key, prefix)
+	if !found {
+		return "", "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", "", "", false
+	}
+	return parts[0], parts[1], parts[2], true
+}
+
+func nativeIndexOccurrence(key, prefix string) (identity, index, occurrence string, ok bool) {
+	return nativeMemberOccurrence(key, prefix)
+}
+
+func nativeFreezeTerm(key, prefix string) (term, occurrence string, ok bool) {
+	rest, found := strings.CutPrefix(key, prefix)
+	if !found {
+		return "", "", false
+	}
+	term, occurrence, found = strings.Cut(rest, "/")
+	if !found || term == "" || occurrence == "" {
+		return "", "", false
+	}
+	return "path/" + term, occurrence, true
+}
+
+func nativeBranchProof(key, prefix string) (body, occurrence, edge string, ok bool) {
+	rest, found := strings.CutPrefix(key, prefix)
+	if !found {
+		return "", "", "", false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 3 || (parts[2] != "true" && parts[2] != "false") {
+		return "", "", "", false
+	}
+	return parts[0], parts[1], parts[2], true
+}
+
+func nativeDecodedIdentity(encoded string) string {
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return ""
+	}
+	return string(decoded)
 }
 
 // bindValidity joins every row to the epoch interval the closure published for

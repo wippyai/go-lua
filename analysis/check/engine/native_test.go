@@ -1,12 +1,54 @@
 package engine
 
 import (
+	"encoding/base64"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 )
+
+func TestNativeContractBridgeProjectsOnlyPublishedSubstrate(t *testing.T) {
+	root := "sealed-table/test/op-00000003"
+	child := "sealed-table/test/op-00000004"
+	rootID := base64.RawURLEncoding.EncodeToString([]byte(root))
+	childID := base64.RawURLEncoding.EncodeToString([]byte(child))
+	rows := projectNativeContracts([]NativeFact{
+		{Lane: NativeLaneValues, Key: "heap/table-identity/path/sym2/op-00000003", Value: root, Term: "path/sym2", Subject: "config", Occurrence: "op-00000003"},
+		{Lane: NativeLaneValues, Key: "heap/table-identity/path/sym2.child/op-00000004", Value: child, Term: "path/sym2.child", Occurrence: "op-00000004"},
+		{Lane: NativeLaneValues, Key: "heap/table-closed/" + rootID + "/op-00000003", Value: "closed", Occurrence: "op-00000003"},
+		{Lane: NativeLaneValues, Key: "heap/table-closed/" + childID + "/op-00000004", Value: "closed", Occurrence: "op-00000004"},
+		{Lane: NativeLaneValues, Key: "heap/member/" + rootID + "/LmNoaWxk/op-00000003", Value: "shape/table/v1/example", Occurrence: "op-00000003"},
+		{Lane: NativeLaneValues, Key: "heap/member-identity/" + rootID + "/LmNoaWxk/op-00000003", Value: child, Occurrence: "op-00000003"},
+		{Lane: NativeLaneValues, Key: "effect.freeze/sym2/op-00000005", Value: "unconditional", Occurrence: "op-00000005"},
+		{Lane: NativeLaneValues, Key: "heap/index-presence/" + rootID + "/cGF0aC9zeW0z/op-00000006", Value: "proven", Occurrence: "op-00000006"},
+		{Lane: NativeLaneValues, Key: "branch-proof/1/op-00000007/true", Value: "proven", Occurrence: "op-00000007"},
+		// The raw close fact remains insufficient after a genuinely new member.
+		{Lane: NativeLaneValues, Key: "heap/table-identity/path/sym9/op-00000008", Value: "sealed-table/test/op-00000008", Term: "path/sym9", Subject: "changed", Occurrence: "op-00000008"},
+		{Lane: NativeLaneValues, Key: "heap/table-closed/c2VhbGVkLXRhYmxlL3Rlc3Qvb3AtMDAwMDAwMDg/op-00000008", Value: "closed", Occurrence: "op-00000008"},
+		{Lane: NativeLaneValues, Key: "heap/member/c2VhbGVkLXRhYmxlL3Rlc3Qvb3AtMDAwMDAwMDg/Lm9yaWdpbmFs/op-00000008", Value: "scalar/number/1", Occurrence: "op-00000008"},
+		{Lane: NativeLaneValues, Key: "heap/member/c2VhbGVkLXRhYmxlL3Rlc3Qvb3AtMDAwMDAwMDg/LmFkZGVk/op-00000009", Value: "scalar/number/2", Occurrence: "op-00000009"},
+	})
+
+	var deep, element, branch bool
+	for _, row := range rows {
+		if row.Family == "sealed_table" && row.Subject == "changed" {
+			t.Fatalf("new-member table projected as sealed: %#v", row)
+		}
+		switch {
+		case row.Family == "sealed_table" && strings.Contains(row.Value, "depth=deep"):
+			deep = true
+		case row.Family == "table_element" && row.Value == "presence=proven result_nilability=non_nil":
+			element = true
+		case row.Family == "branch_partition" && row.Value == "partition=always_taken dead_arm=else dead_arm_reachable=false":
+			branch = true
+		}
+	}
+	if !deep || !element || !branch {
+		t.Fatalf("deep=%v element=%v branch=%v, want every directly witnessed contract row", deep, element, branch)
+	}
+}
 
 func TestCheckPublishesNativeEntryContractsDeterministically(t *testing.T) {
 	source := `
