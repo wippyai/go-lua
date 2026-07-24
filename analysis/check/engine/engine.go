@@ -2621,6 +2621,9 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 // This is a template property, not a source scan: the child remains dormant
 // unless its local capability is actually applied by the enclosing closure.
 func compilationRequiresDiagnosticPublication(compilation front.Compilation) bool {
+	if forwardedStaticMemberContractBoundary(compilation) {
+		return true
+	}
 	// A no-result, static member relay has a caller-owned diagnostic consumer:
 	// the exact enclosing application. Its child cannot publish a result or a
 	// heap write, but a member closure already transported with the complete
@@ -2655,6 +2658,66 @@ func compilationRequiresDiagnosticPublication(compilation front.Compilation) boo
 		}
 	}
 	return memberRelay
+}
+
+// forwardedStaticMemberContractBoundary identifies an invoked helper whose
+// only effectful use of one formal is forwarding it to a static member of
+// another formal. Admission carries only the caller's completed entry facts to
+// the ordinary call-contract kernel; it does not infer a contract from source.
+func forwardedStaticMemberContractBoundary(compilation front.Compilation) bool {
+	if compilation.WIR == nil || compilation.Cyclic != nil || len(compilation.Boundary.Parameters) == 0 {
+		return false
+	}
+	formals := make(map[string]bool, len(compilation.Boundary.Parameters))
+	for _, parameter := range compilation.Boundary.Parameters {
+		if parameter.Vararg || parameter.Symbol == 0 {
+			return false
+		}
+		formals[boundaryTerm(parameter.Symbol)] = true
+	}
+	found := false
+	for _, operation := range compilation.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "entry", "allocation-template", "object-materialization", "external-call", "call-results", "publication":
+			continue
+		case "environment-write":
+			target, present := artifactOperand(operation.Operands, "target")
+			if !present {
+				return false
+			}
+			for formal := range formals {
+				if string(target) == formal || strings.HasPrefix(string(target), formal+".") || strings.HasPrefix(string(target), formal+"[") {
+					return false
+				}
+			}
+		case "apply":
+			if found || len(operation.Guards) != 0 {
+				return false
+			}
+			callee, present := artifactOperand(operation.Operands, "callee")
+			if !present {
+				return false
+			}
+			root, suffix, member := tableAddress(callee)
+			segments, static := segment.ParseFormattedSegments(suffix)
+			if !member || !formals[string(root)] || !static || len(segments) != 1 || segments[0].Kind != segment.SegmentField {
+				return false
+			}
+			forwardsFormal := false
+			for _, operand := range operation.Operands {
+				if strings.HasPrefix(operand.Role, "argument-") && !strings.HasPrefix(operand.Role, "argument-display-") {
+					forwardsFormal = forwardsFormal || formals[string(operand.Term.Encoding)]
+				}
+			}
+			if !forwardsFormal {
+				return false
+			}
+			found = true
+		default:
+			return false
+		}
+	}
+	return found
 }
 
 // lexicalRequiresHeapTransport identifies child effects the value-only bridge
@@ -4633,7 +4696,7 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 	for _, capture := range child.Boundary.Captures {
 		term := boundaryTerm(capture.Symbol)
 		value, known := resolveKnownCurrentValue([]byte(term), partition)
-		if !known {
+		if !known || isUnknownScalar(value) {
 			return nil, false, nil
 		}
 		handle, found := closureHandleFor([]byte(term), partition)
@@ -4877,6 +4940,16 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		}
 		value, known := resolveKnownCurrentValue(arguments[index], partition)
 		if !known || isUnknownScalar(value) {
+			// An explicit-any source is itself a completed precision-boundary
+			// publication. Preserve that exact boundary through the child entry;
+			// replacing it with Top would erase the downstream contract check.
+			if _, boundary, explicit := explicitAnySourceFact(arguments[index], partition.Values()); explicit {
+				value, known = boundary, true
+			} else if summaryTypeIsAny(arguments[index], partition.Values()) {
+				value, known = []byte("scalar/claim/claim-kind/3/\"any\""), true
+			}
+		}
+		if !known || (isUnknownScalar(value) && !isExplicitAnyValue(value)) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: incomplete lexical argument %d", index)
 		}
 		// A lexical entry can transport a concrete allocation shape, but that
@@ -4890,7 +4963,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		}
 		term := boundaryTerm(parameter.Symbol)
 		seeds = append(seeds, entrySeed{Term: term, Value: value})
-		if declared != nil && declared.Kind() == kind.Any {
+		if (declared != nil && declared.Kind() == kind.Any) || sourceHasAnyBoundary(arguments[index], partition.Values()) {
 			gradualAnyTerms = append(gradualAnyTerms, term)
 		}
 		if callback, found := closureHandleFor(arguments[index], partition); found {
@@ -5065,7 +5138,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			}
 		}
 	}
-	l.projectChildDiagnostics(&projected, operation, operands, child, handle, closure)
+	l.projectChildDiagnostics(&projected, operation, operands, child, handle, closure, partition)
 	return equation.TransactionResult{Complete: true, Closure: projected}, nil
 }
 
@@ -5155,7 +5228,7 @@ func heapHasExternalCallbackFacts(identity []byte, values []equation.Fact) bool 
 	return false
 }
 
-func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClosure, caller equation.BoundEquation, callerOperands directCallOperands, child front.Compilation, handle closureHandle, closure equation.OutputClosure) {
+func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClosure, caller equation.BoundEquation, callerOperands directCallOperands, child front.Compilation, handle closureHandle, closure equation.OutputClosure, partition equation.Partition) {
 	// applyKnown reaches this projector only after it has built an exact child
 	// entry from the current caller partition and completed the child run.  That
 	// call evidence is the publication authority; requiresBody is merely an
@@ -5173,7 +5246,7 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 		if !childCallDiagnostic(item.Fact) {
 			continue
 		}
-		if summary, ok := l.projectSummaryCallDiagnostic(caller, callerOperands, child, item); ok {
+		if summary, ok := l.projectSummaryCallDiagnostic(caller, callerOperands, child, item, partition); ok {
 			projected.Diagnostics = append(projected.Diagnostics, cloneFact(summary.Fact))
 			l.diagnosticSpans[summary.Fact.Key] = summary.Span
 			l.childPublished[summary.Fact.Key] = summary
@@ -5203,7 +5276,7 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 // formal boundary, call display, and caller argument span are all published
 // front data; aliases, derived expressions, and incomplete spans remain
 // child-local rather than receiving a guessed caller explanation.
-func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEquation, callerOperands directCallOperands, child front.Compilation, item PublishedDiagnostic) (PublishedDiagnostic, bool) {
+func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEquation, callerOperands directCallOperands, child front.Compilation, item PublishedDiagnostic, partition equation.Partition) (PublishedDiagnostic, bool) {
 	code, childOperation, subject, ok := directCallDiagnosticParts(item.Fact.Key)
 	if !ok || code != "argument_type" {
 		return PublishedDiagnostic{}, false
@@ -5263,6 +5336,32 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 	}
 	outerArgument := formal + 1
 	key := "type.call.direct.argument_type/" + caller.Target.Name + "/" + indexedCallSubject("argument", formal)
+	if sourceHasAnyBoundary(callerOperands.arguments[formal], partition.Values()) {
+		display := "argument " + strconv.Itoa(outerArgument)
+		for _, operand := range caller.Operands {
+			if operand.Role == fmt.Sprintf("argument-display-%08d", formal) && len(operand.Value) != 0 {
+				display = string(operand.Value)
+				break
+			}
+		}
+		innerDisplay := innerArgument
+		message := fmt.Sprintf("argument %d (%s) comes from any/unknown; no proof shows it is %s", outerArgument, display, expected)
+		return PublishedDiagnostic{
+			Fact:    equation.Fact{Key: key, Value: []byte(message)},
+			Code:    "type.call.direct.argument_type",
+			Span:    span,
+			Message: message,
+			Evidence: []DiagnosticEvidence{
+				{Span: span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type any", innerDisplay)},
+				{Span: span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("inside %s, %s is passed to %s parameter %d, which requires %s", callerOperands.display, innerDisplay, callee, childArgument, expected)},
+				{Span: span, Kind: "unvalidated value", Trust: "unknown", Reason: "explicit boundary validation", Message: fmt.Sprintf("%s comes from any/unknown", display)},
+				{Span: span, Kind: "user assertion", Trust: "claimed", Message: "user asserted any; not abstract-interpreter proof"},
+				{Span: span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s is %s", innerDisplay, expected)},
+			},
+			Labels: []DiagnosticLabel{{Span: span, Message: "argument value any"}},
+			Help:   fmt.Sprintf("Validate or narrow `%s` before passing it; any/unknown values do not prove parameter contracts.", display),
+		}, true
+	}
 	return PublishedDiagnostic{
 		Fact:    equation.Fact{Key: key, Value: []byte(fmt.Sprintf("argument %d is %s, not %s", outerArgument, value, expected))},
 		Code:    "type.call.direct.argument_type",
@@ -6272,6 +6371,8 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	if boundary, ok := gradualAnyBoundaryFact(target, operands["value"], operation.Target.Name, partition.Values()); ok {
 		values = append(values, boundary)
+	} else if root, _, explicit := explicitAnySourceFact(operands["value"], partition.Values()); explicit {
+		values = append(values, equation.Fact{Key: "gradual-any/" + target + "/" + operation.Target.Name, Value: root})
 	}
 	if optional, ok := currentEpochFact("optional-provider-result/", operands["value"], partition); ok {
 		values = append(values, equation.Fact{Key: "optional-provider-result/" + target + "/" + operation.Target.Name, Value: optional})
@@ -7235,6 +7336,13 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 				values = append(values, equation.Fact{Key: typedOptionalReadPrefix + target + "/" + operation.Target.Name, Value: []byte("typed")})
 			}
 		}
+	}
+	// Reading through an explicit-any boundary cannot validate the selected
+	// member, but it does preserve the already-published boundary itself. The
+	// downstream consumer may therefore reject a typed use instead of treating
+	// this exact unvalidated read as an opaque Top value.
+	if root, _, explicit := explicitAnySourceFact(operands["container"], partition.Values()); explicit {
+		values = append(values, equation.Fact{Key: "gradual-any/" + target + "/" + operation.Target.Name, Value: root})
 	}
 	if allocation, found := placementAllocationForTerm(operands["container"], partition); found {
 		values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "dynamic-index"))
@@ -10469,6 +10577,13 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			Value: []byte(memberMissingMessage(operands.display, callee)),
 		}}}}, nil
 	}
+	if hasCallee && (!known || isUnknownScalar(callee)) {
+		if receiver, method, static := staticMemberCall(operands.callee); static {
+			if signature, available := typedMethodCallableSignature(receiver, method, partition); available && callArgumentsNeedPublishedContract(operands.arguments, partition) {
+				typedMethodSignature, typedMethodContract = signature, true
+			}
+		}
+	}
 	if !hasCallee {
 		receiver, receiverKnown := resolveKnownCurrentValue(operands.receiver, partition)
 		if !receiverKnown {
@@ -10500,7 +10615,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			// even when the receiver is an opaque interface rather than a sealed
 			// table.  Reuse that canonical member contract for argument checking;
 			// do not materialize a member value or inspect a provider body.
-			if signature, available := typedMethodCallableSignature(operands.receiver, operands.method, partition); available && (hasSummaryAnyArgument(operands.arguments, partition.Values()) || hasPublishedOptionalArgument(operands.arguments, partition)) {
+			if signature, available := typedMethodCallableSignature(operands.receiver, operands.method, partition); available && callArgumentsNeedPublishedContract(operands.arguments, partition) {
 				typedMethodSignature, typedMethodContract = signature, true
 			} else {
 				if receiverType, declared := declaredTypeForTerm(operands.receiver, partition); declared && declaredMethodMissing(receiverType, operands.method) {
@@ -10609,6 +10724,30 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		return outcome, nil
 	}
 	return equation.TransactionResult{Complete: true}, nil
+}
+
+// staticMemberCall recovers the receiver and member only from the front's
+// canonical single-segment direct-callee path. Dynamic and nested paths have
+// no equivalent member authority and therefore remain unavailable.
+func staticMemberCall(callee []byte) (receiver []byte, method string, ok bool) {
+	root, suffix, member := tableAddress(callee)
+	segments, static := segment.ParseFormattedSegments(suffix)
+	if !member || !static || len(segments) != 1 || segments[0].Kind != segment.SegmentField {
+		return nil, "", false
+	}
+	return root, segments[0].Name, true
+}
+
+func callArgumentsNeedPublishedContract(arguments [][]byte, partition equation.Partition) bool {
+	if hasSummaryAnyArgument(arguments, partition.Values()) || hasPublishedOptionalArgument(arguments, partition) {
+		return true
+	}
+	for _, argument := range arguments {
+		if sourceHasAnyBoundary(argument, partition.Values()) {
+			return true
+		}
+	}
+	return false
 }
 
 func typeRequiresBoundaryProof(value typ.Type) bool {

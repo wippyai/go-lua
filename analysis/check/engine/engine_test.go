@@ -990,6 +990,35 @@ return run`
 	t.Fatalf("inferred arithmetic boundary diagnostics = %#v", result.PublishedDiagnostics)
 }
 
+func TestCheckWithImportsRejectsAnyForwardedToTypedMember(t *testing.T) {
+	source := `local provider = require("provider")
+local function helper(client, model_id)
+  return client.invoke(model_id, {}, {})
+end
+local contract_args = nil :: any
+local model_id = contract_args.model
+helper(provider, model_id)`
+	provider := typetable.NewRecord().Field("invoke", typ.Func().
+		Param("model_id", typ.String).
+		Param("payload", typ.Any).
+		Param("options", typ.Any).
+		Returns(typ.Any).
+		Build()).
+		Build()
+	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	if err != nil {
+		t.Fatalf("CheckWithImports: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.call.direct.argument_type" && diagnostic.Span.StartLine == 7 &&
+			strings.Contains(diagnostic.Message, "argument 2 (model_id) comes from any/unknown; no proof shows it is string") &&
+			len(diagnostic.Evidence) == 5 {
+			return
+		}
+	}
+	t.Fatalf("forwarded imported member contract was not published: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckWithImportsRootTruthinessNarrowingUsesCurrentOptionalResultSummary(t *testing.T) {
 	source := `local provider = require("provider")
 local err = provider.fetch()
