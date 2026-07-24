@@ -236,6 +236,39 @@ target()
 	}
 }
 
+func TestCheckPublishesInvokedTypedMemberCallArgumentContract(t *testing.T) {
+	result, err := engine.Check(`
+local function invoke(provider, payload)
+  provider.send(payload)
+end
+
+local provider: { send: (number) -> () } = {
+  send = function(value: number): () end,
+}
+
+invoke(provider, "bad")
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code != "type.call.direct.argument_type" || diagnostic.Message != `argument 2 is "bad", not number` {
+			continue
+		}
+		if diagnostic.Span.StartLine != 10 || diagnostic.Span.StartCol != 18 {
+			t.Fatalf("summary call span = %#v, want caller argument", diagnostic.Span)
+		}
+		if len(diagnostic.Evidence) != 3 || diagnostic.Evidence[0].Message != `argument 1 (payload) has literal value "bad"` || diagnostic.Evidence[1].Message != "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number" || diagnostic.Evidence[2].Trust != "unknown" || diagnostic.Evidence[2].Message != "no proof on this path shows argument 1 (payload) is number" {
+			t.Fatalf("summary call evidence = %#v", diagnostic.Evidence)
+		}
+		if len(diagnostic.Labels) != 1 || !strings.Contains(diagnostic.Labels[0].Message, "argument value") || !strings.Contains(diagnostic.Help, "argument 2") {
+			t.Fatalf("summary call labels/help = %#v / %q", diagnostic.Labels, diagnostic.Help)
+		}
+		return
+	}
+	t.Fatalf("invoked member argument contract was not published: diagnostics=%#v facts=%#v", result.PublishedDiagnostics, result.ValueFacts)
+}
+
 func TestCheckRejectsRefutedTypedVariadicArgument(t *testing.T) {
 	result, err := engine.Check(`
 local function sum(...: number): number

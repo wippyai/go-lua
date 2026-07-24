@@ -1958,8 +1958,10 @@ type memberCellWire struct {
 
 type lexicalEvaluator struct {
 	byPrototype       map[string]front.Compilation
+	byBody            map[equation.BodyID]front.Compilation
 	requiresBody      map[string]bool
 	diagnosticSpans   map[string]wir.Span
+	callSpans         map[string]wir.Span
 	lifecycleEvidence map[string][]DiagnosticEvidence
 	selectEvidence    map[string][]DiagnosticEvidence
 	childPublished    map[string]PublishedDiagnostic
@@ -2188,11 +2190,15 @@ func hasProjectableTableResult(child front.Compilation) bool {
 
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	table := interproc.NewProjectedTable()
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions)}
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions)}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
+		l.byBody[compilation.Body] = compilation
 		if compilation.PrototypeName != "" {
 			l.byPrototype[compilation.PrototypeName] = compilation
+		}
+		for name, span := range compilation.CallSpans {
+			l.callSpans[lexicalSpanKey(compilation.Body, name)] = span
 		}
 		for _, child := range compilation.Nested {
 			add(child)
@@ -2204,8 +2210,9 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 		// Capture/writeback and escaping nested closures retain their established
 		// body admission. Ordinary capture-free calls are admitted separately
 		// only when their sealed result tuple has a caller-owned slot.
-		required := len(compilation.Boundary.Captures) != 0 || compilationRequiresDiagnosticPublication(compilation)
-		if lexicalRequiresHeapTransport(compilation) && !compilation.RebindsBoundary {
+		diagnosticRelay := compilationRequiresDiagnosticPublication(compilation)
+		required := len(compilation.Boundary.Captures) != 0 || diagnosticRelay
+		if lexicalRequiresHeapTransport(compilation) && !compilation.RebindsBoundary && !diagnosticRelay {
 			required = false
 		}
 		for _, child := range compilation.Nested {
@@ -2225,17 +2232,40 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 // This is a template property, not a source scan: the child remains dormant
 // unless its local capability is actually applied by the enclosing closure.
 func compilationRequiresDiagnosticPublication(compilation front.Compilation) bool {
+	// A no-result, static member relay has a caller-owned diagnostic consumer:
+	// the exact enclosing application. Its child cannot publish a result or a
+	// heap write, but a member closure already transported with the complete
+	// formal entry may refute its argument contract. Admit only this closed
+	// relay shape; arbitrary calls, branches, writes, and dynamic lookup remain
+	// demand-driven.
+	memberRelay := false
 	for _, operation := range compilation.Artifact.Equations {
-		if operation.Occurrence.Kind != "expression" {
+		switch operation.Occurrence.Kind {
+		case "entry", "external-call", "call-results":
 			continue
-		}
-		for _, operand := range operation.Operands {
-			if operand.Role == "kind" && string(operand.Term.Encoding) == strconv.Itoa(int(wir.OpConcat)) {
-				return true
+		case "expression":
+			for _, operand := range operation.Operands {
+				if operand.Role == "kind" && string(operand.Term.Encoding) == strconv.Itoa(int(wir.OpConcat)) {
+					return true
+				}
 			}
+			return false
+		case "apply":
+			callee, hasCallee := artifactOperand(operation.Operands, "callee")
+			resultArity, hasResultArity := artifactOperand(operation.Operands, "result-arity")
+			if !hasCallee || !hasResultArity || string(resultArity) != "0" {
+				return false
+			}
+			member := strings.LastIndex(string(callee), ".")
+			if !strings.HasPrefix(string(callee), "path/") || member <= len("path/") {
+				return false
+			}
+			memberRelay = true
+		default:
+			return false
 		}
 	}
-	return false
+	return memberRelay
 }
 
 // lexicalRequiresHeapTransport identifies child effects the value-only bridge
@@ -3147,7 +3177,7 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 	}
 	boundarySeeds := append([]entrySeed(nil), seeds...)
 	seeds = append(seeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
-	entry, err := encodeChildEntryWithCapabilities(seeds, closureSeeds, childEntryMemberClosureSeeds(seeds, partition), tableIdentitySeedsForEntry(seeds, partition), memberCellSeedsForEntry(seeds, partition))
+	entry, err := encodeChildEntryWithCapabilities(seeds, closureSeeds, childEntryMemberClosureSeeds(seeds, nil, partition), tableIdentitySeedsForEntry(seeds, partition), memberCellSeedsForEntry(seeds, partition))
 	if err != nil {
 		return nil, false, err
 	}
@@ -3281,7 +3311,14 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	boundarySeeds := append([]entrySeed(nil), seeds...)
 	entrySeeds := append([]entrySeed(nil), boundarySeeds...)
 	entrySeeds = append(entrySeeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
-	memberClosureSeeds := childEntryMemberClosureSeeds(entrySeeds, partition)
+	memberSources := make(map[string][]byte, len(boundarySeeds))
+	for index, parameter := range child.Boundary.Parameters {
+		memberSources[boundaryTerm(parameter.Symbol)] = append([]byte(nil), arguments[index]...)
+	}
+	for index, capture := range child.Boundary.Captures {
+		memberSources[boundaryTerm(capture.Symbol)] = []byte(handle.Captures[index])
+	}
+	memberClosureSeeds := childEntryMemberClosureSeeds(entrySeeds, memberSources, partition)
 	tableIdentitySeeds := tableIdentitySeedsForEntry(entrySeeds, partition)
 	memberCellSeeds := memberCellSeedsForEntry(entrySeeds, partition)
 	entry, err := encodeChildEntryWithCapabilities(entrySeeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, gradualAnyTerms)
@@ -3417,7 +3454,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			}
 		}
 	}
-	l.projectChildDiagnostics(&projected, child, handle, closure)
+	l.projectChildDiagnostics(&projected, operation, operands, child, handle, closure)
 	return equation.TransactionResult{Complete: true, Closure: projected}, nil
 }
 
@@ -3445,7 +3482,7 @@ func projectCallResults(operation equation.BoundEquation, returns [][]byte, clos
 	return projected
 }
 
-func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClosure, child front.Compilation, handle closureHandle, closure equation.OutputClosure) {
+func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClosure, caller equation.BoundEquation, callerOperands directCallOperands, child front.Compilation, handle closureHandle, closure equation.OutputClosure) {
 	// applyKnown reaches this projector only after it has built an exact child
 	// entry from the current caller partition and completed the child run.  That
 	// call evidence is the publication authority; requiresBody is merely an
@@ -3458,8 +3495,16 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 	closure.Diagnostics = rootPublishedDiagnostics(child.Artifact, closure.Diagnostics)
 	body := fmt.Sprintf("%x", child.Body)
 	spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
+	transported := make(map[string]bool)
 	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
 		if !childCallDiagnostic(item.Fact) {
+			continue
+		}
+		if summary, ok := l.projectSummaryCallDiagnostic(caller, callerOperands, child, item); ok {
+			projected.Diagnostics = append(projected.Diagnostics, cloneFact(summary.Fact))
+			l.diagnosticSpans[summary.Fact.Key] = summary.Span
+			l.childPublished[summary.Fact.Key] = summary
+			transported[item.Fact.Key] = true
 			continue
 		}
 		l.childPublished["child/"+body+"/"+item.Fact.Key] = PublishedDiagnostic{Fact: equation.Fact{Key: "child/" + body + "/" + item.Fact.Key, Value: append([]byte(nil), item.Fact.Value...)}, Code: item.Code, Span: item.Span, Message: item.Message, Evidence: append([]DiagnosticEvidence(nil), item.Evidence...), Labels: append([]DiagnosticLabel(nil), item.Labels...), Help: item.Help}
@@ -3468,12 +3513,100 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 		if !childCallDiagnostic(diagnostic) {
 			continue
 		}
+		if transported[diagnostic.Key] {
+			continue
+		}
 		key := "child/" + body + "/" + diagnostic.Key
 		projected.Diagnostics = append(projected.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 		if span, ok := spans[diagnostic.Key]; ok {
 			l.diagnosticSpans[key] = span
 		}
 	}
+}
+
+// projectSummaryCallDiagnostic moves a refuted member-call contract to its
+// caller only when the child argument is exactly one declared formal and the
+// enclosing application supplies that same formal position.  The child fact,
+// formal boundary, call display, and caller argument span are all published
+// front data; aliases, derived expressions, and incomplete spans remain
+// child-local rather than receiving a guessed caller explanation.
+func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEquation, callerOperands directCallOperands, child front.Compilation, item PublishedDiagnostic) (PublishedDiagnostic, bool) {
+	code, childOperation, subject, ok := directCallDiagnosticParts(item.Fact.Key)
+	if !ok || code != "argument_type" {
+		return PublishedDiagnostic{}, false
+	}
+	childArgument, _, ok := callArgumentSubject(subject)
+	if !ok || childArgument == 0 {
+		return PublishedDiagnostic{}, false
+	}
+	var application equation.Equation
+	found := false
+	for _, candidate := range child.Artifact.Equations {
+		if candidate.Target.Name == childOperation && candidate.Occurrence.Kind == "apply" {
+			application, found = candidate, true
+			break
+		}
+	}
+	if !found {
+		return PublishedDiagnostic{}, false
+	}
+	argumentTerm := []byte(nil)
+	argumentRole := fmt.Sprintf("argument-%08d", childArgument-1)
+	callee := ""
+	for _, operand := range application.Operands {
+		switch operand.Role {
+		case argumentRole:
+			argumentTerm = operand.Term.Encoding
+		case "callee-display":
+			callee = string(operand.Term.Encoding)
+		}
+	}
+	if len(argumentTerm) == 0 || callee == "" || callerOperands.display == "" || callerOperands.display == "target" {
+		return PublishedDiagnostic{}, false
+	}
+	formal := -1
+	for index, parameter := range child.Boundary.Parameters {
+		if string(argumentTerm) == boundaryTerm(parameter.Symbol) {
+			formal = index
+			break
+		}
+	}
+	if formal < 0 || formal >= len(callerOperands.arguments) {
+		return PublishedDiagnostic{}, false
+	}
+	span := l.callSpans[lexicalSpanKey(caller.Target.Body, caller.Target.Name+"/"+indexedCallSubject("argument", formal))]
+	if !span.Valid() {
+		return PublishedDiagnostic{}, false
+	}
+	start := strings.Index(item.Message, " is ")
+	end := strings.LastIndex(item.Message, ", not ")
+	if start < 0 || end <= start+4 {
+		return PublishedDiagnostic{}, false
+	}
+	value, expected := item.Message[start+4:end], item.Message[end+6:]
+	innerArgument := fmt.Sprintf("argument %d", childArgument)
+	if formalName := child.Boundary.Parameters[formal].Name; formalName != "" {
+		innerArgument += " (" + formalName + ")"
+	}
+	outerArgument := formal + 1
+	key := "type.call.direct.argument_type/" + caller.Target.Name + "/" + indexedCallSubject("argument", formal)
+	return PublishedDiagnostic{
+		Fact:    equation.Fact{Key: key, Value: []byte(fmt.Sprintf("argument %d is %s, not %s", outerArgument, value, expected))},
+		Code:    "type.call.direct.argument_type",
+		Span:    span,
+		Message: fmt.Sprintf("argument %d is %s, not %s", outerArgument, value, expected),
+		Evidence: []DiagnosticEvidence{
+			{Span: span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", innerArgument, value)},
+			{Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("inside %s, %s is passed to %s parameter %d, which requires %s", callerOperands.display, innerArgument, callee, childArgument, expected)},
+			{Span: span, Kind: "missing proof", Trust: "unknown", Message: fmt.Sprintf("no proof on this path shows %s is %s", innerArgument, expected)},
+		},
+		Labels: []DiagnosticLabel{{Span: span, Message: "argument value " + value}},
+		Help:   fmt.Sprintf("Pass a value for argument %d that satisfies the parameter type, or change the callee signature if that argument is valid.", outerArgument),
+	}, true
+}
+
+func lexicalSpanKey(body equation.BodyID, occurrence string) string {
+	return fmt.Sprintf("%x/%s", body, occurrence)
 }
 
 // childCallDiagnostic accepts assignment and call-contract facts whose consumer
@@ -3543,13 +3676,17 @@ func childEntryDescendantSeeds(roots []entrySeed, partition equation.Partition) 
 // published at one of the exact child entry terms.  The child still receives
 // the corresponding sealed value seed; no receiver type, annotation, or
 // source spelling can manufacture a local-body capability.
-func childEntryMemberClosureSeeds(seeds []entrySeed, partition equation.Partition) []entryMemberClosureSeed {
+func childEntryMemberClosureSeeds(seeds []entrySeed, sources map[string][]byte, partition equation.Partition) []entryMemberClosureSeed {
 	byTerm := make(map[string][]memberClosureWire, len(seeds))
 	for _, seed := range seeds {
 		if !validEntrySeed(seed) {
 			continue
 		}
-		wires := memberClosuresFor([]byte(seed.Term), partition)
+		source := sources[seed.Term]
+		if len(source) == 0 {
+			source = []byte(seed.Term)
+		}
+		wires := memberClosuresFor(source, partition)
 		if len(wires) != 0 {
 			byTerm[seed.Term] = wires
 		}
@@ -7879,7 +8016,7 @@ func (l *lexicalEvaluator) boundaryArgumentRefutation(operation equation.BoundEq
 			continue
 		}
 		argument, known := resolveKnownCurrentValue(arguments[index], partition)
-		if !known || !declaredExplicitAny(arguments[index], partition) {
+		if !known || isUnknownScalar(argument) || (!declaredExplicitAny(arguments[index], partition) && !l.memberRelayEntry(operation, operands, partition)) {
 			continue
 		}
 		expected := child.WIR.Type(parameter.Type)
@@ -7889,6 +8026,45 @@ func (l *lexicalEvaluator) boundaryArgumentRefutation(operation equation.BoundEq
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), typeformat.Short(expected))), true
 	}
 	return equation.TransactionResult{}, false
+}
+
+// memberRelayEntry proves that this is the narrowly admitted member-summary
+// path: the current body has the relay template and the callable member was
+// seeded at this exact child entry.  It prevents ordinary local calls from
+// gaining a new boundary diagnostic merely because their values happen to be
+// closed.
+func (l *lexicalEvaluator) memberRelayEntry(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) bool {
+	if l == nil || operands.resultArity != 0 {
+		return false
+	}
+	compilation, found := l.byBody[operation.Target.Body]
+	if !found || !compilationRequiresDiagnosticPublication(compilation) {
+		return false
+	}
+	receiver, method := []byte(nil), ""
+	if operands.callee != nil {
+		cut := strings.LastIndex(string(operands.callee), ".")
+		if cut <= len("path/") {
+			return false
+		}
+		receiver, method = operands.callee[:cut], string(operands.callee[cut+1:])
+	} else {
+		receiver, method = operands.receiver, operands.method
+	}
+	if len(receiver) == 0 || method == "" {
+		return false
+	}
+	prefix := "member-closure/" + string(receiver) + "/entry/"
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		var wire memberClosureWire
+		if json.Unmarshal(fact.Value, &wire) == nil && wire.Suffix == "."+method && validClosureHandle(wire.Handle) {
+			return true
+		}
+	}
+	return false
 }
 
 // declaredExplicitAny reads only the descriptive entry fact published from a
