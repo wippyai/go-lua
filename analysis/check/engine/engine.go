@@ -2060,8 +2060,42 @@ func cyclicKernel(kernel equation.Kernel) equation.CyclicKernel {
 		if err != nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: cyclic snapshot partition: %w", err)
 		}
+		if candidate, candidateErr := equation.PartitionFromClosuresWithGuards(operation.Equation.Guards, closures...); candidateErr != nil {
+			return equation.TransactionResult{}, fmt.Errorf("engine: cyclic guarded snapshot partition: %w", candidateErr)
+		} else if cyclicOptionalClaim(operation.Equation, candidate) {
+			partition = candidate
+		}
 		return kernel.Execute(operation.Equation, partition)
 	})
+}
+
+// cyclicOptionalClaim admits only a positive branch-local optional assignment
+// into the cyclic snapshot. The claim already owns the source and declared
+// target; calls, expressions, and non-optional writes remain unavailable until
+// the cyclic evaluator can model their recurrence without borrowing an arm.
+func cyclicOptionalClaim(operation equation.BoundEquation, partition equation.Partition) bool {
+	if operation.Occurrence.Kind != "claim" || len(operation.Guards) == 0 {
+		return false
+	}
+	for _, guard := range operation.Guards {
+		if !strings.HasSuffix(string(guard.Encoding), "/true") {
+			return false
+		}
+	}
+	operands, err := requiredOperandsByRole(operation.Operands, "value", "type")
+	if err != nil {
+		return false
+	}
+	value, available, err := resolveClaimValue(operands["value"], partition)
+	if err != nil || !available {
+		return false
+	}
+	source, decoded := shapefact.DecodeTarget(value)
+	if !decoded || source == nil || !proof.OptionalTypeHasConcreteValue(source) {
+		return false
+	}
+	target, err := strconv.Unquote(strings.TrimPrefix(string(operands["type"]), "claim-type/"))
+	return err == nil && target != "" && target != "any" && target != "nil" && !strings.HasSuffix(target, "?")
 }
 
 // childEntryWire is deliberately a closed entry payload.  It is decoded only

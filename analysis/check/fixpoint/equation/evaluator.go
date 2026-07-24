@@ -230,6 +230,14 @@ type Partition struct {
 // partition.  It is intentionally a value constructor: neither VM exposes
 // mutable evaluator state through this bridge.
 func PartitionFromClosures(closures ...OutputClosure) (Partition, error) {
+	return PartitionFromClosuresWithGuards(nil, closures...)
+}
+
+// PartitionFromClosuresWithGuards constructs a closed predecessor snapshot for
+// a guarded consumer. The guards belong to the consuming operation, not to
+// any predecessor leaf, so cyclic evaluators can retain the same branch view
+// as the acyclic VM without mutating a published closure.
+func PartitionFromClosuresWithGuards(guards []Guard, closures ...OutputClosure) (Partition, error) {
 	// A cyclic snapshot can contribute many predecessor leaves.  They are all
 	// already closed publications, so aggregate their fact lanes before the
 	// single canonical merge.  Re-canonicalizing after each append is the same
@@ -245,7 +253,7 @@ func PartitionFromClosures(closures ...OutputClosure) (Partition, error) {
 	if err != nil {
 		return Partition{}, err
 	}
-	return Partition{closure: canonical}, nil
+	return Partition{closure: canonical, guards: canonicalGuards(guards)}, nil
 }
 
 func (p Partition) Values() []Fact { return visibleFacts(p.closure.Values, p.closure.Values, p.guards) }

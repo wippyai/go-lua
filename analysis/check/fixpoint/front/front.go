@@ -1259,13 +1259,17 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 	for _, operation := range operations {
 		hasDynamicIndexRead = hasDynamicIndexRead || operation.instruction.Op == wir.OpDynamicIndexRead
 	}
-	branchTargets := make(map[cfg.Point]equation.Coordinate)
+	branchTargets := make(map[cfg.Point]branchGuardTarget)
 	for _, operation := range operations {
 		if operation.instruction.Op == wir.OpBranch {
 			if _, duplicate := branchTargets[operation.instruction.Point]; duplicate {
 				return equation.Artifact{}, fmt.Errorf("front: multiple branches at CFG point %d", operation.instruction.Point)
 			}
-			branchTargets[operation.instruction.Point] = operation.target
+			check := body.Check(operation.instruction.Check)
+			branchTargets[operation.instruction.Point] = branchGuardTarget{
+				target:  operation.target,
+				literal: check.Kind == wir.CheckLiteralEqual || check.Kind == wir.CheckLiteralNot,
+			}
 		}
 	}
 	guardReachability := newReachabilityCache(graph)
@@ -3166,7 +3170,12 @@ func exactPositiveIndex(entry wir.TableEntry, index int) bool {
 		entry.Suffix.Segments[0].Index == index
 }
 
-func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.Point, body equation.BodyID, branches map[cfg.Point]equation.Coordinate) []equation.Guard {
+type branchGuardTarget struct {
+	target  equation.Coordinate
+	literal bool
+}
+
+func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.Point, body equation.BodyID, branches map[cfg.Point]branchGuardTarget) []equation.Guard {
 	guards := make([]equation.Guard, 0, len(branches))
 	for branch, target := range branches {
 		if branch == point {
@@ -3175,7 +3184,15 @@ func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.
 		trueReach, falseReach := false, false
 		for _, successor := range graph.Successors(branch) {
 			condition, isBranchEdge := graph.EdgeCond(branch, successor)
-			if !isBranchEdge || !reachability.reaches(successor, point) {
+			reaches := reachability.reaches(successor, point)
+			if target.literal {
+				// A loop back-edge can reach this point only by evaluating the
+				// same literal discriminant again. That is a later iteration,
+				// not an alternate edge of the current decision, so it must not
+				// erase this selected arm's guard.
+				reaches = reachability.reachesWithout(successor, point, branch)
+			}
+			if !isBranchEdge || !reaches {
 				continue
 			}
 			if condition {
@@ -3191,7 +3208,7 @@ func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.
 		if trueReach {
 			edge = "true"
 		}
-		guards = append(guards, equation.Guard{Body: body, Encoding: []byte("front/branch/" + target.Name + "/" + edge)})
+		guards = append(guards, equation.Guard{Body: body, Encoding: []byte("front/branch/" + target.target.Name + "/" + edge)})
 	}
 	return guards
 }
@@ -3368,12 +3385,21 @@ func cyclicReachableOperationCells(graph cfg.Graph, start cfg.Point, points map[
 // that needs branch guards. Large straight-line fixtures otherwise repeat the
 // same O(branches*points) traversal for every draft.
 type reachabilityCache struct {
-	graph cfg.Graph
-	from  map[cfg.Point]map[cfg.Point]bool
+	graph   cfg.Graph
+	from    map[cfg.Point]map[cfg.Point]bool
+	without map[reachabilityExclusion]bool
+}
+
+type reachabilityExclusion struct {
+	from, target, exclude cfg.Point
 }
 
 func newReachabilityCache(graph cfg.Graph) *reachabilityCache {
-	return &reachabilityCache{graph: graph, from: make(map[cfg.Point]map[cfg.Point]bool)}
+	return &reachabilityCache{
+		graph:   graph,
+		from:    make(map[cfg.Point]map[cfg.Point]bool),
+		without: make(map[reachabilityExclusion]bool),
+	}
 }
 
 func (cache *reachabilityCache) reaches(from, target cfg.Point) bool {
@@ -3393,4 +3419,31 @@ func (cache *reachabilityCache) reaches(from, target cfg.Point) bool {
 		cache.from[from] = reachable
 	}
 	return reachable[target]
+}
+
+// reachesWithout answers whether an arm reaches a point before control loops
+// back through the branch that selected the arm. This preserves same-iteration
+// branch ownership while retaining ordinary reachability for non-cyclic CFGs.
+func (cache *reachabilityCache) reachesWithout(from, target, exclude cfg.Point) bool {
+	key := reachabilityExclusion{from: from, target: target, exclude: exclude}
+	if reachable, found := cache.without[key]; found {
+		return reachable
+	}
+	seen := make(map[cfg.Point]bool, cache.graph.Size())
+	stack := []cfg.Point{from}
+	for len(stack) != 0 {
+		point := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if point == exclude || seen[point] {
+			continue
+		}
+		if point == target {
+			cache.without[key] = true
+			return true
+		}
+		seen[point] = true
+		stack = append(stack, cache.graph.Successors(point)...)
+	}
+	cache.without[key] = false
+	return false
 }
