@@ -338,6 +338,46 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 	return facts
 }
 
+// placementImportedStoreFacts consumes an ownership boundary only when an
+// imported module has already published a checked, one-statement wrapper for
+// ownership.store. The relation supplies exact formal positions; no imported
+// source spelling or arbitrary external callable can retain a graph.
+func placementImportedStoreFacts(lexical *lexicalEvaluator, operation equation.BoundEquation, provider []byte, arguments [][]byte, partition equation.Partition) []equation.Fact {
+	if lexical == nil {
+		return nil
+	}
+	module, suffix, load, ok := importedProviderTarget(provider)
+	if !ok || load || suffix == "" {
+		return nil
+	}
+	lexical.importedAuthorityMu.RLock()
+	summary, found := lexical.importedRelations[module]
+	lexical.importedAuthorityMu.RUnlock()
+	if !found {
+		return nil
+	}
+	function, found := summary.Function(strings.TrimPrefix(suffix, "."), len(arguments))
+	if !found || !function.Store.Valid(len(arguments)) {
+		return nil
+	}
+	application := strings.TrimPrefix(string(operationOperandValue(operation, "application")), "call/")
+	if application == "" {
+		return nil
+	}
+	var facts []equation.Fact
+	for _, index := range []int{function.Store.Value, function.Store.Owner} {
+		allocation, found := placementAllocationForTerm(arguments[index], partition)
+		if !found {
+			continue
+		}
+		facts = append(facts, placementContractFact(allocation.Identity, "retain", application))
+		if index == function.Store.Value {
+			facts = append(facts, placementEventFact(allocation.Identity, application, placementEventOwned))
+		}
+	}
+	return facts
+}
+
 // typedChannelReceiver admits the channel send placement boundary only when
 // the receiver's payload contract has already been published. An untyped
 // lookalike send remains opaque and therefore cannot gain a sharing proof.

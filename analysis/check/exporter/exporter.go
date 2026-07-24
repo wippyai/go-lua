@@ -192,6 +192,10 @@ func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]expo
 		params[name] = i
 	}
 	relation := exportrelation.Function{Path: path, Arity: len(params)}
+	if store, ok := ownershipStoreRelation(fn, params); ok {
+		relation.Store = store
+		return relation, relation.Valid()
+	}
 	if len(fn.Stmts) == 1 {
 		if ret, ok := fn.Stmts[0].(*ast.ReturnStmt); ok && len(ret.Exprs) == 1 {
 			if value, ok := templateValue(ret.Exprs[0], params); ok {
@@ -217,6 +221,43 @@ func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]expo
 		}
 	}
 	return exportrelation.Function{}, false
+}
+
+// ownershipStoreRelation recognizes only a one-statement, positional wrapper
+// around the existing global ownership.store contract. The exported callable
+// surface is checked separately by publishedFunction; aliases, methods, and
+// any additional control flow deliberately publish no ownership relation.
+func ownershipStoreRelation(fn *ast.FunctionExpr, params map[string]int) (*exportrelation.OwnershipStore, bool) {
+	if fn == nil || len(fn.Stmts) != 1 {
+		return nil, false
+	}
+	statement, ok := fn.Stmts[0].(*ast.FuncCallStmt)
+	if !ok {
+		return nil, false
+	}
+	call, ok := statement.Expr.(*ast.FuncCallExpr)
+	if !ok || call.Receiver != nil || call.Method != "" || len(call.Args) != 2 {
+		return nil, false
+	}
+	callee, ok := call.Func.(*ast.AttrGetExpr)
+	if !ok || ast.KeyName(callee.Key) != "store" {
+		return nil, false
+	}
+	global, ok := callee.Object.(*ast.IdentExpr)
+	if !ok || global.Value != "ownership" {
+		return nil, false
+	}
+	value, valueOK := call.Args[0].(*ast.IdentExpr)
+	owner, ownerOK := call.Args[1].(*ast.IdentExpr)
+	if !valueOK || !ownerOK {
+		return nil, false
+	}
+	valueIndex, valueOK := params[value.Value]
+	ownerIndex, ownerOK := params[owner.Value]
+	if !valueOK || !ownerOK || valueIndex == ownerIndex {
+		return nil, false
+	}
+	return &exportrelation.OwnershipStore{Value: valueIndex, Owner: ownerIndex}, true
 }
 
 func forwardedImportedReturn(expr ast.Expr, params map[string]int, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Value, bool) {

@@ -84,6 +84,44 @@ local second: string = 2
 	}
 }
 
+func TestCheckProjectPublishesImportedOwnershipStorePlacement(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{{
+		Path:       "storage.lua",
+		ModulePath: "storage",
+		Source: `type Item = { child: { route: string } }
+type Box = { items: {[string]: Item} }
+local M = {}
+function M.store_item(item: Item, box: Box)
+  ownership.store(item, box)
+end
+return M`,
+	}, {
+		Path:       "main.lua",
+		ModulePath: "main",
+		Imports:    []string{"storage"},
+		Source: `local storage = require("storage")
+local box: {items: {[string]: {child: {route: string}}}} = { items = {} }
+local item: {child: {route: string}} = { child = { route = "owned" } }
+storage.store_item(item, box)`,
+	}}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if result.Placement == nil || len(result.Placement.Allocations) != 6 {
+		t.Fatalf("placement = %#v, want six module and consumer allocations", result.Placement)
+	}
+	owned, blocked := 0, 0
+	for _, item := range result.Placement.Allocations {
+		if item.Placement.String() == "owned-heap" && item.OwnerIdentity {
+			owned++
+		}
+		blocked += len(item.Blockers)
+	}
+	if owned < 4 || blocked != 0 {
+		t.Fatalf("placement = %#v, want four imported owned allocations and no opaque blockers", result.Placement)
+	}
+}
+
 func TestCheckProjectResolvesAProviderExportInsteadOfAny(t *testing.T) {
 	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
 		{Path: "provider.lua", ModulePath: "provider", Source: `return { answer = 42 }`},

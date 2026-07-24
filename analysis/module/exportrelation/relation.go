@@ -24,8 +24,13 @@ type Function struct {
 	Arity       int
 	Return      Value
 	Forwarded   bool
+	Store       *OwnershipStore
 	NormalEqual *Equality
 }
+
+// OwnershipStore carries the two exact formal positions of an exported
+// wrapper around the already-published ownership.store contract.
+type OwnershipStore struct{ Value, Owner int }
 
 // Equality is a normal-return-only equality between two formal parameters.
 type Equality struct{ Left, Right int }
@@ -58,13 +63,17 @@ func (s Summary) Function(path string, arity int) (Function, bool) {
 }
 
 func (f Function) Valid() bool {
-	if f.Path == "" || f.Arity < 0 || !f.Return.Valid(f.Arity) {
+	if f.Path == "" || f.Arity < 0 || (!f.Return.Valid(f.Arity) && !f.Store.Valid(f.Arity)) {
 		return false
 	}
 	if f.NormalEqual != nil && (f.NormalEqual.Left < 0 || f.NormalEqual.Right < 0 || f.NormalEqual.Left >= f.Arity || f.NormalEqual.Right >= f.Arity) {
 		return false
 	}
 	return true
+}
+
+func (s *OwnershipStore) Valid(arity int) bool {
+	return s != nil && s.Value >= 0 && s.Owner >= 0 && s.Value != s.Owner && s.Value < arity && s.Owner < arity
 }
 
 // Closed reports whether v is an exact immutable literal tree without a

@@ -1828,7 +1828,9 @@ func kernelBindingSpecs(lexical *lexicalEvaluator, imported map[string]bool) []k
 		{"branch-relations", equation.KernelFunc(branchKernel)}, {"apply", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
 			return applyKernel(lexical, o, p)
 		})},
-		{"external-call", equation.KernelFunc(externalCallKernel)}, {"call-results", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
+		{"external-call", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
+			return externalCallKernel(lexical, o, p)
+		})}, {"call-results", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
 			return callResultsKernel(lexical, o, p)
 		})},
 		{"generic-for", equation.KernelFunc(genericForKernel)}, {"channel-select", equation.KernelFunc(channelSelectKernel)}, {"publication", equation.KernelFunc(publicationKernel)},
@@ -10296,7 +10298,7 @@ func callDisplayValue(value []byte) string {
 // externalCallKernel is a sealed provider-boundary factor.  It intentionally
 // owns no result term: call-results remains the sole result-slot owner for
 // every call, whether the callee is local or external.
-func externalCallKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+func externalCallKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
@@ -10325,7 +10327,10 @@ func externalCallKernel(operation equation.BoundEquation, partition equation.Par
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external call arguments")
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
-		Values: placementExternalOwnershipFacts(operation, operands["provider"], arguments, partition),
+		Values: append(
+			placementExternalOwnershipFacts(operation, operands["provider"], arguments, partition),
+			placementImportedStoreFacts(lexical, operation, operands["provider"], arguments, partition)...,
+		),
 	}}, nil
 }
 
