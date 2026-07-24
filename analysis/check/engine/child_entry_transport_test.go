@@ -17,6 +17,8 @@ func TestChildEntryTransportsPublishedDescendantAndMemberCapability(t *testing.T
 		},
 		nil,
 		[]entryMemberClosureSeed{{Term: "path/root.dep", Wire: wire}},
+		nil,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("encode child entry: %v", err)

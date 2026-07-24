@@ -66,6 +66,7 @@ const (
 	heapTableClosedPrefix    = "heap/table-closed/"
 	heapMemberPrefix         = "heap/member/"
 	heapMemberIdentityPrefix = "heap/member-identity/"
+	memberCellPrefix         = "heap/member-cell/"
 	heapMemberOriginPrefix   = "heap/member-origin/"
 	heapMetaAttachedPrefix   = "heap/meta-attached/"
 	heapMetaNewIndexPrefix   = "heap/meta-newindex/"
@@ -1685,6 +1686,8 @@ type childEntryWire struct {
 	Seeds              []entrySeed              `json:"seeds"`
 	ClosureSeeds       []entryClosureSeed       `json:"closure_seeds,omitempty"`
 	MemberClosureSeeds []entryMemberClosureSeed `json:"member_closure_seeds,omitempty"`
+	TableIdentitySeeds []entryTableIdentitySeed `json:"table_identity_seeds,omitempty"`
+	MemberCellSeeds    []entryMemberCellSeed    `json:"member_cell_seeds,omitempty"`
 	GradualAnyTerms    []string                 `json:"gradual_any_terms,omitempty"`
 }
 
@@ -1710,6 +1713,21 @@ type entryMemberClosureSeed struct {
 	Wire memberClosureWire `json:"wire"`
 }
 
+// entryMemberCellSeed is a versioned heap-member publication carried across a
+// private lexical entry.  The identity, rather than a source path, owns the
+// cell: aliases therefore observe the same newest write and a replacement
+// cannot revive a closure capability from an older path spelling.
+type entryMemberCellSeed struct {
+	Identity []byte         `json:"identity"`
+	Suffix   string         `json:"suffix"`
+	Wire     memberCellWire `json:"wire"`
+}
+
+type entryTableIdentitySeed struct {
+	Term     string `json:"term"`
+	Identity []byte `json:"identity"`
+}
+
 type closureHandle struct {
 	Prototype string   `json:"prototype"`
 	Captures  []string `json:"captures"`
@@ -1722,6 +1740,16 @@ type closureHandle struct {
 type memberClosureWire struct {
 	Suffix string        `json:"suffix"`
 	Handle closureHandle `json:"handle"`
+}
+
+// memberCellWire couples the runtime member value, its optional child-body
+// capability, and an optional child-table identity in one write-owned cell.
+// A missing Handle is intentional: callable proof never arises from a table
+// shape alone.
+type memberCellWire struct {
+	Value          []byte         `json:"value"`
+	Handle         *closureHandle `json:"handle,omitempty"`
+	MemberIdentity []byte         `json:"member_identity,omitempty"`
 }
 
 type lexicalEvaluator struct {
@@ -2032,15 +2060,15 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 }
 
 func encodeChildEntry(seeds []entrySeed, closureSeeds ...entryClosureSeed) ([]byte, error) {
-	return encodeChildEntryWithCapabilities(seeds, closureSeeds, nil)
+	return encodeChildEntryWithCapabilities(seeds, closureSeeds, nil, nil, nil)
 }
 
-func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClosureSeed, memberClosureSeeds []entryMemberClosureSeed, gradualAnyTerms ...[]string) ([]byte, error) {
+func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClosureSeed, memberClosureSeeds []entryMemberClosureSeed, tableIdentitySeeds []entryTableIdentitySeed, memberCellSeeds []entryMemberCellSeed, gradualAnyTerms ...[]string) ([]byte, error) {
 	var terms []string
 	for _, supplied := range gradualAnyTerms {
 		terms = append(terms, supplied...)
 	}
-	wire := childEntryWire{Version: 3, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), GradualAnyTerms: terms}
+	wire := childEntryWire{Version: 4, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), TableIdentitySeeds: append([]entryTableIdentitySeed(nil), tableIdentitySeeds...), MemberCellSeeds: append([]entryMemberCellSeed(nil), memberCellSeeds...), GradualAnyTerms: terms}
 	if err := validateChildEntryWire(&wire); err != nil {
 		return nil, err
 	}
@@ -2048,7 +2076,7 @@ func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClo
 	if err != nil {
 		return nil, fmt.Errorf("engine: encode child entry: %w", err)
 	}
-	return append([]byte("front/child-entry/v3/"), encoded...), nil
+	return append([]byte("front/child-entry/v4/"), encoded...), nil
 }
 
 func validateChildEntryWire(wire *childEntryWire) error {
@@ -2076,6 +2104,25 @@ func validateChildEntryWire(wire *childEntryWire) error {
 			return fmt.Errorf("engine: malformed child entry member closure seed")
 		}
 	}
+	sort.Slice(wire.TableIdentitySeeds, func(i, j int) bool { return wire.TableIdentitySeeds[i].Term < wire.TableIdentitySeeds[j].Term })
+	for index, seed := range wire.TableIdentitySeeds {
+		if seed.Term == "" || len(seed.Identity) == 0 || (index > 0 && wire.TableIdentitySeeds[index-1].Term == seed.Term) {
+			return fmt.Errorf("engine: malformed child entry table identity seed")
+		}
+	}
+	sort.Slice(wire.MemberCellSeeds, func(i, j int) bool {
+		if string(wire.MemberCellSeeds[i].Identity) != string(wire.MemberCellSeeds[j].Identity) {
+			return string(wire.MemberCellSeeds[i].Identity) < string(wire.MemberCellSeeds[j].Identity)
+		}
+		return wire.MemberCellSeeds[i].Suffix < wire.MemberCellSeeds[j].Suffix
+	})
+	for index, seed := range wire.MemberCellSeeds {
+		if len(seed.Identity) == 0 || seed.Suffix == "" || !segment.ValidFormattedSegments(seed.Suffix) || len(seed.Wire.Value) == 0 ||
+			(seed.Wire.Handle != nil && !validClosureHandle(*seed.Wire.Handle)) ||
+			(index > 0 && bytes.Equal(wire.MemberCellSeeds[index-1].Identity, seed.Identity) && wire.MemberCellSeeds[index-1].Suffix == seed.Suffix) {
+			return fmt.Errorf("engine: malformed child entry member cell seed")
+		}
+	}
 	sort.Strings(wire.GradualAnyTerms)
 	for index, term := range wire.GradualAnyTerms {
 		if !strings.HasPrefix(term, "path/") || (index > 0 && wire.GradualAnyTerms[index-1] == term) {
@@ -2086,7 +2133,7 @@ func validateChildEntryWire(wire *childEntryWire) error {
 }
 
 func decodeChildEntryWire(value []byte) (childEntryWire, error) {
-	for version := uint8(1); version <= 3; version++ {
+	for version := uint8(1); version <= 4; version++ {
 		prefix := fmt.Sprintf("front/child-entry/v%d/", version)
 		if !strings.HasPrefix(string(value), prefix) {
 			continue
@@ -2173,7 +2220,7 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	values := make([]equation.Fact, 0, len(wire.Seeds)+len(wire.ClosureSeeds)+len(wire.GradualAnyTerms)+len(declaredRoots)*4)
+	values := make([]equation.Fact, 0, len(wire.Seeds)+len(wire.ClosureSeeds)+len(wire.MemberCellSeeds)*3+len(wire.GradualAnyTerms)+len(declaredRoots)*4)
 	seen := make(map[string]bool, len(wire.Seeds))
 	for _, seed := range wire.Seeds {
 		if !validEntrySeed(seed) || seen[seed.Term] {
@@ -2190,6 +2237,14 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			return equation.TransactionResult{}, fmt.Errorf("engine: gradual-any boundary has no entry seed")
 		}
 		values = append(values, equation.Fact{Key: "gradual-any/" + term + "/entry", Value: []byte(term)})
+	}
+	tableIdentityTerms := make(map[string]bool, len(wire.TableIdentitySeeds))
+	for _, seed := range wire.TableIdentitySeeds {
+		if !seen[seed.Term] || len(seed.Identity) == 0 || tableIdentityTerms[seed.Term] {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry table identity seed")
+		}
+		tableIdentityTerms[seed.Term] = true
+		values = append(values, heapIdentityFact(seed.Term, "entry", seed.Identity))
 	}
 	closureTerms := make(map[string]bool, len(wire.ClosureSeeds))
 	for _, seed := range wire.ClosureSeeds {
@@ -2215,6 +2270,26 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		}
 		memberClosures[key] = true
 		values = append(values, equation.Fact{Key: fmt.Sprintf("member-closure/%s/entry/%08d", seed.Term, index), Value: encoded})
+	}
+	memberCells := make(map[string]bool, len(wire.MemberCellSeeds))
+	for _, seed := range wire.MemberCellSeeds {
+		key := string(seed.Identity) + "\x00" + seed.Suffix
+		if len(seed.Identity) == 0 || seed.Suffix == "" || !segment.ValidFormattedSegments(seed.Suffix) || len(seed.Wire.Value) == 0 ||
+			(seed.Wire.Handle != nil && !validClosureHandle(*seed.Wire.Handle)) || memberCells[key] {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry member cell seed")
+		}
+		memberCells[key] = true
+		values = append(values, heapMemberFact(seed.Identity, seed.Suffix, "entry", seed.Wire.Value))
+		if len(seed.Wire.MemberIdentity) != 0 {
+			values = append(values, heapMemberIdentityFact(seed.Identity, seed.Suffix, "entry", seed.Wire.MemberIdentity))
+		}
+		if seed.Wire.Handle != nil {
+			encoded, marshalErr := json.Marshal(seed.Wire)
+			if marshalErr != nil {
+				return equation.TransactionResult{}, marshalErr
+			}
+			values = append(values, equation.Fact{Key: memberCellFactKey(seed.Identity, seed.Suffix, "entry"), Value: encoded})
+		}
 	}
 	for name, root := range declaredRoots {
 		declared, ok := shapefact.DecodeTarget(declaredTypes[name])
@@ -2265,6 +2340,15 @@ func declaredIndexableContainer(value typ.Type) bool {
 }
 
 func closureHandleFor(term []byte, partition equation.Partition) (closureHandle, bool) {
+	if root, suffix, member := tableAddress(term); member && suffix != "" {
+		if identity, found := tableIdentityForTerm(root, partition); found {
+			if cell, found := currentMemberCell(identity, suffix, partition); found {
+				if cell.Handle != nil {
+					return *cell.Handle, true
+				}
+			}
+		}
+	}
 	prefix := "closure/" + string(term) + "/"
 	var encoded []byte
 	latest := ""
@@ -2389,6 +2473,11 @@ func projectSealedTableMemberClosures(target string, tableValue []byte, operatio
 }
 
 func methodClosureHandleFor(receiver []byte, method string, partition equation.Partition) (closureHandle, bool) {
+	if identity, found := tableIdentityForTerm(receiver, partition); found {
+		if cell, found := currentMemberCell(identity, "."+method, partition); found && cell.Handle != nil {
+			return *cell.Handle, true
+		}
+	}
 	// A static member definition publishes its closure at the exact member
 	// path.  Prefer that direct publication: it is invalidated by a later
 	// member write just like currentMethodCallable, and it does not infer a
@@ -2543,7 +2632,7 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 	}
 	boundarySeeds := append([]entrySeed(nil), seeds...)
 	seeds = append(seeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
-	entry, err := encodeChildEntryWithCapabilities(seeds, closureSeeds, childEntryMemberClosureSeeds(seeds, partition))
+	entry, err := encodeChildEntryWithCapabilities(seeds, closureSeeds, childEntryMemberClosureSeeds(seeds, partition), tableIdentitySeedsForEntry(seeds, partition), memberCellSeedsForEntry(seeds, partition))
 	if err != nil {
 		return nil, false, err
 	}
@@ -2678,7 +2767,9 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	entrySeeds := append([]entrySeed(nil), boundarySeeds...)
 	entrySeeds = append(entrySeeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
 	memberClosureSeeds := childEntryMemberClosureSeeds(entrySeeds, partition)
-	entry, err := encodeChildEntryWithCapabilities(entrySeeds, closureSeeds, memberClosureSeeds, gradualAnyTerms)
+	tableIdentitySeeds := tableIdentitySeedsForEntry(entrySeeds, partition)
+	memberCellSeeds := memberCellSeedsForEntry(entrySeeds, partition)
+	entry, err := encodeChildEntryWithCapabilities(entrySeeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, gradualAnyTerms)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
@@ -3747,6 +3838,11 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 					memberValue = []byte(member.Value)
 				}
 				values = append(values, heapMemberFact(identity, member.Suffix, operation.Target.Name, memberValue))
+				if cell, published, cellErr := memberCellFact(identity, member.Suffix, operation.Target.Name, memberValue, partition); cellErr != nil {
+					return equation.TransactionResult{}, cellErr
+				} else if published {
+					values = append(values, cell)
+				}
 				if allocationResult, found := operationOperand(operation.Operands, "allocation-result"); found {
 					if source, found := heapMemberOriginCurrent(allocationResult, member.Suffix, partition); found {
 						if memberIdentity, found := tableIdentityForTerm(source, partition); found {
@@ -3760,6 +3856,11 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if root, suffix, ok := tableAddress([]byte(target)); ok && suffix != "" {
 		if parent, found := tableIdentityForTerm(root, partition); found {
 			values = append(values, heapMemberFact(parent, suffix, operation.Target.Name, value))
+			if cell, published, cellErr := memberCellFact(parent, suffix, operation.Target.Name, value, partition); cellErr != nil {
+				return equation.TransactionResult{}, cellErr
+			} else if published {
+				values = append(values, cell)
+			}
 			if hasIdentity {
 				values = append(values, heapMemberIdentityFact(parent, suffix, operation.Target.Name, identity))
 			}
@@ -4322,6 +4423,11 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 				}
 			}
 			result.Closure.Values = append(result.Closure.Values, heapMemberFact(writeIdentity, suffix, operation.Target.Name, value))
+			if cell, published, cellErr := memberCellFact(writeIdentity, suffix, operation.Target.Name, value, partition); cellErr != nil {
+				return equation.TransactionResult{}, cellErr
+			} else if published {
+				result.Closure.Values = append(result.Closure.Values, cell)
+			}
 			if writeIdentity == nil || string(writeIdentity) == string(identity) {
 				if memberIdentity, found := tableIdentityForTerm(operands["value"], partition); found {
 					result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
@@ -4507,7 +4613,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	shapeRelation := shapeUnknown
 	for _, operand := range operation.Operands {
 		if operand.Role == "shape-target" {
-			shapeRelation = assignmentShapeRelation(lexical, source, value, operand.Value)
+			shapeRelation = assignmentShapeRelation(lexical, source, value, operand.Value, partition)
 			break
 		}
 	}
@@ -4673,7 +4779,7 @@ const (
 
 // assignmentShapeRelation is deliberately proof-oriented: a malformed or
 // unsupported target/type member is unknown, never a compatibility result.
-func assignmentShapeRelation(lexical *lexicalEvaluator, source, value, encodedTarget []byte) shapeRelation {
+func assignmentShapeRelation(lexical *lexicalEvaluator, source, value, encodedTarget []byte, partition equation.Partition) shapeRelation {
 	target, ok := shapefact.DecodeTarget(encodedTarget)
 	if !ok {
 		return shapeUnknown
@@ -4687,7 +4793,49 @@ func assignmentShapeRelation(lexical *lexicalEvaluator, source, value, encodedTa
 		}
 		return shapeRefuted
 	}
-	return valueAgainstType(value, target)
+	if relation := valueAgainstType(value, target); relation != shapeUnknown {
+		return relation
+	}
+	return lexicalMemberCallableRelation(lexical, source, target, partition)
+}
+
+// lexicalMemberCallableRelation is the narrow callable-surface projection for
+// a local table member.  It consumes an existing closure capability and the
+// current capture cells, then compares the child publication with the claimed
+// zero-argument function result.  It never derives a callable contract from a
+// member name, table shape, or annotation alone.
+func lexicalMemberCallableRelation(lexical *lexicalEvaluator, source []byte, target typ.Type, partition equation.Partition) shapeRelation {
+	if lexical == nil || !strings.HasPrefix(string(source), "path/") {
+		return shapeUnknown
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(target)).(*typ.Function)
+	if !ok || function == nil || len(function.TypeParams) != 0 || len(function.Params) != 0 || function.Variadic != nil || len(function.Returns) != 1 || function.Returns[0] == nil {
+		return shapeUnknown
+	}
+	handle, found := closureHandleFor(source, partition)
+	if !found {
+		if cut := strings.LastIndex(string(source), "."); cut > len("path/") && cut < len(source)-1 {
+			handle, found = methodClosureHandleFor(source[:cut], string(source[cut+1:]), partition)
+		}
+	}
+	if !found {
+		return shapeUnknown
+	}
+	child, found := lexical.byPrototype[handle.Prototype]
+	if !found || child.Cyclic != nil || len(child.Boundary.Parameters) != 0 || len(handle.Captures) != len(child.Boundary.Captures) {
+		return shapeUnknown
+	}
+	operation := equation.BoundEquation{Target: equation.Coordinate{Name: "member-surface"}}
+	projected, err := lexical.applyKnown(operation, directCallOperands{callee: source, resultArity: 1}, handle, partition)
+	if err != nil {
+		return shapeUnknown
+	}
+	for _, fact := range projected.Closure.Values {
+		if fact.Key == "call-result/member-surface/00000000" {
+			return valueAgainstType(fact.Value, function.Returns[0])
+		}
+	}
+	return shapeUnknown
 }
 
 func valueAgainstType(value []byte, target typ.Type) shapeRelation {
@@ -7148,6 +7296,132 @@ func heapMemberFact(identity []byte, suffix, operation string, value []byte) equ
 
 func heapMemberIdentityFact(identity []byte, suffix, operation string, memberIdentity []byte) equation.Fact {
 	return equation.Fact{Key: heapFactKey(heapMemberIdentityPrefix, identity, suffix, operation), Value: append([]byte(nil), memberIdentity...)}
+}
+
+func memberCellFactKey(identity []byte, suffix, operation string) string {
+	return heapFactKey(memberCellPrefix, identity, suffix, operation)
+}
+
+func memberCellFact(identity []byte, suffix, operation string, value []byte, partition equation.Partition) (equation.Fact, bool, error) {
+	return memberCellFactWithSource(identity, suffix, operation, value, value, nil, partition)
+}
+
+func memberCellFactWithIdentity(identity []byte, suffix, operation string, value, memberIdentity []byte, partition equation.Partition) (equation.Fact, bool, error) {
+	return memberCellFactWithSource(identity, suffix, operation, value, value, memberIdentity, partition)
+}
+
+func memberCellFactWithSource(identity []byte, suffix, operation string, value, source, memberIdentity []byte, partition equation.Partition) (equation.Fact, bool, error) {
+	if len(identity) == 0 || suffix == "" || !segment.ValidFormattedSegments(suffix) || len(value) == 0 {
+		return equation.Fact{}, false, nil
+	}
+	cell := memberCellWire{Value: append([]byte(nil), value...)}
+	if handle, found := closureHandleFor(source, partition); found {
+		cell.Handle = &handle
+	}
+	if len(memberIdentity) != 0 {
+		cell.MemberIdentity = append([]byte(nil), memberIdentity...)
+	} else if resolvedIdentity, found := tableIdentityForTerm(source, partition); found {
+		cell.MemberIdentity = resolvedIdentity
+	}
+	encoded, err := json.Marshal(cell)
+	if err != nil {
+		return equation.Fact{}, false, err
+	}
+	return equation.Fact{Key: memberCellFactKey(identity, suffix, operation), Value: encoded}, true, nil
+}
+
+func currentMemberCell(identity []byte, suffix string, partition equation.Partition) (memberCellWire, bool) {
+	prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/"
+	var encoded []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (encoded == nil || fact.Key > latest) {
+			encoded, latest = fact.Value, fact.Key
+		}
+	}
+	if encoded == nil {
+		return memberCellWire{}, false
+	}
+	var cell memberCellWire
+	if json.Unmarshal(encoded, &cell) != nil || len(cell.Value) == 0 || (cell.Handle != nil && !validClosureHandle(*cell.Handle)) {
+		return memberCellWire{}, false
+	}
+	return cell, true
+}
+
+// memberCellSeedsForEntry follows only identities already reachable from an
+// exact entry seed.  It is intentionally a closed heap snapshot: no source
+// path or declared table type is converted into a callable capability.
+func memberCellSeedsForEntry(seeds []entrySeed, partition equation.Partition) []entryMemberCellSeed {
+	queue := make([][]byte, 0, len(seeds))
+	seenIdentity := make(map[string]bool)
+	for _, seed := range seeds {
+		if identity, found := tableIdentityForTerm([]byte(seed.Term), partition); found {
+			queue = append(queue, identity)
+		}
+	}
+	byCell := make(map[string]entryMemberCellSeed)
+	for len(queue) != 0 {
+		identity := queue[0]
+		queue = queue[1:]
+		if seenIdentity[string(identity)] {
+			continue
+		}
+		seenIdentity[string(identity)] = true
+		prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+		for _, fact := range partition.Values() {
+			if !strings.HasPrefix(fact.Key, prefix) {
+				continue
+			}
+			rest := strings.TrimPrefix(fact.Key, prefix)
+			cut := strings.LastIndexByte(rest, '/')
+			if cut <= 0 || cut == len(rest)-1 {
+				continue
+			}
+			suffixBytes, err := base64.RawURLEncoding.DecodeString(rest[:cut])
+			if err != nil || !segment.ValidFormattedSegments(string(suffixBytes)) {
+				continue
+			}
+			cell, found := currentMemberCell(identity, string(suffixBytes), partition)
+			if !found {
+				continue
+			}
+			key := string(identity) + "\x00" + string(suffixBytes)
+			byCell[key] = entryMemberCellSeed{Identity: append([]byte(nil), identity...), Suffix: string(suffixBytes), Wire: cell}
+			if len(cell.MemberIdentity) != 0 {
+				queue = append(queue, cell.MemberIdentity)
+			}
+		}
+	}
+	keys := make([]string, 0, len(byCell))
+	for key := range byCell {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]entryMemberCellSeed, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, byCell[key])
+	}
+	return out
+}
+
+func tableIdentitySeedsForEntry(seeds []entrySeed, partition equation.Partition) []entryTableIdentitySeed {
+	byTerm := make(map[string]entryTableIdentitySeed, len(seeds))
+	for _, seed := range seeds {
+		if identity, found := tableIdentityForTerm([]byte(seed.Term), partition); found {
+			byTerm[seed.Term] = entryTableIdentitySeed{Term: seed.Term, Identity: append([]byte(nil), identity...)}
+		}
+	}
+	terms := make([]string, 0, len(byTerm))
+	for term := range byTerm {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	out := make([]entryTableIdentitySeed, 0, len(terms))
+	for _, term := range terms {
+		out = append(out, byTerm[term])
+	}
+	return out
 }
 
 func materializedMemberOrigin(value []byte) (string, []byte, bool) {
