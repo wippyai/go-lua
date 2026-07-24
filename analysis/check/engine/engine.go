@@ -3028,9 +3028,6 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 	// call evidence is the publication authority; requiresBody is merely an
 	// allocation-time demand hint and must not suppress diagnostics from an
 	// already-admitted invocation.
-	if len(child.Nested) != 0 {
-		return
-	}
 	// A normal call does not create the allocation-time declaration boundary
 	// used by static-member-read admission. Keep those write-owned facts local;
 	// objectMaterializationKernel publishes them only after its closed formal
@@ -3056,11 +3053,11 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 	}
 }
 
-// childCallDiagnostic accepts contract facts whose consumer is already owned
-// by an exact child entry. Branch advice and other body-local conclusions have
-// no caller-owned consumer and remain private.
+// childCallDiagnostic accepts assignment and call-contract facts whose consumer
+// is already owned by an exact child entry. Branch advice and other body-local
+// conclusions have no caller-owned consumer and remain private.
 func childCallDiagnostic(fact equation.Fact) bool {
-	return strings.HasPrefix(fact.Key, "type.call.direct.") || strings.HasPrefix(fact.Key, "type.operator.concat_operand/")
+	return strings.HasPrefix(fact.Key, "type.assignment/") || strings.HasPrefix(fact.Key, "type.call.direct.") || strings.HasPrefix(fact.Key, "type.operator.concat_operand/")
 }
 
 // childEntryDescendantSeeds preserves exact path facts below a captured entry
@@ -4817,6 +4814,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// assignment of nil to the declaration type.
 	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil") && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted) {
 		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
+		optionalSource := optionalAssignmentSource(value, targetType)
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
 			message = "cannot assign " + sourceDisplay + " because it is " + assignmentValueType(value) + ", not " + declared
 		}
@@ -4837,6 +4835,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			if _, ok := lexicalMemberCallableDisplay(lexical, operation); ok {
 				message = "cannot assign " + sourceDisplay + " because it is fun() -> " + assignmentEvidenceValue(memberSurface) + ", not " + callableClaimDisplay(lexical, operation)
 			}
+		}
+		if optionalSource {
+			message = "cannot assign " + sourceDisplay + " because it may be nil"
 		}
 		closure.Diagnostics = []equation.Fact{{
 			Key:   "type.assignment/" + operation.Target.Name,
@@ -5496,6 +5497,30 @@ func assignmentMismatchProven(value []byte, targetType string) bool {
 	default:
 		return false
 	}
+}
+
+// optionalAssignmentSource renders recursive optional values by their decisive
+// nilability refutation, before recursive member comparison can report an
+// incidental callable-shape mismatch. Both sides are already-published type
+// facts; ordinary optionals and nil-accepting targets stay on the existing
+// assignment path.
+func optionalAssignmentSource(value []byte, targetType string) bool {
+	source, ok := shapefact.DecodeTarget(value)
+	if !ok || source == nil {
+		return false
+	}
+	optional, ok := unwrap.Alias(subst.ExpandInstantiated(source)).(*typ.Optional)
+	if !ok || optional == nil || optional.Inner == nil {
+		return false
+	}
+	if _, recursive := unwrap.Alias(subst.ExpandInstantiated(optional.Inner)).(*typ.Recursive); !recursive {
+		return false
+	}
+	name, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
+	if err != nil || name == "" {
+		return false
+	}
+	return !strings.HasSuffix(name, "?") && name != "any" && name != "nil"
 }
 
 func claimTypeIsAny(targetType string) bool {

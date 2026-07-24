@@ -155,6 +155,43 @@ sum(1, 2, "three")
 	t.Fatalf("typed variadic argument mismatch was not proven: %#v", result.Diagnostics)
 }
 
+func TestCheckRendersOptionalRecursiveAssignmentAsNilability(t *testing.T) {
+	result, err := engine.Check(`
+type Node = {
+	name: string,
+    child: Node?,
+    set_child: (self: Node, child: Node) -> Node,
+}
+local function make_node(name: string): Node
+    local node: Node = {
+        name = name,
+        child = nil,
+        set_child = function(self: Node, child: Node): Node
+            self.child = child
+            return self
+        end,
+    }
+    return node
+end
+local root = make_node("root")
+local child = make_node("child")
+root:set_child(child)
+if root.child then
+    local stable: string = root.child.name
+end
+local direct: Node = root.child
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "cannot assign root.child because it may be nil") {
+			return
+		}
+	}
+	t.Fatalf("optional recursive assignment did not render nilability: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	result, err := engine.Check(`local value: string = provider()`)
 	if err != nil {
