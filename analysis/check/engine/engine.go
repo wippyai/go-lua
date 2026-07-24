@@ -1601,6 +1601,17 @@ func (l *lexicalEvaluator) hasTableAllocation(prototype string) bool {
 	return false
 }
 
+// hasProjectableTableResult identifies the narrow result boundary where an
+// already-evaluated child allocation may cross to its caller. A tuple return
+// has Lua expansion semantics of its own, and recursive return graphs need the
+// cyclic summary path; neither can reuse this finite allocation projection.
+func hasProjectableTableResult(child front.Compilation) bool {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.DeclaredReturns) != 1 {
+		return false
+	}
+	return !typ.ContainsRecursive(child.WIR.Type(child.Boundary.DeclaredReturns[0]))
+}
+
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	table := interproc.NewProjectedTable()
 	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission)}
@@ -4991,20 +5002,18 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	applyLocal := func() (equation.TransactionResult, bool, error) {
 		recursiveDemand := lexical != nil && lexical.closureDemandRecurses(handle, partition)
-		genericDirect := false
-		if hasCallee {
-			if callee, known := resolveKnownCurrentValue(operands.callee, partition); known {
-				if signature, signed := callableSignature(callee); signed {
-					genericDirect = genericCallableSignature(signature)
-				}
-			}
+		child, childKnown := front.Compilation{}, false
+		if lexical != nil {
+			child, childKnown = lexical.byPrototype[handle.Prototype]
 		}
-		// A generic local constructor can publish its concrete returned shape
-		// only by evaluating the already-admitted child with this call's exact
-		// values. Its declared generic return contract is not used as a shape
-		// witness, so the ordinary table-allocation shortcut cannot apply.
+		// A declared one-slot, acyclic child result is the only table return that
+		// can be projected without losing tuple order or crossing a recursive
+		// summary boundary. Its sealed allocation is the existing publication; a
+		// declaration alone remains insufficient.
+		tableProjectionUnsafe := !childKnown || !hasProjectableTableResult(child)
 		if lexical == nil || !localCallable || (operands.resultArity == 0 && !lexical.requiresBody[handle.Prototype]) ||
-			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] && (lexical.hasClaim(handle.Prototype) || lexical.hasTableAllocation(handle.Prototype) && !recursiveDemand && !genericDirect)) {
+			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] &&
+				(lexical.hasClaim(handle.Prototype) || lexical.hasTableAllocation(handle.Prototype) && tableProjectionUnsafe && !recursiveDemand)) {
 			return equation.TransactionResult{}, false, nil
 		}
 		outcome, err := lexical.applyKnown(operation, operands, handle, partition)
