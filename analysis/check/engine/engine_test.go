@@ -667,6 +667,24 @@ end
 	t.Fatalf("guarded explicit-any member read diagnostics = %#v", result.Diagnostics)
 }
 
+func TestCheckPublishesExplicitAnyBoundaryViolationThroughCompositeTypeGuard(t *testing.T) {
+	result, err := engine.Check(`
+local raw: any = {items = {"ok", 99}}
+if type(raw.items) == "table" and type(raw.items[1]) == "string" then
+	local labels: {string} = raw.items
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 4 && strings.Contains(diagnostic.Message, "cannot assign raw.items because it is any, not string[]") {
+			return
+		}
+	}
+	t.Fatalf("composite guarded explicit-any member read diagnostics = %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckPreservesExplicitAnyBoundaryThroughSealedTableIteration(t *testing.T) {
 	result, err := engine.Check(`
 local unknownID: any = nil
