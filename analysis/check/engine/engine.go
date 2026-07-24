@@ -11462,7 +11462,7 @@ func resolveCurrentIdentity(term []byte, partition equation.Partition) ([]byte, 
 	if known && isChannelIdentity(value) {
 		return value, true
 	}
-	if _, known := currentEpochFact(channelPayloadPrefix, term, partition); known {
+	if _, known := currentChannelPayloadFact(term, partition); known {
 		return []byte("scalar/channel-summary/" + base64.RawURLEncoding.EncodeToString(term)), true
 	}
 	// A typed module summary can prove that a derived field is a Channel<T>,
@@ -11481,7 +11481,7 @@ func resolveCurrentIdentity(term []byte, partition equation.Partition) ([]byte, 
 // arguments from a runtime-shaped interface, so this projection starts from
 // the closed ancestor type instead of decoding the projected value again.
 func typedChannelPayload(term []byte, partition equation.Partition) (typ.Type, bool) {
-	if encoded, ok := currentEpochFact(channelPayloadPrefix, term, partition); ok {
+	if encoded, ok := currentChannelPayloadFact(term, partition); ok {
 		payload, decoded := shapefact.DecodeTarget(encoded)
 		return payload, decoded && payload != nil
 	}
@@ -11498,6 +11498,39 @@ func typedChannelPayload(term []byte, partition equation.Partition) (typ.Type, b
 	}
 	payload, ok := ambient.ChannelPayloadType(channel)
 	return payload, ok && payload != nil
+}
+
+// currentChannelPayloadFact reads a payload witness at the current epoch of
+// its owning path. Channel payloads belong to a static descendant while the
+// ordinary epoch belongs to the root value, so requiring both coordinates
+// keeps a superseded wrapper result from contributing a stale select arm.
+func currentChannelPayloadFact(term []byte, partition equation.Partition) ([]byte, bool) {
+	if encoded, ok := currentEpochFact(channelPayloadPrefix, term, partition); ok {
+		return encoded, true
+	}
+	path := strings.TrimPrefix(string(term), "path/")
+	if path == string(term) {
+		return nil, false
+	}
+	for cut := len(path); cut > 0; {
+		cut = strings.LastIndexAny(path[:cut], ".[")
+		if cut < 0 {
+			return nil, false
+		}
+		root, suffix := path[:cut], path[cut:]
+		if !segment.ValidFormattedSegments(suffix) {
+			return nil, false
+		}
+		rootTerm := []byte("path/" + root)
+		operation, current := currentEpoch(rootTerm, partition)
+		if !current {
+			continue
+		}
+		if fact, found := partition.Value(channelPayloadPrefix + string(rootTerm) + suffix + "/" + operation); found {
+			return fact.Value, true
+		}
+	}
+	return nil, false
 }
 
 // firstChannelPayloadMismatch walks only a sealed argument shape against the
@@ -11602,6 +11635,45 @@ func channelPayloadSummaryFacts(root, operation string, value typ.Type) []equati
 		}
 	}
 	walk(value, nil)
+	return facts
+}
+
+// channelPayloadRelationFacts carries a Channel<T> payload only through an
+// already-published finite import return relation. Each emitted path comes
+// from the relation's exact member suffix and each payload comes from the
+// corresponding call argument's current type publication; unresolved leaves
+// simply contribute no fact.
+func channelPayloadRelationFacts(template exportrelation.Value, result, operation string, arguments map[int][]byte, partition equation.Partition) []equation.Fact {
+	if result == "" || operation == "" || !strings.HasPrefix(result, "temp/") {
+		return nil
+	}
+	facts := make([]equation.Fact, 0)
+	var walk func(exportrelation.Value, string)
+	walk = func(value exportrelation.Value, suffix string) {
+		if value.Parameter != nil {
+			argument, found := arguments[*value.Parameter]
+			if !found {
+				return
+			}
+			payload, found := typedChannelPayload(argument, partition)
+			if !found || payload == nil {
+				return
+			}
+			encoded, ok := shapefact.EncodeTarget(payload)
+			if !ok {
+				return
+			}
+			facts = append(facts, equation.Fact{Key: channelPayloadPrefix + result + suffix + "/" + operation, Value: encoded})
+			return
+		}
+		for _, member := range value.Table {
+			if !segment.ValidFormattedSegments(member.Suffix) {
+				return
+			}
+			walk(member.Value, suffix+member.Suffix)
+		}
+	}
+	walk(template, "")
 	return facts
 }
 
@@ -13220,6 +13292,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if relation, template, parameterized, ok := importedProviderRelationValue(lexical, provider, application, index, argumentTerms, partition); ok {
 					value = relation
 					importedRelation = parameterized
+					values = append(values, channelPayloadRelationFacts(template, string(result), operation.Target.Name, argumentTerms, partition)...)
 					if template.Parameter != nil {
 						if argument, found := argumentTerms[*template.Parameter]; found {
 							receiverResult, receiverResultTerm = true, argument

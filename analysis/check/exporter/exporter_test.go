@@ -180,6 +180,37 @@ return M`
 	}
 }
 
+func TestDeriveSummaryWithImportsComposesTableArgumentRelation(t *testing.T) {
+	source := `local protocol = require("protocol")
+type Source = { messages: string, ticks: number }
+type SourceBox = { value: Source }
+local M = {}
+function M.new_source(messages: string, ticks: number): SourceBox
+  return protocol.box_source({ messages = messages, ticks = ticks })
+end
+return M`
+	result, err := engine.Check(source)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	parameter := 0
+	upstream := exportrelation.Summary{Type: typ.Unknown, Functions: []exportrelation.Function{{
+		Path: "box_source", Arity: 1,
+		Return: exportrelation.Value{Table: []exportrelation.Member{{Suffix: ".value", Value: exportrelation.Value{Parameter: &parameter}}}},
+	}}}
+	summary := exporter.DeriveSummaryWithImports(result, source, map[string]exportrelation.Summary{"protocol": upstream}, map[string]string{"protocol": "protocol"})
+	function, ok := summary.Function("new_source", 2)
+	if !ok || len(function.Return.Table) != 1 || len(function.Return.Table[0].Value.Table) != 2 {
+		t.Fatalf("new_source relation = %#v, want composed boxed parameter table", function)
+	}
+	messages := function.Return.Table[0].Value.Table[0]
+	ticks := function.Return.Table[0].Value.Table[1]
+	if messages.Suffix != ".messages" || messages.Value.Parameter == nil || *messages.Value.Parameter != 0 ||
+		ticks.Suffix != ".ticks" || ticks.Value.Parameter == nil || *ticks.Value.Parameter != 1 {
+		t.Fatalf("composed members = %#v, want messages/ticks parameter witnesses", function.Return.Table[0].Value.Table)
+	}
+}
+
 func TestDeriveSummaryPublishesOwnershipStoreAlias(t *testing.T) {
 	source := `local M = {}
 local store_item = ownership.store

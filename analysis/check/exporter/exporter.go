@@ -381,19 +381,44 @@ func forwardedImportedReturn(expr ast.Expr, params map[string]int, imports map[s
 	if !found {
 		return exportrelation.Value{}, false
 	}
-	arguments := make([]int, len(call.Args))
+	arguments := make([]exportrelation.Value, len(call.Args))
 	for index, argument := range call.Args {
-		identifier, ok := argument.(*ast.IdentExpr)
+		value, ok := remapValue(argument, params, nil)
 		if !ok {
 			return exportrelation.Value{}, false
 		}
-		parameter, ok := params[identifier.Value]
-		if !ok {
-			return exportrelation.Value{}, false
-		}
-		arguments[index] = parameter
+		arguments[index] = value
 	}
-	return remapValue(function.Return, nil, arguments)
+	return composeForwardedRelation(function.Return, arguments)
+}
+
+// composeForwardedRelation substitutes the already-published caller argument
+// templates into one imported return relation. Both inputs are finite export
+// facts; an unresolved parameter or malformed nested template is rejected
+// instead of inventing a return member.
+func composeForwardedRelation(value exportrelation.Value, arguments []exportrelation.Value) (exportrelation.Value, bool) {
+	if value.Parameter != nil {
+		index := *value.Parameter
+		if index < 0 || index >= len(arguments) {
+			return exportrelation.Value{}, false
+		}
+		return arguments[index], true
+	}
+	if value.Scalar != "" {
+		return exportrelation.Value{Scalar: value.Scalar}, true
+	}
+	if len(value.Table) == 0 {
+		return exportrelation.Value{}, false
+	}
+	result := exportrelation.Value{Table: make([]exportrelation.Member, 0, len(value.Table))}
+	for _, member := range value.Table {
+		child, ok := composeForwardedRelation(member.Value, arguments)
+		if !ok || member.Suffix == "" {
+			return exportrelation.Value{}, false
+		}
+		result.Table = append(result.Table, exportrelation.Member{Suffix: member.Suffix, Value: child})
+	}
+	return result, true
 }
 
 func remapValue(value any, params map[string]int, arguments []int) (exportrelation.Value, bool) {
