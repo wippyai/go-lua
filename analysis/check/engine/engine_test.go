@@ -49,6 +49,32 @@ func TestCheckPublishesProvenAnnotationAssignmentMismatch(t *testing.T) {
 	}
 }
 
+func TestCheckProjectsRecursiveRecordFieldMismatch(t *testing.T) {
+	source := `
+type Tree = { root: TreeNode? }
+type TreeNode = { label: string, owner: Tree, children: {TreeNode}, parent: TreeNode? }
+local tree: Tree = {root = nil}
+local node: TreeNode = {label = 123, owner = tree, children = {}, parent = nil}
+`
+	result, err := engine.Check(source)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code != "type.assignment" || !strings.Contains(diagnostic.Message, "node.label") {
+			continue
+		}
+		if diagnostic.Span.StartLine != 5 || diagnostic.Span.StartCol != 33 {
+			t.Fatalf("field mismatch span = %#v, want main source 5:33", diagnostic.Span)
+		}
+		if len(diagnostic.Evidence) != 2 || !strings.Contains(diagnostic.Evidence[0].Message, "node.label has literal value 123") || !strings.Contains(diagnostic.Evidence[1].Message, "node.label is declared as string") {
+			t.Fatalf("field mismatch evidence = %#v", diagnostic.Evidence)
+		}
+		return
+	}
+	t.Fatalf("recursive field mismatch was not projected: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckCanonicalizesDirectCallDiagnosticsAtPublication(t *testing.T) {
 	result, err := engine.Check(`
 local function takes_string(s: string): string return s end

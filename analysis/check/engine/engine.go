@@ -294,6 +294,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	// publication; keep the pre-existing root surface unchanged.
 	closure.Diagnostics = rootPublishedDiagnostics(artifact, closure.Diagnostics)
 	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, compilation.EffectSpans, compilation.ExpressionSpans, compilation.ReturnSpans, closure.Diagnostics)
+	structuralAssignmentDiagnosticSpans(compilation, closure, diagnosticSpans)
 	for key, span := range lexical.diagnosticSpans {
 		if diagnosticSpans == nil {
 			diagnosticSpans = make(map[string]wir.Span)
@@ -467,6 +468,83 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expression
 	return out
 }
 
+// structuralAssignmentDiagnosticSpans replaces a root annotation's source
+// anchor only when its closed table literal has a proven refuting member. The
+// member coordinates come from WIR TableEntry metadata; no source tree is
+// revisited and an open/malformed literal retains the ordinary claim span.
+func structuralAssignmentDiagnosticSpans(compilation front.Compilation, closure equation.OutputClosure, spans map[string]wir.Span) {
+	if compilation.WIR == nil || len(closure.Diagnostics) == 0 || spans == nil {
+		return
+	}
+	literalMembers := make(map[string]map[string]wir.Span)
+	for index := 0; index < compilation.WIR.Len(); index++ {
+		instruction := compilation.WIR.Instr(index)
+		if instruction.Op != wir.OpMakeTable {
+			continue
+		}
+		members := make(map[string]wir.Span)
+		for _, entry := range compilation.WIR.TableEntries(instruction.TableEntries) {
+			if entry.ValueSpan.Valid() {
+				members[segment.FormatSegments(entry.Suffix.Segments)] = entry.ValueSpan
+			}
+		}
+		if term, ok := tableOperandTerm(compilation.WIR, instruction.Dst); ok && len(members) != 0 {
+			literalMembers[term] = members
+		}
+	}
+	for _, diagnostic := range closure.Diagnostics {
+		name, assignment := strings.CutPrefix(diagnostic.Key, "type.assignment/")
+		if !assignment {
+			continue
+		}
+		var operation equation.Equation
+		for _, candidate := range compilation.Artifact.Equations {
+			if candidate.Target.Name == name && candidate.Occurrence.Kind == "claim" {
+				operation = candidate
+				break
+			}
+		}
+		if operation.Target.Name == "" {
+			continue
+		}
+		operands, err := artifactOperandsByRole(operation.Operands, "value")
+		if err != nil {
+			continue
+		}
+		members := literalMembers[string(operands["value"])]
+		if len(members) == 0 {
+			continue
+		}
+		// claimKernel has already selected a closed, refuted member for this
+		// fact. Reuse that semantic suffix solely to recover its WIR source
+		// coordinate; a suffix absent from the exact constructor has no span.
+		for suffix, span := range members {
+			if strings.Contains(string(diagnostic.Value), suffix+" because") {
+				spans[diagnostic.Key] = span
+				break
+			}
+		}
+	}
+}
+
+func tableOperandTerm(body *wir.Body, operand wir.Operand) (string, bool) {
+	if body == nil {
+		return "", false
+	}
+	switch operand.Kind {
+	case wir.OperandPath:
+		path := body.Path(wir.PathRef(operand.Ref))
+		if path.IsEmpty() || path.Key() == "" {
+			return "", false
+		}
+		return "path/" + string(path.Key()), true
+	case wir.OperandTemp:
+		return "temp/" + strconv.FormatUint(uint64(operand.Ref), 10), true
+	default:
+		return "", false
+	}
+}
+
 // publishedDiagnostics is the sole rich-diagnostic projection.  Kernels still
 // publish equation facts; this function only joins each published fact to the
 // claim operation that produced it and to the abstract value already closed by
@@ -573,6 +651,27 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			declared = display
 		}
 		valueDescription := assignmentEvidenceValue(value)
+		structuralMismatch := assignmentMismatch{}
+		hasStructuralMismatch := false
+		// An explicit-any boundary is the authoritative source fact. Its earlier
+		// initializer can be a sealed table, but that table is not a validation
+		// proof and must not replace the boundary diagnostic with a member error.
+		if !anySource {
+			for _, operand := range operation.Operands {
+				if operand.Role != "shape-target" {
+					continue
+				}
+				if target, ok := shapefact.DecodeTarget(operand.Term.Encoding); ok {
+					structuralMismatch, hasStructuralMismatch = firstAssignmentMismatch(value, target)
+				}
+				break
+			}
+		}
+		if hasStructuralMismatch {
+			sourceDisplay += structuralMismatch.Suffix
+			valueDescription = assignmentEvidenceValue(structuralMismatch.Value)
+			declared = typeformat.Short(structuralMismatch.Expected)
+		}
 		if anySource {
 			valueDescription = "any"
 			targetSpan := claimTargetSpans[name]
@@ -593,7 +692,17 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			out = append(out, item)
 			continue
 		}
-		if _, typed := shapefact.DecodeTarget(value); typed || string(value) == "scalar/nil" {
+		if hasStructuralMismatch {
+			targetSpan := claimTargetSpans[name]
+			if !targetSpan.Valid() {
+				targetSpan = item.Span
+			}
+			item.Evidence = []DiagnosticEvidence{
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", sourceDisplay, valueDescription)},
+				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", sourceDisplay, declared)},
+			}
+			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
+		} else if _, typed := shapefact.DecodeTarget(value); typed || string(value) == "scalar/nil" {
 			targetSpan := claimTargetSpans[name]
 			if !targetSpan.Valid() {
 				targetSpan = item.Span
@@ -934,6 +1043,26 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 				return append([]byte(nil), fact.Value...), true
 			}
 		}
+	}
+	// A constructor can publish its root shape before later per-member writes
+	// complete the same statement. Those writes are the claim's direct CFG
+	// predecessor, while the root shape remains its exact source value. Recover
+	// only that earlier, non-refinement root fact; a later source write or a
+	// claim output is never accepted as evidence for this diagnostic.
+	var source []byte
+	latest := ""
+	for _, fact := range closure.Values {
+		if !strings.HasPrefix(fact.Key, prefix) || isClaimRefinement(fact.Value) {
+			continue
+		}
+		name := strings.TrimPrefix(fact.Key, prefix)
+		if name >= operation.Target.Name || (latest != "" && name <= latest) {
+			continue
+		}
+		source, latest = fact.Value, name
+	}
+	if source != nil && shapefact.IsTable(source) {
+		return append([]byte(nil), source...), true
 	}
 	// A dynamic member read publishes its resolved value at the read-result
 	// term, while a following annotation retains the equivalent static member
@@ -4440,6 +4569,17 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
 			message = "cannot assign " + sourceDisplay + " because it is " + assignmentValueType(value) + ", not " + declared
 		}
+		for _, operand := range operation.Operands {
+			if operand.Role != "shape-target" {
+				continue
+			}
+			if declared, ok := shapefact.DecodeTarget(operand.Value); ok {
+				if mismatch, found := firstAssignmentMismatch(value, declared); found {
+					message = "cannot assign " + sourceDisplay + mismatch.Suffix + " because it is " + assignmentEvidenceValue(mismatch.Value) + ", not " + typeformat.Short(mismatch.Expected)
+				}
+			}
+			break
+		}
 		if anySource {
 			message = assignmentAnyMismatchMessage(sourceDisplay, targetType)
 		}
@@ -4814,6 +4954,47 @@ func tableAgainstRecord(value []byte, target typ.Type, comparison *shapeComparis
 		return shapeUnknown
 	}
 	return shapeProven
+}
+
+// assignmentMismatch identifies the first closed record member that refutes a
+// declared structural assignment. It is a diagnostic projection of the same
+// finite shape relation used by claimKernel: unknown/open members never appear
+// here, and recursive declaration graphs remain bounded by the existing
+// comparison when deciding whether a member is refuted.
+type assignmentMismatch struct {
+	Suffix   string
+	Value    []byte
+	Expected typ.Type
+}
+
+func firstAssignmentMismatch(value []byte, target typ.Type) (assignmentMismatch, bool) {
+	if target == nil {
+		return assignmentMismatch{}, false
+	}
+	resolved := unwrap.Alias(subst.ExpandInstantiated(target))
+	if recursive, ok := resolved.(*typ.Recursive); ok && recursive.Body != nil && recursive.Body != recursive {
+		resolved = unwrap.Alias(subst.ExpandInstantiated(recursive.Body))
+	}
+	record, ok := resolved.(*typ.Record)
+	if !ok {
+		return assignmentMismatch{}, false
+	}
+	table, ok := shapefact.DecodeTable(value)
+	if !ok || !table.Closed {
+		return assignmentMismatch{}, false
+	}
+	for _, field := range record.Fields {
+		member, found := table.Lookup("." + field.Name)
+		if !found || !member.Present || valueAgainstType([]byte(member.Value), field.Type) != shapeRefuted {
+			continue
+		}
+		if nested, found := firstAssignmentMismatch([]byte(member.Value), field.Type); found {
+			nested.Suffix = "." + field.Name + nested.Suffix
+			return nested, true
+		}
+		return assignmentMismatch{Suffix: "." + field.Name, Value: []byte(member.Value), Expected: field.Type}, true
+	}
+	return assignmentMismatch{}, false
 }
 
 // tableAgainstContainer proves a homogeneous array or map only from every
