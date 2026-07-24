@@ -1348,6 +1348,33 @@ end
 	}
 }
 
+func TestCheckRetainsUntypedFieldBoundaryThroughLogicalDefault(t *testing.T) {
+	source := `
+local http = {
+	get = function(url: string, options: table)
+		return { url = url, options = options }, nil
+	end,
+}
+
+local function main(args)
+	local url = (args and args.url) or "http://localhost:8085/hello"
+	return http.get(url, { timeout = "2s" })
+end
+
+return main`
+	result, err := engine.Check(source)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.call.direct.argument_type" && diagnostic.Span.StartLine == 10 &&
+			strings.Contains(diagnostic.Message, "comes from any/unknown; no proof shows it is string") {
+			return
+		}
+	}
+	t.Fatalf("logical default erased untyped field boundary: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckProvesArrayWithCastElementFromPublishedWitness(t *testing.T) {
 	result, err := engine.Check(`
 type Dispatch = {kind: "dispatch", envelope: {id: string}}

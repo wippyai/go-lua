@@ -1659,7 +1659,7 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 		argument += " (" + display + ")"
 	}
 	argumentTerm := []byte(operands[fmt.Sprintf("argument-%08d", argumentIndex-1)])
-	if summaryTypeIsAny(argumentTerm, values) {
+	if summaryTypeIsAny(argumentTerm, values) || sourceHasGradualLogicalBoundary(argumentTerm, values) {
 		display := strings.TrimPrefix(argument, fmt.Sprintf("argument %d (", argumentIndex))
 		display = strings.TrimSuffix(display, ")")
 		if display == argument {
@@ -3321,6 +3321,79 @@ func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
 	return seeds, true
 }
 
+// uncalledGradualLogicalCallBoundary admits an otherwise closed helper only
+// when the lowered graph itself connects an unannotated formal, through Lua
+// short-circuit expressions, to a call argument. The entry carries Top plus
+// the formal's gradual boundary; the ordinary call-contract kernel remains the
+// only authority that can turn that boundary into a diagnostic.
+func uncalledGradualLogicalCallBoundary(child front.Compilation) ([]entrySeed, []string, bool) {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) == 0 || len(child.Boundary.Parameters) != 1 {
+		return nil, nil, false
+	}
+	formals := make(map[string]bool, len(child.Boundary.Parameters))
+	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
+	terms := make([]string, 0, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type != 0 {
+			return nil, nil, false
+		}
+		term := boundaryTerm(parameter.Symbol)
+		formals[term] = true
+		seeds = append(seeds, entrySeed{Term: term, Value: []byte("scalar/top")})
+		terms = append(terms, term)
+	}
+	tainted := make(map[string]bool, len(formals))
+	for formal := range formals {
+		tainted[formal] = true
+	}
+	logical := false
+	changed := true
+	for changed {
+		changed = false
+		for _, operation := range child.Artifact.Equations {
+			switch operation.Occurrence.Kind {
+			case "expression":
+				kind, found := artifactOperand(operation.Operands, "kind")
+				if !found || string(kind) != strconv.Itoa(int(wir.OpLogical)) {
+					continue
+				}
+				left, hasLeft := artifactOperand(operation.Operands, "left")
+				right, hasRight := artifactOperand(operation.Operands, "right")
+				result, hasResult := artifactOperand(operation.Operands, "result")
+				if !hasLeft || !hasRight || !hasResult || (!tainted[string(left)] && !tainted[string(right)]) {
+					continue
+				}
+				logical = true
+				if !tainted[string(result)] {
+					tainted[string(result)] = true
+					changed = true
+				}
+			case "environment-write":
+				value, hasValue := artifactOperand(operation.Operands, "value")
+				target, hasTarget := artifactOperand(operation.Operands, "target")
+				if hasValue && hasTarget && tainted[string(value)] && !tainted[string(target)] {
+					tainted[string(target)] = true
+					changed = true
+				}
+			}
+		}
+	}
+	if !logical {
+		return nil, nil, false
+	}
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if strings.HasPrefix(operand.Role, "argument-") && !strings.HasPrefix(operand.Role, "argument-display-") && tainted[string(operand.Term.Encoding)] {
+				return seeds, terms, true
+			}
+		}
+	}
+	return nil, nil, false
+}
+
 // cyclicPlacementWitnessEntry supplies only declaration-owned parameter facts
 // to a cyclic lexical body. Captures are added exclusively by
 // uncalledChildEntry from the allocating partition's published values. The
@@ -4848,7 +4921,7 @@ func hasDeclaredFormalMethodCall(child front.Compilation, operation equation.Equ
 // participate in later validation, while a sealed local closure contributes
 // only its already-published call capability. Unknown or non-callable captures
 // therefore leave the child dormant rather than receiving a synthetic entry.
-func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies, declaredProviderBoundary bool) ([]byte, bool, error) {
+func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies, declaredProviderBoundary bool, gradualBoundaryTerms ...[]string) ([]byte, bool, error) {
 	seeds := append([]entrySeed(nil), formalSeeds...)
 	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
 	for _, capture := range child.Boundary.Captures {
@@ -4936,7 +5009,7 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 	if declaredProviderBoundary {
 		entry, err = encodeDeclaredChildEntryWithCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds)
 	} else {
-		entry, err = encodeChildEntryWithCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds)
+		entry, err = encodeChildEntryWithCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, gradualBoundaryTerms...)
 	}
 	if err != nil {
 		return nil, false, err
@@ -5862,6 +5935,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// Demand either form privately and qualify its facts by body before they
 	// enter the root publication closure.
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
+	gradualLogicalTerms := []string(nil)
+	gradualLogicalBoundary := false
 	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, declaredConcatBoundary, staticAssignmentBoundary, indexedReadBoundary, localUnionReadBoundary := false, false, false, false, false, false, false
 	declaredConcatOperations := map[string]bool(nil)
 	if declaredSeeds, admitted, methodBoundary, concatOperations := uncalledDeclaredBoundary(child); admitted {
@@ -5894,6 +5969,12 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		explicitAnyBoundary = false
 		localUnionReadBoundary = true
 	}
+	if gradualSeeds, terms, admitted := uncalledGradualLogicalCallBoundary(child); admitted {
+		uncalledSeeds = gradualSeeds
+		gradualLogicalTerms = terms
+		explicitAnyBoundary = false
+		gradualLogicalBoundary = true
+	}
 	staticCapturedReturnBoundary := lexical.uncalledStaticCapturedReturnBoundary(child, partition)
 	arithmeticBoundary := lexical.uncalledStaticArithmeticBoundary(child, partition)
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
@@ -5902,16 +5983,20 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		uncalledSeeds = staticSeeds
 		explicitAnyBoundary = false
 	}
-	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary) {
+	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary) {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
 		} else if declaredBoundary {
 			entry, entryErr = encodeDeclaredChildEntry(uncalledSeeds)
 		} else if len(child.Boundary.Captures) == 0 {
-			entry, entryErr = encodeChildEntry(uncalledSeeds)
+			if gradualLogicalBoundary {
+				entry, entryErr = encodeChildEntryWithCapabilities(uncalledSeeds, nil, nil, nil, nil, gradualLogicalTerms)
+			} else {
+				entry, entryErr = encodeChildEntry(uncalledSeeds)
+			}
 		} else {
-			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, staticAssignmentBoundary || staticCapturedReturnBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary, staticAssignmentBoundary)
+			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, gradualLogicalBoundary || staticAssignmentBoundary || staticCapturedReturnBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary, staticAssignmentBoundary, gradualLogicalTerms)
 		}
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
@@ -5922,6 +6007,11 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		outcome, _, evaluateErr := lexical.evaluate(child, entry)
 		if evaluateErr != nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: uncalled lexical child %q: %w", prototype, evaluateErr)
+		}
+		if gradualLogicalBoundary {
+			for _, term := range gradualLogicalTerms {
+				outcome.Values = append(outcome.Values, equation.Fact{Key: "gradual-logical/" + term + "/entry", Value: []byte(term)})
+			}
 		}
 		body := fmt.Sprintf("%x", child.Body)
 		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
@@ -5934,6 +6024,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				continue
 			}
 			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(diagnostic) {
+				continue
+			}
+			if gradualLogicalBoundary && !strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/") {
 				continue
 			}
 			// A declaration-only entry is sufficient for a member that is absent
@@ -5976,6 +6069,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// owning claim rather than falling back to an unadorned parent fact.
 		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
 			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(item.Fact) {
+				continue
+			}
+			if gradualLogicalBoundary && !strings.HasPrefix(item.Fact.Key, "type.call.direct.argument_type/") {
 				continue
 			}
 			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") &&
@@ -6741,6 +6837,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	}
 	var value []byte
 	var diagnostics []equation.Fact
+	var boundarySources [][]byte
 	var err error
 	switch wir.Op(kind) {
 	case wir.OpLogical:
@@ -6749,12 +6846,17 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			return equation.TransactionResult{}, er
 		}
 		if string(left) == "scalar/top" {
+			// A Top left operand leaves either short-circuit result reachable.
+			// Keep only an already-published gradual boundary from either operand;
+			// the expression does not manufacture a boundary or a value.
+			boundarySources = append(boundarySources, by["left"], by["right"])
 			value = left
 			break
 		}
 		truth, er := luaTruthy(left)
 		if errors.Is(er, errUnknownScalar) && string(left) == optionalNilComparison {
 			if wir.Operator(op) == wir.LogAnd {
+				boundarySources = append(boundarySources, by["right"])
 				value, err = resolve("right")
 				break
 			}
@@ -6763,8 +6865,10 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			return equation.TransactionResult{}, er
 		}
 		if (wir.Operator(op) == wir.LogAnd && !truth) || (wir.Operator(op) == wir.LogOr && truth) {
+			boundarySources = append(boundarySources, by["left"])
 			value = left
 		} else {
+			boundarySources = append(boundarySources, by["right"])
 			value, err = resolve("right")
 		}
 	case wir.OpUnOp:
@@ -6912,6 +7016,14 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	values := []equation.Fact{{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value}}
+	if wir.Op(kind) == wir.OpLogical {
+		for _, source := range boundarySources {
+			if boundary, ok := gradualAnyBoundaryFact(string(result), source, operation.Target.Name, partition.Values()); ok {
+				values = append(values, boundary)
+				break
+			}
+		}
+	}
 	if wir.Op(kind) == wir.OpUnOp && wir.Operator(op) == wir.UnNot {
 		if boundary, ok := gradualAnyBoundaryFact(string(result), by["value"], operation.Target.Name, partition.Values()); ok {
 			values = append(values, boundary)
@@ -8912,6 +9024,24 @@ func gradualAnySourceFact(source []byte, values []equation.Fact) ([]byte, bool) 
 		}
 		path = path[:cut]
 	}
+}
+
+// sourceHasGradualLogicalBoundary identifies the exact untyped formal whose
+// published gradual boundary reached an argument through a logical result.
+// The marker is attached only by the guarded uncalled admission above; a
+// general explicit-any boundary keeps its established diagnostic projection.
+func sourceHasGradualLogicalBoundary(source []byte, values []equation.Fact) bool {
+	root, found := gradualAnySourceFact(source, values)
+	if !found {
+		return false
+	}
+	prefix := "gradual-logical/" + string(root) + "/"
+	for _, fact := range values {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == string(root) {
+			return true
+		}
+	}
+	return false
 }
 
 // explicitAnySourceFact returns only an already-published exact source or
