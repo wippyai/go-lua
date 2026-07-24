@@ -7,6 +7,7 @@ package engine
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -239,10 +240,11 @@ func encodeLexicalSCCOutcome(compilation front.Compilation, closure equation.Out
 }
 
 // lexicalSCCSummary removes body-local VM state before it reaches the table.
-// A recursive re-evaluation consumes only its declared boundary values and
-// capabilities, while callers consume only the return tuple.  Allocation and
-// diagnostic detail is replay-only and therefore cannot make a recursive
-// coordinate grow with caller history.
+// A recursive re-evaluation consumes its declared boundary, the closed heap
+// graph reachable from that boundary, and return-owned capabilities.  Those
+// are all existing publications; allocation and diagnostic detail remains
+// replay-only and therefore cannot make a recursive coordinate grow with
+// caller history.
 func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClosure) equation.OutputClosure {
 	boundary := make([]string, 0, len(compilation.Boundary.Parameters)+len(compilation.Boundary.Captures))
 	for _, parameter := range compilation.Boundary.Parameters {
@@ -253,7 +255,7 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 	}
 	matchBoundary := func(key string) bool {
 		for _, term := range boundary {
-			for _, prefix := range []string{"value/", "closure/", "declared-type/"} {
+			for _, prefix := range []string{"value/", "closure/", "declared-type/", "epoch/", heapTableIdentityPrefix} {
 				if strings.HasPrefix(key, prefix+term+"/") {
 					return true
 				}
@@ -261,11 +263,41 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 		}
 		return false
 	}
-	values := make([]equation.Fact, 0, len(boundary)*3)
+	values := make([]equation.Fact, 0, len(boundary)*4)
+	kept := make(map[string]bool)
+	identities := make(map[string][]byte)
+	keep := func(fact equation.Fact) {
+		if kept[fact.Key] {
+			return
+		}
+		kept[fact.Key] = true
+		values = append(values, fact)
+	}
 	for _, fact := range closure.Values {
 		if matchBoundary(fact.Key) || strings.HasPrefix(fact.Key, "effect.lifecycle.channel/") ||
 			strings.HasPrefix(fact.Key, "effect.lifecycle.resource/") {
-			values = append(values, fact)
+			keep(fact)
+		}
+		if strings.HasPrefix(fact.Key, heapTableIdentityPrefix) && matchBoundary(fact.Key) && len(fact.Value) != 0 {
+			identities[string(fact.Value)] = append([]byte(nil), fact.Value...)
+		}
+	}
+	visited := make(map[string]bool)
+	for len(identities) != 0 {
+		pending := identities
+		identities = make(map[string][]byte)
+		for key := range pending {
+			visited[key] = true
+		}
+		for _, fact := range closure.Values {
+			identity, ownsHeapFact := lexicalSCCHeapFactIdentity(fact.Key)
+			if !ownsHeapFact || pending[string(identity)] == nil {
+				continue
+			}
+			keep(fact)
+			if next, found := lexicalSCCHeapChildIdentity(fact); found && !visited[string(next)] && identities[string(next)] == nil {
+				identities[string(next)] = next
+			}
 		}
 	}
 	outcomes := make([]equation.Fact, 0, len(closure.Outcomes))
@@ -274,7 +306,48 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 			outcomes = append(outcomes, fact)
 		}
 	}
+	for _, fact := range closure.Values {
+		if strings.HasPrefix(fact.Key, "return-member-closure/") {
+			keep(fact)
+		}
+	}
 	return equation.OutputClosure{Values: values, Outcomes: outcomes}
+}
+
+// lexicalSCCHeapFactIdentity decodes the owning allocation identity from the
+// closed heap fact schemas.  It is deliberately schema-driven: a source path
+// or a declared type cannot enter a recursive summary as a heap capability.
+func lexicalSCCHeapFactIdentity(key string) ([]byte, bool) {
+	for _, prefix := range []string{heapTableClosedPrefix, heapMemberPrefix, heapMemberIdentityPrefix, memberCellPrefix, heapMetaAttachedPrefix, heapMetaNewIndexPrefix} {
+		rest, found := strings.CutPrefix(key, prefix)
+		if !found {
+			continue
+		}
+		encoded, _, found := strings.Cut(rest, "/")
+		if !found || encoded == "" {
+			return nil, false
+		}
+		identity, err := base64.RawURLEncoding.DecodeString(encoded)
+		return identity, err == nil && len(identity) != 0
+	}
+	return nil, false
+}
+
+// lexicalSCCHeapChildIdentity follows only explicit member-identity and
+// member-cell publications.  The worklist is finite because every identity
+// is frozen by the compiled body or supplied through the certified entry.
+func lexicalSCCHeapChildIdentity(fact equation.Fact) ([]byte, bool) {
+	if strings.HasPrefix(fact.Key, heapMemberIdentityPrefix) && len(fact.Value) != 0 {
+		return append([]byte(nil), fact.Value...), true
+	}
+	if !strings.HasPrefix(fact.Key, memberCellPrefix) {
+		return nil, false
+	}
+	var cell memberCellWire
+	if json.Unmarshal(fact.Value, &cell) != nil || len(cell.MemberIdentity) == 0 {
+		return nil, false
+	}
+	return append([]byte(nil), cell.MemberIdentity...), true
 }
 
 func decodeLexicalSCCOutcome(outcome interproc.ClosedOutcome) (equation.OutputClosure, error) {
