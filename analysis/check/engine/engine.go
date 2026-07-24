@@ -3809,6 +3809,86 @@ func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.Compilation, 
 	return entry, true, nil
 }
 
+// publishStaticNilCallDiagnostic projects a call contract from an existing
+// closure capture only when the child itself has already published the
+// argument's exact nil write. The guarded call remains a possible path, so
+// its parameter mismatch is source-owned; no branch truth, call result, or
+// inferred alias is manufactured here.
+func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.OutputClosure, child front.Compilation, captures []string, partition equation.Partition) {
+	if l == nil || closure == nil || child.Cyclic != nil || len(child.Boundary.Captures) == 0 || len(child.Boundary.Captures) != len(captures) {
+		return
+	}
+	captured := make(map[string][]byte, len(captures))
+	for index, capture := range child.Boundary.Captures {
+		term := captures[index]
+		value, known := resolveKnownCurrentValue([]byte(term), partition)
+		if !known || isUnknownScalar(value) {
+			return
+		}
+		captured[boundaryTerm(capture.Symbol)] = value
+	}
+	for _, item := range child.Artifact.Equations {
+		if item.Occurrence.Kind != "apply" || len(item.Guards) == 0 {
+			continue
+		}
+		callee, hasCallee := artifactOperand(item.Operands, "callee")
+		calleeValue, capturedCallee := captured[string(callee)]
+		if !hasCallee || !capturedCallee {
+			continue
+		}
+		signature, callable := callableSignature(calleeValue)
+		if !callable {
+			continue
+		}
+		for _, operand := range item.Operands {
+			index, err := callArgumentIndex(operand.Role)
+			if err != nil {
+				continue
+			}
+			expected, accepts := callableParameterAt(signature, index)
+			if !accepts || !callableParameterRejectsNil(expected) || !latestPriorWriteIsNil(child.Artifact.Equations, operand.Term.Encoding, item.Target.Name) {
+				continue
+			}
+			fact := equation.Fact{
+				Key:   "type.call.direct.argument_type/" + item.Target.Name + "/" + indexedCallSubject("argument", index),
+				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))),
+			}
+			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, []equation.Fact{fact})
+			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + published.Fact.Key
+				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), published.Fact.Value...)})
+				if published.Span.Valid() {
+					l.diagnosticSpans[key] = published.Span
+				}
+				published.Fact.Key = key
+				l.childPublished[key] = published
+			}
+			return
+		}
+	}
+}
+
+// latestPriorWriteIsNil accepts a nil only when it is the last child-owned
+// write to the exact argument cell before the guarded call. In particular, an
+// initializer nil followed by a branch-local string assignment is not a
+// refutation: that later write remains the current fact on the call path.
+func latestPriorWriteIsNil(operations []equation.Equation, target []byte, before string) bool {
+	latest := ""
+	nilValue := false
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "environment-write" || operation.Target.Name >= before {
+			continue
+		}
+		writeTarget, hasTarget := artifactOperand(operation.Operands, "target")
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		if !hasTarget || !hasValue || !bytes.Equal(writeTarget, target) || operation.Target.Name <= latest {
+			continue
+		}
+		latest, nilValue = operation.Target.Name, len(operation.Guards) == 0 && string(value) == "scalar/nil"
+	}
+	return latest != "" && nilValue
+}
+
 // uncalledDeclaredFormalConcatOperations returns only concat operands whose
 // operand is the exact result of an already admitted direct formal method
 // call.  It follows the front's closed apply -> call-results -> local-write
@@ -5770,6 +5850,12 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	}
 	closure := equation.OutputClosure{Values: append(memberOrigins, equation.Fact{Key: "closure/" + result + "/" + operation.Target.Name, Value: handle})}
 	child := lexical.byPrototype[prototype]
+	// A local nil write is a completed value publication. When an exact
+	// captured callable is subsequently invoked with that same cell, its
+	// published parameter contract can refute the call even if the surrounding
+	// branch is not selected at allocation time. This is a path-local fact: a
+	// later write, an opaque callee, or an unclosed capture leaves it dormant.
+	lexical.publishStaticNilCallDiagnostic(&closure, child, captures, partition)
 	// A parameter-free child is closed at allocation time. A capture-free child
 	// whose entire boundary is explicitly any is closed too: each formal has a
 	// concrete precision-boundary fact, rather than an invented top value.

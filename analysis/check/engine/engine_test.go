@@ -151,6 +151,43 @@ end
 	}
 }
 
+func TestCheckRejectsReassignedOptionalValueOnGuardedCall(t *testing.T) {
+	result, err := engine.Check(`
+local function load(): string
+    return "loaded"
+end
+
+local function use(value: string): string
+    return value
+end
+
+local function run(ok: boolean): string?
+    local x: string?
+    if ok then
+        x = load()
+    end
+
+    x = nil
+
+    if ok then
+        return use(x)
+    end
+    return nil
+end
+
+return run
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.call.direct.argument_type" && diagnostic.Span.StartLine == 19 && strings.Contains(diagnostic.Message, "may be nil") {
+			return
+		}
+	}
+	t.Fatalf("reassigned optional value was accepted on guarded call: diagnostics=%#v", result.PublishedDiagnostics)
+}
+
 func TestCheckProjectProvesImportedSealedNestedRecordAssignment(t *testing.T) {
 	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{
 		{Path: "types.lua", ModulePath: "types", Source: `
