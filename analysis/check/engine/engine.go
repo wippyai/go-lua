@@ -6291,7 +6291,8 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	memberClosureSeeds := childEntryMemberClosureSeeds(entrySeeds, memberSources, partition)
 	tableIdentitySeeds := tableIdentitySeedsForEntry(entrySeeds, partition)
 	memberCellSeeds := memberCellSeedsForEntry(entrySeeds, partition)
-	entry, err := encodeChildEntryWithCapabilities(entrySeeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, gradualAnyTerms)
+	placementSeeds := placementSeedsForEntry(entrySeeds, partition)
+	entry, err := encodeChildEntryWithPlacementCapabilities(entrySeeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, placementSeeds, gradualAnyTerms)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
