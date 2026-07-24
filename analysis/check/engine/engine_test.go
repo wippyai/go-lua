@@ -138,6 +138,40 @@ end
 	}
 }
 
+func TestCheckLiteralDiscriminantNarrowingStaysOnItsLoopArm(t *testing.T) {
+	result, err := engine.Check(`
+type Release = {kind: "release", reservation_token: string}
+type Refund = {kind: "refund", payment_id: string}
+type Compensation = Release | Refund
+local compensations: {Compensation} = {}
+for _, comp in ipairs(compensations) do
+    local unsafe: string = comp.reservation_token
+    if comp.kind == "release" then
+        local token: string = comp.reservation_token
+    else
+        local payment: string = comp.payment_id
+    end
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	unguardedMissing := false
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code != "type.member.missing" {
+			continue
+		}
+		if diagnostic.Span.StartLine == 7 {
+			unguardedMissing = true
+			continue
+		}
+		t.Fatalf("literal branch leaked an arm fact: %#v", result.PublishedDiagnostics)
+	}
+	if !unguardedMissing {
+		t.Fatalf("unguarded discriminated-union read was accepted: %#v", result.PublishedDiagnostics)
+	}
+}
+
 func TestCheckRejectsConcreteReplacementOfTypedFunctionMember(t *testing.T) {
 	result, err := engine.Check(`
 local M = {}

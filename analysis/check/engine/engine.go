@@ -2105,13 +2105,60 @@ func cyclicKernel(kernel equation.Kernel) equation.CyclicKernel {
 		if err != nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: cyclic snapshot partition: %w", err)
 		}
-		if candidate, candidateErr := equation.PartitionFromClosuresWithGuards(operation.Equation.Guards, closures...); candidateErr != nil {
-			return equation.TransactionResult{}, fmt.Errorf("engine: cyclic guarded snapshot partition: %w", candidateErr)
-		} else if cyclicOptionalClaim(operation.Equation, candidate) {
-			partition = candidate
+		if guards, exact := typedLiteralPartitionGuards(operation.Equation.Guards, closures); exact {
+			candidate, candidateErr := equation.PartitionFromClosuresWithGuards(guards, closures...)
+			if candidateErr != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: cyclic guarded snapshot partition: %w", candidateErr)
+			}
+			if cyclicOptionalClaim(operation.Equation, candidate) {
+				partition = candidate
+			}
 		}
 		return kernel.Execute(operation.Equation, partition)
 	})
+}
+
+// typedLiteralPartitionGuards admits a cyclic branch view only after every
+// requested guard is backed by the matching literal-discriminant narrowing.
+// A branch fact from another predicate may coexist in the snapshot, but it
+// cannot make an arm-specific value visible to this consumer.
+func typedLiteralPartitionGuards(guards []equation.Guard, closures []equation.OutputClosure) ([]equation.Guard, bool) {
+	if len(guards) == 0 {
+		return nil, false
+	}
+	active := make([]equation.Guard, 0, len(guards))
+	for _, guard := range guards {
+		parts := strings.Split(string(guard.Encoding), "/")
+		if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || (parts[3] != "true" && parts[3] != "false") {
+			return nil, false
+		}
+		key, value := "narrowing/"+parts[2], "typed/"+parts[3]
+		found := false
+		for _, closure := range closures {
+			for _, fact := range closure.Outcomes {
+				if fact.Key != key || string(fact.Value) != value {
+					continue
+				}
+				for _, factGuard := range fact.Guards {
+					if factGuard.Body == guard.Body && bytes.Equal(factGuard.Encoding, guard.Encoding) {
+						found = true
+						break
+					}
+				}
+				if found {
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return nil, false
+		}
+		active = append(active, guard)
+	}
+	return active, true
 }
 
 // cyclicOptionalClaim admits only a positive branch-local optional assignment
