@@ -83,7 +83,10 @@ func (l *lexicalEvaluator) resolveSCCChild(child front.Compilation, rawEntry []b
 	// Diagnostics are deliberately outside the approximation lattice.  Replay
 	// only after Resolve has atomically closed the reachable SCC; nested calls
 	// are table hits at this point, never partial reads.
-	replay, _, err := l.evaluate(admission.compilation, admission.entry)
+	// Replay the closed body only for diagnostics.  Keep nested lexical calls in
+	// discovery mode: re-entering Resolve here would recursively trigger another
+	// diagnostics replay after the same cell has already closed.
+	replay, _, err := l.runSCCBody(ctx, admission, &lexicalSCCRun{discovered: make(map[string]interproc.InstanceKey)})
 	if err != nil {
 		return equation.OutputClosure{}, err
 	}
