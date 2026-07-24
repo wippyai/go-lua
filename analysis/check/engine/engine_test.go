@@ -317,6 +317,22 @@ end
 	}
 }
 
+func TestCheckNumericForPreservesNumberWitness(t *testing.T) {
+	result, err := engine.Check(`
+for i = 1, 3 do
+	local current: number = i
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range result.Diagnostics {
+		if strings.HasPrefix(item.Key, "claim/unproven/") {
+			t.Fatalf("numeric loop counter lost its number witness: %#v", result.Diagnostics)
+		}
+	}
+}
+
 func TestCheckTriviallyTrueBranchPublishesTruthinessNarrowing(t *testing.T) {
 	result, err := engine.Check(`
 local value = 1

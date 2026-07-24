@@ -3509,8 +3509,35 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	if _, err := requiredOperandsByRole(operation.Operands, "iterator", "state", "control"); err != nil {
+	operands, err := requiredOperandsByRole(operation.Operands, "iterator", "state", "control")
+	if err != nil {
 		return equation.TransactionResult{}, err
+	}
+	// Numeric and generic for-loops share the same frozen operation family.
+	// Recover a number witness only from the already-published control triple:
+	// the numeric lowering supplies start, limit, and step there, while an
+	// ordinary iterator cannot prove all three numeric.  This is a type fact,
+	// not a concrete counter value, so it remains sound across widening.
+	numeric := true
+	for _, role := range []string{"iterator", "state", "control"} {
+		value, valueErr := resolveCurrentValue(operands[role], partition)
+		if valueErr != nil {
+			numeric = false
+			break
+		}
+		name, typeErr := scalarType(value)
+		if typeErr != nil || name != "number" {
+			numeric = false
+			break
+		}
+	}
+	value := []byte("scalar/top")
+	if numeric {
+		var encoded bool
+		value, encoded = shapefact.EncodeTarget(typ.Number)
+		if !encoded {
+			return equation.TransactionResult{}, fmt.Errorf("engine: encode numeric loop witness")
+		}
 	}
 	values := make([]equation.Fact, 0)
 	for _, operand := range operation.Operands {
@@ -3521,7 +3548,7 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 		if !strings.HasPrefix(result, "path/") {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
 		}
-		values = append(values, equation.Fact{Key: "value/" + result + "/" + operation.Target.Name, Value: []byte("scalar/top")})
+		values = append(values, equation.Fact{Key: "value/" + result + "/" + operation.Target.Name, Value: append([]byte(nil), value...)})
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
