@@ -3114,7 +3114,6 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 	for _, operand := range operation.Operands {
 		if operand.Role == "display" && len(operand.Value) != 0 {
 			display = string(operand.Value)
-			break
 		}
 	}
 	if (!strings.HasPrefix(target, "path/") && !strings.HasPrefix(target, "temp/")) || !validClaimKind(kind) || !validClaimType(kind, targetType) {
@@ -3145,6 +3144,13 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 	}
 	refined := []byte("scalar/claim/" + kind + "/" + targetType)
 	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}}}
+	// A claim can refine its own target without erasing the explicit boundary
+	// value it consumed. Preserve that exact existing fact for a later branch
+	// or assignment on a member path; Top values and ordinary refinements are
+	// deliberately not forwarded as boundary evidence.
+	if strings.HasPrefix(string(source), "path/") && isExplicitAnyValue(value) {
+		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(source) + "/" + operation.Target.Name, Value: append([]byte(nil), value...)})
+	}
 	// An annotation is an assignment contract.  Only a concrete scalar that
 	// the equation has already derived can refute it; top and refinements stay
 	// unproven and deliberately publish no assignment failure.  This keeps the
@@ -3611,20 +3617,33 @@ func isExplicitAnyValue(value []byte) bool {
 }
 
 func sourceHasExplicitAny(source []byte, values []equation.Fact) bool {
+	_, _, found := explicitAnySourceFact(source, values)
+	return found
+}
+
+// explicitAnySourceFact returns only an already-published exact source or
+// ancestor fact. It is used to retain a precision boundary through a closed
+// equation handoff, never to infer a value for an unrecorded member read.
+func explicitAnySourceFact(source []byte, values []equation.Fact) ([]byte, []byte, bool) {
 	path := strings.TrimPrefix(string(source), "path/")
 	if path == string(source) || path == "" {
-		return false
+		return nil, nil, false
 	}
 	for {
 		prefix := "value/path/" + path + "/"
+		var value []byte
+		latest := ""
 		for _, fact := range values {
-			if strings.HasPrefix(fact.Key, prefix) && isExplicitAnyValue(fact.Value) {
-				return true
+			if strings.HasPrefix(fact.Key, prefix) && isExplicitAnyValue(fact.Value) && (value == nil || fact.Key > latest) {
+				value, latest = fact.Value, fact.Key
 			}
+		}
+		if value != nil {
+			return []byte("path/" + path), append([]byte(nil), value...), true
 		}
 		cut := strings.LastIndexAny(path, ".[")
 		if cut < 0 {
-			return false
+			return nil, nil, false
 		}
 		path = path[:cut]
 	}
@@ -4076,6 +4095,16 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 			break
 		}
 	}
+	boundaryPossible := false
+	var boundarySource, boundaryValue []byte
+	acceptBoundary := func(source []byte) bool {
+		term, value, found := explicitAnySourceFact(source, partition.Values())
+		if !found {
+			return false
+		}
+		boundaryPossible, boundarySource, boundaryValue = true, term, value
+		return true
+	}
 	for _, operand := range operation.Operands {
 		if operand.Role != "condition" {
 			continue
@@ -4085,10 +4114,32 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 			return equation.TransactionResult{}, err
 		}
 		if isUnknownScalar(value) && !frozenCondition {
+			// An explicit any ancestor is a published precision boundary, so a
+			// truthy arm remains a possible execution path. Select that arm to
+			// check its contracts, but do not publish an always-true suggestion:
+			// the boundary provides no truth proof.
+			if acceptBoundary(operand.Value) {
+				continue
+			}
 			return equation.TransactionResult{Complete: true}, nil
 		}
 	}
-	truth, frozenGuard, err := branchTruth(operation.Operands, partition)
+	if !boundaryPossible {
+		for _, operand := range operation.Operands {
+			if operand.Role != "predicate" || !strings.HasPrefix(string(operand.Value), branchPredicatePrefix) {
+				continue
+			}
+			var predicate branchPredicateWire
+			if json.Unmarshal(operand.Value[len(branchPredicatePrefix):], &predicate) == nil && predicate.Path != "" {
+				acceptBoundary([]byte("path/" + predicate.Path))
+			}
+		}
+	}
+	truth, frozenGuard := true, false
+	var err error
+	if !boundaryPossible {
+		truth, frozenGuard, err = branchTruth(operation.Operands, partition)
+	}
 	if errors.Is(err, errUnknownScalar) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
@@ -4104,13 +4155,16 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge)},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte(narrowing)},
 	}}
+	if boundaryPossible {
+		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(boundarySource) + "/" + operation.Target.Name, Value: append([]byte(nil), boundaryValue...)})
+	}
 	if frozenGuard && truth {
 		closure.Outcomes = append(closure.Outcomes, equation.Fact{Key: "frozen-branch/" + operation.Target.Name, Value: []byte("proven")})
 	}
-	if truth {
+	if truth && !boundaryPossible {
 		closure.Diagnostics = []equation.Fact{{Key: "advice.always_true_guard/" + operation.Target.Name, Value: []byte("proven constant guard")}}
 	}
-	if len(operation.Guards) != 0 {
+	if len(operation.Guards) != 0 && !boundaryPossible {
 		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: "lint.condition.redundant/" + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
@@ -5858,7 +5912,18 @@ func importedProviderResultValue(provider []byte, index int, arguments map[int][
 	// Keep module-call result admission aligned with the established provider
 	// boundary: optional, union, and unresolved generic slots are not concrete
 	// runtime values until a dedicated result-correlation proof selects them.
-	return providerReturnTypeValue(returnType)
+	return importedReturnValue(returnType)
+}
+
+// importedReturnValue keeps an explicit any only when it is the sealed result
+// type of an already-resolved module export.  Unlike an absent provider result
+// (which remains Top), this is a concrete precision boundary published by the
+// manifest and must remain visible to each later assignment contract.
+func importedReturnValue(result typ.Type) ([]byte, bool) {
+	if result != nil && unwrap.Alias(result).Kind() == kind.Any {
+		return []byte("scalar/claim/claim-kind/3/\"any\""), true
+	}
+	return providerReturnTypeValue(result)
 }
 
 // instantiateImportedReturn unifies only closed argument types already

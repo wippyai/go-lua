@@ -150,6 +150,35 @@ local answer: string = provider.answer()`
 	t.Fatalf("typed imported callable diagnostic = %#v", typed.Diagnostics)
 }
 
+func TestCheckWithImportsRetainsExplicitAnyResultAtEachAssignmentSite(t *testing.T) {
+	source := `
+local provider = require("provider")
+local raw = provider.raw_config()
+local config: {id: string} = raw
+if raw.id then
+  local id: string = raw.id
+end
+`
+	result, err := engine.CheckWithImports(source, map[string]typ.Type{
+		"provider": typetable.NewRecord().Field("raw_config", typ.Func().Returns(typ.Any).Build()).Build(),
+	})
+	if err != nil {
+		t.Fatalf("CheckWithImports: %v", err)
+	}
+	if len(result.Diagnostics) != 2 {
+		t.Fatalf("imported explicit-any diagnostics = %#v, want exactly two assignment violations", result.Diagnostics)
+	}
+	seen := make(map[int]bool)
+	for _, item := range result.PublishedDiagnostics {
+		if item.Code == "type.assignment" {
+			seen[item.Span.StartLine] = true
+		}
+	}
+	if !seen[4] || !seen[6] {
+		t.Fatalf("imported explicit-any diagnostics = %#v, want separate raw and raw.id assignment violations", result.PublishedDiagnostics)
+	}
+}
+
 func TestCheckProjectsStdlibProviderReturnSlots(t *testing.T) {
 	result, err := engine.Check(`
 local text: string = tostring(42)
