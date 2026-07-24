@@ -45,10 +45,11 @@ func TestCheckProjectChecksResolvedModuleTreeAndRendersPositions(t *testing.T) {
 		t.Fatalf("diagnostics = %#v, want one assignment diagnostic", result.Diagnostics)
 	}
 	diag := result.Diagnostics[0]
-	if diag.Code != "type.assignment" || diag.Position.File != "app/consumer.lua" || diag.Position.Line != 2 || diag.Position.Column != 7 {
+	// An assignment diagnostic anchors at the assigned value and labels the declared annotation separately.
+	if diag.Code != "type.assignment" || diag.Position.File != "app/consumer.lua" || diag.Position.Line != 2 || diag.Position.Column != 22 || diag.Position.EndLine != 2 || diag.Position.EndColumn != 22 {
 		t.Fatalf("positional diagnostic = %#v", diag)
 	}
-	if got, want := RenderDiagnostic(diag), "app/consumer.lua:2:7: error[type.assignment]: cannot assign text because it is number, not string"; got != want {
+	if got, want := RenderDiagnostic(diag), "app/consumer.lua:2:22: error[type.assignment]: cannot assign text because it is number, not string"; got != want {
 		t.Fatalf("RenderDiagnostic = %q, want %q", got, want)
 	}
 	evidence := diag.Explanation.Evidence()
@@ -57,6 +58,12 @@ func TestCheckProjectChecksResolvedModuleTreeAndRendersPositions(t *testing.T) {
 	}
 	if len(diag.Labels) != 2 || !strings.Contains(diag.Help, "change the target type") {
 		t.Fatalf("assignment labels/help = %#v / %q", diag.Labels, diag.Help)
+	}
+	if diag.Labels[0].File != "app/consumer.lua" || diag.Labels[0].Message != "assigned value 1" || diag.Labels[0].Span != (diagnostic.Span{StartLine: 2, StartCol: 22, EndLine: 2, EndCol: 22}) {
+		t.Fatalf("assigned-value label = %#v", diag.Labels[0])
+	}
+	if diag.Labels[1].File != "app/consumer.lua" || diag.Labels[1].Message != "declared type string" || diag.Labels[1].Span != (diagnostic.Span{StartLine: 2, StartCol: 13, EndLine: 2, EndCol: 18}) {
+		t.Fatalf("declared-type label = %#v", diag.Labels[1])
 	}
 	if consumer.Timings.ParseBindLowerNS <= 0 || consumer.Timings.EvaluateNS <= 0 || result.Timings.ProjectRenderNS <= 0 {
 		t.Fatalf("structured timings missing: entry=%#v project=%#v", consumer.Timings, result.Timings)
@@ -501,8 +508,9 @@ func TestLoadDirectoryEndToEndMultiModuleTree(t *testing.T) {
 	if len(result.Entries) != 2 || len(result.Diagnostics) != 1 {
 		t.Fatalf("end-to-end result = %#v", result)
 	}
-	if !strings.HasPrefix(RenderDiagnostic(result.Diagnostics[0]), "main.lua:2:7:") {
-		t.Fatalf("rendered position = %q", RenderDiagnostic(result.Diagnostics[0]))
+	// The diagnostic anchors at the assigned value 'bad', which starts at column 19 of line 2.
+	if got, want := RenderDiagnostic(result.Diagnostics[0]), "main.lua:2:19: error[type.assignment]: cannot assign n because it is string, not number"; got != want {
+		t.Fatalf("rendered position = %q, want %q", got, want)
 	}
 }
 
