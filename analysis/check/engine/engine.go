@@ -8549,6 +8549,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	if lexical != nil && localCallable {
+		placementFacts = append(placementFacts, placementInvokedClosureCaptureFacts(operation, operands, handle, partition)...)
 		if result, refuted := lexical.boundaryArgumentRefutation(operation, operands, handle, partition); refuted {
 			return result, nil
 		}

@@ -338,6 +338,33 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 	return facts
 }
 
+// placementInvokedClosureCaptureFacts consumes the exact capture list of a
+// lexical closure only at its established local invocation boundary. A merely
+// materialized closure does not retain anything: the apply factor supplies the
+// proof that this closed environment is live. Each captured allocation is
+// looked up through its current published binding, so unrelated same-shaped or
+// same-named values cannot acquire an ownership conclusion.
+func placementInvokedClosureCaptureFacts(operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) []equation.Fact {
+	if len(handle.Captures) == 0 || operands.callee == nil {
+		return nil
+	}
+	var facts []equation.Fact
+	for _, capture := range handle.Captures {
+		allocation, found := placementAllocationForTerm([]byte(capture), partition)
+		if !found {
+			continue
+		}
+		facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventOwned))
+	}
+	if len(facts) == 0 {
+		return nil
+	}
+	if closure, found := placementAllocationForTerm(operands.callee, partition); found {
+		facts = append(facts, placementEventFact(closure.Identity, operation.Target.Name, placementEventOwned))
+	}
+	return facts
+}
+
 // placementImportedStoreFacts consumes an ownership boundary only when an
 // imported module has already published a checked, one-statement wrapper for
 // ownership.store. The relation supplies exact formal positions; no imported

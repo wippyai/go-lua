@@ -116,6 +116,23 @@ return value`)
 	}
 }
 
+func TestCheckPlacementRetainsLexicalClosureCapture(t *testing.T) {
+	result, err := engine.Check(`local state = { value = 1 }
+local read = function() return state.value end
+local value = read()`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Placement == nil || len(result.Placement.Allocations) != 2 {
+		t.Fatalf("placement = %#v, want closure and captured allocation", result.Placement)
+	}
+	for _, item := range result.Placement.Allocations {
+		if item.Placement != placement.OwnedHeap || !item.OwnerIdentity || item.FrameLocal {
+			t.Fatalf("allocation = %#v, want retained lexical closure graph", item)
+		}
+	}
+}
+
 func TestCheckPlacementCarriesAliasIntoSharedContainer(t *testing.T) {
 	result, err := engine.Check(`local shared = { label = "shared" }
 process.send("worker", "ready", shared)
