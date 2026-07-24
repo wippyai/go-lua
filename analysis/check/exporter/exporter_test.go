@@ -162,3 +162,34 @@ return M`
 		}
 	}
 }
+
+func TestDeriveSummaryPublishesOwnershipStoreAlias(t *testing.T) {
+	source := `local M = {}
+local store_item = ownership.store
+M.store_item = store_item
+return M`
+	result, err := engine.Check(source)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	summary := exporter.DeriveSummary(result, source)
+	store, ok := summary.Function("store_item", 2)
+	if !ok || !store.Store.Valid(2) || store.Store.Value != 0 || store.Store.Owner != 1 {
+		t.Fatalf("store relation = %#v, want published ownership alias", store)
+	}
+}
+
+func TestDeriveSummaryRejectsStaleOwnershipStoreAlias(t *testing.T) {
+	source := `local M = {}
+local store_item = ownership.store
+M.store_item = store_item
+M = {}
+return M`
+	result, err := engine.Check(source)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if _, found := exporter.DeriveSummary(result, source).Function("store_item", 2); found {
+		t.Fatal("stale ownership alias relation escaped its replaced module root")
+	}
+}

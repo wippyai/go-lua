@@ -64,6 +64,13 @@ func deriveFunctions(source string, export typ.Type, imports map[string]exportre
 	}
 	locals := make(map[string]*ast.FunctionExpr)
 	functions := make(map[string]*ast.FunctionExpr)
+	// storeAliases carries only a currently-live local binding of the existing
+	// ownership.store contract. It is not inferred from a callable shape: an
+	// exact provider reference must reach a member of the directly returned
+	// module value before an importer may consume the ownership relation.
+	storeAliases := make(map[string]bool)
+	stores := make(map[string]bool)
+	returnedRoots := returnedModuleRoots(stmts)
 	for _, stmt := range stmts {
 		switch item := stmt.(type) {
 		case *ast.LocalAssignStmt:
@@ -71,10 +78,17 @@ func deriveFunctions(source string, export typ.Type, imports map[string]exportre
 				if i < len(item.Exprs) {
 					if fn, ok := item.Exprs[i].(*ast.FunctionExpr); ok {
 						locals[name] = fn
+						delete(storeAliases, name)
+						continue
+					}
+					if ownershipStoreReference(item.Exprs[i]) {
+						storeAliases[name] = true
+						delete(locals, name)
 						continue
 					}
 				}
 				delete(locals, name)
+				delete(storeAliases, name)
 			}
 		case *ast.FuncDefStmt:
 			if item == nil || item.Func == nil {
@@ -82,9 +96,14 @@ func deriveFunctions(source string, export typ.Type, imports map[string]exportre
 			}
 			if path, ok := functionPath(item.Name); ok {
 				functions[path] = item.Func
+				delete(stores, path)
+				if !strings.Contains(path, ".") {
+					delete(storeAliases, path)
+				}
 			} else if item.Name != nil {
 				if ident, ok := item.Name.Func.(*ast.IdentExpr); ok {
 					locals[ident.Value] = item.Func
+					delete(storeAliases, ident.Value)
 				}
 			}
 		case *ast.AssignStmt:
@@ -96,10 +115,33 @@ func deriveFunctions(source string, export typ.Type, imports map[string]exportre
 				if !ok {
 					if ident, identOK := left.(*ast.IdentExpr); identOK {
 						delete(locals, ident.Value)
+						delete(storeAliases, ident.Value)
 						invalidateFunctions(functions, ident.Value)
+						invalidateStoreRelations(stores, ident.Value)
 					}
 					continue
 				}
+				if ident, identOK := left.(*ast.IdentExpr); identOK {
+					// Replacing a module root invalidates every relation rooted in
+					// that value. A previous member assignment is not a witness for
+					// a different table later returned under the same local name.
+					delete(locals, ident.Value)
+					delete(storeAliases, ident.Value)
+					invalidateFunctions(functions, ident.Value)
+					invalidateStoreRelations(stores, ident.Value)
+					continue
+				}
+				if ownershipStoreReference(item.Rhs[i]) {
+					stores[path] = true
+					delete(functions, path)
+					continue
+				}
+				if ident, ok := item.Rhs[i].(*ast.IdentExpr); ok && storeAliases[ident.Value] {
+					stores[path] = true
+					delete(functions, path)
+					continue
+				}
+				delete(stores, path)
 				if ident, ok := item.Rhs[i].(*ast.IdentExpr); ok && locals[ident.Value] != nil {
 					functions[path] = locals[ident.Value]
 					continue
@@ -108,9 +150,14 @@ func deriveFunctions(source string, export typ.Type, imports map[string]exportre
 			}
 		}
 	}
-	paths := make([]string, 0, len(functions))
+	paths := make([]string, 0, len(functions)+len(stores))
 	for path := range functions {
 		paths = append(paths, path)
+	}
+	for path := range stores {
+		if functions[path] == nil {
+			paths = append(paths, path)
+		}
 	}
 	sort.Strings(paths)
 	out := make([]exportrelation.Function, 0, len(paths))
@@ -118,6 +165,12 @@ func deriveFunctions(source string, export typ.Type, imports map[string]exportre
 		relative := path
 		if cut := strings.IndexByte(path, '.'); cut > 0 {
 			relative = path[cut+1:]
+		}
+		if stores[path] && returnedModuleMember(path, returnedRoots) {
+			out = append(out, exportrelation.Function{
+				Path: relative, Arity: 2, Store: &exportrelation.OwnershipStore{Value: 0, Owner: 1},
+			})
+			continue
 		}
 		if relation, ok := functionRelation(relative, functions[path], imports, aliases); ok && publishedFunction(export, relative, relation.Arity) {
 			out = append(out, relation)
@@ -132,6 +185,45 @@ func invalidateFunctions(functions map[string]*ast.FunctionExpr, root string) {
 			delete(functions, path)
 		}
 	}
+}
+
+func invalidateStoreRelations(stores map[string]bool, root string) {
+	for path := range stores {
+		if path == root || strings.HasPrefix(path, root+".") {
+			delete(stores, path)
+		}
+	}
+}
+
+func returnedModuleRoots(stmts []ast.Stmt) map[string]bool {
+	roots := make(map[string]bool)
+	for _, stmt := range stmts {
+		ret, ok := stmt.(*ast.ReturnStmt)
+		if !ok || len(ret.Exprs) != 1 {
+			continue
+		}
+		if root, ok := ret.Exprs[0].(*ast.IdentExpr); ok && root.Value != "" {
+			roots[root.Value] = true
+		}
+	}
+	return roots
+}
+
+func returnedModuleMember(path string, roots map[string]bool) bool {
+	root, _, found := strings.Cut(path, ".")
+	return found && roots[root]
+}
+
+// ownershipStoreReference recognizes the one already-modeled ownership
+// boundary. The relation is admitted only when that exact provider is exported
+// through a live local alias or a static module member.
+func ownershipStoreReference(expr ast.Expr) bool {
+	member, ok := expr.(*ast.AttrGetExpr)
+	if !ok || ast.KeyName(member.Key) != "store" {
+		return false
+	}
+	global, ok := member.Object.(*ast.IdentExpr)
+	return ok && global.Value == "ownership"
 }
 
 // publishedFunction ties a source-level candidate to the checked module
