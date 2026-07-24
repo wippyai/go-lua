@@ -42,6 +42,148 @@ func adviceControlDiagnostics(body *wir.Body, graph cfg.Graph) []ControlDiagnost
 	return out
 }
 
+// advicePolicyDiagnostics publishes finite lexical lint facts from the same
+// lowered body and CFG that authorize the existing advice family.  These facts
+// remain optional at the lint policy boundary; this pass only records proofs
+// that are complete in the source-owned graph.
+func advicePolicyDiagnostics(body *wir.Body, graph cfg.Graph) []ControlDiagnostic {
+	if body == nil || graph == nil || graphHasCycle(graph) {
+		return nil
+	}
+	var out []ControlDiagnostic
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		path, ok := adviceLocalDeclaration(body, inst)
+		if !ok {
+			continue
+		}
+		if !adviceRootReadAfter(body, graph, path, inst.Point) {
+			name := body.SymbolName(path.Symbol)
+			if name == "" {
+				continue
+			}
+			out = append(out, ControlDiagnostic{
+				Key:      fmt.Sprintf("lint.unused.local/%d/%d", inst.TargetSpan.StartLine, inst.Point),
+				Code:     "lint.unused.local",
+				Message:  "local \"" + name + "\" is never read",
+				Span:     inst.TargetSpan,
+				Evidence: []ControlDiagnosticEvidence{{Span: inst.TargetSpan, Kind: "abstract fact", Trust: "proven", Message: "no read of local \"" + name + "\" was found in this scope"}},
+				Labels:   []ControlDiagnosticLabel{{Span: inst.TargetSpan, Message: "unused local"}},
+				Help:     "Remove it, use it, or rename it with a leading _ when intentionally unused.",
+			})
+		}
+		if item, ok := adviceDeadLocalAssignment(body, graph, path, inst); ok {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func adviceLocalDeclaration(body *wir.Body, inst wir.Instruction) (pathdom.Path, bool) {
+	if inst.Op != wir.OpAssign || inst.Assign != wir.AssignLocalDeclaration || inst.Dst.Kind != wir.OperandPath {
+		return pathdom.Path{}, false
+	}
+	path := body.Path(wir.PathRef(inst.Dst.Ref))
+	if path.Symbol == 0 || len(path.Segments) != 0 {
+		return pathdom.Path{}, false
+	}
+	kind, ok := body.SymbolKind(path.Symbol)
+	return path, ok && kind == wir.SymbolLocal
+}
+
+func adviceRootReadAfter(body *wir.Body, graph cfg.Graph, root pathdom.Path, after cfg.Point) bool {
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Point != after && graphReachable(graph, after, inst.Point) && instructionReadsRoot(body, inst, root) {
+			return true
+		}
+	}
+	return false
+}
+
+// adviceDeadLocalAssignment proves that every path after a local declaration
+// reaches a replacement write or return before a read of that exact symbol.
+// An open exit, loop, call, or read leaves the fact unpublished.
+func adviceDeadLocalAssignment(body *wir.Body, graph cfg.Graph, root pathdom.Path, declaration wir.Instruction) (ControlDiagnostic, bool) {
+	type terminal struct {
+		write      wir.Span
+		returnSpan wir.Span
+	}
+	var terminals []terminal
+	seen := make(map[cfg.Point]bool)
+	queue := append([]cfg.Point(nil), graph.Successors(declaration.Point)...)
+	for len(queue) != 0 {
+		point := queue[0]
+		queue = queue[1:]
+		if seen[point] {
+			continue
+		}
+		seen[point] = true
+		if point == graph.Exit() {
+			return ControlDiagnostic{}, false
+		}
+		var stop *terminal
+		for i := 0; i < body.Len(); i++ {
+			inst := body.Instr(i)
+			if inst.Point != point {
+				continue
+			}
+			if instructionReadsRoot(body, inst, root) {
+				return ControlDiagnostic{}, false
+			}
+			if inst.WritesAssignmentPoint() && inst.Dst.Kind == wir.OperandPath && adviceSamePath(body.Path(wir.PathRef(inst.Dst.Ref)), root) {
+				candidate := terminal{write: inst.TargetSpan}
+				stop = &candidate
+				break
+			}
+			if inst.Op == wir.OpReturn {
+				candidate := terminal{returnSpan: inst.ExprSpan}
+				stop = &candidate
+				break
+			}
+			if inst.Op == wir.OpCall {
+				return ControlDiagnostic{}, false
+			}
+		}
+		if stop != nil {
+			terminals = append(terminals, *stop)
+			continue
+		}
+		queue = append(queue, graph.Successors(point)...)
+	}
+	if len(terminals) == 0 {
+		return ControlDiagnostic{}, false
+	}
+	name := body.SymbolName(root.Symbol)
+	if name == "" {
+		return ControlDiagnostic{}, false
+	}
+	var overwrite, exit wir.Span
+	for _, item := range terminals {
+		if !overwrite.Valid() && item.write.Valid() {
+			overwrite = item.write
+		}
+		if !exit.Valid() && item.returnSpan.Valid() {
+			exit = item.returnSpan
+		}
+	}
+	evidence := make([]ControlDiagnosticEvidence, 0, 2)
+	labels := []ControlDiagnosticLabel{{Span: declaration.TargetSpan, Message: "dead assignment"}}
+	message := "assignment to \"" + name + "\" is overwritten before it is read"
+	help := "Remove this assignment, or read `" + name + "` before the later overwrite."
+	if exit.Valid() {
+		message = "assignment to \"" + name + "\" is discarded before it is read"
+		help = "Remove this assignment, or read `" + name + "` before every later overwrite or exit."
+		evidence = append(evidence, ControlDiagnosticEvidence{Span: exit, Kind: "abstract fact", Trust: "proven", Message: "control can leave before \"" + name + "\" is read"})
+		labels = append(labels, ControlDiagnosticLabel{Span: exit, Message: "exit before read"})
+	}
+	if overwrite.Valid() {
+		evidence = append(evidence, ControlDiagnosticEvidence{Span: overwrite, Kind: "abstract fact", Trust: "proven", Message: "later assignment replaces \"" + name + "\" before the earlier value is read"})
+		labels = append(labels, ControlDiagnosticLabel{Span: overwrite, Message: "overwriting assignment"})
+	}
+	return ControlDiagnostic{Key: fmt.Sprintf("lint.dead.assignment/%d/%d", declaration.TargetSpan.StartLine, declaration.Point), Code: "lint.dead.assignment", Message: message, Span: declaration.TargetSpan, Evidence: evidence, Labels: labels, Help: help}, true
+}
+
 type adviceWrite struct {
 	inst      wir.Instruction
 	path      string

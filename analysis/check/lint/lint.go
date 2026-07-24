@@ -520,6 +520,8 @@ func placementRelationTemplates(module string, summary exportrelation.Summary) [
 
 func applyDiagnosticPolicy(in []diagnostic.Diagnostic, enabled map[diagnostic.Code]bool, policy diagnostic.Policy) []diagnostic.Diagnostic {
 	optional := map[diagnostic.Code]bool{
+		"lint.unused.local":               true,
+		"lint.dead.assignment":            true,
 		"lint.condition.redundant":        true,
 		"advice.always_true_guard":        true,
 		"advice.redundant_claim":          true,
@@ -636,6 +638,13 @@ func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.
 			continue
 		}
 		out = append(out, newDiagnostic(entry, span, code, message))
+	}
+	for _, projection := range result.PolicyDiagnostics {
+		if projection.Code == "" || !projection.Span.Valid() {
+			continue
+		}
+		span := spanForFact(entry.Source, projection.Span)
+		out = append(out, newEnrichedDiagnostic(entry, span, diagnostic.Code(projection.Code), projection.Message, projection))
 	}
 	diagnostic.Sort(out)
 	return diagnostic.CoalesceSamePrimary(out), time.Since(started)

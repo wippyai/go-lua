@@ -131,6 +131,9 @@ type Result struct {
 	Diagnostics []equation.Fact
 	// PublishedDiagnostics projects canonical diagnostic facts without re-analysis.
 	PublishedDiagnostics []PublishedDiagnostic
+	// PolicyDiagnostics retain complete source-owned lint facts for adapters
+	// that explicitly enable their codes. They never alter engine diagnostics.
+	PolicyDiagnostics []PublishedDiagnostic
 	// DiagnosticSpans are source-only metadata; equation facts remain portable.
 	DiagnosticSpans map[string]wir.Span
 	// Placement is nil unless the closure establishes an allocation-site fact.
@@ -403,12 +406,40 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		ReturnCandidates:     cloneFacts(closure.Outcomes),
 		ValueFacts:           cloneFacts(closure.Values),
 		PublishedDiagnostics: published,
+		PolicyDiagnostics:    publishedPolicyDiagnostics(compilation.PolicyDiagnostics),
 		DiagnosticSpans:      diagnosticSpans,
 		Placement:            placement,
 		TypeDefinitions:      cloneTypeDefinitions(compilation.TypeDefinitions),
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
 	}
+}
+
+func publishedPolicyDiagnostics(diagnostics []front.ControlDiagnostic) []PublishedDiagnostic {
+	if len(diagnostics) == 0 {
+		return nil
+	}
+	out := make([]PublishedDiagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "" || !diagnostic.Span.Valid() {
+			continue
+		}
+		item := PublishedDiagnostic{
+			Fact:    equation.Fact{Key: diagnostic.Key, Value: []byte(diagnostic.Message)},
+			Code:    diagnostic.Code,
+			Span:    diagnostic.Span,
+			Message: diagnostic.Message,
+			Help:    diagnostic.Help,
+		}
+		for _, evidence := range diagnostic.Evidence {
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: evidence.Span, Kind: evidence.Kind, Trust: evidence.Trust, Message: evidence.Message})
+		}
+		for _, label := range diagnostic.Labels {
+			item.Labels = append(item.Labels, DiagnosticLabel{Span: label.Span, Message: label.Message})
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func cloneTypeDefinitions(in map[string]typ.Type) map[string]typ.Type {
@@ -1991,6 +2022,10 @@ func branchPredicateDescription(operation equation.Equation) (string, bool) {
 		return "", false
 	}
 	switch predicate.Kind {
+	case "truthy":
+		return display + " is checked as truthy", true
+	case "falsy":
+		return display + " is checked as falsy", true
 	case "literal-equal":
 		literal, err := displayValue([]byte(predicate.Literal))
 		if predicate.Literal == "" || err != nil {
@@ -2024,6 +2059,12 @@ func enclosingBranchProof(operation equation.Equation, artifact equation.Artifac
 		}
 		if left, right, found := strings.Cut(description, " equals "); found {
 			return left + " is " + right, spans[parts[2]], true
+		}
+		if strings.HasSuffix(description, " is checked as truthy") {
+			return strings.TrimSuffix(description, " is checked as truthy") + " is truthy", spans[parts[2]], true
+		}
+		if strings.HasSuffix(description, " is checked as falsy") {
+			return strings.TrimSuffix(description, " is checked as falsy") + " is falsy", spans[parts[2]], true
 		}
 	}
 	return "", wir.Span{}, false

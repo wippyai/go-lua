@@ -112,6 +112,10 @@ type Compilation struct {
 	// retained with the compiled body so the engine can publish them through the
 	// same source-diagnostic boundary as equation facts.
 	ControlDiagnostics []ControlDiagnostic
+	// PolicyDiagnostics are complete lexical facts that are returned to the
+	// project adapter but never enter the engine's unconditional diagnostic
+	// stream. The adapter applies the caller's explicit diagnostic policy.
+	PolicyDiagnostics []ControlDiagnostic
 	// TypeDefinitions are the top-level declarations resolved by the exact
 	// resolver that lowered WIR. Module publication uses these values directly:
 	// reconstructing them with a second resolver would allocate a different
@@ -219,8 +223,10 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	}
 	compilation.Nested = nested
 	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, adviceControlDiagnostics(body, built.Graph)...)
+	compilation.PolicyDiagnostics = append(compilation.PolicyDiagnostics, advicePolicyDiagnostics(body, built.Graph)...)
 	for _, child := range nested {
 		compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, child.ControlDiagnostics...)
+		compilation.PolicyDiagnostics = append(compilation.PolicyDiagnostics, child.PolicyDiagnostics...)
 	}
 	catalog, err := catalogBodies(compilation)
 	if err != nil {
@@ -761,8 +767,10 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 			return nil, err
 		}
 		child.ControlDiagnostics = append(child.ControlDiagnostics, adviceControlDiagnostics(proto.Body, proto.Graph)...)
+		child.PolicyDiagnostics = append(child.PolicyDiagnostics, advicePolicyDiagnostics(proto.Body, proto.Graph)...)
 		for _, nested := range child.Nested {
 			child.ControlDiagnostics = append(child.ControlDiagnostics, nested.ControlDiagnostics...)
+			child.PolicyDiagnostics = append(child.PolicyDiagnostics, nested.PolicyDiagnostics...)
 		}
 		children = append(children, child)
 	}
