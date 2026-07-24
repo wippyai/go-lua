@@ -241,7 +241,7 @@ func CheckWithImports(source string, imports map[string]typ.Type) (result Result
 		}
 		closure, transactions = evaluation.Closure, evaluation.Transactions
 	}
-	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, compilation.EffectSpans, compilation.ExpressionSpans, closure.Diagnostics)
+	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, compilation.EffectSpans, compilation.ExpressionSpans, compilation.ReturnSpans, closure.Diagnostics)
 	for key, span := range lexical.diagnosticSpans {
 		if diagnosticSpans == nil {
 			diagnosticSpans = make(map[string]wir.Span)
@@ -250,6 +250,13 @@ func CheckWithImports(source string, imports map[string]typ.Type) (result Result
 	}
 	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, compilation.BranchSpans, compilation.ExpressionSpans, lexical.lifecycleEvidence, lexical.selectEvidence)
 	published = mergeChildPublishedDiagnostics(published, lexical.childPublished)
+	for _, diagnostic := range compilation.ControlDiagnostics {
+		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: diagnostic.Key, Value: []byte(diagnostic.Message)})
+		if diagnosticSpans == nil {
+			diagnosticSpans = make(map[string]wir.Span)
+		}
+		diagnosticSpans[diagnostic.Key] = diagnostic.Span
+	}
 	result = Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
@@ -275,8 +282,8 @@ func cloneFacts(in []equation.Fact) []equation.Fact {
 	return out
 }
 
-func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expressionSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
-	if (len(claimSpans) == 0 && len(callSpans) == 0 && len(branchSpans) == 0 && len(effectSpans) == 0 && len(expressionSpans) == 0) || len(diagnostics) == 0 {
+func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expressionSpans, returnSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
+	if (len(claimSpans) == 0 && len(callSpans) == 0 && len(branchSpans) == 0 && len(effectSpans) == 0 && len(expressionSpans) == 0 && len(returnSpans) == 0) || len(diagnostics) == 0 {
 		return nil
 	}
 	out := make(map[string]wir.Span)
@@ -346,6 +353,12 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expression
 						out[item.Key] = span
 					}
 				}
+			}
+			continue
+		case strings.HasPrefix(item.Key, "type.return.contract/"):
+			name = strings.TrimPrefix(item.Key, "type.return.contract/")
+			if span, ok := returnSpans[name]; ok {
+				out[item.Key] = span
 			}
 			continue
 		default:
@@ -2246,7 +2259,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		// Check closure is still the sole publication point, while the qualified
 		// key lets DiagnosticSpans retain the child operation's source location.
 		body := fmt.Sprintf("%x", child.Body)
-		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, closure.Diagnostics)
+		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
 		for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
 			l.childPublished["child/"+body+"/"+item.Fact.Key] = PublishedDiagnostic{
 				Fact:     equation.Fact{Key: "child/" + body + "/" + item.Fact.Key, Value: append([]byte(nil), item.Fact.Value...)},
@@ -2322,7 +2335,7 @@ func childReturnValues(closure equation.OutputClosure) ([][]byte, error) {
 			continue
 		}
 		index, err := strconv.Atoi(indexText)
-		if err != nil || index < 0 || values[index] != nil {
+		if err != nil || index < 0 || (index < len(values) && values[index] != nil) {
 			return nil, fmt.Errorf("malformed child return slot")
 		}
 		values[index] = append([]byte(nil), outcome.Value...)
@@ -2497,7 +2510,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
-			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, outcome.Diagnostics)
+			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
 			if span, ok := spans[diagnostic.Key]; ok {
 				lexical.diagnosticSpans[key] = span
 			}
@@ -2530,7 +2543,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
-			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, outcome.Diagnostics)
+			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
 			if span, ok := spans[diagnostic.Key]; ok {
 				lexical.diagnosticSpans[key] = span
 			}
@@ -2582,7 +2595,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		if evaluateErr != nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: select child %q: %w", prototype, evaluateErr)
 		}
-		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, outcome.Diagnostics)
+		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
 		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil)
 		for _, diagnostic := range outcome.Diagnostics {
 			if !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
@@ -6755,9 +6768,23 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	values := make([][]byte, len(operation.Operands))
+	values := make([][]byte, 0, len(operation.Operands))
+	declared := make(map[int]typ.Type)
 	for _, operand := range operation.Operands {
 		const prefix = "return-value-"
+		if strings.HasPrefix(operand.Role, "declared-return-") {
+			indexText := strings.TrimPrefix(operand.Role, "declared-return-")
+			index, err := strconv.Atoi(indexText)
+			if err != nil || index < 0 {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed declared return operand role %q", operand.Role)
+			}
+			declaredType, ok := shapefact.DecodeTarget(operand.Value)
+			if !ok || declaredType == nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed declared return type")
+			}
+			declared[index] = declaredType
+			continue
+		}
 		if !strings.HasPrefix(operand.Role, prefix) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed return operand role %q", operand.Role)
 		}
@@ -6766,8 +6793,11 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed return operand role %q", operand.Role)
 		}
 		index, err := strconv.Atoi(indexText)
-		if err != nil || index < 0 || index >= len(values) || values[index] != nil {
+		if err != nil || index < 0 || (index < len(values) && values[index] != nil) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed return operand role %q", operand.Role)
+		}
+		for len(values) <= index {
+			values = append(values, nil)
 		}
 		value, err := resolveCurrentValue(operand.Value, partition)
 		if err != nil {
@@ -6779,6 +6809,19 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		if value == nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: missing return value %d", index)
 		}
+	}
+	diagnostics := make([]equation.Fact, 0)
+	for index, expected := range declared {
+		if index >= len(values) {
+			continue
+		}
+		if valueAgainstType(values[index], expected) != shapeRefuted {
+			continue
+		}
+		diagnostics = append(diagnostics, equation.Fact{
+			Key:   "type.return.contract/" + operation.Target.Name,
+			Value: []byte(fmt.Sprintf("returned value is %s, not %s", assignmentValueType(values[index]), typeformat.Short(expected))),
+		})
 	}
 	// Every return occurrence owns its internal tuple.  A file can have more
 	// than one reachable return (for example, a loop return plus the fallthrough
@@ -6803,7 +6846,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 			projected = append(projected, placementEventFact(allocation.Identity, operation.Target.Name, placementEventOwned))
 		}
 	}
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: projected, Outcomes: outcomes}}, nil
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: projected, Outcomes: outcomes, Diagnostics: diagnostics}}, nil
 }
 
 // branchTruth evaluates exactly one selector.  An unavailable selector is an

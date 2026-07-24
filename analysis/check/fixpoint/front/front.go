@@ -97,6 +97,7 @@ type Compilation struct {
 	BranchSpans               map[string]wir.Span
 	EffectSpans               map[string]wir.Span
 	ExpressionSpans           map[string]wir.Span
+	ReturnSpans               map[string]wir.Span
 	QualifiedClaimSpans       map[SpanKey]wir.Span
 	QualifiedClaimTargetSpans map[SpanKey]wir.Span
 	QualifiedCallSpans        map[SpanKey]wir.Span
@@ -105,6 +106,16 @@ type Compilation struct {
 	// Catalog on the root indexes every complete lexical body. It remains
 	// passive until child admission is enabled by the engine.
 	Catalog BodyCatalog
+	// ControlDiagnostics are parser-admitted, lexical control facts. They are
+	// retained with the compiled body so the engine can publish them through the
+	// same source-diagnostic boundary as equation facts.
+	ControlDiagnostics []ControlDiagnostic
+}
+
+type ControlDiagnostic struct {
+	Key     string
+	Message string
+	Span    wir.Span
 }
 
 // SpanKey makes source anchors unambiguous across lexical bodies, whose local
@@ -135,6 +146,7 @@ func Compile(source string) (Compilation, error) {
 	if err != nil {
 		return Compilation{}, fmt.Errorf("front: parse body: %w", err)
 	}
+	controlDiagnostics := validateControl(stmts)
 	// channel is the ambient runtime module whose select form has a dedicated
 	// WIR operation.  A local binding still shadows it, so arbitrary
 	// user-authored .select methods remain ordinary calls.
@@ -175,7 +187,109 @@ func Compile(source string) (Compilation, error) {
 		return Compilation{}, err
 	}
 	compilation.Catalog = catalog
+	compilation.ControlDiagnostics = controlDiagnostics
 	return compilation, nil
+}
+
+func validateControl(stmts []ast.Stmt) []ControlDiagnostic {
+	var diagnostics []ControlDiagnostic
+	var visitFunction func([]ast.Stmt)
+	visitFunction = func(body []ast.Stmt) {
+		labels := make(map[string]bool)
+		var collect func([]ast.Stmt)
+		collect = func(items []ast.Stmt) {
+			for _, item := range items {
+				switch stmt := item.(type) {
+				case *ast.LabelStmt:
+					if labels[stmt.Name] {
+						diagnostics = append(diagnostics, controlDiagnostic("duplicate_label", "duplicate label "+stmt.Name, ast.SpanOf(stmt)))
+					}
+					labels[stmt.Name] = true
+				case *ast.DoBlockStmt:
+					collect(stmt.Stmts)
+				case *ast.WhileStmt:
+					collect(stmt.Stmts)
+				case *ast.RepeatStmt:
+					collect(stmt.Stmts)
+				case *ast.NumberForStmt:
+					collect(stmt.Stmts)
+				case *ast.GenericForStmt:
+					collect(stmt.Stmts)
+				case *ast.IfStmt:
+					collect(stmt.Then)
+					collect(stmt.Else)
+				}
+			}
+		}
+		collect(body)
+		var visit func([]ast.Stmt, int)
+		visit = func(items []ast.Stmt, loops int) {
+			for _, item := range items {
+				switch stmt := item.(type) {
+				case *ast.BreakStmt:
+					if loops == 0 {
+						diagnostics = append(diagnostics, controlDiagnostic("break_outside_loop", "break is only valid inside a loop", ast.SpanOf(stmt)))
+					}
+				case *ast.GotoStmt:
+					if !labels[stmt.Label] {
+						diagnostics = append(diagnostics, controlDiagnostic("undefined_label", "undefined label "+stmt.Label, ast.SpanOf(stmt)))
+					}
+				case *ast.DoBlockStmt:
+					visit(stmt.Stmts, loops)
+				case *ast.WhileStmt:
+					visit(stmt.Stmts, loops+1)
+				case *ast.RepeatStmt:
+					visit(stmt.Stmts, loops+1)
+				case *ast.NumberForStmt:
+					visit(stmt.Stmts, loops+1)
+				case *ast.GenericForStmt:
+					visit(stmt.Stmts, loops+1)
+				case *ast.IfStmt:
+					visit(stmt.Then, loops)
+					visit(stmt.Else, loops)
+				case *ast.FuncDefStmt:
+					if stmt.Func != nil {
+						visitFunction(stmt.Func.Stmts)
+					}
+				case *ast.LocalAssignStmt:
+					for _, expr := range stmt.Exprs {
+						visitNestedFunctions(expr, visitFunction)
+					}
+				case *ast.AssignStmt:
+					for _, expr := range stmt.Rhs {
+						visitNestedFunctions(expr, visitFunction)
+					}
+				}
+			}
+		}
+		visit(body, 0)
+	}
+	visitFunction(stmts)
+	return diagnostics
+}
+
+func controlDiagnostic(kind, message string, span ast.Span) ControlDiagnostic {
+	return ControlDiagnostic{Key: "control." + kind, Message: message, Span: wir.Span{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}}
+}
+
+func visitNestedFunctions(expr ast.Expr, visit func([]ast.Stmt)) {
+	switch value := expr.(type) {
+	case *ast.FunctionExpr:
+		visit(value.Stmts)
+	case *ast.FuncCallExpr:
+		visitNestedFunctions(value.Func, visit)
+		visitNestedFunctions(value.Receiver, visit)
+		for _, arg := range value.Args {
+			visitNestedFunctions(arg, visit)
+		}
+	case *ast.TableExpr:
+		for _, field := range value.Fields {
+			if field != nil {
+				visitNestedFunctions(field.Key, visit)
+				visitNestedFunctions(field.Value, visit)
+			}
+		}
+	}
 }
 
 func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, prototypeName string, lexicalPath []uint32, boundary wir.BodyBoundary, wirBody *wir.Body, artifact equation.Artifact, claims, claimTargets, calls, branches, effects, expressions map[string]wir.Span) Compilation {
@@ -184,6 +298,7 @@ func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, protot
 		LexicalPath: append([]uint32(nil), lexicalPath...), Boundary: boundary, RebindsBoundary: bodyRebindsBoundary(wirBody, boundary),
 		ClaimSpans: claims, ClaimTargetSpans: claimTargets, CallSpans: calls,
 		BranchSpans: branches, EffectSpans: effects, ExpressionSpans: expressions,
+		ReturnSpans:               returnSpans(wirBody, artifact),
 		QualifiedClaimSpans:       qualifySpans(body, claims),
 		QualifiedClaimTargetSpans: qualifySpans(body, claimTargets),
 		QualifiedCallSpans:        qualifySpans(body, calls),
@@ -338,6 +453,34 @@ func effectSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 			}
 			callIndex++
 		}
+	}
+	return out
+}
+
+// returnSpans retains each publication's authored return expression span. A
+// return contract is a publication fact, so its diagnostic must use the same
+// operation identity rather than reconstructing an AST location at the host.
+func returnSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
+	if body == nil {
+		return nil
+	}
+	returns := make([]wir.Instruction, 0)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpReturn {
+			returns = append(returns, instruction)
+		}
+	}
+	out := make(map[string]wir.Span, len(returns))
+	returnIndex := 0
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "publication" {
+			continue
+		}
+		if returnIndex < len(returns) && returns[returnIndex].ExprSpan.Valid() {
+			out[operation.Target.Name] = returns[returnIndex].ExprSpan
+		}
+		returnIndex++
 	}
 	return out
 }
@@ -1872,13 +2015,21 @@ func externalCallOperands(body *wir.Body, instruction wir.Instruction, apply equ
 // than a reason to discard the entire return operation.
 func publicationOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Operand, error) {
 	values := body.Operands(instruction.List)
-	operands := make([]equation.Operand, 0, len(values))
+	declared := body.DeclaredReturnTypes()
+	operands := make([]equation.Operand, 0, len(values)+len(declared))
 	for index, value := range values {
 		term, err := scalarTerm(body, value)
 		if err != nil {
 			return nil, fmt.Errorf("value %d: %w", index, err)
 		}
 		operands = append(operands, equation.Operand{Role: indexedRole("return-value", index), Term: term})
+	}
+	for index, declaredType := range declared {
+		encoded, ok := shapefact.EncodeTarget(declaredType)
+		if !ok {
+			continue
+		}
+		operands = append(operands, equation.Operand{Role: indexedRole("declared-return", index), Term: equation.ClosedTerm(encoded)})
 	}
 	return operands, nil
 }
