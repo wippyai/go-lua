@@ -1311,6 +1311,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 		}
 	}
 	guardReachability := newReachabilityCache(graph)
+	suspensionLives := suspensionLiveAllocations(body, graph, guardReachability)
 	for index, operation := range operations {
 		instruction := operation.instruction
 		draft := equation.Draft{Target: operation.target, Entry: entry}
@@ -1567,6 +1568,12 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				operands, err := applyOperands(body, instruction)
 				if err != nil {
 					return equation.Artifact{}, fmt.Errorf("front: call %s: %w", operation.target.Name, err)
+				}
+				for liveIndex, term := range suspensionLives[instruction.Point] {
+					operands = append(operands, equation.Operand{
+						Role: "suspension-live-" + fmt.Sprintf("%08d", liveIndex),
+						Term: term,
+					})
 				}
 				draft.Occurrence = occurrence("apply")
 				draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
@@ -3293,6 +3300,106 @@ func loopHeaderGuards(graph cfg.Graph, reachability *reachabilityCache, point cf
 		}
 	}
 	return kept
+}
+
+// suspensionLiveAllocations records an allocation root only when the immutable
+// WIR and CFG establish all three parts of the lifetime witness: construction
+// reaches a receive call, the allocation root is not rebound before that call,
+// and a read of that root (or one of its members) is reachable after it.  It is
+// deliberately a front-side relation rather than a placement heuristic: later
+// stages consume the exact root term that the allocation already published.
+func suspensionLiveAllocations(body *wir.Body, graph cfg.Graph, reachability *reachabilityCache) map[cfg.Point][]equation.Term {
+	if body == nil || graph == nil || reachability == nil {
+		return nil
+	}
+	type allocation struct {
+		index int
+		point cfg.Point
+		root  wir.Operand
+	}
+	allocations := make([]allocation, 0)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op != wir.OpMakeTable && instruction.Op != wir.OpClosure {
+			continue
+		}
+		if instruction.Dst.Kind != wir.OperandPath || body.Path(wir.PathRef(instruction.Dst.Ref)).IsEmpty() {
+			continue
+		}
+		allocations = append(allocations, allocation{index: index, point: instruction.Point, root: instruction.Dst})
+	}
+	if len(allocations) == 0 {
+		return nil
+	}
+	live := make(map[cfg.Point][]equation.Term)
+	for callIndex := 0; callIndex < body.Len(); callIndex++ {
+		call := body.Instr(callIndex)
+		if !receiveCall(body, call) {
+			continue
+		}
+		for _, candidate := range allocations {
+			if candidate.index >= callIndex || !reachability.reaches(candidate.point, call.Point) ||
+				reboundRootBefore(body, candidate.root, candidate.index+1, callIndex) ||
+				!rootReadAfter(body, reachability, candidate.root, call.Point, callIndex+1) {
+				continue
+			}
+			term, err := scalarTerm(body, candidate.root)
+			if err != nil {
+				continue
+			}
+			live[call.Point] = append(live[call.Point], term)
+		}
+	}
+	return live
+}
+
+func receiveCall(body *wir.Body, instruction wir.Instruction) bool {
+	return instruction.Op == wir.OpCall && instruction.Call.Receiver.Kind != wir.OperandNone &&
+		instruction.Call.Method != 0 && body.Const(instruction.Call.Method).Kind == wir.ConstString &&
+		body.Const(instruction.Call.Method).Str == "receive"
+}
+
+func reboundRootBefore(body *wir.Body, root wir.Operand, start, end int) bool {
+	rootPath := body.Path(wir.PathRef(root.Ref))
+	for index := start; index < end; index++ {
+		instruction := body.Instr(index)
+		if !instruction.WritesAssignmentPoint() || instruction.Dst.Kind != wir.OperandPath {
+			continue
+		}
+		if body.Path(wir.PathRef(instruction.Dst.Ref)).SameRootIgnoringVersion(rootPath) && len(body.Path(wir.PathRef(instruction.Dst.Ref)).Segments) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func rootReadAfter(body *wir.Body, reachability *reachabilityCache, root wir.Operand, call cfg.Point, start int) bool {
+	rootPath := body.Path(wir.PathRef(root.Ref))
+	for index := start; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if !reachability.reaches(call, instruction.Point) {
+			continue
+		}
+		if instructionReadsRoot(body, instruction, rootPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func instructionReadsRoot(body *wir.Body, instruction wir.Instruction, root path.Path) bool {
+	reads := func(operand wir.Operand) bool {
+		return operand.Kind == wir.OperandPath && body.Path(wir.PathRef(operand.Ref)).SameRootIgnoringVersion(root)
+	}
+	if reads(instruction.A) || reads(instruction.B) || reads(instruction.Call.Callee) || reads(instruction.Call.Receiver) {
+		return true
+	}
+	for _, operand := range body.Operands(instruction.List) {
+		if reads(operand) {
+			return true
+		}
+	}
+	return false
 }
 
 func graphHasCycle(graph cfg.Graph) bool {

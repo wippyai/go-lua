@@ -11304,6 +11304,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	argumentFacts = callArgumentFacts(operation.Target.Name, operands.arguments)
 	placementFacts = placementApplyFacts(operation, operands, partition)
+	placementFacts = append(placementFacts, placementSuspensionFacts(operation, operands, partition)...)
 	if operands.display == "setmetatable" && !operands.spread && len(operands.arguments) == 2 {
 		if object, found := tableIdentityForTerm(operands.arguments[0], partition); found {
 			metatableFacts = append(metatableFacts, heapMetaAttachedFact(object, operation.Target.Name))

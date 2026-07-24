@@ -61,6 +61,9 @@ const (
 	placementEventOwned  = "owned"
 	placementEventShared = "shared"
 	placementEventSealed = "sealed"
+	// A suspension event is lifetime evidence, not an ownership transfer. The
+	// allocation remains stack-placed, but neither frame-local license holds.
+	placementEventSuspended = "suspended"
 )
 
 type placementAllocationFact struct {
@@ -376,6 +379,41 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 	return facts
 }
 
+// placementSuspensionFacts promotes only allocation roots that the front has
+// already proved live across a typed channel receive. The live-root operands
+// are CFG-derived: a source allocation reaches this receive, has not been
+// rebound, and has a reachable later read. A method spelling alone therefore
+// cannot promote an arbitrary frame-local value.
+func placementSuspensionFacts(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) []equation.Fact {
+	if operands.method != "receive" || !typedChannelReceiver(operands.receiver, partition) {
+		return nil
+	}
+	live := make(map[int][]byte)
+	for _, operand := range operation.Operands {
+		if !strings.HasPrefix(operand.Role, "suspension-live-") {
+			continue
+		}
+		index, err := strconv.Atoi(strings.TrimPrefix(operand.Role, "suspension-live-"))
+		if err != nil || index < 0 || live[index] != nil {
+			return nil
+		}
+		live[index] = operand.Value
+	}
+	facts := make([]equation.Fact, 0, len(live))
+	for index := 0; index < len(live); index++ {
+		term := live[index]
+		if len(term) == 0 {
+			return nil
+		}
+		allocation, found := placementAllocationForTerm(term, partition)
+		if !found {
+			return nil
+		}
+		facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventSuspended))
+	}
+	return facts
+}
+
 func closedEmptyMetatable(arguments [][]byte, partition equation.Partition) bool {
 	if len(arguments) != 2 {
 		return false
@@ -548,6 +586,7 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 func placementStackWitnessFacts(facts []equation.Fact) []equation.Fact {
 	allocations := make(map[string]equation.Fact)
 	boundary := make(map[string]bool)
+	suspended := make(map[string][]equation.Fact)
 	for _, fact := range facts {
 		switch {
 		case strings.HasPrefix(fact.Key, placementAllocationPrefix):
@@ -560,7 +599,11 @@ func placementStackWitnessFacts(facts []equation.Fact) []equation.Fact {
 				continue
 			}
 			if identity, ok := placementFactIdentity(parts); ok {
-				boundary[identity] = true
+				if strings.HasPrefix(fact.Key, placementEventPrefix) && parts[3] == placementEventSuspended {
+					suspended[identity] = append(suspended[identity], cloneFact(fact))
+				} else {
+					boundary[identity] = true
+				}
 			}
 		case strings.HasPrefix(fact.Key, placementContainmentPrefix):
 			parts, ok := placementProvenFactParts(fact)
@@ -582,6 +625,7 @@ func placementStackWitnessFacts(facts []equation.Fact) []equation.Fact {
 	witnesses := make([]equation.Fact, 0, len(identities))
 	for _, identity := range identities {
 		witnesses = append(witnesses, allocations[identity])
+		witnesses = append(witnesses, suspended[identity]...)
 	}
 	return placementFactsFromChild(witnesses)
 }
@@ -701,6 +745,7 @@ func propagatePublishedPlacement(parsed publishedPlacementFacts) map[string][]st
 	propagate(placementEventOwned)
 	propagate(placementEventShared)
 	propagate(placementEventSealed)
+	propagate(placementEventSuspended)
 	return children
 }
 
@@ -785,7 +830,14 @@ func projectPlacementAllocation(identity string, allocation placementAllocationF
 	case events[identity][placementEventOwned]:
 		item.Placement, item.OwnerIdentity = placement.OwnedHeap, true
 	default:
-		item.Placement, item.FrameLocal, item.DiesBeforeSuspension, item.HasDiesBeforeSuspension = placement.Stack, true, true, true
+		item.Placement, item.HasDiesBeforeSuspension = placement.Stack, true
+		if events[identity][placementEventSuspended] {
+			// A published suspend edge refutes the two lifetime licenses without
+			// changing the allocation's stack/heap ownership classification.
+			item.FrameLocal, item.DiesBeforeSuspension = false, false
+		} else {
+			item.FrameLocal, item.DiesBeforeSuspension = true, true
+		}
 	}
 	item.Decomposable = allocation.Decomposable && item.Placement == placement.Stack && len(item.Blockers) == 0 && len(contracts[identity]) == 0
 	return item
