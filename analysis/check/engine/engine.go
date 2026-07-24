@@ -4890,6 +4890,17 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		{Key: "value/" + target + "/" + operation.Target.Name, Value: value},
 		{Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 	}
+	// A direct alias of an optional declared value keeps that declaration as
+	// descriptive metadata for a later non-nil guard. It remains unavailable to
+	// concrete writes: a reassignment replaces the target's current value and
+	// cannot inherit this contract.
+	if !derivedPathTerm(operands["value"]) {
+		if declared, found := declaredTypeForTerm(operands["value"], partition); found {
+			if encoded, ok := shapefact.EncodeTarget(declared); ok && optionalConcreteWitnessType(declared) {
+				values = append(values, equation.Fact{Key: "declared-type/" + target + "/" + operation.Target.Name, Value: encoded})
+			}
+		}
+	}
 	// A literal read through a resolved static bracket member carries exact
 	// source evidence independently of the destination binding. Preserve that
 	// narrow publication for the immediate annotation diagnostic; ordinary
@@ -13016,6 +13027,9 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 			if decodeErr == nil && typeValue != nil {
 				return rootTerm, segs, typeValue, true
 			}
+		}
+		if typeValue, declared := declaredTypeForTerm(rootTerm, partition); declared && optionalConcreteWitnessType(typeValue) {
+			return rootTerm, segs, typeValue, true
 		}
 		value, found := latestValue(rootTerm, partition)
 		if !found {
