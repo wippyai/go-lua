@@ -457,7 +457,7 @@ func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, 
 	if code == "lint.condition.redundant" || code == "advice.always_true_guard" || code == "advice.redundant_claim" || code == "send.isolation" {
 		result.Severity = diagnostic.SeverityHint
 	}
-	if code == "effect.freeze.mutation" || code == "effect.lifecycle.unreleased" {
+	if code == "effect.freeze.mutation" || code == "effect.lifecycle.unreleased" || code == "typestate.unproven_requirement" {
 		result.Severity = diagnostic.SeverityWarning
 	}
 	if code == "channel.select.exhaustiveness" || code == "lint.union.exhaustiveness" {

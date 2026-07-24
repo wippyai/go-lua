@@ -300,7 +300,7 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans map[string]
 				out[item.Key] = span
 			}
 			continue
-		case strings.HasPrefix(item.Key, "channel.send.closed/"), strings.HasPrefix(item.Key, "channel.close.closed/"):
+		case strings.HasPrefix(item.Key, "channel.send.closed/"), strings.HasPrefix(item.Key, "channel.close.closed/"), strings.HasPrefix(item.Key, "typestate.invalid_requirement/"), strings.HasPrefix(item.Key, "typestate.invalid_transition/"), strings.HasPrefix(item.Key, "typestate.unproven_requirement/"):
 			name = item.Key[strings.LastIndexByte(item.Key, '/')+1:]
 			if span, ok := callSpans[name+"/call"]; ok {
 				out[item.Key] = span
@@ -357,6 +357,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		if isChannelLifecycleDiagnostic(fact.Key) {
 			out = append(out, enrichChannelLifecycleDiagnostic(item))
+			continue
+		}
+		if isResourceTypestateDiagnostic(fact.Key) {
+			out = append(out, enrichResourceTypestateDiagnostic(item))
 			continue
 		}
 		if inner, _ := childDiagnosticKey(fact.Key); strings.HasPrefix(inner, "channel.select.exhaustiveness/") || strings.HasPrefix(inner, "lint.union.exhaustiveness/") {
@@ -612,6 +616,11 @@ func isChannelLifecycleDiagnostic(key string) bool {
 	return strings.HasPrefix(inner, "channel.send.closed/") || strings.HasPrefix(inner, "channel.close.closed/")
 }
 
+func isResourceTypestateDiagnostic(key string) bool {
+	inner, _ := childDiagnosticKey(key)
+	return strings.HasPrefix(inner, "typestate.invalid_requirement/") || strings.HasPrefix(inner, "typestate.invalid_transition/") || strings.HasPrefix(inner, "typestate.unproven_requirement/")
+}
+
 func enrichChannelLifecycleDiagnostic(item PublishedDiagnostic) PublishedDiagnostic {
 	inner, _ := childDiagnosticKey(item.Fact.Key)
 	display := "channel"
@@ -630,6 +639,64 @@ func enrichChannelLifecycleDiagnostic(item PublishedDiagnostic) PublishedDiagnos
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel lifecycle call"}}
 	item.Help = "Avoid closing the same channel twice."
 	return item
+}
+
+func enrichResourceTypestateDiagnostic(item PublishedDiagnostic) PublishedDiagnostic {
+	inner, _ := childDiagnosticKey(item.Fact.Key)
+	transition := strings.HasPrefix(inner, "typestate.invalid_transition/")
+	unproven := strings.HasPrefix(inner, "typestate.unproven_requirement/")
+	resource, expected, found := typestateDiagnosticParts(item.Message)
+	if resource == "" || expected == "" || (!unproven && found == "") {
+		return item
+	}
+	if unproven {
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "missing proof", Trust: "refuted", Message: fmt.Sprintf("no proof establishes `%s` in `%s` state at this call", resource, expected)}}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "unproven typestate requirement"}}
+		item.Help = fmt.Sprintf("Establish that `%s` is in `%s` state before this call.", resource, expected)
+		return item
+	}
+	if transition {
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("this transition requires `%s` to be in `%s`, but solved state is `%s`", resource, expected, found)}}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "invalid lifecycle transition"}}
+		item.Help = fmt.Sprintf("Transition `%s` only when it is in `%s` state.", resource, expected)
+		return item
+	}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("this call requires `%s` to be in `%s`, but solved state is `%s`", resource, expected, found)}}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "invalid typestate requirement"}}
+	item.Help = fmt.Sprintf("Call this operation only when `%s` is in `%s` state.", resource, expected)
+	return item
+}
+
+func typestateDiagnosticParts(message string) (resource, expected, found string) {
+	resourceStart := strings.Index(message, "resource `")
+	if resourceStart < 0 {
+		return "", "", ""
+	}
+	rest := message[resourceStart+len("resource `"):]
+	end := strings.IndexByte(rest, '`')
+	if end < 0 {
+		return "", "", ""
+	}
+	resource = rest[:end]
+	for _, part := range []struct {
+		prefix      string
+		destination *string
+	}{{"expected `", &expected}, {"found `", &found}} {
+		start := strings.Index(message, part.prefix)
+		if start < 0 {
+			if part.prefix == "found `" {
+				continue
+			}
+			return "", "", ""
+		}
+		value := message[start+len(part.prefix):]
+		end := strings.IndexByte(value, '`')
+		if end < 0 {
+			return "", "", ""
+		}
+		*part.destination = value[:end]
+	}
+	return resource, expected, found
 }
 
 func enrichUnreleasedLifecycleDiagnostic(item PublishedDiagnostic, transition []DiagnosticEvidence) PublishedDiagnostic {
@@ -678,7 +745,7 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 }
 
 func diagnosticOperationName(key string) string {
-	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/", "effect.lifecycle.unreleased/", "channel.send.closed/", "channel.close.closed/"} {
+	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/", "effect.lifecycle.unreleased/", "channel.send.closed/", "channel.close.closed/", "typestate.invalid_requirement/", "typestate.invalid_transition/"} {
 		if name, ok := strings.CutPrefix(key, prefix); ok {
 			return name
 		}
@@ -893,6 +960,12 @@ func diagnosticCode(key string) string {
 		return "channel.send.closed"
 	case strings.HasPrefix(key, "channel.close.closed/"):
 		return "channel.close.closed"
+	case strings.HasPrefix(key, "typestate.invalid_requirement/"):
+		return "typestate.invalid_requirement"
+	case strings.HasPrefix(key, "typestate.invalid_transition/"):
+		return "typestate.invalid_transition"
+	case strings.HasPrefix(key, "typestate.unproven_requirement/"):
+		return "typestate.unproven_requirement"
 	case strings.HasPrefix(key, "channel.select.exhaustiveness/"):
 		return "channel.select.exhaustiveness"
 	case strings.HasPrefix(key, "lint.union.exhaustiveness/"):
@@ -2038,7 +2111,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 		body := fmt.Sprintf("%x", child.Body)
 		for _, diagnostic := range outcome.Diagnostics {
-			if !isChannelLifecycleDiagnostic(diagnostic.Key) {
+			if !isChannelLifecycleDiagnostic(diagnostic.Key) && !isResourceTypestateDiagnostic(diagnostic.Key) {
 				continue
 			}
 			key := "child/" + body + "/" + diagnostic.Key
@@ -2181,7 +2254,7 @@ func childHasResourceLifecycle(child front.Compilation) bool {
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if operand.Role == "callee-display" && string(operand.Term.Encoding) == "resource.connect" {
+			if operand.Role == "callee-display" && (string(operand.Term.Encoding) == "resource.connect" || string(operand.Term.Encoding) == "resource.query") {
 				return true
 			}
 		}
@@ -4058,14 +4131,64 @@ func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCal
 			resourceLifecycleStateFact(identity, operation.Target.Name, "open"),
 		}}, true
 	}
-	if operands.display != "resource.close" || operands.spread || len(operands.arguments) != 1 {
+	if operands.spread || len(operands.arguments) != 1 {
 		return equation.OutputClosure{}, false
 	}
 	identity, known := resolveKnownCurrentValue(operands.arguments[0], partition)
 	if !known || !isResourceIdentity(identity) {
+		if operands.display == "resource.query" {
+			display := callArgumentDisplay(operation.Operands, 0)
+			if display != "" {
+				return equation.OutputClosure{Diagnostics: []equation.Fact{{
+					Key:   "typestate.unproven_requirement/" + operation.Target.Name,
+					Value: []byte(fmt.Sprintf("cannot prove typestate requirement for resource `%s`: expected `open`", display)),
+				}}}, true
+			}
+		}
 		return equation.OutputClosure{}, false
 	}
-	return equation.OutputClosure{Values: []equation.Fact{resourceLifecycleStateFact(identity, operation.Target.Name, "closed")}}, true
+	state, proven := resourceLifecycleState(partition, identity)
+	if !proven || state == "escaped" {
+		return equation.OutputClosure{}, true
+	}
+	display := callArgumentDisplay(operation.Operands, 0)
+	if display == "" {
+		display = "resource"
+	}
+	switch operands.display {
+	case "resource.close":
+		return equation.OutputClosure{Values: []equation.Fact{resourceLifecycleStateFact(identity, operation.Target.Name, "closed")}}, true
+	case "resource.query":
+		if state == "open" {
+			return equation.OutputClosure{}, true
+		}
+		return equation.OutputClosure{Diagnostics: []equation.Fact{{
+			Key:   "typestate.invalid_requirement/" + operation.Target.Name,
+			Value: []byte(fmt.Sprintf("invalid typestate requirement for resource `%s` in protocol connection: expected `open`, found `%s`", display, state)),
+		}}}, true
+	case "resource.begin":
+		if state != "open" {
+			return equation.OutputClosure{Diagnostics: []equation.Fact{{
+				Key:   "typestate.invalid_requirement/" + operation.Target.Name,
+				Value: []byte(fmt.Sprintf("invalid typestate requirement for resource `%s` in protocol connection: expected `open`, found `%s`", display, state)),
+			}}}, true
+		}
+		transaction := []byte("scalar/resource/" + operation.Target.Name)
+		return equation.OutputClosure{Values: []equation.Fact{
+			{Key: "call-result/" + operation.Target.Name + "/00000000", Value: transaction},
+			resourceLifecycleStateFact(transaction, operation.Target.Name, "active"),
+		}}, true
+	case "resource.commit":
+		if state == "active" {
+			return equation.OutputClosure{Values: []equation.Fact{resourceLifecycleStateFact(identity, operation.Target.Name, "committed")}}, true
+		}
+		return equation.OutputClosure{Diagnostics: []equation.Fact{{
+			Key:   "typestate.invalid_transition/" + operation.Target.Name,
+			Value: []byte(fmt.Sprintf("invalid transition for resource `%s` in protocol transaction: expected `active`, found `%s`", display, state)),
+		}}}, true
+	default:
+		return equation.OutputClosure{}, false
+	}
 }
 
 func resourceLifecycleStateFact(identity []byte, operation, state string) equation.Fact {
@@ -4091,6 +4214,17 @@ func resourceLifecycleEscape(operation equation.BoundEquation, operands directCa
 
 func isResourceIdentity(value []byte) bool {
 	return strings.HasPrefix(string(value), "scalar/resource/op-")
+}
+
+func resourceLifecycleState(partition equation.Partition, identity []byte) (string, bool) {
+	prefix := resourceLifecyclePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	state, latest := "", ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (state == "" || fact.Key > latest) {
+			state, latest = string(fact.Value), fact.Key
+		}
+	}
+	return state, state == "open" || state == "closed" || state == "active" || state == "committed" || state == "escaped"
 }
 
 func channelLifecycleEscape(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
