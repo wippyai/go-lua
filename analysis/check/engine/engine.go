@@ -5771,7 +5771,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// assignment of nil to the declaration type.
 	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil") && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted) {
 		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
-		optionalSource := optionalAssignmentSource(value, targetType)
+		optionalSource := optionalAssignmentSource(value, targetType) || closedLiteralDeclaredOptionalMemberSource(source, value, shapeTarget, partition)
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
 			actual := assignmentValueType(value)
 			if literal, found := literalDiagnosticValue(source, partition); found {
@@ -9584,6 +9584,14 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 			return value, true
 		}
 		if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) {
+			// A closed literal establishes that this member is absent at runtime,
+			// but an existing declaration on its owning path can still describe a
+			// wider optional member surface. Preserve that published nilability
+			// when it is the only fact available. An explicit member write above
+			// remains authoritative, so this cannot hide a concrete nil assignment.
+			if value, optional := declaredOptionalMemberValue(term, partition); optional {
+				return value, true
+			}
 			if sealedReceiver != nil && heapStaticReplacement(identity, partition) {
 				if missing, encoded := memberMissingValue(sealedReceiver); encoded {
 					return missing, true
@@ -9594,6 +9602,49 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		return nil, false
 	}
 	return nil, false
+}
+
+// declaredOptionalMemberValue projects a static member only from the owning
+// path's already-published declared type. It is used solely for a closed-literal
+// absence: dynamic/open objects and explicit heap writes keep their ordinary
+// value facts. A malformed path or a non-optional projection stays unavailable.
+func declaredOptionalMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	root, suffix, ok := tableAddress(term)
+	if !ok || suffix == "" {
+		return nil, false
+	}
+	segments, ok := segment.ParseFormattedSegments(suffix)
+	if !ok || len(segments) == 0 {
+		return nil, false
+	}
+	// An indexed path carries independent runtime absence: a declared array
+	// element type must not turn a missing entry into a merely optional field.
+	// This bridge is only for static record-member projections.
+	if hasIndexSegment(segments) {
+		return nil, false
+	}
+	declared, ok := declaredTypeForTerm(root, partition)
+	if !ok || declared == nil || !closedMemberSurface(declared) {
+		return nil, false
+	}
+	member, ok := luatypeprojection.ApplySegments(declared, segments)
+	if !ok || !optionalConcreteWitnessType(member) {
+		return nil, false
+	}
+	value, ok := shapefact.EncodeTarget(member)
+	return value, ok
+}
+
+// closedLiteralDeclaredOptionalMemberSource identifies the one optional value
+// produced by declaredOptionalMemberValue. Its diagnostic is a nilability
+// failure, while other optional values retain their established diagnostics.
+func closedLiteralDeclaredOptionalMemberSource(source, value, encodedTarget []byte, partition equation.Partition) bool {
+	declared, ok := declaredOptionalMemberValue(source, partition)
+	if !ok || string(declared) != string(value) {
+		return false
+	}
+	target, ok := shapefact.DecodeTarget(encodedTarget)
+	return ok && target != nil && !subtype.IsSubtype(typ.Nil, target)
 }
 
 // nestedHeapMemberAddress follows an already-published member-identity prefix

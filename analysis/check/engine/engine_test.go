@@ -603,6 +603,35 @@ end
 	t.Fatalf("uncalled declared branch assignment diagnostic = %#v", result.PublishedDiagnostics)
 }
 
+func TestCheckClosedLiteralAbsenceKeepsDeclaredOptionalMemberWitness(t *testing.T) {
+	result, err := engine.Check(`
+type Message = { data: string }
+type Timeout = { elapsed: number }
+local function consume(messages: Channel<Message>, timeout: Channel<Timeout>): string?
+  local result: { channel: any, value: Message | Timeout, ok: boolean } = channel.select {
+    messages:case_receive(),
+    timeout:case_receive(),
+  }
+  result = { channel = messages, value = { elapsed = 1 }, ok = true }
+  if result.channel == messages then
+    local data: string = result.value.data
+    return data
+  end
+  return nil
+end
+return consume
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "result.value.data") && strings.Contains(diagnostic.Message, "may be nil") {
+			return
+		}
+	}
+	t.Fatalf("declared optional member witness was not published: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckPublishesExplicitAnyBoundaryViolationThroughGuardedMemberRead(t *testing.T) {
 	result, err := engine.Check(`
 local raw: any = {kind = "task", route_id = "start"}
