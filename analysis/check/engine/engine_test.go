@@ -768,6 +768,46 @@ local answer: number = object:answer()`
 	}
 }
 
+func TestCheckWithImportsJoinsInstantiatedGenericSummaryAcrossCalls(t *testing.T) {
+	item := typ.NewTypeParam("T", nil)
+	result := typ.NewTypeParam("U", nil)
+	accumulator := typ.NewTypeParam("A", nil)
+	filter := typ.Func().TypeParamRef(item).
+		Param("arr", typ.NewArray(item)).
+		Param("pred", typ.Func().Param("item", item).Returns(typ.Boolean).Build()).
+		Returns(typ.NewArray(item)).Build()
+	mapFn := typ.Func().TypeParamRef(item).TypeParamRef(result).
+		Param("arr", typ.NewArray(item)).
+		Param("fn", typ.Func().Param("item", item).Returns(result).Build()).
+		Returns(typ.NewArray(result)).Build()
+	reduce := typ.Func().TypeParamRef(item).TypeParamRef(accumulator).
+		Param("arr", typ.NewArray(item)).
+		Param("fn", typ.Func().Param("acc", accumulator).Param("item", item).Returns(accumulator).Build()).
+		Param("initial", accumulator).
+		Returns(accumulator).Build()
+	provider := typetable.NewRecord().
+		Field("filter", filter).
+		Field("map", mapFn).
+		Field("reduce", reduce).
+		Build()
+	resultCheck, err := engine.CheckWithImports(`local iter = require("iter")
+type User = {name: string, age: number, active: boolean}
+local users: {User} = {
+  {name = "Ada", age = 31, active = true},
+  {name = "Bob", age = 28, active = false},
+}
+local active = iter.filter(users, function(user: User): boolean return user.active end)
+local names = iter.map(active, function(user: User): string return user.name end)
+local lengths = iter.map(names, function(name: string): number return #name end)
+local total: number = iter.reduce(lengths, function(acc: number, length: number): number return acc + length end, 0)`, map[string]typ.Type{"iter": provider})
+	if err != nil {
+		t.Fatalf("CheckWithImports: %v", err)
+	}
+	if len(resultCheck.Diagnostics) != 0 {
+		t.Fatalf("instantiated generic summary was not joined at the final consumer: %#v", resultCheck.Diagnostics)
+	}
+}
+
 func TestCheckRetainsCallableMemberCapabilityThroughIndexedReplacement(t *testing.T) {
 	result, err := engine.Check(`
 type Message = { _topic: string, topic: (self: Message) -> string }

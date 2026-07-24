@@ -10454,11 +10454,7 @@ func instantiateProviderReturn(function *typ.Function, arguments map[int][]byte,
 		if !present || expected.Type == nil {
 			continue
 		}
-		value, known := resolveKnownCurrentValue(argument, partition)
-		if !known {
-			continue
-		}
-		actual, decoded := providerArgumentType(value)
+		actual, decoded := publishedProviderArgumentType(argument, partition)
 		if !decoded || !inferImportedTypeArgs(expected.Type, actual, params, bindings) {
 			return nil, false
 		}
@@ -10474,6 +10470,81 @@ func instantiateProviderReturn(function *typ.Function, arguments map[int][]byte,
 		}
 	}
 	return subst.Substitute(function.Returns[index], bindings), true
+}
+
+// publishedProviderArgumentType retains a type argument only when its exact
+// term already owns a closed publication. Imported call results carry their
+// instantiated summary through summaryTypePrefix, while checked annotations
+// carry their target through the ordinary type publication. Both are guarded
+// facts tied to this term's current epoch; an untyped literal still uses the
+// existing sealed-shape decoder below. This lets a module generic result feed
+// the next call without treating source annotations or an older write as a
+// fresh witness.
+func publishedProviderArgumentType(term []byte, partition equation.Partition) (typ.Type, bool) {
+	if encoded, found := currentPublishedTermFact(summaryTypePrefix, term, partition); found {
+		if summary, err := typ.DecodeCanonical(context.Background(), encoded); err == nil && closedProviderArgumentType(summary, 0) {
+			return summary, true
+		}
+	}
+	if encoded, found := currentPublishedTermFact("type/", term, partition); found {
+		if checked, decoded := shapefact.DecodeTarget(encoded); decoded && closedProviderArgumentType(checked, 0) {
+			return checked, true
+		}
+	}
+	value, found := resolveKnownCurrentValue(term, partition)
+	if !found {
+		return nil, false
+	}
+	return providerArgumentType(value)
+}
+
+// currentPublishedTermFact returns a type fact only when it was published by
+// the same operation as the term's newest value. A historical annotation must
+// not survive a later reassignment, and an entry declaration is metadata, not
+// a checked value witness.
+func currentPublishedTermFact(prefix string, term []byte, partition equation.Partition) ([]byte, bool) {
+	valuePrefix := "value/" + string(term) + "/"
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, valuePrefix) && fact.Key > latest {
+			latest = fact.Key
+		}
+	}
+	if latest == "" {
+		return nil, false
+	}
+	operation := strings.TrimPrefix(latest, valuePrefix)
+	if operation == "entry" {
+		return nil, false
+	}
+	want := prefix + string(term) + "/" + operation
+	for _, fact := range partition.Values() {
+		if fact.Key == want {
+			return append([]byte(nil), fact.Value...), true
+		}
+	}
+	return nil, false
+}
+
+// closedProviderArgumentType refuses precision boundaries and unresolved
+// binders anywhere in the carried graph. A recursive graph is likewise not a
+// finite generic-call witness: the bounded walk fails closed rather than
+// attempting to reconstitute a recursive type argument from an import edge.
+func closedProviderArgumentType(value typ.Type, depth int) bool {
+	if value == nil || depth > 64 {
+		return false
+	}
+	value = unwrap.Alias(subst.ExpandInstantiated(value))
+	if value == nil {
+		return false
+	}
+	switch value.Kind() {
+	case kind.Any, kind.Unknown, kind.Never, kind.TypeParam, kind.Generic, kind.Ref:
+		return false
+	}
+	return !typ.WalkChildren(value, func(child typ.Type) bool {
+		return !closedProviderArgumentType(child, depth+1)
+	})
 }
 
 // providerArgumentType recovers a finite array witness from a sealed literal
