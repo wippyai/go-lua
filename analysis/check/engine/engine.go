@@ -6069,7 +6069,8 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		return callDiagnostic(operation, "too_many_args", "call", fmt.Sprintf("%s expects %d arguments, got %d", operands.display, len(signature.Params), len(operands.arguments))), nil
 	}
 	for index, term := range operands.arguments {
-		if index >= len(signature.Params) {
+		expected, accepts := callableParameterAt(signature, index)
+		if !accepts {
 			break
 		}
 		argument, known := resolveKnownCurrentValue(term, partition)
@@ -6077,17 +6078,17 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// typed parameter contract.  The argument may retain a concrete shape
 		// from its allocation, but that shape crossed the boundary without
 		// validation and cannot discharge this call's declared requirement.
-		if known && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && callableParameterRequiresProof(signature.Params[index]) {
-			expected := callableParameterType(signature.Params[index])
-			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, expected)), nil
+		if known && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && callableParameterRequiresProof(expected) {
+			expectedType := callableParameterType(expected)
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, expectedType)), nil
 		}
-		if known && genericConstraintRefuted(argument, signature.Params[index]) {
-			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), strings.TrimSpace(strings.SplitN(signature.Params[index], ":", 2)[1]))), nil
+		if known && genericConstraintRefuted(argument, expected) {
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), strings.TrimSpace(strings.SplitN(expected, ":", 2)[1]))), nil
 		}
-		if !known || !provenScalarNotSubtype(argument, signature.Params[index]) {
+		if !known || !provenScalarNotSubtype(argument, expected) {
 			continue
 		}
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), signature.Params[index])), nil
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), expected)), nil
 	}
 	if genericCallableSignature(signature) {
 		var instantiated bool
@@ -7276,11 +7277,12 @@ func indexedCallSubject(prefix string, index int) string {
 }
 
 type callableShape struct {
-	Params     []string            `json:"params"`
-	Returns    []string            `json:"returns"`
-	TypeParams []callableTypeParam `json:"type_params"`
-	Required   int                 `json:"required"`
-	Variadic   bool                `json:"variadic"`
+	Params       []string            `json:"params"`
+	Returns      []string            `json:"returns"`
+	TypeParams   []callableTypeParam `json:"type_params"`
+	Required     int                 `json:"required"`
+	Variadic     bool                `json:"variadic"`
+	VariadicType string              `json:"variadic_type,omitempty"`
 }
 
 type callableTypeParam struct {
@@ -7307,7 +7309,7 @@ func callableSignature(value []byte) (callableShape, bool) {
 		return callableShape{}, false
 	}
 	var signature callableShape
-	if err := json.Unmarshal(wire, &signature); err != nil || signature.Required < 0 || signature.Required > len(signature.Params) {
+	if err := json.Unmarshal(wire, &signature); err != nil || signature.Required < 0 || signature.Required > len(signature.Params) || signature.Variadic != (signature.VariadicType != "") {
 		return callableShape{}, false
 	}
 	for _, parameter := range signature.Params {
@@ -7328,6 +7330,23 @@ func callableSignature(value []byte) (callableShape, bool) {
 		}
 	}
 	return signature, true
+}
+
+// callableParameterAt returns the already-published contract accepted at one
+// source argument position. A variadic signature uses its explicit element
+// contract for every tail slot; it never treats the arity marker itself as a
+// type witness.
+func callableParameterAt(signature callableShape, index int) (string, bool) {
+	if index < 0 {
+		return "", false
+	}
+	if index < len(signature.Params) {
+		return signature.Params[index], true
+	}
+	if signature.Variadic && signature.VariadicType != "" {
+		return signature.VariadicType, true
+	}
+	return "", false
 }
 
 // instantiateCallableSignature applies only substitutions proven from the
@@ -7364,6 +7383,9 @@ func instantiateCallableSignature(signature callableShape, arguments [][]byte, p
 	}
 	signature.Params = substituteCallableTypes(signature.Params, bindings)
 	signature.Returns = substituteCallableTypes(signature.Returns, bindings)
+	if signature.Variadic {
+		signature.VariadicType = substituteCallableTypes([]string{signature.VariadicType}, bindings)[0]
+	}
 	signature.TypeParams = nil
 	return signature, true
 }

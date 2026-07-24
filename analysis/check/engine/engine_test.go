@@ -86,6 +86,24 @@ target()
 	}
 }
 
+func TestCheckRejectsRefutedTypedVariadicArgument(t *testing.T) {
+	result, err := engine.Check(`
+local function sum(...: number): number
+    return 0
+end
+sum(1, 2, "three")
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, fact := range result.Diagnostics {
+		if strings.HasPrefix(fact.Key, "type.call.direct.argument_type/") && strings.Contains(string(fact.Value), `argument 3 is "three", not number`) {
+			return
+		}
+	}
+	t.Fatalf("typed variadic argument mismatch was not proven: %#v", result.Diagnostics)
+}
+
 func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	result, err := engine.Check(`local value: string = provider()`)
 	if err != nil {

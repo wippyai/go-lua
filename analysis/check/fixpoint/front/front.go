@@ -2440,7 +2440,11 @@ func functionValue(t typ.Type) string {
 		TypeParams []typeParam `json:"type_params"`
 		Required   int         `json:"required"`
 		Variadic   bool        `json:"variadic"`
-		Canonical  string      `json:"canonical,omitempty"`
+		// VariadicType is the resolved element contract for every argument past
+		// Params.  Variadic alone only records arity and cannot prove or reject a
+		// tail argument at the apply boundary.
+		VariadicType string `json:"variadic_type,omitempty"`
+		Canonical    string `json:"canonical,omitempty"`
 	}
 	wire := signature{
 		Params:   make([]string, len(fn.Params)),
@@ -2487,6 +2491,12 @@ func functionValue(t typ.Type) string {
 			return "scalar/function"
 		}
 		wire.Returns[index] = result.String()
+	}
+	if fn.Variadic != nil {
+		wire.VariadicType = fn.Variadic.String()
+		if wire.VariadicType == "" {
+			return "scalar/function"
+		}
 	}
 	// Retain the existing callable shape for local apply while attaching the
 	// canonical function type for closed publication/export consumers.
