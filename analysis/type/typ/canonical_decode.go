@@ -80,7 +80,66 @@ func DecodeCanonical(ctx context.Context, encoded []byte) (decoded Type, err err
 	return decoded, nil
 }
 
+// DecodeCanonicalStructural decodes a canonical type graph for structural
+// consumers that already hold the graph as a closed publication. Unlike
+// DecodeCanonical, it permits Recursive nodes and restores them as fresh
+// placeholders; it must not be used where declaration identity is authority.
+func DecodeCanonicalStructural(ctx context.Context, encoded []byte) (decoded Type, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			decoded = nil
+			err = fmt.Errorf("%w: %v", ErrInvalidCanonicalType, recovered)
+		}
+	}()
+
+	parser := canonicalRawReader{raw: encoded}
+	domain, ok := parser.frame()
+	if !ok || string(domain) != canonicalTypeDomain {
+		return nil, fmt.Errorf("%w: domain", ErrInvalidCanonicalType)
+	}
+	version, ok := parser.uvarint()
+	if !ok || version != canonicalTypeVersion {
+		return nil, fmt.Errorf("%w: version", ErrInvalidCanonicalType)
+	}
+	nodes, root, err := decodeCanonicalStructuralGraph(ctx, &parser)
+	if err != nil {
+		return nil, err
+	}
+	if parser.at != len(parser.raw) {
+		return nil, fmt.Errorf("%w: trailing bytes", ErrInvalidCanonicalType)
+	}
+	decoded, err = materializeCanonicalStructuralGraph(ctx, nodes, root)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	roundTrip, err := EncodeCanonical(ctx, decoded)
+	if err != nil {
+		return nil, fmt.Errorf("%w: reconstructed value cannot encode: %v", ErrInvalidCanonicalType, err)
+	}
+	if !bytes.Equal(roundTrip, encoded) {
+		return nil, fmt.Errorf("%w: reconstructed value changed canonical bytes", ErrInvalidCanonicalType)
+	}
+	return decoded, nil
+}
+
 func decodeCanonicalGraph(ctx context.Context, parser *canonicalRawReader) ([]decodedCanonicalNode, int, error) {
+	return decodeCanonicalGraphMode(ctx, parser, false)
+}
+
+func decodeCanonicalStructuralGraph(ctx context.Context, parser *canonicalRawReader) ([]decodedCanonicalNode, int, error) {
+	return decodeCanonicalGraphMode(ctx, parser, true)
+}
+
+func decodeCanonicalGraphMode(ctx context.Context, parser *canonicalRawReader, structural bool) ([]decodedCanonicalNode, int, error) {
 	nodes := make([]decodedCanonicalNode, 0, 16)
 	complete := make([]bool, 0, 16)
 	stack := make([]canonicalDecodeFrame, 0, 16)
@@ -106,7 +165,7 @@ func decodeCanonicalGraph(ctx context.Context, parser *canonicalRawReader) ([]de
 			if index >= len(nodes) {
 				return nil, -1, fmt.Errorf("%w: forward node reference %d", ErrInvalidCanonicalType, index)
 			}
-			if !complete[index] {
+			if !structural && !complete[index] {
 				return nil, -1, ErrCanonicalRecursiveIdentityUnavailable
 			}
 		case 1:
@@ -117,7 +176,7 @@ func decodeCanonicalGraph(ctx context.Context, parser *canonicalRawReader) ([]de
 			if !framed || len(scalar) == 0 {
 				return nil, -1, fmt.Errorf("%w: node scalar", ErrInvalidCanonicalType)
 			}
-			if scalar[0] == canonicalRecursive {
+			if !structural && scalar[0] == canonicalRecursive {
 				return nil, -1, ErrCanonicalRecursiveIdentityUnavailable
 			}
 			childCount, ok = parser.uvarint()
@@ -209,6 +268,109 @@ func materializeCanonicalGraph(ctx context.Context, nodes []decodedCanonicalNode
 		return nil, ErrCanonicalRecursiveIdentityUnavailable
 	}
 	return built[root], nil
+}
+
+// materializeCanonicalStructuralGraph is the recursive counterpart of
+// materializeCanonicalGraph. It allocates Recursive placeholders first, which
+// makes their backedges available to ordinary product-node reconstruction.
+// Any cycle not anchored by a Recursive node remains unmaterializable and
+// therefore fails closed.
+func materializeCanonicalStructuralGraph(ctx context.Context, nodes []decodedCanonicalNode, root int) (Type, error) {
+	if root < 0 || root >= len(nodes) {
+		return nil, fmt.Errorf("%w: missing root", ErrInvalidCanonicalType)
+	}
+	built := make([]Type, len(nodes))
+	ready := make([]bool, len(nodes))
+	recursive := make([]bool, len(nodes))
+	var steps uint64
+
+	for index, node := range nodes {
+		tag, ok := canonicalNodeTag(node.scalar)
+		if !ok {
+			return nil, fmt.Errorf("%w: empty scalar", ErrInvalidCanonicalType)
+		}
+		if tag != canonicalRecursive {
+			continue
+		}
+		name, hasBody, err := canonicalRecursiveHeader(node.scalar)
+		if err != nil {
+			return nil, err
+		}
+		childCount := 0
+		if hasBody {
+			childCount = 1
+		}
+		if len(node.edges) != childCount {
+			return nil, fmt.Errorf("%w: recursive child shape", ErrInvalidCanonicalType)
+		}
+		built[index] = NewRecursivePlaceholder(name)
+		ready[index], recursive[index] = true, true
+	}
+
+	for {
+		progress := false
+		for index, node := range nodes {
+			if ready[index] {
+				continue
+			}
+			children := make([]Type, len(node.edges))
+			allReady := true
+			for position, child := range node.edges {
+				if child < 0 || child >= len(nodes) || !ready[child] {
+					allReady = false
+					break
+				}
+				children[position] = built[child]
+			}
+			if !allReady {
+				continue
+			}
+			value, err := materializeCanonicalNode(ctx, node.scalar, children, &steps)
+			if err != nil {
+				return nil, err
+			}
+			built[index], ready[index], progress = value, true, true
+		}
+		if !progress {
+			break
+		}
+	}
+
+	for index, node := range nodes {
+		if !ready[index] {
+			return nil, ErrCanonicalRecursiveIdentityUnavailable
+		}
+		if !recursive[index] || len(node.edges) == 0 {
+			continue
+		}
+		body := built[node.edges[0]]
+		if body == nil {
+			return nil, fmt.Errorf("%w: recursive body", ErrInvalidCanonicalType)
+		}
+		built[index].(*Recursive).SetBody(body)
+	}
+	return built[root], nil
+}
+
+func canonicalNodeTag(scalar []byte) (byte, bool) {
+	if len(scalar) == 0 {
+		return 0, false
+	}
+	return scalar[0], true
+}
+
+func canonicalRecursiveHeader(scalar []byte) (string, bool, error) {
+	r := canonicalRawReader{raw: scalar}
+	tag, ok := r.byte()
+	if !ok || tag != canonicalRecursive {
+		return "", false, fmt.Errorf("%w: recursive scalar", ErrInvalidCanonicalType)
+	}
+	name, nameOK := r.frame()
+	hasBody, bodyOK := r.bool()
+	if !nameOK || !bodyOK || r.at != len(r.raw) {
+		return "", false, fmt.Errorf("%w: recursive shape", ErrInvalidCanonicalType)
+	}
+	return string(name), hasBody, nil
 }
 
 func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Type, steps *uint64) (Type, error) {

@@ -106,7 +106,10 @@ func DecodeTarget(value []byte) (typ.Type, bool) {
 	if err != nil {
 		return nil, false
 	}
-	target, err := typ.DecodeCanonical(context.Background(), wire)
+	// A shape target is a closed structural publication, not a declaration
+	// identity witness. Recursive aliases therefore use the structural decoder:
+	// it reconstructs fresh placeholders solely to compare the published graph.
+	target, err := typ.DecodeCanonicalStructural(context.Background(), wire)
 	if err != nil || target == nil {
 		return nil, false
 	}

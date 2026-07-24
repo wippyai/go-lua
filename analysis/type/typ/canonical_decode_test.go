@@ -98,6 +98,43 @@ func TestDecodeCanonicalRejectsRecursiveAuthorityAndActiveBackrefs(t *testing.T)
 	}
 }
 
+func TestDecodeCanonicalStructuralRoundTripsRecursiveGraph(t *testing.T) {
+	left := NewRecursivePlaceholder("Left")
+	right := NewRecursivePlaceholder("Right")
+	left.SetBody(RebuildRecord(RecordParts{Fields: []Field{{Name: "right", Type: right}}}))
+	right.SetBody(RebuildRecord(RecordParts{Fields: []Field{{Name: "left", Type: left}, {Name: "value", Type: String}}}))
+
+	encoded, err := EncodeCanonical(context.Background(), left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeCanonicalStructural(context.Background(), encoded)
+	if err != nil {
+		t.Fatalf("DecodeCanonicalStructural: %v", err)
+	}
+	if !TypeEquals(left, decoded) {
+		t.Fatalf("decoded recursive graph = %v, want structural equality with %v", decoded, left)
+	}
+	roundTrip, err := EncodeCanonical(context.Background(), decoded)
+	if err != nil || !bytes.Equal(encoded, roundTrip) {
+		t.Fatalf("structural recursive bytes changed: %x / %x / %v", encoded, roundTrip, err)
+	}
+
+	// An active edge without a Recursive binder cannot manufacture a type
+	// through the structural decoder.
+	forged := appendFrameString(nil, canonicalTypeDomain)
+	forged = binary.AppendUvarint(forged, canonicalTypeVersion)
+	forged = append(forged, 1) // definition
+	forged = binary.AppendUvarint(forged, 0)
+	forged = appendFrameBytes(forged, []byte{canonicalArray})
+	forged = binary.AppendUvarint(forged, 1)
+	forged = append(forged, 0) // active reference
+	forged = binary.AppendUvarint(forged, 0)
+	if decoded, err := DecodeCanonicalStructural(context.Background(), forged); !errors.Is(err, ErrCanonicalRecursiveIdentityUnavailable) || decoded != nil {
+		t.Fatalf("unbound structural backref = %T, %v", decoded, err)
+	}
+}
+
 func TestDecodeCanonicalRejectsMalformedTrailingAndImpossibleCounts(t *testing.T) {
 	valid := mustCanonical(t, NewTuple(String, Number))
 	trailing := append(append([]byte(nil), valid...), 0)

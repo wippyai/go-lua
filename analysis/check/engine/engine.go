@@ -3201,6 +3201,35 @@ func assignmentShapeRelation(value, encodedTarget []byte) shapeRelation {
 }
 
 func valueAgainstType(value []byte, target typ.Type) shapeRelation {
+	return valueAgainstTypeSeen(value, target, newShapeComparison())
+}
+
+// shapeComparison holds one structural claim comparison. Recursive aliases are
+// regular type graphs, so comparing a published value shape against one must
+// close a repeated value/type obligation coinductively. The relation is local
+// to a single claim: no result is published or reused outside the fact that
+// supplied the value shape.
+type shapeComparison struct {
+	active map[shapeRecursivePair]bool
+	memo   map[shapeRecursivePair]shapeRelation
+}
+
+type shapeRecursivePair struct {
+	value  string
+	target *typ.Recursive
+}
+
+func newShapeComparison() *shapeComparison {
+	return &shapeComparison{
+		active: make(map[shapeRecursivePair]bool),
+		memo:   make(map[shapeRecursivePair]shapeRelation),
+	}
+}
+
+func valueAgainstTypeSeen(value []byte, target typ.Type, comparison *shapeComparison) shapeRelation {
+	if comparison == nil {
+		return shapeUnknown
+	}
 	if target == nil || isUnknownScalar(value) {
 		return shapeUnknown
 	}
@@ -3213,7 +3242,7 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 		return shapeUnknown
 	}
 	if shapefact.IsTable(value) && resolvedTarget.Kind() == kind.Record {
-		return tableAgainstRecord(value, resolvedTarget)
+		return tableAgainstRecord(value, resolvedTarget, comparison)
 	}
 	if resolvedTarget.Kind() == kind.Map {
 		if table, ok := shapefact.DecodeTable(value); ok && table.Closed && len(table.Members) == 0 {
@@ -3243,6 +3272,9 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 	// can prove the claim. Expand first, then retain the existing alias policy;
 	// malformed or recursive forms still fall through to unknown.
 	target = resolvedTarget
+	if recursive, ok := target.(*typ.Recursive); ok {
+		return comparison.againstRecursive(value, recursive)
+	}
 	switch target.Kind() {
 	case kind.Optional:
 		optional, ok := target.(*typ.Optional)
@@ -3252,7 +3284,7 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 		if string(value) == "scalar/nil" {
 			return shapeProven
 		}
-		return valueAgainstType(value, optional.Inner)
+		return valueAgainstTypeSeen(value, optional.Inner, comparison)
 	case kind.Union:
 		union, ok := target.(*typ.Union)
 		if !ok || len(union.Members) == 0 {
@@ -3260,7 +3292,7 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 		}
 		unknown := false
 		for _, member := range union.Members {
-			relation := valueAgainstType(value, member)
+			relation := valueAgainstTypeSeen(value, member, comparison)
 			if relation == shapeProven {
 				return shapeProven
 			}
@@ -3277,7 +3309,7 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 		}
 		unknown := false
 		for _, member := range intersection.Members {
-			relation := valueAgainstType(value, member)
+			relation := valueAgainstTypeSeen(value, member, comparison)
 			if relation == shapeRefuted {
 				return shapeRefuted
 			}
@@ -3288,25 +3320,25 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 		}
 		return shapeProven
 	case kind.Record:
-		return tableAgainstRecord(value, target)
+		return tableAgainstRecord(value, target, comparison)
 	case kind.Array:
 		array, ok := target.(*typ.Array)
 		if !ok || array.Element == nil {
 			return shapeUnknown
 		}
-		return tableAgainstContainer(value, array.Element, nil)
+		return tableAgainstContainer(value, array.Element, nil, comparison)
 	case kind.Map:
 		mapping, ok := target.(*typ.Map)
 		if !ok || mapping.Key == nil || mapping.Value == nil {
 			return shapeUnknown
 		}
-		return tableAgainstContainer(value, mapping.Value, mapping.Key)
+		return tableAgainstContainer(value, mapping.Value, mapping.Key, comparison)
 	case kind.ReadonlyMap:
 		mapping, ok := target.(*typ.ReadonlyMap)
 		if !ok || mapping.Key == nil || mapping.Value == nil {
 			return shapeUnknown
 		}
-		return tableAgainstContainer(value, mapping.Value, mapping.Key)
+		return tableAgainstContainer(value, mapping.Value, mapping.Key, comparison)
 	case kind.Nil:
 		return scalarRelation(value, func() bool { return string(value) == "scalar/nil" })
 	case kind.Boolean:
@@ -3330,6 +3362,27 @@ func valueAgainstType(value []byte, target typ.Type) shapeRelation {
 	default:
 		return shapeUnknown
 	}
+}
+
+func (comparison *shapeComparison) againstRecursive(value []byte, target *typ.Recursive) shapeRelation {
+	if target == nil || target.Body == nil || target.Body == target {
+		return shapeUnknown
+	}
+	pair := shapeRecursivePair{value: string(value), target: target}
+	if result, ok := comparison.memo[pair]; ok {
+		return result
+	}
+	if comparison.active[pair] {
+		// This is the equirecursive assumption for the current structural
+		// comparison. The enclosing product/union obligations still decide
+		// whether the surrounding value is compatible.
+		return shapeProven
+	}
+	comparison.active[pair] = true
+	result := valueAgainstTypeSeen(value, target.Body, comparison)
+	delete(comparison.active, pair)
+	comparison.memo[pair] = result
+	return result
 }
 
 // sealedFunctionType decodes only the canonical witness produced by
@@ -3382,7 +3435,7 @@ func tableAgainstMap(value []byte, target typ.Type) shapeRelation {
 	return shapeUnknown
 }
 
-func tableAgainstRecord(value []byte, target typ.Type) shapeRelation {
+func tableAgainstRecord(value []byte, target typ.Type, comparison *shapeComparison) shapeRelation {
 	table, ok := shapefact.DecodeTable(value)
 	if !ok {
 		if string(value) == "scalar/table" {
@@ -3398,7 +3451,7 @@ func tableAgainstRecord(value []byte, target typ.Type) shapeRelation {
 	for _, field := range record.Fields {
 		member, found := table.Lookup("." + field.Name)
 		if !found || !member.Present {
-			if field.Optional {
+			if field.Optional || unwrap.IsOptionalLike(field.Type) {
 				continue
 			}
 			if table.Closed {
@@ -3407,7 +3460,7 @@ func tableAgainstRecord(value []byte, target typ.Type) shapeRelation {
 			unknown = true
 			continue
 		}
-		relation := valueAgainstType([]byte(member.Value), field.Type)
+		relation := valueAgainstTypeSeen([]byte(member.Value), field.Type, comparison)
 		if relation == shapeRefuted {
 			return shapeRefuted
 		}
@@ -3424,7 +3477,7 @@ func tableAgainstRecord(value []byte, target typ.Type) shapeRelation {
 // own shape, not another container entry.  A field key is a string key; an
 // integer index is the sole array-key form.  Unknown member/key relations
 // stay unknown, so an open or partially described shape never becomes proof.
-func tableAgainstContainer(value []byte, element, key typ.Type) shapeRelation {
+func tableAgainstContainer(value []byte, element, key typ.Type, comparison *shapeComparison) shapeRelation {
 	table, ok := shapefact.DecodeTable(value)
 	if !ok || !table.Closed || element == nil {
 		return shapeUnknown
@@ -3448,7 +3501,7 @@ func tableAgainstContainer(value []byte, element, key typ.Type) shapeRelation {
 			if !encoded {
 				return shapeRefuted
 			}
-			relation := valueAgainstType(keyValue, key)
+			relation := valueAgainstTypeSeen(keyValue, key, comparison)
 			if relation == shapeRefuted {
 				return shapeRefuted
 			}
@@ -3459,7 +3512,7 @@ func tableAgainstContainer(value []byte, element, key typ.Type) shapeRelation {
 		if !member.Present {
 			continue
 		}
-		relation := valueAgainstType([]byte(member.Value), element)
+		relation := valueAgainstTypeSeen([]byte(member.Value), element, comparison)
 		if relation == shapeRefuted {
 			return shapeRefuted
 		}
