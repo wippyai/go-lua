@@ -817,6 +817,26 @@ end
 	}
 }
 
+func TestCheckProvesArrayWithCastElementFromPublishedWitness(t *testing.T) {
+	result, err := engine.Check(`
+type Dispatch = {kind: "dispatch", envelope: {id: string}}
+type Tick = {kind: "tick", at: number}
+type Request = Dispatch | Tick
+
+local dispatch: Dispatch = {kind = "dispatch", envelope = {id = "ready"}}
+local tick: Tick = {kind = "tick", at = 1}
+local requests: {Request} = {dispatch, dispatch :: Request, tick}
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "lint.claim.unproven" && diagnostic.Span.StartLine == 8 {
+			t.Fatalf("cast element did not retain its published type witness: %#v", result.PublishedDiagnostics)
+		}
+	}
+}
+
 func TestCheckProjectsStdlibProviderReturnSlots(t *testing.T) {
 	result, err := engine.Check(`
 local text: string = tostring(42)

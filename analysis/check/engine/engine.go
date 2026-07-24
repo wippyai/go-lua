@@ -5334,6 +5334,12 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			closure.Values = append(closure.Values, explicitAnyBoundaryFact(target, operation.Target.Name))
 		}
 		if kind == "claim-kind/1" {
+			// A successful cast has already established its structural target
+			// from the source value. Preserve that checked witness for the exact
+			// result slot; casts fed by an any boundary never enter this branch.
+			if witness, ok := shapefact.DecodeTarget(shapeTarget); ok && witness != nil {
+				closure.Values = append(closure.Values, equation.Fact{Key: "cast-target/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), shapeTarget...)})
+			}
 			closure.Diagnostics = []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven runtime claim")}}
 		}
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
@@ -5552,8 +5558,15 @@ func publishedContainerOriginRelation(source, value []byte, target typ.Type, par
 	}
 	for _, member := range table.Members {
 		segments, valid := segment.ParseFormattedSegments(member.Suffix)
-		if !valid || len(segments) != 1 {
+		if !valid {
 			return shapeUnknown
+		}
+		// Nested members describe the already-sealed shape of one direct
+		// element. Their origin belongs to that descendant rather than to a
+		// separate array/map slot, so only direct container entries take part
+		// in this homogeneous-element proof.
+		if len(segments) != 1 {
+			continue
 		}
 		entry := segments[0]
 		if key == nil {
@@ -5579,6 +5592,14 @@ func publishedContainerOriginRelation(source, value []byte, target typ.Type, par
 		originType, found := typedPathType(origin, partition)
 		if !found {
 			originType, found = declaredTypeForTerm(origin, partition)
+		}
+		if !found {
+			// A cast result is an existing, closed type witness for this exact
+			// element. It may be a temporary rather than a path, so neither
+			// typedPathType nor declaredTypeForTerm can recover it. Reuse only
+			// the cast target published by claimKernel; an unproven annotation
+			// still has no authority here.
+			originType, found = castTargetWitness(origin, partition)
 		}
 		if !found || originType == nil {
 			return shapeUnknown
