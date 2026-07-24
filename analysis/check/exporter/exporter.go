@@ -318,7 +318,63 @@ func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]expo
 			}
 		}
 	}
+	if conditional, ok := conditionalReturnRelation(fn, params); ok {
+		relation.Conditional = conditional
+		return relation, relation.Valid()
+	}
 	return exportrelation.Function{}, false
+}
+
+// conditionalReturnRelation accepts one complete source-level literal branch
+// followed by its normal return. Both result expressions must already be
+// finite templates, so importing the relation cannot reconstruct a value from
+// a declaration or an unclosed body fact.
+func conditionalReturnRelation(fn *ast.FunctionExpr, params map[string]int) (*exportrelation.ConditionalReturn, bool) {
+	if fn == nil || len(fn.Stmts) != 2 {
+		return nil, false
+	}
+	branch, branchOK := fn.Stmts[0].(*ast.IfStmt)
+	fallback, fallbackOK := fn.Stmts[1].(*ast.ReturnStmt)
+	if !branchOK || !fallbackOK || branch.HasElse || len(branch.Then) != 1 || len(fallback.Exprs) != 1 {
+		return nil, false
+	}
+	matched, matchedOK := branch.Then[0].(*ast.ReturnStmt)
+	if !matchedOK || len(matched.Exprs) != 1 {
+		return nil, false
+	}
+	parameter, literal, predicateOK := literalParameterPredicate(branch.Condition, params)
+	if !predicateOK {
+		return nil, false
+	}
+	match, matchOK := remapValue(matched.Exprs[0], params, nil)
+	otherwise, otherwiseOK := remapValue(fallback.Exprs[0], params, nil)
+	if !matchOK || !otherwiseOK {
+		return nil, false
+	}
+	return &exportrelation.ConditionalReturn{Parameter: parameter, Literal: literal, Match: match, Otherwise: otherwise}, true
+}
+
+func literalParameterPredicate(expr ast.Expr, params map[string]int) (int, string, bool) {
+	relation, ok := expr.(*ast.RelationalOpExpr)
+	if !ok || relation.Operator != "==" {
+		return 0, "", false
+	}
+	for _, candidate := range []struct {
+		parameter ast.Expr
+		literal   ast.Expr
+	}{{relation.Lhs, relation.Rhs}, {relation.Rhs, relation.Lhs}} {
+		name, nameOK := candidate.parameter.(*ast.IdentExpr)
+		if !nameOK {
+			continue
+		}
+		parameter, parameterOK := params[name.Value]
+		literal, literalOK := remapValue(candidate.literal, params, nil)
+		if !parameterOK || !literalOK || !literal.Closed() || literal.Scalar == "" {
+			continue
+		}
+		return parameter, literal.Scalar, true
+	}
+	return 0, "", false
 }
 
 // ownershipStoreRelation admits only positional ownership.store wrappers.

@@ -23,9 +23,20 @@ type Function struct {
 	Path        string
 	Arity       int
 	Return      Value
+	Conditional *ConditionalReturn
 	Forwarded   bool
 	Store       *OwnershipStore
 	NormalEqual *Equality
+}
+
+// ConditionalReturn is a closed, producer-evaluated two-way return relation.
+// It records the one literal test that selects Match; Otherwise is selected
+// only when the exact caller argument is a different closed scalar.
+type ConditionalReturn struct {
+	Parameter int
+	Literal   string
+	Match     Value
+	Otherwise Value
 }
 
 // OwnershipStore carries the two exact formal positions of an exported
@@ -63,13 +74,20 @@ func (s Summary) Function(path string, arity int) (Function, bool) {
 }
 
 func (f Function) Valid() bool {
-	if f.Path == "" || f.Arity < 0 || (!f.Return.Valid(f.Arity) && !f.Store.Valid(f.Arity)) {
+	if f.Path == "" || f.Arity < 0 || (!f.Return.Valid(f.Arity) && !f.Conditional.Valid(f.Arity) && !f.Store.Valid(f.Arity)) {
+		return false
+	}
+	if f.Return.Valid(f.Arity) && f.Conditional != nil {
 		return false
 	}
 	if f.NormalEqual != nil && (f.NormalEqual.Left < 0 || f.NormalEqual.Right < 0 || f.NormalEqual.Left >= f.Arity || f.NormalEqual.Right >= f.Arity) {
 		return false
 	}
 	return true
+}
+
+func (c *ConditionalReturn) Valid(arity int) bool {
+	return c != nil && c.Parameter >= 0 && c.Parameter < arity && exactScalar(c.Literal) && c.Match.Valid(arity) && c.Otherwise.Valid(arity)
 }
 
 func (s *OwnershipStore) Valid(arity int) bool {

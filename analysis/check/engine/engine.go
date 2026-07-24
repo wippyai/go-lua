@@ -4075,6 +4075,7 @@ func uncalledDeclaredLocalUnionReadBoundary(child front.Compilation) ([]entrySee
 		formals[term] = entrySeed{Term: term, Value: value}
 	}
 	applications := make(map[string]bool)
+	derived := uncalledDeclaredLocalUnionExpressionTerms(child, formals)
 	for _, operation := range child.Artifact.Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
@@ -4089,7 +4090,7 @@ func uncalledDeclaredLocalUnionReadBoundary(child front.Compilation) ([]entrySee
 				if _, err := callArgumentIndex(operand.Role); err != nil {
 					continue
 				}
-				if _, formal := formals[string(operand.Term.Encoding)]; !formal {
+				if _, formal := formals[string(operand.Term.Encoding)]; !formal && !derived[string(operand.Term.Encoding)] {
 					return nil, false
 				}
 			}
@@ -4137,10 +4138,10 @@ func uncalledDeclaredLocalUnionReadBoundary(child front.Compilation) ([]entrySee
 	}
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
-		case "entry", "apply", "call-results", "environment-write", "claim":
+		case "entry", "apply", "call-results", "environment-write", "claim", "expression", "publication":
 			continue
 		case "branch-relations":
-			if !uncalledDeclaredLocalUnionBranch(operation, paths, formals) {
+			if !uncalledDeclaredLocalUnionBranch(operation, paths, formals) && !uncalledDeclaredLocalUnionExpressionBranch(operation, formals, derived) {
 				return nil, false
 			}
 			continue
@@ -4181,6 +4182,45 @@ func uncalledDeclaredLocalUnionReadBoundary(child front.Compilation) ([]entrySee
 	return nil, false
 }
 
+// uncalledDeclaredLocalUnionExpressionTerms closes only expression temporaries
+// whose value is computed from declared formals and exact scalar literals. The
+// resulting terms may supply an uncalled local union call, but they never
+// authorize a concrete result arm by themselves.
+func uncalledDeclaredLocalUnionExpressionTerms(child front.Compilation, formals map[string]entrySeed) map[string]bool {
+	known := make(map[string]bool, len(formals))
+	for term := range formals {
+		known[term] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, operation := range child.Artifact.Equations {
+			result, hasResult := artifactOperand(operation.Operands, "result")
+			if operation.Occurrence.Kind != "expression" || !hasResult || !strings.HasPrefix(string(result), "temp/") || known[string(result)] {
+				continue
+			}
+			valid := true
+			for _, operand := range operation.Operands {
+				if operand.Role != "left" && operand.Role != "right" {
+					continue
+				}
+				if !known[string(operand.Term.Encoding)] && !exactRelationScalar(operand.Term.Encoding) {
+					valid = false
+					break
+				}
+			}
+			if !valid {
+				continue
+			}
+			known[string(result)] = true
+			changed = true
+		}
+	}
+	for term := range formals {
+		delete(known, term)
+	}
+	return known
+}
+
 // uncalledDeclaredLocalUnionBranch accepts the branch relation that is
 // already justified by the child entry: one returned union member is compared
 // with one exact declared formal. It rejects negation, compound evidence, and
@@ -4210,6 +4250,29 @@ func uncalledDeclaredLocalUnionBranch(operation equation.Equation, results map[s
 	_, leftFormal := formals[left]
 	_, rightFormal := formals[right]
 	return (rootedInResult(left) && rightFormal) || (rootedInResult(right) && leftFormal)
+}
+
+// uncalledDeclaredLocalUnionExpressionBranch accepts only the control edges
+// emitted for a finite expression temporary or a declared boolean formal. The
+// expression remains an unknown selector at the local call boundary; this
+// helper admits evaluation so its result union is retained for the later read.
+func uncalledDeclaredLocalUnionExpressionBranch(operation equation.Equation, formals map[string]entrySeed, derived map[string]bool) bool {
+	if operation.Occurrence.Kind != "branch-relations" || len(operation.Guards) != 0 {
+		return false
+	}
+	if condition, found := artifactOperand(operation.Operands, "condition"); found {
+		return derived[string(condition)]
+	}
+	predicate, found := artifactOperand(operation.Operands, "predicate")
+	if !found || !strings.HasPrefix(string(predicate), branchPredicatePrefix) {
+		return false
+	}
+	var relation branchPredicateWire
+	if json.Unmarshal(predicate[len(branchPredicatePrefix):], &relation) != nil || relation.Kind != "truthy" || relation.Negated || relation.Path == "" {
+		return false
+	}
+	_, formal := formals["path/"+relation.Path]
+	return formal
 }
 
 // uncalledLocalUnionReadEntry carries the exact direct-call capability already
@@ -15549,15 +15612,19 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		var importedSummary typ.Type
 		var methodSummary typ.Type
 		var localSummary typ.Type
+		localUnionSummary, localUnion := inferredLocalCallableResultType(lexical, callee, mustCallResultIndex(key), partition)
+		retainLocalUnion := localUnion && requiresLocalUnionProof(localUnionSummary) && !closedScalarCallArguments(argumentTerms, partition)
 		// A known lexical apply seals its child outcome under the same
 		// application coordinate. call-results is the sole owner of caller
 		// result terms, so it consumes that private projection rather than
 		// falling through to Top.
 		projectedKey := "call-result/" + strings.TrimPrefix(string(application), "call/") + "/" + key
-		for _, fact := range partition.Values() {
-			if fact.Key == projectedKey {
-				value = append([]byte(nil), fact.Value...)
-				break
+		if !retainLocalUnion {
+			for _, fact := range partition.Values() {
+				if fact.Key == projectedKey {
+					value = append([]byte(nil), fact.Value...)
+					break
+				}
 			}
 		}
 		if key == "00000000" && hasValue(partition, "effect.call-bool/"+strings.TrimPrefix(string(application), "call/")) {
@@ -15588,6 +15655,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if string(value) == "scalar/top" {
 				if summary, ok := sealedCallableResultType(lexical, callee, index, argumentTerms, partition); ok && requiresLocalUnionProof(summary) {
 					localSummary = summary
+				}
+				if localSummary == nil && localUnion && requiresLocalUnionProof(localUnionSummary) {
+					localSummary = localUnionSummary
 				}
 			}
 			if string(value) == "scalar/top" {
@@ -15803,6 +15873,29 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
+func mustCallResultIndex(key string) int {
+	index, err := strconv.Atoi(key)
+	if err != nil || index < 0 {
+		return -1
+	}
+	return index
+}
+
+// closedScalarCallArguments reports whether every argument at this exact
+// application boundary is an immutable scalar fact. A missing or broad
+// argument cannot choose one member of a finite local return union.
+func closedScalarCallArguments(arguments map[int][]byte, partition equation.Partition) bool {
+	if len(arguments) == 0 {
+		return true
+	}
+	for _, argument := range arguments {
+		if !exactRelationScalar(argument) {
+			return false
+		}
+	}
+	return true
+}
+
 func currentCallTypePredicateTarget(application []byte, partition equation.Partition) ([]byte, bool) {
 	prefix := callTypePredicatePrefix + strings.TrimPrefix(string(application), "call/") + "/"
 	var target []byte
@@ -15993,6 +16086,62 @@ func sealedCallableResultType(lexical *lexicalEvaluator, callee []byte, index in
 		return nil, false
 	}
 	return instantiateProviderReturn(function, arguments, partition, index)
+}
+
+// inferredLocalCallableResultType retains a finite union only when every
+// return candidate is already a sealed literal shape in the callee artifact.
+// This is summary metadata, not a runtime table value: callers still need a
+// branch or a literal-correlated boundary relation before one arm can become
+// concrete.
+func inferredLocalCallableResultType(lexical *lexicalEvaluator, callee []byte, index int, partition equation.Partition) (typ.Type, bool) {
+	if lexical == nil || callee == nil || index < 0 {
+		return nil, false
+	}
+	handle, local := closureHandleFor(callee, partition)
+	if !local || len(handle.Captures) != 0 {
+		return nil, false
+	}
+	child, found := lexical.byPrototype[handle.Prototype]
+	if !found || child.Cyclic != nil {
+		return nil, false
+	}
+	values := make(map[string][]byte)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		if !hasTarget || !hasValue || !strings.HasPrefix(string(target), "temp/") || values[string(target)] != nil {
+			continue
+		}
+		if table, sealed := shapefact.DecodeTable(value); sealed && table.Closed {
+			values[string(target)] = append([]byte(nil), value...)
+		}
+	}
+	returns := make([]typ.Type, 0)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "publication" {
+			continue
+		}
+		term, found := artifactOperand(operation.Operands, fmt.Sprintf("return-value-%08d", index))
+		if !found {
+			continue
+		}
+		value, found := values[string(term)]
+		if !found {
+			return nil, false
+		}
+		result, concrete := sealedShapeReceiverType(value)
+		if !concrete || result == nil {
+			return nil, false
+		}
+		returns = append(returns, result)
+	}
+	if len(returns) == 0 {
+		return nil, false
+	}
+	return typ.MaterializeUnion(returns), true
 }
 
 // typedCallableResultValue consumes a direct callee's exact canonical
@@ -16574,8 +16723,53 @@ func importedProviderRelationValue(lexical *lexicalEvaluator, provider, applicat
 	if found && !relationReturnTypeSafe(declared, make(map[typ.Type]bool)) {
 		return nil, exportrelation.Value{}, false, false
 	}
-	value, ok := materializeImportedReturn(function.Return, application, arguments, partition)
-	return value, function.Return, templateUsesParameter(function.Return), ok
+	template, selected := importedReturnTemplate(function, arguments, partition)
+	if !selected {
+		return nil, exportrelation.Value{}, false, false
+	}
+	value, ok := materializeImportedReturn(template, application, arguments, partition)
+	return value, template, templateUsesParameter(template), ok
+}
+
+// importedReturnTemplate selects only a closed relation that the provider
+// already published. Conditional relations require the exact scalar argument
+// at their recorded formal position; broad or missing arguments keep the
+// declared summary rather than choosing a return arm.
+func importedReturnTemplate(function exportrelation.Function, arguments map[int][]byte, partition equation.Partition) (exportrelation.Value, bool) {
+	if function.Return.Valid(function.Arity) {
+		return function.Return, true
+	}
+	conditional := function.Conditional
+	if !conditional.Valid(function.Arity) {
+		return exportrelation.Value{}, false
+	}
+	argument, found := arguments[conditional.Parameter]
+	if !found {
+		return exportrelation.Value{}, false
+	}
+	value, found := resolveKnownCurrentValue(argument, partition)
+	if !found || !exactRelationScalar(value) {
+		return exportrelation.Value{}, false
+	}
+	if string(value) == conditional.Literal {
+		return conditional.Match, true
+	}
+	return conditional.Otherwise, true
+}
+
+func exactRelationScalar(value []byte) bool {
+	if string(value) == "scalar/bool/true" || string(value) == "scalar/bool/false" || string(value) == "scalar/nil" {
+		return true
+	}
+	if strings.HasPrefix(string(value), "scalar/string/") {
+		_, err := strconv.Unquote(strings.TrimPrefix(string(value), "scalar/string/"))
+		return err == nil
+	}
+	if strings.HasPrefix(string(value), "scalar/number/") {
+		_, err := strconv.ParseFloat(strings.TrimPrefix(string(value), "scalar/number/"), 64)
+		return err == nil
+	}
+	return false
 }
 
 func templateUsesParameter(template exportrelation.Value) bool {
@@ -18021,6 +18215,9 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		// discriminant-guarded consumer.
 		if _, summary := currentEpochFact(summaryTypePrefix, root, partition); summary {
 			if _, union := unwrap.Alias(subst.ExpandInstantiated(source)).(*typ.Union); union {
+				if projected, projectedFound := luatypeprojection.ApplySegments(source, suffix); projectedFound {
+					return shapefact.EncodeTarget(projected)
+				}
 				return []byte("scalar/top"), true
 			}
 		}
