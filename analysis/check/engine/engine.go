@@ -3182,7 +3182,21 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 					resultArity = string(operand.Term.Encoding)
 				}
 			}
-			if !captures[callee] || resultArity == "" || resultArity == "0" {
+			if resultArity == "" {
+				return nil, false
+			}
+			if resultArity == "0" {
+				// A no-result static member call cannot supply a value or a
+				// branch fact to this declaration-only evaluation.  It is safe
+				// only when the receiver is an already-captured table; the entry
+				// transport below requires that table's sealed identity and member
+				// cells rather than reconstructing a callable from source spelling.
+				if !uncalledStaticCapturedMemberCall(callee, captures) {
+					return nil, false
+				}
+				continue
+			}
+			if !captures[callee] {
 				return nil, false
 			}
 			hasResultCall = true
@@ -3190,7 +3204,7 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 			return nil, false
 		}
 	}
-	if !hasAssignment || !hasResultCall {
+	if !hasAssignment || (!hasResultCall && !hasCapturedNoResultCall(child.Artifact.Equations, captures)) {
 		return nil, false
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
@@ -3206,6 +3220,75 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
 	return seeds, true
+}
+
+// uncalledStaticCapturedMemberCall recognizes the no-result counterpart to a
+// direct captured closure call.  The callee must be one static member below a
+// captured table root; dynamic indexing and deeper paths remain caller-driven.
+func uncalledStaticCapturedMemberCall(callee string, captures map[string]bool) bool {
+	root, suffix, member := tableAddress([]byte(callee))
+	if !member || !captures[string(root)] {
+		return false
+	}
+	segments, static := segment.ParseFormattedSegments(suffix)
+	return static && len(segments) == 1 && (segments[0].Kind == segment.SegmentField || segments[0].Kind == segment.SegmentIndexString)
+}
+
+func hasCapturedNoResultCall(operations []equation.Equation, captures map[string]bool) bool {
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		callee, hasCallee := artifactOperand(operation.Operands, "callee")
+		arity, hasArity := artifactOperand(operation.Operands, "result-arity")
+		if hasCallee && hasArity && string(arity) == "0" && uncalledStaticCapturedMemberCall(string(callee), captures) {
+			return true
+		}
+	}
+	return false
+}
+
+// uncalledStaticAssignmentDiagnostic retains a declaration-only assignment
+// diagnostic only when no no-result call in the same body consumes its source
+// term. A no-result call has no closed return slot, so its assertion or
+// validation effect cannot be replayed without a real invocation. An
+// independent declared formal remains a complete existing boundary witness.
+func uncalledStaticAssignmentDiagnostic(artifact equation.Artifact, key string) bool {
+	const prefix = "type.assignment/"
+	if !strings.HasPrefix(key, prefix) {
+		return false
+	}
+	operation := strings.TrimPrefix(key, prefix)
+	var source string
+	for _, candidate := range artifact.Equations {
+		if candidate.Target.Name != operation || candidate.Occurrence.Kind != "claim" {
+			continue
+		}
+		value, found := artifactOperand(candidate.Operands, "value")
+		if !found {
+			return false
+		}
+		source = string(value)
+		break
+	}
+	if source == "" {
+		return false
+	}
+	for _, candidate := range artifact.Equations {
+		if candidate.Occurrence.Kind != "apply" {
+			continue
+		}
+		arity, hasArity := artifactOperand(candidate.Operands, "result-arity")
+		if !hasArity || string(arity) != "0" {
+			continue
+		}
+		for _, operand := range candidate.Operands {
+			if strings.HasPrefix(operand.Role, "argument-") && string(operand.Term.Encoding) == source {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // uncalledDeclaredIndexedReadBoundary admits a capture-free indexed read whose
@@ -3334,7 +3417,15 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 		}
 		handle, found := closureHandleFor([]byte(term), partition)
 		if !found {
-			return nil, false, nil
+			// A sealed table capture is transported only for the narrow
+			// declaration-only static-member path. Its identity and current
+			// member cells are existing parent publications added below; an open
+			// table or a table without an identity cannot become a capability.
+			if !allowTypedCaptures || !uncalledSealedTableCapture([]byte(term), value, partition) {
+				return nil, false, nil
+			}
+			seeds = append(seeds, entrySeed{Term: term, Value: value})
+			continue
 		}
 		captured, found := l.byPrototype[handle.Prototype]
 		if !found {
@@ -3353,6 +3444,15 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 		return nil, false, err
 	}
 	return entry, true, nil
+}
+
+func uncalledSealedTableCapture(term, value []byte, partition equation.Partition) bool {
+	table, sealed := shapefact.DecodeTable(value)
+	if !sealed || !table.Closed {
+		return false
+	}
+	_, identified := tableIdentityForTerm(term, partition)
+	return identified
 }
 
 // uncalledExplicitAnyDiagnostic retains only strict assignment contracts. A
@@ -4234,7 +4334,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
 			}
-			if staticAssignmentBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") {
+			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key) {
 				continue
 			}
 			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
@@ -4262,7 +4362,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticMemberReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
 				continue
 			}
-			if staticAssignmentBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") {
+			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, item.Fact.Key) {
 				continue
 			}
 			if indexedReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
