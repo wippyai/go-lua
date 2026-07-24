@@ -5906,10 +5906,12 @@ func exactFact(key string, partition equation.Partition) ([]byte, bool) {
 func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (result equation.TransactionResult, err error) {
 	var placementFacts []equation.Fact
 	var metatableFacts []equation.Fact
+	var argumentFacts []equation.Fact
 	defer func() {
 		if err == nil && result.Complete {
 			result.Closure.Values = append(result.Closure.Values, placementFacts...)
 			result.Closure.Values = append(result.Closure.Values, metatableFacts...)
+			result.Closure.Values = append(result.Closure.Values, argumentFacts...)
 		}
 	}()
 	if closure, recognized, freezeErr := freezeCallEpoch(operation, partition); freezeErr != nil {
@@ -5948,6 +5950,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	argumentFacts = callArgumentFacts(operation.Target.Name, operands.arguments)
 	placementFacts = placementApplyFacts(operation, operands, partition)
 	if operands.display == "setmetatable" && !operands.spread && len(operands.arguments) == 2 {
 		if object, found := tableIdentityForTerm(operands.arguments[0], partition); found {
@@ -7653,6 +7656,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	if !hasApplication || (receiver == nil) != (method == nil) || (len(targetTerms) != 0 && len(resultTerms) != len(targetTerms)) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: incomplete call result transaction")
 	}
+	if err := consumeCallArgumentFacts(application, argumentTerms, partition); err != nil {
+		return equation.TransactionResult{}, err
+	}
 	values := make([]equation.Fact, 0, len(resultTerms))
 	for key, result := range resultTerms {
 		if len(result) == 0 || !strings.HasPrefix(string(result), "temp/") || (len(targetTerms) != 0 && len(targetTerms[key]) == 0) {
@@ -7691,12 +7697,12 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			// when it is absent may the result owner use the direct callee's sealed
 			// function contract; an opaque callable has no such witness.
 			if string(value) == "scalar/top" {
-				if contract, ok := sealedCallableResultValue(lexical, callee, index, partition); ok {
+				if contract, ok := sealedCallableResultValue(lexical, callee, index, argumentTerms, partition); ok {
 					value = contract
 				}
 			}
 			if string(value) == "scalar/top" {
-				if contract, ok := typedCallableResultValue(callee, index, partition); ok {
+				if contract, ok := typedCallableResultValue(callee, index, argumentTerms, partition); ok {
 					value = contract
 				}
 			}
@@ -7808,6 +7814,55 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
+// callArgumentFacts preserves the exact argument terms selected by an apply
+// operation for its paired call-results consumer. The apply operation is the
+// sole owner of call-site operands; call-results receives only its application
+// coordinate, so it can consume these already-published references without
+// reconstructing arguments from source syntax or declaration types.
+func callArgumentFacts(application string, arguments [][]byte) []equation.Fact {
+	if application == "" || len(arguments) == 0 {
+		return nil
+	}
+	values := make([]equation.Fact, 0, len(arguments))
+	for index, argument := range arguments {
+		if len(argument) == 0 {
+			return nil
+		}
+		values = append(values, equation.Fact{
+			Key:   fmt.Sprintf("call-argument/%s/%08d", application, index),
+			Value: append([]byte(nil), argument...),
+		})
+	}
+	return values
+}
+
+// consumeCallArgumentFacts restores only the exact argument references
+// published by the matching apply operation. A malformed or conflicting fact
+// is an engine invariant failure; an absent fact simply leaves the result
+// bridge without that argument and therefore fail-closed.
+func consumeCallArgumentFacts(application []byte, arguments map[int][]byte, partition equation.Partition) error {
+	callID, found := strings.CutPrefix(string(application), "call/")
+	if !found || callID == "" {
+		return fmt.Errorf("engine: malformed call result application")
+	}
+	prefix := "call-argument/" + callID + "/"
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		index, err := strconv.Atoi(strings.TrimPrefix(fact.Key, prefix))
+		if err != nil || index < 0 || len(fact.Value) == 0 ||
+			(!strings.HasPrefix(string(fact.Value), "path/") && !strings.HasPrefix(string(fact.Value), "temp/") && !strings.HasPrefix(string(fact.Value), "scalar/")) {
+			return fmt.Errorf("engine: malformed call argument transport")
+		}
+		if existing, present := arguments[index]; present && !bytes.Equal(existing, fact.Value) {
+			return fmt.Errorf("engine: conflicting call argument transport")
+		}
+		arguments[index] = append([]byte(nil), fact.Value...)
+	}
+	return nil
+}
+
 // sealedCallableResultValue bridges a local boundary whose body projection is
 // unavailable. The closure capability and canonical function type are both
 // already published by the allocation transaction. Requiring both means an
@@ -7815,10 +7870,10 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 // manufacture a result fact here. This bridge transports only runtime scalar
 // and callable facts; records and containers retain their child projection so
 // a declared structural contract never becomes a synthetic shape witness.
-// Generic closures likewise remain with their ordinary child projection:
-// without an explicit instantiated canonical witness their result slots stay
-// Top.
-func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index int, partition equation.Partition) ([]byte, bool) {
+// Generic closures likewise remain with their ordinary child projection until
+// their exact call arguments have crossed the paired apply publication. An
+// incomplete instantiation leaves the result slot Top.
+func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
 	if lexical == nil || callee == nil || index < 0 {
 		return nil, false
 	}
@@ -7829,6 +7884,13 @@ func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index i
 	if err != nil {
 		return nil, false
 	}
+	if functionType, ok := sealedFunctionType(value); ok {
+		if function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function); ok && function != nil && len(function.TypeParams) != 0 {
+			result, instantiated := instantiateProviderReturn(function, arguments, partition, index)
+			returnValue, materialized := providerReturnTypeValue(result)
+			return returnValue, instantiated && materialized
+		}
+	}
 	return sealedFunctionResultValue(value, index)
 }
 
@@ -7836,7 +7898,7 @@ func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index i
 // function surface. The surface must already be published at the callee path
 // (including a typed member projection); declarations and source spelling are
 // not alternate authorities, and unresolved/generic return slots stay Top.
-func typedCallableResultValue(callee []byte, index int, partition equation.Partition) ([]byte, bool) {
+func typedCallableResultValue(callee []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
 	if callee == nil || index < 0 {
 		return nil, false
 	}
@@ -7849,10 +7911,12 @@ func typedCallableResultValue(callee []byte, index int, partition equation.Parti
 		return nil, false
 	}
 	function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function)
-	if !ok || function == nil || len(function.TypeParams) != 0 || index >= len(function.Returns) || function.Returns[index] == nil {
+	if !ok || function == nil || index >= len(function.Returns) || function.Returns[index] == nil {
 		return nil, false
 	}
-	return providerReturnTypeValue(function.Returns[index])
+	result, instantiated := instantiateProviderReturn(function, arguments, partition, index)
+	returnValue, materialized := providerReturnTypeValue(result)
+	return returnValue, instantiated && materialized
 }
 
 // sealedMethodResultValue is the method analogue of the direct-callee bridge.
@@ -8267,6 +8331,24 @@ func providerArgumentType(value []byte) (typ.Type, bool) {
 	if target, ok := shapefact.DecodeTarget(value); ok {
 		return target, true
 	}
+	if function, ok := sealedFunctionType(value); ok {
+		return function, true
+	}
+	if scalar, ok := expressionValueType(value); ok {
+		if literal, literalOK := scalar.(*typ.Literal); literalOK {
+			switch literal.Base {
+			case kind.Boolean:
+				return typ.Boolean, true
+			case kind.String:
+				return typ.String, true
+			case kind.Integer:
+				return typ.Integer, true
+			case kind.Number:
+				return typ.Number, true
+			}
+		}
+		return scalar, true
+	}
 	table, ok := shapefact.DecodeTable(value)
 	if !ok || !table.Closed || len(table.Members) == 0 {
 		return nil, false
@@ -8357,6 +8439,17 @@ func inferImportedTypeArgs(expected, actual typ.Type, params map[string]bool, bi
 			return false
 		}
 		for i := range want.Params {
+			if parameter, parameterOK := unwrap.Alias(subst.ExpandInstantiated(want.Params[i].Type)).(*typ.TypeParam); parameterOK && params[parameter.Name] {
+				if bound := bindings[parameter.Name]; bound != nil {
+					// A callback parameter is contravariant: once an earlier
+					// argument has fixed T, its callback may accept T itself or
+					// any established supertype, but never a narrower type.
+					if !subtype.IsSubtype(bound, got.Params[i].Type) {
+						return false
+					}
+					continue
+				}
+			}
 			if !inferImportedTypeArgs(want.Params[i].Type, got.Params[i].Type, params, bindings) {
 				return false
 			}
