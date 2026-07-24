@@ -347,6 +347,31 @@ end
 	}
 }
 
+func TestCheckExactDynamicWriteThroughAliasPublishesHeapMember(t *testing.T) {
+	result, err := engine.Check(`
+type Box = { value: string? }
+local box: Box = { value = "ready" }
+local alias = box
+local key = "value"
+alias[key] = nil
+local after: string = box.value
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range result.Diagnostics {
+		if strings.Contains(string(item.Value), "cannot assign box.value because it is nil, not string") {
+			for _, published := range result.PublishedDiagnostics {
+				if published.Fact.Key == item.Key && len(published.Evidence) == 2 && strings.Contains(published.Evidence[0].Message, "box.value has type nil") {
+					return
+				}
+			}
+			t.Fatalf("exact dynamic write diagnostic lacks published nil evidence: %#v", result.PublishedDiagnostics)
+		}
+	}
+	t.Fatalf("exact dynamic write through alias did not publish nil heap member: %#v", result.Diagnostics)
+}
+
 func TestCheckTriviallyTrueBranchPublishesTruthinessNarrowing(t *testing.T) {
 	result, err := engine.Check(`
 local value = 1

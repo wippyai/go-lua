@@ -490,7 +490,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			out = append(out, item)
 			continue
 		}
-		if _, typed := shapefact.DecodeTarget(value); typed {
+		if _, typed := shapefact.DecodeTarget(value); typed || string(value) == "scalar/nil" {
 			targetSpan := claimTargetSpans[name]
 			if !targetSpan.Valid() {
 				targetSpan = item.Span
@@ -752,6 +752,29 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 			if fact.Key == prefix+dependency.Name {
 				return append([]byte(nil), fact.Value...), true
 			}
+		}
+	}
+	// A dynamic member read publishes its resolved value at the read-result
+	// term, while a following annotation retains the equivalent static member
+	// path for source presentation. The claim's direct dependency is the
+	// authoritative bridge between those terms. Accept one and only one value
+	// published by that dependency; multiple results remain ambiguous and fail
+	// closed.
+	for _, dependency := range operation.Dependencies {
+		suffix := "/" + dependency.Name
+		var value []byte
+		for _, fact := range closure.Values {
+			if !strings.HasPrefix(fact.Key, "value/") || !strings.HasSuffix(fact.Key, suffix) {
+				continue
+			}
+			if value != nil {
+				value = nil
+				break
+			}
+			value = fact.Value
+		}
+		if value != nil {
+			return append([]byte(nil), value...), true
 		}
 	}
 	return nil, false
@@ -2668,7 +2691,12 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 		{Key: "value/" + target + "/" + operation.Target.Name, Value: value},
 		{Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 	}
-	for _, prefix := range []string{"identity/", "type/", "select/origin/"} {
+	// An ordinary write can establish a table alias. Preserve the table identity
+	// through that already-published write so a later exact dynamic mutation is
+	// applied to the same heap cell. Without this fact, alias[key] loses the
+	// authority needed by indexMutationKernel and a subsequent static read can
+	// only fall back to an optional shape.
+	for _, prefix := range []string{"identity/", "type/", "select/origin/", heapTableIdentityPrefix} {
 		if inherited, ok := currentEpochFact(prefix, operands["value"], partition); ok {
 			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: inherited})
 		}
