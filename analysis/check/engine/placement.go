@@ -295,6 +295,9 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 	projected := make([]equation.Fact, 0)
 	allocations := make(map[string]bool)
+	projectedResults := make(map[string]string)
+	resultOwners := make(map[string]string)
+	ambiguousResults := make(map[string]bool)
 	for _, fact := range facts {
 		if !strings.HasPrefix(fact.Key, placementAllocationPrefix) {
 			continue
@@ -302,6 +305,18 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 		var allocation placementAllocationFact
 		if json.Unmarshal(fact.Value, &allocation) == nil && allocation.Identity != "" && allocation.Result != "" && allocation.Kind != "" {
 			allocations[allocation.Identity] = true
+			// Child terms are private to their lexical body.  Give every
+			// published result a sealed identity-derived spelling so a caller's
+			// coincidentally named temp/path cannot acquire child ownership.
+			projectedResults[allocation.Identity] = "placement/projected/" + base64.RawURLEncoding.EncodeToString([]byte(allocation.Identity))
+			if owner, found := resultOwners[allocation.Result]; !found && !ambiguousResults[allocation.Result] {
+				resultOwners[allocation.Result] = allocation.Identity
+			} else if owner != allocation.Identity {
+				// A result spelling is not a unique child-graph edge.  Leave it
+				// unrebound rather than choose one allocation by iteration order.
+				delete(resultOwners, allocation.Result)
+				ambiguousResults[allocation.Result] = true
+			}
 		}
 	}
 	for _, fact := range facts {
@@ -311,7 +326,17 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 			if json.Unmarshal(fact.Value, &allocation) != nil || allocation.Identity == "" || allocation.Result == "" || allocation.Kind == "" {
 				continue
 			}
-			projected = append(projected, equation.Fact{Key: placementAllocationFactKey(allocation.Identity), Value: append([]byte(nil), fact.Value...)})
+			allocation.Result = projectedResults[allocation.Identity]
+			for index, childResult := range allocation.Children {
+				if childIdentity, found := resultOwners[childResult]; found {
+					allocation.Children[index] = projectedResults[childIdentity]
+				}
+			}
+			value, err := encodePlacementAllocation(allocation)
+			if err != nil {
+				continue
+			}
+			projected = append(projected, equation.Fact{Key: placementAllocationFactKey(allocation.Identity), Value: value})
 		case strings.HasPrefix(fact.Key, placementEventPrefix), strings.HasPrefix(fact.Key, placementBlockerPrefix), strings.HasPrefix(fact.Key, placementContractPrefix):
 			parts := strings.Split(fact.Key, "/")
 			if len(parts) != 5 || string(fact.Value) != "proven" {

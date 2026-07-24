@@ -2517,6 +2517,24 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 		}
 	}
+	// A closure with no formals or captures has a fully closed body at its
+	// allocation boundary.  Its placement conclusions are independent of the
+	// optional diagnostic publication above, so carry the already-closed facts
+	// even when the body is larger than the small diagnostic admission budget.
+	// This remains fail-closed: any unresolved body evaluation aborts the
+	// constructor, and the child projector accepts only complete allocations
+	// and their own self-contained boundary evidence.
+	if child.Cyclic == nil && len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 {
+		entry, entryErr := encodeChildEntry(nil)
+		if entryErr != nil {
+			return equation.TransactionResult{}, entryErr
+		}
+		outcome, _, evaluateErr := lexical.evaluate(child, entry)
+		if evaluateErr != nil {
+			return equation.TransactionResult{}, fmt.Errorf("engine: closed lexical child %q: %w", prototype, evaluateErr)
+		}
+		closure.Values = append(closure.Values, placementFactsFromChild(outcome.Values)...)
+	}
 	// Lifecycle epochs are self-contained proof facts: a channel created and
 	// consumed within a declared body needs no caller value to establish its
 	// identity. Publish only those closed facts for otherwise uncalled bodies;
