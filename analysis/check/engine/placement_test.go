@@ -116,6 +116,30 @@ return value`)
 	}
 }
 
+func TestCheckPublishesDeclaredClosureReturnWitnesses(t *testing.T) {
+	result, err := engine.Check(`type Upload = { size: number }
+type View = { human_size: string }
+local function materialize(upload: Upload): View
+  local kilobytes: number = upload.size / 1024
+  return { human_size = tostring(kilobytes) }
+end
+return materialize`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Placement == nil {
+		t.Fatal("placement = nil, want declared closure return witnesses")
+	}
+	ownedTable, stackScalar := false, false
+	for _, item := range result.Placement.Allocations {
+		ownedTable = ownedTable || (item.Kind == "lua.table" && item.Placement == placement.OwnedHeap && item.OwnerIdentity)
+		stackScalar = stackScalar || (item.Kind == "lua.scalar" && item.Placement == placement.Stack && item.FrameLocal)
+	}
+	if !ownedTable || !stackScalar {
+		t.Fatalf("placement = %#v, want owned table and stack scalar witnesses", result.Placement)
+	}
+}
+
 func TestCheckPublishesCyclicStackPlacementWitness(t *testing.T) {
 	result, err := engine.Check(`type Message = { id: string }
 local cache: {[string]: Message} = {}

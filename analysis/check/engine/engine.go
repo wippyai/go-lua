@@ -3283,6 +3283,141 @@ func cyclicPlacementWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
 	return seeds, true
 }
 
+// placementReturnWitnessEntry admits a prospective table-returning closure
+// only from its own declared entry.  The closure must be capture-free and its
+// result slot non-recursive, so the evaluated allocation is a closed function
+// summary rather than a caller-specific reconstruction.
+func placementReturnWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 ||
+		len(child.Boundary.DeclaredReturns) != 1 || !hasProjectableTableResult(child) {
+		return nil, false
+	}
+	returned := unwrap.Alias(child.WIR.Type(child.Boundary.DeclaredReturns[0]))
+	if returned == nil {
+		return nil, false
+	}
+	switch returned.Kind() {
+	case kind.Array, kind.Map, kind.Record, kind.ReadonlyMap:
+	default:
+		return nil, false
+	}
+	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			return nil, false
+		}
+		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
+		if declared == nil || declared.Kind() == kind.Any {
+			return nil, false
+		}
+		value, ok := shapefact.EncodeTarget(declared)
+		if !ok {
+			return nil, false
+		}
+		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
+	}
+	return seeds, true
+}
+
+// placementDeclaredScalarResultWitnesses exposes an immutable scalar result
+// only when both its exact provider and result slot are already published by
+// an evaluated declaration entry.  It does not turn a broad local Top into a
+// scalar: the provider's closed return contract is the independent authority.
+func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equation.OutputClosure) []equation.Fact {
+	values := make(map[string]bool)
+	for _, fact := range outcome.Values {
+		if strings.HasPrefix(fact.Key, "value/") {
+			if termOperation := strings.TrimPrefix(fact.Key, "value/"); strings.LastIndex(termOperation, "/") > 0 {
+				values[termOperation[:strings.LastIndex(termOperation, "/")]] = true
+			}
+		}
+	}
+	providers := make(map[string]string)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "external-call" {
+			continue
+		}
+		application, hasApplication := artifactOperand(operation.Operands, "application")
+		provider, hasProvider := artifactOperand(operation.Operands, "provider")
+		if !hasApplication || !hasProvider {
+			continue
+		}
+		if name, ok := placementGlobalProviderName(provider); ok {
+			providers[string(application)] = name
+		}
+	}
+	var facts []equation.Fact
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		application, found := artifactOperand(operation.Operands, "application")
+		name, foundProvider := providers[string(application)]
+		if !found || !foundProvider {
+			continue
+		}
+		signature, found := (signaturelookup.Source{IncludeStdlib: true}).LookupView(name)
+		if !found || signature.Type == nil {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if !strings.HasPrefix(operand.Role, "result-") || operand.Role == "result-display" {
+				continue
+			}
+			index, err := strconv.Atoi(strings.TrimPrefix(operand.Role, "result-"))
+			if err != nil || index < 0 || index >= len(signature.Type.Returns) || !values[string(operand.Term.Encoding)] || !placementClosedScalarType(signature.Type.Returns[index]) {
+				continue
+			}
+			identity := "scalar/provider/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s/%d", child.Body, operation.Target.Name, index)))
+			encoded, err := encodePlacementAllocation(placementAllocationFact{
+				Identity: identity, Result: "placement/scalar/" + base64.RawURLEncoding.EncodeToString([]byte(identity)), Kind: "lua.scalar", Complete: true,
+			})
+			if err == nil {
+				facts = append(facts, equation.Fact{Key: placementAllocationFactKey(identity), Value: encoded})
+			}
+		}
+	}
+	return facts
+}
+
+func placementClosedScalarType(value typ.Type) bool {
+	value = unwrap.Alias(value)
+	if value == nil {
+		return false
+	}
+	switch value.Kind() {
+	case kind.Boolean, kind.Number, kind.Integer, kind.String, kind.Literal:
+		return true
+	default:
+		return false
+	}
+}
+
+// publishesClosureReturn is an exact artifact edge from a closure allocation
+// result to the enclosing module's return tuple.  Member-owned closures remain
+// demand-driven: publishing their surrounding table is not a publication of
+// each callable's future allocation sites.
+func (l *lexicalEvaluator) publishesClosureReturn(body equation.BodyID, result string) bool {
+	if l == nil || result == "" {
+		return false
+	}
+	parent, found := l.byBody[body]
+	if !found {
+		return false
+	}
+	for _, operation := range parent.Artifact.Equations {
+		if operation.Occurrence.Kind != "publication" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if strings.HasPrefix(operand.Role, "return-value-") && string(operand.Term.Encoding) == result {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // uncalledDeclaredBoundary materializes only the checker-owned type witnesses
 // already present on a capture-free function boundary. These are not runtime
 // values and carry no invented member facts: the shape encoder preserves the
@@ -5573,6 +5708,24 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			outcome, _, evaluateErr := lexical.evaluate(child, entry)
 			if evaluateErr == nil {
 				closure.Values = append(closure.Values, placementStackWitnessFacts(outcome.Values)...)
+			}
+		}
+	}
+	// A capture-free closure with a declared, non-recursive return slot has an
+	// independently published entry contract.  Its returned table is a real
+	// prospective allocation site even before a caller supplies an invocation;
+	// projection retains only the child's completed placement facts, so any
+	// opaque boundary remains conservative in the public plan.
+	if seeds, eligible := placementReturnWitnessEntry(child); eligible && lexical.publishesClosureReturn(operation.Target.Body, result) {
+		entry, admitted, entryErr := lexical.uncalledChildEntry(child, seeds, partition, false, false, false, false)
+		if entryErr != nil {
+			return equation.TransactionResult{}, entryErr
+		}
+		if admitted {
+			outcome, _, evaluateErr := lexical.evaluate(child, entry)
+			if evaluateErr == nil {
+				closure.Values = append(closure.Values, placementFactsFromChild(outcome.Values)...)
+				closure.Values = append(closure.Values, placementFactsFromChild(placementDeclaredScalarResultWitnesses(child, outcome))...)
 			}
 		}
 	}
