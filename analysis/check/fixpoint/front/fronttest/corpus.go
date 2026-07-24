@@ -95,12 +95,17 @@ local result = sink.answer
 local function f() return 1, 2 end
 local first, second, third = 0, f()
 `,
-			Expect: Expectation{Published: []PublishedOutcome{value("first", "0"), value("second", "unknown"), value("third", "unknown")}},
+			// Lua expands an unparenthesized final call, so f() supplies its exact
+			// first and second returns to second and third respectively.
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "0"), value("second", "1"), value("third", "2")}},
 		},
 		{
 			Name:   "adversarial/multi-return-last-provider-call-expands-assignment-tail",
 			Source: `local first, second, third = 0, string.find("abc", "b")`,
-			Expect: Expectation{Published: []PublishedOutcome{value("first", "0"), value("second", "unknown"), value("third", "unknown")}},
+			// Lua expands the final string.find call into its start and end slots.
+			// The engine now retains declared numeric witnesses, which are not
+			// fronttest scalar publications; unknown was the pre-landing contract.
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "0")}},
 		},
 		{
 			Name: "adversarial/multi-return-nonfinal-call-truncates-assignment-list-conservatively",
@@ -108,12 +113,16 @@ local first, second, third = 0, f()
 local function f() return 1, 2 end
 local first, second = f(), 3
 `,
-			Expect: Expectation{Published: []PublishedOutcome{value("first", "unknown"), value("second", "3")}},
+			// Lua truncates a non-final call to one result before assigning the
+			// following expression, so first is f()'s exact first return.
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "1"), value("second", "3")}},
 		},
 		{
 			Name:   "adversarial/multi-return-nonfinal-provider-call-truncates-assignment-list",
 			Source: `local first, second = string.find("abc", "b"), 3`,
-			Expect: Expectation{Published: []PublishedOutcome{value("first", "unknown"), value("second", "3")}},
+			// Lua truncates the non-final provider call to its start result. Its
+			// precise numeric witness is intentionally outside the scalar channel.
+			Expect: Expectation{Published: []PublishedOutcome{value("second", "3")}},
 		},
 		{
 			Name: "adversarial/multi-return-parenthesized-call-truncates-to-one-conservatively",
@@ -121,12 +130,16 @@ local first, second = f(), 3
 local function f() return 1, 2 end
 local first, second = (f()), 3
 `,
-			Expect: Expectation{Published: []PublishedOutcome{value("first", "unknown"), value("second", "3")}},
+			// Parentheses force Lua to adjust f() to one result; that sole result is
+			// the exact first return, before the following literal fills second.
+			Expect: Expectation{Published: []PublishedOutcome{value("first", "1"), value("second", "3")}},
 		},
 		{
 			Name:   "adversarial/multi-return-parenthesized-provider-call-truncates-to-one",
 			Source: `local first, second = (string.find("abc", "b")), 3`,
-			Expect: Expectation{Published: []PublishedOutcome{value("first", "unknown"), value("second", "3")}},
+			// Parentheses likewise reduce string.find to its single start slot; the
+			// retained numeric witness is not a scalar publication, while second is 3.
+			Expect: Expectation{Published: []PublishedOutcome{value("second", "3")}},
 		},
 		{
 			Name: "adversarial/vararg-boundary-counts-nil-and-false-conservatively",

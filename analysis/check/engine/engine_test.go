@@ -482,6 +482,21 @@ local value: number = table.value
 	t.Fatalf("explicit nil member did not refute number assignment: %#v", result.Diagnostics)
 }
 
+func TestCheckFailsClosedForTableValuedNewIndexRoute(t *testing.T) {
+	result, err := engine.Check(`
+local sink = {}
+local object = setmetatable({}, { __newindex = sink })
+object.answer = 42
+local result = sink.answer
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got := valuesByName(result.Values)["result"]; got != "unknown" {
+		t.Fatalf("table-valued __newindex result = %q, want fail-closed unknown; values = %#v", got, result.Values)
+	}
+}
+
 func TestCheckDynamicAliasWriteUpdatesSealedTableMember(t *testing.T) {
 	result, err := engine.Check(`
 type Box = { value: string? }

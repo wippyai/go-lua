@@ -64,6 +64,9 @@ const (
 	heapTableClosedPrefix    = "heap/table-closed/"
 	heapMemberPrefix         = "heap/member/"
 	heapMemberIdentityPrefix = "heap/member-identity/"
+	heapMemberOriginPrefix   = "heap/member-origin/"
+	heapMetaAttachedPrefix   = "heap/meta-attached/"
+	heapMetaNewIndexPrefix   = "heap/meta-newindex/"
 	heapIndexPresencePrefix  = "heap/index-presence/"
 	heapIndexRevokePrefix    = "heap/index-revoke/"
 	heapIndexLowerPrefix     = "heap/index-lower/"
@@ -2776,6 +2779,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	}
 	var prototype, result string
 	captures := make([]string, 0)
+	memberOperands := make([][]byte, 0)
 	for _, operand := range operation.Operands {
 		switch {
 		case operand.Role == "prototype":
@@ -2785,12 +2789,24 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			prototype = strings.TrimPrefix(string(operand.Value), "prototype/")
 		case operand.Role == "result":
 			result = string(operand.Value)
+		case strings.HasPrefix(operand.Role, "member-"):
+			memberOperands = append(memberOperands, operand.Value)
 		case strings.HasPrefix(operand.Role, "capture-"):
 			captures = append(captures, string(operand.Value))
 		}
 	}
+	memberOrigins := make([]equation.Fact, 0, len(memberOperands))
+	for _, member := range memberOperands {
+		suffix, source, ok := materializedMemberOrigin(member)
+		if !ok {
+			// Scalar members do not carry a table identity. Only table-valued
+			// member sources need an origin bridge for alias-preserving writes.
+			continue
+		}
+		memberOrigins = append(memberOrigins, heapMemberOriginFact(result, suffix, operation.Target.Name, source))
+	}
 	if prototype == "" {
-		return equation.TransactionResult{Complete: true}, nil
+		return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: memberOrigins}}, nil
 	}
 	if result == "" || (!strings.HasPrefix(result, "path/") && !strings.HasPrefix(result, "temp/")) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed closure result")
@@ -2804,7 +2820,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "closure/" + result + "/" + operation.Target.Name, Value: handle}}}
+	closure := equation.OutputClosure{Values: append(memberOrigins, equation.Fact{Key: "closure/" + result + "/" + operation.Target.Name, Value: handle})}
 	child := lexical.byPrototype[prototype]
 	// A parameter-free child is closed at allocation time. A capture-free child
 	// whose entire boundary is explicitly any is closed too: each formal has a
@@ -3306,6 +3322,13 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 					memberValue = []byte(member.Value)
 				}
 				values = append(values, heapMemberFact(identity, member.Suffix, operation.Target.Name, memberValue))
+				if allocationResult, found := operationOperand(operation.Operands, "allocation-result"); found {
+					if source, found := heapMemberOriginCurrent(allocationResult, member.Suffix, partition); found {
+						if memberIdentity, found := tableIdentityForTerm(source, partition); found {
+							values = append(values, heapMemberIdentityFact(identity, member.Suffix, operation.Target.Name, memberIdentity))
+						}
+					}
+				}
 			}
 		}
 	}
@@ -3861,9 +3884,23 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	result.Closure.Values = append(result.Closure.Values, literalMemberClosures...)
 	if root, suffix, ok := tableAddress(operands["target"]); ok && suffix != "" {
 		if identity, found := tableIdentityForTerm(root, partition); found {
-			result.Closure.Values = append(result.Closure.Values, heapMemberFact(identity, suffix, operation.Target.Name, value))
-			if memberIdentity, found := tableIdentityForTerm(operands["value"], partition); found {
-				result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
+			writeIdentity := identity
+			// Lua dispatches a write to a missing key through a table-valued
+			// __newindex metamethod. The destination can itself carry another
+			// metatable, so retain only Top at the routed member: proving the
+			// direct table write would be unsound, while a concrete forwarded value
+			// would overstate the incomplete metamethod model.
+			if _, present := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); !present && heapTableClosed(identity, partition) {
+				if routed, found := heapMetaNewIndexCurrent(identity, partition); found {
+					writeIdentity = routed
+					value = []byte("scalar/top")
+				}
+			}
+			result.Closure.Values = append(result.Closure.Values, heapMemberFact(writeIdentity, suffix, operation.Target.Name, value))
+			if writeIdentity == nil || string(writeIdentity) == string(identity) {
+				if memberIdentity, found := tableIdentityForTerm(operands["value"], partition); found {
+					result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
+				}
 			}
 		}
 		parent, hasParent := placementAllocationForTerm(root, partition)
@@ -3905,7 +3942,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 		if suffix, exact := tableMemberSuffix(key, []byte("suffix/")); keyErr == nil && exact {
 			if member, found := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); found {
 				values[0].Value = member
-			} else if heapTableClosed(identity, partition) {
+			} else if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) {
 				values[0].Value = []byte("scalar/nil")
 			}
 			if memberIdentity, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, suffix, partition); found {
@@ -5674,9 +5711,11 @@ func exactFact(key string, partition equation.Partition) ([]byte, bool) {
 // violations: diagnostics are proof outputs, never speculative findings.
 func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (result equation.TransactionResult, err error) {
 	var placementFacts []equation.Fact
+	var metatableFacts []equation.Fact
 	defer func() {
-		if err == nil && result.Complete && len(placementFacts) != 0 {
+		if err == nil && result.Complete {
 			result.Closure.Values = append(result.Closure.Values, placementFacts...)
+			result.Closure.Values = append(result.Closure.Values, metatableFacts...)
 		}
 	}()
 	if closure, recognized, freezeErr := freezeCallEpoch(operation, partition); freezeErr != nil {
@@ -5716,6 +5755,16 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		return equation.TransactionResult{}, err
 	}
 	placementFacts = placementApplyFacts(operation, operands, partition)
+	if operands.display == "setmetatable" && !operands.spread && len(operands.arguments) == 2 {
+		if object, found := tableIdentityForTerm(operands.arguments[0], partition); found {
+			metatableFacts = append(metatableFacts, heapMetaAttachedFact(object, operation.Target.Name))
+			if metatable, found := tableIdentityForTerm(operands.arguments[1], partition); found {
+				if target, found := heapMemberCurrent(heapMemberIdentityPrefix, metatable, ".__newindex", partition); found {
+					metatableFacts = append(metatableFacts, heapMetaNewIndexFact(object, operation.Target.Name, target))
+				}
+			}
+		}
+	}
 	if closure, recognized := tableInsertEpoch(operation, operands, partition); recognized {
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
@@ -6532,6 +6581,15 @@ func heapIdentityFact(term, operation string, identity []byte) equation.Fact {
 	return equation.Fact{Key: heapTableIdentityPrefix + string(term) + "/" + operation, Value: append([]byte(nil), identity...)}
 }
 
+func operationOperand(operands []equation.BoundOperand, role string) ([]byte, bool) {
+	for _, operand := range operands {
+		if operand.Role == role {
+			return append([]byte(nil), operand.Value...), true
+		}
+	}
+	return nil, false
+}
+
 func heapClosedFact(identity []byte, operation string) equation.Fact {
 	return equation.Fact{Key: heapTableClosedPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("closed")}
 }
@@ -6546,6 +6604,72 @@ func heapMemberFact(identity []byte, suffix, operation string, value []byte) equ
 
 func heapMemberIdentityFact(identity []byte, suffix, operation string, memberIdentity []byte) equation.Fact {
 	return equation.Fact{Key: heapFactKey(heapMemberIdentityPrefix, identity, suffix, operation), Value: append([]byte(nil), memberIdentity...)}
+}
+
+func materializedMemberOrigin(value []byte) (string, []byte, bool) {
+	const prefix = "member/"
+	rest := strings.TrimPrefix(string(value), prefix)
+	if rest == string(value) {
+		return "", nil, false
+	}
+	for _, marker := range []string{"/path/", "/temp/"} {
+		index := strings.Index(rest, marker)
+		if index <= 0 {
+			continue
+		}
+		suffix, source := rest[:index], []byte(rest[index+1:])
+		if !segment.ValidFormattedSegments(suffix) {
+			return "", nil, false
+		}
+		return suffix, source, true
+	}
+	return "", nil, false
+}
+
+func heapMemberOriginFact(term, suffix, operation string, source []byte) equation.Fact {
+	return equation.Fact{Key: heapMemberOriginPrefix + term + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/" + operation, Value: append([]byte(nil), source...)}
+}
+
+func heapMemberOriginCurrent(term []byte, suffix string, partition equation.Partition) ([]byte, bool) {
+	prefix := heapMemberOriginPrefix + string(term) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/"
+	var value []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latest) {
+			value, latest = fact.Value, fact.Key
+		}
+	}
+	return append([]byte(nil), value...), value != nil
+}
+
+func heapMetaNewIndexFact(identity []byte, operation string, target []byte) equation.Fact {
+	return equation.Fact{Key: heapMetaNewIndexPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: append([]byte(nil), target...)}
+}
+
+func heapMetaAttachedFact(identity []byte, operation string) equation.Fact {
+	return equation.Fact{Key: heapMetaAttachedPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("attached")}
+}
+
+func heapMetaAttached(identity []byte, partition equation.Partition) bool {
+	prefix := heapMetaAttachedPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "attached" {
+			return true
+		}
+	}
+	return false
+}
+
+func heapMetaNewIndexCurrent(identity []byte, partition equation.Partition) ([]byte, bool) {
+	prefix := heapMetaNewIndexPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	var value []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latest) {
+			value, latest = fact.Value, fact.Key
+		}
+	}
+	return append([]byte(nil), value...), value != nil
 }
 
 func heapMemberCurrent(prefix string, identity []byte, suffix string, partition equation.Partition) ([]byte, bool) {
@@ -6654,7 +6778,7 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		if value, found := heapMemberCurrent(heapMemberPrefix, identity, whole, partition); found {
 			return value, true
 		}
-		if heapTableClosed(identity, partition) {
+		if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) {
 			return []byte("scalar/nil"), true
 		}
 		return nil, false
@@ -7321,6 +7445,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		value := []byte("scalar/top")
 		receiverResult := false
 		receiverResultTerm := receiver
+		setMetatableReceiver := []byte(nil)
 		var importedSummary typ.Type
 		// A known lexical apply seals its child outcome under the same
 		// application coordinate. call-results is the sole owner of caller
@@ -7394,6 +7519,14 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					lexical.setImportedAuthority(string(result), summary)
 				}
 			}
+			// setmetatable returns its first argument unchanged. Preserve only the
+			// existing value and heap identity; the metatable's effects are modeled
+			// independently by applyKernel and never fabricated from its shape.
+			if string(value) == "scalar/top" && providerName(provider) == "setmetatable" {
+				if receiver, found := argumentTerms[0]; found {
+					setMetatableReceiver = receiver
+				}
+			}
 		}
 		values = append(values,
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
@@ -7408,6 +7541,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				return equation.TransactionResult{}, memberErr
 			}
 			values = append(values, members...)
+		}
+		if setMetatableReceiver != nil {
+			if identity, found := tableIdentityForTerm(setMetatableReceiver, partition); found {
+				values = append(values, heapIdentityFact(string(result), operation.Target.Name, identity))
+			}
 		}
 		if importedSummary != nil && !requiresLocalUnionProof(importedSummary) {
 			encoded, encodeErr := typ.EncodeCanonical(context.Background(), importedSummary)
@@ -7686,12 +7824,8 @@ func stdlibMethodResultValue(receiver, method []byte, index int, partition equat
 // canonical type fact.  A malformed provider, unknown dynamic tail, or any
 // result type intentionally leaves the call-result owner at Top.
 func providerResultValue(provider []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
-	encoded := strings.TrimPrefix(string(provider), "provider/global/")
-	if encoded == string(provider) || encoded == "" {
-		return nil, false
-	}
-	name, err := strconv.Unquote(encoded)
-	if err != nil || name == "" {
+	name := providerName(provider)
+	if name == "" {
 		return nil, false
 	}
 	for _, condition := range signaturelookup.StdlibConditionalResultSlots(name) {
@@ -7726,6 +7860,18 @@ func providerResultValue(provider []byte, index int, arguments map[int][]byte, p
 		return nil, false
 	}
 	return providerReturnTypeValue(result)
+}
+
+func providerName(provider []byte) string {
+	encoded := strings.TrimPrefix(string(provider), "provider/global/")
+	if encoded == string(provider) || encoded == "" {
+		return ""
+	}
+	name, err := strconv.Unquote(encoded)
+	if err != nil {
+		return ""
+	}
+	return name
 }
 
 // requiresLocalUnionProof keeps a declared discriminated-record union from
