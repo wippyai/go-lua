@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
@@ -207,7 +208,7 @@ func (e lexicalSCCEvaluator) Evaluate(ctx context.Context, key interproc.Instanc
 	if err != nil {
 		return interproc.ClosedOutcome{}, err
 	}
-	return encodeLexicalSCCOutcome(closure)
+	return encodeLexicalSCCOutcome(admission.compilation, closure)
 }
 
 func (l *lexicalEvaluator) runSCCBody(ctx context.Context, admission lexicalSCCAdmission, run *lexicalSCCRun) (equation.OutputClosure, int, error) {
@@ -225,13 +226,55 @@ func lexicalSCCTopClosure(operands directCallOperands, target string) equation.O
 	return closure
 }
 
-func encodeLexicalSCCOutcome(closure equation.OutputClosure) (interproc.ClosedOutcome, error) {
+func encodeLexicalSCCOutcome(compilation front.Compilation, closure equation.OutputClosure) (interproc.ClosedOutcome, error) {
+	if compilation.Body.Valid() {
+		closure = lexicalSCCSummary(compilation, closure)
+	}
 	wire := lexicalSCCWire{Version: 1, Values: lexicalSCCFacts(closure.Values), Outcomes: lexicalSCCFacts(closure.Outcomes)}
 	bytes, err := json.Marshal(wire)
 	if err != nil {
 		return interproc.ClosedOutcome{}, err
 	}
 	return interproc.NewClosedOutcome(bytes)
+}
+
+// lexicalSCCSummary removes body-local VM state before it reaches the table.
+// A recursive re-evaluation consumes only its declared boundary values and
+// capabilities, while callers consume only the return tuple.  Allocation and
+// diagnostic detail is replay-only and therefore cannot make a recursive
+// coordinate grow with caller history.
+func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClosure) equation.OutputClosure {
+	boundary := make([]string, 0, len(compilation.Boundary.Parameters)+len(compilation.Boundary.Captures))
+	for _, parameter := range compilation.Boundary.Parameters {
+		boundary = append(boundary, boundaryTerm(parameter.Symbol))
+	}
+	for _, capture := range compilation.Boundary.Captures {
+		boundary = append(boundary, boundaryTerm(capture.Symbol))
+	}
+	matchBoundary := func(key string) bool {
+		for _, term := range boundary {
+			for _, prefix := range []string{"value/", "closure/", "declared-type/"} {
+				if strings.HasPrefix(key, prefix+term+"/") {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	values := make([]equation.Fact, 0, len(boundary)*3)
+	for _, fact := range closure.Values {
+		if matchBoundary(fact.Key) || strings.HasPrefix(fact.Key, "effect.lifecycle.channel/") ||
+			strings.HasPrefix(fact.Key, "effect.lifecycle.resource/") {
+			values = append(values, fact)
+		}
+	}
+	outcomes := make([]equation.Fact, 0, len(closure.Outcomes))
+	for _, fact := range closure.Outcomes {
+		if strings.HasPrefix(fact.Key, "return-candidate/") {
+			outcomes = append(outcomes, fact)
+		}
+	}
+	return equation.OutputClosure{Values: values, Outcomes: outcomes}
 }
 
 func decodeLexicalSCCOutcome(outcome interproc.ClosedOutcome) (equation.OutputClosure, error) {
@@ -280,7 +323,7 @@ func lexicalSCCHeight(compilation front.Compilation) uint64 {
 }
 func (l lexicalSCCLattice) Height() uint64 { return l.height }
 func (l lexicalSCCLattice) Bottom(key interproc.InstanceKey) (interproc.ClosedOutcome, error) {
-	return encodeLexicalSCCOutcome(equation.OutputClosure{})
+	return encodeLexicalSCCOutcome(front.Compilation{}, equation.OutputClosure{})
 }
 func (l lexicalSCCLattice) Join(key interproc.InstanceKey, previous, candidate interproc.ClosedOutcome) (interproc.ClosedOutcome, bool, error) {
 	left, err := decodeLexicalSCCOutcome(previous)
@@ -299,7 +342,7 @@ func (l lexicalSCCLattice) Join(key interproc.InstanceKey, previous, candidate i
 	if err != nil {
 		return interproc.ClosedOutcome{}, false, err
 	}
-	next, err := encodeLexicalSCCOutcome(equation.OutputClosure{Values: values, Outcomes: outcomes})
+	next, err := encodeLexicalSCCOutcome(front.Compilation{}, equation.OutputClosure{Values: values, Outcomes: outcomes})
 	return next, changed || outcomeChanged, err
 }
 

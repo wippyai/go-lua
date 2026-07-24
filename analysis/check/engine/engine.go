@@ -2682,7 +2682,17 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	closure, err := l.resolveSCCChild(child, entry, boundarySeeds, arguments, handle, operands, operation.Target.Name)
+	// The coordinator owns a discovered recursive demand, not every ordinary
+	// lexical invocation.  A non-recursive child retains the established direct
+	// evaluation path; once a coordinator callback is active every lexical
+	// child is nevertheless admitted through it so discovery sees the complete
+	// reachable call graph before any approximation is read.
+	var closure equation.OutputClosure
+	if l.run != nil || l.closureDemandRecurses(handle, partition) {
+		closure, err = l.resolveSCCChild(child, entry, boundarySeeds, arguments, handle, operands, operation.Target.Name)
+	} else {
+		closure, _, err = l.evaluate(child, entry)
+	}
 	if err != nil {
 		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
 	}
