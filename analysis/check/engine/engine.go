@@ -9279,7 +9279,13 @@ func typedMethodResultValue(receiver, method []byte, index int, partition equati
 	if !ok {
 		return nil, false
 	}
+	// Keep the existing record/union projection unchanged. Interfaces have no
+	// record field, so only that unavailable case falls back to access.Field,
+	// which substitutes Self through the published interface method contract.
 	callee, ok := variant.FieldAtPath(receiverType, []segment.Segment{{Kind: segment.SegmentField, Name: name}})
+	if !ok {
+		callee, ok = access.Field(receiverType, name)
+	}
 	if !ok {
 		return nil, false
 	}

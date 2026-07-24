@@ -499,6 +499,23 @@ local answer: number = object:answer()`
 	}
 }
 
+func TestCheckWithImportsProjectsPublishedInterfaceMethodResult(t *testing.T) {
+	source := `local provider = require("provider")
+local object = provider.new()
+local answer: number = object:answer()`
+	object := typ.NewInterface("provider.Object", []typ.Method{
+		{Name: "answer", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
+	})
+	provider := typetable.NewRecord().Field("new", typ.Func().Returns(object).Build()).Build()
+	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	if err != nil {
+		t.Fatalf("CheckWithImports interface receiver: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("typed imported interface receiver diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestCheckRetainsCallableMemberCapabilityThroughIndexedReplacement(t *testing.T) {
 	result, err := engine.Check(`
 type Message = { _topic: string, topic: (self: Message) -> string }
