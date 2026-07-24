@@ -52,3 +52,39 @@ return value`)
 		t.Fatalf("allocation = %#v, want returned owned allocation", item)
 	}
 }
+
+func TestCheckPlacementCarriesAliasIntoSharedContainer(t *testing.T) {
+	result, err := engine.Check(`local shared = { label = "shared" }
+process.send("worker", "ready", shared)
+local payload = { id = "payload" }
+local alias = payload
+shared.payload = alias`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Placement == nil || len(result.Placement.Allocations) != 2 {
+		t.Fatalf("placement = %#v, want two allocations", result.Placement)
+	}
+	for _, item := range result.Placement.Allocations {
+		if item.Placement != placement.SharedHeap || !item.SealBeforeShare {
+			t.Fatalf("allocation = %#v, want sealed shared placement", item)
+		}
+	}
+}
+
+func TestCheckPlacementOwnershipStoreRetainsOwnerAndStoredGraph(t *testing.T) {
+	result, err := engine.Check(`local box = { items = {} }
+local item = { child = { route = "owned" } }
+ownership.store(item, box)`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Placement == nil || len(result.Placement.Allocations) != 4 {
+		t.Fatalf("placement = %#v, want four allocations", result.Placement)
+	}
+	for _, item := range result.Placement.Allocations {
+		if item.Placement != placement.OwnedHeap || !item.OwnerIdentity {
+			t.Fatalf("allocation = %#v, want owned placement", item)
+		}
+	}
+}

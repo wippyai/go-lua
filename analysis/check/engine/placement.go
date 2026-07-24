@@ -45,10 +45,11 @@ type PlacementHoistableLoad struct {
 }
 
 const (
-	placementAllocationPrefix = "placement/allocation/"
-	placementBindingPrefix    = "placement/binding/"
-	placementEventPrefix      = "placement/event/"
-	placementBlockerPrefix    = "placement/blocker/"
+	placementAllocationPrefix  = "placement/allocation/"
+	placementBindingPrefix     = "placement/binding/"
+	placementEventPrefix       = "placement/event/"
+	placementBlockerPrefix     = "placement/blocker/"
+	placementContainmentPrefix = "placement/contains/"
 
 	placementEventOwned  = "owned"
 	placementEventShared = "shared"
@@ -68,6 +69,14 @@ func encodePlacementAllocation(fact placementAllocationFact) ([]byte, error) {
 	return json.Marshal(fact)
 }
 
+// placementAllocationFactKey is identity-addressed so facts from an evaluated
+// lexical child can cross its publication boundary without colliding with a
+// same-named operation in its caller. The identity itself is sealed from the
+// child body and allocation occurrence.
+func placementAllocationFactKey(identity string) string {
+	return placementAllocationPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity))
+}
+
 func placementAllocationIdentity(operation equation.BoundEquation) string {
 	return "allocation/" + string(operation.Target.Body[:]) + "/" + operation.Target.Name
 }
@@ -82,6 +91,10 @@ func placementEventFact(identity, operation, event string) equation.Fact {
 
 func placementBlockerFact(identity, operation, blocker string) equation.Fact {
 	return equation.Fact{Key: placementBlockerPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + blocker + "/" + operation, Value: []byte("proven")}
+}
+
+func placementContainmentFact(parent, child, operation string) equation.Fact {
+	return equation.Fact{Key: placementContainmentPrefix + base64.RawURLEncoding.EncodeToString([]byte(parent)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(child)) + "/" + operation, Value: []byte("proven")}
 }
 
 func placementAllocationForTerm(term []byte, partition equation.Partition) (placementAllocationFact, bool) {
@@ -141,10 +154,20 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 			continue
 		}
 		switch {
-		case operands.display == "ownership.store" && index == 0:
+		case operands.display == "ownership.store" && (index == 0 || index == 1):
+			// The ownership contract proves both the stored graph and its owner
+			// are retained past the caller frame. No opaque fallback is needed
+			// for either exact contract argument.
 			facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventOwned))
 		case operands.display == "process.send" && index == 2:
-			facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventShared))
+			// The send boundary is the sealing event for its closed transfer
+			// payload. Both conclusions are emitted from the same proved call
+			// contract, so a later source mutation cannot masquerade as a
+			// pre-send sealing proof.
+			facts = append(facts,
+				placementEventFact(allocation.Identity, operation.Target.Name, placementEventSealed),
+				placementEventFact(allocation.Identity, operation.Target.Name, placementEventShared),
+			)
 		case operands.display == "table.freeze" && index == 0:
 			facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventSealed))
 		default:
@@ -154,11 +177,65 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 	return facts
 }
 
+// placementFactsFromChild transports only already-closed allocation conclusions
+// from a lexical evaluation. Bindings name the child's private frame and are
+// deliberately not projected; allocation identities and their boundary facts
+// are self-contained and remain valid at the caller publication boundary.
+func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
+	projected := make([]equation.Fact, 0)
+	allocations := make(map[string]bool)
+	for _, fact := range facts {
+		if !strings.HasPrefix(fact.Key, placementAllocationPrefix) {
+			continue
+		}
+		var allocation placementAllocationFact
+		if json.Unmarshal(fact.Value, &allocation) == nil && allocation.Identity != "" && allocation.Result != "" && allocation.Kind != "" {
+			allocations[allocation.Identity] = true
+		}
+	}
+	for _, fact := range facts {
+		switch {
+		case strings.HasPrefix(fact.Key, placementAllocationPrefix):
+			var allocation placementAllocationFact
+			if json.Unmarshal(fact.Value, &allocation) != nil || allocation.Identity == "" || allocation.Result == "" || allocation.Kind == "" {
+				continue
+			}
+			projected = append(projected, equation.Fact{Key: placementAllocationFactKey(allocation.Identity), Value: append([]byte(nil), fact.Value...)})
+		case strings.HasPrefix(fact.Key, placementEventPrefix), strings.HasPrefix(fact.Key, placementBlockerPrefix):
+			parts := strings.Split(fact.Key, "/")
+			if len(parts) != 5 || string(fact.Value) != "proven" {
+				continue
+			}
+			identity, err := base64.RawURLEncoding.DecodeString(parts[2])
+			if err != nil || !allocations[string(identity)] {
+				continue
+			}
+			projected = append(projected, equation.Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...)})
+		case strings.HasPrefix(fact.Key, placementContainmentPrefix):
+			parts := strings.Split(fact.Key, "/")
+			if len(parts) != 5 || string(fact.Value) != "proven" {
+				continue
+			}
+			parent, parentErr := base64.RawURLEncoding.DecodeString(parts[2])
+			if parentErr != nil || !allocations[string(parent)] {
+				continue
+			}
+			child, childErr := base64.RawURLEncoding.DecodeString(parts[3])
+			if childErr != nil || !allocations[string(child)] {
+				continue
+			}
+			projected = append(projected, equation.Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...)})
+		}
+	}
+	return projected
+}
+
 func publishedPlacement(facts []equation.Fact) *PlacementPlan {
 	allocations := make(map[string]placementAllocationFact)
 	bindings := make(map[string]string)
 	events := make(map[string]map[string]bool)
 	blockers := make(map[string]map[string]bool)
+	containment := make(map[string][]string)
 	for _, fact := range facts {
 		switch {
 		case strings.HasPrefix(fact.Key, placementAllocationPrefix):
@@ -196,6 +273,15 @@ func publishedPlacement(facts []equation.Fact) *PlacementPlan {
 					blockers[string(identity)][parts[3]] = true
 				}
 			}
+		case strings.HasPrefix(fact.Key, placementContainmentPrefix):
+			parts := strings.Split(fact.Key, "/")
+			if len(parts) == 5 && string(fact.Value) == "proven" {
+				parent, parentErr := base64.RawURLEncoding.DecodeString(parts[2])
+				child, childErr := base64.RawURLEncoding.DecodeString(parts[3])
+				if parentErr == nil && childErr == nil && string(parent) != string(child) {
+					containment[string(parent)] = append(containment[string(parent)], string(child))
+				}
+			}
 		}
 	}
 	if len(allocations) == 0 {
@@ -208,6 +294,7 @@ func publishedPlacement(facts []equation.Fact) *PlacementPlan {
 				children[identity] = append(children[identity], child)
 			}
 		}
+		children[identity] = append(children[identity], containment[identity]...)
 	}
 	propagate := func(event string) {
 		changed := true
@@ -230,6 +317,7 @@ func publishedPlacement(facts []equation.Fact) *PlacementPlan {
 	}
 	propagate(placementEventOwned)
 	propagate(placementEventShared)
+	propagate(placementEventSealed)
 	depth := make(map[string]int, len(allocations))
 	var allocationDepth func(string, map[string]bool) int
 	allocationDepth = func(identity string, visiting map[string]bool) int {

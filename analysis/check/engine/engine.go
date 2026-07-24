@@ -1795,6 +1795,11 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	for index, value := range returns {
 		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("call-result/%s/%08d", operation.Target.Name, index), Value: value})
 	}
+	// A lexical child has already closed these facts through its own
+	// publication path. Projecting that finite proof set is required for the
+	// caller's public result to describe allocations reached by an evaluated
+	// local call; private frame bindings never cross the boundary.
+	projected.Values = append(projected.Values, placementFactsFromChild(closure.Values)...)
 	// Publication is the only child return authority. Its member-capability
 	// facts retain local closure handles for sealed table results without
 	// changing the table's ordinary callable/member facts.
@@ -2077,7 +2082,7 @@ func allocationTemplateKernel(operation equation.BoundEquation, partition equati
 		return equation.TransactionResult{}, err
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
-		Key: placementAllocationPrefix + operation.Target.Name, Value: fact,
+		Key: placementAllocationFactKey(placementAllocationIdentity(operation)), Value: fact,
 	}}}}, nil
 }
 
@@ -2519,10 +2524,22 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	}
 	if allocation, found := placementAllocationForTerm(allocationResult, partition); found {
 		values = append(values, placementBindingFact(target, operation.Target.Name, allocation.Identity))
+	} else if allocation, found := placementAllocationForTerm(operands["value"], partition); found {
+		// Ordinary writes have no allocation-result operand. Their source
+		// binding is the only established alias proof; never infer one from a
+		// matching name or shape.
+		values = append(values, placementBindingFact(target, operation.Target.Name, allocation.Identity))
 	}
 	if _, suffix, member := tableAddress([]byte(target)); member && suffix != "" {
 		if allocation, found := placementAllocationForTerm(allocationResult, partition); found {
 			values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "member-store"))
+		}
+		if root, _, ok := tableAddress([]byte(target)); ok {
+			parent, hasParent := placementAllocationForTerm(root, partition)
+			child, hasChild := placementAllocationForTerm(operands["value"], partition)
+			if hasParent && hasChild && parent.Identity != child.Identity {
+				values = append(values, placementContainmentFact(parent.Identity, child.Identity, operation.Target.Name))
+			}
 		}
 	}
 	memberClosures, err := projectMemberClosures(target, operands["value"], operation.Target.Name, partition)
@@ -2792,6 +2809,14 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 			if memberIdentity, found := tableIdentityForTerm(operands["value"], partition); found {
 				result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
 			}
+		}
+		parent, hasParent := placementAllocationForTerm(root, partition)
+		child, hasChild := placementAllocationForTerm(operands["value"], partition)
+		if hasChild {
+			result.Closure.Values = append(result.Closure.Values, placementBindingFact(string(operands["target"]), operation.Target.Name, child.Identity))
+		}
+		if hasParent && hasChild && parent.Identity != child.Identity {
+			result.Closure.Values = append(result.Closure.Values, placementContainmentFact(parent.Identity, child.Identity, operation.Target.Name))
 		}
 	}
 	if isChannelIdentity(value) {
@@ -3808,9 +3833,19 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			result.Closure.Values = append(result.Closure.Values, placementFacts...)
 		}
 	}()
-	if closure, recognized, err := freezeCallEpoch(operation, partition); err != nil {
-		return equation.TransactionResult{}, err
+	if closure, recognized, freezeErr := freezeCallEpoch(operation, partition); freezeErr != nil {
+		return equation.TransactionResult{}, freezeErr
 	} else if recognized {
+		// Freeze has its own epoch ordering: retain that established kernel
+		// boundary, and publish the independently closed placement event from
+		// the same sealed call operands before returning.
+		if guardsHold(operation.Guards, partition) {
+			operands, operandErr := callOperands(operation.Operands)
+			if operandErr != nil {
+				return equation.TransactionResult{}, operandErr
+			}
+			closure.Values = append(closure.Values, placementApplyFacts(operation, operands, partition)...)
+		}
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	if !guardsHold(operation.Guards, partition) {
