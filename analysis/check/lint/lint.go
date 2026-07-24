@@ -19,8 +19,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/compiler/source"
 )
@@ -266,13 +270,23 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 				importBindings[resolvedImport.ModulePath] = resolvedImport.Export
 			}
 		}
-		result, checkErr := engine.CheckWithImports(entry.Source, importBindings)
+		importManifests := make([]*manifest.Manifest, 0, len(resolvedImports))
+		for _, resolvedImport := range resolvedImports {
+			if resolvedImport.Manifest != nil {
+				importManifests = append(importManifests, resolvedImport.Manifest)
+			}
+		}
+		typeSource := typelookup.Source{Manifests: importManifests}
+		result, checkErr := engine.CheckWithImportsAndResolver(entry.Source, importBindings, typeSource)
 		if checkErr != nil {
 			return fmt.Errorf("lint: check %s: %w", entry.Path, checkErr)
 		}
 		diagnostics, renderElapsed := projectDiagnostics(entry, result, preDiagnostics)
 		diagnostics = applyDiagnosticPolicy(diagnostics, input.DiagnosticRules, input.DiagnosticPolicy)
 		summary := manifest.New(entry.ModulePath)
+		for name, definition := range moduleTypes(entry.Source, typeSource) {
+			summary.DefineType(name, definition)
+		}
 		// Project only facts closed by this entry's equation evaluation. The
 		// exporter leaves opaque results and unknown members conservative, while
 		// preserving proven records, callable signatures, unions, and scalars.
@@ -326,6 +340,37 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 	out.Placement = projectPlacement(out.Entries)
 	diagnostic.Sort(out.Diagnostics)
 	return out, nil
+}
+
+// moduleTypes records only lexical top-level definitions that the parser and
+// resolver can close against the already-selected import manifests. A failed
+// parse or unresolved definition is deliberately omitted: consumers then keep
+// the ordinary unavailable-type behavior instead of receiving a guessed name.
+func moduleTypes(sourceText string, external typelookup.Source) map[string]typ.Type {
+	stmts, err := parse.ParseString(sourceText, "<module-types>")
+	if err != nil {
+		return nil
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"channel"}})
+	resolver := typeresolve.NewWithExternal(bindings, external)
+	definitions := make(map[string]typ.Type)
+	for _, statement := range stmts {
+		var declaration bind.TypeDecl
+		var found bool
+		switch typed := statement.(type) {
+		case *ast.TypeDefStmt:
+			declaration, found = bindings.TypeDef(typed)
+		case *ast.InterfaceDefStmt:
+			declaration, found = bindings.InterfaceDef(typed)
+		}
+		if !found || declaration.Name == "" {
+			continue
+		}
+		if resolved, ok := resolver.Decl(declaration); ok && resolved != nil {
+			definitions[declaration.Name] = resolved
+		}
+	}
+	return definitions
 }
 
 func projectPlacement(entries []EntryResult) *engine.PlacementPlan {

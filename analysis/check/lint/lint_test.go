@@ -143,6 +143,29 @@ local answer: string = provider.answer()
 	}
 }
 
+func TestCheckProjectRehydratesImportedQualifiedTypeDefinitions(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
+		{Path: "provider.lua", ModulePath: "provider", Source: `
+type User = { id: string }
+local M = {}
+M.User = User
+function M.make(): User return { id = "ok" } end
+return M
+`},
+		{Path: "main.lua", ModulePath: "main", Source: `
+local provider = require("provider")
+local user: provider.User = provider.make()
+local wrong: number = user.id
+`},
+	}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != "type.assignment" || !strings.Contains(result.Diagnostics[0].Message, "string") || !strings.Contains(result.Diagnostics[0].Message, "number") {
+		t.Fatalf("diagnostics = %#v, want imported qualified-field assignment diagnostic", result.Diagnostics)
+	}
+}
+
 func TestDiagnosticPolicyConfiguresOptionalHintsAndSeverity(t *testing.T) {
 	input := []diagnostic.Diagnostic{
 		{Code: "lint.condition.redundant", Severity: diagnostic.SeverityError},

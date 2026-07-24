@@ -21,7 +21,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
+	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -142,6 +144,13 @@ type BodyCatalogEntry struct {
 // Compile parses and lowers one complete body, retaining cyclic control-flow
 // as a frozen equation certificate rather than rejecting it at the front door.
 func Compile(source string) (Compilation, error) {
+	return CompileWithResolver(source, nil)
+}
+
+// CompileWithResolver lowers source with the exact external type definitions
+// admitted at the module boundary. Runtime imports remain explicit entry facts;
+// the resolver is used only for annotation rehydration.
+func CompileWithResolver(source string, external typeannotation.Resolver) (Compilation, error) {
 	stmts, err := parse.ParseString(source, "<front>")
 	if err != nil {
 		return Compilation{}, fmt.Errorf("front: parse body: %w", err)
@@ -158,7 +167,8 @@ func Compile(source string) (Compilation, error) {
 	if built == nil || built.Graph == nil {
 		return Compilation{}, fmt.Errorf("front: build CFG")
 	}
-	body := wirlower.Lower("chunk", stmts, bindings, built)
+	resolver := typeresolve.NewWithExternal(bindings, external)
+	body := wirlower.LowerWithResolver("chunk", stmts, bindings, built, resolver)
 	if body == nil {
 		return Compilation{}, fmt.Errorf("front: lower WIR")
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -158,7 +159,7 @@ type Timings struct {
 // and evaluates the front-selected acyclic or frozen-cyclic artifact. Both
 // paths publish the identical result channels.
 func Check(source string) (result Result, err error) {
-	return CheckWithImports(source, nil)
+	return CheckWithImportsAndResolver(source, nil, nil)
 }
 
 // CheckWithImports admits resolved module exports as closed entry facts. It
@@ -167,6 +168,14 @@ func Check(source string) (result Result, err error) {
 // the equation remains fail-closed rather than treating an unresolved module
 // as any.
 func CheckWithImports(source string, imports map[string]typ.Type) (result Result, err error) {
+	return CheckWithImportsAndResolver(source, imports, nil)
+}
+
+// CheckWithImportsAndResolver admits closed import values and the matching
+// named-type resolver together. The resolver cannot create runtime facts: it
+// only rehydrates annotations whose module manifests were already selected by
+// the project boundary.
+func CheckWithImportsAndResolver(source string, imports map[string]typ.Type, resolver typeannotation.Resolver) (result Result, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("%w: %v", ErrInternalPanic, recovered)
@@ -174,7 +183,7 @@ func CheckWithImports(source string, imports map[string]typ.Type) (result Result
 		}
 	}()
 	parseStarted := time.Now()
-	compilation, err := front.Compile(source)
+	compilation, err := front.CompileWithResolver(source, resolver)
 	parseElapsed := time.Since(parseStarted)
 	if err != nil {
 		result = diagnosticResult("analysis/front", err)
@@ -7440,6 +7449,13 @@ func scalarType(value []byte) (string, error) {
 	if isUnknownScalar(value) {
 		return "", errUnknownScalar
 	}
+	// A closed summary can prove that a selected member is absent, but that
+	// absence marker is not a runtime scalar. Predicates must leave it
+	// unselected rather than turning an unavailable proof into an evaluator
+	// failure.
+	if memberMissing(value) {
+		return "", errUnknownScalar
+	}
 	if target, ok := shapefact.DecodeTarget(value); ok {
 		switch unwrap.Alias(target).Kind() {
 		case kind.Nil:
@@ -7967,6 +7983,9 @@ func latestValue(term []byte, partition equation.Partition) ([]byte, bool) {
 
 func luaTruthy(value []byte) (bool, error) {
 	if isUnknownScalar(value) {
+		return false, errUnknownScalar
+	}
+	if memberMissing(value) {
 		return false, errUnknownScalar
 	}
 	if target, ok := shapefact.DecodeTarget(value); ok {
