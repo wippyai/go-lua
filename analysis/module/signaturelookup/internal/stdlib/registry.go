@@ -25,6 +25,8 @@ import (
 const (
 	Assert      = "assert"
 	Error       = "error"
+	Integer     = "integer"
+	Number      = "number"
 	Require     = "require"
 	String      = "string"
 	ToString    = "tostring"
@@ -54,6 +56,20 @@ var registry = map[string]signature.Function{
 			OptParam("level", typ.Integer).
 			Returns(typ.Never).
 			Build(),
+	),
+	Integer: sig(
+		typ.Func().
+			Param("v", typ.Any).
+			Returns(typ.Integer).
+			Build(),
+		ownership.BorrowAll{},
+	),
+	Number: sig(
+		typ.Func().
+			Param("v", typ.Any).
+			Returns(typ.Number).
+			Build(),
+		ownership.BorrowAll{},
 	),
 	Require: sig(
 		typ.Func().

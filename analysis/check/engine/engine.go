@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -3149,6 +3150,16 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	// Exact scalar evaluation deliberately leaves broad, sealed type witnesses
+	// at Top.  Before publishing that loss of precision, let the existing type
+	// operator derive the result from those already-published witnesses.  This
+	// keeps provider results such as integer(any) useful through arithmetic and
+	// concatenation without inventing a concrete runtime value.
+	if string(value) == "scalar/top" && len(diagnostics) == 0 {
+		if typed, ok := typedExpressionResult(wir.Op(kind), wir.Operator(op), by, partition); ok {
+			value = typed
+		}
+	}
 	values := []equation.Fact{{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value}}
 	if wir.Op(kind) == wir.OpBinOp && (wir.Operator(op) == wir.BinEq || wir.Operator(op) == wir.BinNe) {
 		for _, role := range []string{"left", "right"} {
@@ -3158,6 +3169,178 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
+}
+
+func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[string][]byte, partition equation.Partition) ([]byte, bool) {
+	// Exact scalar arithmetic already has a concrete evaluator. This fallback
+	// exists only to carry a sealed type witness across the expression seam;
+	// applying it to plain scalar coercions would replace their intentionally
+	// conservative Top result with an inferred static contract.
+	hasWitness := func(role string) bool {
+		term, found := operands[role]
+		if !found {
+			return false
+		}
+		value, err := resolveCurrentValue(term, partition)
+		if err != nil {
+			return false
+		}
+		_, witnessed := shapefact.DecodeTarget(value)
+		return witnessed
+	}
+	witnessed := false
+	switch kind {
+	case wir.OpBinOp:
+		witnessed = hasWitness("left") || hasWitness("right")
+	case wir.OpUnOp:
+		witnessed = hasWitness("value")
+	case wir.OpConcat:
+		for index := 0; ; index++ {
+			role := fmt.Sprintf("value-%08d", index)
+			if _, found := operands[role]; !found {
+				break
+			}
+			witnessed = witnessed || hasWitness(role)
+		}
+	}
+	if !witnessed {
+		return nil, false
+	}
+	resolveType := func(role string) (typ.Type, bool) {
+		term, found := operands[role]
+		if !found {
+			return nil, false
+		}
+		value, err := resolveCurrentValue(term, partition)
+		if err != nil {
+			return nil, false
+		}
+		return expressionValueType(value)
+	}
+	var result typ.Type
+	var ok bool
+	switch kind {
+	case wir.OpBinOp:
+		operatorText, operatorOK := expressionOperatorText(operator)
+		if !operatorOK {
+			return nil, false
+		}
+		left, leftOK := resolveType("left")
+		right, rightOK := resolveType("right")
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		result, ok = typeoperator.BinaryOp(left, operatorText, right)
+	case wir.OpUnOp:
+		operatorText, operatorOK := expressionOperatorText(operator)
+		if !operatorOK {
+			return nil, false
+		}
+		value, valueOK := resolveType("value")
+		if !valueOK {
+			return nil, false
+		}
+		result, ok = typeoperator.UnaryOp(operatorText, value)
+	case wir.OpConcat:
+		for index := 0; ; index++ {
+			value, valueOK := resolveType(fmt.Sprintf("value-%08d", index))
+			if !valueOK {
+				return nil, false
+			}
+			if index == 0 {
+				result = value
+				continue
+			}
+			result, ok = typeoperator.BinaryOp(result, "..", value)
+			if !ok {
+				return nil, false
+			}
+			if _, next := operands[fmt.Sprintf("value-%08d", index+1)]; !next {
+				break
+			}
+		}
+	default:
+		return nil, false
+	}
+	if !ok || result == nil {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(result)
+}
+
+func expressionValueType(value []byte) (typ.Type, bool) {
+	if value, ok := shapefact.DecodeTarget(value); ok {
+		return value, true
+	}
+	switch {
+	case string(value) == "scalar/nil":
+		return typ.Nil, true
+	case strings.HasPrefix(string(value), "scalar/bool/"):
+		parsed, err := strconv.ParseBool(strings.TrimPrefix(string(value), "scalar/bool/"))
+		return typ.LiteralBool(parsed), err == nil
+	case strings.HasPrefix(string(value), "scalar/string/"):
+		parsed, err := strconv.Unquote(strings.TrimPrefix(string(value), "scalar/string/"))
+		return typ.LiteralString(parsed), err == nil
+	case strings.HasPrefix(string(value), "scalar/number/"):
+		parsed := strings.TrimPrefix(string(value), "scalar/number/")
+		if integer, err := strconv.ParseInt(parsed, 10, 64); err == nil {
+			return typ.LiteralInt(integer), true
+		}
+		if number, err := strconv.ParseFloat(parsed, 64); err == nil {
+			return typ.LiteralNumber(number), true
+		}
+	}
+	return nil, false
+}
+
+func expressionOperatorText(operator wir.Operator) (string, bool) {
+	switch operator {
+	case wir.BinAdd:
+		return "+", true
+	case wir.BinSub:
+		return "-", true
+	case wir.BinMul:
+		return "*", true
+	case wir.BinDiv:
+		return "/", true
+	case wir.BinIDiv:
+		return "//", true
+	case wir.BinMod:
+		return "%", true
+	case wir.BinPow:
+		return "^", true
+	case wir.BinBAnd:
+		return "&", true
+	case wir.BinBOr:
+		return "|", true
+	case wir.BinBXor:
+		return "~", true
+	case wir.BinShl:
+		return "<<", true
+	case wir.BinShr:
+		return ">>", true
+	case wir.BinEq:
+		return "==", true
+	case wir.BinNe:
+		return "~=", true
+	case wir.BinLt:
+		return "<", true
+	case wir.BinLe:
+		return "<=", true
+	case wir.BinGt:
+		return ">", true
+	case wir.BinGe:
+		return ">=", true
+	case wir.UnNeg:
+		return "-", true
+	case wir.UnNot:
+		return "not", true
+	case wir.UnLen:
+		return "#", true
+	case wir.UnBNot:
+		return "~", true
+	}
+	return "", false
 }
 
 // concatOperandMayBeNil accepts only a closed nil value or an explicit
@@ -3390,7 +3573,10 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 			Key:   "type.member.missing/" + operation.Target.Name,
 			Value: []byte(memberMissingMessage(sourceDisplay, value)),
 		}}
-	} else if kind == "claim-kind/3" && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted) {
+		// A declaration without an initializer reads its own Lua nil slot. That
+		// slot establishes the declared local's downstream contract; it is not an
+		// assignment of nil to the declaration type.
+	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil") && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted) {
 		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
 			message = "cannot assign " + sourceDisplay + " because it is " + assignmentValueType(value) + ", not " + declared
@@ -3402,7 +3588,7 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 			Key:   "type.assignment/" + operation.Target.Name,
 			Value: []byte(message),
 		}}
-	} else if !claimTypeIsAny(targetType) && !callableRecordShape {
+	} else if !claimTypeIsAny(targetType) && !callableRecordShape && !(kind == "claim-kind/3" && string(source) == target && string(value) == "scalar/nil") {
 		// The closure keys facts by identity, so separate unproven claims must
 		// retain their operation identity.
 		closure.Diagnostics = []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}}

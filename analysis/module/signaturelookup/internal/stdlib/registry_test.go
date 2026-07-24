@@ -479,7 +479,7 @@ func TestSignaturesSeededNames(t *testing.T) {
 	sort.Strings(got)
 
 	want := []string{
-		Assert, Error, Require, String, ToString, Type, Pairs, IPairs, PCall, XPCall,
+		Assert, Error, Integer, Number, Require, String, ToString, Type, Pairs, IPairs, PCall, XPCall,
 		"print", "tonumber", "next", "select", "rawget", "rawset", "rawequal",
 		"rawlen", "setmetatable", "getmetatable", "collectgarbage", "unpack",
 		TableInsert, "table.remove", "table.concat", "table.sort", "table.unpack",
