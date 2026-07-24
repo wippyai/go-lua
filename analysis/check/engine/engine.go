@@ -2079,6 +2079,29 @@ func (l *lexicalEvaluator) hasClaim(prototype string) bool {
 	return false
 }
 
+// hasRuntimeCastClaim distinguishes a checked cast from an ordinary
+// annotation claim. A cast's result may carry a nilability witness into the
+// child's declared return, so an exact invoked child must be evaluated for
+// that caller-owned contract. Ordinary claims retain the existing deferred
+// body policy.
+func (l *lexicalEvaluator) hasRuntimeCastClaim(prototype string) bool {
+	child, exists := l.byPrototype[prototype]
+	if !exists {
+		return false
+	}
+	for _, item := range child.Artifact.Equations {
+		if item.Occurrence.Kind != "claim" {
+			continue
+		}
+		for _, operand := range item.Operands {
+			if operand.Role == "kind" && string(operand.Term.Encoding) == "claim-kind/1" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (l *lexicalEvaluator) hasTableAllocation(prototype string) bool {
 	child, exists := l.byPrototype[prototype]
 	if !exists {
@@ -3257,7 +3280,7 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 // is already owned by an exact child entry. Branch advice and other body-local
 // conclusions have no caller-owned consumer and remain private.
 func childCallDiagnostic(fact equation.Fact) bool {
-	return strings.HasPrefix(fact.Key, "type.assignment/") || strings.HasPrefix(fact.Key, "type.call.direct.") || strings.HasPrefix(fact.Key, "type.operator.concat_operand/")
+	return strings.HasPrefix(fact.Key, "type.assignment/") || strings.HasPrefix(fact.Key, "type.return.contract/") || strings.HasPrefix(fact.Key, "type.call.direct.") || strings.HasPrefix(fact.Key, "type.operator.concat_operand/")
 }
 
 // childEntryDescendantSeeds preserves exact path facts below a captured entry
@@ -4990,7 +5013,8 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// and remains authoritative until validation supplies a separate proof.
 	anySource := isExplicitAnyValue(value) || sourceHasAnyBoundary(source, partition.Values())
 	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !runtimeTypeValidationProves(source, targetType, partition)
-	if available && !boundaryRequiresProof && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
+	castFromAnyBoundary := kind == "claim-kind/1" && sourceHasAnyBoundary(source, partition.Values())
+	if available && !boundaryRequiresProof && !castFromAnyBoundary && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
 		if kind == "claim-kind/3" && claimTypeIsAny(targetType) {
 			closure.Values = append(closure.Values, explicitAnyBoundaryFact(target, operation.Target.Name))
@@ -7118,7 +7142,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		tableProjectionUnsafe := !childKnown || !hasProjectableTableResult(child)
 		if lexical == nil || !localCallable || (operands.resultArity == 0 && !lexical.requiresBody[handle.Prototype]) ||
 			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] &&
-				(lexical.hasClaim(handle.Prototype) || lexical.hasTableAllocation(handle.Prototype) && tableProjectionUnsafe && !recursiveDemand)) {
+				((lexical.hasClaim(handle.Prototype) && !lexical.hasRuntimeCastClaim(handle.Prototype)) || lexical.hasTableAllocation(handle.Prototype) && tableProjectionUnsafe && !recursiveDemand)) {
 			return equation.TransactionResult{}, false, nil
 		}
 		outcome, err := lexical.applyKnown(operation, operands, handle, partition)
@@ -10054,9 +10078,13 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		if valueAgainstType(values[index], expected) != shapeRefuted {
 			continue
 		}
+		message := fmt.Sprintf("returned value is %s, not %s", assignmentValueType(values[index]), typeformat.Short(expected))
+		if optionalConcreteWitness(values[index]) && valueAgainstType([]byte("scalar/nil"), expected) == shapeRefuted {
+			message = fmt.Sprintf("returned value may be nil, not %s", typeformat.Short(expected))
+		}
 		diagnostics = append(diagnostics, equation.Fact{
 			Key:   "type.return.contract/" + operation.Target.Name,
-			Value: []byte(fmt.Sprintf("returned value is %s, not %s", assignmentValueType(values[index]), typeformat.Short(expected))),
+			Value: []byte(message),
 		})
 	}
 	// Every return occurrence owns its internal tuple.  A file can have more

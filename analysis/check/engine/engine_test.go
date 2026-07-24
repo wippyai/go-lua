@@ -218,6 +218,24 @@ local item: number = (value :: {number})[1]
 	t.Fatalf("cast index optional witness did not reach assignment: %#v", result.PublishedDiagnostics)
 }
 
+func TestCheckPublishesOptionalReturnFromInvokedAnyFunction(t *testing.T) {
+	result, err := engine.Check(`
+local function f(v: any): number
+		return (v :: {number})[1]
+end
+return f({10, 20})
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if strings.Contains(diagnostic.Code, "type.return.contract") && strings.Contains(diagnostic.Message, "may be nil") {
+			return
+		}
+	}
+	t.Fatalf("optional local return was not published: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckProjectsInferredClosedTableResultFromCapturedMember(t *testing.T) {
 	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{{
 		Path:       "main.lua",
