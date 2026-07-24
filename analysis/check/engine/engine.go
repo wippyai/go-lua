@@ -3418,9 +3418,10 @@ func uncalledStaticAssignmentDiagnostic(artifact equation.Artifact, key string) 
 
 // uncalledDeclaredIndexedReadBoundary admits a capture-free indexed read whose
 // container is an exact declared formal. RuntimeIndex already publishes the
-// selected slot's nilability from that array or map witness; evaluating it does
-// not select a heap identity, call result, or branch arm. Calls, mutations,
-// and control-flow still require a caller-owned entry.
+// selected slot's nilability from that array or map witness; the bounded
+// branch facts and a later direct mutation are existing transactions over that
+// same witness. Calls, channel operations, and generic iteration still require
+// a caller-owned entry.
 func uncalledDeclaredIndexedReadBoundary(child front.Compilation) ([]entrySeed, bool) {
 	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
 		return nil, false
@@ -3447,7 +3448,11 @@ func uncalledDeclaredIndexedReadBoundary(child front.Compilation) ([]entrySeed, 
 				return nil, false
 			}
 			hasIndexedRead = true
-		case "apply", "external-call", "branch-relations", "channel-select", "generic-for", "index-mutation", "path-invalidation":
+		case "branch-relations":
+			if !uncalledDeclaredIndexedBranch(operation) {
+				return nil, false
+			}
+		case "apply", "external-call", "channel-select", "generic-for":
 			return nil, false
 		}
 	}
@@ -3459,6 +3464,22 @@ func uncalledDeclaredIndexedReadBoundary(child front.Compilation) ([]entrySeed, 
 		seeds = append(seeds, formals[boundaryTerm(parameter.Symbol)])
 	}
 	return seeds, true
+}
+
+// uncalledDeclaredIndexedBranch admits only the numeric bound evidence that
+// typedIndexBranchClosure already carries as guarded publications. Other
+// branch families can refine arbitrary values, so they remain caller-owned.
+func uncalledDeclaredIndexedBranch(operation equation.Equation) bool {
+	for _, operand := range operation.Operands {
+		predicate, trueEdge, ok := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
+		if !ok || !trueEdge || predicate.Negated {
+			continue
+		}
+		if predicate.Kind == "num-ge" || predicate.Kind == "index-in-range" {
+			return true
+		}
+	}
+	return false
 }
 
 func artifactOperand(operands []equation.Operand, role string) ([]byte, bool) {

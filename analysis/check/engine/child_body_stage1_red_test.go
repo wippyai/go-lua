@@ -62,6 +62,39 @@ end`)
 	}
 }
 
+func TestStage1RedUncalledGuardedIndexedFormalKeepsOnlyUnprovenReadOptional(t *testing.T) {
+	r := checkChildAdmission(t, `
+local function inspect(values: {number}, index: number)
+  if index >= 1 and index <= #values then
+    local proven: number = values[index]
+  end
+  if index >= 1 then
+    local unproven: number = values[index]
+  end
+	if index >= 1 and index <= #values then
+		values[#values] = nil
+		local invalidated: number = values[index]
+	end
+end`)
+	proven, unproven, invalidated := false, false, false
+	for _, diagnostic := range r.PublishedDiagnostics {
+		if diagnostic.Code != "type.assignment" {
+			continue
+		}
+		switch diagnostic.Span.StartLine {
+		case 4:
+			proven = true
+		case 7:
+			unproven = strings.Contains(diagnostic.Message, "number?")
+		case 11:
+			invalidated = strings.Contains(diagnostic.Message, "number?")
+		}
+	}
+	if proven || !unproven || !invalidated {
+		t.Fatalf("guarded indexed-formal diagnostics = %#v, want failures after missing or invalidated bounds", r.PublishedDiagnostics)
+	}
+}
+
 func TestStage1RedUncalledTypePredicateRejectsUnvalidatedAny(t *testing.T) {
 	source := `
 type Point = {x: number, y: number}
