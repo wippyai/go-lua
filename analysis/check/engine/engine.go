@@ -4652,6 +4652,22 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	// keeps provider results such as integer(any) useful through arithmetic and
 	// concatenation without inventing a concrete runtime value.
 	if string(value) == "scalar/top" && len(diagnostics) == 0 {
+		// A sealed table is an existing runtime-kind publication, even though
+		// its cardinality is deliberately not a scalar fact. Lua's length
+		// operator therefore has the ordinary broad number result; retain that
+		// fact rather than turning a proven table receiver into an unproven
+		// numeric annotation. This admits no value for an unknown receiver.
+		if wir.Op(kind) == wir.OpUnOp && wir.Operator(op) == wir.UnLen {
+			if operand, found := by["value"]; found {
+				if table, resolved := resolvedSealedTable(operand, partition); resolved && table.Closed {
+					if encoded, encodedOK := shapefact.EncodeTarget(typ.Number); encodedOK {
+						value = encoded
+					}
+				}
+			}
+		}
+	}
+	if string(value) == "scalar/top" && len(diagnostics) == 0 {
 		if typed, ok := typedExpressionResult(wir.Op(kind), wir.Operator(op), by, partition); ok {
 			value = typed
 		}
@@ -4665,6 +4681,19 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
+}
+
+// resolvedSealedTable accepts only the current closed literal fact for an
+// expression operand. It is intentionally narrower than a declared table
+// type: a declaration can be nil or widened, whereas the sealed value is the
+// concrete table-kind evidence required by the length operator.
+func resolvedSealedTable(term []byte, partition equation.Partition) (shapefact.Table, bool) {
+	value, err := resolveCurrentValue(term, partition)
+	if err != nil {
+		return shapefact.Table{}, false
+	}
+	table, ok := shapefact.DecodeTable(value)
+	return table, ok && table.Closed
 }
 
 func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[string][]byte, partition equation.Partition) ([]byte, bool) {

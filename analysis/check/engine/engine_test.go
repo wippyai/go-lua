@@ -26,6 +26,21 @@ func TestCheckPublishesScalarAssignment(t *testing.T) {
 	}
 }
 
+func TestCheckPublishesNumberWitnessForSealedTableLength(t *testing.T) {
+	result, err := engine.Check(`
+local values: {string}? = { "alpha", "beta" }
+local count: number = #values
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.HasPrefix(diagnostic.Key, "claim/unproven/") || strings.HasPrefix(diagnostic.Key, "type.assignment/") {
+			t.Fatalf("sealed table length emitted diagnostic = %#v", result.Diagnostics)
+		}
+	}
+}
+
 func TestCheckPublishesProvenAnnotationAssignmentMismatch(t *testing.T) {
 	result, err := engine.Check(`local value: string = 42`)
 	if err != nil {
