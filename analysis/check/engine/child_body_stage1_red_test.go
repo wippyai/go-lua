@@ -62,6 +62,20 @@ end`)
 	}
 }
 
+func TestStage1RedUncalledDeclaredStdlibOptionalConcatPublishesWarning(t *testing.T) {
+	r := checkChildAdmission(t, `
+local function unguarded(s: string): string
+  local raw = s:match("p")
+  return "value:" .. raw
+end`)
+	for _, diagnostic := range r.PublishedDiagnostics {
+		if diagnostic.Code == "type.operator.concat_operand" && diagnostic.Span.StartLine == 4 {
+			return
+		}
+	}
+	t.Fatalf("declared stdlib optional concat warning = %#v", r.PublishedDiagnostics)
+}
+
 func TestStage1RedUncalledDeclaredUnionBoundaryPublishesMissingMethod(t *testing.T) {
 	r := checkChildAdmission(t, `
 type Dog = {kind: "dog", bark: () -> ()}

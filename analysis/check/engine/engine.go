@@ -2864,9 +2864,9 @@ func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
 // declared union/optional relation for the child's ordinary claim and branch
 // consumers. A missing, variadic, recursive, or captured boundary stays
 // dormant.
-func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool) {
+func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool, map[string]bool) {
 	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
-		return nil, false, false
+		return nil, false, false, nil
 	}
 	// The declaration-only entry supports a closed discriminant proof, not an
 	// arbitrary body execution. A direct static member call is also admissible
@@ -2878,7 +2878,7 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 	formals := make(map[string]bool, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
-			return nil, false, false
+			return nil, false, false, nil
 		}
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
@@ -2896,16 +2896,16 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 		switch operation.Occurrence.Kind {
 		case "apply":
 			if !uncalledDeclaredMemberCall(child, operation, formals) {
-				return nil, false, false
+				return nil, false, false, nil
 			}
 			hasDeclaredMemberCall = true
 		case "external-call":
 			application, found := artifactOperand(operation.Operands, "application")
 			if !found || !memberCalls[string(application)] {
-				return nil, false, false
+				return nil, false, false, nil
 			}
 		case "dynamic-index-read", "channel-select":
-			return nil, false, false
+			return nil, false, false, nil
 		case "branch-relations":
 			hasBranch = true
 		case "claim":
@@ -2917,24 +2917,82 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool)
 	// allocation-time boundary is therefore limited to straight-line bodies;
 	// declared missing-member reads retain their independent diagnostic path.
 	if hasDirectMethod && hasBranch {
-		return nil, false, false
+		return nil, false, false, nil
 	}
-	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment {
-		return nil, false, false
+	concatOperations := uncalledDeclaredFormalConcatOperations(child.Artifact.Equations, memberCalls)
+	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment && len(concatOperations) == 0 {
+		return nil, false, false, nil
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
-			return nil, false, false
+			return nil, false, false, nil
 		}
 		declared := child.WIR.Type(parameter.Type)
 		value, ok := shapefact.EncodeTarget(declared)
 		if !ok || declared == nil {
-			return nil, false, false
+			return nil, false, false, nil
 		}
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
-	return seeds, true, hasDirectMethod
+	return seeds, true, hasDirectMethod, concatOperations
+}
+
+// uncalledDeclaredFormalConcatOperations returns only concat operands whose
+// operand is the exact result of an already admitted direct formal method
+// call.  It follows the front's closed apply -> call-results -> local-write
+// chain, so an arbitrary local or a separate optional value cannot obtain an
+// allocation-time warning merely because the body also calls a formal method.
+func uncalledDeclaredFormalConcatOperations(operations []equation.Equation, memberCalls map[string]bool) map[string]bool {
+	results := make(map[string]bool)
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		application, found := artifactOperand(operation.Operands, "application")
+		if !found || !memberCalls[string(application)] {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if strings.HasPrefix(operand.Role, "result-") {
+				results[string(operand.Term.Encoding)] = true
+			}
+		}
+	}
+	paths := make(map[string]bool)
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		if hasValue && hasTarget && results[string(value)] {
+			paths[string(target)] = true
+		}
+	}
+	concat := make(map[string]bool)
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "expression" {
+			continue
+		}
+		operands := 0
+		directOperands := make([]string, 0, 1)
+		for _, operand := range operation.Operands {
+			if _, valid := concatOperandIndex(operand.Role); !valid {
+				continue
+			}
+			operands++
+			if paths[string(operand.Term.Encoding)] {
+				directOperands = append(directOperands, operand.Role)
+			}
+		}
+		if operands >= 2 {
+			for _, operand := range directOperands {
+				concat[operation.Target.Name+"/"+operand] = true
+			}
+		}
+	}
+	return concat
 }
 
 // uncalledDeclaredFormalAssignment identifies an annotation claim from an
@@ -3959,12 +4017,15 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// Demand either form privately and qualify its facts by body before they
 	// enter the root publication closure.
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
-	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, staticAssignmentBoundary, indexedReadBoundary := false, false, false, false, false
-	if declaredSeeds, admitted, methodBoundary := uncalledDeclaredBoundary(child); admitted {
+	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, declaredConcatBoundary, staticAssignmentBoundary, indexedReadBoundary := false, false, false, false, false, false
+	declaredConcatOperations := map[string]bool(nil)
+	if declaredSeeds, admitted, methodBoundary, concatOperations := uncalledDeclaredBoundary(child); admitted {
 		uncalledSeeds = declaredSeeds
 		explicitAnyBoundary = false
 		declaredBoundary = true
 		declaredMethodBoundary = methodBoundary
+		declaredConcatOperations = concatOperations
+		declaredConcatBoundary = len(concatOperations) != 0
 		formals := make(map[string]bool, len(child.Boundary.Parameters))
 		for _, parameter := range child.Boundary.Parameters {
 			formals[boundaryTerm(parameter.Symbol)] = true
@@ -4024,7 +4085,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			// a call-specific refinement and therefore remain demand-driven.
 			if declaredBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") &&
 				(!declaredMethodBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) &&
-				(!declaredAssignmentBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment/")) {
+				(!declaredAssignmentBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment/")) &&
+				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) {
 				continue
 			}
 			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
@@ -4206,6 +4268,11 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+func declaredConcatDiagnostic(allowed map[string]bool, key string) bool {
+	_, operation, subject, ok := concatOperandDiagnosticParts(key)
+	return ok && allowed[operation+"/"+subject]
 }
 
 func uncalledStaticMemberReadSeeds(child front.Compilation) ([]entrySeed, bool) {
@@ -4534,6 +4601,9 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if boundary, ok := gradualAnyBoundaryFact(target, operands["value"], operation.Target.Name, partition.Values()); ok {
 		values = append(values, boundary)
 	}
+	if optional, ok := currentEpochFact("optional-provider-result/", operands["value"], partition); ok {
+		values = append(values, equation.Fact{Key: "optional-provider-result/" + target + "/" + operation.Target.Name, Value: optional})
+	}
 	if authority, ok := lexical.importedAuthority(string(operands["value"])); ok {
 		lexical.setImportedAuthority(target, authority)
 	}
@@ -4803,6 +4873,12 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				break
 			}
 			if string(v) == "scalar/top" {
+				if _, found := optionalProviderConcatWitness(term, partition); found {
+					diagnostics = append(diagnostics, equation.Fact{
+						Key:   fmt.Sprintf("type.operator.concat_operand/%s/value-%08d", operation.Target.Name, i),
+						Value: []byte("concat operand may be nil"),
+					})
+				}
 				value = v
 				break
 			}
@@ -5118,6 +5194,12 @@ func concatOperandMayBeNil(value []byte) bool {
 	if string(value) == "scalar/nil" {
 		return true
 	}
+	// A finite provider result can retain nilability as a sealed type witness
+	// instead of a textual annotation refinement. It is still the exact value
+	// reaching this concat operand, so preserve its established optional proof.
+	if optionalConcreteWitness(value) {
+		return true
+	}
 	const marker = "claim-type/"
 	index := strings.LastIndex(string(value), marker)
 	if index < 0 {
@@ -5125,6 +5207,31 @@ func concatOperandMayBeNil(value []byte) bool {
 	}
 	declared, err := strconv.Unquote(string(value)[index+len(marker):])
 	return err == nil && strings.HasSuffix(declared, "?")
+}
+
+// optionalProviderConcatWitness reads a provider's optional result only from
+// the same call-results operation that owns the current value term. The value
+// itself remains Top: this fact is limited to the concat consumer's nilability
+// obligation and cannot be reused as an assignment or member-access proof.
+func optionalProviderConcatWitness(term []byte, partition equation.Partition) ([]byte, bool) {
+	prefix := "value/" + string(term) + "/"
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
+			latest = fact.Key
+		}
+	}
+	if latest == "" {
+		return nil, false
+	}
+	operation := strings.TrimPrefix(latest, prefix)
+	want := "optional-provider-result/" + string(term) + "/" + operation
+	for _, fact := range partition.Values() {
+		if fact.Key == want {
+			return append([]byte(nil), fact.Value...), true
+		}
+	}
+	return nil, false
 }
 
 func numberValue(v float64) []byte {
@@ -10281,6 +10388,14 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			values = append(values, equation.Fact{Key: summaryTypePrefix + string(result) + "/" + operation.Target.Name, Value: encoded})
 			values = append(values, channelPayloadSummaryFacts(string(result), operation.Target.Name, importedSummary)...)
 		}
+		if resultIndex, err := strconv.Atoi(key); err == nil {
+			if optional, ok := optionalProviderResultValue(provider, resultIndex); ok {
+				values = append(values, equation.Fact{
+					Key:   "optional-provider-result/" + string(result) + "/" + operation.Target.Name,
+					Value: optional,
+				})
+			}
+		}
 		if key, element, ok := iteratorElementWitness(provider, argumentTerms, partition); ok {
 			values = append(values, equation.Fact{Key: iteratorElementPrefix + string(result) + "/" + operation.Target.Name, Value: element})
 			if len(key) != 0 {
@@ -11219,6 +11334,17 @@ func providerReturnTypeValue(result typ.Type) ([]byte, bool) {
 	// have no concrete runtime witness and remain Top.
 	switch unwrap.Alias(result).Kind() {
 	case kind.Any, kind.Unknown, kind.Never, kind.Union, kind.TypeParam:
+		return nil, false
+	}
+	return shapefact.EncodeTarget(result)
+}
+
+func optionalProviderResultValue(provider []byte, index int) ([]byte, bool) {
+	if provider == nil || index < 0 {
+		return nil, false
+	}
+	result, ok := signaturelookup.StdlibResultSlot(providerName(provider), index)
+	if !ok || !finiteReturnWitness(result, make(map[typ.Type]bool)) || !unwrap.IsOptionalLike(result) {
 		return nil, false
 	}
 	return shapefact.EncodeTarget(result)
