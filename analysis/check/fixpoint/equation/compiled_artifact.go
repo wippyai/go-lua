@@ -124,15 +124,14 @@ func (a CompiledArtifact) rangeBytes(offset, length uint32) []byte {
 // lane.  It freezes a deterministic topological operation order but never
 // changes an equation, its contract, or a kernel binding.
 func CompileArtifact(artifact Artifact) (CompiledArtifact, error) {
-	ordered, body, entry, err := compiledAcyclicOrder(artifact)
+	canonical, ordered, body, entry, err := compiledAcyclicOrder(artifact)
 	if err != nil {
 		return CompiledArtifact{}, err
 	}
-	return compileArtifact(artifact, ordered, body, entry)
+	return compileAdmittedArtifact(canonical, ordered, body, entry)
 }
 
-func compileArtifact(artifact Artifact, ordered []Equation, body BodyID, entry EntryParameter) (CompiledArtifact, error) {
-	canonical := artifact.CanonicalBytes()
+func compileAdmittedArtifact(canonical []byte, ordered []Equation, body BodyID, entry EntryParameter) (CompiledArtifact, error) {
 	if canonical == nil || len(ordered) == 0 || !body.Valid() || !entry.valid() {
 		return CompiledArtifact{}, fmt.Errorf("equation: invalid artifact for compiled admission")
 	}
@@ -200,36 +199,28 @@ func compileArtifact(artifact Artifact, ordered []Equation, body BodyID, entry E
 	return result, nil
 }
 
-func compiledAcyclicOrder(artifact Artifact) ([]Equation, BodyID, EntryParameter, error) {
+func compiledAcyclicOrder(artifact Artifact) ([]byte, []Equation, BodyID, EntryParameter, error) {
 	canonical := artifact.CanonicalBytes()
 	if canonical == nil || len(artifact.Equations) == 0 {
-		return nil, BodyID{}, EntryParameter{}, fmt.Errorf("equation: invalid acyclic artifact for compiled admission")
+		return nil, nil, BodyID{}, EntryParameter{}, fmt.Errorf("equation: invalid acyclic artifact for compiled admission")
 	}
-	equations := append([]Equation(nil), artifact.Equations...)
-	for index := range equations {
-		canonical, err := canonicalEquation(equations[index])
-		if err != nil {
-			return nil, BodyID{}, EntryParameter{}, err
-		}
-		equations[index] = canonical
+	equations, body, entry, err := admitCompiledEquations(artifact.Equations, "equation: compiled artifact mixes bodies or entry parameters")
+	if err != nil {
+		return nil, nil, BodyID{}, EntryParameter{}, err
 	}
-	body, entry := equations[0].Target.Body, equations[0].Entry
 	byTarget := make(map[Coordinate]Equation, len(equations))
 	dependents := make(map[Coordinate][]Coordinate, len(equations))
 	degree := make(map[Coordinate]int, len(equations))
 	for _, equation := range equations {
-		if equation.Target.Body != body || equation.Entry != entry {
-			return nil, BodyID{}, EntryParameter{}, fmt.Errorf("equation: compiled artifact mixes bodies or entry parameters")
-		}
 		if _, duplicate := byTarget[equation.Target]; duplicate {
-			return nil, BodyID{}, EntryParameter{}, fmt.Errorf("equation: compiled artifact has duplicate target %s", equation.Target.Name)
+			return nil, nil, BodyID{}, EntryParameter{}, fmt.Errorf("equation: compiled artifact has duplicate target %s", equation.Target.Name)
 		}
 		byTarget[equation.Target], degree[equation.Target] = equation, len(equation.Dependencies)
 	}
 	for _, equation := range equations {
 		for _, dependency := range equation.Dependencies {
 			if _, found := byTarget[dependency]; !found {
-				return nil, BodyID{}, EntryParameter{}, fmt.Errorf("equation: compiled dependency %s has no equation", dependency.Name)
+				return nil, nil, BodyID{}, EntryParameter{}, fmt.Errorf("equation: compiled dependency %s has no equation", dependency.Name)
 			}
 			dependents[dependency] = append(dependents[dependency], equation.Target)
 		}
@@ -254,14 +245,31 @@ func compiledAcyclicOrder(artifact Artifact) ([]Equation, BodyID, EntryParameter
 		}
 	}
 	if len(ordered) != len(equations) {
-		return nil, BodyID{}, EntryParameter{}, fmt.Errorf("equation: compiled artifact is cyclic")
+		return nil, nil, BodyID{}, EntryParameter{}, fmt.Errorf("equation: compiled artifact is cyclic")
 	}
-	return ordered, body, entry, nil
+	return canonical, ordered, body, entry, nil
+}
+
+func admitCompiledEquations(in []Equation, mixed string) ([]Equation, BodyID, EntryParameter, error) {
+	equations := append([]Equation(nil), in...)
+	for index := range equations {
+		canonical, err := canonicalEquation(equations[index])
+		if err != nil {
+			return nil, BodyID{}, EntryParameter{}, err
+		}
+		equations[index] = canonical
+	}
+	body, entry := equations[0].Target.Body, equations[0].Entry
+	for _, equation := range equations {
+		if equation.Target.Body != body || equation.Entry != entry {
+			return nil, BodyID{}, EntryParameter{}, fmt.Errorf("%s", mixed)
+		}
+	}
+	return equations, body, entry, nil
 }
 
 // ReferenceArtifact reconstructs the exact equation artifact from the compact
-// plan.  It is intentionally used only by the differential harness until the
-// generated opcode executor lands in the next slice.
+// plan. It is restricted to differential validation and does not execute the compact plan.
 func (a CompiledArtifact) ReferenceArtifact() (Artifact, error) {
 	if !a.id.Valid() || !a.body.Valid() || a.entryName == "" || len(a.ops) == 0 {
 		return Artifact{}, fmt.Errorf("equation: invalid compiled artifact")
@@ -378,23 +386,16 @@ func CompileCyclicArtifact(artifact CyclicArtifact) (CompiledCyclicArtifact, err
 	if artifact.CanonicalBytes() == nil || artifact.Plan == nil {
 		return CompiledCyclicArtifact{}, fmt.Errorf("equation: invalid cyclic artifact for compiled admission")
 	}
-	equations := append([]Equation(nil), artifact.Artifact.Equations...)
-	if len(equations) == 0 {
+	if len(artifact.Artifact.Equations) == 0 {
 		return CompiledCyclicArtifact{}, fmt.Errorf("equation: empty cyclic artifact")
 	}
-	body, entry := equations[0].Target.Body, equations[0].Entry
-	for index := range equations {
-		canonical, err := canonicalEquation(equations[index])
-		if err != nil {
-			return CompiledCyclicArtifact{}, err
-		}
-		equations[index] = canonical
-		if equations[index].Target.Body != body || equations[index].Entry != entry {
-			return CompiledCyclicArtifact{}, fmt.Errorf("equation: compiled cyclic artifact mixes bodies or entry parameters")
-		}
+	artifactCanonical := artifact.Artifact.CanonicalBytes()
+	equations, body, entry, err := admitCompiledEquations(artifact.Artifact.Equations, "equation: compiled cyclic artifact mixes bodies or entry parameters")
+	if err != nil {
+		return CompiledCyclicArtifact{}, err
 	}
 	sort.Slice(equations, func(i, j int) bool { return equations[i].Target.less(equations[j].Target) })
-	compiled, err := compileArtifact(artifact.Artifact, equations, body, entry)
+	compiled, err := compileAdmittedArtifact(artifactCanonical, equations, body, entry)
 	if err != nil {
 		return CompiledCyclicArtifact{}, err
 	}
@@ -428,16 +429,13 @@ func CompileCyclicArtifact(artifact CyclicArtifact) (CompiledCyclicArtifact, err
 	if err != nil {
 		return CompiledCyclicArtifact{}, err
 	}
-	// The acyclic compact schema is also reused to describe cyclic operations,
-	// but its negative loop facts are not valid in a WTO artifact. Until a
-	// lowering identifies each precise region, publish unknown boundaries.
+	// WTO artifacts use unknown runtime boundaries because acyclic negative-loop facts do not apply.
 	compiled.runtime = cyclicRuntimeProjection(compiled.runtime)
 	return CompiledCyclicArtifact{Artifact: compiled, blocks: blocks, frozen: canonical}, nil
 }
 
 // RunCompiledCyclicDifferential preserves both oracle observations: complete
-// closure equality and the exact widening trace.  The reference VM remains
-// the sole execution authority until cyclic generated stencils land.
+// closure equality and the exact widening trace; it does not execute compiled cyclic operations.
 func RunCompiledCyclicDifferential(ctx context.Context, vm *CyclicVM, artifact CyclicArtifact, compiled CompiledCyclicArtifact, entry EntryBinding, selectors []string) error {
 	if artifact.ContentID() != compiled.frozen.ContentID() || !bytes.Equal(artifact.CanonicalBytes(), compiled.frozen.CanonicalBytes()) {
 		return fmt.Errorf("equation: compiled cyclic differential artifact identity differs")

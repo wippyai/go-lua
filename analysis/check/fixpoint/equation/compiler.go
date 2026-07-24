@@ -34,7 +34,7 @@ type Draft struct {
 }
 
 func (d Draft) valid() error {
-	probe := Equation{Target: d.Target, Entry: d.Entry, Guards: d.Guards, Dependencies: d.Dependencies, Occurrence: d.Occurrence, Operands: d.Operands, KernelID: "draft"}
+	probe := canonicalEquationSlices(Equation{Target: d.Target, Entry: d.Entry, Guards: d.Guards, Dependencies: d.Dependencies, Occurrence: d.Occurrence, Operands: d.Operands, KernelID: "draft"})
 	return probe.valid()
 }
 
@@ -67,21 +67,7 @@ func NewCompiler(hooks map[string]Lowerer) (*Compiler, error) {
 		}
 		copy[kind] = hook
 	}
-	for kind := range hooks {
-		if !knownKind(kind) {
-			return nil, fmt.Errorf("equation: unknown lowering hook %q", kind)
-		}
-	}
 	return &Compiler{hooks: copy}, nil
-}
-
-func knownKind(kind string) bool {
-	for _, candidate := range FrozenKinds {
-		if candidate == kind {
-			return true
-		}
-	}
-	return false
 }
 
 // Skeleton returns the complete frame with a fail-closed hook for every kind.
@@ -100,7 +86,10 @@ func Skeleton() *Compiler {
 
 // With returns a copied compiler with exactly one hook replaced.
 func (c *Compiler) With(kind string, hook Lowerer) (*Compiler, error) {
-	if c == nil || !knownKind(kind) || hook == nil {
+	if c == nil || hook == nil {
+		return nil, fmt.Errorf("equation: invalid lowering replacement %q", kind)
+	}
+	if _, known := c.hooks[kind]; !known {
 		return nil, fmt.Errorf("equation: invalid lowering replacement %q", kind)
 	}
 	hooks := make(map[string]Lowerer, len(c.hooks))
@@ -170,6 +159,6 @@ func BindExistingKernel(kernelID string) Lowerer {
 		if kernelID == "" {
 			return Equation{}, fmt.Errorf("equation: empty canonical kernel binding")
 		}
-		return Equation{Target: draft.Target, Entry: draft.Entry, Guards: append([]Guard(nil), draft.Guards...), Dependencies: append([]Coordinate(nil), draft.Dependencies...), Occurrence: draft.Occurrence, Operands: append([]Operand(nil), draft.Operands...), KernelID: kernelID}, nil
+		return canonicalEquationSlices(Equation{Target: draft.Target, Entry: draft.Entry, Guards: draft.Guards, Dependencies: draft.Dependencies, Occurrence: draft.Occurrence, Operands: draft.Operands, KernelID: kernelID}), nil
 	})
 }

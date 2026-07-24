@@ -226,13 +226,6 @@ type Partition struct {
 	guards  []Guard
 }
 
-// PartitionFromClosure closes a published snapshot for a contract kernel.
-// It is used by the cyclic adapter to present the same complete read surface
-// that the acyclic VM supplies to established kernels.
-func PartitionFromClosure(closure OutputClosure) (Partition, error) {
-	return PartitionFromClosures(closure)
-}
-
 // PartitionFromClosures joins complete snapshot leaves into one kernel read
 // partition.  It is intentionally a value constructor: neither VM exposes
 // mutable evaluator state through this bridge.
@@ -268,19 +261,17 @@ func (p Partition) AllocationRekeys() []AllocationRekey {
 	return append([]AllocationRekey(nil), p.closure.AllocationRekeys...)
 }
 
-func cloneFacts(facts []Fact) []Fact {
-	out := make([]Fact, len(facts))
-	for index, fact := range facts {
-		out[index] = Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...), Guards: cloneGuards(fact.Guards)}
-	}
-	return out
-}
+func cloneFacts(facts []Fact) []Fact { return copyFacts(facts, nil) }
 
 func visibleFacts(facts, evidence []Fact, active []Guard) []Fact {
 	active = resolvedBranchGuards(evidence, active)
+	return copyFacts(facts, func(fact Fact) bool { return guardsIncluded(fact.Guards, active) })
+}
+
+func copyFacts(facts []Fact, include func(Fact) bool) []Fact {
 	out := make([]Fact, 0, len(facts))
 	for _, fact := range facts {
-		if guardsIncluded(fact.Guards, active) {
+		if include == nil || include(fact) {
 			out = append(out, Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...), Guards: cloneGuards(fact.Guards)})
 		}
 	}

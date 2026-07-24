@@ -153,13 +153,7 @@ func canonicalEquation(in Equation) (Equation, error) {
 	if err := in.valid(); err != nil {
 		return Equation{}, err
 	}
-	out := in
-	out.Guards = append([]Guard(nil), in.Guards...)
-	out.Dependencies = append([]Coordinate(nil), in.Dependencies...)
-	out.Operands = append([]Operand(nil), in.Operands...)
-	sort.Slice(out.Guards, func(i, j int) bool { return out.Guards[i].less(out.Guards[j]) })
-	sort.Slice(out.Dependencies, func(i, j int) bool { return out.Dependencies[i].less(out.Dependencies[j]) })
-	sort.Slice(out.Operands, func(i, j int) bool { return out.Operands[i].less(out.Operands[j]) })
+	out := canonicalEquationSlices(in)
 	for i := 1; i < len(out.Guards); i++ {
 		if !out.Guards[i-1].less(out.Guards[i]) {
 			return Equation{}, fmt.Errorf("equation: duplicate guard")
@@ -176,6 +170,17 @@ func canonicalEquation(in Equation) (Equation, error) {
 		}
 	}
 	return out, nil
+}
+
+func canonicalEquationSlices(in Equation) Equation {
+	out := in
+	out.Guards = append([]Guard(nil), in.Guards...)
+	out.Dependencies = append([]Coordinate(nil), in.Dependencies...)
+	out.Operands = append([]Operand(nil), in.Operands...)
+	sort.Slice(out.Guards, func(i, j int) bool { return out.Guards[i].less(out.Guards[j]) })
+	sort.Slice(out.Dependencies, func(i, j int) bool { return out.Dependencies[i].less(out.Dependencies[j]) })
+	sort.Slice(out.Operands, func(i, j int) bool { return out.Operands[i].less(out.Operands[j]) })
+	return out
 }
 
 // Artifact is a complete, canonical parameterized equation program.
