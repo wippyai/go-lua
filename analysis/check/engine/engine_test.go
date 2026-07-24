@@ -1239,6 +1239,31 @@ local after: string = box.value
 	t.Fatalf("exact dynamic write through alias did not publish nil heap member: %#v", result.Diagnostics)
 }
 
+func TestCheckExactDynamicVariantWriteUpdatesAliasedMember(t *testing.T) {
+	result, err := engine.Check(`
+type FileSlot = { kind: "file", path: string }
+type TimerSlot = { kind: "timer", seconds: number }
+type Slot = { value: FileSlot | TimerSlot }
+type Slots = {[string]: Slot}
+local slots: Slots = { active = { value = {kind = "file", path = "/tmp/active"} } }
+local active = slots.active
+local key = "active"
+if active.value.kind == "file" then
+    slots[key].value = {kind = "timer", seconds = 20}
+    local stale_path: string = active.value.path
+end
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "cannot assign active.value.path because it is nil, not string") {
+			return
+		}
+	}
+	t.Fatalf("exact dynamic variant write did not update the aliased member: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckTriviallyTrueBranchPublishesTruthinessNarrowing(t *testing.T) {
 	result, err := engine.Check(`
 local value = 1

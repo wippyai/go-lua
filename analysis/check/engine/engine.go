@@ -6810,8 +6810,20 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 			value, valueErr := resolveCurrentValue(operands["value"], partition)
 			if valueErr == nil {
 				result.Closure.Values = append(result.Closure.Values, heapMemberFact(identity, suffix, operation.Target.Name, value))
-				if memberIdentity, found := tableIdentityForTerm(operands["value"], partition); found {
+				memberIdentity, hasMemberIdentity := tableIdentityForTerm(operands["value"], partition)
+				if hasMemberIdentity {
 					result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
+				}
+				// An exact dynamic key can address a nested member whose enclosing
+				// table is already reachable by an alias. Publish the same write at
+				// that existing member identity, so later reads through the alias
+				// observe the replacement. The identity walk is bounded entirely by
+				// pre-existing heap facts; an unresolved prefix stays fail-closed.
+				if nestedIdentity, nestedSuffix, nested := nestedHeapMemberAddress(identity, suffix, partition); nested {
+					result.Closure.Values = append(result.Closure.Values, heapMemberFact(nestedIdentity, nestedSuffix, operation.Target.Name, value))
+					if hasMemberIdentity {
+						result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(nestedIdentity, nestedSuffix, operation.Target.Name, memberIdentity))
+					}
 				}
 			}
 		}
@@ -9210,6 +9222,26 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		return nil, false
 	}
 	return nil, false
+}
+
+// nestedHeapMemberAddress follows an already-published member-identity prefix
+// of a complete static suffix. It returns the deepest existing object and its
+// remaining member suffix, never constructing identity from a source path.
+// Dynamic writes use this to update aliases of an exact selected table member.
+func nestedHeapMemberAddress(identity []byte, suffix string, partition equation.Partition) ([]byte, string, bool) {
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid || len(segments) < 2 {
+		return nil, "", false
+	}
+	for count := 1; count < len(segments); count++ {
+		prefix := segment.FormatSegments(segments[:count])
+		next, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, prefix, partition)
+		if !found || len(next) == 0 {
+			return nil, "", false
+		}
+		identity = next
+	}
+	return identity, segment.FormatSegments(segments[len(segments)-1:]), true
 }
 
 func tableMemberSuffix(key, suffix []byte) (string, bool) {
