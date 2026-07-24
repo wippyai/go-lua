@@ -63,6 +63,27 @@ func TestCheckProjectChecksResolvedModuleTreeAndRendersPositions(t *testing.T) {
 	}
 }
 
+func TestCheckProjectRetainsDistinctSameCodeDiagnostics(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{{
+		Path:       "main.lua",
+		ModulePath: "main",
+		Source: `local first: string = 1
+local second: string = 2
+`,
+	}}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if len(result.Diagnostics) != 2 {
+		t.Fatalf("diagnostics = %#v, want one assignment diagnostic at each source site", result.Diagnostics)
+	}
+	for index, item := range result.Diagnostics {
+		if item.Code != "type.assignment" || item.Position.File != "main.lua" || item.Position.Line != index+1 {
+			t.Fatalf("diagnostics = %#v, want source-ordered distinct assignment diagnostics", result.Diagnostics)
+		}
+	}
+}
+
 func TestCheckProjectResolvesAProviderExportInsteadOfAny(t *testing.T) {
 	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
 		{Path: "provider.lua", ModulePath: "provider", Source: `return { answer = 42 }`},
