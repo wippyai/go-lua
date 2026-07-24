@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
@@ -69,6 +70,25 @@ type placementAllocationFact struct {
 	Complete     bool     `json:"complete"`
 	Decomposable bool     `json:"decomposable"`
 	Children     []string `json:"children,omitempty"`
+}
+
+// placementClosedAllocation is the narrow admission boundary shared by the
+// local operation witnesses below.  It is deliberately about the published
+// allocation identity, not the spelling of the source term: an incomplete,
+// non-decomposable, or open table remains subject to the ordinary blocker.
+func placementClosedAllocation(allocation placementAllocationFact, partition equation.Partition) bool {
+	if !allocation.Complete || !allocation.Decomposable {
+		return false
+	}
+	identity, found := placementAllocationIdentityBytes(allocation, partition)
+	return found && heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) && !heapHasExternalCallback(identity, partition)
+}
+
+func placementAllocationIdentityBytes(allocation placementAllocationFact, partition equation.Partition) ([]byte, bool) {
+	if allocation.Result == "" {
+		return nil, false
+	}
+	return tableIdentityForTerm([]byte(allocation.Result), partition)
 }
 
 func encodePlacementAllocation(fact placementAllocationFact) ([]byte, error) {
@@ -344,11 +364,34 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 			)
 		case operands.display == "table.freeze" && index == 0:
 			facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventSealed))
+		case operands.display == "setmetatable" && closedEmptyMetatable(operands.arguments, partition):
+			// An exact closed table with an exact empty metatable has no callable
+			// metamethod boundary.  Retain the ordinary opaque blocker for every
+			// other metatable shape.
+			facts = append(facts, placementContractFact(allocation.Identity, "metatable", operation.Target.Name))
 		default:
 			facts = append(facts, placementBlockerFact(allocation.Identity, operation.Target.Name, "opaque-call"))
 		}
 	}
 	return facts
+}
+
+func closedEmptyMetatable(arguments [][]byte, partition equation.Partition) bool {
+	if len(arguments) != 2 {
+		return false
+	}
+	for _, argument := range arguments {
+		allocation, found := placementAllocationForTerm(argument, partition)
+		if !found || !placementClosedAllocation(allocation, partition) {
+			return false
+		}
+	}
+	value, err := resolveCurrentValue(arguments[1], partition)
+	if err != nil {
+		return false
+	}
+	table, ok := shapefact.DecodeTable(value)
+	return ok && table.Closed && len(table.Members) == 0
 }
 
 // placementInvokedClosureCaptureFacts consumes the exact capture list of a
@@ -598,7 +641,7 @@ func parsePublishedPlacementFact(parsed *publishedPlacementFacts, fact equation.
 				parsed.blockerOperations[identity][parts[3]] = make(map[string]bool)
 			}
 			parsed.blockerOperations[identity][parts[3]][parts[4]] = true
-		} else if parts[3] == "send" || parts[3] == "retain" {
+		} else {
 			placementFactSet(parsed.contracts, identity)[parts[4]] = true
 		}
 	case strings.HasPrefix(fact.Key, placementContainmentPrefix):
@@ -744,6 +787,6 @@ func projectPlacementAllocation(identity string, allocation placementAllocationF
 	default:
 		item.Placement, item.FrameLocal, item.DiesBeforeSuspension, item.HasDiesBeforeSuspension = placement.Stack, true, true, true
 	}
-	item.Decomposable = allocation.Decomposable && item.Placement == placement.Stack && len(item.Blockers) == 0
+	item.Decomposable = allocation.Decomposable && item.Placement == placement.Stack && len(item.Blockers) == 0 && len(contracts[identity]) == 0
 	return item
 }

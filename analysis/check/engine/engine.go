@@ -95,6 +95,10 @@ const (
 	indexReadDisplayPrefix     = "index-read-display/"
 	indexReadScalarPrefix      = "index-read-scalar/"
 	typedOptionalReadPrefix    = "typed-optional-read/"
+	typePredicateTargetPrefix  = "type-predicate-target/"
+	typePredicatePairPrefix    = "type-predicate-pair/"
+	typePredicateValuePrefix   = "type-predicate-value/"
+	callTypePredicatePrefix    = "call-type-predicate/"
 )
 
 // branchPredicateWire mirrors the front's closed predicate wire vocabulary.
@@ -2292,6 +2296,7 @@ type childEntryWire struct {
 	MemberClosureSeeds []entryMemberClosureSeed `json:"member_closure_seeds,omitempty"`
 	TableIdentitySeeds []entryTableIdentitySeed `json:"table_identity_seeds,omitempty"`
 	MemberCellSeeds    []entryMemberCellSeed    `json:"member_cell_seeds,omitempty"`
+	PlacementSeeds     []entryPlacementSeed     `json:"placement_seeds,omitempty"`
 	GradualAnyTerms    []string                 `json:"gradual_any_terms,omitempty"`
 	DeclaredBoundary   bool                     `json:"declared_boundary,omitempty"`
 }
@@ -2331,6 +2336,16 @@ type entryMemberCellSeed struct {
 type entryTableIdentitySeed struct {
 	Term     string `json:"term"`
 	Identity []byte `json:"identity"`
+}
+
+// entryPlacementSeed is an exact caller allocation lens for a child formal.
+// It is accepted only with the corresponding value seed and carries the
+// existing allocation fact unchanged; children therefore publish observed
+// local-call boundaries against the caller's identity instead of fabricating
+// an alias from a parameter name.
+type entryPlacementSeed struct {
+	Term       string                  `json:"term"`
+	Allocation placementAllocationFact `json:"allocation"`
 }
 
 type closureHandle struct {
@@ -2822,6 +2837,14 @@ func encodeChildEntryWithCapabilities(seeds []entrySeed, closureSeeds []entryClo
 	return encodeChildEntryWire(childEntryWire{Version: 4, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), TableIdentitySeeds: append([]entryTableIdentitySeed(nil), tableIdentitySeeds...), MemberCellSeeds: append([]entryMemberCellSeed(nil), memberCellSeeds...), GradualAnyTerms: terms})
 }
 
+func encodeChildEntryWithPlacementCapabilities(seeds []entrySeed, closureSeeds []entryClosureSeed, memberClosureSeeds []entryMemberClosureSeed, tableIdentitySeeds []entryTableIdentitySeed, memberCellSeeds []entryMemberCellSeed, placementSeeds []entryPlacementSeed, gradualAnyTerms ...[]string) ([]byte, error) {
+	var terms []string
+	for _, supplied := range gradualAnyTerms {
+		terms = append(terms, supplied...)
+	}
+	return encodeChildEntryWire(childEntryWire{Version: 6, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), TableIdentitySeeds: append([]entryTableIdentitySeed(nil), tableIdentitySeeds...), MemberCellSeeds: append([]entryMemberCellSeed(nil), memberCellSeeds...), PlacementSeeds: append([]entryPlacementSeed(nil), placementSeeds...), GradualAnyTerms: terms})
+}
+
 func encodeChildEntryWire(wire childEntryWire) ([]byte, error) {
 	if err := validateChildEntryWire(&wire); err != nil {
 		return nil, err
@@ -2834,7 +2857,7 @@ func encodeChildEntryWire(wire childEntryWire) ([]byte, error) {
 }
 
 func validateChildEntryWire(wire *childEntryWire) error {
-	if wire.Version < 1 || wire.Version > 5 || (wire.DeclaredBoundary && wire.Version != 5) {
+	if wire.Version < 1 || wire.Version > 6 || (wire.DeclaredBoundary && wire.Version != 5) {
 		return fmt.Errorf("engine: malformed child entry version")
 	}
 	sort.Slice(wire.Seeds, func(i, j int) bool { return wire.Seeds[i].Term < wire.Seeds[j].Term })
@@ -2867,6 +2890,13 @@ func validateChildEntryWire(wire *childEntryWire) error {
 			return fmt.Errorf("engine: malformed child entry table identity seed")
 		}
 	}
+	sort.Slice(wire.PlacementSeeds, func(i, j int) bool { return wire.PlacementSeeds[i].Term < wire.PlacementSeeds[j].Term })
+	for index, seed := range wire.PlacementSeeds {
+		if seed.Term == "" || seed.Allocation.Identity == "" || seed.Allocation.Result == "" || seed.Allocation.Kind == "" ||
+			(index > 0 && wire.PlacementSeeds[index-1].Term == seed.Term) {
+			return fmt.Errorf("engine: malformed child entry placement seed")
+		}
+	}
 	sort.Slice(wire.MemberCellSeeds, func(i, j int) bool {
 		if string(wire.MemberCellSeeds[i].Identity) != string(wire.MemberCellSeeds[j].Identity) {
 			return string(wire.MemberCellSeeds[i].Identity) < string(wire.MemberCellSeeds[j].Identity)
@@ -2890,7 +2920,7 @@ func validateChildEntryWire(wire *childEntryWire) error {
 }
 
 func decodeChildEntryWire(value []byte) (childEntryWire, error) {
-	for version := uint8(1); version <= 5; version++ {
+	for version := uint8(1); version <= 6; version++ {
 		prefix := fmt.Sprintf("front/child-entry/v%d/", version)
 		if !strings.HasPrefix(string(value), prefix) {
 			continue
@@ -3007,6 +3037,21 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		}
 		tableIdentityTerms[seed.Term] = true
 		values = append(values, heapIdentityFact(seed.Term, "entry", seed.Identity))
+	}
+	placementTerms := make(map[string]bool, len(wire.PlacementSeeds))
+	for _, seed := range wire.PlacementSeeds {
+		if !seen[seed.Term] || placementTerms[seed.Term] || seed.Allocation.Identity == "" || seed.Allocation.Result == "" || seed.Allocation.Kind == "" {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry placement seed")
+		}
+		encoded, encodeErr := encodePlacementAllocation(seed.Allocation)
+		if encodeErr != nil {
+			return equation.TransactionResult{}, encodeErr
+		}
+		placementTerms[seed.Term] = true
+		values = append(values,
+			equation.Fact{Key: placementAllocationFactKey(seed.Allocation.Identity), Value: encoded},
+			placementBindingFact(seed.Term, "entry", seed.Allocation.Identity),
+		)
 	}
 	closureTerms := make(map[string]bool, len(wire.ClosureSeeds))
 	for _, seed := range wire.ClosureSeeds {
@@ -5634,6 +5679,16 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	}
 	projected := projectCallResults(operation, returns, closure)
 	projected.Values = append(projected.Values, projectExternalCallbackReturnFacts(operation, child, closure)...)
+	for _, fact := range closure.Values {
+		if !strings.HasPrefix(fact.Key, typePredicateTargetPrefix) {
+			continue
+		}
+		if _, ok := shapefact.DecodeTarget(fact.Value); !ok {
+			continue
+		}
+		projected.Values = append(projected.Values, equation.Fact{Key: callTypePredicatePrefix + operation.Target.Name + "/" + strings.TrimPrefix(fact.Key, typePredicateTargetPrefix), Value: append([]byte(nil), fact.Value...)})
+		break
+	}
 	// Publication is the only child return authority. Its member-capability
 	// facts retain local closure handles for sealed table results without
 	// changing the table's ordinary callable/member facts.
@@ -7106,6 +7161,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			}
 		}
 	}
+	values = append(values, projectTypePredicateWriteRelation(target, operands["value"], operation.Target.Name, partition)...)
 	if isChannelIdentity(value) {
 		values = append(values, equation.Fact{
 			Key:   "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
@@ -7418,13 +7474,50 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				break
 			}
 		}
+		closedComparison := closedPlacementIdentityComparison(by["left"], by["right"], partition)
 		for _, role := range []string{"left", "right"} {
 			if allocation, found := placementAllocationForTerm(by[role], partition); found {
-				values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "identity-compare"))
+				if !closedComparison {
+					values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "identity-compare"))
+				} else {
+					values = append(values, placementContractFact(allocation.Identity, "identity", operation.Target.Name))
+				}
 			}
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
+}
+
+func closedPlacementIdentityComparison(left, right []byte, partition equation.Partition) bool {
+	for _, term := range [][]byte{left, right} {
+		allocation, found := placementAllocationForTerm(term, partition)
+		if !found || !placementClosedAllocation(allocation, partition) {
+			return false
+		}
+	}
+	return true
+}
+
+func projectTypePredicateWriteRelation(target string, source []byte, operation string, partition equation.Partition) []equation.Fact {
+	if !strings.HasPrefix(target, "path/") {
+		return nil
+	}
+	encodedSource := base64.RawURLEncoding.EncodeToString(source)
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, typePredicatePairPrefix) {
+			parts := strings.Split(strings.TrimPrefix(fact.Key, typePredicatePairPrefix), "/")
+			if len(parts) == 2 && parts[0] == encodedSource {
+				return []equation.Fact{{Key: typePredicateValuePrefix + base64.RawURLEncoding.EncodeToString([]byte(target)) + "/" + parts[1] + "/" + operation, Value: append([]byte(nil), fact.Value...)}}
+			}
+		}
+		if strings.HasPrefix(fact.Key, typePredicateValuePrefix) {
+			parts := strings.Split(strings.TrimPrefix(fact.Key, typePredicateValuePrefix), "/")
+			if len(parts) == 3 && parts[1] == encodedSource {
+				return []equation.Fact{{Key: typePredicatePairPrefix + parts[0] + "/" + base64.RawURLEncoding.EncodeToString([]byte(target)), Value: append([]byte(nil), fact.Value...)}}
+			}
+		}
+	}
+	return nil
 }
 
 // resolvedSealedTable accepts only the current closed literal fact for an
@@ -8002,7 +8095,13 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 		values = append(values, equation.Fact{Key: "gradual-any/" + target + "/" + operation.Target.Name, Value: root})
 	}
 	if allocation, found := placementAllocationForTerm(operands["container"], partition); found {
-		values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "dynamic-index"))
+		key, keyErr := resolveCurrentValue(operands["key"], partition)
+		_, exactKey := tableMemberSuffix(key, []byte("suffix/"))
+		if keyErr != nil || !exactKey || !placementClosedAllocation(allocation, partition) {
+			values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "dynamic-index"))
+		} else {
+			values = append(values, placementContractFact(allocation.Identity, "dynamic-index", operation.Target.Name))
+		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
@@ -10284,6 +10383,9 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
+	if closure, recognized := typePredicateBranchClosure(operation, partition); recognized {
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	if closure, recognized, err := correlationBranchClosure(operation, partition); err != nil {
 		return equation.TransactionResult{}, err
 	} else if recognized {
@@ -10406,6 +10508,49 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: "lint.condition.redundant/" + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+func typePredicateBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool) {
+	var errorPath string
+	for _, operand := range operation.Operands {
+		predicate, trueEdge, ok := branchEvidencePredicate(operand)
+		if ok && trueEdge && !predicate.Negated && predicate.Kind == "not-nil" && predicate.Path != "" {
+			errorPath = "path/" + predicate.Path
+			break
+		}
+	}
+	if errorPath == "" {
+		return equation.OutputClosure{}, false
+	}
+	encodedError := base64.RawURLEncoding.EncodeToString([]byte(errorPath))
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, typePredicatePairPrefix) || fact.Value == nil {
+			continue
+		}
+		if _, valid := shapefact.DecodeTarget(fact.Value); !valid {
+			continue
+		}
+		parts := strings.Split(strings.TrimPrefix(fact.Key, typePredicatePairPrefix), "/")
+		if len(parts) != 2 || parts[1] != encodedError {
+			continue
+		}
+		valuePath, err := base64.RawURLEncoding.DecodeString(parts[0])
+		if err != nil || !strings.HasPrefix(string(valuePath), "path/") {
+			continue
+		}
+		trueGuard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
+		falseGuard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/false")}
+		return equation.OutputClosure{
+			Outcomes: []equation.Fact{
+				{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/true"), Guards: []equation.Guard{trueGuard}},
+				{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/false"), Guards: []equation.Guard{falseGuard}},
+				{Key: "narrowing/" + operation.Target.Name, Value: []byte("type-predicate/true"), Guards: []equation.Guard{trueGuard}},
+				{Key: "narrowing/" + operation.Target.Name, Value: []byte("type-predicate/false"), Guards: []equation.Guard{falseGuard}},
+			},
+			Values: []equation.Fact{{Key: "value/" + string(valuePath) + "/" + operation.Target.Name, Value: []byte("scalar/nil"), Guards: []equation.Guard{trueGuard}}},
+		}, true
+	}
+	return equation.OutputClosure{}, false
 }
 
 // appendClosedGuardAdvice preserves an existing branch closure while allowing
@@ -11196,6 +11341,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	if lexical != nil && localCallable {
 		placementFacts = append(placementFacts, placementInvokedClosureCaptureFacts(operation, operands, handle, partition)...)
+		placementFacts = append(placementFacts, placementClosedLocalSummaryFacts(lexical, operation, operands, handle, partition)...)
 		if result, refuted := lexical.boundaryArgumentRefutation(operation, operands, handle, partition); refuted {
 			return result, nil
 		}
@@ -12472,6 +12618,27 @@ func tableIdentitySeedsForEntry(seeds []entrySeed, partition equation.Partition)
 	}
 	sort.Strings(terms)
 	out := make([]entryTableIdentitySeed, 0, len(terms))
+	for _, term := range terms {
+		out = append(out, byTerm[term])
+	}
+	return out
+}
+
+func placementSeedsForEntry(seeds []entrySeed, partition equation.Partition) []entryPlacementSeed {
+	byTerm := make(map[string]entryPlacementSeed, len(seeds))
+	for _, seed := range seeds {
+		allocation, found := placementAllocationForTerm([]byte(seed.Term), partition)
+		if !found || !allocation.Complete || allocation.Identity == "" || allocation.Result == "" || allocation.Kind == "" {
+			continue
+		}
+		byTerm[seed.Term] = entryPlacementSeed{Term: seed.Term, Allocation: allocation}
+	}
+	terms := make([]string, 0, len(byTerm))
+	for term := range byTerm {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	out := make([]entryPlacementSeed, 0, len(terms))
 	for _, term := range terms {
 		out = append(out, byTerm[term])
 	}
@@ -13925,6 +14092,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
 			equation.Fact{Key: "epoch/" + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		)
+		if typePredicateErrorTarget != nil && key == "00000000" {
+			values = append(values, equation.Fact{Key: typePredicateTargetPrefix + base64.RawURLEncoding.EncodeToString(result) + "/" + operation.Target.Name, Value: append([]byte(nil), typePredicateErrorTarget...)})
+		}
 		if localCallableResult {
 			// The value came from this exact local callable's sealed contract.
 			// Later static reads may preserve only its explicit nilability after
@@ -13999,6 +14169,17 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				values = append(values, equation.Fact{Key: iteratorKeyPrefix + string(result) + "/" + operation.Target.Name, Value: key})
 			}
 		}
+		if source, found := iteratorSourceTerm(provider, argumentTerms); found {
+			// The iterator source is selected by the published provider effect,
+			// not by a callee name or source spelling. It discharges only this
+			// same call's temporary opaque boundary.
+			if allocation, found := placementAllocationForTerm(source, partition); found && placementClosedAllocation(allocation, partition) {
+				applicationID := strings.TrimPrefix(string(application), "call/")
+				if applicationID != "" {
+					values = append(values, placementContractFact(allocation.Identity, "iterator", applicationID))
+				}
+			}
+		}
 		// A type predicate's result is the closed control witness for its
 		// validated value. When the exact predicate argument is explicitly any,
 		// retain that boundary on the control result so a possible arm is
@@ -14036,7 +14217,99 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			values = append(values, equation.Fact{Key: "member-closure/" + string(result) + "/" + operation.Target.Name + "/" + strings.TrimPrefix(fact.Key, memberPrefix), Value: append([]byte(nil), fact.Value...)})
 		}
 	}
+	if target, found := currentCallTypePredicateTarget(application, partition); found && len(resultTerms) == 2 {
+		if value, okValue := resultTerms["00000000"]; okValue {
+			if errValue, okErr := resultTerms["00000001"]; okErr {
+				values = append(values, equation.Fact{Key: typePredicatePairPrefix + base64.RawURLEncoding.EncodeToString(value) + "/" + base64.RawURLEncoding.EncodeToString(errValue), Value: target})
+			}
+		}
+	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+func currentCallTypePredicateTarget(application []byte, partition equation.Partition) ([]byte, bool) {
+	prefix := callTypePredicatePrefix + strings.TrimPrefix(string(application), "call/") + "/"
+	var target []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
+			if _, ok := shapefact.DecodeTarget(fact.Value); ok {
+				target, latest = append([]byte(nil), fact.Value...), fact.Key
+			}
+		}
+	}
+	return target, target != nil
+}
+
+func iteratorSourceTerm(provider []byte, arguments map[int][]byte) ([]byte, bool) {
+	signature, found := (signaturelookup.Source{IncludeStdlib: true}).LookupView(providerName(provider))
+	if !found {
+		return nil, false
+	}
+	iterator, found := iteration.ActiveIterator(signature.Effect.Labels)
+	if !found {
+		return nil, false
+	}
+	source, found := arguments[iterator.Source.Index]
+	return source, found
+}
+
+func placementArgumentsPresent(operands directCallOperands, partition equation.Partition) bool {
+	for _, argument := range operands.arguments {
+		if allocation, found := placementAllocationForTerm(argument, partition); found && placementClosedAllocation(allocation, partition) {
+			return true
+		}
+	}
+	return false
+}
+
+// placementVerifiedLocalCallFacts closes the provisional opaque-call blocker
+// only after applyKnown has completed the exact lexical child with the same
+// caller partition.  The child projector carries any observed escape or
+// opaque boundary back alongside this contract, so a completed local call is
+// transparent only to the extent its published child facts prove it is.
+func placementVerifiedLocalCallFacts(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) []equation.Fact {
+	var facts []equation.Fact
+	for _, argument := range operands.arguments {
+		allocation, found := placementAllocationForTerm(argument, partition)
+		if !found || !placementClosedAllocation(allocation, partition) {
+			continue
+		}
+		facts = append(facts, placementContractFact(allocation.Identity, "local", operation.Target.Name))
+	}
+	return facts
+}
+
+func placementClosedLocalSummaryFacts(lexical *lexicalEvaluator, operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) []equation.Fact {
+	child, found := lexical.byPrototype[handle.Prototype]
+	if !found || child.Cyclic != nil || len(handle.Captures) != 0 || len(child.Boundary.Captures) != 0 || !closedLocalParameterSummary(child) {
+		return nil
+	}
+	return placementVerifiedLocalCallFacts(operation, operands, partition)
+}
+
+// closedLocalParameterSummary admits only a child that has no operation able
+// to retain, return, or mutate a formal. Its finite body artifact is the
+// authority; calls, writes, index operations, and publications of a formal
+// all keep the caller-side opaque boundary intact.
+func closedLocalParameterSummary(child front.Compilation) bool {
+	formals := make(map[string]bool, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		formals[boundaryTerm(parameter.Symbol)] = true
+	}
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "apply", "external-call", "call-results", "environment-write", "path-replacement", "index-mutation":
+			return false
+		case "publication":
+			for _, operand := range operation.Operands {
+				if strings.HasPrefix(operand.Role, "return-value-") && formals[string(operand.Term.Encoding)] {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 // callArgumentFacts preserves the exact argument terms selected by an apply
