@@ -74,20 +74,21 @@ const correlationConeValuePrefix = "correlation-cone/value/"
 // the identity separate from a shape avoids letting a stale root.field value
 // outrank a write made through an alias.
 const (
-	heapTableIdentityPrefix  = "heap/table-identity/"
-	heapTableClosedPrefix    = "heap/table-closed/"
-	heapMemberPrefix         = "heap/member/"
-	heapMemberIdentityPrefix = "heap/member-identity/"
-	heapStaticReplacePrefix  = "heap/static-replace/"
-	memberCellPrefix         = "heap/member-cell/"
-	heapMemberOriginPrefix   = "heap/member-origin/"
-	heapMetaAttachedPrefix   = "heap/meta-attached/"
-	heapMetaNewIndexPrefix   = "heap/meta-newindex/"
-	heapIndexPresencePrefix  = "heap/index-presence/"
-	heapIndexRevokePrefix    = "heap/index-revoke/"
-	heapIndexLowerPrefix     = "heap/index-lower/"
-	heapIndexUpperPrefix     = "heap/index-upper/"
-	indexReadDisplayPrefix   = "index-read-display/"
+	heapTableIdentityPrefix    = "heap/table-identity/"
+	heapTableClosedPrefix      = "heap/table-closed/"
+	heapMemberPrefix           = "heap/member/"
+	heapMemberIdentityPrefix   = "heap/member-identity/"
+	heapStaticReplacePrefix    = "heap/static-replace/"
+	memberCellPrefix           = "heap/member-cell/"
+	heapMemberOriginPrefix     = "heap/member-origin/"
+	heapMetaAttachedPrefix     = "heap/meta-attached/"
+	heapMetaNewIndexPrefix     = "heap/meta-newindex/"
+	heapExternalCallbackPrefix = "heap/external-callback/"
+	heapIndexPresencePrefix    = "heap/index-presence/"
+	heapIndexRevokePrefix      = "heap/index-revoke/"
+	heapIndexLowerPrefix       = "heap/index-lower/"
+	heapIndexUpperPrefix       = "heap/index-upper/"
+	indexReadDisplayPrefix     = "index-read-display/"
 )
 
 // branchPredicateWire mirrors the front's closed predicate wire vocabulary.
@@ -719,7 +720,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		value, available := claimDiagnosticValue(operands["value"], operation, closure)
 		resultDisplay, callResultOperation, hasResultDisplay := callResultDisplay(artifact, operands["value"])
-		hasResultDisplay = hasResultDisplay && hasImportedRelationResult(closure.Values, operands["value"])
+		hasResultDisplay = hasResultDisplay && (hasImportedRelationResult(closure.Values, operands["value"]) || isUnvalidatedAnyValue(value))
 		if hasResultDisplay {
 			sourceDisplay = resultDisplay
 			if span := callSpans[callResultOperation+"/call"]; span.Valid() {
@@ -730,7 +731,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		// raw.id).  The scalar read can still retain a literal heap fact, but the
 		// ancestor boundary is the authoritative assignment source and is itself
 		// sufficient closed evidence for the diagnostic projection.
-		anySource := (available && isExplicitAnyValue(value)) || sourceHasAnyBoundary(operands["value"], closure.Values)
+		anySource := (available && isUnvalidatedAnyValue(value)) || sourceHasAnyBoundary(operands["value"], closure.Values)
 		if !available && anySource {
 			value, available = []byte("scalar/claim/claim-kind/3/\"any\""), true
 		}
@@ -832,6 +833,9 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		if anySource {
 			valueDescription = "any"
+			if hasResultDisplay {
+				item.Message = fmt.Sprintf("cannot assign %s because it is %s, not %s", sourceDisplay, valueDescription, declared)
+			}
 			targetSpan := claimTargetSpans[name]
 			if !targetSpan.Valid() {
 				targetSpan = item.Span
@@ -1007,6 +1011,8 @@ func callResultDisplay(artifact equation.Artifact, result []byte) (string, strin
 		matched := false
 		display := ""
 		application := ""
+		provider := []byte(nil)
+		method := ""
 		for _, operand := range operation.Operands {
 			switch {
 			case strings.HasPrefix(operand.Role, "result-") && string(operand.Term.Encoding) == string(result):
@@ -1015,9 +1021,16 @@ func callResultDisplay(artifact equation.Artifact, result []byte) (string, strin
 				display = string(operand.Term.Encoding)
 			case operand.Role == "application":
 				application = strings.TrimPrefix(string(operand.Term.Encoding), "call/")
+			case operand.Role == "provider":
+				provider = operand.Term.Encoding
+			case operand.Role == "method":
+				method, _ = callMethodName(operand.Term.Encoding)
 			}
 		}
-		if matched && display != "" && application != "" {
+		if display == "" && method != "" && providerName(provider) != "" {
+			display = providerName(provider) + ":" + method + "(...)"
+		}
+		if matched && display != "" {
 			return display, application, true
 		}
 	}
@@ -4276,6 +4289,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
 	}
 	projected := projectCallResults(operation, returns, closure)
+	projected.Values = append(projected.Values, projectExternalCallbackReturnFacts(operation, child, closure)...)
 	// Publication is the only child return authority. Its member-capability
 	// facts retain local closure handles for sealed table results without
 	// changing the table's ordinary callable/member facts.
@@ -4412,6 +4426,68 @@ func projectCallResults(operation equation.BoundEquation, returns [][]byte, clos
 	}
 	projected.Values = append(projected.Values, placementFactsFromChild(closure.Values)...)
 	return projected
+}
+
+// projectExternalCallbackReturnFacts preserves a callback-mutation hazard only
+// when the child returns the exact captured table identity carrying that fact.
+// The caller's call-results owner already knows how to transport this identity
+// to its result slot, so the hazard remains attached to a real publication
+// rather than to a guessed alias or source name.
+func projectExternalCallbackReturnFacts(operation equation.BoundEquation, child front.Compilation, closure equation.OutputClosure) []equation.Fact {
+	var facts []equation.Fact
+	seen := make(map[string]bool)
+	for _, publication := range child.Artifact.Equations {
+		if publication.Occurrence.Kind != "publication" {
+			continue
+		}
+		for _, operand := range publication.Operands {
+			if !strings.HasPrefix(operand.Role, "return-value-") {
+				continue
+			}
+			index, err := strconv.Atoi(strings.TrimPrefix(operand.Role, "return-value-"))
+			if err != nil || index < 0 {
+				continue
+			}
+			identity, found := closureTableIdentity(operand.Term.Encoding, closure.Values)
+			if !found || !heapHasExternalCallbackFacts(identity, closure.Values) {
+				continue
+			}
+			key := fmt.Sprintf("call-heap-identity/%s/%08d", operation.Target.Name, index)
+			if !seen[key] {
+				facts = append(facts, equation.Fact{Key: key, Value: identity})
+				seen[key] = true
+			}
+			for _, fact := range closure.Values {
+				if strings.HasPrefix(fact.Key, heapExternalCallbackPrefix+base64.RawURLEncoding.EncodeToString(identity)+"/") && !seen[fact.Key] {
+					facts = append(facts, cloneFact(fact))
+					seen[fact.Key] = true
+				}
+			}
+		}
+	}
+	return facts
+}
+
+func closureTableIdentity(term []byte, values []equation.Fact) ([]byte, bool) {
+	prefix := heapTableIdentityPrefix + string(term) + "/"
+	var identity []byte
+	latest := ""
+	for _, fact := range values {
+		if strings.HasPrefix(fact.Key, prefix) && (identity == nil || fact.Key > latest) {
+			identity, latest = append([]byte(nil), fact.Value...), fact.Key
+		}
+	}
+	return identity, identity != nil
+}
+
+func heapHasExternalCallbackFacts(identity []byte, values []equation.Fact) bool {
+	prefix := heapExternalCallbackPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	for _, fact := range values {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "may-mutate" {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClosure, caller equation.BoundEquation, callerOperands directCallOperands, child front.Compilation, handle closureHandle, closure equation.OutputClosure) {
@@ -6428,7 +6504,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 		if suffix, exact := tableMemberSuffix(key, []byte("suffix/")); keyErr == nil && exact {
 			if member, found := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); found {
 				values[0].Value = member
-			} else if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) {
+			} else if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) && !heapHasExternalCallback(identity, partition) {
 				values[0].Value = []byte("scalar/nil")
 			}
 			if memberIdentity, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, suffix, partition); found {
@@ -6610,7 +6686,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// an explicit-any boundary, but it cannot discharge a later declared
 	// assignment contract. The boundary itself is already-published evidence
 	// and remains authoritative until validation supplies a separate proof.
-	anySource := isExplicitAnyValue(value) || sourceHasAnyBoundary(source, partition.Values())
+	anySource := isUnvalidatedAnyValue(value) || sourceHasAnyBoundary(source, partition.Values())
 	// An explicit-any declaration remains a boundary, but an exact sealed
 	// member may still be the concrete counterexample for its assignment
 	// diagnostic. Keep that existing heap publication separate from the
@@ -7624,6 +7700,10 @@ func claimTypeIsAny(targetType string) bool {
 // when that contract requires evidence the boundary cannot supply.
 func isExplicitAnyValue(value []byte) bool {
 	return strings.HasSuffix(string(value), "/\"any\"") && strings.HasPrefix(string(value), "scalar/claim/")
+}
+
+func isUnvalidatedAnyValue(value []byte) bool {
+	return isExplicitAnyValue(value) || string(value) == "scalar/external-callback-any"
 }
 
 func sourceHasExplicitAny(source []byte, values []equation.Fact) bool {
@@ -10573,6 +10653,24 @@ func heapMetaAttached(identity []byte, partition equation.Partition) bool {
 	return false
 }
 
+// heapExternalCallbackFact records that an opaque provider received a local
+// callback which may mutate this captured table after the call returns. It
+// invalidates only the closed-literal absence proof; it never invents a member
+// value or an execution order.
+func heapExternalCallbackFact(identity []byte, operation string) equation.Fact {
+	return equation.Fact{Key: heapExternalCallbackPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("may-mutate")}
+}
+
+func heapHasExternalCallback(identity []byte, partition equation.Partition) bool {
+	prefix := heapExternalCallbackPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "may-mutate" {
+			return true
+		}
+	}
+	return false
+}
+
 func heapMetaNewIndexCurrent(identity []byte, partition equation.Partition) ([]byte, bool) {
 	prefix := heapMetaNewIndexPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	var value []byte
@@ -10794,7 +10892,7 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		if value, found := heapMemberCurrent(heapMemberPrefix, identity, whole, partition); found {
 			return value, true
 		}
-		if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) {
+		if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) && !heapHasExternalCallback(identity, partition) {
 			// A closed literal establishes that this member is absent at runtime,
 			// but an existing declaration on its owning path can still describe a
 			// wider optional member surface. Preserve that published nilability
@@ -11282,6 +11380,9 @@ func methodCallable(receiver []byte, method string) ([]byte, bool) {
 // invalidates the constructor's closed-absence proof before apply decides
 // whether the member is callable.
 func currentMethodCallable(receiverTerm, receiver []byte, method string, partition equation.Partition) ([]byte, bool) {
+	if identity, found := tableIdentityForTerm(receiverTerm, partition); found && heapHasExternalCallback(identity, partition) {
+		return nil, false
+	}
 	if strings.HasPrefix(string(receiverTerm), "path/") {
 		memberTerm := []byte(string(receiverTerm) + "." + method)
 		if value, known := resolveKnownCurrentValue(memberTerm, partition); known {
@@ -11677,12 +11778,62 @@ func externalCallKernel(lexical *lexicalEvaluator, operation equation.BoundEquat
 	if !complete {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external call arguments")
 	}
+	values := placementExternalOwnershipFacts(operation, operands["provider"], arguments, partition)
+	values = append(values, placementImportedStoreFacts(lexical, operation, operands["provider"], arguments, partition)...)
+	values = append(values, opaqueCallbackCaptureEffects(lexical, operands["provider"], arguments, operation.Target.Name, partition)...)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
-		Values: append(
-			placementExternalOwnershipFacts(operation, operands["provider"], arguments, partition),
-			placementImportedStoreFacts(lexical, operation, operands["provider"], arguments, partition)...,
-		),
+		Values: values,
 	}}, nil
+}
+
+// opaqueCallbackCaptureEffects derives a may-mutate fact only from a callback
+// handle already published in this partition and an unresolved provider. The
+// callback body's own lowered write is the authority; no source name or
+// synthetic callback behavior is consulted.
+func opaqueCallbackCaptureEffects(lexical *lexicalEvaluator, provider []byte, arguments [][]byte, operation string, partition equation.Partition) []equation.Fact {
+	if lexical == nil || providerName(provider) == "" {
+		return nil
+	}
+	if _, known := (signaturelookup.Source{IncludeStdlib: true}).LookupView(providerName(provider)); known {
+		return nil
+	}
+	facts := make([]equation.Fact, 0)
+	seen := make(map[string]bool)
+	for _, argument := range arguments {
+		handle, known := closureHandleFor(argument, partition)
+		if !known {
+			continue
+		}
+		child, found := lexical.byPrototype[handle.Prototype]
+		if !found || len(handle.Captures) != len(child.Boundary.Captures) {
+			continue
+		}
+		for index, capture := range child.Boundary.Captures {
+			if !childWritesCapture(child, boundaryTerm(capture.Symbol)) {
+				continue
+			}
+			identity, found := tableIdentityForTerm([]byte(handle.Captures[index]), partition)
+			if !found || seen[string(identity)] {
+				continue
+			}
+			seen[string(identity)] = true
+			facts = append(facts, heapExternalCallbackFact(identity, operation))
+		}
+	}
+	return facts
+}
+
+func childWritesCapture(child front.Compilation, capture string) bool {
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "environment-write", "path-replacement", "index-mutation", "path-invalidation":
+			target, found := artifactOperand(operation.Operands, "target")
+			if found && (string(target) == capture || strings.HasPrefix(string(target), capture+".") || strings.HasPrefix(string(target), capture+"[")) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // callResultsKernel publishes explicit Top facts for unresolved owned result
@@ -11796,6 +11947,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if contract, ok := sealedMethodReceiverResultValue(lexical, receiver, method, index, partition); ok {
 					value, receiverResult = contract, true
 				}
+			}
+			if string(value) == "scalar/top" && receiver != nil && externalCallbackReceiverMayMutate(receiver, provider, partition) {
+				value = []byte("scalar/external-callback-any")
 			}
 			// A local child result is the most precise existing publication. Only
 			// when it is absent may the result owner use the direct callee's sealed
@@ -12513,6 +12667,18 @@ func providerName(provider []byte) string {
 		return ""
 	}
 	return name
+}
+
+func externalCallbackReceiverMayMutate(receiver, provider []byte, partition equation.Partition) bool {
+	name := providerName(provider)
+	if name == "" {
+		return false
+	}
+	if _, known := (signaturelookup.Source{IncludeStdlib: true}).LookupView(name); known {
+		return false
+	}
+	identity, found := tableIdentityForTerm(receiver, partition)
+	return found && heapHasExternalCallback(identity, partition)
 }
 
 // requiresLocalUnionProof keeps a declared discriminated-record union from
@@ -13775,6 +13941,9 @@ func shapeMemberValue(term []byte, partition equation.Partition) ([]byte, bool) 
 		table, ok := shapefact.DecodeTable(value)
 		if !ok {
 			continue
+		}
+		if identity, tracked := tableIdentityForTerm([]byte("path/"+ancestor), partition); tracked && heapHasExternalCallback(identity, partition) {
+			return nil, false
 		}
 		member, found := table.Lookup(suffix)
 		if !found {

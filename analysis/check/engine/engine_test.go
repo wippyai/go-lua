@@ -1952,6 +1952,33 @@ local count = record.count + 1
 	}
 }
 
+func TestCheckRejectsAsyncCallbackMemberAsUnvalidated(t *testing.T) {
+	result, err := engine.Check(`local function make_async()
+    local obj = {}
+    coroutine.spawn(function()
+        obj.get_value = function(self): number
+            return 42
+        end
+    end)
+    return obj
+end
+
+local async_obj = make_async()
+local v: number = async_obj:get_value()`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.call.direct.not_callable" {
+			t.Fatalf("async callback member was treated as a closed nil: %#v", result.PublishedDiagnostics)
+		}
+		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "async_obj:get_value(...)") && strings.Contains(diagnostic.Message, "any, not number") {
+			return
+		}
+	}
+	t.Fatalf("async callback assignment diagnostic = %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckProjectsCalledChildConcatEvidence(t *testing.T) {
 	result, err := engine.Check(`
 local function label(maybe: string?): string
