@@ -526,7 +526,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				{Span: item.Span, Message: "assigned value " + valueDescription},
 				{Span: targetSpan, Message: "declared type " + declared},
 			}
-			item.Help = "Use a value compatible with the expected type, or change the target type if `" + display + "` is valid."
+			item.Help = "Use a value compatible with the expected type, or change the target type if `" + sourceDisplay + "` is valid."
 			out = append(out, item)
 			continue
 		}
@@ -547,7 +547,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: item.Span, Message: "declared type " + declared}}
 		}
-		item.Help = "Use a value compatible with the expected type, or change the target type if `" + display + "` is valid."
+		item.Help = "Use a value compatible with the expected type, or change the target type if `" + sourceDisplay + "` is valid."
 		out = append(out, item)
 	}
 	return out
@@ -2514,6 +2514,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			return equation.TransactionResult{}, fmt.Errorf("engine: uncalled lexical child %q: %w", prototype, evaluateErr)
 		}
 		body := fmt.Sprintf("%x", child.Body)
+		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
 		for _, diagnostic := range outcome.Diagnostics {
 			// An allocation-time any boundary can prove only a strict assignment
 			// contract lacks validation. Other child diagnostics still require a
@@ -2524,9 +2525,24 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
-			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
 			if span, ok := spans[diagnostic.Key]; ok {
 				lexical.diagnosticSpans[key] = span
+			}
+		}
+		// The child has already evaluated its own closed entry.  Preserve the
+		// corresponding source-facing projection alongside the qualified fact so
+		// allocation-time diagnostics retain the evidence published by their
+		// owning claim rather than falling back to an unadorned parent fact.
+		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+			key := "child/" + body + "/" + item.Fact.Key
+			lexical.childPublished[key] = PublishedDiagnostic{
+				Fact:     equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)},
+				Code:     item.Code,
+				Span:     item.Span,
+				Message:  item.Message,
+				Evidence: append([]DiagnosticEvidence(nil), item.Evidence...),
+				Labels:   append([]DiagnosticLabel(nil), item.Labels...),
+				Help:     item.Help,
 			}
 		}
 	}
