@@ -576,6 +576,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 	expressions := make(map[string]equation.Equation)
 	writes := make(map[string]equation.Equation)
 	indexMutations := make(map[string]equation.Equation)
+	pathReplacements := make(map[string]equation.Equation)
 	for _, operation := range artifact.Equations {
 		if operation.Occurrence.Kind == "claim" {
 			claims[operation.Target.Name] = operation
@@ -591,6 +592,9 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		if operation.Occurrence.Kind == "index-mutation" {
 			indexMutations[operation.Target.Name] = operation
+		}
+		if operation.Occurrence.Kind == "path-replacement" {
+			pathReplacements[operation.Target.Name] = operation
 		}
 	}
 	out := make([]PublishedDiagnostic, 0, len(closure.Diagnostics))
@@ -633,6 +637,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		if !found {
 			if mutation, found := indexMutations[name]; found {
 				out = append(out, enrichClosedDynamicWriteDiagnostic(item, mutation, claimTargetSpans[name]))
+				continue
+			}
+			if replacement, found := pathReplacements[name]; found && functionContractDiagnostic(name, closure.Values) {
+				out = append(out, enrichFunctionContractWriteDiagnostic(item, replacement, claimTargetSpans[name], closure))
 				continue
 			}
 			out = append(out, item)
@@ -807,6 +815,46 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		out = append(out, item)
 	}
 	return out
+}
+
+func functionContractDiagnostic(operation string, facts []equation.Fact) bool {
+	for _, fact := range facts {
+		if fact.Key == "assignment-function-contract/"+operation && string(fact.Value) == "refuted" {
+			return true
+		}
+	}
+	return false
+}
+
+func enrichFunctionContractWriteDiagnostic(item PublishedDiagnostic, operation equation.Equation, targetSpan wir.Span, closure equation.OutputClosure) PublishedDiagnostic {
+	operands, err := artifactOperandsByRole(operation.Operands, "display", "value")
+	if err != nil {
+		return item
+	}
+	value, available := claimDiagnosticValue(operands["value"], operation, closure)
+	if !available {
+		return item
+	}
+	actual := assignmentEvidenceValue(value)
+	display := string(operands["display"])
+	_, suffix, found := strings.Cut(item.Message, " because assigned value is ")
+	if !found {
+		return item
+	}
+	_, declared, found := strings.Cut(suffix, ", not ")
+	if !found || declared == "" {
+		return item
+	}
+	if !targetSpan.Valid() {
+		targetSpan = item.Span
+	}
+	item.Evidence = []DiagnosticEvidence{
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "assigned value has literal value " + actual},
+		{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: display + " is declared as " + declared},
+	}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + actual}, {Span: targetSpan, Message: "declared type " + declared}}
+	item.Help = "Use a value compatible with the expected type, or change the target type if the assigned value is valid."
+	return item
 }
 
 // callResultDisplay returns display metadata only from the call-results
@@ -4729,9 +4777,36 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	if err != nil {
 		value = []byte("scalar/top")
 	}
+	var declaredContract []byte
+	for _, operand := range operation.Operands {
+		if operand.Role != "declared-type" {
+			continue
+		}
+		if declared, ok := shapefact.DecodeTarget(operand.Value); ok && declared != nil {
+			declaredContract = append([]byte(nil), operand.Value...)
+		}
+		break
+	}
 	result, err := frozenMutationDiagnostic(operation, partition, "assignment")
 	if err != nil {
 		return equation.TransactionResult{}, err
+	}
+	// A typed dotted function definition has already published an exact
+	// callable contract at this path. A later static write may refute that
+	// contract only with a concrete non-callable value; opaque callables and
+	// unknown values remain unreported rather than being treated as proof.
+	if existing, found := declaredTypeForTerm(operands["target"], partition); found && functionContractWriteRefuted(value, existing) {
+		result.Closure.Diagnostics = append(result.Closure.Diagnostics, equation.Fact{
+			Key:   "type.assignment/" + operation.Target.Name,
+			Value: []byte(fmt.Sprintf("cannot assign %s because assigned value is %s, not %s", operands["display"], assignmentEvidenceValue(value), functionContractDisplay(existing))),
+		})
+		result.Closure.Values = append(result.Closure.Values, equation.Fact{Key: "assignment-function-contract/" + operation.Target.Name, Value: []byte("refuted")})
+	}
+	if len(declaredContract) != 0 {
+		result.Closure.Values = append(result.Closure.Values, equation.Fact{
+			Key:   "declared-type/" + string(operands["target"]) + "/" + operation.Target.Name,
+			Value: declaredContract,
+		})
 	}
 	result.Closure.Values = append(result.Closure.Values, equation.Fact{
 		Key: "value/" + string(operands["target"]) + "/" + operation.Target.Name, Value: value,
@@ -4822,6 +4897,45 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 		})
 	}
 	return result, nil
+}
+
+// functionContractWriteRefuted accepts only an exact declared callable and a
+// concrete incompatible replacement. A bare scalar/function transport is not
+// a signature witness, so it stays unknown rather than being rejected.
+func functionContractWriteRefuted(value []byte, declared typ.Type) bool {
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(declared)).(*typ.Function)
+	if !ok || function == nil {
+		return false
+	}
+	if actual, sealed := sealedFunctionType(value); sealed {
+		return !subtype.IsSubtype(actual, function)
+	}
+	if strings.HasPrefix(string(value), "scalar/function") {
+		return false
+	}
+	return knownScalarRelation(value, false) == shapeRefuted
+}
+
+func functionContractDisplay(declared typ.Type) string {
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(declared)).(*typ.Function)
+	if !ok || function == nil {
+		return typeformat.Short(declared)
+	}
+	params := make([]string, 0, len(function.Params))
+	for _, param := range function.Params {
+		if param.Type == nil {
+			return typeformat.Short(declared)
+		}
+		params = append(params, typeformat.Short(param.Type))
+	}
+	returns := make([]string, 0, len(function.Returns))
+	for _, returned := range function.Returns {
+		if returned == nil {
+			return typeformat.Short(declared)
+		}
+		returns = append(returns, typeformat.Short(returned))
+	}
+	return "fun(" + strings.Join(params, ", ") + ") -> " + strings.Join(returns, ", ")
 }
 
 // dynamicIndexReadKernel projects only an exact-key heap fact.  Unknown keys

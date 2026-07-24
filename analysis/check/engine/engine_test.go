@@ -88,6 +88,35 @@ local entry: types.Entry = {
 	}
 }
 
+func TestCheckRejectsConcreteReplacementOfTypedFunctionMember(t *testing.T) {
+	result, err := engine.Check(`
+local M = {}
+function M.f(): string
+    return "ok"
+end
+M.f = 42
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code != "type.assignment" || diagnostic.Span.StartLine != 6 || diagnostic.Span.StartCol != 7 {
+			continue
+		}
+		if diagnostic.Message != "cannot assign M.f because assigned value is 42, not fun() -> string" {
+			t.Fatalf("typed function member diagnostic = %#v", diagnostic)
+		}
+		if len(diagnostic.Evidence) != 2 || diagnostic.Evidence[0].Message != "assigned value has literal value 42" || diagnostic.Evidence[1].Message != "M.f is declared as fun() -> string" {
+			t.Fatalf("typed function member evidence = %#v", diagnostic.Evidence)
+		}
+		if len(diagnostic.Labels) != 2 || diagnostic.Labels[0].Span.StartCol != 7 || diagnostic.Labels[1].Span.StartCol != 1 {
+			t.Fatalf("typed function member labels = %#v", diagnostic.Labels)
+		}
+		return
+	}
+	t.Fatalf("typed function member replacement was not rejected: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckRejectsBroadWriteToSealedLiteralRecord(t *testing.T) {
 	result, err := engine.Check(`
 local item = { count = 1, name = "ready" }

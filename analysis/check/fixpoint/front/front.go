@@ -529,21 +529,31 @@ func effectTargetSpans(body *wir.Body, artifact equation.Artifact) map[string]wi
 		return nil
 	}
 	dynamic := make([]wir.Instruction, 0)
+	static := make([]wir.Instruction, 0)
 	for index := 0; index < body.Len(); index++ {
-		if instruction := body.Instr(index); instruction.Op == wir.OpDynamicIndexWrite {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpDynamicIndexWrite {
 			dynamic = append(dynamic, instruction)
 		}
+		if instruction.Op == wir.OpStaticMemberWrite {
+			static = append(static, instruction)
+		}
 	}
-	out := make(map[string]wir.Span, len(dynamic))
-	index := 0
+	out := make(map[string]wir.Span, len(dynamic)+len(static))
+	dynamicIndex, staticIndex := 0, 0
 	for _, operation := range artifact.Equations {
-		if operation.Occurrence.Kind != "index-mutation" {
-			continue
+		switch operation.Occurrence.Kind {
+		case "index-mutation":
+			if dynamicIndex < len(dynamic) && dynamic[dynamicIndex].ContainerSpan.Valid() {
+				out[operation.Target.Name] = dynamic[dynamicIndex].ContainerSpan
+			}
+			dynamicIndex++
+		case "path-replacement":
+			if staticIndex < len(static) && static[staticIndex].TargetSpan.Valid() {
+				out[operation.Target.Name] = static[staticIndex].TargetSpan
+			}
+			staticIndex++
 		}
-		if index < len(dynamic) && dynamic[index].ContainerSpan.Valid() {
-			out[operation.Target.Name] = dynamic[index].ContainerSpan
-		}
-		index++
 	}
 	return out
 }
@@ -556,21 +566,31 @@ func effectValueSpans(body *wir.Body, artifact equation.Artifact) map[string]wir
 		return nil
 	}
 	dynamic := make([]wir.Instruction, 0)
+	static := make([]wir.Instruction, 0)
 	for index := 0; index < body.Len(); index++ {
-		if instruction := body.Instr(index); instruction.Op == wir.OpDynamicIndexWrite {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpDynamicIndexWrite {
 			dynamic = append(dynamic, instruction)
 		}
+		if instruction.Op == wir.OpStaticMemberWrite {
+			static = append(static, instruction)
+		}
 	}
-	out := make(map[string]wir.Span, len(dynamic))
-	index := 0
+	out := make(map[string]wir.Span, len(dynamic)+len(static))
+	dynamicIndex, staticIndex := 0, 0
 	for _, operation := range artifact.Equations {
-		if operation.Occurrence.Kind != "index-mutation" {
-			continue
+		switch operation.Occurrence.Kind {
+		case "index-mutation":
+			if dynamicIndex < len(dynamic) && dynamic[dynamicIndex].TargetSpan.Valid() {
+				out[operation.Target.Name] = dynamic[dynamicIndex].TargetSpan
+			}
+			dynamicIndex++
+		case "path-replacement":
+			if staticIndex < len(static) && static[staticIndex].ExprSpan.Valid() {
+				out[operation.Target.Name] = static[staticIndex].ExprSpan
+			}
+			staticIndex++
 		}
-		if index < len(dynamic) && dynamic[index].TargetSpan.Valid() {
-			out[operation.Target.Name] = dynamic[index].TargetSpan
-		}
-		index++
 	}
 	return out
 }
@@ -1078,6 +1098,14 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				{Role: "target", Term: target},
 				{Role: "display", Term: equation.ClosedTerm([]byte(display))},
 				{Role: "value", Term: value},
+			}
+			// WIR records a signature on typed dotted function definitions. Carry
+			// only that resolved, closed type as the member's declaration contract;
+			// ordinary static writes have no such authority.
+			if instruction.Type != 0 {
+				if declared, ok := shapefact.EncodeTarget(body.Type(instruction.Type)); ok {
+					draft.Operands = append(draft.Operands, equation.Operand{Role: "declared-type", Term: equation.ClosedTerm(declared)})
+				}
 			}
 			// table.freeze is deliberately shallow. A direct member write can
 			// mutate the frozen table itself; deeper writes affect a child table.

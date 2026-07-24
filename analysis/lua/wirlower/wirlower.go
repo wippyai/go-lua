@@ -719,11 +719,16 @@ func (b *builder) lowerAssignTarget(index int, target ast.Expr, v binding) {
 		b.markAssignmentTargetSpan(b.curPoint, 0, dst, tableEntryValueSpan(t))
 	case *ast.AttrGetExpr:
 		if p, ok := pathexpr.Resolve(t, b.bindings); ok {
+			valueSpan := wir.Span{}
+			if v.kind == bindExpr && v.expr != nil {
+				valueSpan = tableEntryValueSpan(v.expr)
+			}
 			b.emit(wir.Instruction{
 				Op:            wir.OpStaticMemberWrite,
 				Dst:           b.pathOperand(p),
 				A:             b.bindingOperand(v),
 				TargetSpan:    tableEntryValueSpan(t),
+				ExprSpan:      valueSpan,
 				ContainerSpan: assignmentTargetContainerSpan(t),
 			})
 			if v.hasCallResult {
@@ -1634,8 +1639,40 @@ func (b *builder) lowerFuncDef(s *ast.FuncDefStmt) {
 	tmp := b.newTemp()
 	b.emitClosure(tmp, s.Func)
 	if ok {
-		b.emit(wir.Instruction{Op: wir.OpStaticMemberWrite, Dst: b.pathOperand(p), A: tmp})
+		// A typed dotted definition is a declaration of that exact member
+		// contract, not merely an inferred closure value. Preserve the resolved
+		// signature on the static write so the front can publish it through the
+		// ordinary path-replacement fact flow. Untyped definitions retain the
+		// existing value-only behavior.
+		var declared wir.TypeRef
+		if functionHasDeclaredSignature(s.Func) {
+			if signature, resolved := functiontype.ValueExpression(s.Func, b.bindings, b.resolver); resolved {
+				declared = b.body.InternType(signature)
+			}
+		}
+		b.emit(wir.Instruction{Op: wir.OpStaticMemberWrite, Dst: b.pathOperand(p), A: tmp, Type: declared})
 	}
+}
+
+func functionHasDeclaredSignature(fn *ast.FunctionExpr) bool {
+	if fn == nil {
+		return false
+	}
+	if len(fn.TypeParams) != 0 || len(fn.ReturnTypes) != 0 {
+		return true
+	}
+	if fn.ParList == nil {
+		return false
+	}
+	if fn.ParList.VarargType != nil {
+		return true
+	}
+	for _, declared := range fn.ParList.Types {
+		if declared != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // emitClosure lowers fn into its own proto Body (built on its own cfgbuild
