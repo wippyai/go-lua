@@ -3217,6 +3217,7 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 	for _, capture := range child.Boundary.Captures {
 		captures[boundaryTerm(capture.Symbol)] = true
 	}
+	publishedStdlibCalls := uncalledPublishedStdlibCalls(child.Artifact.Equations)
 	// A result slot is owned only by a captured local call's exact
 	// apply -> call-results -> write chain. A subsequent unguarded method call
 	// may consume that slot's declared optional contract, but no other local
@@ -3301,7 +3302,7 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 				}
 				continue
 			}
-			if !captures[callee] {
+			if !captures[callee] && !publishedStdlibCalls["call/"+operation.Target.Name] {
 				return nil, false
 			}
 			hasResultCall = true
@@ -3309,7 +3310,7 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 			return nil, false
 		}
 	}
-	if (!hasAssignment && !hasOptionalMethod) || (!hasResultCall && !hasCapturedNoResultCall(child.Artifact.Equations, captures)) {
+	if (!hasAssignment && !hasOptionalMethod && !hasResultCall) || (!hasResultCall && !hasCapturedNoResultCall(child.Artifact.Equations, captures)) {
 		return nil, false
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
@@ -3325,6 +3326,32 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
 	return seeds, true
+}
+
+// uncalledPublishedStdlibCalls returns exact apply applications whose
+// external-call companion carries a standard-library provider publication.
+// The declaration-only child entry consumes that registry contract; it does
+// not recover a callable from source spelling or manufacture a result type.
+func uncalledPublishedStdlibCalls(operations []equation.Equation) map[string]bool {
+	out := make(map[string]bool)
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "external-call" {
+			continue
+		}
+		application, hasApplication := artifactOperand(operation.Operands, "application")
+		provider, hasProvider := artifactOperand(operation.Operands, "provider")
+		if !hasApplication || !hasProvider {
+			continue
+		}
+		name := providerName(provider)
+		if name == "" {
+			continue
+		}
+		if _, found := signaturelookup.StdlibResultSlot(name, 0); found {
+			out[string(application)] = true
+		}
+	}
+	return out
 }
 
 // uncalledStaticOptionalMethodDiagnostic admits only the call failure owned by
@@ -3414,6 +3441,61 @@ func uncalledStaticAssignmentDiagnostic(artifact equation.Artifact, key string) 
 		}
 	}
 	return true
+}
+
+// uncalledStaticResultCallDiagnostic retains only an argument contract on a
+// captured local callable when that exact argument is the local write of an
+// already-published stdlib result. The apply/external-call/call-results/write
+// chain prevents unrelated local calls or source-shaped names from entering a
+// declaration-only child evaluation.
+func uncalledStaticResultCallDiagnostic(artifact equation.Artifact, key string) bool {
+	if !strings.HasPrefix(key, "type.call.direct.argument_type/") {
+		return false
+	}
+	operationName := diagnosticOperationName(key)
+	published := uncalledPublishedStdlibCalls(artifact.Equations)
+	resultPaths := uncalledPublishedResultPaths(artifact.Equations, published)
+	for _, operation := range artifact.Equations {
+		if operation.Target.Name != operationName || operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if strings.HasPrefix(operand.Role, "argument-") && resultPaths[string(operand.Term.Encoding)] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func uncalledPublishedResultPaths(operations []equation.Equation, applications map[string]bool) map[string]bool {
+	results := make(map[string]bool)
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		application, found := artifactOperand(operation.Operands, "application")
+		if !found || !applications[string(application)] {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if strings.HasPrefix(operand.Role, "result-") {
+				results[string(operand.Term.Encoding)] = true
+			}
+		}
+	}
+	paths := make(map[string]bool)
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		if hasValue && hasTarget && results[string(value)] {
+			paths[string(target)] = true
+		}
+	}
+	return paths
 }
 
 // uncalledDeclaredIndexedReadBoundary admits a capture-free indexed read whose
@@ -3558,11 +3640,14 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 	for _, capture := range child.Boundary.Captures {
 		term := boundaryTerm(capture.Symbol)
 		value, known := resolveKnownCurrentValue([]byte(term), partition)
-		if !known || isUnknownScalar(value) {
+		if !known {
 			return nil, false, nil
 		}
 		handle, found := closureHandleFor([]byte(term), partition)
 		if !found {
+			if isUnknownScalar(value) {
+				return nil, false, nil
+			}
 			// A sealed table capture is transported only for the narrow
 			// declaration-only static-member path. Its identity and current
 			// member cells are existing parent publications added below; an open
@@ -3575,6 +3660,12 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 		}
 		captured, found := l.byPrototype[handle.Prototype]
 		if !found {
+			return nil, false, nil
+		}
+		// A closure handle is an existing capability publication. The static
+		// declaration boundary may carry that handle even when its ordinary
+		// scalar lane remains Top; no table shape or callable is reconstructed.
+		if isUnknownScalar(value) && !allowTypedCaptures {
 			return nil, false, nil
 		}
 		if _, explicitAny := uncalledExplicitAnyBoundary(captured); !explicitAny && !allowTypedCaptures {
@@ -4480,7 +4571,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
 			}
-			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, diagnostic) {
+			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, diagnostic) && !uncalledStaticResultCallDiagnostic(child.Artifact, diagnostic.Key) {
 				continue
 			}
 			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
@@ -4508,7 +4599,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticMemberReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
 				continue
 			}
-			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, item.Fact.Key) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, item.Fact) {
+			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, item.Fact.Key) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, item.Fact) && !uncalledStaticResultCallDiagnostic(child.Artifact, item.Fact.Key) {
 				continue
 			}
 			if indexedReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
@@ -11033,6 +11124,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	if err := consumeCallArgumentFacts(application, argumentTerms, partition); err != nil {
 		return equation.TransactionResult{}, err
 	}
+	methodProvider, hasMethodProvider := stdlibMethodProvider(receiver, method, partition)
 	values := make([]equation.Fact, 0, len(resultTerms))
 	for key, result := range resultTerms {
 		if len(result) == 0 || !strings.HasPrefix(string(result), "temp/") || (len(targetTerms) != 0 && len(targetTerms[key]) == 0) {
@@ -11189,7 +11281,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			values = append(values, channelPayloadSummaryFacts(string(result), operation.Target.Name, importedSummary)...)
 		}
 		if resultIndex, err := strconv.Atoi(key); err == nil {
-			if optional, ok := optionalProviderResultValue(provider, resultIndex); ok {
+			optionalProvider := providerName(provider)
+			if optionalProvider == "" && hasMethodProvider {
+				optionalProvider = methodProvider
+			}
+			if optional, ok := optionalProviderResultValue(optionalProvider, resultIndex); ok {
 				values = append(values, equation.Fact{
 					Key:   "optional-provider-result/" + string(result) + "/" + operation.Target.Name,
 					Value: optional,
@@ -11645,27 +11741,7 @@ func sealedFunctionResultValue(value []byte, index int) ([]byte, bool) {
 // method by source spelling nor trusts the call's annotation: an unknown or
 // non-string receiver leaves the result at Top.
 func stdlibMethodResultValue(receiver, method []byte, index int, partition equation.Partition) ([]byte, bool) {
-	if receiver == nil || method == nil || index < 0 {
-		return nil, false
-	}
-	name, ok := callMethodName(method)
-	if !ok {
-		return nil, false
-	}
-	value, err := resolveCurrentValue(receiver, partition)
-	if err != nil {
-		return nil, false
-	}
-	receiverType := typ.Type(nil)
-	if strings.HasPrefix(string(value), "scalar/string/") {
-		receiverType = typ.String
-	} else if decoded, decodedOK := shapefact.DecodeTarget(value); decodedOK {
-		receiverType = decoded
-	}
-	if receiverType == nil {
-		return nil, false
-	}
-	provider, ok := signaturelookup.StdlibMethodProvider(receiverType, name)
+	provider, ok := stdlibMethodProvider(receiver, method, partition)
 	if !ok {
 		return nil, false
 	}
@@ -11674,6 +11750,41 @@ func stdlibMethodResultValue(receiver, method []byte, index int, partition equat
 		return nil, false
 	}
 	return providerReturnTypeValue(result)
+}
+
+// stdlibMethodProvider resolves a method only through its current sealed
+// receiver fact and the canonical standard-library registry. Keeping this
+// lookup shared makes value and optional-result publications agree on the
+// exact same authority.
+func stdlibMethodProvider(receiver, method []byte, partition equation.Partition) (string, bool) {
+	if receiver == nil || method == nil {
+		return "", false
+	}
+	name, ok := callMethodName(method)
+	if !ok {
+		return "", false
+	}
+	value, err := resolveCurrentValue(receiver, partition)
+	if err != nil {
+		return "", false
+	}
+	receiverType := typ.Type(nil)
+	if strings.HasPrefix(string(value), "scalar/string/") {
+		receiverType = typ.String
+	} else if decoded, decodedOK := shapefact.DecodeTarget(value); decodedOK {
+		receiverType = decoded
+	}
+	if receiverType == nil {
+		// Formal and declared locals publish their exact type at their entry or
+		// write boundary. This is descriptive evidence only, but it is the
+		// established authority for resolving a standard-library method contract
+		// when the runtime value remains Top.
+		receiverType, _ = declaredTypeForTerm(receiver, partition)
+	}
+	if receiverType == nil {
+		return "", false
+	}
+	return signaturelookup.StdlibMethodProvider(receiverType, name)
 }
 
 // providerResultValue turns a finite, declared stdlib result slot into a
@@ -12295,11 +12406,11 @@ func providerReturnTypeValue(result typ.Type) ([]byte, bool) {
 	return shapefact.EncodeTarget(result)
 }
 
-func optionalProviderResultValue(provider []byte, index int) ([]byte, bool) {
-	if provider == nil || index < 0 {
+func optionalProviderResultValue(provider string, index int) ([]byte, bool) {
+	if provider == "" || index < 0 {
 		return nil, false
 	}
-	result, ok := signaturelookup.StdlibResultSlot(providerName(provider), index)
+	result, ok := signaturelookup.StdlibResultSlot(provider, index)
 	if !ok || !finiteReturnWitness(result, make(map[typ.Type]bool)) || !unwrap.IsOptionalLike(result) {
 		return nil, false
 	}
