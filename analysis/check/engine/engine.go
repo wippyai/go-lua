@@ -2990,6 +2990,51 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 	return seeds, true
 }
 
+// uncalledDeclaredIndexedReadBoundary admits a capture-free indexed read whose
+// container is an exact declared formal. RuntimeIndex already publishes the
+// selected slot's nilability from that array or map witness; evaluating it does
+// not select a heap identity, call result, or branch arm. Calls, mutations,
+// and control-flow still require a caller-owned entry.
+func uncalledDeclaredIndexedReadBoundary(child front.Compilation) ([]entrySeed, bool) {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
+		return nil, false
+	}
+	formals := make(map[string]entrySeed, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type == 0 {
+			return nil, false
+		}
+		declared := child.WIR.Type(parameter.Type)
+		value, ok := shapefact.EncodeTarget(declared)
+		if !ok || declared == nil {
+			return nil, false
+		}
+		term := boundaryTerm(parameter.Symbol)
+		formals[term] = entrySeed{Term: term, Value: value}
+	}
+	hasIndexedRead := false
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "dynamic-index-read":
+			container, found := artifactOperand(operation.Operands, "container")
+			if _, exactFormal := formals[string(container)]; !found || !exactFormal {
+				return nil, false
+			}
+			hasIndexedRead = true
+		case "apply", "external-call", "branch-relations", "channel-select", "generic-for", "index-mutation", "path-invalidation":
+			return nil, false
+		}
+	}
+	if !hasIndexedRead {
+		return nil, false
+	}
+	seeds := make([]entrySeed, 0, len(formals))
+	for _, parameter := range child.Boundary.Parameters {
+		seeds = append(seeds, formals[boundaryTerm(parameter.Symbol)])
+	}
+	return seeds, true
+}
+
 func artifactOperand(operands []equation.Operand, role string) ([]byte, bool) {
 	for _, operand := range operands {
 		if operand.Role == role {
@@ -3727,7 +3772,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// Demand either form privately and qualify its facts by body before they
 	// enter the root publication closure.
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
-	declaredBoundary, declaredMethodBoundary, staticAssignmentBoundary := false, false, false
+	declaredBoundary, declaredMethodBoundary, staticAssignmentBoundary, indexedReadBoundary := false, false, false, false
 	if declaredSeeds, admitted, methodBoundary := uncalledDeclaredBoundary(child); admitted {
 		uncalledSeeds = declaredSeeds
 		explicitAnyBoundary = false
@@ -3738,6 +3783,11 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		uncalledSeeds = staticSeeds
 		explicitAnyBoundary = false
 		staticAssignmentBoundary = true
+	}
+	if indexedSeeds, admitted := uncalledDeclaredIndexedReadBoundary(child); admitted {
+		uncalledSeeds = indexedSeeds
+		explicitAnyBoundary = false
+		indexedReadBoundary = true
 	}
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
 	staticSeeds, staticMemberReadBoundary := uncalledStaticMemberReadSeeds(child)
@@ -3788,6 +3838,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticAssignmentBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") {
 				continue
 			}
+			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
+				continue
+			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			if span, ok := spans[diagnostic.Key]; ok {
@@ -3810,6 +3863,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				continue
 			}
 			if staticAssignmentBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") {
+				continue
+			}
+			if indexedReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
 				continue
 			}
 			key := "child/" + body + "/" + item.Fact.Key

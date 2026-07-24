@@ -471,6 +471,24 @@ end
 	}
 }
 
+func TestCheckPublishesUncalledDeclaredIndexedOptionalContract(t *testing.T) {
+	result, err := engine.Check(`
+local function pick(values: {number}, index: number): number
+  return values[index]
+end
+return pick
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Key, "/type.return.contract/") && strings.Contains(string(diagnostic.Value), "may be nil") {
+			return
+		}
+	}
+	t.Fatalf("uncalled declared index diagnostic = %#v", result.Diagnostics)
+}
+
 func TestCheckPublishesExplicitAnyBoundaryViolationThroughGuardedMemberRead(t *testing.T) {
 	result, err := engine.Check(`
 local raw: any = {kind = "task", route_id = "start"}
