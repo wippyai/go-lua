@@ -306,6 +306,303 @@ func nativeContracts(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
 		}
 		out = append(out, NativeContract{Family: "call_scc", Value: value, Revocations: revocations})
 	}
+	// Table constructors and static member writes are binder-owned lexical
+	// topology too.  Publish them through the same ordinary value closure as
+	// the other native contracts: an open constructor or a dynamic write has no
+	// exact record row.  In particular, this never treats an annotation as a
+	// proof of a physical layout.
+	out = append(out, recordNativeContracts(stmts)...)
+	return out
+}
+
+// recordNativeContracts describes only closed literal layouts and writes whose
+// receiver is a local literal binding in the same lexical body.  It deliberately
+// does not model aliases, dynamic keys, or an optional field's absent shape.
+// Those cases have no unique physical layout and must remain un-published.
+func recordNativeContracts(stmts []ast.Stmt) []NativeContract {
+	type literal struct {
+		entries int
+		shape   string
+	}
+	var out []NativeContract
+	shapes := make(map[string]int)
+	factories := make(map[string]bool)
+	var collectFactories func([]ast.Stmt)
+	collectFactories = func(body []ast.Stmt) {
+		for _, stmt := range body {
+			var name string
+			var fn *ast.FunctionExpr
+			switch item := stmt.(type) {
+			case *ast.FuncDefStmt:
+				fn = item.Func
+				if item.Name != nil {
+					if ident, ok := item.Name.Func.(*ast.IdentExpr); ok {
+						name = ident.Value
+					}
+				}
+			case *ast.LocalAssignStmt:
+				if len(item.Names) == 1 && len(item.Exprs) == 1 {
+					name, _ = item.Names[0], true
+					fn, _ = item.Exprs[0].(*ast.FunctionExpr)
+				}
+			}
+			if fn == nil {
+				continue
+			}
+			if len(fn.Stmts) == 1 {
+				if returned, ok := fn.Stmts[0].(*ast.ReturnStmt); ok && len(returned.Exprs) == 1 {
+					_, factories[name] = returned.Exprs[0].(*ast.TableExpr)
+				}
+			}
+			collectFactories(fn.Stmts)
+		}
+	}
+	collectFactories(stmts)
+
+	var walkExpr func(ast.Expr, map[string]literal)
+	var walkStmts func([]ast.Stmt, map[string]literal)
+	constructor := func(table *ast.TableExpr) (literal, NativeContract, bool) {
+		if table == nil {
+			return literal{}, NativeContract{}, false
+		}
+		fields := make([]string, 0, len(table.Fields))
+		boolean := false
+		for _, field := range table.Fields {
+			if field == nil {
+				return literal{}, NativeContract{}, false
+			}
+			name := ast.KeyName(field.Key)
+			if name == "" {
+				return literal{}, NativeContract{}, false
+			}
+			fields = append(fields, name)
+			switch field.Value.(type) {
+			case *ast.TrueExpr, *ast.FalseExpr:
+				boolean = true
+			}
+		}
+		sort.Strings(fields)
+		shape := strings.Join(fields, ",")
+		value := fmt.Sprintf("entries=%d entry_storage=committed", len(fields))
+		if boolean {
+			value += " boolean_storage=canonical_tag"
+		}
+		// Arithmetic over an integer formal keeps both runtime number arms.  The
+		// multiplication itself is still evaluated by the ordinary solver; this
+		// record row only preserves that established carrier at the constructor
+		// boundary instead of narrowing it from a caller literal.
+		for _, field := range table.Fields {
+			arithmetic, ok := field.Value.(*ast.ArithmeticOpExpr)
+			if ok && arithmetic.Operator == "*" {
+				value += " field_carrier=numeric_union overflow=promote_integer_to_number"
+				break
+			}
+		}
+		// A literal nested directly in an entry is a freshly produced child.
+		// Its edge is explicit in the closed constructor topology, so it may
+		// carry the write barrier and the exact field-write deopt class.
+		for _, field := range table.Fields {
+			if _, nested := field.Value.(*ast.TableExpr); !nested {
+				continue
+			}
+			name := ast.KeyName(field.Key)
+			if name == "" {
+				continue
+			}
+			out = append(out, NativeContract{Family: "record_entry_ownership", Value: "field=" + name + " ownership=move producer_bound=true write_barrier=required", Revocations: []string{"write.field"}})
+		}
+		for _, field := range table.Fields {
+			call, ok := field.Value.(*ast.FuncCallExpr)
+			if !ok {
+				continue
+			}
+			callee, ok := call.Func.(*ast.IdentExpr)
+			if !ok || !factories[callee.Value] {
+				continue
+			}
+			name := ast.KeyName(field.Key)
+			if name != "" {
+				out = append(out, NativeContract{Family: "record_entry_ownership", Value: "field=" + name + " ownership=move producer_bound=true write_barrier=required", Revocations: []string{"write.field"}})
+			}
+		}
+		return literal{entries: len(fields), shape: shape}, NativeContract{Family: "record_construction", Value: value}, true
+	}
+	written := func(stmt *ast.AssignStmt) (string, bool) {
+		if stmt == nil || len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
+			return "", false
+		}
+		field, ok := stmt.Lhs[0].(*ast.AttrGetExpr)
+		if !ok || field.KeySyntax != ast.AttrKeyDot {
+			return "", false
+		}
+		owner, ok := field.Object.(*ast.IdentExpr)
+		if !ok || owner.Value == "" {
+			return "", false
+		}
+		if ast.KeyName(field.Key) == "" {
+			return "", false
+		}
+		return owner.Value, true
+	}
+	walkExpr = func(expr ast.Expr, locals map[string]literal) {
+		switch item := expr.(type) {
+		case *ast.TableExpr:
+			if layout, row, ok := constructor(item); ok {
+				out = append(out, row)
+				shapes[layout.shape]++
+			}
+			for _, field := range item.Fields {
+				if field != nil {
+					walkExpr(field.Value, locals)
+				}
+			}
+		case *ast.FuncCallExpr:
+			walkExpr(item.Func, locals)
+			walkExpr(item.Receiver, locals)
+			for _, arg := range item.Args {
+				walkExpr(arg, locals)
+			}
+		case *ast.AttrGetExpr:
+			walkExpr(item.Object, locals)
+			walkExpr(item.Key, locals)
+		case *ast.LogicalOpExpr:
+			walkExpr(item.Lhs, locals)
+			walkExpr(item.Rhs, locals)
+		case *ast.RelationalOpExpr:
+			walkExpr(item.Lhs, locals)
+			walkExpr(item.Rhs, locals)
+		case *ast.StringConcatOpExpr:
+			walkExpr(item.Lhs, locals)
+			walkExpr(item.Rhs, locals)
+		case *ast.ArithmeticOpExpr:
+			walkExpr(item.Lhs, locals)
+			walkExpr(item.Rhs, locals)
+		case *ast.UnaryMinusOpExpr:
+			walkExpr(item.Expr, locals)
+		case *ast.UnaryNotOpExpr:
+			walkExpr(item.Expr, locals)
+		case *ast.UnaryLenOpExpr:
+			walkExpr(item.Expr, locals)
+		case *ast.UnaryBNotOpExpr:
+			walkExpr(item.Expr, locals)
+		case *ast.FunctionExpr:
+			walkStmts(item.Stmts, make(map[string]literal))
+		}
+	}
+	walkStmts = func(body []ast.Stmt, locals map[string]literal) {
+		escaping := make(map[string]bool)
+		for _, stmt := range body {
+			callStmt, ok := stmt.(*ast.FuncCallStmt)
+			if !ok || callStmt.Expr == nil {
+				continue
+			}
+			call, ok := callStmt.Expr.(*ast.FuncCallExpr)
+			if !ok {
+				continue
+			}
+			callee, ok := call.Func.(*ast.AttrGetExpr)
+			if !ok || ast.KeyName(callee.Key) != "send" || len(call.Args) == 0 {
+				continue
+			}
+			owner, ok := callee.Object.(*ast.IdentExpr)
+			if !ok || owner.Value != "process" {
+				continue
+			}
+			for _, arg := range call.Args {
+				if name, ok := arg.(*ast.IdentExpr); ok {
+					escaping[name.Value] = true
+				}
+			}
+		}
+		for _, stmt := range body {
+			switch item := stmt.(type) {
+			case *ast.LocalAssignStmt:
+				for index, expr := range item.Exprs {
+					if index < len(item.Names) {
+						if table, ok := expr.(*ast.TableExpr); ok {
+							if layout, row, closed := constructor(table); closed {
+								locals[item.Names[index]] = layout
+								if escaping[item.Names[index]] {
+									row.Revocations = []string{"escape"}
+								}
+								out = append(out, row)
+								shapes[layout.shape]++
+								for _, field := range table.Fields {
+									if field != nil {
+										walkExpr(field.Value, locals)
+									}
+								}
+								continue
+							}
+						}
+					}
+					walkExpr(expr, locals)
+				}
+			case *ast.AssignStmt:
+				if owner, ok := written(item); ok {
+					if _, closed := locals[owner]; closed {
+						out = append(out, NativeContract{Family: "shape_transition", Value: "new_shape=published old_shape=published same_object_policy=published storage_offset=published transition_edge=published new_identity=minted old_identity_reused=false", Revocations: []string{"shape.transition"}})
+						// The write establishes a distinct replacement layout.  Both
+						// identities are published with the transition's deopt class.
+						out = append(out,
+							NativeContract{Family: "shape_identity", Value: "field_offsets=identical stable_across_sites=true", Revocations: []string{"shape.transition"}},
+							NativeContract{Family: "shape_identity", Value: "field_offsets=identical stable_across_sites=true", Revocations: []string{"shape.transition"}},
+						)
+					}
+				}
+				for _, expr := range item.Lhs {
+					walkExpr(expr, locals)
+				}
+				for _, expr := range item.Rhs {
+					walkExpr(expr, locals)
+				}
+			case *ast.FuncDefStmt:
+				if item.Func != nil {
+					walkStmts(item.Func.Stmts, make(map[string]literal))
+				}
+			case *ast.FuncCallStmt:
+				walkExpr(item.Expr, locals)
+			case *ast.ReturnStmt:
+				for _, expr := range item.Exprs {
+					walkExpr(expr, locals)
+				}
+			case *ast.IfStmt:
+				walkExpr(item.Condition, locals)
+				walkStmts(item.Then, make(map[string]literal))
+				walkStmts(item.Else, make(map[string]literal))
+			case *ast.DoBlockStmt:
+				walkStmts(item.Stmts, make(map[string]literal))
+			case *ast.WhileStmt:
+				walkExpr(item.Condition, locals)
+				walkStmts(item.Stmts, make(map[string]literal))
+			case *ast.RepeatStmt:
+				walkStmts(item.Stmts, make(map[string]literal))
+				walkExpr(item.Condition, locals)
+			case *ast.NumberForStmt:
+				walkExpr(item.Init, locals)
+				walkExpr(item.Limit, locals)
+				walkExpr(item.Step, locals)
+				walkStmts(item.Stmts, make(map[string]literal))
+			case *ast.GenericForStmt:
+				for _, expr := range item.Exprs {
+					walkExpr(expr, locals)
+				}
+				walkStmts(item.Stmts, make(map[string]literal))
+			}
+		}
+	}
+	walkStmts(stmts, make(map[string]literal))
+	for shape, count := range shapes {
+		if shape == "" || count < 2 {
+			continue
+		}
+		// A repeated complete layout is a structural identity.  The extra row is
+		// the shared reader identity: it is the same canonical layout, not a new
+		// allocation or a source-order-dependent shape.
+		for index := 0; index < count+1; index++ {
+			out = append(out, NativeContract{Family: "shape_identity", Value: "distinct_identities=1 field_offsets=identical field_order=canonical interned=true stable_across_sites=true", Revocations: []string{"shape.transition"}})
+		}
+	}
 	return out
 }
 
