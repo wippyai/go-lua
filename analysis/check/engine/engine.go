@@ -1819,7 +1819,7 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry wire")
 		}
 	}
-	values := make([]equation.Fact, 0, len(wire.Seeds)+len(wire.ClosureSeeds)+len(declaredRoots)*3)
+	values := make([]equation.Fact, 0, len(wire.Seeds)+len(wire.ClosureSeeds)+len(declaredRoots)*4)
 	seen := make(map[string]bool, len(wire.Seeds))
 	for _, seed := range wire.Seeds {
 		if !validEntrySeed(seed) || seen[seed.Term] {
@@ -1851,6 +1851,10 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			// than rejecting an otherwise independently evaluable child.
 			continue
 		}
+		// Keep the declaration as metadata even when a concrete seed is already
+		// present. It is not a value proof, but it preserves an explicit-any
+		// boundary for later caller-owned contract checks.
+		values = append(values, equation.Fact{Key: "declared-type/" + string(root) + "/entry", Value: append([]byte(nil), declaredTypes[name]...)})
 		// A concrete seed is the value authority.  Declarations fill only absent
 		// entries, which prevents a caller's channel identity from being replaced
 		// by a callee-local symbolic one.
@@ -2093,6 +2097,15 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		value, known := resolveKnownCurrentValue(arguments[index], partition)
 		if !known || isUnknownScalar(value) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: incomplete lexical argument %d", index)
+		}
+		// A lexical entry can transport a concrete allocation shape, but that
+		// does not validate a value which previously crossed an explicit-any
+		// boundary.  Reject it at the caller-owned application while the
+		// declared formal contract and the published boundary fact are both
+		// available.  The child is not entered with a forged typed seed.
+		declared := unwrap.Alias(subst.ExpandInstantiated(child.WIR.Type(parameter.Type)))
+		if (isExplicitAnyValue(value) || sourceHasExplicitAny(arguments[index], partition.Values()) || declaredExplicitAny(arguments[index], partition)) && typeRequiresBoundaryProof(declared) {
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, typeformat.Short(declared))), nil
 		}
 		term := boundaryTerm(parameter.Symbol)
 		seeds = append(seeds, entrySeed{Term: term, Value: value})
@@ -3583,6 +3596,9 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !runtimeTypeValidationProves(source, targetType, partition)
 	if available && !boundaryRequiresProof && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
+		if kind == "claim-kind/3" && claimTypeIsAny(targetType) {
+			closure.Values = append(closure.Values, explicitAnyBoundaryFact(target, operation.Target.Name))
+		}
 		if kind == "claim-kind/1" {
 			closure.Diagnostics = []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven runtime claim")}}
 		}
@@ -3590,6 +3606,9 @@ func claimKernel(operation equation.BoundEquation, partition equation.Partition)
 	}
 	refined := []byte("scalar/claim/" + kind + "/" + targetType)
 	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}}}
+	if kind == "claim-kind/3" && claimTypeIsAny(targetType) {
+		closure.Values = append(closure.Values, explicitAnyBoundaryFact(target, operation.Target.Name))
+	}
 	// A claim can refine its own target without erasing the explicit boundary
 	// value it consumed. Preserve that exact existing fact for a later branch
 	// or assignment on a member path; Top values and ordinary refinements are
@@ -4949,6 +4968,11 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			handle, localCallable = methodClosureHandleFor(operands.receiver, operands.method, partition)
 		}
 	}
+	if lexical != nil && localCallable {
+		if result, refuted := lexical.boundaryArgumentRefutation(operation, operands, handle, partition); refuted {
+			return result, nil
+		}
+	}
 	applyLocal := func() (equation.TransactionResult, bool, error) {
 		recursiveDemand := lexical != nil && lexical.closureDemandRecurses(handle, partition)
 		genericDirect := false
@@ -5090,6 +5114,14 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			break
 		}
 		argument, known := resolveKnownCurrentValue(term, partition)
+		// An explicit any is a published precision boundary, not a proof of a
+		// typed parameter contract.  The argument may retain a concrete shape
+		// from its allocation, but that shape crossed the boundary without
+		// validation and cannot discharge this call's declared requirement.
+		if known && (isExplicitAnyValue(argument) || sourceHasExplicitAny(term, partition.Values()) || declaredExplicitAny(term, partition)) && callableParameterRequiresProof(signature.Params[index]) {
+			expected := callableParameterType(signature.Params[index])
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, expected)), nil
+		}
 		if known && genericConstraintRefuted(argument, signature.Params[index]) {
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), strings.TrimSpace(strings.SplitN(signature.Params[index], ":", 2)[1]))), nil
 		}
@@ -5116,6 +5148,80 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	return equation.TransactionResult{Complete: true}, nil
 }
 
+func typeRequiresBoundaryProof(value typ.Type) bool {
+	if value == nil {
+		return false
+	}
+	switch unwrap.Alias(subst.ExpandInstantiated(value)).Kind() {
+	case kind.Any, kind.Unknown:
+		return false
+	default:
+		return true
+	}
+}
+
+// boundaryArgumentRefutation compares a known caller value with the closed
+// declared type at a local function boundary.  It consumes the same sealed
+// function witness used by assignment claims; a body may be ineligible for
+// result projection, but that must not erase a directly refuted parameter
+// contract.  Unknown values and malformed/inexact boundaries remain silent.
+func (l *lexicalEvaluator) boundaryArgumentRefutation(operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) (equation.TransactionResult, bool) {
+	child, exists := l.byPrototype[handle.Prototype]
+	if !exists || child.WIR == nil || operands.spread {
+		return equation.TransactionResult{}, false
+	}
+	arguments := operands.arguments
+	if operands.receiver != nil {
+		arguments = append([][]byte{operands.receiver}, arguments...)
+	}
+	if len(arguments) != len(child.Boundary.Parameters) {
+		return equation.TransactionResult{}, false
+	}
+	for index, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			continue
+		}
+		argument, known := resolveKnownCurrentValue(arguments[index], partition)
+		if !known || !declaredExplicitAny(arguments[index], partition) {
+			continue
+		}
+		expected := child.WIR.Type(parameter.Type)
+		if valueAgainstType(argument, expected) != shapeRefuted {
+			continue
+		}
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), typeformat.Short(expected))), true
+	}
+	return equation.TransactionResult{}, false
+}
+
+// declaredExplicitAny reads only the descriptive entry fact published from a
+// front declaration. Unlike a shape or inferred value, it identifies a
+// deliberate precision boundary and never manufactures compatibility proof.
+func declaredExplicitAny(term []byte, partition equation.Partition) bool {
+	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
+		return false
+	}
+	boundaryPrefix := "explicit-any/" + string(term) + "/"
+	prefix := "declared-type/" + string(term) + "/"
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, boundaryPrefix) && string(fact.Value) == "declared" {
+			return true
+		}
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		declared, ok := shapefact.DecodeTarget(fact.Value)
+		if ok && declared != nil && unwrap.Alias(subst.ExpandInstantiated(declared)).Kind() == kind.Any {
+			return true
+		}
+	}
+	return false
+}
+
+func explicitAnyBoundaryFact(term, operation string) equation.Fact {
+	return equation.Fact{Key: "explicit-any/" + term + "/" + operation, Value: []byte("declared")}
+}
+
 func genericCallableSignature(signature callableShape) bool {
 	for _, parameter := range signature.Params {
 		if len(parameter) > 0 && parameter[0] >= 'A' && parameter[0] <= 'Z' && (len(parameter) == 1 || strings.HasPrefix(parameter[1:], " :")) {
@@ -5123,6 +5229,21 @@ func genericCallableSignature(signature callableShape) bool {
 		}
 	}
 	return false
+}
+
+// callableParameterRequiresProof recognizes only a concrete declared
+// parameter type.  Unconstrained generic and top-like parameters impose no
+// boundary-validation obligation, so they retain the existing call behavior.
+func callableParameterRequiresProof(parameter string) bool {
+	expected := callableParameterType(parameter)
+	return expected != "" && expected != "any" && expected != "unknown"
+}
+
+func callableParameterType(parameter string) string {
+	if _, expected, found := strings.Cut(parameter, ":"); found {
+		return strings.TrimSpace(expected)
+	}
+	return strings.TrimSpace(parameter)
 }
 
 func genericConstraintRefuted(value []byte, parameter string) bool {
