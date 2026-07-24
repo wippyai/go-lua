@@ -3755,6 +3755,112 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 	return seeds, true
 }
 
+// uncalledStaticArithmeticBoundary admits a parameter-free closure only when
+// its entire call graph segment is already closed: imported member calls use a
+// project-published import authority and the local call targets a captured
+// closure whose unannotated formal is directly consumed by numeric arithmetic.
+// The body has no branches, dynamic lookup, or writes beyond ordinary call
+// result bindings, so evaluating it at allocation time cannot invent a path
+// condition or a caller-owned heap fact.
+func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(child front.Compilation, partition equation.Partition) bool {
+	if l == nil || child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) != 0 || len(child.Boundary.Captures) == 0 {
+		return false
+	}
+	captures := make(map[string]bool, len(child.Boundary.Captures))
+	arithmeticCallees := make(map[string]bool)
+	for _, capture := range child.Boundary.Captures {
+		term := boundaryTerm(capture.Symbol)
+		captures[term] = true
+		if handle, found := closureHandleFor([]byte(term), partition); found {
+			callee, exists := l.byPrototype[handle.Prototype]
+			if !exists {
+				return false
+			}
+			if unannotatedArithmeticFormal(callee) {
+				arithmeticCallees[term] = true
+			}
+			continue
+		}
+		if _, imported := l.importedAuthority(term); !imported {
+			return false
+		}
+	}
+	foundArithmeticCall := false
+	applications := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "entry", "publication", "environment-write":
+			continue
+		case "apply":
+			callee, found := artifactOperand(operation.Operands, "callee")
+			if !found {
+				return false
+			}
+			if arithmeticCallees[string(callee)] {
+				foundArithmeticCall = true
+				applications["call/"+operation.Target.Name] = true
+				continue
+			}
+			root, _, member := tableAddress(callee)
+			if !member || !captures[string(root)] {
+				return false
+			}
+			if _, imported := l.importedAuthority(string(root)); !imported {
+				return false
+			}
+			applications["call/"+operation.Target.Name] = true
+		case "external-call", "call-results":
+			application, found := artifactOperand(operation.Operands, "application")
+			if !found || !applications[string(application)] {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return foundArithmeticCall
+}
+
+func unannotatedArithmeticFormal(child front.Compilation) bool {
+	if child.WIR == nil || child.Cyclic != nil {
+		return false
+	}
+	formals := make(map[string]bool)
+	for _, parameter := range child.Boundary.Parameters {
+		if !parameter.Vararg && parameter.Type == 0 {
+			formals[boundaryTerm(parameter.Symbol)] = true
+		}
+	}
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "expression" {
+			continue
+		}
+		expressionKind, hasKind := artifactOperand(operation.Operands, "kind")
+		operator, hasOperator := artifactOperand(operation.Operands, "operator")
+		if !hasKind || !hasOperator || string(expressionKind) != strconv.Itoa(int(wir.OpBinOp)) {
+			continue
+		}
+		operatorID, err := strconv.Atoi(string(operator))
+		if err != nil {
+			continue
+		}
+		operatorText, supported := expressionOperatorText(wir.Operator(operatorID))
+		if !supported {
+			continue
+		}
+		result, numeric := typeoperator.BinaryOp(typ.Number, operatorText, typ.Number)
+		if !numeric || result == nil || (result.Kind() != kind.Number && result.Kind() != kind.Integer) {
+			continue
+		}
+		left, leftFound := artifactOperand(operation.Operands, "left")
+		right, rightFound := artifactOperand(operation.Operands, "right")
+		if leftFound && formals[string(left)] || rightFound && formals[string(right)] {
+			return true
+		}
+	}
+	return false
+}
+
 // uncalledPublishedStdlibCalls returns exact apply applications whose
 // external-call companion carries a standard-library provider publication.
 // The declaration-only child entry consumes that registry contract; it does
@@ -4061,7 +4167,7 @@ func hasDeclaredFormalMethodCall(child front.Compilation, operation equation.Equ
 // participate in later validation, while a sealed local closure contributes
 // only its already-published call capability. Unknown or non-callable captures
 // therefore leave the child dormant rather than receiving a synthetic entry.
-func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures bool) ([]byte, bool, error) {
+func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies bool) ([]byte, bool, error) {
 	seeds := append([]entrySeed(nil), formalSeeds...)
 	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
 	for _, capture := range child.Boundary.Captures {
@@ -4074,6 +4180,19 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 		if !found {
 			if isUnknownScalar(value) {
 				return nil, false, nil
+			}
+			// A require binding can carry its project-selected export type as
+			// entry metadata. This is not a reconstructed module value: the
+			// exact authority was published when require's result was written.
+			// It is admitted only on the typed static paths that already require
+			// a complete capture entry.
+			if imported, found := l.importedAuthority(term); allowImportedCaptures {
+				encoded, encodedOK := shapefact.EncodeTarget(imported)
+				if !found || !encodedOK {
+					return nil, false, nil
+				}
+				seeds = append(seeds, entrySeed{Term: term, Value: encoded})
+				continue
 			}
 			// A sealed table capture is transported only for the narrow
 			// declaration-only static-member path. Its identity and current
@@ -4100,6 +4219,31 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 		}
 		seeds = append(seeds, entrySeed{Term: term, Value: value})
 		closureSeeds = append(closureSeeds, entryClosureSeed{Term: term, Handle: handle})
+	}
+	if includeClosureDependencies {
+		seen := make(map[string]bool, len(seeds))
+		for _, seed := range seeds {
+			seen[seed.Term] = true
+		}
+		for index := 0; index < len(closureSeeds); index++ {
+			for _, capture := range closureSeeds[index].Handle.Captures {
+				if strings.HasPrefix(capture, "scalar/") || seen[capture] {
+					continue
+				}
+				value, known := resolveKnownCurrentValue([]byte(capture), partition)
+				if !known || isUnknownScalar(value) {
+					return nil, false, nil
+				}
+				seen[capture] = true
+				seeds = append(seeds, entrySeed{Term: capture, Value: value})
+				if handle, found := closureHandleFor([]byte(capture), partition); found {
+					if _, admitted := l.byPrototype[handle.Prototype]; !admitted {
+						return nil, false, nil
+					}
+					closureSeeds = append(closureSeeds, entryClosureSeed{Term: capture, Handle: handle})
+				}
+			}
+		}
 	}
 	boundarySeeds := append([]entrySeed(nil), seeds...)
 	seeds = append(seeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
@@ -5018,20 +5162,21 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		explicitAnyBoundary = false
 		localUnionReadBoundary = true
 	}
+	arithmeticBoundary := lexical.uncalledStaticArithmeticBoundary(child, partition)
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
 	staticSeeds, staticMemberReadBoundary := uncalledStaticMemberReadSeeds(child)
 	if staticMemberReadBoundary {
 		uncalledSeeds = staticSeeds
 		explicitAnyBoundary = false
 	}
-	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || typedChannelSendBoundary || staticMemberReadBoundary) {
+	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary) {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
 		} else if len(child.Boundary.Captures) == 0 {
 			entry, entryErr = encodeChildEntry(uncalledSeeds)
 		} else {
-			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, staticAssignmentBoundary)
+			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, staticAssignmentBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary)
 		}
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
@@ -5071,6 +5216,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, diagnostic) && !uncalledStaticResultCallDiagnostic(child.Artifact, diagnostic.Key) {
 				continue
 			}
+			if arithmeticBoundary && !strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/") {
+				continue
+			}
 			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
 				continue
 			}
@@ -5100,6 +5248,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				continue
 			}
 			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, item.Fact.Key) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, item.Fact) && !uncalledStaticResultCallDiagnostic(child.Artifact, item.Fact.Key) {
+				continue
+			}
+			if arithmeticBoundary && !strings.HasPrefix(item.Fact.Key, "type.call.direct.argument_type/") {
 				continue
 			}
 			if indexedReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
@@ -5146,7 +5297,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// declared formals and already-published captures form a closed entry; only
 	// stack witnesses without any boundary evidence cross the child projector.
 	if seeds, eligible := cyclicPlacementWitnessEntry(child); eligible {
-		entry, admitted, entryErr := lexical.uncalledChildEntry(child, seeds, partition, true)
+		entry, admitted, entryErr := lexical.uncalledChildEntry(child, seeds, partition, true, false, false)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -9620,6 +9771,9 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if result, refuted := lexical.boundaryArgumentRefutation(operation, operands, handle, partition); refuted {
 			return result, nil
 		}
+		if result, refuted := lexical.boundaryArithmeticOperandRefutation(operation, operands, handle, partition); refuted {
+			return result, nil
+		}
 	}
 	applyLocal := func() (equation.TransactionResult, bool, error) {
 		recursiveDemand := lexical != nil && lexical.closureDemandRecurses(handle, partition)
@@ -9897,6 +10051,91 @@ func (l *lexicalEvaluator) boundaryArgumentRefutation(operation equation.BoundEq
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValue(argument), typeformat.Short(expected))), true
 	}
 	return equation.TransactionResult{}, false
+}
+
+// boundaryArithmeticOperandRefutation carries a local body's direct numeric
+// operand obligation back to its exact caller. An unannotated formal normally
+// has no boundary contract, but an already-lowered binary expression with a
+// proven numeric counterpart is an executable requirement of that formal.
+// The check remains fail-closed: it accepts only a known, statically refuted
+// argument at a complete lexical boundary and never infers a type from an
+// opaque expression or unresolved capture.
+func (l *lexicalEvaluator) boundaryArithmeticOperandRefutation(operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) (equation.TransactionResult, bool) {
+	child, exists := l.byPrototype[handle.Prototype]
+	if !exists || child.WIR == nil || operands.spread {
+		return equation.TransactionResult{}, false
+	}
+	arguments := operands.arguments
+	if operands.receiver != nil {
+		arguments = append([][]byte{operands.receiver}, arguments...)
+	}
+	if len(arguments) != len(child.Boundary.Parameters) {
+		return equation.TransactionResult{}, false
+	}
+	for index, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type != 0 {
+			continue
+		}
+		argument, known := resolveKnownCurrentValue(arguments[index], partition)
+		if !known || isUnknownScalar(argument) || !arithmeticOperandRefuted(argument) {
+			continue
+		}
+		formal := []byte(boundaryTerm(parameter.Symbol))
+		for _, expression := range child.Artifact.Equations {
+			if expression.Occurrence.Kind != "expression" {
+				continue
+			}
+			expressionKind, found := artifactOperand(expression.Operands, "kind")
+			if !found || string(expressionKind) != strconv.Itoa(int(wir.OpBinOp)) {
+				continue
+			}
+			operator, found := artifactOperand(expression.Operands, "operator")
+			if !found {
+				continue
+			}
+			operatorID, err := strconv.Atoi(string(operator))
+			if err != nil {
+				continue
+			}
+			operatorText, supported := expressionOperatorText(wir.Operator(operatorID))
+			if !supported {
+				continue
+			}
+			left, leftFound := artifactOperand(expression.Operands, "left")
+			right, rightFound := artifactOperand(expression.Operands, "right")
+			if !leftFound || !rightFound {
+				continue
+			}
+			counterpart := right
+			if bytes.Equal(right, formal) {
+				counterpart = left
+			} else if !bytes.Equal(left, formal) {
+				continue
+			}
+			counterpartValue, resolveErr := resolveCurrentValue(counterpart, partition)
+			if resolveErr != nil || isUnknownScalar(counterpartValue) {
+				continue
+			}
+			counterpartType, typed := expressionValueType(counterpartValue)
+			if !typed {
+				continue
+			}
+			result, numeric := typeoperator.BinaryOp(typ.Number, operatorText, counterpartType)
+			if !numeric || result == nil || (result.Kind() != kind.Number && result.Kind() != kind.Integer) {
+				continue
+			}
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not number", index+1, callDisplayValue(argument))), true
+		}
+	}
+	return equation.TransactionResult{}, false
+}
+
+func arithmeticOperandRefuted(value []byte) bool {
+	// A closed table is an existing runtime-kind publication. Unlike an open
+	// table annotation, it conclusively cannot satisfy Lua's numeric operand
+	// requirement even when the general structural comparator has no scalar
+	// relation for tables.
+	return shapefact.IsTable(value) || valueAgainstType(value, typ.Number) == shapeRefuted
 }
 
 // memberRelayEntry proves that this is the narrowly admitted member-summary

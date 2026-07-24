@@ -896,6 +896,32 @@ local answer: string = provider.answer()`
 	t.Fatalf("typed imported callable diagnostic = %#v", typed.Diagnostics)
 }
 
+func TestCheckWithImportsRejectsNonNumberAtInferredArithmeticBoundary(t *testing.T) {
+	source := `local provider = require("provider")
+local config = { rate = 4 }
+local function scale(tokens)
+  return tokens * config.rate
+end
+local function run()
+  local item = provider.meta()
+  return scale(item)
+end
+return run`
+	provider := typetable.NewRecord().Field("meta", typ.Func().Returns(
+		typetable.NewRecord().Field("name", typ.String).Build(),
+	).Build()).Build()
+	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	if err != nil {
+		t.Fatalf("CheckWithImports: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.call.direct.argument_type" && diagnostic.Span.StartLine == 8 && strings.Contains(diagnostic.Message, "not number") {
+			return
+		}
+	}
+	t.Fatalf("inferred arithmetic boundary diagnostics = %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckWithImportsRootTruthinessNarrowingUsesCurrentOptionalResultSummary(t *testing.T) {
 	source := `local provider = require("provider")
 local err = provider.fetch()
