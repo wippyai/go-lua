@@ -5430,6 +5430,128 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 	return entry, true, nil
 }
 
+// publishUncalledFalseEdgeAnyAssignment admits one declaration-owned
+// obligation from an otherwise dormant local helper body. The front must have
+// published the complete chain: an explicit-any formal, an exact captured
+// read-only local predicate call, its branch result, and a strict assignment
+// guarded by that branch's false edge. A local predicate's false result is not
+// a type proof unless the front published a relation for it, so this existing
+// false path remains possible and the assignment cannot be accepted.
+func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equation.OutputClosure, child front.Compilation, captures []string, partition equation.Partition) {
+	if l == nil || closure == nil || child.Cyclic != nil {
+		return
+	}
+	formals, explicitAny := uncalledExplicitAnyBoundary(child)
+	if !explicitAny || len(formals) == 0 || len(captures) != len(child.Boundary.Captures) {
+		return
+	}
+	anyFormal := make(map[string]bool, len(formals))
+	for _, seed := range formals {
+		anyFormal[seed.Term] = true
+	}
+	readOnlyCapture := make(map[string]bool, len(captures))
+	for _, capture := range captures {
+		handle, found := closureHandleFor([]byte(capture), partition)
+		if !found {
+			continue
+		}
+		candidate, found := l.byPrototype[handle.Prototype]
+		if found && uncalledReadOnlyClosure(candidate) {
+			readOnlyCapture[capture] = true
+		}
+	}
+	if len(readOnlyCapture) == 0 {
+		return
+	}
+	callResultCallee := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		callee, hasCallee := artifactOperand(operation.Operands, "callee")
+		if !hasCallee || !readOnlyCapture[string(callee)] {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role == "result-00000000" {
+				callResultCallee[string(operand.Term.Encoding)] = true
+			}
+		}
+	}
+	for _, branch := range child.Artifact.Equations {
+		if branch.Occurrence.Kind != "branch-relations" {
+			continue
+		}
+		condition, hasCondition := artifactOperand(branch.Operands, "condition")
+		if !hasCondition || !callResultCallee[string(condition)] {
+			continue
+		}
+		for _, operand := range branch.Operands {
+			if operand.Role == "predicate" {
+				return
+			}
+		}
+		falseEdge := "front/branch/" + branch.Target.Name + "/false"
+		for _, claim := range child.Artifact.Equations {
+			if claim.Occurrence.Kind != "claim" || !hasGuardEncoding(claim.Guards, falseEdge) {
+				continue
+			}
+			source, hasSource := artifactOperand(claim.Operands, "value")
+			targetType, hasType := artifactOperand(claim.Operands, "type")
+			if !hasSource || !hasType || !anyFormal[string(source)] || !assignmentTargetRequiresProof(string(targetType)) {
+				continue
+			}
+			display := strings.TrimPrefix(string(source), "path/")
+			for _, operand := range claim.Operands {
+				if operand.Role == "source-display" && len(operand.Term.Encoding) != 0 {
+					display = string(operand.Term.Encoding)
+					break
+				}
+			}
+			fact := equation.Fact{Key: "type.assignment/" + claim.Target.Name, Value: []byte(assignmentAnyMismatchMessage(display, string(targetType)))}
+			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, []equation.Fact{fact})
+			for _, item := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + item.Fact.Key
+				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)})
+				if item.Span.Valid() {
+					l.diagnosticSpans[key] = item.Span
+				}
+				item.Fact.Key = key
+				l.childPublished[key] = item
+			}
+			return
+		}
+	}
+}
+
+func hasGuardEncoding(guards []equation.Guard, want string) bool {
+	for _, guard := range guards {
+		if string(guard.Encoding) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// uncalledReadOnlyClosure identifies a lexical capability that can accompany
+// an existing explicit-any boundary without importing caller state. It is
+// deliberately narrower than general uncalled-child admission: the helper has
+// no captures and cannot write, mutate, allocate a returned closure, select,
+// or iterate. Its operations are therefore only value/condition consumers of
+// the exact formal supplied by the enclosing child entry.
+func uncalledReadOnlyClosure(child front.Compilation) bool {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 {
+		return false
+	}
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "environment-write", "path-replacement", "index-mutation", "path-invalidation", "object-materialization", "channel-select", "generic-for":
+			return false
+		}
+	}
+	return true
+}
+
 func uncalledSealedTableCapture(term, value []byte, partition equation.Partition) bool {
 	table, sealed := shapefact.DecodeTable(value)
 	if !sealed || !table.Closed {
@@ -6362,6 +6484,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		lexical.publishStaticNilCallDiagnostic(&closure, child, parent.Artifact.Equations, operation.Target.Name, captures, partition)
 	}
 	lexical.publishCapturedOptionalMemberCallDiagnostic(&closure, child, captures, partition)
+	lexical.publishUncalledFalseEdgeAnyAssignment(&closure, child, captures, partition)
 	// A parameter-free child is closed at allocation time. A capture-free child
 	// whose entire boundary is explicitly any is closed too: each formal has a
 	// concrete precision-boundary fact, rather than an invented top value.
