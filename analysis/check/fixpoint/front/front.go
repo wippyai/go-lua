@@ -92,9 +92,16 @@ type Compilation struct {
 	// allocations in Artifact. They retain the same WIR-derived equation form
 	// and publication path as the enclosing body; a caller decides which body
 	// entries are available to evaluate.
-	Nested                    []Compilation
-	ClaimSpans                map[string]wir.Span
-	ClaimTargetSpans          map[string]wir.Span
+	Nested           []Compilation
+	ClaimSpans       map[string]wir.Span
+	ClaimTargetSpans map[string]wir.Span
+	// ClaimNameSpans anchor an annotation claim at the declared name itself.
+	// ClaimTargetSpans prefer the declared type, so a diagnostic that explains
+	// where a binding was born needs this separate channel.
+	ClaimNameSpans map[string]wir.Span
+	// BranchJoinSpans anchor a branch at the closing `end` where its arms
+	// rejoin. BranchSpans own the condition; a merge is a different location.
+	BranchJoinSpans           map[string]wir.Span
 	CallSpans                 map[string]wir.Span
 	BranchSpans               map[string]wir.Span
 	EffectSpans               map[string]wir.Span
@@ -122,6 +129,48 @@ type Compilation struct {
 	// recursive identity graph from the declaration that annotates exported
 	// values.
 	TypeDefinitions map[string]typ.Type
+	// TypeFieldSpans records where each field of a top-level record declaration
+	// was named. It is source metadata for diagnostics that must cite where an
+	// optional field was declared; the resolved type stays the sole authority.
+	TypeFieldSpans map[string]map[string]wir.Span
+}
+
+// recordFieldNameSpans retains the authored field-name token of every
+// top-level record declaration. Only the parser owns those positions, and the
+// resolved type discards them.
+func recordFieldNameSpans(stmts []ast.Stmt) map[string]map[string]wir.Span {
+	out := make(map[string]map[string]wir.Span)
+	for _, statement := range stmts {
+		definition, ok := statement.(*ast.TypeDefStmt)
+		if !ok || definition.Name == "" {
+			continue
+		}
+		record, ok := definition.Type.(*ast.RecordTypeExpr)
+		if !ok {
+			continue
+		}
+		fields := make(map[string]wir.Span, len(record.Fields))
+		for _, field := range record.Fields {
+			if field.Name == "" || field.NamePosition.Line <= 0 {
+				continue
+			}
+			span := wir.Span{StartLine: field.NamePosition.Line, StartCol: field.NamePosition.Column, EndLine: field.NamePosition.Line, EndCol: field.NamePosition.Column}
+			if field.NamePosition.EndLine > 0 {
+				span.EndLine = field.NamePosition.EndLine
+			}
+			if field.NamePosition.EndColumn > 0 {
+				span.EndCol = field.NamePosition.EndColumn
+			}
+			fields[field.Name] = span
+		}
+		if len(fields) != 0 {
+			out[definition.Name] = fields
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 type ControlDiagnostic struct {
@@ -236,6 +285,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, controlDiagnostics...)
 	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
 	compilation.TypeDefinitions = typeDefinitions
+	compilation.TypeFieldSpans = recordFieldNameSpans(stmts)
 	return compilation, nil
 }
 
@@ -697,6 +747,8 @@ func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, protot
 		ClaimSpans: claims, ClaimTargetSpans: claimTargets, CallSpans: calls,
 		BranchSpans: branches, EffectSpans: effects, ExpressionSpans: expressions,
 		ReturnSpans:               returnSpans(wirBody, artifact),
+		ClaimNameSpans:            claimNameSpans(wirBody, artifact),
+		BranchJoinSpans:           branchJoinSpans(wirBody, artifact),
 		QualifiedClaimSpans:       qualifySpans(body, claims),
 		QualifiedClaimTargetSpans: qualifySpans(body, claimTargets),
 		QualifiedCallSpans:        qualifySpans(body, calls),
@@ -1115,6 +1167,59 @@ func branchSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 			continue
 		}
 		if span := branches[branchIndex].ExprSpan; span.Valid() {
+			out[operation.Target.Name] = span
+		}
+		branchIndex++
+	}
+	return out
+}
+
+// claimNameSpans retains the declared-name anchor of every annotation claim.
+// It is the birth location of a binding, which ClaimTargetSpans deliberately
+// replaces with the declared type once an annotation supplies one.
+func claimNameSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
+	if body == nil {
+		return nil
+	}
+	claims := make([]wir.Instruction, 0)
+	for index := 0; index < body.Len(); index++ {
+		if instruction := body.Instr(index); instruction.Op == wir.OpClaim {
+			claims = append(claims, instruction)
+		}
+	}
+	out := make(map[string]wir.Span, len(claims))
+	claimIndex := 0
+	for _, item := range artifact.Equations {
+		if item.Occurrence.Kind != "claim" || claimIndex >= len(claims) {
+			continue
+		}
+		if span := claims[claimIndex].TargetSpan; span.Valid() {
+			out[item.Target.Name] = span
+		}
+		claimIndex++
+	}
+	return out
+}
+
+// branchJoinSpans retains the closing `end` of every authored if statement.
+// Loop conditions have no authored merge token and therefore stay absent.
+func branchJoinSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
+	if body == nil {
+		return nil
+	}
+	branches := make([]wir.Instruction, 0)
+	for index := 0; index < body.Len(); index++ {
+		if instruction := body.Instr(index); instruction.Op == wir.OpBranch {
+			branches = append(branches, instruction)
+		}
+	}
+	out := make(map[string]wir.Span, len(branches))
+	branchIndex := 0
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "branch-relations" || branchIndex >= len(branches) {
+			continue
+		}
+		if span := branches[branchIndex].JoinSpan; span.Valid() {
 			out[operation.Target.Name] = span
 		}
 		branchIndex++

@@ -117,6 +117,10 @@ func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast
 /* Lua 5.3 operators */
 %token<token> TShl TShr TIdiv
 
+/* Index brackets carry their own token positions: an indexed expression's
+   closing bracket is the authoritative end of its source span. */
+%token<token> '[' ']'
+
 /* Type annotation operators */
 %token<token> TArrow TQuestion TBang TQuestionColon
 
@@ -212,7 +216,7 @@ stat:
             $$.SetLastLine($4.Line())
         } |
         TIf expr TThen block elseifs TEnd {
-            $$ = &ast.IfStmt{Condition: $2, Then: $4}
+            $$ = &ast.IfStmt{Condition: $2, Then: $4, EndPosition: $6.Pos}
             cur := $$
             for _, elseif := range $5 {
                 cur.(*ast.IfStmt).Else = []ast.Stmt{elseif}
@@ -222,7 +226,7 @@ stat:
             $$.SetLastPosFromToken($6.Pos)
         } |
         TIf expr TThen block elseifs TElse block TEnd {
-            $$ = &ast.IfStmt{Condition: $2, Then: $4}
+            $$ = &ast.IfStmt{Condition: $2, Then: $4, EndPosition: $8.Pos}
             cur := $$
             for _, elseif := range $5 {
                 cur.(*ast.IfStmt).Else = []ast.Stmt{elseif}
@@ -898,7 +902,9 @@ typeexpr:
                 $$ = union
             } else {
                 $$ = &ast.UnionTypeExpr{Types: []ast.TypeExpr{$1, $3}}
+                $$.CopyPos($1)
             }
+            $$.CopyLastPos($3)
         } |
         typeexpr '&' simpletypeexpr {
             if inter, ok := $1.(*ast.IntersectionTypeExpr); ok {
@@ -906,7 +912,9 @@ typeexpr:
                 $$ = inter
             } else {
                 $$ = &ast.IntersectionTypeExpr{Types: []ast.TypeExpr{$1, $3}}
+                $$.CopyPos($1)
             }
+            $$.CopyLastPos($3)
         } |
         simpletypeexpr TExtends simpletypeexpr TQuestion typeexpr ':' typeexpr {
             $$ = &ast.ConditionalTypeExpr{Check: $1, Extends: $3, Then: $5, Else: $7}
@@ -930,6 +938,8 @@ simpletypeexpr:
         } |
         simpletypeexpr TQuestion {
             $$ = &ast.OptionalTypeExpr{Inner: $1}
+            $$.CopyPos($1)
+            $$.SetLastPosFromToken($2.Pos)
         }
 
 primarytypeexpr:

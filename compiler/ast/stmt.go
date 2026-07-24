@@ -77,6 +77,10 @@ type IfStmt struct {
 	Then      []Stmt // Statements when condition is true
 	Else      []Stmt // Statements when condition is false (may contain nested IfStmt for elseif)
 	HasElse   bool   // Source contained a terminal else, including an empty body
+	// EndPosition is the `end` token that closes this statement, where its arms
+	// rejoin. An elseif member of a chain shares the head's token and therefore
+	// carries no position of its own.
+	EndPosition Position
 }
 
 // NumberForStmt represents a numeric for loop (for i = start, limit, step do ... end).

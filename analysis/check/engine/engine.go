@@ -225,7 +225,11 @@ func CheckWithImportsResolverAndGlobals(source string, imports, globals map[stri
 // Evaluation always runs to completion: the analysis carries its own
 // termination argument (frozen WTO, widening, finite lattices), so no
 // resource cap may truncate a file's verdict.
-func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, globals map[string]typ.Type, resolver typeannotation.Resolver, relations map[string]exportrelation.Summary) (result Result, err error) {
+// sourcePath is optional: a project adapter that knows the entry's file name
+// supplies it so origin diagnostics can cite the source location they prove.
+// Without it those diagnostics stay unpublished rather than naming a file the
+// engine cannot know.
+func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, globals map[string]typ.Type, resolver typeannotation.Resolver, relations map[string]exportrelation.Summary, sourcePath ...string) (result Result, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("%w: %v", ErrInternalPanic, recovered)
@@ -248,6 +252,9 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 	lexical.setImportedRelations(relations)
 	lexical.setGlobalTypes(globals)
 	lexical.setTypeOrigins(compilation)
+	if len(sourcePath) != 0 {
+		lexical.sourcePath = sourcePath[0]
+	}
 	lexical.ctx = fileContext
 	closure, transactions, err := evaluateCheck(compilation, binding, lexical, fileContext)
 	if err != nil {
@@ -261,7 +268,6 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 	}
 	return projectCheck(compilation, lexical, closure, transactions, parseElapsed, time.Since(evaluateStarted)), nil
 }
-
 
 type conservativeEvaluationError struct{ error }
 
@@ -1882,6 +1888,8 @@ func diagnosticCode(key string) string {
 		return "advice.always_true_guard"
 	case strings.HasPrefix(key, "lint.condition.redundant/"):
 		return "lint.condition.redundant"
+	case strings.HasPrefix(key, "type.nil.unsafe_use/"):
+		return "type.nil.unsafe_use"
 	case strings.HasPrefix(key, "type.assignment/"):
 		return "type.assignment"
 	case strings.HasPrefix(key, "type.member.missing/"):
@@ -2455,6 +2463,10 @@ type lexicalEvaluator struct {
 	importedAuthorities map[string]typ.Type
 	typeOrigins         map[string]typ.Type
 	typeDefinitions     map[string]typ.Type
+	typeFieldSpans      map[string]map[string]wir.Span
+	// sourcePath is the project-supplied file name for this compilation unit.
+	// It is presentation identity only: no fact, type, or proof depends on it.
+	sourcePath          string
 	importedAuthorityMu sync.RWMutex
 }
 
@@ -2666,7 +2678,7 @@ func hasProjectableTableResult(child front.Compilation) bool {
 
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	table := interproc.NewProjectedTable()
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), captureWrites: make(map[string]map[string]bool), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions)}
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), captureWrites: make(map[string]map[string]bool), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions), typeFieldSpans: root.TypeFieldSpans}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
 		l.byBody[compilation.Body] = compilation
@@ -6421,6 +6433,462 @@ func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.Compi
 	return true, projected, nil
 }
 
+// nilOriginWitness is the closed origin chain of one nil-born binding: the
+// annotation that admitted nil, the unconditional write that created it, and
+// every non-exhaustive branch merge the nil crossed intact. It is derived from
+// the front's own publications, so it names no source text of its own.
+type nilOriginWitness struct {
+	display  string
+	declared string
+	claim    string
+	joins    []string
+	valid    bool
+}
+
+// nilOriginUnsafeUses recognizes a possibly-nil binding that reaches a method
+// call with no guard on that path. The proof is the body's own control flow:
+// the binding is written nil unconditionally, every later write to it is the
+// true edge of a branch whose predicate can be false, and the use itself is
+// unguarded, so the all-false path carries the original nil into the call.
+// A write this recognizer cannot account for, a branch whose false edge is not
+// feasible, and a guarded use each leave the binding unreported.
+func nilOriginUnsafeUses(child front.Compilation) map[string]nilOriginWitness {
+	if child.WIR == nil || child.Cyclic != nil {
+		return nil
+	}
+	witnesses := nilOriginCandidates(child)
+	if len(witnesses) == 0 {
+		return nil
+	}
+	uses := make(map[string]nilOriginWitness)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" || len(operation.Guards) != 0 {
+			continue
+		}
+		receiver, hasReceiver := artifactOperand(operation.Operands, "receiver")
+		method, hasMethod := artifactOperand(operation.Operands, "method")
+		if !hasReceiver || !hasMethod {
+			continue
+		}
+		if name, ok := callMethodName(method); !ok || name == "" {
+			continue
+		}
+		witness, candidate := witnesses[string(receiver)]
+		if !candidate || !witness.valid || operation.Target.Name <= witness.claim {
+			continue
+		}
+		lastJoin := ""
+		if len(witness.joins) != 0 {
+			lastJoin = witness.joins[len(witness.joins)-1]
+		}
+		if operation.Target.Name <= lastJoin {
+			continue
+		}
+		uses[operation.Target.Name] = witness
+	}
+	return uses
+}
+
+// nilOriginCandidates collects every binding whose complete write history is
+// one unconditional nil plus true-edge replacements under feasible branches.
+// Any other write invalidates the binding: the recognizer owns the whole cell,
+// never a prefix of its history.
+func nilOriginCandidates(child front.Compilation) map[string]nilOriginWitness {
+	formals := make(map[string]typ.Type, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type == 0 {
+			continue
+		}
+		formals[boundaryTerm(parameter.Symbol)] = child.WIR.Type(parameter.Type)
+	}
+	feasibleBranch := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "branch-relations" || len(operation.Guards) != 0 {
+			continue
+		}
+		if !child.BranchJoinSpans[operation.Target.Name].Valid() {
+			continue
+		}
+		predicate, found := artifactOperand(operation.Operands, "predicate")
+		if !found || !strings.HasPrefix(string(predicate), branchPredicatePrefix) {
+			continue
+		}
+		var relation branchPredicateWire
+		if json.Unmarshal(predicate[len(branchPredicatePrefix):], &relation) != nil {
+			continue
+		}
+		if relation.Kind != "truthy" || relation.Negated || relation.Path == "" {
+			continue
+		}
+		declared, formal := formals["path/"+relation.Path]
+		if !formal || declared == nil || !typ.AdmitsFalse(unwrap.Alias(declared)) {
+			continue
+		}
+		feasibleBranch[operation.Target.Name] = true
+	}
+	witnesses := make(map[string]nilOriginWitness)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		if !hasTarget || !hasValue || !strings.HasPrefix(string(target), "path/") {
+			continue
+		}
+		witness := witnesses[string(target)]
+		if len(operation.Guards) == 0 && string(value) == "scalar/nil" && len(witness.joins) == 0 {
+			witness.valid = true
+			witnesses[string(target)] = witness
+			continue
+		}
+		if !witness.valid || len(operation.Guards) != 1 || string(value) == "scalar/nil" {
+			witness.valid = false
+			witnesses[string(target)] = witness
+			continue
+		}
+		parts := strings.Split(string(operation.Guards[0].Encoding), "/")
+		if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || parts[3] != "true" || !feasibleBranch[parts[2]] {
+			witness.valid = false
+			witnesses[string(target)] = witness
+			continue
+		}
+		witness.joins = appendNilOriginJoin(witness.joins, parts[2])
+		witnesses[string(target)] = witness
+	}
+	for term, witness := range witnesses {
+		if !witness.valid || len(witness.joins) == 0 {
+			delete(witnesses, term)
+			continue
+		}
+		claim, display, declared, annotated := nilOriginDeclaration(child, term)
+		if !annotated || nilOriginTermEscapes(child, term, claim) {
+			delete(witnesses, term)
+			continue
+		}
+		witness.claim, witness.display, witness.declared = claim, display, declared
+		witnesses[term] = witness
+	}
+	return witnesses
+}
+
+func appendNilOriginJoin(joins []string, branch string) []string {
+	for _, existing := range joins {
+		if existing == branch {
+			return joins
+		}
+	}
+	joins = append(joins, branch)
+	sort.Strings(joins)
+	return joins
+}
+
+// nilOriginDeclaration returns the unguarded optional annotation that admitted
+// nil into this binding. An unannotated local is deliberately excluded: its
+// merged assignment obligation is already owned by the declared-branch
+// assignment witness.
+func nilOriginDeclaration(child front.Compilation, term string) (string, string, string, bool) {
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "claim" || len(operation.Guards) != 0 {
+			continue
+		}
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		kind, hasKind := artifactOperand(operation.Operands, "kind")
+		claimType, hasType := artifactOperand(operation.Operands, "type")
+		if !hasTarget || !hasValue || !hasKind || !hasType || string(target) != term || string(value) != term || string(kind) != "claim-kind/3" {
+			continue
+		}
+		declared, err := strconv.Unquote(strings.TrimPrefix(string(claimType), "claim-type/"))
+		if err != nil || !strings.HasSuffix(declared, "?") {
+			continue
+		}
+		if !child.ClaimNameSpans[operation.Target.Name].Valid() || !child.ClaimTargetSpans[operation.Target.Name].Valid() {
+			continue
+		}
+		display := strings.TrimPrefix(term, "path/")
+		for _, operand := range operation.Operands {
+			if operand.Role == "display" && len(operand.Term.Encoding) != 0 {
+				display = string(operand.Term.Encoding)
+			}
+		}
+		return operation.Target.Name, display, declared, true
+	}
+	return "", "", "", false
+}
+
+// nilOriginTermEscapes reports whether a binding leaves this recognizer's
+// write model: a nested closure may capture and rebind it, a heap-level
+// operation may replace it outside the ordinary environment-write lane, or a
+// second annotation may refine the same cell.
+func nilOriginTermEscapes(child front.Compilation, term string, claim string) bool {
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "path-replacement", "path-invalidation", "index-mutation", "generic-for", "channel-select", "dynamic-index-read":
+			for _, operand := range operation.Operands {
+				encoding := string(operand.Term.Encoding)
+				if encoding == term || strings.HasPrefix(encoding, term+".") || strings.HasPrefix(encoding, term+"[") {
+					return true
+				}
+			}
+		case "claim":
+			if operation.Target.Name == claim {
+				continue
+			}
+			if target, found := artifactOperand(operation.Operands, "target"); found && string(target) == term {
+				return true
+			}
+		}
+	}
+	for _, nested := range child.Nested {
+		for _, capture := range nested.Boundary.Captures {
+			if boundaryTerm(capture.Symbol) == term {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// publishNilOriginUnsafeUse publishes the origin-ordered witness trace for a
+// possibly-nil binding that reaches an unguarded method call. The chain is the
+// binding's birth, the declaration that admitted nil, every merge it survived,
+// and the use itself, each anchored at the front's own source publication.
+func (l *lexicalEvaluator) publishNilOriginUnsafeUse(closure *equation.OutputClosure, child front.Compilation) {
+	if l == nil || closure == nil || l.sourcePath == "" {
+		return
+	}
+	uses := nilOriginUnsafeUses(child)
+	if len(uses) == 0 {
+		return
+	}
+	body := fmt.Sprintf("%x", child.Body)
+	for _, operation := range child.Artifact.Equations {
+		witness, unsafe := uses[operation.Target.Name]
+		if !unsafe {
+			continue
+		}
+		useSpan := child.CallSpans[operation.Target.Name+"/callee"]
+		if !useSpan.Valid() {
+			useSpan = child.CallSpans[operation.Target.Name+"/call"]
+		}
+		if !useSpan.Valid() {
+			continue
+		}
+		fact := equation.Fact{
+			Key:   "type.nil.unsafe_use/" + operation.Target.Name,
+			Value: []byte(witness.display + " may be nil at method call"),
+		}
+		item := PublishedDiagnostic{
+			Fact:    fact,
+			Code:    "type.nil.unsafe_use",
+			Span:    useSpan,
+			Message: string(fact.Value),
+			Evidence: []DiagnosticEvidence{{
+				Span: child.ClaimNameSpans[witness.claim], Kind: "abstract fact", Trust: "proven",
+				Message: fmt.Sprintf("%s born nil at %s:%d (else branch had no assignment)", witness.display, l.sourcePath, child.ClaimNameSpans[witness.claim].StartLine),
+			}, {
+				Span: child.ClaimTargetSpans[witness.claim], Kind: "user assertion", Trust: "claimed",
+				Message: fmt.Sprintf("%s declared with optional type %s", witness.display, witness.declared),
+			}},
+			Labels: []DiagnosticLabel{{Span: useSpan, Message: "possibly-nil value"}},
+			Help:   fmt.Sprintf("Guard %s against nil before the method call, or assign it on every branch.", witness.display),
+		}
+		for _, join := range witness.joins {
+			joinSpan := child.BranchJoinSpans[join]
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{
+				Span: joinSpan, Kind: "abstract fact", Trust: "proven",
+				Message: fmt.Sprintf("%s survives the if/else join at %s:%d (no else assignment)", witness.display, l.sourcePath, joinSpan.StartLine),
+			})
+		}
+		item.Evidence = append(item.Evidence, DiagnosticEvidence{
+			Span: useSpan, Kind: "abstract fact", Trust: "proven",
+			Message: fmt.Sprintf("%s reaches use at %s:%d (method call on possibly-nil value)", witness.display, l.sourcePath, useSpan.StartLine),
+		})
+		key := "child/" + body + "/" + fact.Key
+		item.Fact = equation.Fact{Key: key, Value: append([]byte(nil), fact.Value...)}
+		closure.Diagnostics = append(closure.Diagnostics, item.Fact)
+		l.diagnosticSpans[key] = useSpan
+		l.childPublished[key] = item
+	}
+}
+
+// nilOriginFieldWitness is the origin chain of a declared-optional record
+// field that reaches a method call: the declaration that admitted nil and the
+// unguarded read that consumes it.
+type nilOriginFieldWitness struct {
+	display   string
+	field     string
+	fieldType string
+	declared  wir.Span
+}
+
+// nilOriginOptionalFieldUses recognizes an unguarded method call on a static
+// field of a declared formal whose declared type makes that field optional.
+// The nil possibility is created by the declaration itself, so no body write
+// history is needed; conversely, any write reaching that formal or its field
+// leaves the read unreported, because the recognizer does not model it.
+func (l *lexicalEvaluator) nilOriginOptionalFieldUses(child front.Compilation) map[string]nilOriginFieldWitness {
+	if l == nil || child.WIR == nil || child.Cyclic != nil || len(l.typeFieldSpans) == 0 {
+		return nil
+	}
+	formals := make(map[string]typ.Type, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type == 0 {
+			continue
+		}
+		formals[boundaryTerm(parameter.Symbol)] = child.WIR.Type(parameter.Type)
+	}
+	if len(formals) == 0 {
+		return nil
+	}
+	uses := make(map[string]nilOriginFieldWitness)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" || len(operation.Guards) != 0 {
+			continue
+		}
+		receiver, hasReceiver := artifactOperand(operation.Operands, "receiver")
+		method, hasMethod := artifactOperand(operation.Operands, "method")
+		if !hasReceiver || !hasMethod {
+			continue
+		}
+		if name, ok := callMethodName(method); !ok || name == "" {
+			continue
+		}
+		root, suffix, member := tableAddress(receiver)
+		if !member || suffix == "" {
+			continue
+		}
+		segments, static := segment.ParseFormattedSegments(suffix)
+		if !static || len(segments) != 1 || segments[0].Kind != segment.SegmentField || segments[0].Name == "" {
+			continue
+		}
+		declared, formal := formals[string(root)]
+		if !formal || declared == nil {
+			continue
+		}
+		fieldType, found := access.Field(unwrap.Alias(declared), segments[0].Name)
+		if !found || !optionalConcreteWitnessType(fieldType) {
+			continue
+		}
+		span, known := l.declaredFieldNameSpan(declared, segments[0].Name)
+		if !known || nilOriginFormalFieldEscapes(child, string(root)) {
+			continue
+		}
+		display := strings.TrimPrefix(string(receiver), "path/")
+		for _, operand := range operation.Operands {
+			if operand.Role == "receiver-display" && len(operand.Term.Encoding) != 0 {
+				display = string(operand.Term.Encoding)
+			}
+		}
+		uses[operation.Target.Name] = nilOriginFieldWitness{
+			display: display, field: segments[0].Name,
+			fieldType: typeformat.Short(fieldType), declared: span,
+		}
+	}
+	return uses
+}
+
+// declaredFieldNameSpan resolves the authored field-name position of a
+// top-level record declaration. The declaration is matched by the exact type
+// value the resolver produced, so a structurally similar but separately
+// declared record cannot borrow another declaration's source location.
+func (l *lexicalEvaluator) declaredFieldNameSpan(declared typ.Type, field string) (wir.Span, bool) {
+	span, found := wir.Span{}, false
+	for name, definition := range l.typeDefinitions {
+		if definition != declared {
+			continue
+		}
+		candidate, known := l.typeFieldSpans[name][field]
+		if !known || !candidate.Valid() {
+			return wir.Span{}, false
+		}
+		if found && candidate != span {
+			return wir.Span{}, false
+		}
+		span, found = candidate, true
+	}
+	return span, found
+}
+
+// nilOriginFormalFieldEscapes reports whether the body writes through the
+// formal at all. Any such write is outside this recognizer's model, so the
+// field read stays unreported rather than being proven against a stale
+// declaration.
+func nilOriginFormalFieldEscapes(child front.Compilation, root string) bool {
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "environment-write", "path-replacement", "path-invalidation", "index-mutation", "generic-for", "channel-select", "dynamic-index-read":
+			for _, operand := range operation.Operands {
+				if operand.Role != "target" && !strings.HasPrefix(operand.Role, "target-") && operand.Role != "container" {
+					continue
+				}
+				encoding := string(operand.Term.Encoding)
+				if encoding == root || strings.HasPrefix(encoding, root+".") || strings.HasPrefix(encoding, root+"[") {
+					return true
+				}
+			}
+		}
+	}
+	for _, nested := range child.Nested {
+		for _, capture := range nested.Boundary.Captures {
+			if boundaryTerm(capture.Symbol) == root {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// publishNilOriginOptionalFieldUse publishes the declaration-to-use origin
+// trace of an unguarded method call on a declared-optional field.
+func (l *lexicalEvaluator) publishNilOriginOptionalFieldUse(closure *equation.OutputClosure, child front.Compilation) {
+	if l == nil || closure == nil || l.sourcePath == "" {
+		return
+	}
+	uses := l.nilOriginOptionalFieldUses(child)
+	if len(uses) == 0 {
+		return
+	}
+	body := fmt.Sprintf("%x", child.Body)
+	for _, operation := range child.Artifact.Equations {
+		witness, unsafe := uses[operation.Target.Name]
+		if !unsafe {
+			continue
+		}
+		useSpan := child.CallSpans[operation.Target.Name+"/callee"]
+		if !useSpan.Valid() {
+			useSpan = child.CallSpans[operation.Target.Name+"/call"]
+		}
+		if !useSpan.Valid() {
+			continue
+		}
+		fact := equation.Fact{
+			Key:   "type.nil.unsafe_use/" + operation.Target.Name,
+			Value: []byte(witness.display + " may be nil at method call"),
+		}
+		key := "child/" + body + "/" + fact.Key
+		item := PublishedDiagnostic{
+			Fact:    equation.Fact{Key: key, Value: append([]byte(nil), fact.Value...)},
+			Code:    "type.nil.unsafe_use",
+			Span:    useSpan,
+			Message: string(fact.Value),
+			Evidence: []DiagnosticEvidence{{
+				Span: witness.declared, Kind: "user assertion", Trust: "claimed",
+				Message: fmt.Sprintf("field %s declared optional at %s:%d (type %s)", witness.field, l.sourcePath, witness.declared.StartLine, witness.fieldType),
+			}, {
+				Span: useSpan, Kind: "abstract fact", Trust: "proven",
+				Message: fmt.Sprintf("%s reaches use at %s:%d (method call on possibly-nil field)", witness.display, l.sourcePath, useSpan.StartLine),
+			}},
+			Labels: []DiagnosticLabel{{Span: useSpan, Message: "possibly-nil field"}},
+			Help:   fmt.Sprintf("Guard %s against nil before the method call.", witness.display),
+		}
+		closure.Diagnostics = append(closure.Diagnostics, item.Fact)
+		l.diagnosticSpans[key] = useSpan
+		l.childPublished[key] = item
+	}
+}
+
 type declaredNilAssignmentWitness struct {
 	source, predecessor, display string
 	alternative                  []byte
@@ -7078,6 +7546,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	if parent, found := lexical.byBody[operation.Target.Body]; found {
 		lexical.publishStaticNilCallDiagnostic(&closure, child, parent.Artifact.Equations, operation.Target.Name, captures, partition)
 	}
+	lexical.publishNilOriginUnsafeUse(&closure, child)
+	lexical.publishNilOriginOptionalFieldUse(&closure, child)
 	lexical.publishCapturedOptionalMemberCallDiagnostic(&closure, child, captures, partition)
 	lexical.publishUncalledFalseEdgeAnyAssignment(&closure, child, captures, partition)
 	// A parameter-free child is closed at allocation time. A capture-free child

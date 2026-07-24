@@ -330,6 +330,12 @@ type Instruction struct {
 	// receiver separately from the full assignment target.
 	ContainerSpan Span
 
+	// JoinSpan is the source anchor of the point where a branch's arms rejoin:
+	// the closing `end` of the authored if statement. Diagnostics that explain
+	// what a value carries past a merge anchor there rather than at the
+	// condition, which ExprSpan already owns.
+	JoinSpan Span
+
 	// SelectDefault marks an OpSelect that carries a default (non-blocking) case.
 	SelectDefault bool
 

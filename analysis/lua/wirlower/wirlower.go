@@ -1492,7 +1492,7 @@ func (b *builder) lowerIf(s *ast.IfStmt) {
 	}
 	b.preLowerExprCalls(s.Condition, pts[:nCalls], wir.CallContextCondition)
 	b.curPoint = pts[nCalls]
-	b.emitBranch(s.Condition)
+	b.emitBranch(s.Condition, ifJoinSpan(s))
 	b.debugPushScope()
 	b.lowerStmts(s.Then)
 	b.debugPopScope()
@@ -1546,7 +1546,7 @@ func (b *builder) lowerWhile(s *ast.WhileStmt) {
 	}
 	b.preLowerExprCalls(s.Condition, pts[:nCalls], wir.CallContextCondition)
 	b.curPoint = pts[nCalls]
-	b.emitBranch(s.Condition)
+	b.emitBranch(s.Condition, wir.Span{})
 	b.debugPushScope()
 	b.lowerStmts(s.Stmts)
 	b.debugPopScope()
@@ -1562,7 +1562,7 @@ func (b *builder) lowerRepeat(s *ast.RepeatStmt) {
 	b.lowerStmts(s.Stmts)
 	b.preLowerExprCalls(s.Condition, pts[:nCalls], wir.CallContextCondition)
 	b.curPoint = pts[nCalls]
-	b.emitBranch(s.Condition)
+	b.emitBranch(s.Condition, wir.Span{})
 	b.debugPopScope()
 }
 
@@ -1574,7 +1574,25 @@ func (b *builder) condCallCount(cond ast.Expr) int {
 	return len(calls)
 }
 
-func (b *builder) emitBranch(cond ast.Expr) {
+// ifJoinSpan anchors an if statement's merge at its closing `end` token. The
+// parser records that token as the statement's last position, so the anchor is
+// authored syntax rather than a reconstructed coordinate.
+func ifJoinSpan(s *ast.IfStmt) wir.Span {
+	if s == nil || s.EndPosition.Line <= 0 {
+		return wir.Span{}
+	}
+	end := s.EndPosition
+	span := wir.Span{StartLine: end.Line, StartCol: end.Column, EndLine: end.Line, EndCol: end.Column}
+	if end.EndLine > 0 {
+		span.EndLine = end.EndLine
+	}
+	if end.EndColumn > 0 {
+		span.EndCol = end.EndColumn
+	}
+	return span
+}
+
+func (b *builder) emitBranch(cond ast.Expr, joinSpan wir.Span) {
 	check := b.normalizeBranchCondition(cond)
 	inst := wir.Instruction{
 		Op:                       wir.OpBranch,
@@ -1585,6 +1603,7 @@ func (b *builder) emitBranch(cond ast.Expr) {
 		SufficientCheckArmsFalse: b.body.AppendSufficientCheckArms(b.branchSufficientCheckArmsOnEdge(cond, b.bindings, false)),
 		DiffConstraints:          b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(cond, b.bindings))),
 		ExprSpan:                 tableEntryValueSpan(cond),
+		JoinSpan:                 joinSpan,
 	}
 	// A normalized descriptor owns edge refinements, but it does not replace
 	// the Boolean value produced by a call. Preserve that call result on the
