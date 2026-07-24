@@ -779,6 +779,29 @@ local count = record.count + 1
 	}
 }
 
+func TestCheckProjectsCalledChildConcatEvidence(t *testing.T) {
+	result, err := engine.Check(`
+local function label(maybe: string?): string
+    return "prefix:" .. maybe
+end
+
+return label(nil)
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range result.PublishedDiagnostics {
+		if item.Code != "type.operator.concat_operand" {
+			continue
+		}
+		if len(item.Evidence) != 2 || item.Evidence[0].Message != "right operand `maybe` has type nil" || item.Evidence[1].Message != "no guard on this path proves maybe is non-nil" {
+			t.Fatalf("concat diagnostic did not retain child evidence: %#v", item)
+		}
+		return
+	}
+	t.Fatalf("concat diagnostic absent: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckPublishesAdjustedOpenReturnTailSlots(t *testing.T) {
 	tests := []struct {
 		name   string
