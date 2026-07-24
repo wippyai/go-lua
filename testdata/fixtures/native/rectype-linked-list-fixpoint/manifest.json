@@ -1,0 +1,58 @@
+{
+  "description": "A self-linked record type reaches a coinductive fixpoint: the shape identity of node.next equals the identity of node, so the traversal loop reuses one inline cache instead of re-deriving the shape per node.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven recursive_type_identity row(s)",
+          "lane": "values",
+          "family": "recursive_type_identity",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 recursive_type_identity.unknown row(s)",
+          "family": "recursive_type_identity",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "recursive_type_identity row",
+          "lane": "values",
+          "family": "recursive_type_identity",
+          "value_contains": [
+            "fixpoint=reached",
+            "identity_equal_to_subject=true",
+            "traversal_caches=1"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "recursive_type_identity must not carry unrolled",
+          "lane": "values",
+          "family": "recursive_type_identity",
+          "value_contains": [
+            "unrolled"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

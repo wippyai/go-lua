@@ -1,0 +1,47 @@
+{
+  "description": "A monomorphic function whose result depends only on its parameters has exactly one exact, caller-invariant interprocedural summary that serves both call sites; one row, not one per site, is what licenses a single shared inline cache.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven interproc_summary row(s)",
+          "lane": "values",
+          "family": "interproc_summary",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 interproc_summary row(s)",
+          "family": "interproc_summary",
+          "max": 1
+        },
+        {
+          "name": "at most 0 interproc_summary.context_sensitive row(s)",
+          "family": "interproc_summary",
+          "value_contains": [
+            "context_sensitive"
+          ],
+          "max": 0
+        },
+        {
+          "name": "interproc_summary row",
+          "lane": "values",
+          "family": "interproc_summary",
+          "value_contains": [
+            "exactness=exact",
+            "invariance=caller_invariant"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

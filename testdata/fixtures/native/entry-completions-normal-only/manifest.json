@@ -1,0 +1,41 @@
+{
+  "description": "A pure arithmetic body completes only normally; the function-entry row must publish the whole completion vocabulary as known with only normal present, because a row whose known set is partial is not a fixed signature.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven function_entry row(s)",
+          "lane": "values",
+          "family": "function_entry",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 function_entry.unknown row(s)",
+          "family": "function_entry",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "function_entry row",
+          "lane": "values",
+          "family": "function_entry",
+          "value_contains": [
+            "completions={'known': ['normal', 'throw', 'user_suspend', 'system_suspend'], 'present': ['normal']}"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

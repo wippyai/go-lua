@@ -61,6 +61,12 @@ const branchEvidencePrefix = "front/branch-evidence/v1/"
 const memberMissingPrefix = "shape/member-missing/v1/"
 const literalDiagnosticPrefix = "diagnostic/literal-source/"
 
+// epochFactPrefix keys the sole current-version publication of a term.  Every
+// derived fact for that term is published at the operation named by the term's
+// latest epoch, so a later epoch is exactly the event that revokes the facts
+// established at the earlier one.
+const epochFactPrefix = "epoch/"
+
 const summaryTypePrefix = "summary-type/"
 const methodReturnSummaryPrefix = "method-return-summary/"
 const assignmentMapReadMissingPrefix = "assignment-map-read-missing/v1/"
@@ -2916,7 +2922,7 @@ func (l *lexicalEvaluator) capturedMemberWriteInvalidations(handle closureHandle
 		}
 		facts = append(facts,
 			equation.Fact{Key: "value/" + callerTerm + "/" + operation, Value: opened},
-			equation.Fact{Key: "epoch/" + callerTerm + "/" + operation, Value: []byte(operation)},
+			equation.Fact{Key: epochFactPrefix + callerTerm + "/" + operation, Value: []byte(operation)},
 		)
 	}
 	return facts
@@ -3193,7 +3199,7 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		seedValues[seed.Term] = append([]byte(nil), seed.Value...)
 		values = append(values,
 			equation.Fact{Key: "value/" + seed.Term + "/entry", Value: append([]byte(nil), seed.Value...)},
-			equation.Fact{Key: "epoch/" + seed.Term + "/entry", Value: []byte("entry")},
+			equation.Fact{Key: epochFactPrefix + seed.Term + "/entry", Value: []byte("entry")},
 		)
 	}
 	for _, term := range wire.GradualAnyTerms {
@@ -3301,7 +3307,7 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		}
 		values = append(values,
 			equation.Fact{Key: "value/" + string(root) + "/entry", Value: []byte("scalar/top")},
-			equation.Fact{Key: "epoch/" + string(root) + "/entry", Value: []byte("entry")},
+			equation.Fact{Key: epochFactPrefix + string(root) + "/entry", Value: []byte("entry")},
 			equation.Fact{Key: "type/" + string(root) + "/entry", Value: append([]byte(nil), declaredTypes[name]...)},
 		)
 		if declaredIndexableContainer(declared) {
@@ -3453,7 +3459,7 @@ func projectSealedTableMemberValues(target string, tableValue []byte, operation 
 		memberTarget := target + member.Suffix
 		values = append(values,
 			equation.Fact{Key: "value/" + memberTarget + "/" + operation, Value: []byte(member.Value)},
-			equation.Fact{Key: "epoch/" + memberTarget + "/" + operation, Value: []byte(operation)},
+			equation.Fact{Key: epochFactPrefix + memberTarget + "/" + operation, Value: []byte(operation)},
 		)
 	}
 	return values, nil
@@ -8384,7 +8390,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	values := []equation.Fact{
 		{Key: "value/" + target + "/" + operation.Target.Name, Value: value},
-		{Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
+		{Key: epochFactPrefix + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 	}
 	// A direct alias of an optional declared value keeps that declaration as
 	// descriptive metadata for a later non-nil guard. It remains unavailable to
@@ -9362,7 +9368,7 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	// cells resolve their parent through this epoch, so omitting it would leave
 	// a replacement table reachable only by its stale predecessor identity.
 	result.Closure.Values = append(result.Closure.Values, equation.Fact{
-		Key: "epoch/" + string(operands["target"]) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name),
+		Key: epochFactPrefix + string(operands["target"]) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name),
 	})
 	memberValues, memberValueErr := projectSealedTableMemberValues(string(operands["target"]), value, operation.Target.Name)
 	if memberValueErr != nil {
@@ -9519,7 +9525,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed dynamic index read")
 	}
 	value := []byte("scalar/top")
-	values := []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}, {Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)}}
+	values := []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}, {Key: epochFactPrefix + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)}}
 	if identity, found := tableIdentityForTerm(operands["container"], partition); found {
 		key, keyErr := resolveCurrentValue(operands["key"], partition)
 		if suffix, exact := tableMemberSuffix(key, []byte("suffix/")); keyErr == nil && exact {
@@ -9785,7 +9791,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			closure.Values = append(closure.Values, equation.Fact{Key: "type/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), shapeTarget...)})
 		}
 		if channelCastFromNil {
-			closure.Values = append(closure.Values, equation.Fact{Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)})
+			closure.Values = append(closure.Values, equation.Fact{Key: epochFactPrefix + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)})
 		}
 		if kind == "claim-kind/3" && claimTypeIsAny(targetType) {
 			closure.Values = append(closure.Values, explicitAnyBoundaryFact(target, operation.Target.Name))
@@ -10900,7 +10906,7 @@ func summaryTypeIsAny(term []byte, values []equation.Fact) bool {
 	if !strings.HasPrefix(string(term), "path/") {
 		return false
 	}
-	epochPrefix := "epoch/" + string(term) + "/"
+	epochPrefix := epochFactPrefix + string(term) + "/"
 	latest := ""
 	for _, fact := range values {
 		if strings.HasPrefix(fact.Key, epochPrefix) && fact.Key > latest {
@@ -11807,7 +11813,7 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 	}
 	values := []equation.Fact{
 		{Key: "value/" + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte("scalar/top")},
-		{Key: "epoch/" + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
+		{Key: epochFactPrefix + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		{Key: "type/" + string(operands["result"]) + "/" + operation.Target.Name, Value: encodedResult},
 		{Key: "select/origin/" + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte(selectID)},
 		{Key: "select/meta/" + selectID, Value: meta},
@@ -13709,7 +13715,7 @@ func tableInsertEpoch(operation equation.BoundEquation, operands directCallOpera
 	if _, _, exact := heapTableAddress(memberTerm); exact {
 		values = append(values,
 			equation.Fact{Key: "value/" + string(memberTerm) + "/" + operation.Target.Name, Value: append([]byte(nil), value...)},
-			equation.Fact{Key: "epoch/" + string(memberTerm) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
+			equation.Fact{Key: epochFactPrefix + string(memberTerm) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		)
 	}
 	if memberIdentity, found := tableIdentityForTerm(operands.arguments[1], partition); found {
@@ -14175,7 +14181,7 @@ func currentEpochFact(prefix string, term []byte, partition equation.Partition) 
 // publish guarded predicate facts must compare against this existing
 // publication rather than retaining evaluator-local mutation state.
 func currentEpoch(term []byte, partition equation.Partition) (string, bool) {
-	epochPrefix := "epoch/" + string(term) + "/"
+	epochPrefix := epochFactPrefix + string(term) + "/"
 	latest, found := partition.LatestValuePrefix(epochPrefix)
 	if !found {
 		return "", false
@@ -15919,7 +15925,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		}
 		values = append(values,
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
-			equation.Fact{Key: "epoch/" + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
+			equation.Fact{Key: epochFactPrefix + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		)
 		if typePredicateErrorTarget != nil && key == "00000000" {
 			values = append(values, equation.Fact{Key: typePredicateTargetPrefix + base64.RawURLEncoding.EncodeToString(result) + "/" + operation.Target.Name, Value: append([]byte(nil), typePredicateErrorTarget...)})

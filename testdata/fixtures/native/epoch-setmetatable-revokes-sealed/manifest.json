@@ -1,0 +1,57 @@
+{
+  "description": "A sealed_table fact on a closed table literal is revoked by setmetatable: an installed __index makes absent-key reads observable, so sealedness cannot survive meta.set.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven sealed_table row(s)",
+          "lane": "values",
+          "family": "sealed_table",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 sealed_table row(s)",
+          "family": "sealed_table",
+          "max": 1
+        },
+        {
+          "name": "sealed_table row",
+          "lane": "values",
+          "family": "sealed_table",
+          "subject": "cfg",
+          "value_contains": [
+            "sealed=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "meta.set"
+            },
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "sealed_table is revoked by meta.set",
+          "lane": "values",
+          "family": "sealed_table",
+          "event": "meta.set",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "description": "A table proven never to reach setmetatable publishes metatable-absent, which lets the __index chain walk at the read site be elided.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven metatable_seal row(s)",
+          "lane": "values",
+          "family": "metatable_seal",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 metatable_seal.unknown row(s)",
+          "family": "metatable_seal",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "metatable_seal row",
+          "lane": "values",
+          "family": "metatable_seal",
+          "value_contains": [
+            "index_chain=elided",
+            "metatable=absent"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "meta.set"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "metatable_seal row",
+          "lane": "values",
+          "family": "metatable_seal",
+          "value_contains": [
+            "index_chain=elided",
+            "metatable=absent"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "meta.set"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

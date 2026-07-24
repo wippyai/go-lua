@@ -1,0 +1,21 @@
+{
+  "description": "A structurally empty program point stays a noop: an empty then-arm and an empty do block demand no evaluation node, so the evaluation-node patch must not relabel every noop as an operation.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 eval_node row(s)",
+          "family": "eval_node",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

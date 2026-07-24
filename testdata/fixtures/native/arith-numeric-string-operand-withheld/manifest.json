@@ -1,0 +1,21 @@
+{
+  "description": "A `number | string` operand leaves the numeric-string coercion disposition unresolved, so no scalar operator row is published and the coercion is not silently dropped.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 scalar_operator row(s)",
+          "family": "scalar_operator",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "description": "A local typed `number` whose integer arm and float arm both reach the use site has no statically singular representation; the widened type grants nothing and every exact representation claim must be withheld.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven representation row(s)",
+          "lane": "values",
+          "family": "representation",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 representation.exact row(s)",
+          "family": "representation",
+          "value_contains": [
+            "exact"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 representation.float row(s)",
+          "family": "representation",
+          "value_contains": [
+            "float"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 representation.integer row(s)",
+          "family": "representation",
+          "value_contains": [
+            "integer"
+          ],
+          "max": 0
+        },
+        {
+          "name": "representation row",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "representation=number"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "representation must not carry exact",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "exact"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

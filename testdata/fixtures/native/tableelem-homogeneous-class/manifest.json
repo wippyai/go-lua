@@ -1,0 +1,53 @@
+{
+  "description": "A closed writer set that stores only number publishes the element class for the dense prefix, with the deopt-trigger set naming every event that can admit a foreign element.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven table_element row(s)",
+          "lane": "values",
+          "family": "table_element",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "table_element row",
+          "lane": "values",
+          "family": "table_element",
+          "value_contains": [
+            "element_class=number",
+            "mutations_closed=true",
+            "presence=dense_prefix"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "write.length"
+            },
+            {
+              "event": "meta.set"
+            },
+            {
+              "event": "call.opaque"
+            },
+            {
+              "event": "escape"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

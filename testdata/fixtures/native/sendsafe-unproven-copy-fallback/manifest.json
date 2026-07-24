@@ -1,0 +1,60 @@
+{
+  "description": "A payload built up over several statements and still read by the sender afterwards has an alias set that is not closed; the verdict is the explicit copy fallback, published as a row rather than silently omitted.",
+  "packages": [
+    "process",
+    "ownership"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven send_safety row(s)",
+          "lane": "values",
+          "family": "send_safety",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 send_safety.immutable row(s)",
+          "family": "send_safety",
+          "value_contains": [
+            "immutable"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 send_safety.isolated row(s)",
+          "family": "send_safety",
+          "value_contains": [
+            "isolated"
+          ],
+          "max": 0
+        },
+        {
+          "name": "send_safety row",
+          "lane": "values",
+          "family": "send_safety",
+          "value_contains": [
+            "copy_required=true",
+            "verdict=unproven_copy"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "send_safety must not carry transfer",
+          "lane": "values",
+          "family": "send_safety",
+          "value_contains": [
+            "transfer"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

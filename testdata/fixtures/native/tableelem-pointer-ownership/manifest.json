@@ -1,0 +1,59 @@
+{
+  "description": "Pointer elements built fresh at the store site publish per-element ownership and the write-barrier obligation; a pointer element domain may not be published without both.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven table_element row(s)",
+          "lane": "values",
+          "family": "table_element",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "table_element row",
+          "lane": "values",
+          "family": "table_element",
+          "value_contains": [
+            "element_class=record",
+            "ownership=move",
+            "write_barrier=required"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "call.opaque"
+            },
+            {
+              "event": "escape"
+            },
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "table_element must not carry borrow",
+          "lane": "values",
+          "family": "table_element",
+          "value_contains": [
+            "borrow"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

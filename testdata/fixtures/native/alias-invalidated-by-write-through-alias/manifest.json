@@ -1,0 +1,84 @@
+{
+  "description": "A store through a proven alias revokes the load-forwarding fact taken on the original binding: alias and box denote one allocation, so the aliasing must itself be published as a refutation and write.field through either name must fire the deopt trigger.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven alias_disjoint row(s)",
+          "lane": "values",
+          "family": "alias_disjoint",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 2 alias_disjoint row(s)",
+          "family": "alias_disjoint",
+          "max": 2
+        },
+        {
+          "name": "alias_disjoint row",
+          "lane": "values",
+          "family": "alias_disjoint",
+          "subject": "box.n",
+          "value_contains": [
+            "basis=no_intervening_store",
+            "disjoint=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.field"
+            },
+            {
+              "event": "escape"
+            },
+            {
+              "event": "call.opaque"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "alias_disjoint row",
+          "lane": "values",
+          "family": "alias_disjoint",
+          "subject": "alias",
+          "value_contains": [
+            "against=box",
+            "basis=copy_of_same_binding",
+            "disjoint=false"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "alias_disjoint must not carry distinct_fresh_allocations",
+          "lane": "values",
+          "family": "alias_disjoint",
+          "subject": "alias",
+          "value_contains": [
+            "distinct_fresh_allocations"
+          ],
+          "max": 0
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "alias_disjoint is revoked by write.field",
+          "lane": "values",
+          "family": "alias_disjoint",
+          "event": "write.field",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

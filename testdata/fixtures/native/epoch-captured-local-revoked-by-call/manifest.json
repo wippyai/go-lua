@@ -1,0 +1,63 @@
+{
+  "description": "The counterpart to the uncaptured precision case: the narrowed local is captured by a closure handed to the opaque callee, so the fact is revoked at the call and its revocation set must name both call.opaque and write.upvalue.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven nilability row(s)",
+          "lane": "values",
+          "family": "nilability",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 nilability.non_nil row(s)",
+          "family": "nilability",
+          "value_contains": [
+            "non_nil"
+          ],
+          "max": 1
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.local"
+            },
+            {
+              "event": "write.upvalue"
+            },
+            {
+              "event": "call.opaque"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "nilability is revoked by call.opaque",
+          "lane": "values",
+          "family": "nilability",
+          "event": "call.opaque",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

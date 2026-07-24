@@ -1,0 +1,50 @@
+{
+  "description": "The same floor division without a guard publishes no divisor property, and the primitive-dispatch row it does publish must not claim a divisor property of its own.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven scalar_operator row(s)",
+          "lane": "values",
+          "family": "scalar_operator",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 divisor_property row(s)",
+          "family": "divisor_property",
+          "max": 0
+        },
+        {
+          "name": "scalar_operator row",
+          "lane": "values",
+          "family": "scalar_operator",
+          "value_contains": [
+            "dispatch=primitive",
+            "left=integer",
+            "result=integer",
+            "right=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "scalar_operator must not carry divisor",
+          "lane": "values",
+          "family": "scalar_operator",
+          "value_contains": [
+            "divisor"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

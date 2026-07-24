@@ -1,0 +1,37 @@
+{
+  "description": "`^` is float exponentiation in Lua: two provably integer operands still produce a float result carrier, so the result representation is a property of the instruction, not of the operand arms.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven representation row(s)",
+          "lane": "values",
+          "family": "representation",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "representation row",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "left=integer",
+            "operator=pow",
+            "overflow=ieee754",
+            "result_representation=float",
+            "right=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

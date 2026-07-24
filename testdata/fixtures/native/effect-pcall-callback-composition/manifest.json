@@ -1,0 +1,53 @@
+{
+  "description": "pcall over a local, fully analyzable callback composes the callback's effect row into the pcall site's row; the site is closed, not degraded to open.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven effect_row row(s)",
+          "lane": "values",
+          "family": "effect_row",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 effect_row.unknown row(s)",
+          "family": "effect_row",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row row",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "allocation=absent",
+            "error=absent",
+            "exhaustive=true",
+            "yield=absent"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "effect_row row",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "composed_from_callback=true",
+            "error=absent",
+            "exhaustive=true"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

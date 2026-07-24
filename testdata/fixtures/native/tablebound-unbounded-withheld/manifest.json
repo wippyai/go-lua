@@ -1,0 +1,21 @@
+{
+  "description": "A runtime loop bound admits no maximum occurrence count, so the construction bound must fail closed; no guessed or defaulted maximum may be published.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 table_construction_bound row(s)",
+          "family": "table_construction_bound",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

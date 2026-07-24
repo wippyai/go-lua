@@ -1,0 +1,71 @@
+{
+  "description": "A table filled before closure construction carries its completed initialization, element class and dense-prefix presence across the capture into the child body.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven capture_transport row(s)",
+          "lane": "values",
+          "family": "capture_transport",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 capture_transport.unknown row(s)",
+          "family": "capture_transport",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "capture_transport row",
+          "lane": "values",
+          "family": "capture_transport",
+          "value_contains": [
+            "carried_through=closure_construction",
+            "element_class=number",
+            "initialization=complete",
+            "presence=dense_prefix"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "write.length"
+            },
+            {
+              "event": "grow"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "capture_transport must not carry reconstructed_in_child",
+          "lane": "values",
+          "family": "capture_transport",
+          "value_contains": [
+            "reconstructed_in_child"
+          ],
+          "max": 0
+        },
+        {
+          "name": "capture_transport must not carry element_class_widened",
+          "lane": "values",
+          "family": "capture_transport",
+          "value_contains": [
+            "element_class_widened"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

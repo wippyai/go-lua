@@ -1,0 +1,61 @@
+{
+  "description": "A freshly constructed closed table literal sent directly is proven isolated, so the transfer is a pointer move with no runtime copy; the deopt-trigger set is exactly escape and field write.",
+  "packages": [
+    "process",
+    "ownership"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven send_safety row(s)",
+          "lane": "values",
+          "family": "send_safety",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 send_safety.escaped_refuted row(s)",
+          "family": "send_safety",
+          "value_contains": [
+            "escaped_refuted"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 send_safety.unproven_copy row(s)",
+          "family": "send_safety",
+          "value_contains": [
+            "unproven_copy"
+          ],
+          "max": 0
+        },
+        {
+          "name": "send_safety row",
+          "lane": "values",
+          "family": "send_safety",
+          "value_contains": [
+            "copy_required=false",
+            "transfer=move",
+            "verdict=isolated"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "escape"
+            },
+            {
+              "event": "write.field"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "description": "An integer-annotated parameter is an exact VM integer representation at the addition operand site; the language-level type integer must publish the machine arm, not a widened number.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven representation row(s)",
+          "lane": "values",
+          "family": "representation",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven representation.exact row(s)",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "exact"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 representation.float row(s)",
+          "family": "representation",
+          "value_contains": [
+            "float"
+          ],
+          "max": 0
+        },
+        {
+          "name": "representation row",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "exact=true",
+            "representation=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

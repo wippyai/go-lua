@@ -1,0 +1,55 @@
+{
+  "description": "The minimal any-then-cast reproducer: the producer row exists in its own right and is distinct from the cast and annotation rows beside it, which do not license it.",
+  "check": {
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven typed_producer row(s)",
+          "lane": "values",
+          "family": "typed_producer",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 typed_producer.unknown row(s)",
+          "family": "typed_producer",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "typed_producer row",
+          "lane": "values",
+          "family": "typed_producer",
+          "value_contains": [
+            "classification=compile_time_only"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "typed_producer must not carry licensed_by_neighbouring_claim",
+          "lane": "values",
+          "family": "typed_producer",
+          "value_contains": [
+            "licensed_by_neighbouring_claim"
+          ],
+          "max": 0
+        },
+        {
+          "name": "typed_producer must not carry unclassified",
+          "lane": "values",
+          "family": "typed_producer",
+          "value_contains": [
+            "unclassified"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

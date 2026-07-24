@@ -1,0 +1,64 @@
+{
+  "description": "A closed literal passed to table.freeze is deeply immutable: the seal covers the nested table value as well as the outer allocation, and nothing revokes it.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven sealed_table row(s)",
+          "lane": "values",
+          "family": "sealed_table",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 sealed_table.unknown row(s)",
+          "family": "sealed_table",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "sealed_table row",
+          "lane": "values",
+          "family": "sealed_table",
+          "value_contains": [
+            "closed=true",
+            "depth=deep",
+            "frozen=true"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "sealed_table row",
+          "lane": "values",
+          "family": "sealed_table",
+          "value_contains": [
+            "closed=true",
+            "depth=deep",
+            "frozen=true"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "sealed_table must not carry shallow",
+          "lane": "values",
+          "family": "sealed_table",
+          "value_contains": [
+            "shallow"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "description": "An operand that can carry __concat refutes primitive dispatch, so the primitive verdict is withheld rather than assumed.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 concat_site.primitive row(s)",
+          "family": "concat_site",
+          "value_contains": [
+            "primitive"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

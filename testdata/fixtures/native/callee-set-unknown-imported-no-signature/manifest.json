@@ -1,0 +1,55 @@
+{
+  "description": "A function value exported through an any-typed path carries no signature across the module boundary; the call in main.lua has an Unknown callee set and cross-module blindness must never be reported as Complete.",
+  "files": [
+    "helper.lua",
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven callee_set.unknown row(s)",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "unknown"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "callee_set row",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "completeness=unknown"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "callee_set must not carry cardinality",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "cardinality"
+          ],
+          "max": 0
+        },
+        {
+          "name": "callee_set must not carry singleton",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "singleton"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

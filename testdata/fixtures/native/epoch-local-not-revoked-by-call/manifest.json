@@ -1,0 +1,68 @@
+{
+  "description": "Precision case: a nilability narrowing on a local that no closure captures survives an opaque call. The callee cannot reach the binding, so call.opaque must NOT appear in the revocation set and the fact must still be published at the use after the call. Over-invalidation here costs the JIT a needless re-guard.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven nilability row(s)",
+          "lane": "values",
+          "family": "nilability",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "else_edge=non_nil",
+            "then_edge=nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.local"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.local"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "nilability must not carry maybe_nil",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "maybe_nil"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

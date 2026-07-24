@@ -1,0 +1,103 @@
+{
+  "description": "check.native invalidation exemplar: a binding's proven constant holds from the write that established it until the write that replaces it, and the closure names that replacing operation. A speculative consumer can install the constant and place its deopt trigger at the named occurrence instead of re-proving the value at every use.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "min_facts": 6,
+      "facts": [
+        {
+          "name": "the first constant is a derived proof and is revoked by exactly the write that replaces it",
+          "lane": "values",
+          "family": "value",
+          "subject": "budget",
+          "value": "scalar/number/3",
+          "trust": "proven",
+          "min": 1,
+          "max": 1,
+          "revoked_by": [
+            {
+              "established": "op-00000001",
+              "revoked": "op-00000003",
+              "event": "environment-write"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "the replacing constant is established at the same occurrence that revoked the first",
+          "lane": "values",
+          "family": "value",
+          "subject": "budget",
+          "occurrence": "op-00000003",
+          "value": "scalar/number/6",
+          "trust": "proven",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the epoch row that carries the revocation is itself published",
+          "lane": "values",
+          "family": "epoch",
+          "subject": "budget",
+          "key": "epoch/path/sym2/op-00000001",
+          "value": "op-00000001",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the read taken before the replacement keeps the first constant",
+          "lane": "values",
+          "family": "value",
+          "subject": "first",
+          "value": "scalar/number/6",
+          "trust": "proven",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "no value of this module is a claim",
+          "lane": "values",
+          "family": "value",
+          "trust": "claimed",
+          "max": 0
+        },
+        {
+          "name": "nothing is published on the diagnostic lane",
+          "lane": "diagnostics",
+          "max": 0
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "exactly one value of the accumulator is revoked, by a write",
+          "lane": "values",
+          "family": "value",
+          "subject": "budget",
+          "event": "environment-write",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the revocation is the write at op-00000003 and no other occurrence",
+          "lane": "values",
+          "family": "value",
+          "subject": "budget",
+          "established": "op-00000001",
+          "revoked": "op-00000003",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "no value of this module is revoked by a call",
+          "lane": "values",
+          "family": "value",
+          "event": "apply",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "check.native publication fixture: the assertions are over published facts, not over execution"
+  }
+}

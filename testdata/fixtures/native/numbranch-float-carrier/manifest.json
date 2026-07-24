@@ -1,0 +1,63 @@
+{
+  "description": "A subject produced by `/` is provably on the VM float arm, so the branch row must claim the float representation explicitly, and a non-zero literal divisor over a finite integer numerator makes the ordering total.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven numeric_branch row(s)",
+          "lane": "values",
+          "family": "numeric_branch",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven scalar_operator row(s)",
+          "lane": "values",
+          "family": "scalar_operator",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "scalar_operator row",
+          "lane": "values",
+          "family": "scalar_operator",
+          "value_contains": [
+            "dispatch=primitive",
+            "divisor=nonzero",
+            "left=integer",
+            "overflow=ieee754",
+            "representation=float",
+            "result=number",
+            "right=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_branch row",
+          "lane": "values",
+          "family": "numeric_branch",
+          "subject": "q",
+          "value_contains": [
+            "carrier=number",
+            "dispatch=primitive",
+            "nan=not_applicable",
+            "representation=float",
+            "taken_edge_carrier=number",
+            "total_order=true",
+            "untaken_edge_carrier=number"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

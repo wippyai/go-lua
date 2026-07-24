@@ -1,0 +1,45 @@
+{
+  "description": "A helper module exports a function and main.lua calls it; the callee must carry ONE stable identity on both sides of the module boundary, or the caller's row and the callee's row cannot be joined.",
+  "files": [
+    "helper.lua",
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven publication_identity row(s)",
+          "lane": "values",
+          "family": "publication_identity",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 publication_identity.unkeyed row(s)",
+          "family": "publication_identity",
+          "value_contains": [
+            "unkeyed"
+          ],
+          "max": 0
+        },
+        {
+          "name": "publication_identity row",
+          "lane": "values",
+          "family": "publication_identity",
+          "value_contains": [
+            "executable_body=present",
+            "function_generation=present",
+            "identity=stable_cross_module",
+            "source_span=present"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

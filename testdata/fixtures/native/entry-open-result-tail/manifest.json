@@ -1,0 +1,50 @@
+{
+  "description": "A function that returns a forwarded call's whole result list has an open result tail; the function-entry contract publishes prefix 0 with an open tail and must never let a spread result be read as an exact count of one.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven function_entry row(s)",
+          "lane": "values",
+          "family": "function_entry",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 function_entry.unknown row(s)",
+          "family": "function_entry",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "function_entry row",
+          "lane": "values",
+          "family": "function_entry",
+          "value_contains": [
+            "results={'exact': False, 'prefix': 0, 'open_tail': True}"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "function_entry must not carry exact_count",
+          "lane": "values",
+          "family": "function_entry",
+          "value_contains": [
+            "exact_count"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "description": "Every entry of a static record literal binds to a solved source occurrence and a storage class; the true entry uses the canonical tagged-boolean storage class.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven record_construction row(s)",
+          "lane": "values",
+          "family": "record_construction",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 record_construction.unknown row(s)",
+          "family": "record_construction",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "record_construction row",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "boolean_storage=canonical_tag",
+            "entries=2",
+            "entry_storage=committed"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

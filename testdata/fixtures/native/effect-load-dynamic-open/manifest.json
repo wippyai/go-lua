@@ -1,0 +1,83 @@
+{
+  "description": "`load` applied to a runtime string admits new code into the world; the site's effect row must be published OPEN with module loading present and may claim no effect absence.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven effect_row row(s)",
+          "lane": "values",
+          "family": "effect_row",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 effect_row.exhaustive row(s)",
+          "family": "effect_row",
+          "value_contains": [
+            "exhaustive"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 effect_row.pure row(s)",
+          "family": "effect_row",
+          "value_contains": [
+            "pure"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row row",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "exhaustive=false",
+            "module_loading=present"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "effect_row must not carry allocation",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "allocation"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row must not carry yield",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "yield"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row must not carry error",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "error"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row must not carry safepoint",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "safepoint"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

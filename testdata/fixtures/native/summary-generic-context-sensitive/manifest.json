@@ -1,0 +1,50 @@
+{
+  "description": "A generic function's summary is instantiation dependent: it must be published as context sensitive, must not claim caller invariance, and therefore licenses no single inline cache shared by the number and string call sites.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven interproc_summary row(s)",
+          "lane": "values",
+          "family": "interproc_summary",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 interproc_summary.caller_invariant row(s)",
+          "family": "interproc_summary",
+          "value_contains": [
+            "caller_invariant"
+          ],
+          "max": 0
+        },
+        {
+          "name": "interproc_summary row",
+          "lane": "values",
+          "family": "interproc_summary",
+          "value_contains": [
+            "invariance=context_sensitive"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "interproc_summary must not carry caller_invariant",
+          "lane": "values",
+          "family": "interproc_summary",
+          "value_contains": [
+            "caller_invariant"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "description": "A child referenced twice in one literal yields two edges, both closed explicitly; edge count counts edge occurrences and must not be collapsed to distinct children.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven list_construction row(s)",
+          "lane": "values",
+          "family": "list_construction",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "list_construction row",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "all_edges_closed=true",
+            "duplicate_children=1",
+            "edges=2"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "list_construction must not carry deduplicated",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "deduplicated"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "description": "`//` on two provably integer operands yields an integer result carrier, the contrast that keeps the per-instruction result rule honest against `/` and `^`. The divisor is an unconstrained parameter, so no nonzero grant may be published: integer floor division by zero raises.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven representation row(s)",
+          "lane": "values",
+          "family": "representation",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 divisor_property.nonzero row(s)",
+          "family": "divisor_property",
+          "value_contains": [
+            "nonzero"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 divisor_property.nonzero_not_minus_one row(s)",
+          "family": "divisor_property",
+          "value_contains": [
+            "nonzero_not_minus_one"
+          ],
+          "max": 0
+        },
+        {
+          "name": "representation row",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "left=integer",
+            "operator=idiv",
+            "overflow=closed_integer",
+            "result_representation=integer",
+            "right=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

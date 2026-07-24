@@ -1,0 +1,52 @@
+{
+  "description": "One arm of the four-variant union is unhandled: the dispatch requires a default lane and the exhaustive grant is withheld.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 discriminant_select.exhaustive row(s)",
+          "family": "discriminant_select",
+          "value_contains": [
+            "exhaustive"
+          ],
+          "max": 0
+        },
+        {
+          "name": "discriminant_select row",
+          "lane": "values",
+          "family": "discriminant_select",
+          "value_contains": [
+            "cases=3",
+            "default_required=true",
+            "discriminant_field=kind",
+            "exhaustive=false"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.field"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "discriminant_select must not carry assumed_exhaustive",
+          "lane": "values",
+          "family": "discriminant_select",
+          "value_contains": [
+            "assumed_exhaustive"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

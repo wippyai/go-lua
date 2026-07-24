@@ -1,0 +1,44 @@
+{
+  "description": "A closed list literal publishes exact bounded capacity 4, four ordered element occurrences and the parent allocation row for the list header.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven list_construction row(s)",
+          "lane": "values",
+          "family": "list_construction",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "list_construction row",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "capacity=4",
+            "ordered_occurrences=4",
+            "parent_allocation=published"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "list_construction must not carry open_tail",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "open_tail"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

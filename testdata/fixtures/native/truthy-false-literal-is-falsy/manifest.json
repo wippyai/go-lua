@@ -1,0 +1,102 @@
+{
+  "description": "A false constant condition is always_falsy, and the class must be accompanied by the named dead arm: a bare boolean truthiness flag cannot distinguish proven-false from proven-true-of-the-negation, which is what the consumer needs to drop the then arm.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven branch_partition row(s)",
+          "lane": "values",
+          "family": "branch_partition",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven constant_value row(s)",
+          "lane": "values",
+          "family": "constant_value",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven truthiness_class row(s)",
+          "lane": "values",
+          "family": "truthiness_class",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 branch_partition.always_taken row(s)",
+          "family": "branch_partition",
+          "value_contains": [
+            "always_taken"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 branch_partition.dynamic row(s)",
+          "family": "branch_partition",
+          "value_contains": [
+            "dynamic"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 truthiness_class.always_truthy row(s)",
+          "family": "truthiness_class",
+          "value_contains": [
+            "always_truthy"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 truthiness_class.dynamic_nil_or_false row(s)",
+          "family": "truthiness_class",
+          "value_contains": [
+            "dynamic_nil_or_false"
+          ],
+          "max": 0
+        },
+        {
+          "name": "constant_value row",
+          "lane": "values",
+          "family": "constant_value",
+          "value_contains": [
+            "representation=boolean",
+            "value=false"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "truthiness_class row",
+          "lane": "values",
+          "family": "truthiness_class",
+          "value_contains": [
+            "class=always_falsy"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "branch_partition row",
+          "lane": "values",
+          "family": "branch_partition",
+          "value_contains": [
+            "dead_arm=then",
+            "dead_arm_reachable=false",
+            "partition=always_not_taken"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

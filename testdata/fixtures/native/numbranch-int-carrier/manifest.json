@@ -1,0 +1,39 @@
+{
+  "description": "The identical branch syntax over an integer subject must publish a different carrier -- the integer representation -- and may additionally conclude a total order, which the number-carrier case cannot.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven numeric_branch row(s)",
+          "lane": "values",
+          "family": "numeric_branch",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_branch row",
+          "lane": "values",
+          "family": "numeric_branch",
+          "subject": "x",
+          "value_contains": [
+            "carrier=integer",
+            "dispatch=primitive",
+            "nan=not_applicable",
+            "taken_edge_carrier=integer",
+            "total_order=true",
+            "untaken_edge_carrier=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

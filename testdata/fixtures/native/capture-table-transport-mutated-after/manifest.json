@@ -1,0 +1,29 @@
+{
+  "description": "A write into the captured table after closure construction revokes the transported element judgment at that write; the epoch boundary is where the guard belongs.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven capture_transport row(s)",
+          "lane": "values",
+          "family": "capture_transport",
+          "trust": "proven",
+          "min": 1
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "capture_transport is revoked by write.element",
+          "lane": "values",
+          "family": "capture_transport",
+          "event": "write.element",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

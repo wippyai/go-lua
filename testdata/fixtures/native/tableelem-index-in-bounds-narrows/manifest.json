@@ -1,0 +1,60 @@
+{
+  "description": "A guard proving 1 <= i <= #xs publishes element presence and a non-nil result for xs[i]; the length of the opaque parameter table itself stays withheld.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven table_element row(s)",
+          "lane": "values",
+          "family": "table_element",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 table_length.raw row(s)",
+          "family": "table_length",
+          "value_contains": [
+            "raw"
+          ],
+          "max": 0
+        },
+        {
+          "name": "table_element row",
+          "lane": "values",
+          "family": "table_element",
+          "value_contains": [
+            "presence=proven",
+            "result_nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "write.length"
+            },
+            {
+              "event": "write.local"
+            },
+            {
+              "event": "meta.set"
+            },
+            {
+              "event": "call.opaque"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

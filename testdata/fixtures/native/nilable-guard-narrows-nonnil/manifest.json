@@ -1,0 +1,68 @@
+{
+  "description": "A truthiness guard on an optional parameter publishes nilability on both edges: non_nil on the then edge and nil on the else edge, since nil is the only falsy inhabitant of string?.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven nilability row(s)",
+          "lane": "values",
+          "family": "nilability",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "else_edge=nil",
+            "then_edge=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.local"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.local"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "nilability must not carry maybe_nil",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "maybe_nil"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

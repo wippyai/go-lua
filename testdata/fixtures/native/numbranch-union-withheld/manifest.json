@@ -1,0 +1,21 @@
+{
+  "description": "A `number | string` subject admits a lexicographic string comparison and a mixed comparison that throws, so no numeric branch carrier is published on either edge.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 numeric_branch row(s)",
+          "family": "numeric_branch",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

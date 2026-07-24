@@ -1,0 +1,66 @@
+{
+  "description": "A narrowed optional field re-widens across an opaque call. Contrast with epoch-local-not-revoked-by-call: a field is reachable by the callee through the record, so call.opaque revokes it, while an uncaptured local is untouched.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven nilability row(s)",
+          "lane": "values",
+          "family": "nilability",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 nilability.non_nil row(s)",
+          "family": "nilability",
+          "value_contains": [
+            "non_nil"
+          ],
+          "max": 1
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "r.id",
+          "value_contains": [
+            "nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.field"
+            },
+            {
+              "event": "call.opaque"
+            },
+            {
+              "event": "escape"
+            },
+            {
+              "event": "suspend"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "nilability is revoked by call.opaque",
+          "lane": "values",
+          "family": "nilability",
+          "event": "call.opaque",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

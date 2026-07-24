@@ -1,0 +1,53 @@
+{
+  "description": "A constant survives an intermediate binding: the fold reaches the second local with both value and representation intact, rather than stopping at the first binding boundary.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven constant_value row(s)",
+          "lane": "values",
+          "family": "constant_value",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 representation.float row(s)",
+          "family": "representation",
+          "value_contains": [
+            "float"
+          ],
+          "max": 0
+        },
+        {
+          "name": "constant_value row",
+          "lane": "values",
+          "family": "constant_value",
+          "value_contains": [
+            "representation=integer",
+            "value=10"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "constant_value row",
+          "lane": "values",
+          "family": "constant_value",
+          "value_contains": [
+            "representation=integer",
+            "value=15"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

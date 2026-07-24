@@ -1,0 +1,42 @@
+{
+  "description": "The right-hand point of a short-circuit or publishes an evaluation node carrying the closure construction it performs; the point is a real operation with an allocation, not a noop.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven eval_node row(s)",
+          "lane": "values",
+          "family": "eval_node",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "eval_node row",
+          "lane": "values",
+          "family": "eval_node",
+          "value_contains": [
+            "operation=closure"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "eval_node must not carry noop",
+          "lane": "values",
+          "family": "eval_node",
+          "value_contains": [
+            "noop"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

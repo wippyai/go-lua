@@ -1,0 +1,50 @@
+{
+  "description": "A body with a reachable error() call carries throw in its completion set; the function-entry row must publish the full known vocabulary with both normal and throw present, and must not be reduced to a normal-only signature.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven function_entry row(s)",
+          "lane": "values",
+          "family": "function_entry",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 function_entry.unknown row(s)",
+          "family": "function_entry",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "function_entry row",
+          "lane": "values",
+          "family": "function_entry",
+          "value_contains": [
+            "completions={'known': ['normal', 'throw', 'user_suspend', 'system_suspend'], 'present': ['normal', 'throw']}"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "function_entry must not carry normal_only",
+          "lane": "values",
+          "family": "function_entry",
+          "value_contains": [
+            "normal_only"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

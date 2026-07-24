@@ -1,0 +1,72 @@
+{
+  "description": "A table_element fact read out of an actor-visible module table does not survive a channel receive: another actor may run across the suspension point, so the element class is withheld after it.",
+  "packages": [
+    "channel"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven table_element row(s)",
+          "lane": "values",
+          "family": "table_element",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 table_element row(s)",
+          "family": "table_element",
+          "max": 1
+        },
+        {
+          "name": "table_element row",
+          "lane": "values",
+          "family": "table_element",
+          "subject": "shared",
+          "value_contains": [
+            "element_class=number"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "write.length"
+            },
+            {
+              "event": "grow"
+            },
+            {
+              "event": "suspend"
+            },
+            {
+              "event": "call.opaque"
+            },
+            {
+              "event": "escape"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "table_element is revoked by suspend",
+          "lane": "values",
+          "family": "table_element",
+          "event": "suspend",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

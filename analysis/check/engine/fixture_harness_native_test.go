@@ -27,15 +27,17 @@ type fixtureNative struct {
 	MaxFacts *int `json:"max_facts,omitempty"`
 	// Facts are the per-family row assertions.
 	Facts []fixtureNativeFact `json:"facts,omitempty"`
+	// Invalidation asserts over the epoch intervals the closure published for
+	// the selected rows: where a fact's validity begins, which operation ends
+	// it, and what kind of event that operation is. A row bounded by max 0 is
+	// the precision half — the selected fact must survive the named event.
+	Invalidation []fixtureNativeInvalidation `json:"invalidation,omitempty"`
 }
 
-// fixtureNativeFact selects published rows and bounds their count. Every
-// selector is an exact match against published data; there is deliberately no
-// selector that matches a row merely because it exists.
-type fixtureNativeFact struct {
-	// Name labels the assertion in failure output. It selects nothing.
-	Name string `json:"name,omitempty"`
-
+// fixtureNativeSelector selects published rows. Every selector is an exact
+// match against published data; there is deliberately no selector that matches
+// a row merely because it exists.
+type fixtureNativeSelector struct {
 	Lane        string   `json:"lane,omitempty"`
 	Module      string   `json:"module,omitempty"`
 	Family      string   `json:"family,omitempty"`
@@ -50,6 +52,53 @@ type fixtureNativeFact struct {
 	Value         *string  `json:"value,omitempty"`
 	ValuePrefix   string   `json:"value_prefix,omitempty"`
 	ValueContains []string `json:"value_contains,omitempty"`
+	// Trust selects the row's published proof provenance. A native code
+	// generator may elide a guard only for a proven row; a claimed row is a
+	// source assertion the checker could not discharge and stays guarded at
+	// runtime, so the two are never interchangeable in an assertion.
+	Trust string `json:"trust,omitempty"`
+}
+
+// fixtureNativeRevocation selects the epoch interval published for a row: the
+// epoch its validity begins at, the epoch that ends it, and the artifact's
+// occurrence kind of the ending operation. An entry with no field set selects
+// any revocation.
+type fixtureNativeRevocation struct {
+	Established string `json:"established,omitempty"`
+	Revoked     string `json:"revoked,omitempty"`
+	Event       string `json:"event,omitempty"`
+}
+
+// fixtureNativeFact selects published rows and bounds their count.
+type fixtureNativeFact struct {
+	// Name labels the assertion in failure output. It selects nothing.
+	Name string `json:"name,omitempty"`
+
+	fixtureNativeSelector
+
+	// RevokedBy demands that every listed revocation is published for the
+	// matched rows. It also demands that every matched row carries an epoch
+	// interval at all: a fact whose validity the closure never published
+	// cannot be consumed speculatively, so silence fails the assertion.
+	RevokedBy []fixtureNativeRevocation `json:"revoked_by,omitempty"`
+	// RevokedByExhaustive demands the converse: every revocation published for
+	// the matched rows is one of the listed entries, so no unnamed event ends
+	// the fact.
+	RevokedByExhaustive bool `json:"revoked_by_exhaustive,omitempty"`
+
+	Min int  `json:"min,omitempty"`
+	Max *int `json:"max,omitempty"`
+}
+
+// fixtureNativeInvalidation bounds how many of the selected rows carry a
+// revocation matching the revocation selector. It requires the selection to
+// name at least one row with a published epoch interval, so "nothing revokes
+// this" can never pass because the closure published no validity at all.
+type fixtureNativeInvalidation struct {
+	Name string `json:"name,omitempty"`
+
+	fixtureNativeSelector
+	fixtureNativeRevocation
 
 	Min int  `json:"min,omitempty"`
 	Max *int `json:"max,omitempty"`
@@ -66,7 +115,27 @@ func (r nativeFactRow) String() string {
 	if subject == "" {
 		subject = "-"
 	}
-	return fmt.Sprintf("%s [%s/%s subject=%s] %s = %q", r.Module, r.Fact.Lane, r.Fact.Family, subject, r.Fact.Key, r.Fact.Value)
+	trust := r.Fact.Trust
+	if trust == "" {
+		trust = "-"
+	}
+	return fmt.Sprintf("%s [%s/%s subject=%s trust=%s%s] %s = %q",
+		r.Module, r.Fact.Lane, r.Fact.Family, subject, trust, r.validity(), r.Fact.Key, r.Fact.Value)
+}
+
+// validity renders the published epoch interval so a revocation failure shows
+// what the closure did publish, including that it published nothing.
+func (r nativeFactRow) validity() string {
+	switch {
+	case r.Fact.Established == "":
+		return " no-epoch-interval"
+	case r.Fact.Revoked == "":
+		return " established=" + r.Fact.Established + " never-revoked"
+	case r.Fact.Event == "":
+		return " established=" + r.Fact.Established + " revoked=" + r.Fact.Revoked
+	default:
+		return " established=" + r.Fact.Established + " revoked=" + r.Fact.Revoked + " event=" + r.Fact.Event
+	}
 }
 
 const nativeFailureSamples = 4
@@ -74,6 +143,15 @@ const nativeFailureSamples = 4
 func validNativeLane(lane string) bool {
 	switch lane {
 	case engine.NativeLaneValues, engine.NativeLaneOutcomes, engine.NativeLaneDiagnostics:
+		return true
+	default:
+		return false
+	}
+}
+
+func validNativeTrust(trust string) bool {
+	switch trust {
+	case engine.NativeTrustProven, engine.NativeTrustClaimed, engine.NativeTrustUnknown:
 		return true
 	default:
 		return false
@@ -102,8 +180,8 @@ func parseFixtureNative(raw json.RawMessage) (*fixtureNative, error) {
 }
 
 func validateFixtureNative(expect *fixtureNative) error {
-	if len(expect.Facts) == 0 && expect.MinFacts == 0 && expect.MaxFacts == nil {
-		return fmt.Errorf("the native block asserts nothing: set facts, min_facts, or max_facts")
+	if len(expect.Facts) == 0 && len(expect.Invalidation) == 0 && expect.MinFacts == 0 && expect.MaxFacts == nil {
+		return fmt.Errorf("the native block asserts nothing: set facts, invalidation, min_facts, or max_facts")
 	}
 	if expect.MinFacts < 0 {
 		return fmt.Errorf("min_facts must be non-negative")
@@ -121,52 +199,116 @@ func validateFixtureNative(expect *fixtureNative) error {
 			return fmt.Errorf("facts[%d]: %w", index, err)
 		}
 	}
+	for index, invalidation := range expect.Invalidation {
+		if err := validateFixtureNativeInvalidation(invalidation); err != nil {
+			return fmt.Errorf("invalidation[%d]: %w", index, err)
+		}
+	}
 	return nil
 }
 
 func validateFixtureNativeFact(exp fixtureNativeFact) error {
+	if err := exp.validate(); err != nil {
+		return err
+	}
+	if err := validateNativeBounds(exp.Min, exp.Max); err != nil {
+		return err
+	}
+	// A required row must pin what the engine published. Asserting that some
+	// row exists under a key prefix is not a specification of a fact.
+	if exp.Min > 0 && !exp.assertsContent() {
+		return fmt.Errorf("min %d requires an exact key or a value assertion", exp.Min)
+	}
+	for index, revocation := range exp.RevokedBy {
+		if err := revocation.validate(); err != nil {
+			return fmt.Errorf("revoked_by[%d]: %w", index, err)
+		}
+		if revocation.empty() {
+			return fmt.Errorf("revoked_by[%d]: at least one of established, revoked or event is required", index)
+		}
+	}
+	// A revocation set describes rows that exist. Attaching one to an assertion
+	// that demands no row would report a revocation nothing has to publish.
+	if len(exp.RevokedBy) > 0 && exp.Min == 0 {
+		return fmt.Errorf("revoked_by requires min to be positive")
+	}
+	if exp.RevokedByExhaustive && len(exp.RevokedBy) == 0 {
+		return fmt.Errorf("revoked_by_exhaustive requires revoked_by")
+	}
+	return nil
+}
+
+func validateFixtureNativeInvalidation(exp fixtureNativeInvalidation) error {
+	if err := exp.fixtureNativeSelector.validate(); err != nil {
+		return err
+	}
+	if err := exp.fixtureNativeRevocation.validate(); err != nil {
+		return err
+	}
+	return validateNativeBounds(exp.Min, exp.Max)
+}
+
+func validateNativeBounds(min int, max *int) error {
+	if min < 0 {
+		return fmt.Errorf("min must be non-negative")
+	}
+	if max != nil && *max < 0 {
+		return fmt.Errorf("max must be non-negative")
+	}
+	if min == 0 && max == nil {
+		return fmt.Errorf("min must be positive or max must be set")
+	}
+	if max != nil && min > *max {
+		return fmt.Errorf("min %d exceeds max %d", min, *max)
+	}
+	return nil
+}
+
+func (exp fixtureNativeSelector) validate() error {
 	if !exp.selects() {
 		return fmt.Errorf("at least one selector is required")
 	}
 	if exp.Lane != "" && !validNativeLane(exp.Lane) {
 		return fmt.Errorf("unknown lane %q", exp.Lane)
 	}
+	if exp.Trust != "" && !validNativeTrust(exp.Trust) {
+		return fmt.Errorf("unknown trust %q", exp.Trust)
+	}
 	if err := validateContains("key_contains", exp.KeyContains, false); err != nil {
 		return err
 	}
-	if err := validateContains("value_contains", exp.ValueContains, false); err != nil {
-		return err
-	}
-	if exp.Min < 0 {
-		return fmt.Errorf("min must be non-negative")
-	}
-	if exp.Max != nil && *exp.Max < 0 {
-		return fmt.Errorf("max must be non-negative")
-	}
-	if exp.Min == 0 && exp.Max == nil {
-		return fmt.Errorf("min must be positive or max must be set")
-	}
-	if exp.Max != nil && exp.Min > *exp.Max {
-		return fmt.Errorf("min %d exceeds max %d", exp.Min, *exp.Max)
-	}
-	// A required row must pin what the engine published. Asserting that some
-	// row exists under a key prefix is not a specification of a fact.
-	if exp.Min > 0 && exp.Key == "" && exp.Value == nil && exp.ValuePrefix == "" && len(exp.ValueContains) == 0 {
-		return fmt.Errorf("min %d requires an exact key or a value assertion", exp.Min)
+	return validateContains("value_contains", exp.ValueContains, false)
+}
+
+func (exp fixtureNativeRevocation) validate() error {
+	if exp.Revoked != "" && exp.Established != "" && exp.Revoked == exp.Established {
+		return fmt.Errorf("revoked %q cannot equal established", exp.Revoked)
 	}
 	return nil
 }
 
-func (exp fixtureNativeFact) selects() bool {
+func (exp fixtureNativeRevocation) empty() bool {
+	return exp.Established == "" && exp.Revoked == "" && exp.Event == ""
+}
+
+func (exp fixtureNativeSelector) selects() bool {
 	return exp.Lane != "" || exp.Module != "" || exp.Family != "" || exp.Key != "" || exp.KeyPrefix != "" ||
 		exp.KeySuffix != "" || len(exp.KeyContains) > 0 || exp.Subject != "" || exp.Term != "" ||
-		exp.Occurrence != "" || exp.Value != nil || exp.ValuePrefix != "" || len(exp.ValueContains) > 0
+		exp.Occurrence != "" || exp.Value != nil || exp.ValuePrefix != "" || len(exp.ValueContains) > 0 ||
+		exp.Trust != ""
+}
+
+// assertsContent reports whether the selector pins published content rather
+// than merely a coordinate. Proof provenance is content: it is the difference
+// between a row a code generator may act on and one it may not.
+func (exp fixtureNativeSelector) assertsContent() bool {
+	return exp.Key != "" || exp.Value != nil || exp.ValuePrefix != "" || len(exp.ValueContains) > 0 || exp.Trust != ""
 }
 
 // selectsKey is the identity half of the selector. It is separated from the
 // value half so a failed assertion can render the rows the engine did publish
 // at the selected coordinate against the value the fixture demanded.
-func (exp fixtureNativeFact) selectsKey(row nativeFactRow) bool {
+func (exp fixtureNativeSelector) selectsKey(row nativeFactRow) bool {
 	fact := row.Fact
 	if exp.Lane != "" && fact.Lane != exp.Lane {
 		return false
@@ -198,7 +340,7 @@ func (exp fixtureNativeFact) selectsKey(row nativeFactRow) bool {
 	return exp.Occurrence == "" || fact.Occurrence == exp.Occurrence
 }
 
-func (exp fixtureNativeFact) selectsValue(row nativeFactRow) bool {
+func (exp fixtureNativeSelector) selectsValue(row nativeFactRow) bool {
 	value := row.Fact.Value
 	if exp.Value != nil && value != *exp.Value {
 		return false
@@ -206,11 +348,30 @@ func (exp fixtureNativeFact) selectsValue(row nativeFactRow) bool {
 	if exp.ValuePrefix != "" && !strings.HasPrefix(value, exp.ValuePrefix) {
 		return false
 	}
+	if exp.Trust != "" && row.Fact.Trust != exp.Trust {
+		return false
+	}
 	return containsAll(value, exp.ValueContains)
 }
 
-func describeFixtureNativeFact(exp fixtureNativeFact) string {
-	parts := make([]string, 0, 12)
+// selectsRevocation matches the epoch interval the closure published for a
+// row. A row the closure never revoked matches no revocation selector, so a
+// revocation assertion can never be satisfied by an unrevoked row.
+func (exp fixtureNativeRevocation) selectsRevocation(fact engine.NativeFact) bool {
+	if fact.Revoked == "" {
+		return false
+	}
+	if exp.Established != "" && fact.Established != exp.Established {
+		return false
+	}
+	if exp.Revoked != "" && fact.Revoked != exp.Revoked {
+		return false
+	}
+	return exp.Event == "" || fact.Event == exp.Event
+}
+
+func (exp fixtureNativeSelector) describe() []string {
+	parts := make([]string, 0, 14)
 	add := func(name, value string) {
 		if value != "" {
 			parts = append(parts, name+"="+value)
@@ -235,11 +396,48 @@ func describeFixtureNativeFact(exp fixtureNativeFact) string {
 	if len(exp.ValueContains) > 0 {
 		add("value_contains", strings.Join(exp.ValueContains, "|"))
 	}
-	selector := strings.Join(parts, ", ")
-	if exp.Name != "" {
-		return fmt.Sprintf("%s {%s}", exp.Name, selector)
+	add("trust", exp.Trust)
+	return parts
+}
+
+func (exp fixtureNativeRevocation) describe() []string {
+	parts := make([]string, 0, 3)
+	add := func(name, value string) {
+		if value != "" {
+			parts = append(parts, name+"="+value)
+		}
 	}
-	return "{" + selector + "}"
+	add("established", exp.Established)
+	add("revoked", exp.Revoked)
+	add("event", exp.Event)
+	if len(parts) == 0 {
+		return []string{"any-revocation"}
+	}
+	return parts
+}
+
+func describeNativeAssertion(name string, parts []string) string {
+	selector := "{" + strings.Join(parts, ", ") + "}"
+	if name != "" {
+		return name + " " + selector
+	}
+	return selector
+}
+
+func describeFixtureNativeFact(exp fixtureNativeFact) string {
+	parts := exp.describe()
+	for _, revocation := range exp.RevokedBy {
+		parts = append(parts, "revoked_by["+strings.Join(revocation.describe(), " ")+"]")
+	}
+	if exp.RevokedByExhaustive {
+		parts = append(parts, "revoked_by_exhaustive")
+	}
+	return describeNativeAssertion(exp.Name, parts)
+}
+
+func describeFixtureNativeInvalidation(exp fixtureNativeInvalidation) string {
+	return describeNativeAssertion(exp.Name,
+		append(exp.fixtureNativeSelector.describe(), "revocation["+strings.Join(exp.fixtureNativeRevocation.describe(), " ")+"]"))
 }
 
 // fixtureNativeRows joins every module's published fact index. A checked module
@@ -291,11 +489,16 @@ func nativeExpectationMisses(raw json.RawMessage, rows []nativeFactRow, indexFai
 	for _, fact := range expect.Facts {
 		misses = append(misses, nativeFactExpectationMisses(fact, rows)...)
 	}
+	for _, invalidation := range expect.Invalidation {
+		misses = append(misses, nativeInvalidationExpectationMisses(invalidation, rows)...)
+	}
 	return misses
 }
 
-func nativeFactExpectationMisses(exp fixtureNativeFact, rows []nativeFactRow) []string {
-	var matched, keyed []nativeFactRow
+// selectRows splits the published rows into those the whole selector matched
+// and those that matched its identity half, so a value or trust mismatch can
+// be rendered against what the closure did publish at that coordinate.
+func (exp fixtureNativeSelector) selectRows(rows []nativeFactRow) (matched, keyed []nativeFactRow) {
 	for _, row := range rows {
 		if !exp.selectsKey(row) {
 			continue
@@ -305,6 +508,11 @@ func nativeFactExpectationMisses(exp fixtureNativeFact, rows []nativeFactRow) []
 			matched = append(matched, row)
 		}
 	}
+	return matched, keyed
+}
+
+func nativeFactExpectationMisses(exp fixtureNativeFact, rows []nativeFactRow) []string {
+	matched, keyed := exp.selectRows(rows)
 	var misses []string
 	if len(matched) < exp.Min {
 		misses = append(misses, fmt.Sprintf("%s matched %d rows, want at least %d%s",
@@ -313,6 +521,80 @@ func nativeFactExpectationMisses(exp fixtureNativeFact, rows []nativeFactRow) []
 	if exp.Max != nil && len(matched) > *exp.Max {
 		misses = append(misses, fmt.Sprintf("%s matched %d rows, want at most %d%s",
 			describeFixtureNativeFact(exp), len(matched), *exp.Max, renderNativeSamples("matched", matched)))
+	}
+	return append(misses, nativeRevocationSetMisses(exp, matched)...)
+}
+
+// nativeRevocationSetMisses checks the revocation set of the matched rows
+// against the fixture's. A matched row with no published epoch interval fails
+// first: a fact whose validity was never published names no deopt point, and
+// treating that silence as "revoked by nothing" is exactly the unsound reading.
+func nativeRevocationSetMisses(exp fixtureNativeFact, matched []nativeFactRow) []string {
+	if len(exp.RevokedBy) == 0 {
+		return nil
+	}
+	var misses []string
+	for _, row := range matched {
+		if row.Fact.Established == "" {
+			misses = append(misses, fmt.Sprintf("%s matched a row with no published epoch interval; %s",
+				describeFixtureNativeFact(exp), row))
+		}
+	}
+	for _, revocation := range exp.RevokedBy {
+		found := false
+		for _, row := range matched {
+			found = found || revocation.selectsRevocation(row.Fact)
+		}
+		if !found {
+			misses = append(misses, fmt.Sprintf("%s publishes no revocation {%s}%s",
+				describeFixtureNativeFact(exp), strings.Join(revocation.describe(), " "), renderNativeSamples("matched", matched)))
+		}
+	}
+	if !exp.RevokedByExhaustive {
+		return misses
+	}
+	for _, row := range matched {
+		if row.Fact.Revoked == "" {
+			continue
+		}
+		listed := false
+		for _, revocation := range exp.RevokedBy {
+			listed = listed || revocation.selectsRevocation(row.Fact)
+		}
+		if !listed {
+			misses = append(misses, fmt.Sprintf("%s is revoked by an unlisted event; %s", describeFixtureNativeFact(exp), row))
+		}
+	}
+	return misses
+}
+
+func nativeInvalidationExpectationMisses(exp fixtureNativeInvalidation, rows []nativeFactRow) []string {
+	matched, keyed := exp.selectRows(rows)
+	var intervals, revoked []nativeFactRow
+	for _, row := range matched {
+		if row.Fact.Established == "" {
+			continue
+		}
+		intervals = append(intervals, row)
+		if exp.selectsRevocation(row.Fact) {
+			revoked = append(revoked, row)
+		}
+	}
+	// Bounding revocations of rows whose validity was never published would
+	// pass on silence, which is the one reading a speculative consumer must
+	// never be given.
+	if len(intervals) == 0 {
+		return []string{fmt.Sprintf("%s selects no row with a published epoch interval%s",
+			describeFixtureNativeInvalidation(exp), renderNativeSamples("published at the selected coordinate", keyed))}
+	}
+	var misses []string
+	if len(revoked) < exp.Min {
+		misses = append(misses, fmt.Sprintf("%s matched %d revocations, want at least %d%s",
+			describeFixtureNativeInvalidation(exp), len(revoked), exp.Min, renderNativeSamples("selected", intervals)))
+	}
+	if exp.Max != nil && len(revoked) > *exp.Max {
+		misses = append(misses, fmt.Sprintf("%s matched %d revocations, want at most %d%s",
+			describeFixtureNativeInvalidation(exp), len(revoked), *exp.Max, renderNativeSamples("revoked", revoked)))
 	}
 	return misses
 }

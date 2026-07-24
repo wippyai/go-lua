@@ -1,0 +1,60 @@
+{
+  "description": "A float literal whose value is integral is still a float machine word: the constant row must publish representation float and must not be normalised to the integer 42 on the strength of its numeric value.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven constant_value row(s)",
+          "lane": "values",
+          "family": "constant_value",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven representation row(s)",
+          "lane": "values",
+          "family": "representation",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 representation.integer row(s)",
+          "family": "representation",
+          "value_contains": [
+            "integer"
+          ],
+          "max": 0
+        },
+        {
+          "name": "constant_value row",
+          "lane": "values",
+          "family": "constant_value",
+          "value_contains": [
+            "representation=float",
+            "value=42.0"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "representation row",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "exact=true",
+            "representation=float"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "description": "Structural shape identity is the same value on both sides of a module boundary: the helper's construction site and main's read site publish one id with identical field offsets.",
+  "files": [
+    "shapes.lua",
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven shape_identity row(s)",
+          "lane": "values",
+          "family": "shape_identity",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 shape_identity.unknown row(s)",
+          "family": "shape_identity",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "shape_identity row",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "field_offsets=identical",
+            "stable_across_modules=true",
+            "stable_across_sites=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "shape_identity must not carry module_local",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "module_local"
+          ],
+          "max": 0
+        },
+        {
+          "name": "shape_identity row",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "field_offsets=identical",
+            "stable_across_modules=true",
+            "stable_across_sites=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "shape_identity must not carry module_local",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "module_local"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

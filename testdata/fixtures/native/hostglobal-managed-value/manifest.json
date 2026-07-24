@@ -1,0 +1,80 @@
+{
+  "description": "A host binding whose value carries a table is managed and must publish ownership, rooting and release; the immediate integer producer beside it draws no binding row at all.",
+  "packages": [
+    "stream"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven host_global_binding row(s)",
+          "lane": "values",
+          "family": "host_global_binding",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 host_global_binding row(s)",
+          "family": "host_global_binding",
+          "max": 1
+        },
+        {
+          "name": "at most 0 host_global_binding.unknown row(s)",
+          "family": "host_global_binding",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "host_global_binding row",
+          "lane": "values",
+          "family": "host_global_binding",
+          "value_contains": [
+            "identity=published",
+            "managed=true",
+            "ownership=published",
+            "release=published",
+            "rooting=published",
+            "type=published",
+            "used_order=published",
+            "value_carrier=published"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.global"
+            },
+            {
+              "event": "load.dynamic"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "host_global_binding must not carry type_ingress_only",
+          "lane": "values",
+          "family": "host_global_binding",
+          "value_contains": [
+            "type_ingress_only"
+          ],
+          "max": 0
+        },
+        {
+          "name": "host_global_binding must not carry immediate",
+          "lane": "values",
+          "family": "host_global_binding",
+          "value_contains": [
+            "immediate"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

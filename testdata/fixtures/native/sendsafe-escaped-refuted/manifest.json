@@ -1,0 +1,77 @@
+{
+  "description": "A payload stored into another owner before the send has escaped: the send-safety verdict must be REFUTED with the copy required by proof, never left as unknown, and the escape epoch must name where the isolation was lost.",
+  "packages": [
+    "process",
+    "ownership"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven send_safety row(s)",
+          "lane": "values",
+          "family": "send_safety",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 send_safety.immutable row(s)",
+          "family": "send_safety",
+          "value_contains": [
+            "immutable"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 send_safety.isolated row(s)",
+          "family": "send_safety",
+          "value_contains": [
+            "isolated"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 send_safety.unknown row(s)",
+          "family": "send_safety",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "send_safety row",
+          "lane": "values",
+          "family": "send_safety",
+          "value_contains": [
+            "copy_required=true",
+            "verdict=escaped_refuted"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "send_safety must not carry transfer",
+          "lane": "values",
+          "family": "send_safety",
+          "value_contains": [
+            "transfer"
+          ],
+          "max": 0
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "send_safety is revoked by escape",
+          "lane": "values",
+          "family": "send_safety",
+          "event": "escape",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

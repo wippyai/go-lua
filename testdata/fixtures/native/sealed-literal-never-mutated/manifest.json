@@ -1,0 +1,60 @@
+{
+  "description": "A table literal with a complete static key set that is never mutated is closed, and its deopt-trigger set is exactly a field store and a metatable install.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven sealed_table row(s)",
+          "lane": "values",
+          "family": "sealed_table",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 sealed_table.unknown row(s)",
+          "family": "sealed_table",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "sealed_table row",
+          "lane": "values",
+          "family": "sealed_table",
+          "value_contains": [
+            "closed=true",
+            "key_set=complete"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.field"
+            },
+            {
+              "event": "meta.set"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "sealed_table must not carry assumed_closed",
+          "lane": "values",
+          "family": "sealed_table",
+          "value_contains": [
+            "assumed_closed"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

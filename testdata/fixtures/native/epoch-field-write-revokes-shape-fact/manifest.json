@@ -1,0 +1,89 @@
+{
+  "description": "A shape_identity fact established by a field read names write.field in its own revocation set, is revoked by the store to that field, and is reestablished at the read after the store.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven shape_identity row(s)",
+          "lane": "values",
+          "family": "shape_identity",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 2 shape_identity row(s)",
+          "family": "shape_identity",
+          "max": 2
+        },
+        {
+          "name": "shape_identity row",
+          "lane": "values",
+          "family": "shape_identity",
+          "subject": "b",
+          "value_contains": [
+            "stable=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.field"
+            },
+            {
+              "event": "shape.transition"
+            },
+            {
+              "event": "meta.set"
+            },
+            {
+              "event": "call.opaque"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "shape_identity row",
+          "lane": "values",
+          "family": "shape_identity",
+          "subject": "b",
+          "value_contains": [
+            "stable=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.field"
+            },
+            {
+              "event": "shape.transition"
+            },
+            {
+              "event": "meta.set"
+            },
+            {
+              "event": "call.opaque"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "shape_identity is revoked by write.field",
+          "lane": "values",
+          "family": "shape_identity",
+          "event": "write.field",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

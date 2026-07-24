@@ -1,0 +1,62 @@
+{
+  "description": "A typed producer carrying a resolved scalar type is classified compile-time-only: the annotation fixes value-bit identity and no native operation contract is owed.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven typed_producer row(s)",
+          "lane": "values",
+          "family": "typed_producer",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 typed_producer row(s)",
+          "family": "typed_producer",
+          "max": 1
+        },
+        {
+          "name": "at most 0 typed_producer.unknown row(s)",
+          "family": "typed_producer",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "typed_producer row",
+          "lane": "values",
+          "family": "typed_producer",
+          "value_contains": [
+            "classification=compile_time_only",
+            "value_bit_identity=true"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "typed_producer must not carry requires_native_operation_contract",
+          "lane": "values",
+          "family": "typed_producer",
+          "value_contains": [
+            "requires_native_operation_contract"
+          ],
+          "max": 0
+        },
+        {
+          "name": "typed_producer must not carry unclassified",
+          "lane": "values",
+          "family": "typed_producer",
+          "value_contains": [
+            "unclassified"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

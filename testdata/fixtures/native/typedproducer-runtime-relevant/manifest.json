@@ -1,0 +1,71 @@
+{
+  "description": "The other classification arm: a producer whose annotation is a record type driving physical layout is runtime-relevant and owes a native operation contract.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven typed_producer row(s)",
+          "lane": "values",
+          "family": "typed_producer",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 typed_producer row(s)",
+          "family": "typed_producer",
+          "max": 1
+        },
+        {
+          "name": "at most 0 typed_producer.unknown row(s)",
+          "family": "typed_producer",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "typed_producer row",
+          "lane": "values",
+          "family": "typed_producer",
+          "value_contains": [
+            "classification=runtime_relevant",
+            "requires_native_operation_contract=true"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "typed_producer must not carry compile_time_only",
+          "lane": "values",
+          "family": "typed_producer",
+          "value_contains": [
+            "compile_time_only"
+          ],
+          "max": 0
+        },
+        {
+          "name": "typed_producer must not carry value_bit_identity",
+          "lane": "values",
+          "family": "typed_producer",
+          "value_contains": [
+            "value_bit_identity"
+          ],
+          "max": 0
+        },
+        {
+          "name": "typed_producer must not carry unclassified",
+          "lane": "values",
+          "family": "typed_producer",
+          "value_contains": [
+            "unclassified"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "description": "A loop-carried element store publishes a repeatable growth site with the array-vs-hash predecessor retirement arm, a published heap-exhaustion rollback and a complete throw inventory; it must not be published as a one-shot lifecycle row.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven table_growth row(s)",
+          "lane": "values",
+          "family": "table_growth",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "table_growth row",
+          "lane": "values",
+          "family": "table_growth",
+          "value_contains": [
+            "occurrence_mode=repeatable",
+            "retirement=array_or_hash",
+            "rollback=published",
+            "throw_inventory=complete"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "escape"
+            },
+            {
+              "event": "meta.set"
+            },
+            {
+              "event": "call.opaque"
+            },
+            {
+              "event": "load.dynamic"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "table_growth must not carry once_only",
+          "lane": "values",
+          "family": "table_growth",
+          "value_contains": [
+            "once_only"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

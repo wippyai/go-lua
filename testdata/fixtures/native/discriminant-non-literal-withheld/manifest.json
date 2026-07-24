@@ -1,0 +1,21 @@
+{
+  "description": "The discriminant is compared against a runtime string rather than against literals, so the case set is not closed and no dense-dispatch fact is published.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 discriminant_select row(s)",
+          "family": "discriminant_select",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

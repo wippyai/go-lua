@@ -1,0 +1,109 @@
+{
+  "description": "One record type constructed at two sites and read at a third mints a single stable shape id with identical field offsets, which is what makes the read site's monomorphic inline cache legal.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 3 proven shape_identity row(s)",
+          "lane": "values",
+          "family": "shape_identity",
+          "trust": "proven",
+          "min": 3
+        },
+        {
+          "name": "at most 0 shape_identity.unknown row(s)",
+          "family": "shape_identity",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "shape_identity row",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "field_offsets=identical",
+            "stable_across_sites=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "shape_identity must not carry site_local",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "site_local"
+          ],
+          "max": 0
+        },
+        {
+          "name": "shape_identity row",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "field_offsets=identical",
+            "stable_across_sites=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "shape_identity must not carry site_local",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "site_local"
+          ],
+          "max": 0
+        },
+        {
+          "name": "shape_identity row",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "field_offsets=identical",
+            "stable_across_sites=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "shape_identity must not carry site_local",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "site_local"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

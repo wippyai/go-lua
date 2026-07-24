@@ -255,7 +255,7 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 	}
 	matchBoundary := func(key string) bool {
 		for _, term := range boundary {
-			for _, prefix := range []string{"value/", "closure/", "declared-type/", "epoch/", heapTableIdentityPrefix} {
+			for _, prefix := range []string{"value/", "closure/", "declared-type/", epochFactPrefix, heapTableIdentityPrefix} {
 				if strings.HasPrefix(key, prefix+term+"/") {
 					return true
 				}

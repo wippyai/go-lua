@@ -1,0 +1,53 @@
+{
+  "description": "A literal mixing static string keys with positional entries publishes array capacity and key capacity separately, each entry carrying a producer-committed destination: integer array index or record-field offset, never an index derived from source order.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven list_construction row(s)",
+          "lane": "values",
+          "family": "list_construction",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "list_construction row",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "array_capacity=2",
+            "entry_destinations=committed",
+            "key_capacity=1"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "list_construction must not carry source_order_index",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "source_order_index"
+          ],
+          "max": 0
+        },
+        {
+          "name": "list_construction must not carry merged_capacity",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "merged_capacity"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

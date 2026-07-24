@@ -1,0 +1,55 @@
+{
+  "description": "Unary negation preserves the operand's integer representation arm, and the overflow disposition must be published with it: Lua integer negation wraps at math.mininteger rather than promoting to float.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven representation row(s)",
+          "lane": "values",
+          "family": "representation",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven representation.exact row(s)",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "exact"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 representation.float row(s)",
+          "family": "representation",
+          "value_contains": [
+            "float"
+          ],
+          "max": 0
+        },
+        {
+          "name": "representation row",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "exact=true",
+            "operator=unm",
+            "overflow=closed_integer",
+            "representation=integer",
+            "result_representation=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

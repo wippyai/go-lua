@@ -1,0 +1,87 @@
+{
+  "description": "Two structurally identical record types whose fields are written in different textual order intern to one shape identity: field ordering is canonical, never source order.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven shape_identity row(s)",
+          "lane": "values",
+          "family": "shape_identity",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 shape_identity.unknown row(s)",
+          "family": "shape_identity",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "shape_identity row",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "distinct_identities=1",
+            "field_offsets=identical",
+            "field_order=canonical",
+            "interned=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "shape_identity must not carry source_order",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "source_order"
+          ],
+          "max": 0
+        },
+        {
+          "name": "shape_identity row",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "distinct_identities=1",
+            "field_offsets=identical",
+            "field_order=canonical",
+            "interned=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "shape_identity must not carry source_order",
+          "lane": "values",
+          "family": "shape_identity",
+          "value_contains": [
+            "source_order"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

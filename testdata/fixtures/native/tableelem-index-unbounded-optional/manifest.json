@@ -1,0 +1,61 @@
+{
+  "description": "Without an upper-bound proof the indexed read is maybe_nil; element presence must be withheld rather than assumed from the array annotation.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 table_element.presence_proven row(s)",
+          "family": "table_element",
+          "value_contains": [
+            "presence_proven"
+          ],
+          "max": 0
+        },
+        {
+          "name": "table_element row",
+          "lane": "values",
+          "family": "table_element",
+          "value_contains": [
+            "result_nilability=maybe_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "write.length"
+            },
+            {
+              "event": "write.local"
+            },
+            {
+              "event": "meta.set"
+            },
+            {
+              "event": "call.opaque"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "table_element must not carry presence",
+          "lane": "values",
+          "family": "table_element",
+          "value_contains": [
+            "presence"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

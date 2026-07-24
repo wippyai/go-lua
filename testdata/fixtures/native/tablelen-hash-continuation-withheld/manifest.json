@@ -1,0 +1,21 @@
+{
+  "description": "Integer keys continuing in hash storage leave the sequence border non-unique; the array-header length must not be published as the Lua result of #t.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 table_length row(s)",
+          "family": "table_length",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

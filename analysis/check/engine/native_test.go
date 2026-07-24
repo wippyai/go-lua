@@ -58,13 +58,15 @@ func TestNativeFactIndexAnchorsTermsAndOccurrencesFromTheArtifact(t *testing.T) 
 		byKey[fact.Key] = fact
 	}
 	for _, want := range []NativeFact{
-		{Lane: NativeLaneValues, Family: "value", Key: "value/path/sym2/op-00000003", Value: "scalar/number/7", Term: "path/sym2", Subject: "total", Occurrence: "op-00000003"},
+		{Lane: NativeLaneValues, Family: "value", Key: "value/path/sym2/op-00000003", Value: "scalar/number/7", Term: "path/sym2", Subject: "total", Occurrence: "op-00000003", Trust: NativeTrustProven},
 		// A callee spelling is recovered from the paired display operand role.
-		{Lane: NativeLaneValues, Family: "value", Key: "value/path/sym5/op-00000004", Value: "scalar/function/x", Term: "path/sym5", Subject: "scale", Occurrence: "op-00000004"},
+		{Lane: NativeLaneValues, Family: "value", Key: "value/path/sym5/op-00000004", Value: "scalar/function/x", Term: "path/sym5", Subject: "scale", Occurrence: "op-00000004", Trust: NativeTrustProven},
 		// A hidden front display is not a source name, so the term stays unnamed.
-		{Lane: NativeLaneValues, Family: "value", Key: "value/path/sym9/op-00000005", Value: "scalar/number/1", Term: "path/sym9", Subject: "", Occurrence: "op-00000005"},
+		{Lane: NativeLaneValues, Family: "value", Key: "value/path/sym9/op-00000005", Value: "scalar/number/1", Term: "path/sym9", Subject: "", Occurrence: "op-00000005", Trust: NativeTrustProven},
 		// An identity-addressed key still anchors on its equation coordinate.
-		{Lane: NativeLaneValues, Family: "heap", Key: "heap/table-closed/aGVhcA/op-00000003", Value: "closed", Term: "", Subject: "", Occurrence: "op-00000003"},
+		{Lane: NativeLaneValues, Family: "heap", Key: "heap/table-closed/aGVhcA/op-00000003", Value: "closed", Term: "", Subject: "", Occurrence: "op-00000003", Trust: NativeTrustProven},
+		// Outcome and diagnostic rows carry no value encoding, so they carry no
+		// proof provenance either.
 		{Lane: NativeLaneOutcomes, Family: "return", Key: "return/arity", Value: "1"},
 		{Lane: NativeLaneDiagnostics, Family: "claim", Key: "claim/unproven/op-00000004", Value: "no witness", Occurrence: "op-00000004"},
 	} {
@@ -74,6 +76,73 @@ func TestNativeFactIndexAnchorsTermsAndOccurrencesFromTheArtifact(t *testing.T) 
 	}
 	if len(index.Facts()) != 6 {
 		t.Fatalf("published %d rows, want 6", len(index.Facts()))
+	}
+}
+
+// The epoch chain a term already carries is its validity interval: a fact
+// established at one epoch stops holding at the next, and the operation that
+// bumps the epoch names the event.
+func TestNativeFactIndexBindsEachRowToItsPublishedEpochInterval(t *testing.T) {
+	index := publishedNativeFacts(nativeTestArtifact(),
+		[]equation.Fact{
+			{Key: "epoch/path/sym2/op-00000003", Value: []byte("op-00000003")},
+			{Key: "epoch/path/sym2/op-00000005", Value: []byte("op-00000005")},
+			{Key: "value/path/sym2/op-00000003", Value: []byte("scalar/number/7")},
+			{Key: "value/path/sym2/op-00000005", Value: []byte("scalar/number/8")},
+			// A term the closure never versioned carries no interval at all.
+			{Key: "value/path/sym5/op-00000004", Value: []byte("scalar/function/x")},
+			// A key anchored somewhere other than one of the term's epochs is
+			// not epoch-gated and must not borrow an interval from one.
+			{Key: "value/path/sym2/op-00000004", Value: []byte("scalar/number/7")},
+		}, nil, nil)
+	byKey := make(map[string]NativeFact)
+	for _, fact := range index.Facts() {
+		byKey[fact.Key] = fact
+	}
+	for _, want := range []struct{ key, established, revoked, event string }{
+		{"value/path/sym2/op-00000003", "op-00000003", "op-00000005", "environment-write"},
+		{"epoch/path/sym2/op-00000003", "op-00000003", "op-00000005", "environment-write"},
+		{"value/path/sym2/op-00000005", "op-00000005", "", ""},
+		{"value/path/sym5/op-00000004", "", "", ""},
+		{"value/path/sym2/op-00000004", "", "", ""},
+	} {
+		got := byKey[want.key]
+		if got.Established != want.established || got.Revoked != want.revoked || got.Event != want.event {
+			t.Fatalf("row %s validity = (%q, %q, %q), want (%q, %q, %q)",
+				want.key, got.Established, got.Revoked, got.Event, want.established, want.revoked, want.event)
+		}
+	}
+}
+
+// A claim the closure could not discharge stays a claim wherever its value
+// travels, because the refusal is carried inside the published value.
+func TestNativeFactIndexClassifiesProofProvenance(t *testing.T) {
+	claimed := "scalar/claim/claim-kind/1/claim-type/\"number\""
+	index := publishedNativeFacts(nativeTestArtifact(),
+		[]equation.Fact{
+			{Key: "value/path/sym2/op-00000003", Value: []byte("scalar/number/7")},
+			{Key: "value/path/sym5/op-00000004", Value: []byte(claimed)},
+			{Key: "value/path/sym9/op-00000005", Value: []byte("scalar/top")},
+			{Key: "value/temp/1/op-00000004", Value: []byte("scalar/external-callback-any")},
+		},
+		[]equation.Fact{{Key: "return/0", Value: []byte(claimed)}},
+		[]equation.Fact{{Key: "claim/unproven/op-00000004", Value: []byte("no witness")}},
+	)
+	byKey := make(map[string]NativeFact)
+	for _, fact := range index.Facts() {
+		byKey[fact.Key] = fact
+	}
+	for key, want := range map[string]string{
+		"value/path/sym2/op-00000003": NativeTrustProven,
+		"value/path/sym5/op-00000004": NativeTrustClaimed,
+		"value/path/sym9/op-00000005": NativeTrustUnknown,
+		"value/temp/1/op-00000004":    NativeTrustUnknown,
+		"return/0":                    "",
+		"claim/unproven/op-00000004":  "",
+	} {
+		if got := byKey[key].Trust; got != want {
+			t.Fatalf("row %s trust = %q, want %q", key, got, want)
+		}
 	}
 }
 
@@ -135,6 +204,47 @@ func TestNativeFactIndexIsAbsentForARejectedBody(t *testing.T) {
 type errNativeTestRejection struct{}
 
 func (errNativeTestRejection) Error() string { return "rejected" }
+
+// The two halves a speculative consumer needs, on a real checked module: a
+// binding's first value is revoked at the write that replaces it, and an
+// undischarged cast reaches that write still claimed.
+func TestCheckPublishesValidityAndProvenanceForACheckedModule(t *testing.T) {
+	result, err := Check("local raw: any = os.clock()\nlocal total = 0\nif type(raw) == \"number\" then\n\tlocal checked = raw :: number\n\ttotal = checked\nend\nreturn total\n")
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if result.Native == nil {
+		t.Fatal("checked module published no fact index")
+	}
+	var initial, replacement NativeFact
+	for _, fact := range result.Native.Facts() {
+		if fact.Lane != NativeLaneValues || fact.Family != "value" || fact.Subject != "total" {
+			continue
+		}
+		if fact.Value == "scalar/number/0" {
+			initial = fact
+			continue
+		}
+		replacement = fact
+	}
+	if initial.Established == "" || initial.Revoked == "" {
+		t.Fatalf("the replaced constant carries validity %#v, want an established and a revoked epoch", initial)
+	}
+	if initial.Revoked != replacement.Established {
+		t.Fatalf("the constant is revoked at %q but its replacement is established at %q", initial.Revoked, replacement.Established)
+	}
+	if initial.Event != "environment-write" {
+		t.Fatalf("the revoking event is %q, want the write that replaced the binding", initial.Event)
+	}
+	if initial.Trust != NativeTrustProven {
+		t.Fatalf("the literal constant is %q, want %q", initial.Trust, NativeTrustProven)
+	}
+	// The cast was never discharged, so the value it produced stays claimed
+	// through the assignment that carries it to another binding.
+	if replacement.Trust != NativeTrustClaimed {
+		t.Fatalf("the value assigned from an undischarged cast is %q, want %q", replacement.Trust, NativeTrustClaimed)
+	}
+}
 
 func TestCheckPublishesNativeFactsForACheckedModule(t *testing.T) {
 	result, err := Check("local config = { retries = 3 }\nlocal function scale(factor: integer): integer\nreturn factor * 2\nend\nreturn scale(config.retries)\n")

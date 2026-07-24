@@ -1,0 +1,67 @@
+{
+  "description": "The accumulator row must connect the result arm of one iteration to the input arm of the next: exact initial representation, every transition edge, and backedge coverage -- and with an unbounded trip count it must not conclude no-overflow.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven numeric_loop_carrier row(s)",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven scalar_operator row(s)",
+          "lane": "values",
+          "family": "scalar_operator",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_loop_carrier row",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "value_contains": [
+            "backedges_covered=true",
+            "carrier=sum",
+            "float_arm=false",
+            "initial=integer",
+            "transitions=[integer->integer]"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_loop_carrier must not carry no_overflow",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "value_contains": [
+            "no_overflow"
+          ],
+          "max": 0
+        },
+        {
+          "name": "scalar_operator row",
+          "lane": "values",
+          "family": "scalar_operator",
+          "value_contains": [
+            "dispatch=primitive",
+            "left=integer",
+            "overflow=promote_integer_to_number",
+            "result=integer",
+            "right=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

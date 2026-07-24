@@ -1,0 +1,21 @@
+{
+  "description": "A host-provided value with no declared type publishes no binding row: presence of a host surface is not itself a binding grant.",
+  "packages": [
+    "process"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 host_global_binding row(s)",
+          "family": "host_global_binding",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

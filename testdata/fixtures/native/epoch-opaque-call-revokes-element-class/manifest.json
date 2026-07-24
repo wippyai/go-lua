@@ -1,0 +1,66 @@
+{
+  "description": "A table_element class fact over a locally filled numeric table is revoked by a call through a function-typed parameter: the callee set is not Complete, so the element class is withheld at reads after the call.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven table_element row(s)",
+          "lane": "values",
+          "family": "table_element",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 table_element row(s)",
+          "family": "table_element",
+          "max": 1
+        },
+        {
+          "name": "table_element row",
+          "lane": "values",
+          "family": "table_element",
+          "subject": "xs",
+          "value_contains": [
+            "element_class=number"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "write.length"
+            },
+            {
+              "event": "grow"
+            },
+            {
+              "event": "call.opaque"
+            },
+            {
+              "event": "escape"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "table_element is revoked by call.opaque",
+          "lane": "values",
+          "family": "table_element",
+          "event": "call.opaque",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

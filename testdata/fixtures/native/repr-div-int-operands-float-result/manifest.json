@@ -1,0 +1,47 @@
+{
+  "description": "`/` is float division in Lua: with both operands provably integer the result carrier is still a float, so the result representation is licensed per binary instruction and never inherited from the operand arms. `/` needs no divisor guard because integer-zero division is not an error for this operator.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven representation row(s)",
+          "lane": "values",
+          "family": "representation",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "representation row",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "left=integer",
+            "operator=div",
+            "overflow=ieee754",
+            "result_representation=float",
+            "right=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "divisor_property row",
+          "lane": "values",
+          "family": "divisor_property",
+          "value_contains": [
+            "divisor=not_applicable"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

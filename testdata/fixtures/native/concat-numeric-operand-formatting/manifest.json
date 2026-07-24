@@ -1,0 +1,65 @@
+{
+  "description": "A string/integer concat names the exact Lua integer formatting semantics in the published row instead of deferring the conversion to the backend.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven concat_site row(s)",
+          "lane": "values",
+          "family": "concat_site",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 concat_site row(s)",
+          "family": "concat_site",
+          "max": 1
+        },
+        {
+          "name": "at most 0 concat_site.unknown row(s)",
+          "family": "concat_site",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "concat_site row",
+          "lane": "values",
+          "family": "concat_site",
+          "value_contains": [
+            "dispatch=primitive",
+            "formatting=lua_integer",
+            "metamethod=proved_absent",
+            "operand_classes=[string,integer]",
+            "operands=2"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "concat_site must not carry formatting_deferred",
+          "lane": "values",
+          "family": "concat_site",
+          "value_contains": [
+            "formatting_deferred"
+          ],
+          "max": 0
+        },
+        {
+          "name": "concat_site must not carry assumed_primitive",
+          "lane": "values",
+          "family": "concat_site",
+          "value_contains": [
+            "assumed_primitive"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

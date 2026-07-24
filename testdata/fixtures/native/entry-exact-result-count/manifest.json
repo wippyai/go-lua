@@ -1,0 +1,41 @@
+{
+  "description": "A function whose every return carries the same fixed arity publishes an exact result count in its function-entry contract, so a caller can lay out the result slots without a runtime arity adjust.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven function_entry row(s)",
+          "lane": "values",
+          "family": "function_entry",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 function_entry.unknown row(s)",
+          "family": "function_entry",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "function_entry row",
+          "lane": "values",
+          "family": "function_entry",
+          "value_contains": [
+            "results={'exact': True, 'count': 2}"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

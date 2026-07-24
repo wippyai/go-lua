@@ -1,0 +1,60 @@
+{
+  "description": "A four-variant union discriminated by a literal kind field with every arm handled publishes a dense bounded-index mapping, exhaustive with no default lane required.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven discriminant_select row(s)",
+          "lane": "values",
+          "family": "discriminant_select",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 discriminant_select.unknown row(s)",
+          "family": "discriminant_select",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "discriminant_select row",
+          "lane": "values",
+          "family": "discriminant_select",
+          "value_contains": [
+            "cases=4",
+            "default_required=false",
+            "dense_mapping=[0,1,2,3]",
+            "discriminant_field=kind",
+            "exhaustive=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.field"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "discriminant_select must not carry assumed_exhaustive",
+          "lane": "values",
+          "family": "discriminant_select",
+          "value_contains": [
+            "assumed_exhaustive"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

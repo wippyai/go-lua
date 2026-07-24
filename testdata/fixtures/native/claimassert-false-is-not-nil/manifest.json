@@ -1,0 +1,93 @@
+{
+  "description": "The claim assert splits on nil alone: false is not nil, so it passes through the assert unchanged rather than throwing.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven throw_template row(s)",
+          "lane": "values",
+          "family": "throw_template",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 throw_template row(s)",
+          "family": "throw_template",
+          "max": 1
+        },
+        {
+          "name": "throw_template row",
+          "lane": "values",
+          "family": "throw_template",
+          "value_contains": [
+            "allocates=false",
+            "false_arm=passes",
+            "kind=claim_assert",
+            "nil_arm=throws",
+            "preserves_word_on_success=true"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "throw_template must not carry truthiness_tested",
+          "lane": "values",
+          "family": "throw_template",
+          "value_contains": [
+            "truthiness_tested"
+          ],
+          "max": 0
+        },
+        {
+          "name": "throw_template must not carry type",
+          "lane": "values",
+          "family": "throw_template",
+          "value_contains": [
+            "type"
+          ],
+          "max": 0
+        },
+        {
+          "name": "throw_template must not carry ownership",
+          "lane": "values",
+          "family": "throw_template",
+          "value_contains": [
+            "ownership"
+          ],
+          "max": 0
+        },
+        {
+          "name": "throw_template must not carry root",
+          "lane": "values",
+          "family": "throw_template",
+          "value_contains": [
+            "root"
+          ],
+          "max": 0
+        },
+        {
+          "name": "throw_template must not carry release",
+          "lane": "values",
+          "family": "throw_template",
+          "value_contains": [
+            "release"
+          ],
+          "max": 0
+        },
+        {
+          "name": "throw_template must not carry suspension",
+          "lane": "values",
+          "family": "throw_template",
+          "value_contains": [
+            "suspension"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

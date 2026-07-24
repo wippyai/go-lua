@@ -1,0 +1,57 @@
+{
+  "description": "base.lua defines and uses M.scale once; main.lua adds a second, indirected use of the same value. Adding a use or a possible target must never STRENGTHEN a grant, so no callee set in the program may be published Complete.",
+  "files": [
+    "base.lua",
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven callee_set row(s)",
+          "lane": "values",
+          "family": "callee_set",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 callee_set.complete row(s)",
+          "family": "callee_set",
+          "value_contains": [
+            "complete"
+          ],
+          "max": 0
+        },
+        {
+          "name": "callee_set row",
+          "lane": "values",
+          "family": "callee_set",
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.field"
+            },
+            {
+              "event": "load.dynamic"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "callee_set must not carry assumed_singleton",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "assumed_singleton"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

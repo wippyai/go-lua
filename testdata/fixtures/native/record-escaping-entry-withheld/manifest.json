@@ -1,0 +1,52 @@
+{
+  "description": "The constructed record is sent to another process, so escape is not closed and a specialized entry storage class must be withheld.",
+  "packages": [
+    "process"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 record_construction.specialized_storage row(s)",
+          "family": "record_construction",
+          "value_contains": [
+            "specialized_storage"
+          ],
+          "max": 0
+        },
+        {
+          "name": "record_construction row",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "entries=2"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "escape"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "record_construction must not carry specialized_storage",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "specialized_storage"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

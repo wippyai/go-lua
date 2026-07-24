@@ -1,0 +1,18 @@
+{
+  "description": "Near-miss: a cast and a type annotation must never be mistaken for a non-nil assert, so the module publishes no throw template at all.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 throw_template row(s)",
+          "family": "throw_template",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

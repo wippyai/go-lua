@@ -1,0 +1,60 @@
+{
+  "description": "A loop with zero iterations publishes a maximum occurrence count of 0; zero must be representable and must not be widened to a defaulted one.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven table_construction_bound row(s)",
+          "lane": "values",
+          "family": "table_construction_bound",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "table_construction_bound row",
+          "lane": "values",
+          "family": "table_construction_bound",
+          "value_contains": [
+            "max_occurrences=0"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "table_construction_bound must not carry once_only",
+          "lane": "values",
+          "family": "table_construction_bound",
+          "value_contains": [
+            "once_only"
+          ],
+          "max": 0
+        },
+        {
+          "name": "table_construction_bound must not carry live_objects",
+          "lane": "values",
+          "family": "table_construction_bound",
+          "value_contains": [
+            "live_objects"
+          ],
+          "max": 0
+        },
+        {
+          "name": "table_construction_bound must not carry journal_capacity",
+          "lane": "values",
+          "family": "table_construction_bound",
+          "value_contains": [
+            "journal_capacity"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

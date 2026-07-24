@@ -1,0 +1,44 @@
+{
+  "description": "A list of freshly constructed records publishes one closed parent-to-child edge per element, each with its ownership mode and write-barrier obligation.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven list_construction row(s)",
+          "lane": "values",
+          "family": "list_construction",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "list_construction row",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "edges=4",
+            "ownership=move",
+            "write_barrier=required"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "list_construction must not carry borrow",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "borrow"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

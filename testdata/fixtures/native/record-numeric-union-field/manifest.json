@@ -1,0 +1,61 @@
+{
+  "description": "A field initialized from an integer multiplication that may overflow-promote carries the numeric union; the arm is not narrowed from a small observed call-site input.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven record_construction row(s)",
+          "lane": "values",
+          "family": "record_construction",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 record_construction.unknown row(s)",
+          "family": "record_construction",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "record_construction row",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "entries=1",
+            "field_carrier=numeric_union",
+            "overflow=promote_integer_to_number"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "record_construction must not carry integer_only",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "integer_only"
+          ],
+          "max": 0
+        },
+        {
+          "name": "record_construction must not carry float_only",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "float_only"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "description": "Once the allocation escapes to another process the growth site no longer owns the backing store, so no growth authority may be published for the later stores.",
+  "packages": [
+    "process"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 table_growth row(s)",
+          "family": "table_growth",
+          "max": 0
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "table_growth is revoked by escape",
+          "lane": "values",
+          "family": "table_growth",
+          "event": "escape",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

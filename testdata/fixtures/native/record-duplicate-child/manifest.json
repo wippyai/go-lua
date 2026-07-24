@@ -1,0 +1,58 @@
+{
+  "description": "One freshly built child reaches two fields of the same record: both edges are closed explicitly, at most one may be a move, and source evaluation order is preserved.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven record_construction row(s)",
+          "lane": "values",
+          "family": "record_construction",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at least 2 proven record_entry_ownership row(s)",
+          "lane": "values",
+          "family": "record_entry_ownership",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 1 record_entry_ownership.move row(s)",
+          "family": "record_entry_ownership",
+          "value_contains": [
+            "move"
+          ],
+          "max": 1
+        },
+        {
+          "name": "at most 0 record_entry_ownership.unknown row(s)",
+          "family": "record_entry_ownership",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "record_construction row",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "duplicate_children=1",
+            "edges=2",
+            "evaluation_order=preserved"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

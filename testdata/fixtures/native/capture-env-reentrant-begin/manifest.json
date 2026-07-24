@@ -1,0 +1,18 @@
+{
+  "description": "A re-entrant begin creates many concrete environments per activation, so the single-epoch-root grant must be withheld.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 capture_epoch_root row(s)",
+          "family": "capture_epoch_root",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

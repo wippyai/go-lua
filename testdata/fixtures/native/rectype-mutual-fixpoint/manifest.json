@@ -1,0 +1,86 @@
+{
+  "description": "Two mutually recursive record types both reach a coinductive fixpoint with stable identities; the two-hop link back to the outer type is identity-equal to the subject.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven recursive_type_identity row(s)",
+          "lane": "values",
+          "family": "recursive_type_identity",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 recursive_type_identity.unknown row(s)",
+          "family": "recursive_type_identity",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "recursive_type_identity row",
+          "lane": "values",
+          "family": "recursive_type_identity",
+          "value_contains": [
+            "fixpoint=reached",
+            "identity_stable=true",
+            "mutual=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "recursive_type_identity must not carry unrolled",
+          "lane": "values",
+          "family": "recursive_type_identity",
+          "value_contains": [
+            "unrolled"
+          ],
+          "max": 0
+        },
+        {
+          "name": "recursive_type_identity row",
+          "lane": "values",
+          "family": "recursive_type_identity",
+          "value_contains": [
+            "fixpoint=reached",
+            "identity_equal_to_subject=true",
+            "identity_stable=true",
+            "mutual=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "shape.transition"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "recursive_type_identity must not carry unrolled",
+          "lane": "values",
+          "family": "recursive_type_identity",
+          "value_contains": [
+            "unrolled"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

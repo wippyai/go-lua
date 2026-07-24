@@ -1,0 +1,55 @@
+{
+  "description": "A guard excluding both 0 and -1 publishes a divisor property that lets the JIT drop both integer floor-division traps, and closes the operator's overflow disposition.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven divisor_property row(s)",
+          "lane": "values",
+          "family": "divisor_property",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven scalar_operator row(s)",
+          "lane": "values",
+          "family": "scalar_operator",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "divisor_property row",
+          "lane": "values",
+          "family": "divisor_property",
+          "value_contains": [
+            "divisor=nonzero_not_minus_one"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "scalar_operator row",
+          "lane": "values",
+          "family": "scalar_operator",
+          "value_contains": [
+            "dispatch=primitive",
+            "divisor=nonzero_not_minus_one",
+            "left=integer",
+            "overflow=closed_integer",
+            "result=integer",
+            "right=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

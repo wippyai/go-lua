@@ -1,0 +1,65 @@
+{
+  "description": "A function whose result depends on a mutable captured cell is not caller invariant; its summary must name write.upvalue as a deopt trigger, and the store between the two call sites revokes the summary established at the first one.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven interproc_summary row(s)",
+          "lane": "values",
+          "family": "interproc_summary",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 interproc_summary.caller_invariant row(s)",
+          "family": "interproc_summary",
+          "value_contains": [
+            "caller_invariant"
+          ],
+          "max": 0
+        },
+        {
+          "name": "interproc_summary row",
+          "lane": "values",
+          "family": "interproc_summary",
+          "value_contains": [
+            "invariance=context_sensitive"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.upvalue"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "interproc_summary must not carry caller_invariant",
+          "lane": "values",
+          "family": "interproc_summary",
+          "value_contains": [
+            "caller_invariant"
+          ],
+          "max": 0
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "interproc_summary is revoked by write.upvalue",
+          "lane": "values",
+          "family": "interproc_summary",
+          "event": "write.upvalue",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

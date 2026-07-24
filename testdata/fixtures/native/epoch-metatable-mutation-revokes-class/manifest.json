@@ -1,0 +1,68 @@
+{
+  "description": "A metatable_seal fact established at setmetatable is revoked when the installed __index table itself gains a member: an implementation that snapshots the method table at install time must not keep the seal across meta.mutate.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven metatable_seal row(s)",
+          "lane": "values",
+          "family": "metatable_seal",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 metatable_seal row(s)",
+          "family": "metatable_seal",
+          "max": 1
+        },
+        {
+          "name": "metatable_seal row",
+          "lane": "values",
+          "family": "metatable_seal",
+          "subject": "c",
+          "value_contains": [
+            "index_table=Methods",
+            "sealed=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "meta.set"
+            },
+            {
+              "event": "meta.mutate"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "metatable_seal must not carry snapshot",
+          "lane": "values",
+          "family": "metatable_seal",
+          "subject": "c",
+          "value_contains": [
+            "snapshot"
+          ],
+          "max": 0
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "metatable_seal is revoked by meta.mutate",
+          "lane": "values",
+          "family": "metatable_seal",
+          "event": "meta.mutate",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

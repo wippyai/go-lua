@@ -1,0 +1,66 @@
+{
+  "description": "A pointer-bearing record entry publishes an ownership mode and a write barrier, and the edge is bound to the producing call rather than to lexical position.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven record_construction row(s)",
+          "lane": "values",
+          "family": "record_construction",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at least 1 proven record_entry_ownership row(s)",
+          "lane": "values",
+          "family": "record_entry_ownership",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 record_entry_ownership.unknown row(s)",
+          "family": "record_entry_ownership",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "record_entry_ownership row",
+          "lane": "values",
+          "family": "record_entry_ownership",
+          "value_contains": [
+            "field=node",
+            "ownership=move",
+            "producer_bound=true",
+            "write_barrier=required"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.field"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "record_entry_ownership must not carry inferred_from_nesting",
+          "lane": "values",
+          "family": "record_entry_ownership",
+          "value_contains": [
+            "inferred_from_nesting"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

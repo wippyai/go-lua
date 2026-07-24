@@ -1,0 +1,32 @@
+{
+  "description": "A metatable is installed and then the installed __index table itself gains a method; the seal established at the install is revoked at the mutation, which a snapshot-based implementation misses.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven metatable_seal row(s)",
+          "lane": "values",
+          "family": "metatable_seal",
+          "trust": "proven",
+          "min": 1
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "metatable_seal is revoked by meta.mutate",
+          "lane": "values",
+          "family": "metatable_seal",
+          "event": "meta.mutate",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

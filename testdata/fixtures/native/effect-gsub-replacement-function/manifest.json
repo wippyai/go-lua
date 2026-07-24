@@ -1,0 +1,62 @@
+{
+  "description": "string.gsub with a function replacement composes the replacement's effect row into the call site and publishes allocation presence for the rebuilt string.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven effect_row row(s)",
+          "lane": "values",
+          "family": "effect_row",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 effect_row.pure row(s)",
+          "family": "effect_row",
+          "value_contains": [
+            "pure"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 effect_row.unknown row(s)",
+          "family": "effect_row",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row row",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "allocation=present",
+            "error=absent",
+            "exhaustive=true",
+            "yield=absent"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "effect_row row",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "allocation=present",
+            "composed_from_callback=true",
+            "control_transfer=callback",
+            "exhaustive=true"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

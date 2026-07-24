@@ -1,0 +1,69 @@
+{
+  "description": "A condition decided entirely by constants partitions statically as always_taken, and the fixture demands the dead arm be named and marked unreachable: an arm the JIT never emits is strictly more information than the absence of a branch fact.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven branch_partition row(s)",
+          "lane": "values",
+          "family": "branch_partition",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven constant_value row(s)",
+          "lane": "values",
+          "family": "constant_value",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 branch_partition.always_not_taken row(s)",
+          "family": "branch_partition",
+          "value_contains": [
+            "always_not_taken"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 branch_partition.dynamic row(s)",
+          "family": "branch_partition",
+          "value_contains": [
+            "dynamic"
+          ],
+          "max": 0
+        },
+        {
+          "name": "constant_value row",
+          "lane": "values",
+          "family": "constant_value",
+          "value_contains": [
+            "representation=integer",
+            "value=10"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "branch_partition row",
+          "lane": "values",
+          "family": "branch_partition",
+          "value_contains": [
+            "dead_arm=else",
+            "dead_arm_reachable=false",
+            "partition=always_taken"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

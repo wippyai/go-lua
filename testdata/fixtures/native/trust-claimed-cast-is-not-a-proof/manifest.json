@@ -1,0 +1,89 @@
+{
+  "description": "check.native trust exemplar: a cast off a gradual boundary is a source assertion, not a proof. It is published as claimed, never as proven, and copying the value to another binding does not raise its trust. A native code generator must keep the type test for every claimed row; only a proven row licenses eliding it.",
+  "check": {
+    "errors": 1,
+    "native": {
+      "min_facts": 8,
+      "facts": [
+        {
+          "name": "the boundary the cast reads from is published",
+          "lane": "values",
+          "family": "explicit-any",
+          "subject": "raw",
+          "value": "declared",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the cast result carries the undischarged claim in its own value",
+          "lane": "values",
+          "family": "value",
+          "subject": "seconds",
+          "value": "scalar/claim/claim-kind/1/claim-type/\"number\"",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "so the cast result is claimed",
+          "lane": "values",
+          "family": "value",
+          "subject": "seconds",
+          "trust": "claimed",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "and the cast publishes no proof at that binding",
+          "lane": "values",
+          "family": "value",
+          "subject": "seconds",
+          "trust": "proven",
+          "max": 0
+        },
+        {
+          "name": "copying the claimed value to another binding does not discharge it",
+          "lane": "values",
+          "family": "value",
+          "subject": "rounded",
+          "trust": "claimed",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "so the downstream binding is not proven either",
+          "lane": "values",
+          "family": "value",
+          "subject": "rounded",
+          "trust": "proven",
+          "max": 0
+        },
+        {
+          "name": "no runtime validation was performed, so none is published",
+          "key_prefix": "runtime-type-proof/",
+          "max": 0
+        },
+        {
+          "name": "the module returns exactly one value",
+          "lane": "outcomes",
+          "key": "return/arity",
+          "value": "1",
+          "min": 1,
+          "max": 1
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "the claimed value is not revoked before the module returns, and is still not a proof there",
+          "lane": "values",
+          "family": "value",
+          "subject": "rounded",
+          "trust": "claimed",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "check.native publication fixture: the assertions are over published facts, not over execution"
+  }
+}

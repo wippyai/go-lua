@@ -1,0 +1,21 @@
+{
+  "description": "The same literal gains a key after construction, so the key set is not complete and the sealed-table fact is withheld for the whole module generation.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 sealed_table row(s)",
+          "family": "sealed_table",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "description": "A tostring call on an integer carrier inside a loop publishes a builtin row bound to the canonical global, joined to its call site, with exactly one string result.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven builtin_call row(s)",
+          "lane": "values",
+          "family": "builtin_call",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 builtin_call row(s)",
+          "family": "builtin_call",
+          "max": 1
+        },
+        {
+          "name": "at most 0 builtin_call.unknown row(s)",
+          "family": "builtin_call",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "builtin_call row",
+          "lane": "values",
+          "family": "builtin_call",
+          "value_contains": [
+            "binding=canonical",
+            "builtin=tostring",
+            "input_carrier=integer",
+            "joined_to_call_site=true",
+            "results={'exact': True, 'count': 1}"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.global"
+            },
+            {
+              "event": "call.opaque"
+            },
+            {
+              "event": "call.effectful"
+            },
+            {
+              "event": "load.dynamic"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "builtin_call must not carry open_tail",
+          "lane": "values",
+          "family": "builtin_call",
+          "value_contains": [
+            "open_tail"
+          ],
+          "max": 0
+        },
+        {
+          "name": "builtin_call must not carry assumed_binding",
+          "lane": "values",
+          "family": "builtin_call",
+          "value_contains": [
+            "assumed_binding"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

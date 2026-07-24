@@ -1,0 +1,54 @@
+{
+  "description": "A product recurrence under an unbounded runtime trip count publishes the carrier representation but no no-overflow conclusion, so the per-iteration overflow test stands.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven numeric_loop_carrier row(s)",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 numeric_loop_carrier.no_overflow row(s)",
+          "family": "numeric_loop_carrier",
+          "value_contains": [
+            "no_overflow"
+          ],
+          "max": 0
+        },
+        {
+          "name": "numeric_loop_carrier row",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "value_contains": [
+            "backedges_covered=true",
+            "carrier=sum",
+            "float_arm=false",
+            "initial=integer",
+            "transitions=[integer->integer]"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_loop_carrier must not carry no_overflow",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "value_contains": [
+            "no_overflow"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

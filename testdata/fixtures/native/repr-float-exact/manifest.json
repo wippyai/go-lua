@@ -1,0 +1,52 @@
+{
+  "description": "The result of `/` is a VM float on every operand arm, so the operand `r` at the multiplication site carries an exact float representation even though both `/` operands were widened numbers.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven representation row(s)",
+          "lane": "values",
+          "family": "representation",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven representation.exact row(s)",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "exact"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 representation.integer row(s)",
+          "family": "representation",
+          "value_contains": [
+            "integer"
+          ],
+          "max": 0
+        },
+        {
+          "name": "representation row",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "exact=true",
+            "representation=float"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

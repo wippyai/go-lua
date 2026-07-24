@@ -1,0 +1,39 @@
+{
+  "description": "A local written on a conditional path carries no constant at the merge: two opaque arms cannot be folded into one machine word, so every constant_value row is withheld. The representation arm does survive the same merge, which is the contrast that shows withholding is per-family and not a blanket give-up.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven representation row(s)",
+          "lane": "values",
+          "family": "representation",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 constant_value row(s)",
+          "family": "constant_value",
+          "max": 0
+        },
+        {
+          "name": "representation row",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "exact=true",
+            "representation=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

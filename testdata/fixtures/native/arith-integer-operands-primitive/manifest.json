@@ -1,0 +1,37 @@
+{
+  "description": "Integer operands publish a primitive integer add whose row also carries the overflow disposition, because an integer add can leave the integer arm.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven scalar_operator row(s)",
+          "lane": "values",
+          "family": "scalar_operator",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "scalar_operator row",
+          "lane": "values",
+          "family": "scalar_operator",
+          "value_contains": [
+            "dispatch=primitive",
+            "left=integer",
+            "overflow=promote_integer_to_number",
+            "result=integer",
+            "right=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

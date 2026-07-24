@@ -1,0 +1,94 @@
+{
+  "description": "check.native trust exemplar, the other direction: the same gradual boundary, validated by a runtime type test, publishes a proof. The validation itself is published as a runtime-type-proof row and the declared binding inside the guarded region carries no claim, so a native code generator may specialise there and nowhere else.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "min_facts": 10,
+      "facts": [
+        {
+          "name": "the boundary is published before the validation",
+          "lane": "values",
+          "family": "explicit-any",
+          "subject": "raw",
+          "value": "declared",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the runtime type test publishes its own proof for the tested path",
+          "lane": "values",
+          "family": "runtime-type-proof",
+          "key_suffix": "/number",
+          "value": "proven",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the true edge of the guard is proven",
+          "lane": "values",
+          "family": "branch-proof",
+          "key_suffix": "/true",
+          "value": "proven",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the validated declaration publishes no claim",
+          "lane": "values",
+          "family": "value",
+          "subject": "checked",
+          "trust": "claimed",
+          "max": 0
+        },
+        {
+          "name": "it publishes the declared type as a proof instead",
+          "lane": "values",
+          "family": "value",
+          "subject": "checked",
+          "value_prefix": "shape/target/v1/",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "the binding the validated value flows into is a proof as well",
+          "lane": "values",
+          "family": "value",
+          "subject": "total",
+          "occurrence": "op-00000010",
+          "trust": "proven",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "and nothing claimed reaches it",
+          "lane": "values",
+          "family": "value",
+          "subject": "total",
+          "trust": "claimed",
+          "max": 0
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "the accumulator's initial constant is revoked by the write inside the validated region",
+          "lane": "values",
+          "family": "value",
+          "subject": "total",
+          "event": "environment-write",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the boundary value itself is not revoked by the type test",
+          "lane": "values",
+          "family": "value",
+          "subject": "raw",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "check.native publication fixture: the assertions are over published facts, not over execution"
+  }
+}

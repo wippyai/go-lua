@@ -1,0 +1,18 @@
+{
+  "description": "One unproven interior operand withholds the whole concat site row: a flattened site is one aggregate judgment, never a partial grant over the provable operands.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 concat_site row(s)",
+          "family": "concat_site",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

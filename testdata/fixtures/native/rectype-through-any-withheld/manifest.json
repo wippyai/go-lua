@@ -1,0 +1,21 @@
+{
+  "description": "The recursive link passes through any, so the successor's shape identity is not derivable from the subject and no recursive identity may be published.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 recursive_type_identity row(s)",
+          "family": "recursive_type_identity",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

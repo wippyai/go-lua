@@ -1,0 +1,38 @@
+{
+  "description": "The return-early-in-if shape must publish the numeric carrier and its representation on BOTH branch edges plus the comparison dispatch class and the NaN disposition, since a normalized branch bound alone is not numeric execution authority.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven numeric_branch row(s)",
+          "lane": "values",
+          "family": "numeric_branch",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_branch row",
+          "lane": "values",
+          "family": "numeric_branch",
+          "subject": "x",
+          "value_contains": [
+            "carrier=number",
+            "dispatch=primitive",
+            "nan=ordered_comparison_defined",
+            "taken_edge_carrier=number",
+            "untaken_edge_carrier=number"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

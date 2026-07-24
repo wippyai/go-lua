@@ -1,0 +1,33 @@
+{
+  "description": "A nil store inside the filled prefix moves the sequence border into hash storage, so the raw-length row is withheld from the point of the hole onward.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 table_length.raw row(s)",
+          "family": "table_length",
+          "value_contains": [
+            "raw"
+          ],
+          "max": 0
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "table_length is revoked by write.length",
+          "lane": "values",
+          "family": "table_length",
+          "event": "write.length",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

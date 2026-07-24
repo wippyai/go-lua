@@ -1,0 +1,68 @@
+{
+  "description": "An opaque call that can reach the element domain revokes the element-class row at the call site; the row must not be reestablished for the later read and must never claim a closed writer set.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 table_element.mutations_closed row(s)",
+          "family": "table_element",
+          "value_contains": [
+            "mutations_closed"
+          ],
+          "max": 0
+        },
+        {
+          "name": "table_element row",
+          "lane": "values",
+          "family": "table_element",
+          "value_contains": [
+            "element_class=number",
+            "presence=dense_prefix"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "write.length"
+            },
+            {
+              "event": "call.opaque"
+            },
+            {
+              "event": "escape"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "table_element must not carry mutations_closed",
+          "lane": "values",
+          "family": "table_element",
+          "value_contains": [
+            "mutations_closed"
+          ],
+          "max": 0
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "table_element is revoked by call.opaque",
+          "lane": "values",
+          "family": "table_element",
+          "event": "call.opaque",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "description": "The non-nil assertion operator and a call to assert each publish nilability non_nil at the point after them; the field form carries the wider revocation set because a field is reachable by a callee.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven nilability row(s)",
+          "lane": "values",
+          "family": "nilability",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "r.id",
+          "value_contains": [
+            "nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.field"
+            },
+            {
+              "event": "call.opaque"
+            },
+            {
+              "event": "escape"
+            },
+            {
+              "event": "suspend"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "nilability must not carry maybe_nil",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "r.id",
+          "value_contains": [
+            "maybe_nil"
+          ],
+          "max": 0
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.local"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "nilability must not carry maybe_nil",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "maybe_nil"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

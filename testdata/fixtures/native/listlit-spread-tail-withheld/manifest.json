@@ -1,0 +1,21 @@
+{
+  "description": "An open call result in tail position makes list capacity non-exact, so no bounded-capacity row may be published; the written prefix is not a capacity bound.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 list_construction row(s)",
+          "family": "list_construction",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

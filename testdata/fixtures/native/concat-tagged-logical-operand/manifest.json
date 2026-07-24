@@ -1,0 +1,65 @@
+{
+  "description": "The greeter shape: a logical selection feeding a concat must carry its string operand class into the concat operand list, not lose it at the selection.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven concat_site row(s)",
+          "lane": "values",
+          "family": "concat_site",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 concat_site row(s)",
+          "family": "concat_site",
+          "max": 1
+        },
+        {
+          "name": "at most 0 concat_site.unknown row(s)",
+          "family": "concat_site",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "concat_site row",
+          "lane": "values",
+          "family": "concat_site",
+          "value_contains": [
+            "dispatch=primitive",
+            "formatting=not_applicable",
+            "metamethod=proved_absent",
+            "operand_classes=[string,string,string]",
+            "operands=3"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "concat_site must not carry operand_class_lost_at_selection",
+          "lane": "values",
+          "family": "concat_site",
+          "value_contains": [
+            "operand_class_lost_at_selection"
+          ],
+          "max": 0
+        },
+        {
+          "name": "concat_site must not carry assumed_primitive",
+          "lane": "values",
+          "family": "concat_site",
+          "value_contains": [
+            "assumed_primitive"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

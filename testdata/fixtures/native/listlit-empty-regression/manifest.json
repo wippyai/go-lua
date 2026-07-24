@@ -1,0 +1,60 @@
+{
+  "description": "An empty constructor keeps the empty-table allocation row; the list-construction path must not claim it with a zero capacity or zero edges.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven list_construction row(s)",
+          "lane": "values",
+          "family": "list_construction",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "list_construction row",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "kind=empty_table"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "list_construction must not carry capacity",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "capacity"
+          ],
+          "max": 0
+        },
+        {
+          "name": "list_construction must not carry edges",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "edges"
+          ],
+          "max": 0
+        },
+        {
+          "name": "list_construction must not carry ordered_occurrences",
+          "lane": "values",
+          "family": "list_construction",
+          "value_contains": [
+            "ordered_occurrences"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

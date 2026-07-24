@@ -1,0 +1,128 @@
+{
+  "description": "A stdlib entry carrying no effect label is not thereby pure: the unlabelled call site and the local wrapper that composes it must both publish OPEN rows, and the missing label must be an explicit withholding condition.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven effect_row row(s)",
+          "lane": "values",
+          "family": "effect_row",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 effect_row.exhaustive row(s)",
+          "family": "effect_row",
+          "value_contains": [
+            "exhaustive"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 effect_row.pure row(s)",
+          "family": "effect_row",
+          "value_contains": [
+            "pure"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row row",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "exhaustive=false"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "effect_row must not carry allocation",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "allocation"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row must not carry yield",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "yield"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row must not carry error",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "error"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row must not carry safepoint",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "safepoint"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row row",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "exhaustive=false"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "effect_row must not carry allocation",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "allocation"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row must not carry yield",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "yield"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row must not carry error",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "error"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row must not carry safepoint",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "safepoint"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

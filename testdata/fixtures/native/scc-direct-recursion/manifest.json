@@ -1,0 +1,50 @@
+{
+  "description": "A self-recursive function forms one call SCC; the row closes the self edge and carries the argument and result representation plus the exceptional completion an unbounded cycle can produce, so the recursive edge does not have to be treated as an opaque call.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven call_scc row(s)",
+          "lane": "values",
+          "family": "call_scc",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 call_scc row(s)",
+          "family": "call_scc",
+          "max": 1
+        },
+        {
+          "name": "at most 0 call_scc.unknown row(s)",
+          "family": "call_scc",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "call_scc row",
+          "lane": "values",
+          "family": "call_scc",
+          "value_contains": [
+            "arguments=[number]",
+            "completions={'known': ['normal', 'throw', 'user_suspend', 'system_suspend'], 'present': ['normal', 'throw']}",
+            "edges_closed=[fib->fib]",
+            "members=[fib]",
+            "results={'exact': True, 'count': 1}"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

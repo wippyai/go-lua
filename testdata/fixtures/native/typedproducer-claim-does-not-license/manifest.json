@@ -1,0 +1,28 @@
+{
+  "description": "A claim adjacent to a typed producer is not a licence for it: the producer must be classified on its own evidence, never from the neighbouring cast.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven typed_producer row(s)",
+          "lane": "values",
+          "family": "typed_producer",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 typed_producer.licensed_by_claim row(s)",
+          "family": "typed_producer",
+          "value_contains": [
+            "licensed_by_claim"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

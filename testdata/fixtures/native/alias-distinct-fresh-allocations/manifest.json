@@ -1,0 +1,42 @@
+{
+  "description": "Two fresh, non-escaping table allocations in the same scope are provably disjoint, which is what licenses forwarding the load of a.n across the store into b.n. Escape is the only event that can revoke it.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven alias_disjoint row(s)",
+          "lane": "values",
+          "family": "alias_disjoint",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "alias_disjoint row",
+          "lane": "values",
+          "family": "alias_disjoint",
+          "subject": "b",
+          "value_contains": [
+            "against=a",
+            "basis=distinct_fresh_allocations",
+            "disjoint=true"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "escape"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

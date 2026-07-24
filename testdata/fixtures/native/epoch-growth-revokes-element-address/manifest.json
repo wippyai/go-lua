@@ -1,0 +1,89 @@
+{
+  "description": "An append that can require new backing storage revokes the element fact taken before it: a raw element address does not survive a reallocation, so the fact must be reestablished at the read after the growth site.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven table_element row(s)",
+          "lane": "values",
+          "family": "table_element",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 2 table_element row(s)",
+          "family": "table_element",
+          "max": 2
+        },
+        {
+          "name": "table_element row",
+          "lane": "values",
+          "family": "table_element",
+          "subject": "xs",
+          "value_contains": [
+            "element_class=number"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "write.length"
+            },
+            {
+              "event": "grow"
+            },
+            {
+              "event": "gc.relocate"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "table_element row",
+          "lane": "values",
+          "family": "table_element",
+          "subject": "xs",
+          "value_contains": [
+            "element_class=number"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "write.length"
+            },
+            {
+              "event": "grow"
+            },
+            {
+              "event": "gc.relocate"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "table_element is revoked by grow",
+          "lane": "values",
+          "family": "table_element",
+          "event": "grow",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

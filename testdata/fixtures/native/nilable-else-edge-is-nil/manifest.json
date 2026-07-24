@@ -1,0 +1,95 @@
+{
+  "description": "The else edge of a nil guard publishes nil, not merely the absence of non_nil: the negative edge carries information the JIT can use to fold the fallback path.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 3 proven nilability row(s)",
+          "lane": "values",
+          "family": "nilability",
+          "trust": "proven",
+          "min": 3
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "else_edge=nil",
+            "then_edge=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.local"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.local"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "nilability must not carry maybe_nil",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "maybe_nil"
+          ],
+          "max": 0
+        },
+        {
+          "name": "nilability row",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "nilability=nil"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.local"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "nilability must not carry maybe_nil",
+          "lane": "values",
+          "family": "nilability",
+          "subject": "x",
+          "value_contains": [
+            "maybe_nil"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

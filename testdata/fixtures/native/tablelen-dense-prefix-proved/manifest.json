@@ -1,0 +1,77 @@
+{
+  "description": "#t publishes a raw-length row only from a proved dense prefix with __len proved absent; the row authorizes the VM border algorithm and carries an exhaustive deopt-trigger set.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven table_length row(s)",
+          "lane": "values",
+          "family": "table_length",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "table_length row",
+          "lane": "values",
+          "family": "table_length",
+          "value_contains": [
+            "border_algorithm=canonical",
+            "dense_prefix=true",
+            "disposition=raw"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.element"
+            },
+            {
+              "event": "write.length"
+            },
+            {
+              "event": "meta.set"
+            },
+            {
+              "event": "call.opaque"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "table_length must not carry array_header_length",
+          "lane": "values",
+          "family": "table_length",
+          "value_contains": [
+            "array_header_length"
+          ],
+          "max": 0
+        },
+        {
+          "name": "table_length must not carry predicted_length",
+          "lane": "values",
+          "family": "table_length",
+          "value_contains": [
+            "predicted_length"
+          ],
+          "max": 0
+        },
+        {
+          "name": "table_length must not carry constructor_shape",
+          "lane": "values",
+          "family": "table_length",
+          "value_contains": [
+            "constructor_shape"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

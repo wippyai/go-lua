@@ -1,0 +1,60 @@
+{
+  "description": "A constant fact must carry its machine representation alongside its value: 42 and 42.0 are different machine words, so a value-only constant row is not a licence to select an integer instruction.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven constant_value row(s)",
+          "lane": "values",
+          "family": "constant_value",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven representation row(s)",
+          "lane": "values",
+          "family": "representation",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 representation.float row(s)",
+          "family": "representation",
+          "value_contains": [
+            "float"
+          ],
+          "max": 0
+        },
+        {
+          "name": "constant_value row",
+          "lane": "values",
+          "family": "constant_value",
+          "value_contains": [
+            "representation=integer",
+            "value=42"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "representation row",
+          "lane": "values",
+          "family": "representation",
+          "value_contains": [
+            "exact=true",
+            "representation=integer"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

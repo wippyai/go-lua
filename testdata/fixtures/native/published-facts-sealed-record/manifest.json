@@ -82,6 +82,36 @@
           "max": 1
         },
         {
+          "name": "every fact here is derived, so no source claim is involved anywhere",
+          "lane": "values",
+          "trust": "claimed",
+          "max": 0
+        },
+        {
+          "name": "and no value is published without proof content",
+          "lane": "values",
+          "trust": "unknown",
+          "max": 0
+        },
+        {
+          "name": "the constant member read is a derived proof, not a declaration",
+          "lane": "values",
+          "family": "value",
+          "subject": "config.retries",
+          "trust": "proven",
+          "min": 1,
+          "max": 1
+        },
+        {
+          "name": "the sealed table's closure proof is derived",
+          "lane": "values",
+          "family": "heap",
+          "key_prefix": "heap/table-closed/",
+          "trust": "proven",
+          "min": 1,
+          "max": 1
+        },
+        {
           "name": "the table allocation site is complete and decomposable",
           "family": "placement",
           "key_prefix": "placement/allocation/",

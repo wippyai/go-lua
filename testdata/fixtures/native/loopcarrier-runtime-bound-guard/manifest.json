@@ -1,0 +1,50 @@
+{
+  "description": "A runtime trip count with a proven range licenses exactly ONE sealed preheader guard over n protecting the accumulator, not a per-iteration overflow test on every backedge.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven numeric_loop_carrier row(s)",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_loop_carrier row",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "value_contains": [
+            "backedges_covered=true",
+            "carrier=sum",
+            "conclusion=no_overflow",
+            "float_arm=false",
+            "guard=preheader",
+            "guard_operands=[n]",
+            "initial=integer",
+            "protected_carrier=sum",
+            "transitions=[integer->integer]"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_loop_carrier must not carry per_iteration_guard",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "value_contains": [
+            "per_iteration_guard"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

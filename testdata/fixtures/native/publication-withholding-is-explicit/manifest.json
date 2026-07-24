@@ -1,0 +1,48 @@
+{
+  "description": "At one division site the scalar operator row is provable and publishes, while the divisor cannot be proven nonzero and must be withheld with an explicit reason rather than silently absent or published as Unknown.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven scalar_operator row(s)",
+          "lane": "values",
+          "family": "scalar_operator",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 divisor_property.nonzero row(s)",
+          "family": "divisor_property",
+          "value_contains": [
+            "nonzero"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 divisor_property.nonzero_not_minus_one row(s)",
+          "family": "divisor_property",
+          "value_contains": [
+            "nonzero_not_minus_one"
+          ],
+          "max": 0
+        },
+        {
+          "name": "scalar_operator row",
+          "lane": "values",
+          "family": "scalar_operator",
+          "value_contains": [
+            "class=number",
+            "dispatch=primitive",
+            "overflow=ieee754"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

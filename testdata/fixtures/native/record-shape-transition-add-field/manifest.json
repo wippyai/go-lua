@@ -1,0 +1,51 @@
+{
+  "description": "A field assigned after construction publishes a shape transition carrying the old shape, the new shape, the same-object policy and the new storage offset.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven record_construction row(s)",
+          "lane": "values",
+          "family": "record_construction",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at least 1 proven shape_transition row(s)",
+          "lane": "values",
+          "family": "shape_transition",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 shape_transition.unknown row(s)",
+          "family": "shape_transition",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "shape_transition row",
+          "lane": "values",
+          "family": "shape_transition",
+          "value_contains": [
+            "new_shape=published",
+            "old_shape=published",
+            "same_object_policy=published",
+            "storage_offset=published"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

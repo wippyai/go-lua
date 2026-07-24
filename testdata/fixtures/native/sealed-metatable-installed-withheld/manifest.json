@@ -1,0 +1,24 @@
+{
+  "description": "setmetatable is called on the table, so metatable-absent is withheld and the __index chain walk at the read site cannot be elided.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 metatable_seal.absent row(s)",
+          "family": "metatable_seal",
+          "value_contains": [
+            "absent"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

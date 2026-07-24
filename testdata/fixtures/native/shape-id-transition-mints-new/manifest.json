@@ -1,0 +1,61 @@
+{
+  "description": "Adding a field mints a new shape identity: the old id is not reused, the transition edge is published, and the identity is re-established after the store rather than merely lost.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven shape_identity row(s)",
+          "lane": "values",
+          "family": "shape_identity",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at least 1 proven shape_transition row(s)",
+          "lane": "values",
+          "family": "shape_transition",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 shape_identity.unknown row(s)",
+          "family": "shape_identity",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "shape_transition row",
+          "lane": "values",
+          "family": "shape_transition",
+          "value_contains": [
+            "new_identity=minted",
+            "new_shape=published",
+            "old_identity_reused=false",
+            "old_shape=published",
+            "transition_edge=published"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "shape_identity is revoked by shape.transition",
+          "lane": "values",
+          "family": "shape_identity",
+          "event": "shape.transition",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "description": "A function returning different types on two branches has an over-approximate summary; the row must say so, must not be marked exact, and must license no result-type guard elision at any call site.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven interproc_summary row(s)",
+          "lane": "values",
+          "family": "interproc_summary",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 interproc_summary.exact row(s)",
+          "family": "interproc_summary",
+          "value_contains": [
+            "exact"
+          ],
+          "max": 0
+        },
+        {
+          "name": "interproc_summary row",
+          "lane": "values",
+          "family": "interproc_summary",
+          "value_contains": [
+            "exactness=over_approximation"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "interproc_summary must not carry exact",
+          "lane": "values",
+          "family": "interproc_summary",
+          "value_contains": [
+            "exact"
+          ],
+          "max": 0
+        },
+        {
+          "name": "interproc_summary must not carry result_guard_elision",
+          "lane": "values",
+          "family": "interproc_summary",
+          "value_contains": [
+            "result_guard_elision"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

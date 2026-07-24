@@ -1,0 +1,52 @@
+{
+  "description": "A closed literal frozen before the send is deeply immutable, so the exact identity is shared with no copy and the fact has an empty, exhaustive deopt-trigger set.",
+  "packages": [
+    "process",
+    "ownership"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven send_safety row(s)",
+          "lane": "values",
+          "family": "send_safety",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 send_safety.escaped_refuted row(s)",
+          "family": "send_safety",
+          "value_contains": [
+            "escaped_refuted"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 send_safety.unproven_copy row(s)",
+          "family": "send_safety",
+          "value_contains": [
+            "unproven_copy"
+          ],
+          "max": 0
+        },
+        {
+          "name": "send_safety row",
+          "lane": "values",
+          "family": "send_safety",
+          "value_contains": [
+            "copy_required=false",
+            "transfer=share",
+            "verdict=immutable"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "description": "A builtin_call fact for tostring is keyed on the global binding rather than the name: reassigning the global revokes it, and the call after the rebind carries no builtin row.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven builtin_call row(s)",
+          "lane": "values",
+          "family": "builtin_call",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 builtin_call row(s)",
+          "family": "builtin_call",
+          "max": 1
+        },
+        {
+          "name": "builtin_call row",
+          "lane": "values",
+          "family": "builtin_call",
+          "value_contains": [
+            "callee=tostring",
+            "cardinality=1",
+            "completeness=complete"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.global"
+            },
+            {
+              "event": "load.dynamic"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "builtin_call is revoked by write.global",
+          "lane": "values",
+          "family": "builtin_call",
+          "event": "write.global",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

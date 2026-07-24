@@ -1,0 +1,63 @@
+{
+  "description": "A coroutine yield and the resume that drives it each publish control transfer and an explicit suspension lane; the resume site is a safepoint by its published row, not by the callee's name.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven effect_row row(s)",
+          "lane": "values",
+          "family": "effect_row",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 effect_row.pure row(s)",
+          "family": "effect_row",
+          "value_contains": [
+            "pure"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 effect_row.unknown row(s)",
+          "family": "effect_row",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "effect_row row",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "control_transfer=suspend",
+            "exhaustive=true",
+            "suspension=published",
+            "yield=present"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "effect_row row",
+          "lane": "values",
+          "family": "effect_row",
+          "value_contains": [
+            "control_transfer=resume",
+            "exhaustive=true",
+            "safepoint=required",
+            "suspension=published",
+            "yield=present"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

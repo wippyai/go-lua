@@ -1,0 +1,57 @@
+{
+  "description": "A local binding that carries two distinct function values on merging paths has an Incomplete callee set of cardinality 2; the row must not claim a singleton and no Complete row may be published for the site.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven callee_set row(s)",
+          "lane": "values",
+          "family": "callee_set",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 callee_set.complete row(s)",
+          "family": "callee_set",
+          "value_contains": [
+            "complete"
+          ],
+          "max": 0
+        },
+        {
+          "name": "callee_set row",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "cardinality=2",
+            "completeness=incomplete"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "write.local"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        },
+        {
+          "name": "callee_set must not carry singleton",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "singleton"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

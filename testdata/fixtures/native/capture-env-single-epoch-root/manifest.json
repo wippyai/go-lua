@@ -1,0 +1,73 @@
+{
+  "description": "A single activation captured by a single closure publishes exactly one active epoch root with both the uniqueness and the coverage proof stated, not inferred from owner zero or function-root position.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven capture_epoch_root row(s)",
+          "lane": "values",
+          "family": "capture_epoch_root",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 capture_epoch_root row(s)",
+          "family": "capture_epoch_root",
+          "max": 1
+        },
+        {
+          "name": "at most 0 capture_epoch_root.unknown row(s)",
+          "family": "capture_epoch_root",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "capture_epoch_root row",
+          "lane": "values",
+          "family": "capture_epoch_root",
+          "value_contains": [
+            "active_epoch_root=1",
+            "begin_coordinate=entry",
+            "coverage_proof=complete",
+            "uniqueness_proof=complete"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "capture_epoch_root must not carry owner_zero",
+          "lane": "values",
+          "family": "capture_epoch_root",
+          "value_contains": [
+            "owner_zero"
+          ],
+          "max": 0
+        },
+        {
+          "name": "capture_epoch_root must not carry function_root_position",
+          "lane": "values",
+          "family": "capture_epoch_root",
+          "value_contains": [
+            "function_root_position"
+          ],
+          "max": 0
+        },
+        {
+          "name": "capture_epoch_root must not carry assumed_singleton",
+          "lane": "values",
+          "family": "capture_epoch_root",
+          "value_contains": [
+            "assumed_singleton"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

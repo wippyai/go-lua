@@ -1,0 +1,64 @@
+{
+  "description": "A record_construction ownership disposition proven for a fresh table is revoked when the table is sent: after escape the construction no longer licenses unguarded mutation.",
+  "packages": [
+    "process"
+  ],
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven record_construction row(s)",
+          "lane": "values",
+          "family": "record_construction",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 1 record_construction row(s)",
+          "family": "record_construction",
+          "max": 1
+        },
+        {
+          "name": "record_construction row",
+          "lane": "values",
+          "family": "record_construction",
+          "subject": "msg",
+          "value_contains": [
+            "fresh=true",
+            "ownership=move"
+          ],
+          "trust": "proven",
+          "min": 1,
+          "revoked_by": [
+            {
+              "event": "escape"
+            },
+            {
+              "event": "call.opaque"
+            },
+            {
+              "event": "meta.set"
+            }
+          ],
+          "revoked_by_exhaustive": true
+        }
+      ],
+      "invalidation": [
+        {
+          "name": "record_construction is revoked by escape",
+          "lane": "values",
+          "family": "record_construction",
+          "event": "escape",
+          "min": 1
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "description": "A record with an optional field is constructed with the field on one path and without it on another; the physical discriminator is never implied by the type, so no single shape identity may be granted.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven record_construction row(s)",
+          "lane": "values",
+          "family": "record_construction",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 shape_identity row(s)",
+          "family": "shape_identity",
+          "max": 0
+        },
+        {
+          "name": "record_construction row",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "entries=2"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "record_construction must not carry implied_presence",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "implied_presence"
+          ],
+          "max": 0
+        },
+        {
+          "name": "record_construction row",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "entries=1"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "record_construction must not carry implied_presence",
+          "lane": "values",
+          "family": "record_construction",
+          "value_contains": [
+            "implied_presence"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

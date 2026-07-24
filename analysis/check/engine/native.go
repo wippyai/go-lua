@@ -19,6 +19,26 @@ const (
 	NativeLaneDiagnostics = "diagnostics"
 )
 
+// Proof provenance of one published row, in the vocabulary the diagnostic
+// evidence layer already uses. It answers the only question a speculative code
+// generator may not get wrong: whether the row is a conclusion the checker
+// derived, or a statement the source asserted and the checker could not
+// discharge. A guard may be elided for the first and never for the second.
+const (
+	// NativeTrustProven is a conclusion the closure derived. A user claim that
+	// the closure discharged against a value it had already derived publishes
+	// that derived value and is proven; the claim added no authority.
+	NativeTrustProven = "proven"
+	// NativeTrustClaimed is an undischarged source assertion — a cast, a
+	// declared type or a non-nil assertion the closure could not prove. The
+	// encoding is carried in the value itself, so every later read, copy and
+	// merge of the value stays claimed: trust never rises by propagation.
+	NativeTrustClaimed = "claimed"
+	// NativeTrustUnknown is a row with no proof content: the closure's opaque
+	// value, or an unvalidated gradual boundary.
+	NativeTrustUnknown = "unknown"
+)
+
 // NativeFactIndex is the read-only projection of every fact closed by one
 // engine evaluation, in the form a native code generator consumes: the
 // published row, the family it belongs to, the equation coordinate it is
@@ -60,6 +80,24 @@ type NativeFact struct {
 	// Occurrence is the equation coordinate the fact is anchored at, when the
 	// key carries one of the artifact's equation target names.
 	Occurrence string
+	// Trust is the row's proof provenance: proven, claimed or unknown. It is
+	// empty outside the value lane, whose rows are the only ones that carry a
+	// value encoding.
+	Trust string
+	// Established is the epoch of Term that this row's validity begins at. It
+	// is empty when the row is not epoch-gated — when its term has no published
+	// epoch, or its key is not anchored at one of that term's epochs. An empty
+	// Established means the closure published no validity interval for the row,
+	// never that the row is valid everywhere.
+	Established string
+	// Revoked is the next epoch published for Term after Established: the exact
+	// operation at which this row stops holding. It is empty when Established
+	// is the term's last published epoch, which is the closure's statement that
+	// nothing in the analysed body revokes the row.
+	Revoked string
+	// Event is the artifact's occurrence kind of the operation named by
+	// Revoked: what kind of program event ends the row's validity.
+	Event string
 }
 
 // NativeValuePrefixBase64 marks a value rendering that carries the fact's raw
@@ -105,22 +143,85 @@ func (index *NativeFactIndex) build() {
 		}
 		return facts[i].Value < facts[j].Value
 	})
+	anchors.bindValidity(facts)
 	index.facts = facts
+}
+
+// bindValidity joins every row to the epoch interval the closure published for
+// its term. The epochs are read from the same published rows; nothing is
+// recomputed, so a term the closure never versioned yields no interval at all
+// rather than an interval that happens to look unbounded.
+func (a *nativeAnchors) bindValidity(facts []NativeFact) {
+	chains := make(map[string][]string)
+	for _, fact := range facts {
+		if fact.Lane != NativeLaneValues || !strings.HasPrefix(fact.Key, epochFactPrefix) {
+			continue
+		}
+		rest := fact.Key[len(epochFactPrefix):]
+		cut := strings.LastIndexByte(rest, '/')
+		if cut < 0 {
+			continue
+		}
+		term, epoch := rest[:cut], rest[cut+1:]
+		chain := chains[term]
+		// The rows arrive in key order, so a term's epochs arrive in operation
+		// order and a repeated key is adjacent to its twin.
+		if len(chain) != 0 && chain[len(chain)-1] == epoch {
+			continue
+		}
+		chains[term] = append(chain, epoch)
+	}
+	for index := range facts {
+		fact := &facts[index]
+		if fact.Lane != NativeLaneValues || fact.Term == "" {
+			continue
+		}
+		chain, versioned := chains[fact.Term]
+		if !versioned {
+			continue
+		}
+		// An epoch-gated key is exactly "<prefix>/<term>/<epoch>": the same
+		// spelling the closure publishes its derived facts at. A key that does
+		// not end that way is anchored somewhere else and carries no interval.
+		marker := "/" + fact.Term + "/"
+		cut := strings.LastIndex(fact.Key, marker)
+		if cut < 0 {
+			continue
+		}
+		established := fact.Key[cut+len(marker):]
+		if strings.Contains(established, "/") {
+			continue
+		}
+		for position, epoch := range chain {
+			if epoch != established {
+				continue
+			}
+			fact.Established = established
+			if position+1 < len(chain) {
+				fact.Revoked = chain[position+1]
+				fact.Event = a.operations[fact.Revoked]
+			}
+			break
+		}
+	}
 }
 
 // nativeAnchors recovers the term and coordinate vocabulary of one artifact.
 // Both sets are exactly what the equations carry, so a fact key is anchored by
 // matching published data rather than by a per-family key grammar.
+// operations maps every equation coordinate name to the artifact's occurrence
+// kind at that coordinate, which is the event vocabulary a revocation is named
+// in.
 type nativeAnchors struct {
 	terms      map[string]string
-	operations map[string]bool
+	operations map[string]string
 	longest    int
 }
 
 func newNativeAnchors(artifact equation.Artifact) *nativeAnchors {
-	anchors := &nativeAnchors{terms: make(map[string]string), operations: make(map[string]bool)}
+	anchors := &nativeAnchors{terms: make(map[string]string), operations: make(map[string]string)}
 	for _, operation := range artifact.Equations {
-		anchors.operations[operation.Target.Name] = true
+		anchors.operations[operation.Target.Name] = operation.Occurrence.Kind
 		byRole := make(map[string][]byte, len(operation.Operands))
 		for _, operand := range operation.Operands {
 			if operand.Term.Entry || len(operand.Term.Encoding) == 0 {
@@ -168,7 +269,7 @@ func (a *nativeAnchors) name(term, display string) {
 }
 
 func (a *nativeAnchors) project(lane string, fact equation.Fact) NativeFact {
-	row := NativeFact{Lane: lane, Key: fact.Key, Value: nativeFactValue(fact.Value)}
+	row := NativeFact{Lane: lane, Key: fact.Key, Value: nativeFactValue(fact.Value), Trust: nativeFactTrust(lane, fact.Value)}
 	// Segment boundaries stay as offsets into the key, so every candidate run
 	// below is a substring of the published key rather than a rebuilt string.
 	starts := make([]int, 1, 8)
@@ -185,7 +286,7 @@ func (a *nativeAnchors) project(lane string, fact equation.Fact) NativeFact {
 	}
 	row.Family = fact.Key[:end(0)]
 	for segment := len(starts) - 1; segment >= 0; segment-- {
-		if a.operations[fact.Key[starts[segment]:end(segment)]] {
+		if _, coordinate := a.operations[fact.Key[starts[segment]:end(segment)]]; coordinate {
 			row.Occurrence = fact.Key[starts[segment]:end(segment)]
 			break
 		}
@@ -209,6 +310,29 @@ func (a *nativeAnchors) project(lane string, fact equation.Fact) NativeFact {
 		}
 	}
 	return row
+}
+
+// nativeFactTrust classifies a published value by the same predicates the
+// closure itself uses to decide whether a value is authority. It reads the
+// published encoding and nothing else: a claim the closure refused to
+// discharge is carried as a claim refinement inside the value, which is why an
+// assignment, a merge or a later read of that value cannot launder it into a
+// proof.
+//
+// Only the value lane carries value encodings. Outcome and diagnostic rows are
+// display and report projections whose spellings this vocabulary does not
+// classify, so they are left unclassified rather than defaulted to proven.
+func nativeFactTrust(lane string, value []byte) string {
+	switch {
+	case lane != NativeLaneValues:
+		return ""
+	case isClaimRefinement(value):
+		return NativeTrustClaimed
+	case isUnknownScalar(value) || isUnvalidatedAnyValue(value):
+		return NativeTrustUnknown
+	default:
+		return NativeTrustProven
+	}
 }
 
 func nativeFactValue(value []byte) string {

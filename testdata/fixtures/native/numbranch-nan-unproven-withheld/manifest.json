@@ -1,0 +1,55 @@
+{
+  "description": "When the compared value may be NaN the branch row may still carry the carrier and the defined comparison result, but must not conclude a total ordering: the false edge of `<=` does not prove `>`.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven numeric_branch row(s)",
+          "lane": "values",
+          "family": "numeric_branch",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "at most 0 numeric_branch.total_order row(s)",
+          "family": "numeric_branch",
+          "value_contains": [
+            "total_order"
+          ],
+          "max": 0
+        },
+        {
+          "name": "numeric_branch row",
+          "lane": "values",
+          "family": "numeric_branch",
+          "subject": "x",
+          "value_contains": [
+            "carrier=number",
+            "dispatch=primitive",
+            "nan=ordered_comparison_defined",
+            "representation=float"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_branch must not carry total_order",
+          "lane": "values",
+          "family": "numeric_branch",
+          "subject": "x",
+          "value_contains": [
+            "total_order"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

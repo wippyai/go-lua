@@ -1,0 +1,29 @@
+{
+  "description": "Recursion routed through a field of a table that escapes the module closes no provable call cycle; the SCC row must be explicitly withheld rather than assumed, and the recursive call site must not be granted a Complete callee set either.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 call_scc row(s)",
+          "family": "call_scc",
+          "max": 0
+        },
+        {
+          "name": "at most 0 callee_set.complete row(s)",
+          "family": "callee_set",
+          "value_contains": [
+            "complete"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

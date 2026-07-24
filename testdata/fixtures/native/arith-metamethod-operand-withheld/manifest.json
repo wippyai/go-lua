@@ -1,0 +1,21 @@
+{
+  "description": "An operand whose declared type admits a table carrying __add cannot be proved out of metamethod dispatch, so no scalar operator row is published for the add.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 scalar_operator row(s)",
+          "family": "scalar_operator",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

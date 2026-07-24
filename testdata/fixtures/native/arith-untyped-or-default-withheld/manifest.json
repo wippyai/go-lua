@@ -1,0 +1,21 @@
+{
+  "description": "An unannotated `(a or 0) + (b or 0)` publishes no scalar operator row: an `or` fallback proves the operand is not nil, which is not numeric execution authority.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 scalar_operator row(s)",
+          "family": "scalar_operator",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "description": "Adversarial rebind: the global tostring is reassigned before the call site, so the builtin identity is refuted and no builtin row may be published for the call.",
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 builtin_call row(s)",
+          "family": "builtin_call",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

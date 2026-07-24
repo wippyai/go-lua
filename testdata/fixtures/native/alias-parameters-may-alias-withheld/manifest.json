@@ -1,0 +1,21 @@
+{
+  "description": "Two parameters of the same record type may denote one table: the caller is free to pass the same table twice, so disjointness is not provable and no alias_disjoint row may be published. The withholding must be explicit, not silent absence.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at most 0 alias_disjoint row(s)",
+          "family": "alias_disjoint",
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

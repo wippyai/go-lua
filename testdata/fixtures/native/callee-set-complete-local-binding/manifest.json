@@ -1,0 +1,79 @@
+{
+  "description": "A local function binding that is never reassigned, stored, or passed proves a Complete callee set of cardinality 1 at each of its two call sites, with an empty and exhaustive revocation set, which is what lets the JIT inline without a dispatch guard.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 2 proven callee_set row(s)",
+          "lane": "values",
+          "family": "callee_set",
+          "trust": "proven",
+          "min": 2
+        },
+        {
+          "name": "at most 0 callee_set.incomplete row(s)",
+          "family": "callee_set",
+          "value_contains": [
+            "incomplete"
+          ],
+          "max": 0
+        },
+        {
+          "name": "at most 0 callee_set.unknown row(s)",
+          "family": "callee_set",
+          "value_contains": [
+            "unknown"
+          ],
+          "max": 0
+        },
+        {
+          "name": "callee_set row",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "cardinality=1",
+            "completeness=complete"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "callee_set must not carry assumed_singleton",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "assumed_singleton"
+          ],
+          "max": 0
+        },
+        {
+          "name": "callee_set row",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "cardinality=1",
+            "completeness=complete"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "callee_set must not carry assumed_singleton",
+          "lane": "values",
+          "family": "callee_set",
+          "value_contains": [
+            "assumed_singleton"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}

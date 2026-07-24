@@ -1,0 +1,47 @@
+{
+  "description": "Three distinct recurrences under three arms of one loop body: the carrier row must cover every arm and every backedge, not one representative arm.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "at least 1 proven numeric_loop_carrier row(s)",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_loop_carrier row",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "value_contains": [
+            "arms_covered=3",
+            "backedges_covered=true",
+            "carrier=sum",
+            "float_arm=false",
+            "initial=integer",
+            "transitions=[integer->integer]"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "numeric_loop_carrier must not carry no_overflow",
+          "lane": "values",
+          "family": "numeric_loop_carrier",
+          "value_contains": [
+            "no_overflow"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  },
+  "run": {
+    "skip": "checker-only native fact fixture"
+  }
+}
