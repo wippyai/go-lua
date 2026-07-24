@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/interproc"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -53,6 +54,7 @@ const memberMissingPrefix = "shape/member-missing/v1/"
 
 const summaryTypePrefix = "summary-type/"
 const channelPayloadPrefix = "channel-payload/"
+const iteratorElementPrefix = "iterator-element/"
 
 // Heap facts are deliberately keyed by a sealed allocation identity, never by
 // a source path.  Paths are merely lenses: assignments copy an identity and
@@ -5140,6 +5142,7 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 			return equation.TransactionResult{}, fmt.Errorf("engine: encode numeric loop witness")
 		}
 	}
+	iteratorElement, indexedIterator := currentEpochFact(iteratorElementPrefix, operands["iterator"], partition)
 	values := make([]equation.Fact, 0)
 	for _, operand := range operation.Operands {
 		if !strings.HasPrefix(operand.Role, "result-") {
@@ -5149,9 +5152,57 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 		if !strings.HasPrefix(result, "path/") {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
 		}
-		values = append(values, equation.Fact{Key: "value/" + result + "/" + operation.Target.Name, Value: append([]byte(nil), value...)})
+		resultValue := value
+		if indexedIterator {
+			index, indexErr := strconv.Atoi(strings.TrimPrefix(operand.Role, "result-"))
+			if indexErr != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
+			}
+			if index == 0 {
+				var encoded bool
+				resultValue, encoded = shapefact.EncodeTarget(typ.Integer)
+				if !encoded {
+					return equation.TransactionResult{}, fmt.Errorf("engine: encode indexed iterator key witness")
+				}
+			} else {
+				resultValue = iteratorElement
+			}
+		}
+		values = append(values, equation.Fact{Key: "value/" + result + "/" + operation.Target.Name, Value: append([]byte(nil), resultValue...)})
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+// iteratorElementWitness reifies only an indexed iterator's declared element
+// relation. The iterator contract comes from the existing standard-library
+// signature registry and the element comes from the current closed source
+// value; unresolved, non-array, and open iterator sources remain unknown.
+func iteratorElementWitness(provider []byte, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
+	signature, found := (signaturelookup.Source{IncludeStdlib: true}).LookupView(providerName(provider))
+	if !found {
+		return nil, false
+	}
+	iterator, found := iteration.ActiveIterator(signature.Effect.Labels)
+	if !found || iterator.Kind != iteration.IterateIndexed {
+		return nil, false
+	}
+	argument, found := arguments[iterator.Source.Index]
+	if !found {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(argument, partition)
+	if err != nil {
+		return nil, false
+	}
+	source, decoded := shapefact.DecodeTarget(value)
+	if !decoded || source == nil {
+		return nil, false
+	}
+	array, ok := unwrap.Alias(subst.ExpandInstantiated(source)).(*typ.Array)
+	if !ok || array.Element == nil {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(array.Element)
 }
 
 func channelSelectKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -7593,6 +7644,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			}
 			values = append(values, equation.Fact{Key: summaryTypePrefix + string(result) + "/" + operation.Target.Name, Value: encoded})
 			values = append(values, channelPayloadSummaryFacts(string(result), operation.Target.Name, importedSummary)...)
+		}
+		if element, ok := iteratorElementWitness(provider, argumentTerms, partition); ok {
+			values = append(values, equation.Fact{Key: iteratorElementPrefix + string(result) + "/" + operation.Target.Name, Value: element})
 		}
 		heapKey := "call-heap-identity/" + strings.TrimPrefix(string(application), "call/") + "/" + key
 		for _, fact := range partition.Values() {

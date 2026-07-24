@@ -242,6 +242,24 @@ local record: { id: string } = provider.make()`
 	}
 }
 
+func TestCheckWithImportsCarriesIndexedIteratorElementWitness(t *testing.T) {
+	source := `local provider = require("provider")
+local rows = provider.list()
+for _, row in ipairs(rows) do
+  local id: string = row.id
+  local ready: boolean = row.ready
+end`
+	row := typetable.NewRecord().Field("id", typ.String).Field("ready", typ.Boolean).Build()
+	provider := typetable.NewRecord().Field("list", typ.Func().Returns(typ.NewArray(row)).Build()).Build()
+	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	if err != nil {
+		t.Fatalf("CheckWithImports: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("indexed iterator lost the imported array element witness: %#v", result.Diagnostics)
+	}
+}
+
 func TestCheckWithImportsProjectsTypedReceiverMethodResult(t *testing.T) {
 	source := `local provider = require("provider")
 local object = provider.new()
