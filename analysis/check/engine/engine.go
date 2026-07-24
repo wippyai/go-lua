@@ -46,6 +46,8 @@ const entryValue = "front/closed-entry/v1"
 
 var errUnknownScalar = errors.New("engine: unknown scalar")
 
+var errMultipleChildReturnAlternatives = errors.New("multiple child return alternatives")
+
 // ErrInternalPanic identifies an engine invariant failure that would otherwise
 // escape Check as a panic. Check is the public whole-file boundary, so callers
 // always receive a named error instead of an unclassified process crash.
@@ -2970,11 +2972,13 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		values = append(values, equation.Fact{Key: declaredEntryBoundaryKey(operation.Target.Body), Value: []byte("declared")})
 	}
 	seen := make(map[string]bool, len(wire.Seeds))
+	seedValues := make(map[string][]byte, len(wire.Seeds))
 	for _, seed := range wire.Seeds {
 		if !validEntrySeed(seed) || seen[seed.Term] {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry seed")
 		}
 		seen[seed.Term] = true
+		seedValues[seed.Term] = append([]byte(nil), seed.Value...)
 		values = append(values,
 			equation.Fact{Key: "value/" + seed.Term + "/entry", Value: append([]byte(nil), seed.Value...)},
 			equation.Fact{Key: "epoch/" + seed.Term + "/entry", Value: []byte("entry")},
@@ -3051,10 +3055,21 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		// present. It is not a value proof, but it preserves an explicit-any
 		// boundary for later caller-owned contract checks.
 		values = append(values, equation.Fact{Key: "declared-type/" + string(root) + "/entry", Value: append([]byte(nil), declaredTypes[name]...)})
-		// A concrete seed is the value authority.  Declarations fill only absent
-		// entries, which prevents a caller's channel identity from being replaced
-		// by a callee-local symbolic one.
+		// A concrete seed is the value authority.  A typed channel seed which
+		// carries no channel identity (notably `nil :: Channel<T>`) still needs
+		// the declaration-owned identity used by the select kernel.  Preserve a
+		// caller-provided channel identity unchanged; only the absent-identity
+		// case can use this already-published boundary contract.
 		if seen[string(root)] {
+			if _, channel := ambient.ChannelPayloadType(declared); channel {
+				if !isChannelIdentity(seedValues[string(root)]) {
+					identity := []byte("scalar/channel-entry/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + base64.RawURLEncoding.EncodeToString(root))
+					values = append(values,
+						equation.Fact{Key: "type/" + string(root) + "/entry", Value: append([]byte(nil), declaredTypes[name]...)},
+						equation.Fact{Key: "identity/" + string(root) + "/entry", Value: identity},
+					)
+				}
+			}
 			continue
 		}
 		values = append(values,
@@ -5517,6 +5532,13 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	}
 	returns, err := childReturnValues(closure)
 	if err != nil {
+		// A select evaluates every feasible arm, so its branch-local return
+		// tuples cannot be collapsed into one caller result slot here. Its
+		// completed allocation facts are independent of that tuple transport and
+		// may still cross this exact invocation boundary.
+		if errors.Is(err, errMultipleChildReturnAlternatives) && childHasSelect(child) {
+			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: placementFactsFromChild(closure.Values)}}, nil
+		}
 		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
 	}
 	projected := projectCallResults(operation, returns, closure)
@@ -6001,7 +6023,7 @@ func childReturnValues(closure equation.OutputClosure) ([][]byte, error) {
 		if strings.HasPrefix(outcome.Key, "return-candidate/") && strings.HasSuffix(outcome.Key, "/arity") {
 			candidate := strings.TrimSuffix(outcome.Key, "/arity") + "/"
 			if prefix != "" && prefix != candidate {
-				return nil, fmt.Errorf("multiple child return alternatives")
+				return nil, errMultipleChildReturnAlternatives
 			}
 			if _, err := strconv.Atoi(string(outcome.Value)); err != nil {
 				return nil, fmt.Errorf("malformed child return arity")
@@ -8055,6 +8077,17 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			break
 		}
 	}
+	// A channel cast from nil is an explicit static boundary used by select
+	// expressions.  Keep nil as the runtime value, but publish the exact
+	// already-lowered Channel<T> contract so the select consumer can establish
+	// its symbolic arm identity.  This admits neither a broad claim nor an
+	// arbitrary interface cast.
+	channelCastFromNil := false
+	if kind == "claim-kind/1" && string(value) == "scalar/nil" {
+		if target, ok := shapefact.DecodeTarget(shapeTarget); ok {
+			_, channelCastFromNil = ambient.ChannelPayloadType(target)
+		}
+	}
 	// A sealed table whose declared record includes callable members retains a
 	// concrete dispatch witness even when function-variance proof is outside
 	// this scalar relation. Do not turn that missing compatibility proof into a
@@ -8080,7 +8113,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !runtimeTypeValidationProves(source, targetType, shapeTarget, partition)
 	castFromAnyBoundary := kind == "claim-kind/1" && sourceHasAnyBoundary(source, partition.Values())
-	if available && !boundaryRequiresProof && !castFromAnyBoundary && (claimProven(value, kind, targetType) || shapeRelation == shapeProven) {
+	if available && !boundaryRequiresProof && !castFromAnyBoundary && (claimProven(value, kind, targetType) || shapeRelation == shapeProven || channelCastFromNil) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
 		// A successfully checked annotation is a closed type publication for
 		// this exact binding. Later aggregate literals may consume that
@@ -8093,8 +8126,11 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// structural relation has already been proven. The assertion target on
 		// an unchecked cast remains non-authoritative, so it cannot make a
 		// later aggregate annotation pass by itself.
-		if kind == "claim-kind/1" && shapeRelation == shapeProven && len(shapeTarget) != 0 {
+		if kind == "claim-kind/1" && (shapeRelation == shapeProven || channelCastFromNil) && len(shapeTarget) != 0 {
 			closure.Values = append(closure.Values, equation.Fact{Key: "type/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), shapeTarget...)})
+		}
+		if channelCastFromNil {
+			closure.Values = append(closure.Values, equation.Fact{Key: "epoch/" + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)})
 		}
 		if kind == "claim-kind/3" && claimTypeIsAny(targetType) {
 			closure.Values = append(closure.Values, explicitAnyBoundaryFact(target, operation.Target.Name))
@@ -8106,7 +8142,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			if witness, ok := shapefact.DecodeTarget(shapeTarget); ok && witness != nil {
 				closure.Values = append(closure.Values, equation.Fact{Key: "cast-target/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), shapeTarget...)})
 			}
-			closure.Diagnostics = []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven runtime claim")}}
+			if !channelCastFromNil {
+				closure.Diagnostics = []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven runtime claim")}}
+			}
 		}
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
@@ -11060,7 +11098,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		tableProjectionUnsafe := !childKnown || !hasProjectableTableResult(child)
 		if lexical == nil || !localCallable || (operands.resultArity == 0 && !lexical.requiresBody[handle.Prototype]) ||
 			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] &&
-				((lexical.hasClaim(handle.Prototype) && !lexical.hasRuntimeCastClaim(handle.Prototype)) || lexical.hasTableAllocation(handle.Prototype) && tableProjectionUnsafe && !recursiveDemand)) {
+				((lexical.hasClaim(handle.Prototype) && !lexical.hasRuntimeCastClaim(handle.Prototype)) || lexical.hasTableAllocation(handle.Prototype) && tableProjectionUnsafe && !recursiveDemand) && !childHasSelect(child)) {
 			return equation.TransactionResult{}, false, nil
 		}
 		outcome, err := lexical.applyKnown(operation, operands, handle, partition)
