@@ -29,9 +29,10 @@ type Function struct {
 // Equality is a normal-return-only equality between two formal parameters.
 type Equality struct{ Left, Right int }
 
-// Value is a finite, serializable return template. Parameter is retained for
-// in-process construction, but cannot cross a module boundary: no caller
-// operand is part of the producer's sealed publication.
+// Value is a finite, serializable return template. A Parameter is an ordinal
+// reference in the exported callable's already-validated signature; it is
+// materialized only from that call site's exact, published argument fact.
+// An unknown argument therefore cannot become an imported result witness.
 type Value struct {
 	Parameter *int
 	Scalar    string
@@ -56,7 +57,7 @@ func (s Summary) Function(path string, arity int) (Function, bool) {
 }
 
 func (f Function) Valid() bool {
-	if f.Path == "" || f.Arity < 0 || !f.Return.Valid(f.Arity) || !f.Return.Closed() {
+	if f.Path == "" || f.Arity < 0 || !f.Return.Valid(f.Arity) {
 		return false
 	}
 	if f.NormalEqual != nil && (f.NormalEqual.Left < 0 || f.NormalEqual.Right < 0 || f.NormalEqual.Left >= f.Arity || f.NormalEqual.Right >= f.Arity) {
@@ -65,8 +66,9 @@ func (f Function) Valid() bool {
 	return true
 }
 
-// Closed reports whether v is an exact immutable literal tree. Dynamic
-// operands, including formal parameters, deliberately have no export relation.
+// Closed reports whether v is an exact immutable literal tree without a
+// call-site substitution. Parameterized templates are valid export relations,
+// but are not literal trees on their own.
 func (v Value) Closed() bool {
 	if v.Parameter != nil {
 		return false

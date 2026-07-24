@@ -654,6 +654,14 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			}
 		}
 		value, available := claimDiagnosticValue(operands["value"], operation, closure)
+		resultDisplay, callResultOperation, hasResultDisplay := callResultDisplay(artifact, operands["value"])
+		hasResultDisplay = hasResultDisplay && hasImportedRelationResult(closure.Values, operands["value"])
+		if hasResultDisplay {
+			sourceDisplay = resultDisplay
+			if span := callSpans[callResultOperation+"/call"]; span.Valid() {
+				item.Span = span
+			}
+		}
 		// An explicit any may be carried by an ancestor path (for example
 		// raw.id).  The scalar read can still retain a literal heap fact, but the
 		// ancestor boundary is the authoritative assignment source and is itself
@@ -773,15 +781,62 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
 		} else {
 			item.Evidence = []DiagnosticEvidence{
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", display, valueDescription)},
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", sourceDisplay, valueDescription)},
 				{Span: item.Span, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: item.Span, Message: "declared type " + declared}}
+		}
+		if hasResultDisplay && strings.HasPrefix(string(value), "scalar/") && string(value) != "scalar/nil" {
+			item.Message = fmt.Sprintf("cannot assign %s because it is %s, not %s", sourceDisplay, valueDescription, declared)
 		}
 		item.Help = "Use a value compatible with the expected type, or change the target type if `" + sourceDisplay + "` is valid."
 		out = append(out, item)
 	}
 	return out
+}
+
+// callResultDisplay returns display metadata only from the call-results
+// operation that owns this exact result term. The metadata is presentation
+// evidence; missing, ambiguous, or malformed displays remain unavailable.
+func callResultDisplay(artifact equation.Artifact, result []byte) (string, string, bool) {
+	if len(result) == 0 {
+		return "", "", false
+	}
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		matched := false
+		display := ""
+		application := ""
+		for _, operand := range operation.Operands {
+			switch {
+			case strings.HasPrefix(operand.Role, "result-") && string(operand.Term.Encoding) == string(result):
+				matched = true
+			case operand.Role == "result-display":
+				display = string(operand.Term.Encoding)
+			case operand.Role == "application":
+				application = strings.TrimPrefix(string(operand.Term.Encoding), "call/")
+			}
+		}
+		if matched && display != "" && application != "" {
+			return display, application, true
+		}
+	}
+	return "", "", false
+}
+
+func hasImportedRelationResult(values []equation.Fact, result []byte) bool {
+	if len(result) == 0 {
+		return false
+	}
+	prefix := "imported-relation-result/" + base64.RawURLEncoding.EncodeToString(result) + "/"
+	for _, fact := range values {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "scalar/bool/true" {
+			return true
+		}
+	}
+	return false
 }
 
 func assignmentMemberSurface(operation string, facts []equation.Fact) ([]byte, bool) {
@@ -4999,7 +5054,7 @@ func importedResultPaths(artifact equation.Artifact) map[string]bool {
 				case "container":
 					container = string(operand.Term.Encoding)
 				default:
-					if strings.HasPrefix(operand.Role, "result-") {
+					if operand.Role != "result-display" && strings.HasPrefix(operand.Role, "result-") {
 						result = string(operand.Term.Encoding)
 					}
 				}
@@ -8791,6 +8846,10 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result method")
 			}
 			method = operand.Value
+		case operand.Role == "result-display":
+			// Source display is descriptive only. It is emitted by the front
+			// alongside this exact call-result publication and is never used as
+			// a provider or value authority.
 		case strings.HasPrefix(operand.Role, "result-"):
 			resultTerms[strings.TrimPrefix(operand.Role, "result-")] = operand.Value
 		case strings.HasPrefix(operand.Role, "target-"):
@@ -8811,6 +8870,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result %q", key)
 		}
 		value := []byte("scalar/top")
+		importedRelation := false
 		receiverResult := false
 		receiverResultTerm := receiver
 		setMetatableReceiver := []byte(nil)
@@ -8887,8 +8947,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if imported, ok := importedProviderResultValue(lexical, provider, index, argumentTerms, partition); ok {
 					value = imported
 				}
-				if relation, ok := importedProviderRelationValue(lexical, provider, application, index, argumentTerms, partition); ok {
+				if relation, parameterized, ok := importedProviderRelationValue(lexical, provider, application, index, argumentTerms, partition); ok {
 					value = relation
+					importedRelation = parameterized
 				}
 				if summary, ok := importedProviderResultType(lexical, provider, index, argumentTerms, partition); ok {
 					importedSummary = summary
@@ -8908,6 +8969,12 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
 			equation.Fact{Key: "epoch/" + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		)
+		if importedRelation {
+			values = append(values, equation.Fact{
+				Key:   "imported-relation-result/" + base64.RawURLEncoding.EncodeToString(result) + "/" + operation.Target.Name,
+				Value: []byte("scalar/bool/true"),
+			})
+		}
 		if receiverResult {
 			if identity, found := tableIdentityForTerm(receiverResultTerm, partition); found {
 				values = append(values, heapIdentityFact(string(result), operation.Target.Name, identity))
@@ -9374,30 +9441,43 @@ func hostGlobalProviderResultType(lexical *lexicalEvaluator, provider []byte, in
 // provider. It is derived solely from the require-seeded entry export and
 // closed call arguments, so callers may carry it as summary metadata without
 // turning an absent provider result into a type witness.
-func importedProviderRelationValue(lexical *lexicalEvaluator, provider, application []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
+func importedProviderRelationValue(lexical *lexicalEvaluator, provider, application []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool, bool) {
 	if lexical == nil || index != 0 {
-		return nil, false
+		return nil, false, false
 	}
 	module, suffix, load, ok := importedProviderTarget(provider)
 	if !ok || load || suffix == "" {
-		return nil, false
+		return nil, false, false
 	}
 	suffix = strings.TrimPrefix(suffix, ".")
 	lexical.importedAuthorityMu.RLock()
 	summary, found := lexical.importedRelations[module]
 	lexical.importedAuthorityMu.RUnlock()
 	if !found {
-		return nil, false
+		return nil, false, false
 	}
 	function, found := summary.Function(suffix, len(arguments))
 	if !found {
-		return nil, false
+		return nil, false, false
 	}
 	declared, found := importedProviderResultType(lexical, provider, index, arguments, partition)
 	if found && !relationReturnTypeSafe(declared, make(map[typ.Type]bool)) {
-		return nil, false
+		return nil, false, false
 	}
-	return materializeImportedReturn(function.Return, application, arguments, partition)
+	value, ok := materializeImportedReturn(function.Return, application, arguments, partition)
+	return value, templateUsesParameter(function.Return), ok
+}
+
+func templateUsesParameter(template exportrelation.Value) bool {
+	if template.Parameter != nil {
+		return true
+	}
+	for _, member := range template.Table {
+		if templateUsesParameter(member.Value) {
+			return true
+		}
+	}
+	return false
 }
 
 // A literal template has no dynamic-key lane.  Keep declared map components

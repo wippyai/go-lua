@@ -110,7 +110,7 @@ func TestDeriveRejectsARecordShapeInvalidatedByUnknownIndexMutation(t *testing.T
 	}
 }
 
-func TestDeriveSummaryPublishesOnlyClosedMemberReturnTemplates(t *testing.T) {
+func TestDeriveSummaryPublishesSealedMemberReturnTemplates(t *testing.T) {
 	source := `local M = {}
 local function identity(value: string) return value end
 M.identity = identity
@@ -121,8 +121,9 @@ return M`
 		t.Fatalf("Check: %v", err)
 	}
 	summary := exporter.DeriveSummary(result, source)
-	if _, ok := summary.Function("identity", 1); ok {
-		t.Fatal("parameter-derived relation was published")
+	identity, ok := summary.Function("identity", 1)
+	if !ok || identity.Return.Parameter == nil || *identity.Return.Parameter != 0 || !identity.Valid() {
+		t.Fatalf("export = %v; identity relation = %#v", summary.Type, identity)
 	}
 	make, ok := summary.Function("make", 0)
 	if !ok || len(make.Return.Table) != 2 || !make.Valid() {

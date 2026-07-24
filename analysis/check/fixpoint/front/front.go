@@ -2259,6 +2259,13 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 			operands = append(operands, equation.Operand{Role: indexedRole("argument", index), Term: term})
 		}
 	}
+	// A result temporary has no authored spelling of its own. Preserve a direct
+	// call's complete display beside the same sealed call-result publication so
+	// a later assignment diagnostic can identify the proven result without
+	// recovering it from source text or a provider name.
+	if display, ok := directCallDisplay(body, instruction); ok {
+		operands = append(operands, equation.Operand{Role: "result-display", Term: equation.ClosedTerm([]byte(display))})
+	}
 	if instruction.Call.Method != 0 {
 		receiver, err := scalarTerm(body, instruction.Call.Receiver)
 		if err != nil {
@@ -2288,6 +2295,20 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 		}
 	}
 	return operands, nil
+}
+
+func directCallDisplay(body *wir.Body, instruction wir.Instruction) (string, bool) {
+	if body == nil || instruction.Call.Method != 0 || instruction.Call.Callee.Kind != wir.OperandPath {
+		return "", false
+	}
+	callee := body.Path(wir.PathRef(instruction.Call.Callee.Ref)).String()
+	if callee == "" {
+		return "", false
+	}
+	// Result displays intentionally omit argument spellings. The call-result
+	// publication identifies the exact value relation; arguments can be
+	// arbitrary expressions and are not source-facing diagnostic authority.
+	return callee + "(...)", true
 }
 
 func indexedRole(prefix string, index int) string { return fmt.Sprintf("%s-%08d", prefix, index) }
