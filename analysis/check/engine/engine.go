@@ -3719,6 +3719,9 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 				continue
 			}
 			if resultArity == "0" {
+				if captures[callee] {
+					continue
+				}
 				// A no-result static member call cannot supply a value or a
 				// branch fact to this declaration-only evaluation.  It is safe
 				// only when the receiver is an already-captured table; the entry
@@ -3926,7 +3929,8 @@ func hasCapturedNoResultCall(operations []equation.Equation, captures map[string
 		}
 		callee, hasCallee := artifactOperand(operation.Operands, "callee")
 		arity, hasArity := artifactOperand(operation.Operands, "result-arity")
-		if hasCallee && hasArity && string(arity) == "0" && uncalledStaticCapturedMemberCall(string(callee), captures) {
+		if hasCallee && hasArity && string(arity) == "0" &&
+			(captures[string(callee)] || uncalledStaticCapturedMemberCall(string(callee), captures)) {
 			return true
 		}
 	}
@@ -3938,7 +3942,7 @@ func hasCapturedNoResultCall(operations []equation.Equation, captures map[string
 // term. A no-result call has no closed return slot, so its assertion or
 // validation effect cannot be replayed without a real invocation. An
 // independent declared formal remains a complete existing boundary witness.
-func uncalledStaticAssignmentDiagnostic(artifact equation.Artifact, key string) bool {
+func (l *lexicalEvaluator) uncalledStaticAssignmentDiagnostic(artifact equation.Artifact, key string, partition equation.Partition) bool {
 	const prefix = "type.assignment/"
 	if !strings.HasPrefix(key, prefix) {
 		return false
@@ -3969,8 +3973,67 @@ func uncalledStaticAssignmentDiagnostic(artifact equation.Artifact, key string) 
 		}
 		for _, operand := range candidate.Operands {
 			if strings.HasPrefix(operand.Role, "argument-") && string(operand.Term.Encoding) == source {
+				callee, hasCallee := artifactOperand(candidate.Operands, "callee")
+				if hasCallee && l.uncalledCapturedHelperHasOnlyGuardedValidation(callee, partition) {
+					continue
+				}
 				return false
 			}
+		}
+	}
+	return true
+}
+
+// uncalledCapturedHelperHasOnlyGuardedValidation admits one very limited
+// no-result helper shape: its only application is a validation operation that
+// itself is guarded by the helper's branch. The call therefore cannot publish
+// an unconditional postcondition for the caller's argument.
+func (l *lexicalEvaluator) uncalledCapturedHelperHasOnlyGuardedValidation(callee []byte, partition equation.Partition) bool {
+	if l == nil {
+		return false
+	}
+	handle, found := closureHandleFor(callee, partition)
+	if !found {
+		return false
+	}
+	child, found := l.byPrototype[handle.Prototype]
+	if !found || child.Cyclic != nil {
+		return false
+	}
+	foundValidation := false
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		if len(operation.Guards) == 0 {
+			return false
+		}
+		hasCheck := false
+		for _, operand := range operation.Operands {
+			hasCheck = hasCheck || operand.Role == "check"
+		}
+		if !hasCheck {
+			return false
+		}
+		foundValidation = true
+	}
+	return foundValidation
+}
+
+func (l *lexicalEvaluator) uncalledStaticCapturedCallsAreGuardedValidation(child front.Compilation, partition equation.Partition) bool {
+	captures := make(map[string]bool, len(child.Boundary.Captures))
+	for _, capture := range child.Boundary.Captures {
+		captures[boundaryTerm(capture.Symbol)] = true
+	}
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		callee, hasCallee := artifactOperand(operation.Operands, "callee")
+		arity, hasArity := artifactOperand(operation.Operands, "result-arity")
+		if hasCallee && hasArity && string(arity) == "0" && captures[string(callee)] &&
+			!l.uncalledCapturedHelperHasOnlyGuardedValidation(callee, partition) {
+			return false
 		}
 	}
 	return true
@@ -5147,7 +5210,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			declaredAssignmentBoundary = declaredAssignmentBoundary || uncalledDeclaredFormalAssignment(child, childOperation, formals)
 		}
 	}
-	if staticSeeds, admitted := uncalledStaticAssignmentBoundary(child); admitted {
+	if staticSeeds, admitted := uncalledStaticAssignmentBoundary(child); admitted && lexical.uncalledStaticCapturedCallsAreGuardedValidation(child, partition) {
 		uncalledSeeds = staticSeeds
 		explicitAnyBoundary = false
 		staticAssignmentBoundary = true
@@ -5213,7 +5276,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
 			}
-			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, diagnostic) && !uncalledStaticResultCallDiagnostic(child.Artifact, diagnostic.Key) {
+			if staticAssignmentBoundary && !lexical.uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key, partition) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, diagnostic) && !uncalledStaticResultCallDiagnostic(child.Artifact, diagnostic.Key) {
 				continue
 			}
 			if arithmeticBoundary && !strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/") {
@@ -5247,7 +5310,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if staticMemberReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
 				continue
 			}
-			if staticAssignmentBoundary && !uncalledStaticAssignmentDiagnostic(child.Artifact, item.Fact.Key) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, item.Fact) && !uncalledStaticResultCallDiagnostic(child.Artifact, item.Fact.Key) {
+			if staticAssignmentBoundary && !lexical.uncalledStaticAssignmentDiagnostic(child.Artifact, item.Fact.Key, partition) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, item.Fact) && !uncalledStaticResultCallDiagnostic(child.Artifact, item.Fact.Key) {
 				continue
 			}
 			if arithmeticBoundary && !strings.HasPrefix(item.Fact.Key, "type.call.direct.argument_type/") {

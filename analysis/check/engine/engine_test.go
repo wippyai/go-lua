@@ -83,6 +83,29 @@ func TestCheckPublishesProvenAnnotationAssignmentMismatch(t *testing.T) {
 	}
 }
 
+func TestCheckRejectsOptionalFormalAfterConditionalAssertionHelper(t *testing.T) {
+	result, err := engine.Check(`
+local function conditionalAssert(val: any, check: boolean)
+    if check then
+        assert(val, "value is nil")
+    end
+end
+function process(x: string?)
+    conditionalAssert(x, true)
+    local s: string = x
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 9 && strings.Contains(diagnostic.Message, "string?") {
+			return
+		}
+	}
+	t.Fatalf("conditional assertion helper hid optional-formal assignment failure: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckProjectProvesImportedSealedNestedRecordAssignment(t *testing.T) {
 	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{
 		{Path: "types.lua", ModulePath: "types", Source: `
