@@ -383,6 +383,16 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 			published = append(published, item)
 		}
 	}
+	placement := publishedPlacement(closure.Values)
+	for _, item := range published {
+		if item.Code != "advice.invariant_loop_read" {
+			continue
+		}
+		if placement == nil {
+			placement = &PlacementPlan{Complete: true}
+		}
+		placement.HoistableLoads = append(placement.HoistableLoads, PlacementHoistableLoad{Target: item.Fact.Key})
+	}
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: publishedOutcomes(closure.Outcomes), Diagnostics: closure.Diagnostics,
@@ -390,7 +400,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		ValueFacts:           cloneFacts(closure.Values),
 		PublishedDiagnostics: published,
 		DiagnosticSpans:      diagnosticSpans,
-		Placement:            publishedPlacement(closure.Values),
+		Placement:            placement,
 		TypeDefinitions:      cloneTypeDefinitions(compilation.TypeDefinitions),
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
@@ -10194,21 +10204,25 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	if closure, recognized, err := correlationBranchClosure(operation, partition); err != nil {
 		return equation.TransactionResult{}, err
 	} else if recognized {
+		closure = appendClosedGuardAdvice(closure, operation, partition)
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	if closure, recognized, err := selectBranchClosure(operation, partition); err != nil {
 		return equation.TransactionResult{}, err
 	} else if recognized {
+		closure = appendClosedGuardAdvice(closure, operation, partition)
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	if closure, recognized, err := typedLiteralBranchClosure(operation, partition); err != nil {
 		return equation.TransactionResult{}, err
 	} else if recognized {
+		closure = appendClosedGuardAdvice(closure, operation, partition)
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	if closure, recognized, err := typedIndexBranchClosure(operation, partition); err != nil {
 		return equation.TransactionResult{}, err
 	} else if recognized {
+		closure = appendClosedGuardAdvice(closure, operation, partition)
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	frozenCondition := false
@@ -10309,6 +10323,27 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: "lint.condition.redundant/" + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+// appendClosedGuardAdvice preserves an existing branch closure while allowing
+// a dominated selector to publish the same constant-guard fact as the scalar
+// branch path.  Specialized closures own their narrowing facts and therefore
+// return before branchKernel's ordinary diagnostic tail.  This adapter never
+// trusts the dominance guard by itself: it asks the current partition for the
+// exact selector truth, so a write between guards (or an opaque value) stays
+// silent.
+func appendClosedGuardAdvice(closure equation.OutputClosure, operation equation.BoundEquation, partition equation.Partition) equation.OutputClosure {
+	if len(operation.Guards) == 0 {
+		return closure
+	}
+	truth, _, err := branchTruth(operation.Operands, partition)
+	if err != nil || !truth {
+		return closure
+	}
+	closure.Diagnostics = append(closure.Diagnostics, equation.Fact{
+		Key: "advice.always_true_guard/" + operation.Target.Name, Value: []byte("proven constant guard"),
+	})
+	return closure
 }
 
 type correlationConeEpoch struct {

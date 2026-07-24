@@ -520,10 +520,13 @@ func placementRelationTemplates(module string, summary exportrelation.Summary) [
 
 func applyDiagnosticPolicy(in []diagnostic.Diagnostic, enabled map[diagnostic.Code]bool, policy diagnostic.Policy) []diagnostic.Diagnostic {
 	optional := map[diagnostic.Code]bool{
-		"lint.condition.redundant": true,
-		"advice.always_true_guard": true,
-		"advice.redundant_claim":   true,
-		"send.isolation":           true,
+		"lint.condition.redundant":        true,
+		"advice.always_true_guard":        true,
+		"advice.redundant_claim":          true,
+		"advice.invariant_loop_read":      true,
+		"advice.shape.polymorphic":        true,
+		"advice.split_birth_discriminant": true,
+		"send.isolation":                  true,
 	}
 	rules := make(map[diagnostic.Code]diagnostic.Rule, len(enabled)+len(policy.Rules))
 	for code, rule := range policy.Rules {

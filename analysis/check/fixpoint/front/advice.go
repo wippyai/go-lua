@@ -1,0 +1,303 @@
+package front
+
+import (
+	"fmt"
+	"sort"
+
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
+)
+
+// adviceControlDiagnostics projects only finite WIR relations whose complete
+// source topology is already admitted by the front.  It deliberately uses
+// symbol/path identities and CFG reachability, never source spelling.
+func adviceControlDiagnostics(body *wir.Body, graph cfg.Graph) []ControlDiagnostic {
+	if body == nil || graph == nil {
+		return nil
+	}
+	var out []ControlDiagnostic
+	for i := 0; i < body.Len(); i++ {
+		birth := body.Instr(i)
+		if birth.Op != wir.OpMakeTable || birth.Dst.Kind != wir.OperandPath || len(body.TableEntries(birth.TableEntries)) != 0 {
+			continue
+		}
+		root := body.Path(wir.PathRef(birth.Dst.Ref))
+		if root.Symbol == 0 || len(root.Segments) != 0 {
+			continue
+		}
+		writes := adviceStaticWrites(body, root)
+		if len(writes) == 0 || adviceDynamicWrite(body, root) {
+			continue
+		}
+		if item, ok := adviceSplitBirth(body, graph, birth, root, writes); ok {
+			out = append(out, item)
+		}
+		if item, ok := adviceShape(body, graph, birth, root, writes); ok {
+			out = append(out, item)
+		}
+	}
+	out = append(out, adviceRedundantGuards(body, graph)...)
+	out = append(out, adviceInvariantLoopReads(body, graph)...)
+	return out
+}
+
+type adviceWrite struct {
+	inst      wir.Instruction
+	path      string
+	literal   string
+	isLiteral bool
+}
+
+func adviceStaticWrites(body *wir.Body, root pathdom.Path) []adviceWrite {
+	rootName := root.String()
+	var out []adviceWrite
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op != wir.OpStaticMemberWrite || inst.Dst.Kind != wir.OperandPath {
+			continue
+		}
+		p := body.Path(wir.PathRef(inst.Dst.Ref))
+		if len(p.Segments) != 1 || p.Root != rootName || p.Segments[0].Name == "" {
+			continue
+		}
+		item := adviceWrite{inst: inst, path: p.String()}
+		if inst.A.Kind == wir.OperandConst {
+			c := body.Const(wir.ConstRef(inst.A.Ref))
+			item.literal, item.isLiteral = c.Str, c.Kind == wir.ConstString
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func adviceDynamicWrite(body *wir.Body, root pathdom.Path) bool {
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op == wir.OpDynamicIndexWrite && inst.Dst.Kind == wir.OperandPath && body.Path(wir.PathRef(inst.Dst.Ref)).Root == root.String() {
+			return true
+		}
+	}
+	return false
+}
+
+func adviceSplitBirth(body *wir.Body, graph cfg.Graph, birth wir.Instruction, root pathdom.Path, writes []adviceWrite) (ControlDiagnostic, bool) {
+	for _, tag := range writes {
+		if !tag.isLiteral {
+			continue
+		}
+		for i := 0; i < body.Len(); i++ {
+			use := body.Instr(i)
+			if use.Op != wir.OpBranch || use.Check == 0 || !graphReachable(graph, tag.inst.Point, use.Point) {
+				continue
+			}
+			check := body.Check(use.Check)
+			if check.Kind != wir.CheckLiteralEqual || check.Path.String() != tag.path {
+				continue
+			}
+			var payload *adviceWrite
+			for j := range writes {
+				if writes[j].path != tag.path && graphReachable(graph, birth.Point, writes[j].inst.Point) {
+					payload = &writes[j]
+					break
+				}
+			}
+			if payload == nil {
+				continue
+			}
+			return ControlDiagnostic{Key: "advice.split_birth_discriminant", Code: "advice.split_birth_discriminant", Message: tag.path + " is assigned apart from its payload", Span: tag.inst.TargetSpan,
+				Evidence: []ControlDiagnosticEvidence{{Span: birth.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: root.String() + " is born as a table here"}, {Span: tag.inst.TargetSpan, Kind: "abstract fact", Trust: "proven", Message: tag.path + " is assigned literal \"" + tag.literal + "\" here"}, {Span: payload.inst.TargetSpan, Kind: "abstract fact", Trust: "proven", Message: payload.path + " is assigned separately"}, {Span: use.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: tag.path + " is used as a discriminant here"}},
+				Labels:   []ControlDiagnosticLabel{{Span: tag.inst.TargetSpan, Message: "tag write"}, {Span: birth.ExprSpan, Message: "table birth"}, {Span: payload.inst.TargetSpan, Message: "payload write"}, {Span: use.ExprSpan, Message: "discriminant use"}}, Help: "Construct the variant in one table literal so the tag and payload are born atomically."}, true
+		}
+	}
+	return ControlDiagnostic{}, false
+}
+
+func adviceShape(body *wir.Body, graph cfg.Graph, birth wir.Instruction, root pathdom.Path, writes []adviceWrite) (ControlDiagnostic, bool) {
+	var use wir.Instruction
+	found := false
+	for i := 0; i < body.Len(); i++ {
+		candidate := body.Instr(i)
+		if candidate.Op == wir.OpReturn {
+			for _, value := range body.Operands(candidate.List) {
+				if value.Kind == wir.OperandPath && body.Path(wir.PathRef(value.Ref)).String() == root.String() {
+					use = candidate
+					found = true
+					break
+				}
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		return ControlDiagnostic{}, false
+	}
+	if meta := body.ReturnValueMeta(use.ReturnValues); len(meta) != 0 && meta[0].Span.Valid() {
+		use.ExprSpan = meta[0].Span
+	}
+	fields := make([]adviceWrite, 0, len(writes))
+	for _, write := range writes {
+		if graphReachable(graph, birth.Point, write.inst.Point) && graphReachable(graph, write.inst.Point, use.Point) {
+			fields = append(fields, write)
+		}
+	}
+	if len(fields) < 2 {
+		return ControlDiagnostic{}, false
+	}
+	sort.Slice(fields, func(i, j int) bool { return fields[i].path < fields[j].path })
+	evidence := []ControlDiagnosticEvidence{{Span: birth.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: root.String() + " is born as a table here"}}
+	labels := []ControlDiagnosticLabel{{Span: use.ExprSpan, Message: "shape-relevant use"}, {Span: birth.ExprSpan, Message: "table birth"}}
+	for _, field := range fields {
+		evidence = append(evidence, ControlDiagnosticEvidence{Span: field.inst.TargetSpan, Kind: "abstract fact", Trust: "proven", Message: field.path + " is added only on some paths"})
+		labels = append(labels, ControlDiagnosticLabel{Span: field.inst.TargetSpan, Message: "conditionally present field"})
+	}
+	evidence = append(evidence, ControlDiagnosticEvidence{Span: use.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: "StableShape is refused because " + root.String() + " has a non-uniform field set"}, ControlDiagnosticEvidence{Span: use.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: root.String() + " is used where a fixed shape matters"})
+	return ControlDiagnostic{Key: "advice.shape.polymorphic", Code: "advice.shape.polymorphic", Message: root.String() + " has a path-dependent field shape", Span: use.ExprSpan, Evidence: evidence, Labels: labels, Help: "Construct all variants with one fixed-shape constructor (all fields present, absent ones nil/default)."}, true
+}
+
+func adviceRedundantGuards(body *wir.Body, graph cfg.Graph) []ControlDiagnostic {
+	var out []ControlDiagnostic
+	for i := 0; i < body.Len(); i++ {
+		inner := body.Instr(i)
+		if inner.Op != wir.OpBranch || inner.Check == 0 {
+			continue
+		}
+		check := body.Check(inner.Check)
+		for j := 0; j < i; j++ {
+			outer := body.Instr(j)
+			if outer.Op != wir.OpBranch || outer.Check == 0 {
+				continue
+			}
+			prior := body.Check(outer.Check)
+			if !adviceImplies(prior, check) || adviceWriteBetween(body, outer.Point, inner.Point, check.Path.String()) {
+				continue
+			}
+			out = append(out, ControlDiagnostic{Key: fmt.Sprintf("advice.always_true_guard/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: "advice.always_true_guard", Message: "condition is proven always true", Span: inner.ExprSpan, Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: "condition is proven to be true on every reachable path"}}, Labels: []ControlDiagnosticLabel{{Span: inner.ExprSpan, Message: "constant guard"}}, Help: "Remove the guard or move the guarded code out of the branch."})
+			break
+		}
+	}
+	return out
+}
+
+func adviceInvariantLoopReads(body *wir.Body, graph cfg.Graph) []ControlDiagnostic {
+	var out []ControlDiagnostic
+	for i := 0; i < body.Len(); i++ {
+		read := body.Instr(i)
+		if read.Op != wir.OpAssign || read.A.Kind != wir.OperandPath || !advicePointInCycle(graph, read.Point) {
+			continue
+		}
+		path := body.Path(wir.PathRef(read.A.Ref))
+		if path.Symbol == 0 || len(path.Segments) != 1 {
+			continue
+		}
+		aliases := map[uint32]bool{uint32(path.Symbol): true}
+		changed := true
+		for changed {
+			changed = false
+			for j := 0; j < body.Len(); j++ {
+				inst := body.Instr(j)
+				if inst.Op == wir.OpAssign && inst.Dst.Kind == wir.OperandPath && inst.A.Kind == wir.OperandPath {
+					dst, src := body.Path(wir.PathRef(inst.Dst.Ref)), body.Path(wir.PathRef(inst.A.Ref))
+					if len(dst.Segments) == 0 && len(src.Segments) == 0 && aliases[uint32(src.Symbol)] && !aliases[uint32(dst.Symbol)] {
+						aliases[uint32(dst.Symbol)] = true
+						changed = true
+					}
+				}
+			}
+		}
+		mutated := false
+		for j := 0; j < body.Len(); j++ {
+			inst := body.Instr(j)
+			if inst.Op == wir.OpStaticMemberWrite && inst.Dst.Kind == wir.OperandPath {
+				target := body.Path(wir.PathRef(inst.Dst.Ref))
+				if len(target.Segments) != 0 && aliases[uint32(target.Symbol)] {
+					mutated = true
+					break
+				}
+			}
+		}
+		if mutated {
+			continue
+		}
+		loop := adviceLoopHead(body, graph, read.Point)
+		out = append(out, ControlDiagnostic{Key: "advice.invariant_loop_read", Code: "advice.invariant_loop_read", Message: path.String() + " is loop-invariant and can be hoisted", Span: read.ExprSpan, Evidence: []ControlDiagnosticEvidence{{Span: read.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: path.String() + " is not written by the loop body"}, {Span: read.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: path.Root + " is non-nil on all loop paths"}}, Labels: []ControlDiagnosticLabel{{Span: read.ExprSpan, Message: "loop read"}, {Span: loop, Message: "loop head"}}, Help: "Read `" + path.String() + "` once before the loop when that makes the code clearer or cheaper."})
+	}
+	return out
+}
+
+func advicePointInCycle(graph cfg.Graph, point cfg.Point) bool {
+	for _, next := range graph.Successors(point) {
+		if graphReachable(graph, next, point) {
+			return true
+		}
+	}
+	for _, prior := range graph.Predecessors(point) {
+		if graphReachable(graph, point, prior) {
+			return true
+		}
+	}
+	return false
+}
+func adviceLoopHead(body *wir.Body, graph cfg.Graph, point cfg.Point) wir.Span {
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op == wir.OpBranch && advicePointInCycle(graph, inst.Point) && graphReachable(graph, inst.Point, point) {
+			return wir.Span{StartLine: inst.ExprSpan.StartLine, StartCol: 1, EndLine: inst.ExprSpan.EndLine, EndCol: inst.ExprSpan.EndCol}
+		}
+	}
+	return wir.Span{}
+}
+
+func adviceImplies(prior, current wir.Check) bool {
+	if prior.Kind == wir.CheckNotNil && current.Kind == wir.CheckNotNil {
+		return adviceSamePath(prior.Path, current.Path) || (prior.Path.Root == current.Path.Root && prior.Path.Root != "")
+	}
+	if !adviceSamePath(prior.Path, current.Path) {
+		return false
+	}
+	return prior.Kind == wir.CheckTypeEqual && current.Kind == wir.CheckTypeNot && prior.TypeName != "" && current.TypeName != "" && prior.TypeName != current.TypeName
+}
+
+func adviceSamePath(left, right pathdom.Path) bool {
+	if left.Symbol != right.Symbol || left.Root != right.Root || len(left.Segments) != len(right.Segments) {
+		return false
+	}
+	for i := range left.Segments {
+		if left.Segments[i] != right.Segments[i] {
+			return false
+		}
+	}
+	return true
+}
+func adviceWriteBetween(body *wir.Body, from, to cfg.Point, path string) bool {
+	for i := 0; i < body.Len(); i++ {
+		inst := body.Instr(i)
+		if inst.Op == wir.OpAssign && inst.Dst.Kind == wir.OperandPath && body.Path(wir.PathRef(inst.Dst.Ref)).String() == path && inst.Point > from && inst.Point < to {
+			return true
+		}
+	}
+	return false
+}
+func graphReachable(graph cfg.Graph, from, to cfg.Point) bool {
+	if from == to {
+		return true
+	}
+	seen := map[cfg.Point]bool{from: true}
+	queue := []cfg.Point{from}
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		for _, next := range graph.Successors(p) {
+			if next == to {
+				return true
+			}
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return false
+}

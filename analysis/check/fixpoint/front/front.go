@@ -218,12 +218,17 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 		return Compilation{}, err
 	}
 	compilation.Nested = nested
+	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, adviceControlDiagnostics(body, built.Graph)...)
+	for _, child := range nested {
+		compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, child.ControlDiagnostics...)
+	}
 	catalog, err := catalogBodies(compilation)
 	if err != nil {
 		return Compilation{}, err
 	}
 	compilation.Catalog = catalog
-	compilation.ControlDiagnostics = append(controlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
+	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, controlDiagnostics...)
+	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
 	compilation.TypeDefinitions = typeDefinitions
 	return compilation, nil
 }
@@ -754,6 +759,10 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 		child.Nested, err = compileNestedBodies(proto.Body, root)
 		if err != nil {
 			return nil, err
+		}
+		child.ControlDiagnostics = append(child.ControlDiagnostics, adviceControlDiagnostics(proto.Body, proto.Graph)...)
+		for _, nested := range child.Nested {
+			child.ControlDiagnostics = append(child.ControlDiagnostics, nested.ControlDiagnostics...)
 		}
 		children = append(children, child)
 	}
