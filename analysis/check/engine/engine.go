@@ -8415,6 +8415,14 @@ func sealShapeValue(value []byte, partition equation.Partition) ([]byte, error) 
 		if !member.Present {
 			continue
 		}
+		// A table member transported from a completed typed operation is already
+		// a value witness, not a source term awaiting another lookup.  In
+		// particular, table.insert may append the generic-for element's sealed
+		// target; resolving that encoding as a path would discard it as Top when
+		// the returned table is rebound by the caller.
+		if _, typed := shapefact.DecodeTarget([]byte(member.Value)); typed {
+			continue
+		}
 		resolved, err := resolveCurrentValue([]byte(member.Value), partition)
 		if err != nil {
 			member.Value = "scalar/top"
@@ -13359,6 +13367,19 @@ func tableInsertEpoch(operation equation.BoundEquation, operands directCallOpera
 	}
 	suffix := segment.FormatSegments([]segment.Segment{{Kind: segment.SegmentIndexInt, Index: next}})
 	values := []equation.Fact{heapMemberFact(identity, suffix, operation.Target.Name, value)}
+	// The heap cell is the identity-backed mutation authority.  Its matching
+	// source-path cell is needed when this closed table subsequently crosses a
+	// lexical return boundary: heapMemberSurface deliberately rebuilds a
+	// returned literal only from member paths published by the producing body.
+	// Keep the bridge exact -- a dynamic receiver has no canonical source cell
+	// to publish, even when its current heap identity happens to be known.
+	memberTerm := append(append([]byte(nil), operands.arguments[0]...), []byte(suffix)...)
+	if _, _, exact := heapTableAddress(memberTerm); exact {
+		values = append(values,
+			equation.Fact{Key: "value/" + string(memberTerm) + "/" + operation.Target.Name, Value: append([]byte(nil), value...)},
+			equation.Fact{Key: "epoch/" + string(memberTerm) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
+		)
+	}
 	if memberIdentity, found := tableIdentityForTerm(operands.arguments[1], partition); found {
 		values = append(values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
 	}
@@ -16551,7 +16572,7 @@ func heapMemberSurface(term, value []byte, partition equation.Partition) []byte 
 	// The absence of any such publication proves this partition performed no
 	// static member write on this term, so the aggregate is already current and
 	// the heap walk is skipped.
-	if _, written := partition.LatestValuePrefix("value/" + string(term) + "."); !written {
+	if !hasStaticMemberPathWrite(term, partition) {
 		return value
 	}
 	identity, found := tableIdentityForTerm(term, partition)
@@ -16594,6 +16615,29 @@ func heapMemberSurface(term, value []byte, partition equation.Partition) []byte 
 		return surfaced
 	}
 	return value
+}
+
+// hasStaticMemberPathWrite recognizes the exact path-value counterpart of a
+// heap member write.  Both dot and integer/string bracket paths are static
+// WIR lenses; dynamic writes do not carry such a path fact and therefore
+// cannot make a returned aggregate more precise.
+func hasStaticMemberPathWrite(term []byte, partition equation.Partition) bool {
+	prefix := "value/" + string(term)
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(fact.Key, prefix)
+		if len(rest) == 0 || (rest[0] != '.' && rest[0] != '[') {
+			continue
+		}
+		cut := strings.LastIndexByte(rest, '/')
+		if cut <= 0 || !segment.ValidFormattedSegments(rest[:cut]) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func importedProviderResultType(lexical *lexicalEvaluator, provider []byte, index int, arguments map[int][]byte, partition equation.Partition) (typ.Type, bool) {
