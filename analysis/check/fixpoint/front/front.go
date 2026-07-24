@@ -1999,6 +1999,10 @@ func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, curren
 	if err != nil {
 		return nil, err
 	}
+	allocationResult, err := allocationValueTerm(body, instruction.Dst)
+	if err != nil {
+		return nil, err
+	}
 	value := "scalar/table"
 	if instruction.Op == wir.OpClosure {
 		proto := body.Proto(instruction.Func)
@@ -2016,6 +2020,7 @@ func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, curren
 		{Role: "target", Term: target},
 		{Role: "display", Term: hiddenAllocationDisplay(current.target)},
 		{Role: "value", Term: equation.ClosedTerm([]byte(value))},
+		{Role: "allocation-result", Term: allocationResult},
 		{Role: "read-before", Term: readBefore},
 		{Role: "absence", Term: equation.ClosedTerm([]byte("front/absence/error"))},
 	}, nil

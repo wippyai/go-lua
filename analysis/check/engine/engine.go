@@ -101,8 +101,13 @@ type Result struct {
 	// source span that produced it. It is intentionally source-only metadata:
 	// equation facts remain portable and position-free.
 	DiagnosticSpans map[string]wir.Span
-	Transactions    int
-	Timings         Timings
+	// Placement is the conservative allocation plan projected from placement
+	// facts in the completed equation closure. A nil plan means the closure
+	// established no allocation-site fact; callers must not substitute a
+	// source-derived guess.
+	Placement    *PlacementPlan
+	Transactions int
+	Timings      Timings
 }
 
 // PublishedDiagnostic enriches one equation diagnostic fact at the public
@@ -234,6 +239,7 @@ func Check(source string) (result Result, err error) {
 		ValueFacts:           cloneFacts(closure.Values),
 		PublishedDiagnostics: published,
 		DiagnosticSpans:      diagnosticSpans,
+		Placement:            publishedPlacement(closure.Values),
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)},
 	}
@@ -1786,10 +1792,43 @@ func allocationTemplateKernel(operation equation.BoundEquation, partition equati
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	if _, err := requiredOperandsByRole(operation.Operands, "site", "result", "kind"); err != nil {
+	operands, err := requiredOperandsByRole(operation.Operands, "site", "result", "kind")
+	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	return equation.TransactionResult{Complete: true}, nil
+	kind := strings.TrimPrefix(string(operands["kind"]), "allocation-kind/")
+	if kind == string(operands["kind"]) || kind == "" {
+		return equation.TransactionResult{}, fmt.Errorf("engine: malformed allocation kind")
+	}
+	complete, decomposable := true, true
+	children := make([]string, 0)
+	for _, operand := range operation.Operands {
+		switch {
+		case operand.Role == "open-tail":
+			if string(operand.Value) != "scalar/bool/false" {
+				complete, decomposable = false, false
+			}
+		case strings.HasPrefix(operand.Role, "value-"):
+			if strings.HasPrefix(string(operand.Value), "scalar/") {
+				continue
+			}
+			children = append(children, string(operand.Value))
+			decomposable = false
+		}
+	}
+	if kind != "table" {
+		decomposable = false
+	}
+	fact, err := encodePlacementAllocation(placementAllocationFact{
+		Identity: placementAllocationIdentity(operation), Result: string(operands["result"]),
+		Kind: "lua." + kind, Complete: complete, Decomposable: decomposable, Children: children,
+	})
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
+		Key: placementAllocationPrefix + operation.Target.Name, Value: fact,
+	}}}}, nil
 }
 
 // objectMaterializationKernel runs only after its template dependency.  The
@@ -2159,7 +2198,7 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	operands, err := operandsByRole(operation.Operands, "target", "display", "value", "read-before", "absence")
+	operands, err := requiredOperandsByRole(operation.Operands, "target", "display", "value", "read-before", "absence")
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
@@ -2220,6 +2259,21 @@ func writeKernel(operation equation.BoundEquation, partition equation.Partition)
 			return equation.TransactionResult{}, marshalErr
 		}
 		values = append(values, equation.Fact{Key: "closure/" + target + "/" + operation.Target.Name, Value: encoded})
+	}
+	allocationResult := []byte(target)
+	for _, operand := range operation.Operands {
+		if operand.Role == "allocation-result" {
+			allocationResult = operand.Value
+			break
+		}
+	}
+	if allocation, found := placementAllocationForTerm(allocationResult, partition); found {
+		values = append(values, placementBindingFact(target, operation.Target.Name, allocation.Identity))
+	}
+	if _, suffix, member := tableAddress([]byte(target)); member && suffix != "" {
+		if allocation, found := placementAllocationForTerm(allocationResult, partition); found {
+			values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "member-store"))
+		}
 	}
 	memberClosures, err := projectMemberClosures(target, operands["value"], operation.Target.Name, partition)
 	if err != nil {
@@ -2399,7 +2453,15 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value}}}}, nil
+	values := []equation.Fact{{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value}}
+	if wir.Op(kind) == wir.OpBinOp && (wir.Operator(op) == wir.BinEq || wir.Operator(op) == wir.BinNe) {
+		for _, role := range []string{"left", "right"} {
+			if allocation, found := placementAllocationForTerm(by[role], partition); found {
+				values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "identity-compare"))
+			}
+		}
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
 func numberValue(v float64) []byte {
@@ -2517,6 +2579,9 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 				values = append(values, heapIdentityFact(target, operation.Target.Name, memberIdentity))
 			}
 		}
+	}
+	if allocation, found := placementAllocationForTerm(operands["container"], partition); found {
+		values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "dynamic-index"))
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
@@ -3486,7 +3551,13 @@ func exactFact(key string, partition equation.Partition) ([]byte, bool) {
 // applyKernel validates the sealed direct or method-call shape and publishes
 // proven call-contract failures at this equation point. Unknown values are not
 // violations: diagnostics are proof outputs, never speculative findings.
-func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (result equation.TransactionResult, err error) {
+	var placementFacts []equation.Fact
+	defer func() {
+		if err == nil && result.Complete && len(placementFacts) != 0 {
+			result.Closure.Values = append(result.Closure.Values, placementFacts...)
+		}
+	}()
 	if closure, recognized, err := freezeCallEpoch(operation, partition); err != nil {
 		return equation.TransactionResult{}, err
 	} else if recognized {
@@ -3513,6 +3584,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	placementFacts = placementApplyFacts(operation, operands, partition)
 	if closure, recognized := tableInsertEpoch(operation, operands, partition); recognized {
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
@@ -4887,6 +4959,11 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 				return equation.TransactionResult{}, err
 			}
 			projected = append(projected, equation.Fact{Key: fmt.Sprintf("return-member-closure/%s/%08d/%08d", operation.Target.Name, index, memberIndex), Value: encoded})
+		}
+	}
+	for _, operand := range operation.Operands {
+		if allocation, found := placementAllocationForTerm(operand.Value, partition); found {
+			projected = append(projected, placementEventFact(allocation.Identity, operation.Target.Name, placementEventOwned))
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: projected, Outcomes: outcomes}}, nil

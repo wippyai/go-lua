@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/lint"
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -228,7 +230,7 @@ func parseExpectations(filename, source string) []inlineExpectation {
 // fixtureDiagnostics is the only execution adaptation. The lint adapter owns
 // project ordering, import resolution, engine.Check invocation, and conversion
 // from engine facts to source diagnostics. The manifest oracle remains intact.
-func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, string, error) {
+func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, *engine.PlacementPlan, string, error) {
 	files := resolveFiles(s)
 	entries := make([]lint.Entry, 0, len(files))
 	for _, file := range files {
@@ -236,7 +238,7 @@ func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, string, error) {
 	}
 	input := lint.ProjectInput{Entries: entries, Targets: []string{strings.TrimSuffix(files[len(files)-1], ".lua")}}
 	if policy, err := fixtureDiagnosticPolicy(s.Suite.Check); err != nil {
-		return nil, files[len(files)-1], fmt.Errorf("diagnostic_rules: %w", err)
+		return nil, nil, files[len(files)-1], fmt.Errorf("diagnostic_rules: %w", err)
 	} else {
 		input.DiagnosticPolicy = policy
 	}
@@ -250,9 +252,9 @@ func fixtureDiagnostics(s namedSuite) ([]diag.Diagnostic, string, error) {
 	}
 	result, err := lint.CheckProject(context.Background(), input)
 	if err != nil {
-		return nil, files[len(files)-1], err
+		return nil, nil, files[len(files)-1], err
 	}
-	return result.Diagnostics, files[len(files)-1], nil
+	return result.Diagnostics, result.Placement, files[len(files)-1], nil
 }
 
 func fixtureDiagnosticPolicy(check *fixtureCheck) (diag.Policy, error) {
@@ -303,20 +305,20 @@ func fullOracleFixtureVerdict(s namedSuite) (v fixtureExpectationVerdict) {
 			v.unexpected = append(v.unexpected, fmt.Sprintf("panic: %v", recovered))
 		}
 	}()
-	diagnostics, entryFile, err := fixtureDiagnostics(s)
+	diagnostics, plan, entryFile, err := fixtureDiagnostics(s)
 	if err != nil {
 		v.passed = false
 		v.unexpected = append(v.unexpected, "checker infrastructure failure: "+err.Error())
 		return v
 	}
-	return judgeAgainstFixtureExpectations(s, diagnostics, entryFile)
+	return judgeAgainstFixtureExpectations(s, diagnostics, plan, entryFile)
 }
 
 // judgeAgainstFixtureExpectations preserves the original precedence exactly:
 // inline markers first, then manifest diagnostics (missing-only when inline
 // markers exist), then error count, otherwise clean check. Check.Skip and
 // fixture Skip are intentionally not consulted by the hard oracle.
-func judgeAgainstFixtureExpectations(s namedSuite, diagnostics []diag.Diagnostic, entryFile string) fixtureExpectationVerdict {
+func judgeAgainstFixtureExpectations(s namedSuite, diagnostics []diag.Diagnostic, plan *engine.PlacementPlan, entryFile string) fixtureExpectationVerdict {
 	v := fixtureExpectationVerdict{name: s.Name, passed: true}
 	var inline []inlineExpectation
 	for _, file := range resolveFiles(s) {
@@ -384,10 +386,114 @@ func judgeAgainstFixtureExpectations(s namedSuite, diagnostics []diag.Diagnostic
 		}
 	}
 	if s.Suite.Check != nil && s.Suite.Check.Placement != nil {
-		v.passed = false
-		v.missing = append(v.missing, "placement expectation not evaluated: new engine publishes no placement plan")
+		for _, missing := range placementExpectationMisses(s.Suite.Check.Placement, plan) {
+			v.passed = false
+			v.missing = append(v.missing, "placement: "+missing)
+		}
 	}
 	return v
+}
+
+func placementExpectationMisses(expect *fixturePlacement, plan *engine.PlacementPlan) []string {
+	if plan == nil {
+		return []string{"no placement plan (no allocation fact was proven)"}
+	}
+	allocations := plan.Allocations
+	count := func(predicate func(engine.PlacementAllocation) bool) int {
+		out := 0
+		for _, allocation := range allocations {
+			if predicate(allocation) {
+				out++
+			}
+		}
+		return out
+	}
+	byPlacement := func(want placement.Value) int {
+		return count(func(item engine.PlacementAllocation) bool { return item.Placement == want })
+	}
+	maxDepth := func(want placement.Value) int {
+		depth := 0
+		for _, item := range allocations {
+			if item.Placement == want && item.Depth > depth {
+				depth = item.Depth
+			}
+		}
+		return depth
+	}
+	byKind := func(want placement.Value, kinds map[string]int) []string {
+		var misses []string
+		for kind, minimum := range kinds {
+			got := count(func(item engine.PlacementAllocation) bool { return item.Placement == want && item.Kind == kind })
+			if got < minimum {
+				misses = append(misses, fmt.Sprintf("%s kind %s = %d, want at least %d", want, kind, got, minimum))
+			}
+		}
+		return misses
+	}
+	var misses []string
+	minimum := func(name string, got, want int) {
+		if got < want {
+			misses = append(misses, fmt.Sprintf("%s = %d, want at least %d", name, got, want))
+		}
+	}
+	maximum := func(name string, got int, want *int) {
+		if want != nil && got > *want {
+			misses = append(misses, fmt.Sprintf("%s = %d, want at most %d", name, got, *want))
+		}
+	}
+	if expect.RequireComplete && !plan.Complete {
+		misses = append(misses, "plan is incomplete")
+	}
+	minimum("stack", byPlacement(placement.Stack), expect.MinStack)
+	minimum("owned_heap", byPlacement(placement.OwnedHeap), expect.MinOwnedHeap)
+	minimum("shared_heap", byPlacement(placement.SharedHeap), expect.MinSharedHeap)
+	maximum("stack", byPlacement(placement.Stack), expect.MaxStack)
+	maximum("owned_heap", byPlacement(placement.OwnedHeap), expect.MaxOwnedHeap)
+	maximum("shared_heap", byPlacement(placement.SharedHeap), expect.MaxSharedHeap)
+	minimum("allocation_sites", len(allocations), expect.MinAllocationSites)
+	minimum("decomposable", count(func(item engine.PlacementAllocation) bool { return item.Decomposable }), expect.MinDecomposable)
+	maximum("decomposable", count(func(item engine.PlacementAllocation) bool { return item.Decomposable }), expect.MaxDecomposable)
+	minimum("frame_local", count(func(item engine.PlacementAllocation) bool { return item.FrameLocal }), expect.MinFrameLocal)
+	maximum("frame_local", count(func(item engine.PlacementAllocation) bool { return item.FrameLocal }), expect.MaxFrameLocal)
+	minimum("dies_before_suspension", count(func(item engine.PlacementAllocation) bool { return item.DiesBeforeSuspension }), expect.MinDiesBeforeSuspension)
+	maximum("dies_before_suspension", count(func(item engine.PlacementAllocation) bool { return item.DiesBeforeSuspension }), expect.MaxDiesBeforeSuspension)
+	minimum("owner_identity", count(func(item engine.PlacementAllocation) bool { return item.OwnerIdentity }), expect.MinOwnerIdentity)
+	minimum("seal_before_share", count(func(item engine.PlacementAllocation) bool { return item.SealBeforeShare }), expect.MinSealBeforeShare)
+	minimum("hoistable_loads", len(plan.HoistableLoads), expect.MinHoistableLoads)
+	maximum("hoistable_loads", len(plan.HoistableLoads), expect.MaxHoistableLoads)
+	minimum("stack_depth", maxDepth(placement.Stack), expect.MinStackDepth)
+	minimum("owned_heap_depth", maxDepth(placement.OwnedHeap), expect.MinOwnedHeapDepth)
+	minimum("shared_depth", maxDepth(placement.SharedHeap), expect.MinSharedDepth)
+	maximum("unknown", byPlacement(placement.Unknown), expect.MaxUnknown)
+	maximum("no_fact", 0, expect.MaxNoFact)
+	misses = append(misses, byKind(placement.Stack, expect.MinStackKind)...)
+	misses = append(misses, byKind(placement.OwnedHeap, expect.MinOwnedHeapKind)...)
+	misses = append(misses, byKind(placement.SharedHeap, expect.MinSharedHeapKind)...)
+	for kind, maximumCount := range expect.MaxStackKind {
+		got := count(func(item engine.PlacementAllocation) bool {
+			return item.Placement == placement.Stack && item.Kind == kind
+		})
+		if got > maximumCount {
+			misses = append(misses, fmt.Sprintf("stack kind %s = %d, want at most %d", kind, got, maximumCount))
+		}
+	}
+	for kind, maximumCount := range expect.MaxOwnedHeapKind {
+		got := count(func(item engine.PlacementAllocation) bool {
+			return item.Placement == placement.OwnedHeap && item.Kind == kind
+		})
+		if got > maximumCount {
+			misses = append(misses, fmt.Sprintf("owned_heap kind %s = %d, want at most %d", kind, got, maximumCount))
+		}
+	}
+	for kind, maximumCount := range expect.MaxSharedHeapKind {
+		got := count(func(item engine.PlacementAllocation) bool {
+			return item.Placement == placement.SharedHeap && item.Kind == kind
+		})
+		if got > maximumCount {
+			misses = append(misses, fmt.Sprintf("shared_heap kind %s = %d, want at most %d", kind, got, maximumCount))
+		}
+	}
+	return misses
 }
 
 func applyErrorCount(v *fixtureExpectationVerdict, want int, diagnostics []diag.Diagnostic) {

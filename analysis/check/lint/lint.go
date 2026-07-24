@@ -95,6 +95,7 @@ type EntryResult struct {
 	Imports     []ResolvedImport
 	Engine      engine.Result
 	Diagnostics []diagnostic.Diagnostic
+	Placement   *engine.PlacementPlan
 	Timings     PhaseTimings
 }
 
@@ -104,6 +105,7 @@ type EntryResult struct {
 type ProjectResult struct {
 	Entries        []EntryResult
 	Diagnostics    []diagnostic.Diagnostic
+	Placement      *engine.PlacementPlan
 	Timings        PhaseTimings
 	InterprocCache interproc.CacheMetrics
 }
@@ -280,7 +282,7 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 			EvaluateNS:       result.Timings.Evaluate.Nanoseconds(),
 			ProjectRenderNS:  renderElapsed.Nanoseconds(),
 		}
-		results[module] = EntryResult{Entry: entry, Manifest: summary, Imports: resolvedImports, Engine: result, Diagnostics: diagnostics, Timings: entryTiming}
+		results[module] = EntryResult{Entry: entry, Manifest: summary, Imports: resolvedImports, Engine: result, Diagnostics: diagnostics, Placement: result.Placement, Timings: entryTiming}
 		return nil
 	}
 	targets := append([]string(nil), input.Targets...)
@@ -315,8 +317,25 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 		out.Diagnostics = append(out.Diagnostics, item.Diagnostics...)
 		out.Timings.add(item.Timings)
 	}
+	out.Placement = projectPlacement(out.Entries)
 	diagnostic.Sort(out.Diagnostics)
 	return out, nil
+}
+
+func projectPlacement(entries []EntryResult) *engine.PlacementPlan {
+	var plan *engine.PlacementPlan
+	for _, entry := range entries {
+		if entry.Placement == nil {
+			continue
+		}
+		if plan == nil {
+			plan = &engine.PlacementPlan{Complete: true}
+		}
+		plan.Complete = plan.Complete && entry.Placement.Complete
+		plan.Allocations = append(plan.Allocations, entry.Placement.Allocations...)
+		plan.HoistableLoads = append(plan.HoistableLoads, entry.Placement.HoistableLoads...)
+	}
+	return plan
 }
 
 func applyDiagnosticPolicy(in []diagnostic.Diagnostic, enabled map[diagnostic.Code]bool, policy diagnostic.Policy) []diagnostic.Diagnostic {
