@@ -12317,11 +12317,22 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if relation, template, parameterized, ok := importedProviderRelationValue(lexical, provider, application, index, argumentTerms, partition); ok {
 					value = relation
 					importedRelation = parameterized
+					if template.Parameter != nil {
+						if argument, found := argumentTerms[*template.Parameter]; found {
+							receiverResult, receiverResultTerm = true, argument
+						}
+					}
 					values = append(values, placementImportedReturnFacts(template, string(result), strings.TrimPrefix(string(application), "call/"))...)
 				}
 				if summary, ok := importedProviderResultType(lexical, provider, index, argumentTerms, partition); ok {
-					importedSummary = summary
-					lexical.setImportedAuthority(string(result), summary)
+					// A parameterized export relation has already materialized the
+					// caller's sealed value. Its broad declared return (for example
+					// `table`) remains summary metadata, but cannot displace that
+					// concrete relation as the assignment authority.
+					if !importedRelation {
+						importedSummary = summary
+						lexical.setImportedAuthority(string(result), summary)
+					}
 				}
 			}
 			// setmetatable returns its first argument unchanged. Preserve only the
@@ -13129,14 +13140,27 @@ func materializeImportedReturn(template exportrelation.Value, application []byte
 		argumentKey := "call-argument/" + strings.TrimPrefix(string(application), "call/") + "/" + fmt.Sprintf("%08d", *template.Parameter)
 		for _, fact := range partition.Values() {
 			if fact.Key == argumentKey {
-				return append([]byte(nil), fact.Value...), true
+				// The transport publication names the exact caller term. Resolve
+				// that already-published term at its current epoch so a parameter
+				// return carries the caller's sealed value rather than an opaque
+				// path token. If the term has no current fact, the relation remains
+				// unavailable instead of manufacturing a result value.
+				value, found := resolveKnownCurrentValue(fact.Value, partition)
+				if !found {
+					return nil, false
+				}
+				return importedParameterSurface(fact.Value, value, partition), true
 			}
 		}
 		term, found := arguments[*template.Parameter]
 		if !found {
 			return nil, false
 		}
-		return resolveKnownCurrentValue(term, partition)
+		value, found := resolveKnownCurrentValue(term, partition)
+		if !found {
+			return nil, false
+		}
+		return importedParameterSurface(term, value, partition), true
 	}
 	if template.Scalar != "" {
 		return []byte(template.Scalar), true
@@ -13167,6 +13191,61 @@ func materializeImportedReturn(template exportrelation.Value, application []byte
 		}
 	}
 	return shapefact.EncodeTable(table)
+}
+
+// importedParameterSurface snapshots the current direct members of a sealed
+// caller-owned table for an exported identity relation. Both the relation and
+// every member fact are existing publications. An open or callback-exposed
+// heap remains at its original broad value, so this helper never grants a
+// structural proof from an unresolved or mutable boundary.
+func importedParameterSurface(term, value []byte, partition equation.Partition) []byte {
+	table, sealed := shapefact.DecodeTable(value)
+	if !sealed || !table.Closed || len(table.Members) != 0 {
+		return value
+	}
+	identity, found := tableIdentityForTerm(term, partition)
+	if !found || !heapTableClosed(identity, partition) || heapHasExternalCallback(identity, partition) {
+		return value
+	}
+	prefix := heapMemberPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	latest := make(map[string]equation.Fact)
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(fact.Key, prefix)
+		encodedSuffix, _, ok := strings.Cut(rest, "/")
+		if !ok {
+			continue
+		}
+		suffixBytes, err := base64.RawURLEncoding.DecodeString(encodedSuffix)
+		if err != nil || !segment.ValidFormattedSegments(string(suffixBytes)) {
+			continue
+		}
+		suffix := string(suffixBytes)
+		if prior, exists := latest[suffix]; !exists || fact.Key > prior.Key {
+			latest[suffix] = fact
+		}
+	}
+	if len(latest) == 0 {
+		return value
+	}
+	members := make(map[string]shapefact.Member, len(table.Members)+len(latest))
+	for _, member := range table.Members {
+		members[member.Suffix] = member
+	}
+	for suffix, fact := range latest {
+		members[suffix] = shapefact.Member{Suffix: suffix, Present: string(fact.Value) != "scalar/nil", Value: string(fact.Value)}
+	}
+	table.Members = table.Members[:0]
+	for _, member := range members {
+		table.Members = append(table.Members, member)
+	}
+	sort.Slice(table.Members, func(i, j int) bool { return table.Members[i].Suffix < table.Members[j].Suffix })
+	if surfaced, ok := shapefact.EncodeTable(table); ok {
+		return surfaced
+	}
+	return value
 }
 
 func importedProviderResultType(lexical *lexicalEvaluator, provider []byte, index int, arguments map[int][]byte, partition equation.Partition) (typ.Type, bool) {

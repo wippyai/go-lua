@@ -132,6 +132,23 @@ return M`
 	}
 }
 
+func TestDeriveSummaryPublishesDirectParameterReturnTemplate(t *testing.T) {
+	source := `local M = {}
+function M.id(value: table): table
+  return value
+end
+return M`
+	result, err := engine.Check(source)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	summary := exporter.DeriveSummary(result, source)
+	identity, ok := summary.Function("id", 1)
+	if !ok || identity.Return.Parameter == nil || *identity.Return.Parameter != 0 {
+		t.Fatalf("id relation = %#v, want parameter 0", identity)
+	}
+}
+
 func TestDeriveSummaryWithImportsPreservesPublishedFreshTableRelation(t *testing.T) {
 	source := `local upstream = require("upstream")
 local M = {}

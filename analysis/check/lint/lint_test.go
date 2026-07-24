@@ -249,6 +249,26 @@ local answer: string = provider.answer()
 	}
 }
 
+func TestCheckProjectPreservesPublishedParameterReturnShape(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
+		{Path: "helpers.lua", ModulePath: "helpers", Source: `local M = {}
+function M.id(value: table): table
+  return value
+end
+return M`},
+		{Path: "main.lua", ModulePath: "main", Source: `local helpers = require("helpers")
+local cfg = { host = "x" }
+local exact: { host: string } = helpers.id(cfg)
+`},
+	}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want parameter shape preserved", result.Diagnostics)
+	}
+}
+
 func TestCheckProjectRepublishesExactOptionalMethodResultAtConsumer(t *testing.T) {
 	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
 		{Path: "store.lua", ModulePath: "store", Source: `
