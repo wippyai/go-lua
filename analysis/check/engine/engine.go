@@ -1702,12 +1702,18 @@ func (l *lexicalEvaluator) hasTableAllocation(prototype string) bool {
 }
 
 // hasProjectableTableResult identifies the narrow result boundary where an
-// already-evaluated child allocation may cross to its caller. A tuple return
-// has Lua expansion semantics of its own, and recursive return graphs need the
-// cyclic summary path; neither can reuse this finite allocation projection.
+// already-evaluated child allocation may cross to its caller. An inferred
+// return has no declared tuple contract, but applyKnown still projects only
+// the child body's actual returned slots; it is therefore no less closed than
+// a one-slot declaration. Declared multi-return tuples retain Lua expansion
+// semantics of their own, and recursive return graphs need the cyclic summary
+// path; neither can reuse this finite allocation projection.
 func hasProjectableTableResult(child front.Compilation) bool {
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.DeclaredReturns) != 1 {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.DeclaredReturns) > 1 {
 		return false
+	}
+	if len(child.Boundary.DeclaredReturns) == 0 {
+		return true
 	}
 	return !typ.ContainsRecursive(child.WIR.Type(child.Boundary.DeclaredReturns[0]))
 }

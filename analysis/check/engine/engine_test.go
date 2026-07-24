@@ -1,12 +1,14 @@
 package engine_test
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/lint"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -128,6 +130,39 @@ local item: number = (value :: {number})[1]
 		}
 	}
 	t.Fatalf("cast index optional witness did not reach assignment: %#v", result.PublishedDiagnostics)
+}
+
+func TestCheckProjectsInferredClosedTableResultFromCapturedMember(t *testing.T) {
+	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{{
+		Path:       "main.lua",
+		ModulePath: "main",
+		Source: `local M = {
+	dep = {
+		get = function()
+			return nil
+		end,
+	},
+}
+
+function M.run()
+	return M.dep.get()
+end
+
+M.dep = {
+	get = function()
+		return { answer = "ok" }
+	end,
+}
+
+local res = M.run()
+local answer: string = res.answer`,
+	}}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("inferred reassigned member result diagnostics = %#v", result.Diagnostics)
+	}
 }
 
 func TestCheckPublishesUncalledExplicitAnyBoundaryViolation(t *testing.T) {
