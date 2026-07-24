@@ -403,6 +403,10 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expression
 				out[item.Key] = span
 				continue
 			}
+			if span, ok := callSpans[name+"/call"]; ok {
+				out[item.Key] = span
+				continue
+			}
 		case strings.HasPrefix(item.Key, "advice.redundant_claim/"):
 			name = strings.TrimPrefix(item.Key, "advice.redundant_claim/")
 			if span, ok := callSpans[name+"/call"]; ok {
@@ -2682,12 +2686,39 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool) {
 		return nil, false
 	}
 	// The declaration-only entry supports a closed discriminant proof, not an
-	// arbitrary body execution. Calls, dynamic reads, and select operations
-	// need a caller-owned value/heap entry and remain demand-driven.
+	// arbitrary body execution. A direct static member call is also admissible
+	// when its receiver is one of those declared formals: resolving a missing
+	// member consumes that same published declaration and produces no call
+	// result or capability. Calls through any other value, dynamic reads, and
+	// select operations need a caller-owned value/heap entry and remain
+	// demand-driven.
+	formals := make(map[string]bool, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			return nil, false
+		}
+		formals[boundaryTerm(parameter.Symbol)] = true
+	}
+	memberCalls := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" || !uncalledDeclaredMemberCall(operation, formals) {
+			continue
+		}
+		memberCalls["call/"+operation.Target.Name] = true
+	}
 	hasLiteralBranch := false
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
-		case "apply", "external-call", "dynamic-index-read", "channel-select":
+		case "apply":
+			if !uncalledDeclaredMemberCall(operation, formals) {
+				return nil, false
+			}
+		case "external-call":
+			application, found := artifactOperand(operation.Operands, "application")
+			if !found || !memberCalls[string(application)] {
+				return nil, false
+			}
+		case "dynamic-index-read", "channel-select":
 			return nil, false
 		case "branch-relations":
 			for _, operand := range operation.Operands {
@@ -2717,6 +2748,30 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool) {
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
 	return seeds, true
+}
+
+func artifactOperand(operands []equation.Operand, role string) ([]byte, bool) {
+	for _, operand := range operands {
+		if operand.Role == role {
+			return append([]byte(nil), operand.Term.Encoding...), true
+		}
+	}
+	return nil, false
+}
+
+// uncalledDeclaredMemberCall recognizes the narrow call shape that can only
+// report a missing declared member. It accepts neither a dynamic index nor a
+// receiver whose identity was not supplied by the declaration-owned entry.
+func uncalledDeclaredMemberCall(operation equation.Equation, formals map[string]bool) bool {
+	for _, operand := range operation.Operands {
+		if operand.Role != "callee" {
+			continue
+		}
+		root, suffix, member := tableAddress(operand.Term.Encoding)
+		segments, static := segment.ParseFormattedSegments(suffix)
+		return member && formals[string(root)] && static && len(segments) == 1 && (segments[0].Kind == segment.SegmentField || segments[0].Kind == segment.SegmentIndexString)
+	}
+	return false
 }
 
 // uncalledChildEntry closes an allocation-time child entry from the same
@@ -7001,6 +7056,21 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	callee, known := resolveKnownCurrentValue(operands.callee, partition)
+	if hasCallee && (!known || isUnknownScalar(callee)) {
+		// A static member read is a derived use of an already-published declared
+		// receiver, rather than a direct value cell. Preserve the ordinary
+		// fail-closed call lookup, but recognize the one concrete outcome that
+		// cannot become callable: the closed receiver has no such member.
+		if resolved, resolveErr := resolveCurrentValue(operands.callee, partition); resolveErr == nil && memberMissing(resolved) {
+			callee, known = resolved, true
+		}
+	}
+	if hasCallee && known && memberMissing(callee) {
+		return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
+			Key:   "type.member.missing/" + operation.Target.Name,
+			Value: []byte(memberMissingMessage(operands.display, callee)),
+		}}}}, nil
+	}
 	if !hasCallee {
 		receiver, receiverKnown := resolveKnownCurrentValue(operands.receiver, partition)
 		if !receiverKnown {

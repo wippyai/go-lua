@@ -49,6 +49,24 @@ end`)
 	}
 }
 
+func TestStage1RedUncalledDeclaredUnionBoundaryPublishesMissingMethod(t *testing.T) {
+	r := checkChildAdmission(t, `
+type Dog = {kind: "dog", bark: () -> ()}
+type Cat = {kind: "cat", meow: () -> ()}
+type Animal = Dog | Cat
+local function speak(a: Animal)
+  if a.kind == "dog" then
+    a.meow()
+  end
+end`)
+	if len(r.Diagnostics) != 1 || !strings.HasPrefix(r.Diagnostics[0].Key, "child/") || !strings.Contains(string(r.Diagnostics[0].Value), "has no member \"meow\"") {
+		t.Fatalf("declared union method diagnostics = %#v", r.Diagnostics)
+	}
+	if len(r.PublishedDiagnostics) != 1 || r.PublishedDiagnostics[0].Code != "type.member.missing" || r.PublishedDiagnostics[0].Span.StartLine != 7 {
+		t.Fatalf("declared union method publication = %#v", r.PublishedDiagnostics)
+	}
+}
+
 func TestStage1RedCalledChildDiagnosticUsesChildSpan(t *testing.T) {
 	r := checkChildAdmission(t, `
 local retained = 0
