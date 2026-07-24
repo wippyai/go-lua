@@ -7130,6 +7130,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				}
 			}
 			if string(value) == "scalar/top" {
+				if contract, ok := typedCallableResultValue(callee, index, partition); ok {
+					value = contract
+				}
+			}
+			if string(value) == "scalar/top" {
 				if contract, ok := sealedMethodResultValue(lexical, receiver, method, index, partition); ok {
 					value = contract
 				}
@@ -7238,6 +7243,29 @@ func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index i
 		return nil, false
 	}
 	return sealedFunctionResultValue(value, index)
+}
+
+// typedCallableResultValue consumes a direct callee's exact canonical
+// function surface. The surface must already be published at the callee path
+// (including a typed member projection); declarations and source spelling are
+// not alternate authorities, and unresolved/generic return slots stay Top.
+func typedCallableResultValue(callee []byte, index int, partition equation.Partition) ([]byte, bool) {
+	if callee == nil || index < 0 {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(callee, partition)
+	if err != nil {
+		return nil, false
+	}
+	functionType, ok := shapefact.DecodeTarget(value)
+	if !ok {
+		return nil, false
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function)
+	if !ok || function == nil || len(function.TypeParams) != 0 || index >= len(function.Returns) || function.Returns[index] == nil {
+		return nil, false
+	}
+	return providerReturnTypeValue(function.Returns[index])
 }
 
 // sealedMethodResultValue is the method analogue of the direct-callee bridge.

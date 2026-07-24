@@ -220,6 +220,21 @@ local answer: string = provider.answer()`
 	t.Fatalf("typed imported callable diagnostic = %#v", typed.Diagnostics)
 }
 
+func TestCheckWithImportsProjectsTypedDirectCallableRecordResult(t *testing.T) {
+	source := `local provider = require("provider")
+local record: { id: string } = provider.make()`
+	provider := typetable.NewRecord().Field("make", typ.Func().Returns(
+		typetable.NewRecord().Field("id", typ.String).Build(),
+	).Build()).Build()
+	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	if err != nil {
+		t.Fatalf("CheckWithImports typed direct callable: %v", err)
+	}
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("typed direct callable record diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestCheckWithImportsProjectsTypedReceiverMethodResult(t *testing.T) {
 	source := `local provider = require("provider")
 local object = provider.new()
