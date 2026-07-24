@@ -1601,6 +1601,13 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			}
 			draft.Occurrence = occurrence("generic-for")
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
+			// A branch in this loop body can route one arm back to the iterator
+			// header (for example, the false arm of `if i > limit then break`).
+			// That branch consumes the iterator binding, so guarding the binding
+			// with its own later outcome creates a cyclic read with no initial
+			// completed write.  Keep outer branch guards, but remove only guards
+			// from branches reachable after this header in the same CFG cycle.
+			draft.Guards = loopHeaderGuards(draft.Guards, instruction.Point, graph, guardReachability, branchTargets)
 			draft.Operands = operands
 		case instruction.Op == wir.OpSelect:
 			result, err := selectResultTerm(instruction.Dst)
@@ -3263,6 +3270,39 @@ func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.
 		guards = append(guards, equation.Guard{Body: body, Encoding: []byte("front/branch/" + target.target.Name + "/" + edge)})
 	}
 	return guards
+}
+
+// loopHeaderGuards retains guards that control entry to an iterator while
+// dropping only a later branch from the iterator's own recurrence.  The latter
+// cannot guard the binding it needs to evaluate; treating it as an outer guard
+// would make the first fixed-point visit read an unavailable carried value.
+func loopHeaderGuards(guards []equation.Guard, header cfg.Point, graph cfg.Graph, reachability *reachabilityCache, branches map[cfg.Point]branchGuardTarget) []equation.Guard {
+	if len(guards) == 0 {
+		return nil
+	}
+	drop := make(map[string]bool)
+	for branch, target := range branches {
+		if reachability.reaches(header, branch) {
+			drop["front/branch/"+target.target.Name+"/"] = true
+		}
+	}
+	if len(drop) == 0 {
+		return guards
+	}
+	kept := make([]equation.Guard, 0, len(guards))
+	for _, guard := range guards {
+		remove := false
+		for prefix := range drop {
+			if strings.HasPrefix(string(guard.Encoding), prefix) {
+				remove = true
+				break
+			}
+		}
+		if !remove {
+			kept = append(kept, guard)
+		}
+	}
+	return kept
 }
 
 func graphHasCycle(graph cfg.Graph) bool {

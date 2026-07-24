@@ -11616,7 +11616,55 @@ func genericConstraintRefuted(value []byte, parameter string) bool {
 		return false
 	}
 	constraint := strings.TrimSpace(parts[1])
-	return strings.HasPrefix(constraint, "{") && !shapefact.IsTable(value)
+	fields, record := closedRecordConstraintFields(constraint)
+	if !record {
+		return false
+	}
+	table, tableValue := shapefact.DecodeTable(value)
+	if !tableValue {
+		return true
+	}
+	// A sealed literal records both present fields and proved absences.  Only
+	// that existing shape witness can refute a record constraint; an open table
+	// remains unclassified rather than being rejected from its source spelling.
+	if !table.Closed {
+		return false
+	}
+	for _, field := range fields {
+		member, found := table.Lookup("." + field)
+		if !found || !member.Present {
+			return true
+		}
+	}
+	return false
+}
+
+// closedRecordConstraintFields accepts the finite record surface emitted in a
+// callable type-parameter constraint.  It returns names only after validating
+// every field declaration, so malformed or open constraint text cannot become
+// a structural rejection authority.
+func closedRecordConstraintFields(constraint string) ([]string, bool) {
+	if len(constraint) < 3 || constraint[0] != '{' || constraint[len(constraint)-1] != '}' {
+		return nil, false
+	}
+	items := strings.Split(strings.TrimSpace(constraint[1:len(constraint)-1]), ",")
+	fields := make([]string, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		name, fieldType, found := strings.Cut(strings.TrimSpace(item), ":")
+		name, fieldType = strings.TrimSpace(name), strings.TrimSpace(fieldType)
+		if !found || name == "" || fieldType == "" || seen[name] {
+			return nil, false
+		}
+		for index, runeValue := range name {
+			if !(runeValue == '_' || runeValue >= 'a' && runeValue <= 'z' || runeValue >= 'A' && runeValue <= 'Z' || index != 0 && runeValue >= '0' && runeValue <= '9') {
+				return nil, false
+			}
+		}
+		seen[name] = true
+		fields = append(fields, name)
+	}
+	return fields, len(fields) != 0
 }
 
 // freezeCallEpoch captures only closed root-table identities. It publishes the
@@ -13490,7 +13538,10 @@ func provenScalarNotSubtype(value []byte, expected string) bool {
 func callDisplayValue(value []byte) string {
 	display, err := displayValue(value)
 	if err != nil {
-		return "unknown"
+		// A closed literal shape is an existing call-site value witness.  It is
+		// presentation only here: the constraint kernel has already established
+		// the refutation, and an open shape still renders as unknown.
+		return boundaryShapeEvidenceValue(value)
 	}
 	return string(display)
 }
