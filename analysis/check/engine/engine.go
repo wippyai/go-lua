@@ -1873,6 +1873,52 @@ func (l *lexicalEvaluator) closureDemandRecurses(root closureHandle, partition e
 
 func boundaryTerm(symbol wir.SymbolID) string { return fmt.Sprintf("path/sym%d", symbol) }
 
+// uncalledExplicitAnyBoundary returns the only non-empty lexical entry that
+// may be published before a call: every formal is an explicit any boundary
+// supplied by the declaration itself. Other annotations remain descriptive
+// metadata and must wait for a concrete caller seed.
+func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
+	if child.WIR == nil || len(child.Boundary.Parameters) == 0 || len(child.Boundary.Captures) != 0 {
+		return nil, false
+	}
+	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			return nil, false
+		}
+		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
+		if declared == nil || declared.Kind() != kind.Any {
+			return nil, false
+		}
+		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: []byte("scalar/claim/claim-kind/3/\"any\"")})
+	}
+	return seeds, true
+}
+
+// uncalledExplicitAnyDiagnostic retains only strict assignment contracts. A
+// runtime claim may validate an any value only along an invoked path, but an
+// annotation assignment is a source-owned obligation at the closed boundary.
+func uncalledExplicitAnyDiagnostic(artifact equation.Artifact, diagnostic equation.Fact) bool {
+	if strings.HasPrefix(diagnostic.Key, "type.assignment/") {
+		return true
+	}
+	name, unproven := strings.CutPrefix(diagnostic.Key, "claim/unproven/")
+	if !unproven {
+		return false
+	}
+	for _, operation := range artifact.Equations {
+		if operation.Target.Name != name || operation.Occurrence.Kind != "claim" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role == "kind" {
+				return string(operand.Term.Encoding) == "claim-kind/3"
+			}
+		}
+	}
+	return false
+}
+
 // applyKnown evaluates a complete lexical child privately, then projects only
 // caller-owned results, capture effects, and residual diagnostics. A malformed
 // entry or child failure returns an error, so the surrounding VM publishes no
@@ -2271,11 +2317,14 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	}
 	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "closure/" + result + "/" + operation.Target.Name, Value: handle}}}
 	child := lexical.byPrototype[prototype]
-	// A parameter-free, capture-free child has a complete diagnostic entry at
-	// allocation time. Demand it privately and qualify its facts by body before
-	// they enter the root publication closure.
-	if len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && child.Cyclic == nil && len(child.Artifact.Equations) <= 4 {
-		entry, entryErr := encodeChildEntry(nil)
+	// A parameter-free child is closed at allocation time. A capture-free child
+	// whose entire boundary is explicitly any is closed too: each formal has a
+	// concrete precision-boundary fact, rather than an invented top value.
+	// Demand either form privately and qualify its facts by body before they
+	// enter the root publication closure.
+	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
+	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || explicitAnyBoundary) {
+		entry, entryErr := encodeChildEntry(uncalledSeeds)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -2285,6 +2334,13 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 		body := fmt.Sprintf("%x", child.Body)
 		for _, diagnostic := range outcome.Diagnostics {
+			// An allocation-time any boundary can prove only a strict assignment
+			// contract lacks validation. Other child diagnostics still require a
+			// concrete call path, since a cast or operation may establish their
+			// proof before that path reaches publication.
+			if explicitAnyBoundary && !uncalledExplicitAnyDiagnostic(child.Artifact, diagnostic) {
+				continue
+			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, outcome.Diagnostics)

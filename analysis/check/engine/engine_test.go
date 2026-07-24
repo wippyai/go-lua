@@ -96,6 +96,20 @@ func TestCheckDoesNotPublishAssignmentMismatchForUnknownValue(t *testing.T) {
 	}
 }
 
+func TestCheckPublishesUncalledExplicitAnyBoundaryViolation(t *testing.T) {
+	result, err := engine.Check(`
+local function validate(data: any)
+  local point: {x: number, y: number} = data
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(result.Diagnostics) != 1 || !strings.Contains(result.Diagnostics[0].Key, "/type.assignment/") || !strings.Contains(string(result.Diagnostics[0].Value), "comes from any/unknown") {
+		t.Fatalf("uncalled explicit-any boundary diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestCheckWithImportsSeedsExactRequireExportAndOmitsAny(t *testing.T) {
 	source := `local provider = require("provider")
 local answer: string = provider.answer`
