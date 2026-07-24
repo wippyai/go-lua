@@ -3445,6 +3445,84 @@ func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equ
 	return facts
 }
 
+// placementReturnedClosureWitnesses projects only facts whose two authorities
+// are already published: the enclosing module returns this exact closure, and
+// the child artifact stores one declared table formal into one of its captured
+// tables. The returned closure keeps its captured state live; the matching
+// store is a prospective shared-input boundary, not a reconstruction from the
+// function's source spelling.
+func placementReturnedClosureWitnesses(child front.Compilation, partition equation.Partition) []equation.Fact {
+	if child.WIR == nil || child.Cyclic != nil {
+		return nil
+	}
+	captures := make(map[string]bool, len(child.Boundary.Captures))
+	for _, capture := range child.Boundary.Captures {
+		term := boundaryTerm(capture.Symbol)
+		captures[term] = true
+	}
+	formals := make(map[string]typ.Type, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			continue
+		}
+		value := unwrap.Alias(child.WIR.Type(parameter.Type))
+		if placementTableWitnessType(value) {
+			formals[boundaryTerm(parameter.Symbol)] = value
+		}
+	}
+	if len(captures) == 0 || len(formals) == 0 {
+		return nil
+	}
+	var facts []equation.Fact
+	seen := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "index-mutation" {
+			continue
+		}
+		target, hasTarget := artifactOperand(operation.Operands, "container")
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		if !hasTarget || !hasValue || !captures[string(target)] || !placementTableWitnessType(formals[string(value)]) {
+			continue
+		}
+		identity := "formal-store/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s/%s", child.Body, value, operation.Target.Name)))
+		if seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		encoded, err := encodePlacementAllocation(placementAllocationFact{
+			Identity: identity,
+			Result:   "placement/formal/" + base64.RawURLEncoding.EncodeToString([]byte(identity)),
+			Kind:     "lua.table",
+			Complete: true,
+		})
+		if err != nil {
+			continue
+		}
+		facts = append(facts,
+			equation.Fact{Key: placementAllocationFactKey(identity), Value: encoded},
+			placementEventFact(identity, operation.Target.Name, placementEventShared),
+		)
+	}
+	for capture := range captures {
+		if allocation, found := placementAllocationForTerm([]byte(capture), partition); found {
+			facts = append(facts, placementEventFact(allocation.Identity, "closure-return", placementEventOwned))
+		}
+	}
+	return facts
+}
+
+func placementTableWitnessType(value typ.Type) bool {
+	if value = unwrap.Alias(value); value == nil {
+		return false
+	}
+	switch value.Kind() {
+	case kind.Array, kind.Map, kind.Record, kind.ReadonlyMap:
+		return true
+	default:
+		return false
+	}
+}
+
 func placementClosedScalarType(value typ.Type) bool {
 	value = unwrap.Alias(value)
 	if value == nil {
@@ -5904,6 +5982,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				closure.Values = append(closure.Values, placementFactsFromChild(placementDeclaredScalarResultWitnesses(child, outcome))...)
 			}
 		}
+	}
+	if lexical.publishesClosureReturn(operation.Target.Body, result) {
+		closure.Values = append(closure.Values, placementReturnedClosureWitnesses(child, partition)...)
 	}
 	// Lifecycle epochs are self-contained proof facts: a channel created and
 	// consumed within a declared body needs no caller value to establish its

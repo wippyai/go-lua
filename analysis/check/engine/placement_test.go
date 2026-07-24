@@ -140,6 +140,29 @@ return materialize`)
 	}
 }
 
+func TestCheckPublishesReturnedClosureStoreWitnesses(t *testing.T) {
+	result, err := engine.Check(`type Event = { key: string }
+local pending: {[string]: Event} = {}
+local function retain(event: Event)
+  pending[event.key] = event
+end
+return retain`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Placement == nil {
+		t.Fatal("placement = nil, want returned closure store witnesses")
+	}
+	owned, shared := false, false
+	for _, item := range result.Placement.Allocations {
+		owned = owned || (item.Kind == "lua.table" && item.Placement == placement.OwnedHeap && item.OwnerIdentity)
+		shared = shared || (item.Kind == "lua.table" && item.Placement == placement.SharedHeap)
+	}
+	if !owned || !shared {
+		t.Fatalf("placement = %#v, want owned capture and shared formal witnesses", result.Placement)
+	}
+}
+
 func TestCheckPublishesCyclicStackPlacementWitness(t *testing.T) {
 	result, err := engine.Check(`type Message = { id: string }
 local cache: {[string]: Message} = {}
