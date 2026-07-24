@@ -366,7 +366,17 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 	return projected
 }
 
-func publishedPlacement(facts []equation.Fact) *PlacementPlan {
+type publishedPlacementFacts struct {
+	allocations       map[string]placementAllocationFact
+	bindings          map[string]string
+	events            map[string]map[string]bool
+	blockers          map[string]map[string]bool
+	blockerOperations map[string]map[string]map[string]bool
+	contracts         map[string]map[string]bool
+	containment       map[string][]string
+}
+
+func parsePublishedPlacement(facts []equation.Fact) publishedPlacementFacts {
 	allocations := make(map[string]placementAllocationFact)
 	bindings := make(map[string]string)
 	events := make(map[string]map[string]bool)
@@ -440,9 +450,19 @@ func publishedPlacement(facts []equation.Fact) *PlacementPlan {
 			}
 		}
 	}
-	if len(allocations) == 0 {
+	return publishedPlacementFacts{allocations, bindings, events, blockers, blockerOperations, contracts, containment}
+}
+
+func publishedPlacement(facts []equation.Fact) *PlacementPlan {
+	parsed := parsePublishedPlacement(facts)
+	if len(parsed.allocations) == 0 {
 		return nil
 	}
+	return projectPublishedPlacement(parsed, propagatePublishedPlacement(parsed))
+}
+
+func propagatePublishedPlacement(parsed publishedPlacementFacts) map[string][]string {
+	allocations, events, containment := parsed.allocations, parsed.events, parsed.containment
 	children := make(map[string][]string, len(allocations))
 	for identity, allocation := range allocations {
 		for _, childTerm := range allocation.Children {
@@ -474,6 +494,12 @@ func publishedPlacement(facts []equation.Fact) *PlacementPlan {
 	propagate(placementEventOwned)
 	propagate(placementEventShared)
 	propagate(placementEventSealed)
+	return children
+}
+
+func projectPublishedPlacement(parsed publishedPlacementFacts, children map[string][]string) *PlacementPlan {
+	allocations, bindings, events := parsed.allocations, parsed.bindings, parsed.events
+	blockers, blockerOperations, contracts := parsed.blockers, parsed.blockerOperations, parsed.contracts
 	depth := make(map[string]int, len(allocations))
 	var allocationDepth func(string, map[string]bool) int
 	allocationDepth = func(identity string, visiting map[string]bool) int {
