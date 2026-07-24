@@ -4853,7 +4853,12 @@ type callableTypeParam struct {
 }
 
 func isCallableValue(value []byte) bool {
-	return string(value) == "scalar/function" || strings.HasPrefix(string(value), "scalar/function/")
+	if string(value) == "scalar/function" || strings.HasPrefix(string(value), "scalar/function/") {
+		return true
+	}
+	callee, ok := shapefact.DecodeTarget(value)
+	_, callable := unwrap.Alias(subst.ExpandInstantiated(callee)).(*typ.Function)
+	return ok && callable
 }
 
 func callableSignature(value []byte) (callableShape, bool) {
@@ -5127,7 +5132,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if contract, ok := providerResultValue(provider, index, argumentTerms, partition); ok {
 				value = contract
 			}
-			if imported, ok := importedProviderResultValue(provider, index, partition); ok {
+			if imported, ok := importedProviderResultValue(provider, index, argumentTerms, partition); ok {
 				value = imported
 			}
 		}
@@ -5201,21 +5206,175 @@ func providerResultValue(provider []byte, index int, arguments map[int][]byte, p
 }
 
 // importedProviderResultValue projects the export seeded at the consumer
-// entry into require's only result slot. The provider identity comes from the
-// front's exact local-require annotation, so neither source spelling nor an
-// untrusted global lookup can select an import fact.
-func importedProviderResultValue(provider []byte, index int, partition equation.Partition) ([]byte, bool) {
-	if index != 0 {
+// entry into either require's result or a statically selected require-member
+// call result. The provider identity is emitted by the front from the exact
+// local-require binding, so a source spelling or global lookup cannot select
+// an import fact.
+func importedProviderResultValue(provider []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
+	modulePath, suffix, requireResult, ok := importedProviderTarget(provider)
+	if !ok {
 		return nil, false
 	}
+	imported, ok := importedEntryType(modulePath, partition)
+	if !ok {
+		return nil, false
+	}
+	if requireResult {
+		if index != 0 {
+			return nil, false
+		}
+		return shapefact.EncodeTarget(imported)
+	}
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid && suffix != "" {
+		return nil, false
+	}
+	callee := imported
+	if len(segments) != 0 {
+		var found bool
+		callee, found = variant.FieldAtPath(imported, segments)
+		if !found {
+			return nil, false
+		}
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(callee)).(*typ.Function)
+	if !ok || function == nil || index < 0 || index >= len(function.Returns) || function.Returns[index] == nil {
+		return nil, false
+	}
+	returnType, ok := instantiateImportedReturn(function, arguments, partition, index)
+	if !ok {
+		return nil, false
+	}
+	// Keep module-call result admission aligned with the established provider
+	// boundary: optional, union, and unresolved generic slots are not concrete
+	// runtime values until a dedicated result-correlation proof selects them.
+	return providerReturnTypeValue(returnType)
+}
+
+// instantiateImportedReturn unifies only closed argument types already
+// published at this call boundary.  It is deliberately structural and
+// fail-closed: an incomplete generic match leaves the external result Top.
+func instantiateImportedReturn(function *typ.Function, arguments map[int][]byte, partition equation.Partition, index int) (typ.Type, bool) {
+	if function == nil || index < 0 || index >= len(function.Returns) || function.Returns[index] == nil {
+		return nil, false
+	}
+	if len(function.TypeParams) == 0 {
+		return function.Returns[index], true
+	}
+	params := make(map[string]bool, len(function.TypeParams))
+	for _, parameter := range function.TypeParams {
+		if parameter == nil || parameter.Name == "" {
+			return nil, false
+		}
+		params[parameter.Name] = true
+	}
+	bindings := make(map[string]typ.Type, len(params))
+	for position, expected := range function.Params {
+		argument, present := arguments[position]
+		if !present || expected.Type == nil {
+			continue
+		}
+		value, known := resolveKnownCurrentValue(argument, partition)
+		if !known {
+			continue
+		}
+		actual, decoded := shapefact.DecodeTarget(value)
+		if !decoded || !inferImportedTypeArgs(expected.Type, actual, params, bindings) {
+			return nil, false
+		}
+	}
+	for name := range params {
+		if bindings[name] == nil {
+			return nil, false
+		}
+	}
+	return subst.Substitute(function.Returns[index], bindings), true
+}
+
+func inferImportedTypeArgs(expected, actual typ.Type, params map[string]bool, bindings map[string]typ.Type) bool {
+	expected = unwrap.Alias(subst.ExpandInstantiated(expected))
+	actual = unwrap.Alias(subst.ExpandInstantiated(actual))
+	if expected == nil || actual == nil {
+		return false
+	}
+	if parameter, ok := expected.(*typ.TypeParam); ok && params[parameter.Name] {
+		if prior := bindings[parameter.Name]; prior != nil {
+			return typ.TypeEquals(prior, actual)
+		}
+		bindings[parameter.Name] = actual
+		return true
+	}
+	switch want := expected.(type) {
+	case *typ.Record:
+		got, ok := actual.(*typ.Record)
+		if !ok {
+			return false
+		}
+		for _, field := range want.Fields {
+			actualField := got.GetField(field.Name)
+			if actualField == nil || field.Type == nil || !inferImportedTypeArgs(field.Type, actualField.Type, params, bindings) {
+				return false
+			}
+		}
+		return true
+	case *typ.Function:
+		got, ok := actual.(*typ.Function)
+		if !ok || len(want.Params) != len(got.Params) || len(want.Returns) != len(got.Returns) {
+			return false
+		}
+		for i := range want.Params {
+			if !inferImportedTypeArgs(want.Params[i].Type, got.Params[i].Type, params, bindings) {
+				return false
+			}
+		}
+		for i := range want.Returns {
+			if !inferImportedTypeArgs(want.Returns[i], got.Returns[i], params, bindings) {
+				return false
+			}
+		}
+		return true
+	case *typ.Array:
+		got, ok := actual.(*typ.Array)
+		return ok && inferImportedTypeArgs(want.Element, got.Element, params, bindings)
+	case *typ.Optional:
+		got, ok := actual.(*typ.Optional)
+		return ok && inferImportedTypeArgs(want.Inner, got.Inner, params, bindings)
+	default:
+		return typ.TypeEquals(expected, actual)
+	}
+}
+
+type moduleProviderWire struct {
+	Module string `json:"module"`
+	Suffix string `json:"suffix,omitempty"`
+}
+
+func importedProviderTarget(provider []byte) (modulePath, suffix string, requireResult, ok bool) {
 	encoded := strings.TrimPrefix(string(provider), "provider/module-load/")
+	if encoded != string(provider) && encoded != "" {
+		modulePath, err := strconv.Unquote(encoded)
+		return modulePath, "", true, err == nil && modulePath != ""
+	}
+	encoded = strings.TrimPrefix(string(provider), "provider/module/v1/")
 	if encoded == string(provider) || encoded == "" {
-		return nil, false
+		return "", "", false, false
 	}
-	modulePath, err := strconv.Unquote(encoded)
-	if err != nil || modulePath == "" {
-		return nil, false
+	wired, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", "", false, false
 	}
+	var wire moduleProviderWire
+	if json.Unmarshal(wired, &wire) != nil || wire.Module == "" {
+		return "", "", false, false
+	}
+	canonical, marshalErr := json.Marshal(wire)
+	if marshalErr != nil || string(canonical) != string(wired) {
+		return "", "", false, false
+	}
+	return wire.Module, wire.Suffix, false, true
+}
+
+func importedEntryType(modulePath string, partition equation.Partition) (typ.Type, bool) {
 	prefix := "value/" + importEntryTerm(modulePath) + "/"
 	var value []byte
 	latest := ""
@@ -5227,10 +5386,7 @@ func importedProviderResultValue(provider []byte, index int, partition equation.
 	if value == nil {
 		return nil, false
 	}
-	if _, ok := shapefact.DecodeTarget(value); !ok {
-		return nil, false
-	}
-	return append([]byte(nil), value...), true
+	return shapefact.DecodeTarget(value)
 }
 
 func providerReturnTypeValue(result typ.Type) ([]byte, bool) {

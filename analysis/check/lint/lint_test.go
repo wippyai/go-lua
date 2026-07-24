@@ -105,6 +105,23 @@ local answer: string = provider.answer
 	}
 }
 
+func TestCheckProjectSeedsPublishedCallableMemberResult(t *testing.T) {
+	result, err := CheckProject(context.Background(), ProjectInput{Entries: []Entry{
+		{Path: "provider.lua", ModulePath: "provider", Source: `local M = {}
+function M.answer(): number return 42 end
+return M`},
+		{Path: "main.lua", ModulePath: "main", Source: `local provider = require("provider")
+local answer: string = provider.answer()
+`},
+	}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != "type.assignment" || !strings.Contains(result.Diagnostics[0].Message, "number") || !strings.Contains(result.Diagnostics[0].Message, "string") {
+		t.Fatalf("published callable import diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestDiagnosticPolicyConfiguresOptionalHintsAndSeverity(t *testing.T) {
 	input := []diagnostic.Diagnostic{
 		{Code: "lint.condition.redundant", Severity: diagnostic.SeverityError},

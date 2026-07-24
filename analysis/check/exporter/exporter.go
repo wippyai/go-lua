@@ -2,6 +2,9 @@
 package exporter
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -184,6 +187,29 @@ func scalarOrTableType(value []byte) typ.Type {
 func scalarType(value []byte) typ.Type {
 	encoded := string(value)
 	switch {
+	case strings.HasPrefix(encoded, "scalar/function/"):
+		wire, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(encoded, "scalar/function/"))
+		if err != nil {
+			return unknownFunction()
+		}
+		var signature struct {
+			Canonical string `json:"canonical,omitempty"`
+		}
+		if json.Unmarshal(wire, &signature) != nil || signature.Canonical == "" {
+			return unknownFunction()
+		}
+		canonical, err := base64.RawURLEncoding.DecodeString(signature.Canonical)
+		if err != nil {
+			return unknownFunction()
+		}
+		function, err := typ.DecodeCanonical(context.Background(), canonical)
+		if err != nil {
+			return unknownFunction()
+		}
+		if _, ok := function.(*typ.Function); ok {
+			return function
+		}
+		return unknownFunction()
 	case encoded == "scalar/nil":
 		return typ.Nil
 	case encoded == "scalar/bool/true":

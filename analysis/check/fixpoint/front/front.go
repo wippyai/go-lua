@@ -1,6 +1,7 @@
 package front
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -1657,7 +1658,7 @@ func externalProviderSeen(body *wir.Body, instruction wir.Instruction, seen map[
 	}
 	root := path.RootOnly()
 	if module, ok := body.SymbolRequireModulePath(root.Symbol); ok {
-		return equation.ClosedTerm([]byte("provider/module/" + strconv.Quote(module))), true
+		return moduleProvider(module, segment.FormatSegments(path.Segments))
 	}
 	kind, global := body.SymbolKind(root.Symbol)
 	if module, ok := exactRequireModule(body, instruction, root.Symbol, kind, global); ok {
@@ -1671,6 +1672,24 @@ func externalProviderSeen(body *wir.Body, instruction wir.Instruction, seen map[
 		return equation.Term{}, false
 	}
 	return equation.ClosedTerm([]byte("provider/global/" + strconv.Quote(name))), true
+}
+
+type moduleProviderWire struct {
+	Module string `json:"module"`
+	Suffix string `json:"suffix,omitempty"`
+}
+
+// moduleProvider binds an external call to the exact member of a resolved
+// require alias.  It carries structural path evidence, never a name allowlist.
+func moduleProvider(module, suffix string) (equation.Term, bool) {
+	if module == "" {
+		return equation.Term{}, false
+	}
+	wired, err := json.Marshal(moduleProviderWire{Module: module, Suffix: suffix})
+	if err != nil {
+		return equation.Term{}, false
+	}
+	return equation.ClosedTerm([]byte("provider/module/v1/" + base64.RawURLEncoding.EncodeToString(wired))), true
 }
 
 // exactRequireModule recognizes Lua's direct require("module") form before
@@ -2100,6 +2119,7 @@ func functionValue(t typ.Type) string {
 		TypeParams []typeParam `json:"type_params"`
 		Required   int         `json:"required"`
 		Variadic   bool        `json:"variadic"`
+		Canonical  string      `json:"canonical,omitempty"`
 	}
 	wire := signature{
 		Params:   make([]string, len(fn.Params)),
@@ -2146,6 +2166,11 @@ func functionValue(t typ.Type) string {
 			return "scalar/function"
 		}
 		wire.Returns[index] = result.String()
+	}
+	// Retain the existing callable shape for local apply while attaching the
+	// canonical function type for closed publication/export consumers.
+	if canonical, err := typ.EncodeCanonical(context.Background(), fn); err == nil && len(canonical) != 0 {
+		wire.Canonical = base64.RawURLEncoding.EncodeToString(canonical)
 	}
 	encoded, err := json.Marshal(wire)
 	if err != nil {

@@ -119,6 +119,23 @@ local answer: string = provider.answer`
 	}
 }
 
+func TestCheckWithImportsProjectsResolvedCallableMemberResult(t *testing.T) {
+	source := `local provider = require("provider")
+local answer: string = provider.answer()`
+	typed, err := engine.CheckWithImports(source, map[string]typ.Type{
+		"provider": typetable.NewRecord().Field("answer", typ.Func().Returns(typ.LiteralInt(42)).Build()).Build(),
+	})
+	if err != nil {
+		t.Fatalf("CheckWithImports typed callable: %v", err)
+	}
+	for _, diagnostic := range typed.Diagnostics {
+		if strings.HasPrefix(diagnostic.Key, "type.assignment/") && strings.Contains(string(diagnostic.Value), "42") && strings.Contains(string(diagnostic.Value), "string") {
+			return
+		}
+	}
+	t.Fatalf("typed imported callable diagnostic = %#v", typed.Diagnostics)
+}
+
 func TestCheckProjectsStdlibProviderReturnSlots(t *testing.T) {
 	result, err := engine.Check(`
 local text: string = tostring(42)
