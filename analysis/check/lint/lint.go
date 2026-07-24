@@ -23,7 +23,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/compiler/source"
 )
@@ -392,11 +394,13 @@ func projectPlacement(entries []EntryResult) *engine.PlacementPlan {
 			plan.HoistableLoads = append(plan.HoistableLoads, entry.Placement.HoistableLoads...)
 		}
 		templates := placementRelationTemplates(entry.Entry.ModulePath, entry.Relation)
-		if len(templates) != 0 {
+		witnesses := placementScalarReturnWitnesses(entry.Entry.ModulePath, entry.Relation)
+		if len(templates) != 0 || len(witnesses) != 0 {
 			if plan == nil {
 				plan = &engine.PlacementPlan{Complete: true}
 			}
 			plan.Allocations = append(plan.Allocations, templates...)
+			plan.Allocations = append(plan.Allocations, witnesses...)
 		}
 	}
 	return plan
@@ -409,6 +413,44 @@ func relationHasTableReturn(summary exportrelation.Summary) bool {
 		}
 	}
 	return false
+}
+
+// placementScalarReturnWitnesses turns a closed exported scalar result into a
+// stack placement witness. The module export is the publication authority: a
+// body-local spelling, aggregate return, union, or unresolved result cannot
+// contribute a witness. Scalar values carry no allocation graph and cannot
+// cross the module boundary by retaining an object identity.
+func placementScalarReturnWitnesses(module string, summary exportrelation.Summary) []engine.PlacementAllocation {
+	function, ok := unwrap.Alias(summary.Type).(*typ.Function)
+	if !ok || function == nil || len(function.Returns) != 1 || !closedScalarReturn(function.Returns[0]) {
+		return nil
+	}
+	return []engine.PlacementAllocation{{
+		Identity:                "return-scalar/" + module,
+		Kind:                    "lua.scalar",
+		Placement:               placement.Stack,
+		Complete:                true,
+		Depth:                   1,
+		FrameLocal:              true,
+		DiesBeforeSuspension:    true,
+		HasDiesBeforeSuspension: true,
+	}}
+}
+
+func closedScalarReturn(value typ.Type) bool {
+	value = unwrap.Alias(value)
+	if value == nil {
+		return false
+	}
+	switch value.Kind() {
+	case kind.Boolean, kind.Number, kind.Integer, kind.String:
+		return true
+	case kind.Literal:
+		literal, ok := value.(*typ.Literal)
+		return ok && literal != nil && (literal.Base == kind.Boolean || literal.Base == kind.Number || literal.Base == kind.Integer || literal.Base == kind.String)
+	default:
+		return false
+	}
 }
 
 // placementRelationTemplates projects only table sites already published by a
