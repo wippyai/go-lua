@@ -2070,6 +2070,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		return equation.TransactionResult{}, fmt.Errorf("engine: unsupported exact lexical boundary for %q", handle.Prototype)
 	}
 	seeds := make([]entrySeed, 0, len(operands.arguments)+len(handle.Captures))
+	closureSeedByTerm := make(map[string]closureHandle)
 	for index, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg {
 			return equation.TransactionResult{}, fmt.Errorf("engine: vararg lexical boundary is unsupported")
@@ -2078,7 +2079,11 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		if !known || isUnknownScalar(value) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: incomplete lexical argument %d", index)
 		}
-		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
+		term := boundaryTerm(parameter.Symbol)
+		seeds = append(seeds, entrySeed{Term: term, Value: value})
+		if callback, found := closureHandleFor(arguments[index], partition); found {
+			closureSeedByTerm[term] = callback
+		}
 	}
 	for index, capture := range child.Boundary.Captures {
 		value, known := resolveKnownCurrentValue([]byte(handle.Captures[index]), partition)
@@ -2094,9 +2099,12 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			// partition that supplied the capture value. In particular, a plain
 			// scalar/function entry value cannot manufacture a recursive edge.
 			if captured, found := closureHandleFor([]byte(handle.Captures[index]), partition); found {
-				closureSeeds = append(closureSeeds, entryClosureSeed{Term: boundaryTerm(capture.Symbol), Handle: captured})
+				closureSeedByTerm[boundaryTerm(capture.Symbol)] = captured
 			}
 		}
+	}
+	for term, closure := range closureSeedByTerm {
+		closureSeeds = append(closureSeeds, entryClosureSeed{Term: term, Handle: closure})
 	}
 	entry, err := encodeChildEntry(seeds, closureSeeds...)
 	if err != nil {
