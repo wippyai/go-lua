@@ -172,6 +172,34 @@ end
 	}
 }
 
+func TestCheckRejectsUnguardedUnionMemberFromDeclaredCallResult(t *testing.T) {
+	source := `
+type Event = {kind: string}
+type Timer = {elapsed: number}
+type Result = Event | Timer
+function get_result(use_timer: boolean): Result
+    if use_timer then
+        return {elapsed = 1}
+    end
+    return {kind = "exit"}
+end
+function f(use_timer: boolean)
+    local result = get_result(use_timer)
+    local kind: string = result.kind
+end
+`
+	result, err := engine.Check(source)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "result.kind because it may be nil") {
+			return
+		}
+	}
+	t.Fatalf("unguarded declared union result member was accepted: %#v", result.PublishedDiagnostics)
+}
+
 func TestCheckRejectsConcreteReplacementOfTypedFunctionMember(t *testing.T) {
 	result, err := engine.Check(`
 local M = {}

@@ -3273,6 +3273,168 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool,
 	return seeds, true, hasDirectMethod, concatOperations
 }
 
+// uncalledDeclaredLocalUnionReadBoundary admits one allocation-time relay:
+// declared formals feed an already-published local closure, whose sole result
+// is assigned and read through an exact static key. The call capability and
+// declared return are supplied by the enclosing allocation partition; the
+// child receives neither an invented value nor an arbitrary capture. This is
+// sufficient to check an unguarded union member assignment while leaving
+// branches, dynamic keys, external calls, and all other child effects
+// demand-driven.
+func uncalledDeclaredLocalUnionReadBoundary(child front.Compilation) ([]entrySeed, bool) {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) == 0 {
+		return nil, false
+	}
+	formals := make(map[string]entrySeed, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type == 0 {
+			return nil, false
+		}
+		declared := child.WIR.Type(parameter.Type)
+		value, ok := shapefact.EncodeTarget(declared)
+		if !ok || declared == nil {
+			return nil, false
+		}
+		term := boundaryTerm(parameter.Symbol)
+		formals[term] = entrySeed{Term: term, Value: value}
+	}
+	applications := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		callee, hasCallee := artifactOperand(operation.Operands, "callee")
+		arity, hasArity := artifactOperand(operation.Operands, "result-arity")
+		if !hasCallee || !strings.HasPrefix(string(callee), "path/") || !hasArity || string(arity) != "1" {
+			return nil, false
+		}
+		for _, operand := range operation.Operands {
+			if strings.HasPrefix(operand.Role, "argument-") {
+				if _, err := callArgumentIndex(operand.Role); err != nil {
+					continue
+				}
+				if _, formal := formals[string(operand.Term.Encoding)]; !formal {
+					return nil, false
+				}
+			}
+		}
+		applications["call/"+operation.Target.Name] = true
+	}
+	if len(applications) == 0 {
+		return nil, false
+	}
+	results := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		application, found := artifactOperand(operation.Operands, "application")
+		if !found || !applications[string(application)] {
+			return nil, false
+		}
+		result, found := artifactOperand(operation.Operands, "result-00000000")
+		if !found {
+			return nil, false
+		}
+		results[string(result)] = true
+	}
+	paths := make(map[string]bool)
+	reads := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		if hasValue && hasTarget && results[string(value)] {
+			paths[string(target)] = true
+			continue
+		}
+		if hasValue && hasTarget && strings.HasPrefix(string(value), "path/") {
+			for path := range paths {
+				if strings.HasPrefix(string(value), path+".") {
+					reads[string(value)] = true
+					reads[string(target)] = true
+				}
+			}
+		}
+	}
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "entry", "apply", "call-results", "environment-write", "claim":
+			continue
+		case "external-call":
+			application, found := artifactOperand(operation.Operands, "application")
+			if !found || !applications[string(application)] {
+				return nil, false
+			}
+			continue
+		case "dynamic-index-read":
+			container, hasContainer := artifactOperand(operation.Operands, "container")
+			key, hasKey := artifactOperand(operation.Operands, "key")
+			target, hasTarget := artifactOperand(operation.Operands, "target")
+			if !hasContainer || !paths[string(container)] || !hasKey || !strings.HasPrefix(string(key), "scalar/string/") || !hasTarget {
+				return nil, false
+			}
+			reads[string(target)] = true
+		default:
+			return nil, false
+		}
+	}
+	if len(reads) == 0 {
+		return nil, false
+	}
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "claim" {
+			continue
+		}
+		value, found := artifactOperand(operation.Operands, "value")
+		if found && reads[string(value)] {
+			seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
+			for _, parameter := range child.Boundary.Parameters {
+				seeds = append(seeds, formals[boundaryTerm(parameter.Symbol)])
+			}
+			return seeds, true
+		}
+	}
+	return nil, false
+}
+
+// uncalledLocalUnionReadEntry carries the exact direct-call capability already
+// published at the enclosing allocation point into the admitted child. The
+// child artifact itself names that path, while closureHandleFor verifies it is
+// a local capability rather than a source-level function spelling.
+func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition) ([]byte, bool, error) {
+	seeds := append([]entrySeed(nil), formalSeeds...)
+	closures := make([]entryClosureSeed, 0)
+	seen := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		callee, found := artifactOperand(operation.Operands, "callee")
+		if !found || !strings.HasPrefix(string(callee), "path/") || seen[string(callee)] {
+			continue
+		}
+		value, known := resolveKnownCurrentValue(callee, partition)
+		handle, callable := closureHandleFor(callee, partition)
+		if !known || isUnknownScalar(value) || !callable {
+			return nil, false, nil
+		}
+		seen[string(callee)] = true
+		seeds = append(seeds, entrySeed{Term: string(callee), Value: value})
+		closures = append(closures, entryClosureSeed{Term: string(callee), Handle: handle})
+	}
+	if len(closures) == 0 {
+		return nil, false, nil
+	}
+	entry, err := encodeChildEntryWithCapabilities(seeds, closures, childEntryMemberClosureSeeds(seeds, nil, partition), tableIdentitySeedsForEntry(seeds, partition), memberCellSeedsForEntry(seeds, partition))
+	if err != nil {
+		return nil, false, err
+	}
+	return entry, true, nil
+}
+
 // uncalledDeclaredFormalConcatOperations returns only concat operands whose
 // operand is the exact result of an already admitted direct formal method
 // call.  It follows the front's closed apply -> call-results -> local-write
@@ -4696,7 +4858,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// Demand either form privately and qualify its facts by body before they
 	// enter the root publication closure.
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
-	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, declaredConcatBoundary, staticAssignmentBoundary, indexedReadBoundary := false, false, false, false, false, false
+	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, declaredConcatBoundary, staticAssignmentBoundary, indexedReadBoundary, localUnionReadBoundary := false, false, false, false, false, false, false
 	declaredConcatOperations := map[string]bool(nil)
 	if declaredSeeds, admitted, methodBoundary, concatOperations := uncalledDeclaredBoundary(child); admitted {
 		uncalledSeeds = declaredSeeds
@@ -4723,6 +4885,11 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		explicitAnyBoundary = false
 		indexedReadBoundary = true
 	}
+	if unionSeeds, admitted := uncalledDeclaredLocalUnionReadBoundary(child); admitted {
+		uncalledSeeds = unionSeeds
+		explicitAnyBoundary = false
+		localUnionReadBoundary = true
+	}
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
 	staticSeeds, staticMemberReadBoundary := uncalledStaticMemberReadSeeds(child)
 	if staticMemberReadBoundary {
@@ -4731,7 +4898,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	}
 	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || typedChannelSendBoundary || staticMemberReadBoundary) {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
-		if len(child.Boundary.Captures) == 0 {
+		if localUnionReadBoundary {
+			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
+		} else if len(child.Boundary.Captures) == 0 {
 			entry, entryErr = encodeChildEntry(uncalledSeeds)
 		} else {
 			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, staticAssignmentBoundary)
@@ -4777,6 +4946,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
 				continue
 			}
+			if localUnionReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") {
+				continue
+			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			if span, ok := spans[diagnostic.Key]; ok {
@@ -4803,6 +4975,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				continue
 			}
 			if indexedReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
+				continue
+			}
+			if localUnionReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") {
 				continue
 			}
 			key := "child/" + body + "/" + item.Fact.Key
@@ -6284,6 +6459,17 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 		return nil, "", false
 	}
 	containerType, ok := shapefact.DecodeTarget(containerValue)
+	if !ok && isUnknownScalar(containerValue) {
+		// A local declared union return remains Top as a runtime value until a
+		// guard selects an arm. Its guarded, epoch-current summary is still an
+		// existing type publication: RuntimeIndex can use it to retain Lua's
+		// nilability for an unguarded member read, without fabricating a table
+		// shape or granting either union arm as a value proof.
+		if encoded, found := currentEpochFact(summaryTypePrefix, container, partition); found {
+			containerType, err = typ.DecodeCanonical(context.Background(), encoded)
+			ok = err == nil && containerType != nil
+		}
+	}
 	if !ok && strings.HasPrefix(string(containerValue), "scalar/claim/claim-kind/1/") {
 		containerType, ok = castTargetWitness(container, partition)
 	}
@@ -11586,6 +11772,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		setMetatableReceiver := []byte(nil)
 		var importedSummary typ.Type
 		var methodSummary typ.Type
+		var localSummary typ.Type
 		// A known lexical apply seals its child outcome under the same
 		// application coordinate. call-results is the sole owner of caller
 		// result terms, so it consumes that private projection rather than
@@ -11617,6 +11804,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if contract, ok := sealedCallableResultValue(lexical, callee, index, argumentTerms, partition); ok {
 					value = contract
 					localCallableResult = true
+				}
+			}
+			if string(value) == "scalar/top" {
+				if summary, ok := sealedCallableResultType(lexical, callee, index, argumentTerms, partition); ok && requiresLocalUnionProof(summary) {
+					localSummary = summary
 				}
 			}
 			if string(value) == "scalar/top" {
@@ -11704,6 +11896,13 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			}
 			values = append(values, equation.Fact{Key: summaryTypePrefix + string(result) + "/" + operation.Target.Name, Value: encoded})
 			values = append(values, equation.Fact{Key: methodReturnSummaryPrefix + string(result) + "/" + operation.Target.Name, Value: encoded})
+		}
+		if localSummary != nil {
+			encoded, encodeErr := typ.EncodeCanonical(context.Background(), localSummary)
+			if encodeErr != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: encode local union result summary: %w", encodeErr)
+			}
+			values = append(values, equation.Fact{Key: summaryTypePrefix + string(result) + "/" + operation.Target.Name, Value: encoded})
 		}
 		if receiverResult {
 			if identity, found := tableIdentityForTerm(receiverResultTerm, partition); found {
@@ -11864,6 +12063,33 @@ func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index i
 		}
 	}
 	return sealedFunctionResultValue(value, index)
+}
+
+// sealedCallableResultType exposes a local declared return only as an
+// epoch-current summary. The same closure handle and sealed function witness
+// required by sealedCallableResultValue keep a declaration or annotation from
+// becoming an independent source of facts. Callers must still decide whether
+// that summary is safe to materialize as a runtime value.
+func sealedCallableResultType(lexical *lexicalEvaluator, callee []byte, index int, arguments map[int][]byte, partition equation.Partition) (typ.Type, bool) {
+	if lexical == nil || callee == nil || index < 0 {
+		return nil, false
+	}
+	if _, local := closureHandleFor(callee, partition); !local {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(callee, partition)
+	if err != nil {
+		return nil, false
+	}
+	functionType, ok := sealedFunctionType(value)
+	if !ok {
+		return nil, false
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function)
+	if !ok || function == nil || index >= len(function.Returns) || function.Returns[index] == nil {
+		return nil, false
+	}
+	return instantiateProviderReturn(function, arguments, partition, index)
 }
 
 // typedCallableResultValue consumes a direct callee's exact canonical
