@@ -3919,7 +3919,7 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 				continue
 			}
 			expected, accepts := callableParameterAt(signature, index)
-			if !accepts || !callableParameterRejectsNil(expected) || !latestPriorWriteIsNil(child.Artifact.Equations, operand.Term.Encoding, item.Target.Name) {
+			if !accepts || !callableParameterRejectsNil(expected) || !latestPriorWriteIsNilOnCallPath(child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, item.Guards) {
 				continue
 			}
 			fact := equation.Fact{
@@ -3941,11 +3941,13 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 	}
 }
 
-// latestPriorWriteIsNil accepts a nil only when it is the last child-owned
-// write to the exact argument cell before the guarded call. In particular, an
-// initializer nil followed by a branch-local string assignment is not a
-// refutation: that later write remains the current fact on the call path.
-func latestPriorWriteIsNil(operations []equation.Equation, target []byte, before string) bool {
+// latestPriorWriteIsNilOnCallPath accepts nil only when it is the last write
+// that can reach the guarded call. A later write under the same edge of a
+// boolean that was directly inverted before the call is excluded: the two
+// edges cannot co-occur. This reads the front's exact branch and expression
+// publications; an alias, an intervening write, or any unrecognized control
+// relation leaves the later write reachable and fails closed.
+func latestPriorWriteIsNilOnCallPath(operations []equation.Equation, target []byte, before string, callGuards []equation.Guard) bool {
 	latest := ""
 	nilValue := false
 	for _, operation := range operations {
@@ -3957,9 +3959,109 @@ func latestPriorWriteIsNil(operations []equation.Equation, target []byte, before
 		if !hasTarget || !hasValue || !bytes.Equal(writeTarget, target) || operation.Target.Name <= latest {
 			continue
 		}
+		if guardedOperationsAreExclusive(operations, operation.Guards, callGuards) {
+			continue
+		}
 		latest, nilValue = operation.Target.Name, len(operation.Guards) == 0 && string(value) == "scalar/nil"
 	}
 	return latest != "" && nilValue
+}
+
+// guardedOperationsAreExclusive recognizes only contradictory branch edges
+// already represented by the front. Besides opposite edges of one branch, it
+// admits equal edges when the later branch reads the exact path after its last
+// intervening write was that path's directly lowered `not` expression.
+func guardedOperationsAreExclusive(operations []equation.Equation, left, right []equation.Guard) bool {
+	for _, leftGuard := range left {
+		leftBranch, leftEdge, leftOK := branchGuardEdge(leftGuard)
+		if !leftOK {
+			continue
+		}
+		for _, rightGuard := range right {
+			rightBranch, rightEdge, rightOK := branchGuardEdge(rightGuard)
+			if !rightOK {
+				continue
+			}
+			if leftBranch == rightBranch && leftEdge != rightEdge {
+				return true
+			}
+			if leftEdge == rightEdge && directlyInvertedBranchConditions(operations, leftBranch, rightBranch) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func branchGuardEdge(guard equation.Guard) (string, string, bool) {
+	parts := strings.Split(string(guard.Encoding), "/")
+	if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || (parts[3] != "true" && parts[3] != "false") {
+		return "", "", false
+	}
+	return parts[2], parts[3], true
+}
+
+func directlyInvertedBranchConditions(operations []equation.Equation, earlier, later string) bool {
+	if earlier == later {
+		return false
+	}
+	earlierCondition, earlierOK := branchConditionTerm(operations, earlier)
+	laterCondition, laterOK := branchConditionTerm(operations, later)
+	if !earlierOK || !laterOK || !bytes.Equal(earlierCondition, laterCondition) {
+		return false
+	}
+	return latestBranchConditionMutationIsNot(operations, earlierCondition, earlier, later)
+}
+
+func branchConditionTerm(operations []equation.Equation, target string) ([]byte, bool) {
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "branch-relations" || operation.Target.Name != target {
+			continue
+		}
+		if condition, found := artifactOperand(operation.Operands, "condition"); found {
+			return condition, true
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role != "predicate" {
+				continue
+			}
+			var predicate branchPredicateWire
+			encoded := operand.Term.Encoding
+			if !strings.HasPrefix(string(encoded), branchPredicatePrefix) || json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate) != nil || predicate.Path == "" {
+				return nil, false
+			}
+			return []byte("path/" + predicate.Path), true
+		}
+		return nil, false
+	}
+	return nil, false
+}
+
+func latestBranchConditionMutationIsNot(operations []equation.Equation, target []byte, after, before string) bool {
+	latest := ""
+	inverted := false
+	for _, operation := range operations {
+		if operation.Target.Name <= after || operation.Target.Name >= before || operation.Target.Name <= latest {
+			continue
+		}
+		switch operation.Occurrence.Kind {
+		case "environment-write":
+			writeTarget, hasTarget := artifactOperand(operation.Operands, "target")
+			if hasTarget && bytes.Equal(writeTarget, target) {
+				latest, inverted = operation.Target.Name, false
+			}
+		case "expression":
+			kind, hasKind := artifactOperand(operation.Operands, "kind")
+			operator, hasOperator := artifactOperand(operation.Operands, "operator")
+			result, hasResult := artifactOperand(operation.Operands, "result")
+			value, hasValue := artifactOperand(operation.Operands, "value")
+			if hasKind && hasOperator && hasResult && hasValue && bytes.Equal(result, target) {
+				latest = operation.Target.Name
+				inverted = bytes.Equal(value, target) && string(kind) == strconv.Itoa(int(wir.OpUnOp)) && string(operator) == strconv.Itoa(int(wir.UnNot))
+			}
+		}
+	}
+	return latest != "" && inverted
 }
 
 // uncalledDeclaredFormalConcatOperations returns only concat operands whose
