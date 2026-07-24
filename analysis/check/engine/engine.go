@@ -1852,6 +1852,15 @@ func projectSealedTableMemberClosures(target string, tableValue []byte, operatio
 }
 
 func methodClosureHandleFor(receiver []byte, method string, partition equation.Partition) (closureHandle, bool) {
+	// A static member definition publishes its closure at the exact member
+	// path.  Prefer that direct publication: it is invalidated by a later
+	// member write just like currentMethodCallable, and it does not infer a
+	// capability from the receiver's declared type.
+	if strings.HasPrefix(string(receiver), "path/") && method != "" {
+		if handle, found := closureHandleFor(append(append([]byte(nil), receiver...), []byte("."+method)...), partition); found {
+			return handle, true
+		}
+	}
 	for _, wire := range memberClosuresFor(receiver, partition) {
 		if wire.Suffix == "."+method {
 			return wire.Handle, true
@@ -4424,8 +4433,20 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	applyLocal := func() (equation.TransactionResult, bool, error) {
 		recursiveDemand := lexical != nil && lexical.closureDemandRecurses(handle, partition)
+		genericDirect := false
+		if hasCallee {
+			if callee, known := resolveKnownCurrentValue(operands.callee, partition); known {
+				if signature, signed := callableSignature(callee); signed {
+					genericDirect = genericCallableSignature(signature)
+				}
+			}
+		}
+		// A generic local constructor can publish its concrete returned shape
+		// only by evaluating the already-admitted child with this call's exact
+		// values. Its declared generic return contract is not used as a shape
+		// witness, so the ordinary table-allocation shortcut cannot apply.
 		if lexical == nil || !localCallable || (operands.resultArity == 0 && !lexical.requiresBody[handle.Prototype]) ||
-			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] && (lexical.hasClaim(handle.Prototype) || lexical.hasTableAllocation(handle.Prototype) && !recursiveDemand)) {
+			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] && (lexical.hasClaim(handle.Prototype) || lexical.hasTableAllocation(handle.Prototype) && !recursiveDemand && !genericDirect)) {
 			return equation.TransactionResult{}, false, nil
 		}
 		outcome, err := lexical.applyKnown(operation, operands, handle, partition)
@@ -5724,6 +5745,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					value = contract
 				}
 			}
+			if string(value) == "scalar/top" {
+				if contract, ok := sealedMethodResultValue(lexical, receiver, method, index, partition); ok {
+					value = contract
+				}
+			}
 			if contract, ok := stdlibMethodResultValue(receiver, method, index, partition); ok {
 				value = contract
 			}
@@ -5791,6 +5817,44 @@ func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index i
 		return nil, false
 	}
 	return sealedFunctionResultValue(value, index)
+}
+
+// sealedMethodResultValue is the method analogue of the direct-callee bridge.
+// Both the exact member value and the local closure capability must already be
+// published at the receiver/member path.  A declared receiver type, an open
+// callable, or a stale table member has no authority to produce a result.
+func sealedMethodResultValue(lexical *lexicalEvaluator, receiver, method []byte, index int, partition equation.Partition) ([]byte, bool) {
+	if lexical == nil || receiver == nil || index < 0 {
+		return nil, false
+	}
+	name, ok := callMethodName(method)
+	if !ok {
+		return nil, false
+	}
+	handle, local := methodClosureHandleFor(receiver, name, partition)
+	if !local {
+		return nil, false
+	}
+	if _, available := lexical.byPrototype[handle.Prototype]; !available {
+		return nil, false
+	}
+	receiverValue, err := resolveCurrentValue(receiver, partition)
+	if err != nil {
+		return nil, false
+	}
+	callee, found := currentMethodCallable(receiver, receiverValue, name, partition)
+	if !found && isClaimRefinement(receiverValue) {
+		// A claim is not a callable witness. It may only expose the immediately
+		// preceding sealed table through the same contiguous refinement chain
+		// used by applyKernel; a real write ends that chain.
+		if sealed, sealedFound := priorSealedTableValue(receiver, partition); sealedFound {
+			callee, found = currentMethodCallable(receiver, sealed, name, partition)
+		}
+	}
+	if !found {
+		return nil, false
+	}
+	return sealedFunctionResultValue(callee, index)
 }
 
 func sealedFunctionResultValue(value []byte, index int) ([]byte, bool) {

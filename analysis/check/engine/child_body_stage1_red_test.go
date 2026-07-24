@@ -64,6 +64,31 @@ local value: number = make()`)
 	}
 }
 
+func TestStage1RedClosedMethodContractFillsUnavailableChildResult(t *testing.T) {
+	r := checkChildAdmission(t, `
+local Counter = {count = 0}
+function Counter:get(): number
+  return self.count
+end
+local value: number = Counter:get()`)
+	if len(r.Diagnostics) != 0 {
+		t.Fatalf("closed method contract did not fill result: diagnostics=%#v values=%#v", r.Diagnostics, r.Values)
+	}
+}
+
+func TestStage1RedGenericConstructorPublishesEvaluatedReturnShape(t *testing.T) {
+	r := checkChildAdmission(t, `
+local function zip<A, B>(a: A, b: B): { first: A, second: B }
+  return { first = a, second = b }
+end
+local pair = zip("x", 5)
+local first: string = pair.first
+local second: number = pair.second`)
+	if len(r.Diagnostics) != 0 {
+		t.Fatalf("evaluated generic constructor result was not published: diagnostics=%#v values=%#v", r.Diagnostics, r.Values)
+	}
+}
+
 func TestStage1RedMutableCaptureWriteback(t *testing.T) {
 	r := checkChildAdmission(t, `local x = 0; local set = function() x = 2 end; set(); local y: number = x`)
 	if len(r.Diagnostics) != 0 || valuesByName(r.Values)["y"] != "2" {
