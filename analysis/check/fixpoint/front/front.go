@@ -1483,8 +1483,13 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				}
 				draft.Operands = append(draft.Operands, equation.Operand{Role: "display", Term: equation.ClosedTerm([]byte(display))})
 			}
-			if instruction.A.Kind == wir.OperandPath {
-				sourceDisplay := body.Path(wir.PathRef(instruction.A.Ref)).String()
+			if instruction.ClaimSourceDisplay != "" {
+				draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(instruction.ClaimSourceDisplay))})
+				if instruction.ClaimSourceMethodSelector {
+					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-method-selector", Term: equation.ClosedTerm([]byte("scalar/bool/true"))})
+				}
+			} else if instruction.A.Kind == wir.OperandPath {
+				sourceDisplay := diagnosticPathDisplay(body.Path(wir.PathRef(instruction.A.Ref)))
 				if sourceDisplay == "" {
 					return equation.Artifact{}, fmt.Errorf("front: claim %s: empty path source", operation.target.Name)
 				}
@@ -2273,7 +2278,27 @@ func claimTypeTerm(body *wir.Body, instruction wir.Instruction) (equation.Term, 
 	if instruction.Type == 0 || body.Type(instruction.Type) == nil || body.TypeDisplay(instruction.Type) == "" {
 		return equation.Term{}, fmt.Errorf("type-bearing claim has no resolved target type")
 	}
-	return equation.ClosedTerm([]byte("claim-type/" + strconv.Quote(body.TypeDisplay(instruction.Type)))), nil
+	display := instruction.ClaimTypeDisplay
+	if display == "" {
+		display = body.TypeDisplay(instruction.Type)
+	}
+	return equation.ClosedTerm([]byte("claim-type/" + strconv.Quote(display))), nil
+}
+
+// diagnosticPathDisplay derives a quoted string-index display from the
+// already-bound path segments. It deliberately does not parse source text or
+// infer a key: only a statically classified string segment receives quotes.
+func diagnosticPathDisplay(value path.Path) string {
+	display := value.String()
+	if display == "" || len(value.Segments) == 0 {
+		return display
+	}
+	last := value.Segments[len(value.Segments)-1]
+	if last.Kind != segment.SegmentIndexString {
+		return display
+	}
+	suffix := "[" + last.Name + "]"
+	return strings.TrimSuffix(display, suffix) + "[" + strconv.Quote(last.Name) + "]"
 }
 
 // applyOperands preserves the complete source-side call shape. The kernel,

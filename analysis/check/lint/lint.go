@@ -698,6 +698,8 @@ func evidenceReason(reason string) diagnostic.EvidenceReason {
 	switch reason {
 	case "boundary validation missing":
 		return diagnostic.EvidenceReasonBoundaryValidationMissing
+	case "index read validation missing":
+		return diagnostic.EvidenceReasonIndexReadValidationMissing
 	case "explicit boundary validation":
 		return diagnostic.EvidenceReasonExplicitBoundaryValidation
 	default:

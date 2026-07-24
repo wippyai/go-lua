@@ -24,6 +24,7 @@ package wirlower
 import (
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -631,9 +632,18 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 		}
 		if declared != 0 {
 			source := b.annotationSourceOperand(values[i], dst)
-			var sourceSpan wir.Span
-			if source.Kind == wir.OperandPath && source != dst && i < len(s.Exprs) {
-				sourceSpan = wirSpanFromSource(ast.SpanOf(s.Exprs[i]))
+			// Keep the authored expression span even when lowering materializes it
+			// into dst. The claim still consumes the exact lowered operand; this
+			// metadata only prevents a method-result selector from being reported
+			// at the destination local.
+			sourceSpan := bindingSpan(values[i])
+			methodResultSelector := bindingMethodResultSelector(values[i])
+			claimSourceDisplay := ""
+			if source == dst && methodResultSelector {
+				// A compound expression has been materialized into its destination.
+				// Preserve its existing AST display only in that case; a path source
+				// is rendered from its canonical WIR segments by the front.
+				claimSourceDisplay = bindingDisplay(values[i])
 			}
 			b.emit(wir.Instruction{
 				Op:  wir.OpClaim,
@@ -644,18 +654,42 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 				// itself.  In particular this preserves an explicit `any` source
 				// through the equation claim instead of losing it to the target
 				// write.
-				A:            source,
-				Claim:        wir.ClaimAnnotation,
-				Type:         declared,
-				TargetSpan:   localNameSpan(s, i),
-				DeclaredSpan: wirSpanFromSource(ast.SpanOf(s.Types[i])),
-				ExprSpan:     sourceSpan,
+				A:                         source,
+				Claim:                     wir.ClaimAnnotation,
+				Type:                      declared,
+				ClaimTypeDisplay:          authoredTypeDisplay(s.Types[i]),
+				ClaimSourceDisplay:        claimSourceDisplay,
+				ClaimSourceMethodSelector: methodResultSelector,
+				TargetSpan:                localNameSpan(s, i),
+				DeclaredSpan:              wirSpanFromSource(ast.SpanOf(s.Types[i])),
+				ExprSpan:                  sourceSpan,
 			})
 		}
 		if symbol, ok := b.bindings.LocalSymbolAt(s, i); ok {
 			b.debugDeclareAt(b.curPoint, symbol)
 		}
 	}
+}
+
+// authoredTypeDisplay retains an exact type-reference spelling that the
+// resolver may intentionally expand while checking. Other type forms keep the
+// resolved display, so this metadata can never become a source-text fallback
+// for type authority.
+func authoredTypeDisplay(value ast.TypeExpr) string {
+	reference, ok := value.(*ast.TypeRefExpr)
+	if !ok || len(reference.Path) == 0 {
+		return ""
+	}
+	return strings.Join(reference.Path, ".")
+}
+
+func bindingMethodResultSelector(value binding) bool {
+	member, ok := value.expr.(*ast.AttrGetExpr)
+	if !ok || member == nil {
+		return false
+	}
+	_, ok = member.Object.(*ast.FuncCallExpr)
+	return ok
 }
 
 // annotationSourceOperand returns an already-materialized source operand when
@@ -793,7 +827,9 @@ func dynamicWriteValueDisplay(expr ast.Expr) string {
 		return "nil"
 	case *ast.AttrGetExpr:
 		if value.KeySyntax == ast.AttrKeyDot {
-			return dynamicWriteValueDisplay(value.Object) + "." + dynamicWriteValueDisplay(value.Key)
+			if name := ast.KeyName(value.Key); name != "" {
+				return dynamicWriteValueDisplay(value.Object) + "." + name
+			}
 		}
 		return dynamicWriteValueDisplay(value.Object) + "[" + dynamicWriteValueDisplay(value.Key) + "]"
 	case *ast.FuncCallExpr:

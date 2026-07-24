@@ -744,7 +744,12 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		if display := claimDeclaredDisplay(operation, operands["type"]); display != "" {
 			declared = display
 		}
-		if strings.HasSuffix(item.Message, " because it may be nil") {
+		methodSelector := false
+		for _, operand := range operation.Operands {
+			methodSelector = methodSelector || operand.Role == "source-method-selector"
+		}
+		mayBeNil := strings.HasSuffix(item.Message, " because it may be nil") || (methodSelector && diagnosticValueMayBeNil(value))
+		if mayBeNil {
 			targetSpan := claimTargetSpans[name]
 			if !targetSpan.Valid() {
 				targetSpan = item.Span
@@ -753,17 +758,24 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			if witness, ok := shapefact.DecodeTarget(value); ok && witness != nil {
 				concrete = typeformat.Short(proof.ProjectionWithoutNil(witness))
 			}
+			item.Message = fmt.Sprintf("cannot assign %s because it may be nil", sourceDisplay)
 			item.Evidence = []DiagnosticEvidence{
 				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s can be %s or nil here", sourceDisplay, concrete)},
 				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
-			missing := fmt.Sprintf("no guard on this path proves %s is non-nil", sourceDisplay)
-			if dot := strings.LastIndex(sourceDisplay, "."); dot > 0 && strings.Contains(sourceDisplay[:dot], "[") {
+			missing, reason := fmt.Sprintf("no guard on this path proves %s is non-nil", sourceDisplay), "boundary validation missing"
+			if strings.Contains(sourceDisplay, "[") {
+				if dot := strings.LastIndex(sourceDisplay, "."); dot > 0 && strings.Contains(sourceDisplay[:dot], "[") {
+					parent := sourceDisplay[:dot]
+					item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s may be nil before reading %s", parent, sourceDisplay[dot:])})
+				}
+				missing = fmt.Sprintf("%s is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here", sourceDisplay)
+				reason = "index read validation missing"
+			} else if dot := strings.LastIndex(sourceDisplay, "."); dot > 0 && methodSelector {
 				parent := sourceDisplay[:dot]
 				item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s may be nil before reading %s", parent, sourceDisplay[dot:])})
-				missing = fmt.Sprintf("%s is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here", sourceDisplay)
 			}
-			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: missing})
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: reason, Message: missing})
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value may be nil"}, {Span: targetSpan, Message: "declared type " + declared}}
 			item.Help = fmt.Sprintf("Guard `%s` with a nil check before assigning it, or change the target type to accept nil.", sourceDisplay)
 			out = append(out, item)
@@ -873,6 +885,15 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		out = append(out, item)
 	}
 	return out
+}
+
+// diagnosticValueMayBeNil accepts only an already-closed shape witness. It is
+// used by the publisher to narrate a union-with-nil assignment as the same
+// nil-proof obligation that the checker established, never to infer nilability
+// from a rendered message.
+func diagnosticValueMayBeNil(value []byte) bool {
+	witness, ok := shapefact.DecodeTarget(value)
+	return ok && witness != nil && unwrap.IsOptionalLike(witness)
 }
 
 func functionContractDiagnostic(operation string, facts []equation.Fact) bool {

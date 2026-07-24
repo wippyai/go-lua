@@ -280,11 +280,19 @@ type Instruction struct {
 	Iter     IterKind  // OpIterate numeric/generic
 	Claim    ClaimKind // OpClaim family
 	Assign   AssignKind
-	Type     TypeRef  // OpClaim target, OpMakeTable declared type, OpCall type receiver (0 = none)
-	Check    CheckRef // normalized condition descriptor for OpBranch/OpCall/boolean OpBinOp (0 = none)
-	Func     FuncRef  // OpClosure nested proto (0 = none)
-	Call     CallInfo // OpCall shape
-	ExprID   ExpressionID
+	Type     TypeRef // OpClaim target, OpMakeTable declared type, OpCall type receiver (0 = none)
+	// ClaimTypeDisplay and ClaimSourceDisplay preserve authored presentation
+	// identities for OpClaim. They are diagnostic provenance only: Type remains
+	// the sole resolved type authority and A remains the sole value authority.
+	// In particular, an imported alias and a materialized call/member expression
+	// must not be reconstructed from a structural type or a temporary name.
+	ClaimTypeDisplay          string
+	ClaimSourceDisplay        string
+	ClaimSourceMethodSelector bool
+	Check                     CheckRef // normalized condition descriptor for OpBranch/OpCall/boolean OpBinOp (0 = none)
+	Func                      FuncRef  // OpClosure nested proto (0 = none)
+	Call                      CallInfo // OpCall shape
+	ExprID                    ExpressionID
 
 	CallContext  CallContextKind
 	CallExpr     int
