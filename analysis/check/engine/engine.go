@@ -11193,13 +11193,33 @@ func sealedShapeReceiverType(value []byte) (typ.Type, bool) {
 	if !sealed || !table.Closed {
 		return nil, false
 	}
+	return sealedShapeRecord(table, sealedShapeReceiverType)
+}
+
+// sealedShapeRecord rebuilds the record a closed literal shape proves, reading
+// each direct member's own value through member.
+//
+// A deeper member path is a projection of the direct member that roots it, and
+// that direct member's publication already carries the whole subtree, so the
+// projection contributes no field of its own. A path rooted at no direct
+// member would instead describe content the record cannot state, and leaves
+// the literal without a record witness — as does an absent member or a member
+// value that carries no concrete type.
+func sealedShapeRecord(table shapefact.Table, member func([]byte) (typ.Type, bool)) (*typ.Record, bool) {
 	builder := typetable.NewRecord()
-	for _, member := range table.Members {
-		segments, valid := segment.ParseFormattedSegments(member.Suffix)
-		if !valid || len(segments) != 1 || !member.Present {
+	roots := make(map[string]bool, len(table.Members))
+	for _, entry := range table.Members {
+		segments, valid := segment.ParseFormattedSegments(entry.Suffix)
+		if !valid || len(segments) == 0 {
 			return nil, false
 		}
-		memberType, concrete := sealedShapeReceiverType([]byte(member.Value))
+		if len(segments) != 1 {
+			continue
+		}
+		if !entry.Present {
+			return nil, false
+		}
+		memberType, concrete := member([]byte(entry.Value))
 		if !concrete {
 			return nil, false
 		}
@@ -11211,6 +11231,13 @@ func sealedShapeReceiverType(value []byte) (typ.Type, bool) {
 		case segment.SegmentIndexInt:
 			builder.StaticIntIndex(int64(item.Index), memberType)
 		default:
+			return nil, false
+		}
+		roots[entry.Suffix] = true
+	}
+	for _, entry := range table.Members {
+		segments, _ := segment.ParseFormattedSegments(entry.Suffix)
+		if len(segments) > 1 && !roots[segment.FormatSegments(segments[:1])] {
 			return nil, false
 		}
 	}
@@ -20102,7 +20129,7 @@ func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index i
 		return nil, false
 	}
 	if functionType, ok := sealedFunctionType(value); ok {
-		if function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function); ok && function != nil && len(function.TypeParams) != 0 {
+		if function, ok := genericCalleeSurface(functionType); ok && len(function.TypeParams) != 0 {
 			result, instantiated := instantiateProviderReturn(function, arguments, partition, index)
 			returnValue, materialized := providerReturnTypeValue(result)
 			return returnValue, instantiated && materialized
@@ -20131,8 +20158,8 @@ func sealedCallableResultType(lexical *lexicalEvaluator, callee []byte, index in
 	if !ok {
 		return nil, false
 	}
-	function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function)
-	if !ok || function == nil || index >= len(function.Returns) || function.Returns[index] == nil {
+	function, ok := genericCalleeSurface(functionType)
+	if !ok || index >= len(function.Returns) || function.Returns[index] == nil {
 		return nil, false
 	}
 	return instantiateProviderReturn(function, arguments, partition, index)
@@ -20322,8 +20349,8 @@ func typedCalleeFunction(callee []byte, index int, partition equation.Partition)
 	if !ok {
 		return nil, false
 	}
-	function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function)
-	if !ok || function == nil || index >= len(function.Returns) || function.Returns[index] == nil {
+	function, ok := genericCalleeSurface(functionType)
+	if !ok || index >= len(function.Returns) || function.Returns[index] == nil {
 		return nil, false
 	}
 	return function, true
@@ -20855,7 +20882,7 @@ func externalCallbackReceiverMayMutate(receiver, provider []byte, partition equa
 // becoming a value proof at an import boundary. Its selected arm is a runtime
 // fact, so member publication must wait for the caller's local guard.
 func requiresLocalUnionProof(value typ.Type) bool {
-	union, ok := unwrap.Alias(unwrap.Annotations(value)).(*typ.Union)
+	union, ok := unwrap.Alias(unwrap.Annotations(subst.ExpandInstantiated(value))).(*typ.Union)
 	if !ok || union == nil {
 		return false
 	}
@@ -20903,8 +20930,8 @@ func hostGlobalProviderResultType(lexical *lexicalEvaluator, provider []byte, in
 	if !found {
 		return nil, false
 	}
-	function, ok := unwrap.Alias(subst.ExpandInstantiated(callee)).(*typ.Function)
-	if !ok || function == nil || index < 0 || index >= len(function.Returns) {
+	function, ok := genericCalleeSurface(callee)
+	if !ok || index < 0 || index >= len(function.Returns) {
 		return nil, false
 	}
 	return instantiateProviderReturn(function, arguments, partition, index)
@@ -21275,8 +21302,8 @@ func importedProviderResultType(lexical *lexicalEvaluator, provider []byte, inde
 			return nil, false
 		}
 	}
-	function, ok := unwrap.Alias(subst.ExpandInstantiated(callee)).(*typ.Function)
-	if !ok || function == nil || index < 0 || index >= len(function.Returns) || function.Returns[index] == nil {
+	function, ok := genericCalleeSurface(callee)
+	if !ok || index < 0 || index >= len(function.Returns) || function.Returns[index] == nil {
 		return nil, false
 	}
 	returnType, ok := instantiateProviderReturn(function, arguments, partition, index)
@@ -21295,6 +21322,31 @@ func importedReturnValue(result typ.Type) ([]byte, bool) {
 		return []byte("scalar/claim/claim-kind/3/\"any\""), true
 	}
 	return providerReturnTypeValue(result)
+}
+
+// genericCalleeSurface resolves the function a callee type states while
+// leaving the generic applications in its parameter and return positions
+// nominal. Only the applications the callee itself is wrapped in are peeled,
+// because those stand between the type and its function surface.
+//
+// Expanding the whole graph instead would erase the type arguments of a
+// generic whose body does not mention its parameters — the runtime channel
+// marker Channel<T> is exactly that shape — and both the argument unification
+// and the substituted result slot read those arguments.
+func genericCalleeSurface(callee typ.Type) (*typ.Function, bool) {
+	surface := unwrap.Alias(callee)
+	for surface != nil {
+		if _, applied := surface.(*typ.Instantiated); !applied {
+			break
+		}
+		peeled := unwrap.Alias(subst.ExpandInstantiatedRoot(surface))
+		if peeled == surface {
+			break
+		}
+		surface = peeled
+	}
+	function, callable := surface.(*typ.Function)
+	return function, callable && function != nil
 }
 
 // instantiateProviderReturn unifies only closed argument types already
@@ -21428,10 +21480,24 @@ func closedProviderArgumentType(value typ.Type, depth int) bool {
 	})
 }
 
-// providerArgumentType recovers a finite array witness from a sealed literal
-// only when every present top-level member is an integer-indexed, exact value.
-// This is the same evidence accepted by tableAgainstContainer; an open table,
-// object field, nested member, absent entry, or unknown element fails closed.
+// keyedLiteralMembers reports whether a sealed literal states a record rather
+// than an array: any member path that is not a direct integer index is a key
+// the array reading cannot express.
+func keyedLiteralMembers(table shapefact.Table) bool {
+	for _, member := range table.Members {
+		segments, valid := segment.ParseFormattedSegments(member.Suffix)
+		if !valid || len(segments) != 1 || segments[0].Kind != segment.SegmentIndexInt {
+			return true
+		}
+	}
+	return false
+}
+
+// providerArgumentType recovers the witness a sealed literal carries: a finite
+// array when every present top-level member is an integer-indexed exact value,
+// and otherwise the record its keyed members prove. Both are the evidence
+// tableAgainstContainer already accepts. An open table, an absent entry, or a
+// member without its own concrete value fails closed.
 func providerArgumentType(value []byte) (typ.Type, bool) {
 	if target, ok := shapefact.DecodeTarget(value); ok {
 		return target, true
@@ -21457,6 +21523,13 @@ func providerArgumentType(value []byte) (typ.Type, bool) {
 	table, ok := shapefact.DecodeTable(value)
 	if !ok || !table.Closed || len(table.Members) == 0 {
 		return nil, false
+	}
+	if keyedLiteralMembers(table) {
+		// A keyed constructor states a record, and each member's own
+		// publication is the authority for that field. This is what lets a
+		// generic parameter bind from an options literal whose members carry
+		// the concrete channel and witness types the call site passed.
+		return sealedShapeRecord(table, providerArgumentType)
 	}
 	elements := make([]typ.Type, 0, len(table.Members))
 	for _, member := range table.Members {
@@ -21521,28 +21594,18 @@ type typeArgPair struct {
 	actual   typ.Type
 }
 
+// inferImportedTypeArgs unifies a declared parameter position against the
+// closed type an argument already published, binding every generic parameter
+// the declaration names.
 func inferImportedTypeArgs(expected, actual typ.Type, params map[string]bool, bindings map[string]typ.Type) bool {
 	return inferTypeArgsDeciding(expected, actual, params, bindings, map[typeArgPair]bool{})
 }
 
 func inferTypeArgsDeciding(expected, actual typ.Type, params map[string]bool, bindings map[string]typ.Type, deciding map[typeArgPair]bool) bool {
-	expected = unwrap.Alias(subst.ExpandInstantiated(expected))
-	actual = unwrap.Alias(subst.ExpandInstantiated(actual))
+	expected = unwrap.Alias(expected)
+	actual = unwrap.Alias(actual)
 	if expected == nil || actual == nil {
 		return false
-	}
-	if parameter, ok := expected.(*typ.TypeParam); ok && params[parameter.Name] {
-		if prior := bindings[parameter.Name]; prior != nil {
-			// A later concrete argument may be a narrower inhabitant of an
-			// already-bound generic parameter.  The binding itself remains the
-			// published contract: accepting only an actual subtype cannot widen
-			// it or manufacture a result witness.  This is needed for ordinary
-			// reducers whose callback fixes A as number while their literal seed
-			// is an integer.
-			return typ.TypeEquals(prior, actual) || subtype.IsSubtype(actual, prior)
-		}
-		bindings[parameter.Name] = actual
-		return true
 	}
 	pair := typeArgPair{expected: expected, actual: actual}
 	if deciding[pair] {
@@ -21550,6 +21613,54 @@ func inferTypeArgsDeciding(expected, actual typ.Type, params map[string]bool, bi
 	}
 	deciding[pair] = true
 	defer delete(deciding, pair)
+	// Reduce both sides to the surface one of the structural cases below can
+	// decide. A generic application states its type arguments in the
+	// application itself and not necessarily in the generic's body — the
+	// runtime channel marker Channel<T> has an interface body that never
+	// mentions T — so paired applications are matched at their heads before
+	// anything is expanded, and an application whose partner is not one is
+	// peeled a single level at a time. A parameter position binds the argument
+	// exactly as it stands, because peeling it first would substitute a marker
+	// generic's payload away before the binding could record it.
+	for {
+		if parameter, ok := expected.(*typ.TypeParam); ok && params[parameter.Name] {
+			if prior := bindings[parameter.Name]; prior != nil {
+				// A later concrete argument may be a narrower inhabitant of an
+				// already-bound generic parameter.  The binding itself remains the
+				// published contract: accepting only an actual subtype cannot widen
+				// it or manufacture a result witness.  This is needed for ordinary
+				// reducers whose callback fixes A as number while their literal seed
+				// is an integer.
+				return typ.TypeEquals(prior, actual) || subtype.IsSubtype(actual, prior)
+			}
+			bindings[parameter.Name] = actual
+			return true
+		}
+		want, wantApplied := expected.(*typ.Instantiated)
+		got, gotApplied := actual.(*typ.Instantiated)
+		if wantApplied && gotApplied && len(want.TypeArgs) == len(got.TypeArgs) && typ.TypeEquals(want.Generic, got.Generic) {
+			for index := range want.TypeArgs {
+				if !inferTypeArgsDeciding(want.TypeArgs[index], got.TypeArgs[index], params, bindings, deciding) {
+					return false
+				}
+			}
+			return true
+		}
+		peeledExpected, peeledActual := expected, actual
+		if wantApplied {
+			peeledExpected = unwrap.Alias(subst.ExpandInstantiatedRoot(expected))
+		}
+		if gotApplied {
+			peeledActual = unwrap.Alias(subst.ExpandInstantiatedRoot(actual))
+		}
+		if peeledExpected == expected && peeledActual == actual {
+			break
+		}
+		if peeledExpected == nil || peeledActual == nil {
+			return false
+		}
+		expected, actual = peeledExpected, peeledActual
+	}
 	switch want := expected.(type) {
 	case *typ.Record:
 		got, ok := actual.(*typ.Record)
@@ -21600,7 +21711,12 @@ func inferTypeArgsDeciding(expected, actual typ.Type, params map[string]bool, bi
 		got, ok := actual.(*typ.Union)
 		return ok && inferUnionTypeArgs(want, got, params, bindings, deciding)
 	default:
-		return typ.TypeEquals(expected, actual)
+		// No parameter position remains reachable here, so the two sides only
+		// have to describe the same type. Nominal identity settles the paired
+		// applications the loop above left in place; anything else is decided
+		// on the structural graphs both spellings denote.
+		return typ.TypeEquals(expected, actual) ||
+			typ.TypeEquals(subst.ExpandInstantiated(expected), subst.ExpandInstantiated(actual))
 	}
 }
 
