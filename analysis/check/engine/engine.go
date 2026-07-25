@@ -7903,7 +7903,13 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	staticCapturedReturnBoundary := lexical.uncalledStaticCapturedReturnBoundary(child, partition)
 	arithmeticBoundary := lexical.uncalledStaticArithmeticBoundary(child, partition)
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
+	// The static member read boundary is the fallback for a declared receiver
+	// that no richer boundary admits. It authorizes missing members alone, so a
+	// boundary already carrying this body keeps its own seeds and its own wider
+	// diagnostic surface.
 	staticSeeds, staticMemberReadBoundary := uncalledStaticMemberReadSeeds(child)
+	staticMemberReadBoundary = staticMemberReadBoundary && !explicitAnyBoundary && !declaredBoundary &&
+		!staticAssignmentBoundary && !indexedReadBoundary && !localUnionReadBoundary && !gradualLogicalBoundary
 	if staticMemberReadBoundary {
 		uncalledSeeds = staticSeeds
 		explicitAnyBoundary = false
@@ -7945,7 +7951,11 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 		body := fmt.Sprintf("%x", child.Body)
 		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
+		claimOwnedReads := claimConsumedStaticReads(child.Artifact)
 		for _, diagnostic := range outcome.Diagnostics {
+			if claimOwnedReads[strings.TrimPrefix(diagnostic.Key, "type.member.missing/")] && strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
+				continue
+			}
 			// An allocation-time any boundary can prove only a strict assignment
 			// contract lacks validation. Other child diagnostics still require a
 			// concrete call path, since a cast or operation may establish their
@@ -8002,6 +8012,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// allocation-time diagnostics retain the evidence published by their
 		// owning claim rather than falling back to an unadorned parent fact.
 		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+			if claimOwnedReads[strings.TrimPrefix(item.Fact.Key, "type.member.missing/")] && strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
+				continue
+			}
 			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(item.Fact) {
 				continue
 			}
@@ -8203,6 +8216,42 @@ func declaredOrderedComparisonDiagnostic(allowed map[string]bool, key string) bo
 	return ok && allowed[name]
 }
 
+// staticMemberSegment reports whether a path segment names one member of a
+// declared receiver. Field and quoted-key spellings address the same member,
+// so both establish the static member read boundary.
+func staticMemberSegment(item segment.Segment) bool {
+	return item.Kind == segment.SegmentField || item.Kind == segment.SegmentIndexString
+}
+
+// claimConsumedStaticReads names the environment writes whose read a claim in
+// the same body also consumes — either by reading the same source path or by
+// reading back the local the write produced. The claim owns that read's
+// diagnostic surface: it carries the annotation, the source display, and the
+// span, so the write's own missing-member fact would republish the same read.
+func claimConsumedStaticReads(artifact equation.Artifact) map[string]bool {
+	sources := make(map[string]bool, len(artifact.Equations))
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "claim" {
+			continue
+		}
+		if value, found := artifactOperand(operation.Operands, "value"); found {
+			sources[string(value)] = true
+		}
+	}
+	consumed := make(map[string]bool, len(sources))
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		if hasValue && sources[string(value)] || hasTarget && sources[string(target)] {
+			consumed[operation.Target.Name] = true
+		}
+	}
+	return consumed
+}
+
 func uncalledStaticMemberReadSeeds(child front.Compilation) ([]entrySeed, bool) {
 	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 {
 		return nil, false
@@ -8228,7 +8277,7 @@ func uncalledStaticMemberReadSeeds(child front.Compilation) ([]entrySeed, bool) 
 			}
 			root, suffix, ok := tableAddress(operand.Term.Encoding)
 			segments, static := segment.ParseFormattedSegments(suffix)
-			if _, found := formals[string(root)]; ok && found && static && len(segments) == 1 && segments[0].Kind == segment.SegmentIndexString {
+			if _, found := formals[string(root)]; ok && found && static && len(segments) == 1 && staticMemberSegment(segments[0]) {
 				seeds := make([]entrySeed, 0, len(formals))
 				for _, item := range formals {
 					seeds = append(seeds, item)
@@ -11092,6 +11141,58 @@ type assignmentMismatch struct {
 	Expected typ.Type
 }
 
+// uniqueNamedArm selects the single union arm whose member surface admits every
+// member a closed literal actually names. When exactly one arm can name them
+// all, that arm is the only contract the literal could have satisfied, so an
+// already-refuted assignment reports the member that refutes it rather than the
+// whole union. Several admitting arms leave arm selection undecided and the
+// whole-value message stands.
+func uniqueNamedArm(union *typ.Union, value []byte) (typ.Type, bool) {
+	if union == nil || len(union.Members) == 0 {
+		return nil, false
+	}
+	table, ok := shapefact.DecodeTable(value)
+	if !ok || !table.Closed {
+		return nil, false
+	}
+	names := make([]string, 0, len(table.Members))
+	for _, member := range table.Members {
+		if !member.Present {
+			continue
+		}
+		segments, valid := segment.ParseFormattedSegments(member.Suffix)
+		if !valid || len(segments) != 1 || segments[0].Kind != segment.SegmentField {
+			return nil, false
+		}
+		names = append(names, segments[0].Name)
+	}
+	if len(names) == 0 {
+		return nil, false
+	}
+	var selected typ.Type
+	for _, arm := range union.Members {
+		record, isRecord := unwrap.Alias(subst.ExpandInstantiated(arm)).(*typ.Record)
+		if !isRecord || record == nil || record.Open {
+			continue
+		}
+		admits := true
+		for _, name := range names {
+			if record.GetField(name) == nil {
+				admits = false
+				break
+			}
+		}
+		if !admits {
+			continue
+		}
+		if selected != nil {
+			return nil, false
+		}
+		selected = arm
+	}
+	return selected, selected != nil
+}
+
 func firstAssignmentMismatch(value []byte, target typ.Type) (assignmentMismatch, bool) {
 	if target == nil {
 		return assignmentMismatch{}, false
@@ -11099,6 +11200,13 @@ func firstAssignmentMismatch(value []byte, target typ.Type) (assignmentMismatch,
 	resolved := unwrap.Alias(subst.ExpandInstantiated(target))
 	if recursive, ok := resolved.(*typ.Recursive); ok && recursive.Body != nil && recursive.Body != recursive {
 		resolved = unwrap.Alias(subst.ExpandInstantiated(recursive.Body))
+	}
+	if union, ok := resolved.(*typ.Union); ok {
+		arm, selected := uniqueNamedArm(union, value)
+		if !selected {
+			return assignmentMismatch{}, false
+		}
+		return firstAssignmentMismatch(value, arm)
 	}
 	record, ok := resolved.(*typ.Record)
 	if !ok {

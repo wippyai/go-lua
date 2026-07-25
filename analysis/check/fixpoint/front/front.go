@@ -1573,6 +1573,10 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				{Role: "read-before", Term: readBefore},
 				{Role: "absence", Term: equation.ClosedTerm([]byte(absence))},
 			}
+			// A member read is static under either spelling: t.name and
+			// t["name"] address the same member, so both publish the read
+			// source display. Only the bracket form needs its key requoted
+			// for the source-facing rendering.
 			if instruction.A.Kind == wir.OperandPath {
 				source := body.Path(wir.PathRef(instruction.A.Ref))
 				if len(source.Segments) != 0 && source.String() != "" {
@@ -1581,8 +1585,8 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 					if last.Kind == segment.SegmentIndexString {
 						suffix := "[" + last.Name + "]"
 						sourceDisplay = strings.TrimSuffix(sourceDisplay, suffix) + "[" + strconv.Quote(last.Name) + "]"
-						draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(sourceDisplay))})
 					}
+					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(sourceDisplay))})
 				}
 			}
 		case instruction.Op == wir.OpStaticMemberWrite:
