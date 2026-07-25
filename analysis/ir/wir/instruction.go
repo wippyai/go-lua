@@ -351,6 +351,13 @@ type Instruction struct {
 	// Results names the explicitly bound head destinations; ResultSpread says the
 	// count is open beyond them.
 	ResultSpread bool
+
+	// TailIndex is the array index the head value of an OpMakeTable's expanding
+	// final positional field occupies. ListSpread states that the tail is open;
+	// TailIndex states where it starts, so a consumer that resolves the tail
+	// producer's result count sizes the expansion exactly instead of discarding
+	// the constructor inventory. Zero when the constructor has no such field.
+	TailIndex int
 }
 
 // AssignmentSourceOperand returns the operand whose value is written by an

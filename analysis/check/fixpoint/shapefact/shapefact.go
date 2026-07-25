@@ -29,14 +29,25 @@ type Member struct {
 
 // Table is a finite literal shape. Closed means the constructor had no
 // unclassified key or open tail, so omitted static fields are proven absent.
+//
+// Tail names the value term produced by an expanding final positional field
+// whose result count is not a lowering-time constant, and TailIndex is the
+// array index its first value occupies. A shape carrying a tail is a template:
+// the member inventory is complete only from TailIndex-1 down, and the shape
+// stays open until a consumer that can size the expansion resolves it.
 type Table struct {
-	Closed  bool     `json:"closed"`
-	Members []Member `json:"members"`
+	Closed    bool     `json:"closed"`
+	Members   []Member `json:"members"`
+	Tail      string   `json:"tail,omitempty"`
+	TailIndex int      `json:"tail_index,omitempty"`
 }
 
 func EncodeTable(in Table) ([]byte, bool) {
-	out := Table{Closed: in.Closed, Members: append([]Member(nil), in.Members...)}
+	out := Table{Closed: in.Closed, Members: append([]Member(nil), in.Members...), Tail: in.Tail, TailIndex: in.TailIndex}
 	sort.Slice(out.Members, func(i, j int) bool { return out.Members[i].Suffix < out.Members[j].Suffix })
+	if (out.Tail == "") != (out.TailIndex == 0) || out.TailIndex < 0 || (out.Tail != "" && out.Closed) {
+		return nil, false
+	}
 	for index, member := range out.Members {
 		if member.Suffix == "" || !segment.ValidFormattedSegments(member.Suffix) ||
 			(index > 0 && out.Members[index-1].Suffix == member.Suffix) ||

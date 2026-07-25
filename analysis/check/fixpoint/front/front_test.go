@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 )
 
 func TestCompileBodyLowersScalarAssignmentAndBranchSlice(t *testing.T) {
@@ -534,12 +535,22 @@ func TestCompileBodyAdmitsOpenTableTailWithoutClaimingClosedShape(t *testing.T) 
 	}
 	for _, write := range byKind["environment-write"] {
 		roles := operands(write)
-		if roles["target"] == "" || roles["value"] != "scalar/table" {
+		if roles["target"] == "" {
 			continue
+		}
+		table, ok := shapefact.DecodeTable([]byte(roles["value"]))
+		if !ok {
+			continue
+		}
+		// The tail names where the expansion starts and which term produces it.
+		// Nothing here claims how many slots it fills: the shape stays open until
+		// a consumer that can size the producer's results resolves it.
+		if table.Closed || table.Tail == "" || table.TailIndex != 1 {
+			t.Fatalf("open-tail table shape = %#v", table)
 		}
 		return
 	}
-	t.Fatalf("open-tail table was given a finite shape: %#v", byKind["environment-write"])
+	t.Fatalf("open-tail table published no tail template: %#v", byKind["environment-write"])
 }
 
 func TestCompileAdmitsNestedVarargTableBody(t *testing.T) {

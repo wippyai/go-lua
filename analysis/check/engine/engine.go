@@ -71,6 +71,14 @@ const literalDiagnosticPrefix = "diagnostic/literal-source/"
 // established at the earlier one.
 const epochFactPrefix = "epoch/"
 
+// callReturnArityPrefix keys the result count a call's callee contract names,
+// published beside that call's head result term.
+const callReturnArityPrefix = "call-return-arity/"
+
+// inferredCallableReturnPrefix keys the result contract derived from a closure
+// body that declares none, published beside the term the closure allocated.
+const inferredCallableReturnPrefix = "inferred-callable-return/"
+
 const summaryTypePrefix = "summary-type/"
 const methodReturnSummaryPrefix = "method-return-summary/"
 const returnMemberSummaryPrefix = "return-member-summary/"
@@ -9084,6 +9092,11 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// Demand either form privately and qualify its facts by body before they
 	// enter the root publication closure.
 	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
+	// The derived result contract is published by whichever admitted entry
+	// evaluates the body first. The declaration-only lane further down is the
+	// fallback for a body no other boundary demands, never a second evaluation
+	// of one already performed.
+	inferredReturnPublished := false
 	gradualLogicalTerms := []string(nil)
 	gradualLogicalBoundary := false
 	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, declaredConcatBoundary, declaredComparisonBoundary, staticAssignmentBoundary, indexedReadBoundary, localUnionReadBoundary := false, false, false, false, false, false, false, false
@@ -9219,6 +9232,16 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		if gradualLogicalBoundary {
 			for _, term := range gradualLogicalTerms {
 				outcome.Values = append(outcome.Values, equation.Fact{Key: "gradual-logical/" + term + "/entry", Value: []byte(term)})
+			}
+		}
+		if stableCaptureBoundary(lexical, operation.Target.Body, child, partition) {
+			fact, published, factErr := inferredCallableReturnFact(lexical, child, outcome, result, operation.Target.Name)
+			if factErr != nil {
+				return equation.TransactionResult{}, factErr
+			}
+			if published {
+				closure.Values = append(closure.Values, fact)
+				inferredReturnPublished = true
 			}
 		}
 		body := fmt.Sprintf("%x", child.Body)
@@ -9381,6 +9404,31 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			outcome, _, evaluateErr := lexical.evaluate(child, entry)
 			if evaluateErr == nil {
 				closure.Values = append(closure.Values, placementStackWitnessFacts(outcome.Values)...)
+			}
+		}
+	}
+	// A closure that declares every formal and closes over nothing a later
+	// write can change states its own result contract, even when the source
+	// omits the return annotation. Derive that one contract from the body under
+	// its declared entry and publish nothing else: this lane owns no diagnostic
+	// surface, so it adds inference without widening any obligation.
+	if !inferredReturnPublished && result != "" && undeclaredPrototypeReturn(child) && stableCaptureBoundary(lexical, operation.Target.Body, child, partition) {
+		if seeds, declared := declaredFormalSeeds(child); declared {
+			entry, admitted, entryErr := lexical.uncalledChildEntry(operation.Target.Body, child, seeds, partition, false, true, true, true)
+			if entryErr != nil {
+				return equation.TransactionResult{}, entryErr
+			}
+			if admitted {
+				outcome, _, evaluateErr := lexical.evaluate(child, entry)
+				if evaluateErr == nil {
+					fact, published, factErr := inferredCallableReturnFact(lexical, child, outcome, result, operation.Target.Name)
+					if factErr != nil {
+						return equation.TransactionResult{}, factErr
+					}
+					if published {
+						closure.Values = append(closure.Values, fact)
+					}
+				}
 			}
 		}
 	}
@@ -10296,11 +10344,201 @@ func sealShapeValue(value []byte, partition equation.Partition) ([]byte, error) 
 		}
 		member.Value = string(resolved)
 	}
+	if table.Tail != "" && !expandTableTail(&table, partition) {
+		// Nothing sizes this expansion, so the constructor has no finite member
+		// inventory and the literal keeps only its broad table kind.
+		return []byte("scalar/table"), nil
+	}
 	sealed, ok := shapefact.EncodeTable(table)
 	if !ok {
 		return nil, fmt.Errorf("engine: malformed table shape")
 	}
 	return sealed, nil
+}
+
+// expandTableTail turns a constructor's open final field into its exact slots.
+// The producer's published result count is the only admissible size: it names
+// how many values the tail contributes, so the slots from TailIndex on are the
+// complete remainder of the array part and the shape closes. Only the head slot
+// carries a resolved value; the WIR binds no term for the further results, so
+// they enter as Top rather than as an invented value or an absent member.
+func expandTableTail(table *shapefact.Table, partition equation.Partition) bool {
+	tail := []byte(table.Tail)
+	if !strings.HasPrefix(table.Tail, "temp/") && !strings.HasPrefix(table.Tail, "path/") {
+		return false
+	}
+	encoded, found := currentEpochFact(callReturnArityPrefix, tail, partition)
+	if !found {
+		return false
+	}
+	arity, err := strconv.Atoi(string(encoded))
+	if err != nil || arity < 0 {
+		return false
+	}
+	occupied := make(map[string]bool, len(table.Members))
+	for _, member := range table.Members {
+		occupied[member.Suffix] = true
+	}
+	expanded := append([]shapefact.Member(nil), table.Members...)
+	for index := 0; index < arity; index++ {
+		suffix := segment.FormatSegments([]segment.Segment{{Kind: segment.SegmentIndexInt, Index: table.TailIndex + index}})
+		if suffix == "" || occupied[suffix] {
+			return false
+		}
+		member := shapefact.Member{Suffix: suffix, Present: true, Value: "scalar/top"}
+		if index == 0 {
+			resolved, resolveErr := resolveCurrentValue(tail, partition)
+			if resolveErr != nil {
+				return false
+			}
+			sealed, sealErr := sealShapeValue(resolved, partition)
+			if sealErr != nil {
+				return false
+			}
+			member.Value = string(sealed)
+		}
+		expanded = append(expanded, member)
+	}
+	table.Members, table.Closed, table.Tail, table.TailIndex = expanded, true, "", 0
+	return true
+}
+
+// undeclaredPrototypeReturn reports that a child body states no return type of
+// its own. Only such a body needs a derived result: a declared signature is
+// already the callable contract every consumer reads.
+func undeclaredPrototypeReturn(child front.Compilation) bool {
+	return child.WIR != nil && len(child.WIR.DeclaredReturnTypes()) == 0
+}
+
+// stableCaptureBoundary reports that nothing a closure closes over can change
+// between its allocation and any later call: a mutable cell, a channel, or a
+// resource makes the body's result depend on when it runs, so no allocation-time
+// derivation describes it. A non-cyclic body over immutable captures does not
+// have that dependence.
+func stableCaptureBoundary(lexical *lexicalEvaluator, body equation.BodyID, child front.Compilation, partition equation.Partition) bool {
+	if lexical == nil || child.WIR == nil || child.Cyclic != nil {
+		return false
+	}
+	if childHasChannelLifecycle(child) || childHasResourceLifecycle(child) || childHasSelect(child) {
+		return false
+	}
+	for _, capture := range child.Boundary.Captures {
+		if capture.Mutable {
+			return false
+		}
+		term := boundaryTerm(capture.Symbol)
+		if _, imported := lexical.importedAuthority(body, term); imported {
+			continue
+		}
+		if _, closure := closureHandleFor([]byte(term), partition); !closure {
+			return false
+		}
+	}
+	return true
+}
+
+// inferredCallableReturnFact states the result contract a child body derives
+// for the callable term the allocation produced. Every admitted entry for that
+// body reaches the same publication, so an evaluation one boundary already
+// performed is never repeated to obtain it.
+func inferredCallableReturnFact(lexical *lexicalEvaluator, child front.Compilation, outcome equation.OutputClosure, result, operation string) (equation.Fact, bool, error) {
+	if result == "" || !undeclaredPrototypeReturn(child) {
+		return equation.Fact{}, false, nil
+	}
+	inferred, known := inferredUncalledReturnType(outcome)
+	if !known {
+		return equation.Fact{}, false, nil
+	}
+	encoded, err := typ.EncodeCanonical(lexical.ctx, inferred)
+	if err != nil {
+		return equation.Fact{}, false, fmt.Errorf("engine: encode inferred callable return: %w", err)
+	}
+	return equation.Fact{Key: inferredCallableReturnPrefix + result + "/" + operation, Value: encoded}, true, nil
+}
+
+// inferredUncalledReturnType is the single result an evaluated child body
+// produces. A body with several result slots, several disagreeing return
+// candidates, or a result whose value carries no concrete witness states no
+// derived contract at all: a partial tuple would misdescribe the callable's
+// arity as much as an invented value would misdescribe its type.
+func inferredUncalledReturnType(outcome equation.OutputClosure) (typ.Type, bool) {
+	values, err := childReturnValues(outcome, false)
+	if err != nil || len(values) != 1 {
+		return nil, false
+	}
+	result, concrete := providerArgumentType(values[0])
+	if !concrete || result == nil {
+		return nil, false
+	}
+	return result, true
+}
+
+// inferredCallableReturn reads the derived result contract published for a
+// callable term by the allocation that materialized it.
+func inferredCallableReturn(term []byte, partition equation.Partition) (typ.Type, bool) {
+	prefix := inferredCallableReturnPrefix + string(term) + "/"
+	latest, found := partition.LatestValuePrefix(prefix)
+	if !found || len(latest.Value) == 0 {
+		return nil, false
+	}
+	result, err := typ.DecodeCanonical(context.Background(), latest.Value)
+	if err != nil || result == nil {
+		return nil, false
+	}
+	return result, true
+}
+
+// withInferredReturn completes a callable contract whose declaration omitted
+// its result. The parameter surface is the declaration's own; only the missing
+// return slot is filled, and a signature that already states one is returned
+// unchanged.
+func withInferredReturn(function *typ.Function, result typ.Type) (typ.Type, bool) {
+	if function == nil || result == nil || len(function.Returns) != 0 || len(function.TypeParams) != 0 {
+		return nil, false
+	}
+	builder := typ.Func()
+	builder.ReserveParams(len(function.Params))
+	for _, parameter := range function.Params {
+		if parameter.Type == nil {
+			return nil, false
+		}
+		builder.Param(parameter.Name, parameter.Type)
+	}
+	if function.Variadic != nil {
+		builder.Variadic(function.Variadic)
+	}
+	builder.Returns(result)
+	return builder.Build(), true
+}
+
+// calleeReturnArity is the result count a direct callee's sealed contract
+// names. It reads the same function witnesses the call result values are
+// derived from — a sealed function literal or a resolved shape target — and
+// declines every callee that carries neither.
+func calleeReturnArity(callee []byte, partition equation.Partition) (int, bool) {
+	if len(callee) == 0 {
+		return 0, false
+	}
+	value, err := resolveCurrentValue(callee, partition)
+	if err != nil {
+		return 0, false
+	}
+	functionType, ok := sealedFunctionType(value)
+	if !ok {
+		if functionType, ok = shapefact.DecodeTarget(value); !ok {
+			return 0, false
+		}
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function)
+	if !ok || function == nil {
+		return 0, false
+	}
+	for _, returned := range function.Returns {
+		if returned == nil {
+			return 0, false
+		}
+	}
+	return len(function.Returns), true
 }
 
 func expressionKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -19055,6 +19293,15 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
 			equation.Fact{Key: epochFactPrefix + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		)
+		// A callee whose sealed contract names its result tuple produces exactly
+		// that many values. Publish the count beside the head result so a
+		// multi-value tail sizes its expansion from the same witness the result
+		// values themselves come from.
+		if key == "00000000" {
+			if arity, known := calleeReturnArity(callee, partition); known {
+				values = append(values, equation.Fact{Key: callReturnArityPrefix + string(result) + "/" + operation.Target.Name, Value: []byte(strconv.Itoa(arity))})
+			}
+		}
 		// B: a locally evaluated body published its returned root allocation under
 		// this application. Bind the caller result and its assignment target to that
 		// root so a later member read or send traverses the transported graph.
@@ -20831,7 +21078,21 @@ func publishedProviderArgumentType(term []byte, partition equation.Partition) (t
 	if !found {
 		return nil, false
 	}
-	return providerArgumentType(value)
+	argument, decoded := providerArgumentType(value)
+	if !decoded {
+		return nil, false
+	}
+	// A callback literal carries only the surface its declaration states. Its
+	// derived result completes that contract for this argument position, so a
+	// generic parameter can bind from the body the allocation already evaluated.
+	if function, callable := unwrap.Alias(argument).(*typ.Function); callable {
+		if result, inferred := inferredCallableReturn(term, partition); inferred {
+			if completed, ok := withInferredReturn(function, result); ok {
+				return completed, true
+			}
+		}
+	}
+	return argument, true
 }
 
 // currentPublishedTermFact returns a type fact only when it was published by

@@ -3198,11 +3198,13 @@ func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, curren
 	}, nil
 }
 
-// tableShapeTerm turns the WIR constructor inventory into a closed, finite
-// value fact. It deliberately declines an open tail or unclassified key: those
-// shapes have no complete member-presence proof.
+// tableShapeTerm turns the WIR constructor inventory into a finite value fact.
+// It declines an unclassified key outright: such a shape has no member-presence
+// proof at all. An expanding final field keeps its inventory and travels as a
+// tail template instead, because the slot it starts at is exact and only the
+// number of values it contributes is still open.
 func tableShapeTerm(body *wir.Body, instruction wir.Instruction) ([]byte, bool, error) {
-	if instruction.Op != wir.OpMakeTable || !instruction.StaticStringKeysComplete || instruction.ListSpread {
+	if instruction.Op != wir.OpMakeTable || !instruction.StaticStringKeysComplete {
 		return nil, false, nil
 	}
 	bySuffix := make(map[string]shapefact.Member)
@@ -3226,7 +3228,19 @@ func tableShapeTerm(body *wir.Body, instruction wir.Instruction) ([]byte, bool, 
 	for _, member := range bySuffix {
 		members = append(members, member)
 	}
-	shape, ok := shapefact.EncodeTable(shapefact.Table{Closed: true, Members: members})
+	table := shapefact.Table{Closed: true, Members: members}
+	if instruction.ListSpread {
+		values := body.Operands(instruction.List)
+		if instruction.TailIndex <= 0 || len(values) == 0 {
+			return nil, false, nil
+		}
+		tail, err := allocationValueTerm(body, values[len(values)-1])
+		if err != nil {
+			return nil, false, err
+		}
+		table.Closed, table.Tail, table.TailIndex = false, string(tail.Encoding), instruction.TailIndex
+	}
+	shape, ok := shapefact.EncodeTable(table)
 	return shape, ok, nil
 }
 

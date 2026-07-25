@@ -2284,14 +2284,21 @@ func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 	}
 	entries := make([]wir.TableEntry, 0, len(entryByField))
 	spread := false
+	// A constructor's array indices come from its positional fields alone; an
+	// explicit key never advances them. The counter therefore names the exact
+	// slot an expanding final field's first value occupies.
+	arrayIndex, tailIndex := 0, 0
 	for i, f := range t.Fields {
 		if f == nil || f.Value == nil {
 			continue
 		}
+		if f.Key == nil {
+			arrayIndex++
+		}
 		var value wir.Operand
 		if i == last && f.Key == nil && sourceprovenance.CanExpandFinal(f.Value) {
 			value = b.lowerMultiValue(f.Value)
-			spread = true
+			spread, tailIndex = true, arrayIndex
 		} else {
 			value = b.lowerExpr(f.Value)
 		}
@@ -2320,6 +2327,7 @@ func (b *builder) lowerTable(dst wir.Operand, t *ast.TableExpr) {
 		TableEntries:             b.body.AppendTableEntries(entries),
 		StaticStringKeysComplete: tableStaticStringKeysComplete(t),
 		ListSpread:               spread,
+		TailIndex:                tailIndex,
 		ExprID:                   expressionid.Of(t),
 		ExprSpan:                 tableEntryValueSpan(t),
 	})
