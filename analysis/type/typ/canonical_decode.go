@@ -439,6 +439,45 @@ func canonicalGenericHeader(scalar []byte) (string, int, bool, error) {
 	return string(name), int(paramCount), hasBody, nil
 }
 
+// materializeCanonicalUnionNode rebuilds a published union node.
+//
+// Member order in a union node is fixed by hash at construction time, and the
+// hash of a recursive binder is a function of its body. A structural decode
+// allocates every binder as an open placeholder and only closes it once the
+// whole graph exists, so re-sorting a union that reaches a binder would order
+// it by placeholder hashes that no longer hold once the bodies are set. The
+// published order is the graph's own order and is retained verbatim in that
+// case; without an open binder the member hashes are already final and the
+// ordinary canonicalizing constructor still rejects a reordered stream.
+func materializeCanonicalUnionNode(children []Type) Type {
+	filtered := filterNilTypes(children)
+	if !containsOpenRecursiveMember(filtered) {
+		return MaterializeUnion(children)
+	}
+	unique, hashes := deduplicateTypesWithHashes(filtered)
+	return newCanonicalUnion(unique, hashes)
+}
+
+// materializeCanonicalIntersectionNode is the intersection counterpart of
+// materializeCanonicalUnionNode and retains the same published order rule.
+func materializeCanonicalIntersectionNode(children []Type) Type {
+	filtered := filterNilTypes(children)
+	if !containsOpenRecursiveMember(filtered) {
+		return MaterializeIntersection(children)
+	}
+	unique, hashes := deduplicateTypesWithHashes(filtered)
+	return newCanonicalIntersection(unique, hashes)
+}
+
+func containsOpenRecursiveMember(members []Type) bool {
+	for _, member := range members {
+		if mayContainOpenRecursive(member) {
+			return true
+		}
+	}
+	return false
+}
+
 func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Type, steps *uint64) (Type, error) {
 	r := canonicalRawReader{raw: scalar}
 	tag, ok := r.byte()
@@ -555,9 +594,9 @@ func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Typ
 		}
 		switch tag {
 		case canonicalUnion:
-			return MaterializeUnion(children), nil
+			return materializeCanonicalUnionNode(children), nil
 		case canonicalIntersection:
-			return MaterializeIntersection(children), nil
+			return materializeCanonicalIntersectionNode(children), nil
 		default:
 			return NewTuple(children...), nil
 		}

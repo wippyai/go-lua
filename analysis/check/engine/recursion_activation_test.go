@@ -40,7 +40,7 @@ return value`
 	if err != nil {
 		t.Fatalf("evaluate recursive lexical closure: %v", err)
 	}
-	returns, err := childReturnValues(closure)
+	returns, err := childReturnValues(closure, true)
 	if err != nil {
 		t.Fatalf("recursive lexical closure returns: %v", err)
 	}

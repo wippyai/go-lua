@@ -196,3 +196,62 @@ func TestDecodeCanonicalCancellationPublishesNothing(t *testing.T) {
 		t.Fatalf("DecodeCanonical = %T, %v", decoded, err)
 	}
 }
+
+// TestDecodeCanonicalStructuralRoundTripsRecursiveUnionMember covers a union
+// whose member is a recursive binder. Member order is fixed by hash when the
+// union node is built, and a structural decode has only open placeholders at
+// that moment, so re-sorting would publish a different order than the bytes
+// carry and reject the encoder's own output.
+func TestDecodeCanonicalStructuralRoundTripsRecursiveUnionMember(t *testing.T) {
+	box := NewRecursivePlaceholder("Box")
+	tombstone := RebuildRecord(RecordParts{Fields: []Field{{Name: "kind", Type: LiteralString("tombstone")}}})
+	box.SetBody(RebuildRecord(RecordParts{Fields: []Field{
+		{Name: "kind", Type: LiteralString("box")},
+		{Name: "next", Type: MaterializeUnion([]Type{box, tombstone})},
+	}}))
+	payload := MaterializeUnion([]Type{tombstone, box})
+
+	encoded, err := EncodeCanonical(context.Background(), payload)
+	if err != nil {
+		t.Fatalf("EncodeCanonical: %v", err)
+	}
+	decoded, err := DecodeCanonicalStructural(context.Background(), encoded)
+	if err != nil {
+		t.Fatalf("DecodeCanonicalStructural rejected its own encoding: %v", err)
+	}
+	if !TypeEquals(decoded, payload) {
+		t.Fatalf("structural decode changed the recursive union: %s", decoded)
+	}
+	again, err := EncodeCanonical(context.Background(), decoded)
+	if err != nil || !bytes.Equal(again, encoded) {
+		t.Fatalf("re-encoding the decoded recursive union is not byte-stable (err=%v)", err)
+	}
+}
+
+// TestDecodeCanonicalStructuralRejectsReorderedUnionMembers keeps the
+// canonical order requirement for graphs without a recursive binder: those
+// member hashes are already final, so a reordered stream is not canonical.
+func TestDecodeCanonicalStructuralRejectsReorderedUnionMembers(t *testing.T) {
+	canonical, err := EncodeCanonical(context.Background(), MaterializeUnion([]Type{String, Integer, Boolean}))
+	if err != nil {
+		t.Fatalf("EncodeCanonical: %v", err)
+	}
+	reordered, err := EncodeCanonical(context.Background(), &Union{Members: reversedTypes(MaterializeUnion([]Type{String, Integer, Boolean}).(*Union).Members)})
+	if err != nil {
+		t.Fatalf("EncodeCanonical reordered: %v", err)
+	}
+	if bytes.Equal(canonical, reordered) {
+		t.Fatal("reordered union produced canonical bytes; the test cannot observe the rejection")
+	}
+	if decoded, err := DecodeCanonicalStructural(context.Background(), reordered); err == nil || decoded != nil {
+		t.Fatalf("reordered union member stream was admitted: %v", decoded)
+	}
+}
+
+func reversedTypes(members []Type) []Type {
+	out := make([]Type, len(members))
+	for index, member := range members {
+		out[len(members)-1-index] = member
+	}
+	return out
+}

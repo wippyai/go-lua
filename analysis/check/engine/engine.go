@@ -41,6 +41,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typecall"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
@@ -3347,6 +3348,12 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			identity := []byte("scalar/channel-entry/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + base64.RawURLEncoding.EncodeToString(root))
 			values = append(values, equation.Fact{Key: "identity/" + string(root) + "/entry", Value: identity})
 		}
+		// A declared boundary type can carry Channel<T> below its root, as a
+		// record of channels does. That is the same closed payload witness an
+		// imported result summary publishes, so the boundary declaration uses
+		// the same fact family: a select over `source.primary` then reads its
+		// payload and identity from the declaration instead of failing closed.
+		values = append(values, channelPayloadSummaryFacts(string(root), "entry", declared)...)
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
@@ -4047,7 +4054,13 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool,
 			hasDirectMethod = hasDirectMethod || hasDeclaredFormalMethodCall(child, operation, formals)
 			continue
 		}
-		if uncalledDeclaredExpandedStdlibCall(child.Artifact.Equations, operation, formals) {
+		// A published standard-library contract reached only from terms this
+		// declaration entry already closes needs no caller-owned value: the
+		// registry signature is the result authority. Admitting it keeps the
+		// rest of the body — its declared member reads and their claims —
+		// evaluable instead of dormant behind an ambient call.
+		if uncalledDeclaredStdlibCall(child.Artifact.Equations, operation, formals) ||
+			uncalledDeclaredExpandedStdlibCall(child.Artifact.Equations, operation, formals) {
 			memberCalls["call/"+operation.Target.Name] = true
 		}
 	}
@@ -5696,18 +5709,63 @@ func uncalledDeclaredMemberCall(child front.Compilation, operation equation.Equa
 	return false
 }
 
+// declaredEntryClosedTerms computes the terms a declaration-only entry already
+// closes. The entry seeds every declared formal and this boundary admits no
+// captures, so a local first written from an already-closed value is itself
+// closed: nothing outside the declaration contributes to it. The set is a
+// least fixed point over the body's own writes; a local reached from a global,
+// an unwritten path, or any other open source stays outside it.
+func declaredEntryClosedTerms(operations []equation.Equation, formals map[string]bool) map[string]bool {
+	closed := make(map[string]bool, len(formals))
+	for formal := range formals {
+		closed[formal] = true
+	}
+	closedTerm := func(term string) bool {
+		if strings.HasPrefix(term, "scalar/") || shapefact.IsTable([]byte(term)) {
+			return true
+		}
+		if closed[term] {
+			return true
+		}
+		root := term
+		if trimmed, ok := strings.CutPrefix(term, "path/"); ok {
+			if cut := strings.IndexAny(trimmed, ".["); cut >= 0 {
+				root = "path/" + trimmed[:cut]
+			}
+		}
+		return closed[root]
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, operation := range operations {
+			if operation.Occurrence.Kind != "environment-write" {
+				continue
+			}
+			target, hasTarget := artifactOperand(operation.Operands, "target")
+			value, hasValue := artifactOperand(operation.Operands, "value")
+			if !hasTarget || !hasValue || closed[string(target)] || !closedTerm(string(value)) {
+				continue
+			}
+			closed[string(target)], changed = true, true
+		}
+	}
+	return closed
+}
+
 // uncalledDeclaredStdlibCall identifies only a registered standard-library
-// result reached from exact child formals or scalar literals. It is a result
-// provenance check, not an admission rule: the declaration boundary still
-// decides independently whether the call itself can be evaluated.
+// result reached from exact child formals, scalar literals, or locals the
+// declaration entry already closes. It is a result provenance check, not an
+// admission rule: the declaration boundary still decides independently whether
+// the call itself can be evaluated.
 func uncalledDeclaredStdlibCall(operations []equation.Equation, apply equation.Equation, formals map[string]bool) bool {
 	application := "call/" + apply.Target.Name
+	closed := declaredEntryClosedTerms(operations, formals)
 	for _, operand := range apply.Operands {
 		if _, err := callArgumentIndex(operand.Role); err != nil {
 			continue
 		}
 		argument := string(operand.Term.Encoding)
-		if !formals[argument] && !strings.HasPrefix(argument, "scalar/") {
+		if !closed[argument] && !strings.HasPrefix(argument, "scalar/") {
 			return false
 		}
 	}
@@ -6403,7 +6461,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	if err != nil {
 		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
 	}
-	returns, err := childReturnValues(closure)
+	returns, err := childReturnValues(closure, !childHasSelect(child))
 	if err != nil {
 		// A select evaluates every feasible arm, so its branch-local return
 		// tuples cannot be collapsed into one caller result slot here. Its
@@ -7549,24 +7607,57 @@ func latestClosedValue(term []byte, facts []equation.Fact) ([]byte, bool) {
 	return append([]byte(nil), value...), value != nil
 }
 
-func childReturnValues(closure equation.OutputClosure) ([][]byte, error) {
-	var prefix string
+// childReturnValues reads the child's completed return. Several reachable
+// return statements are alternatives, and the caller owns a single result
+// tuple: they are joinable only when every candidate published the identical
+// arity and slot values, which is one result rather than a choice between two.
+// Any disagreement remains an unresolved alternative for the caller to reject.
+// A select body is excluded: its arms are evaluated in separate partitions, so
+// its branch-local return tuples are not comparable at this boundary.
+func childReturnValues(closure equation.OutputClosure, joinAlternatives bool) ([][]byte, error) {
+	candidates := make([]string, 0, 2)
+	seen := make(map[string]bool, 2)
 	for _, outcome := range closure.Outcomes {
-		if strings.HasPrefix(outcome.Key, "return-candidate/") && strings.HasSuffix(outcome.Key, "/arity") {
-			candidate := strings.TrimSuffix(outcome.Key, "/arity") + "/"
-			if prefix != "" && prefix != candidate {
-				return nil, errMultipleChildReturnAlternatives
-			}
-			if _, err := strconv.Atoi(string(outcome.Value)); err != nil {
-				return nil, fmt.Errorf("malformed child return arity")
-			}
-			prefix = candidate
+		if !strings.HasPrefix(outcome.Key, "return-candidate/") || !strings.HasSuffix(outcome.Key, "/arity") {
+			continue
+		}
+		if _, err := strconv.Atoi(string(outcome.Value)); err != nil {
+			return nil, fmt.Errorf("malformed child return arity")
+		}
+		candidate := strings.TrimSuffix(outcome.Key, "/arity") + "/"
+		if !seen[candidate] {
+			seen[candidate], candidates = true, append(candidates, candidate)
 		}
 	}
-	if prefix == "" {
+	if len(candidates) == 0 {
 		// A body with no return statement has a complete zero-result outcome.
 		return nil, nil
 	}
+	if len(candidates) > 1 && !joinAlternatives {
+		return nil, errMultipleChildReturnAlternatives
+	}
+	joined, err := childReturnCandidateValues(closure, candidates[0])
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates[1:] {
+		values, err := childReturnCandidateValues(closure, candidate)
+		if err != nil {
+			return nil, err
+		}
+		if len(values) != len(joined) {
+			return nil, errMultipleChildReturnAlternatives
+		}
+		for index := range joined {
+			if !bytes.Equal(joined[index], values[index]) {
+				return nil, errMultipleChildReturnAlternatives
+			}
+		}
+	}
+	return joined, nil
+}
+
+func childReturnCandidateValues(closure equation.OutputClosure, prefix string) ([][]byte, error) {
 	values := map[int][]byte{}
 	for _, outcome := range closure.Outcomes {
 		if !strings.HasPrefix(outcome.Key, prefix) {
@@ -8053,6 +8144,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// an unavailable capture leaves this optional diagnostic pass silent
 		// rather than manufacturing a module value.
 		seeds := closedImportEntrySeeds(partition)
+		closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
 		complete := len(captures) == len(child.Boundary.Captures)
 		for index, capture := range child.Boundary.Captures {
 			if !complete {
@@ -8063,12 +8155,25 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				complete = false
 				break
 			}
-			seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: value})
+			term := boundaryTerm(capture.Symbol)
+			seeds = append(seeds, entrySeed{Term: term, Value: value})
+			// A captured local function is a published capability of this
+			// partition, not a value shape. Transporting its handle is what lets
+			// a call inside the select body reach the callee's own completed
+			// summary; without it the callee stays opaque and every obligation
+			// it owns is lost. An unadmitted prototype keeps the pass silent.
+			if handle, found := closureHandleFor([]byte(captures[index]), partition); found {
+				if _, admitted := lexical.byPrototype[handle.Prototype]; !admitted {
+					complete = false
+					break
+				}
+				closureSeeds = append(closureSeeds, entryClosureSeed{Term: term, Handle: handle})
+			}
 		}
 		if !complete {
 			return equation.TransactionResult{Complete: true, Closure: closure}, nil
 		}
-		entry, entryErr := encodeChildEntry(seeds)
+		entry, entryErr := encodeChildEntry(seeds, closureSeeds...)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -16213,6 +16318,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					value = contract
 				}
 			}
+			if string(value) == "scalar/top" {
+				if contract, ok := ambientChannelMethodResultValue(receiver, method, index, partition); ok {
+					value = contract
+				}
+			}
 			if contract, ok := stdlibMethodResultValue(receiver, method, index, partition); ok {
 				value = contract
 			}
@@ -16881,6 +16991,36 @@ func typedMethodResultValue(receiver, method []byte, index int, partition equati
 		return nil, false
 	}
 	return providerReturnTypeValue(result)
+}
+
+// ambientChannelMethodResultValue projects a channel method return from the
+// receiver's already-published payload witness. A channel's methods are an
+// ambient contract rather than record members, so the ordinary member
+// projection never reaches them and the result slot would stay Top even where
+// the payload is fully proven. The payload fact and the ambient signature are
+// both existing publications; nothing here is derived from the method name
+// alone, and a receiver without a proven payload keeps its Top result.
+func ambientChannelMethodResultValue(receiver, method []byte, index int, partition equation.Partition) ([]byte, bool) {
+	if receiver == nil || method == nil || index < 0 {
+		return nil, false
+	}
+	name, ok := callMethodName(method)
+	if !ok {
+		return nil, false
+	}
+	payload, ok := typedChannelPayload(receiver, partition)
+	if !ok || payload == nil {
+		return nil, false
+	}
+	contract, status := typecall.MemberCall(typ.Instantiate(ambient.ChannelGeneric(), payload), name)
+	if status != typecall.MemberCallOK {
+		return nil, false
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(contract)).(*typ.Function)
+	if !ok || function == nil || index >= len(function.Returns) || function.Returns[index] == nil {
+		return nil, false
+	}
+	return providerReturnTypeValue(function.Returns[index])
 }
 
 // typedMethodReturnType projects a method return from an existing published
@@ -18734,6 +18874,45 @@ func shapeMemberValue(term []byte, partition equation.Partition) ([]byte, bool) 
 	return nil, false
 }
 
+// selectConstrainedArms composes every select constraint that holds in this
+// partition. Each constraint states that the winning arm lies inside its own
+// arm set, so successive guarded edges compose by intersection: an outer
+// `result.channel ~= a` false edge and an inner `result.channel == b` true edge
+// together prove arm `b`, not their union. Composition is what carries the
+// proof across nested selects and child bodies, where several edges of the same
+// select are live at once. An empty intersection is a contradictory partition
+// and yields no payload rather than a widened one.
+func selectConstrainedArms(selectID []byte, cases int, partition equation.Partition) (map[int]bool, bool) {
+	arms := make(map[int]bool, cases)
+	for arm := 0; arm < cases; arm++ {
+		arms[arm] = true
+	}
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, "select/constraint/") {
+			continue
+		}
+		var constraint selectConstraintWire
+		if json.Unmarshal(fact.Value, &constraint) != nil || constraint.Select != string(selectID) || constraint.Default {
+			continue
+		}
+		allowed := make(map[int]bool, len(constraint.Arms))
+		for _, arm := range constraint.Arms {
+			if arm >= 0 && arm < cases {
+				allowed[arm] = true
+			}
+		}
+		for arm := range arms {
+			if !allowed[arm] {
+				delete(arms, arm)
+			}
+		}
+	}
+	if len(arms) == 0 {
+		return nil, false
+	}
+	return arms, true
+}
+
 // selectPayloadValue is the sole bridge from a selected result's guarded arm
 // constraint to an ordinary `result.value` read. The absence of a complete
 // select catalog or an active constraint stays unknown.
@@ -18755,25 +18934,9 @@ func selectPayloadValue(term []byte, partition equation.Partition) ([]byte, bool
 	if json.Unmarshal(metaFact, &meta) != nil || meta.Cases <= 0 {
 		return nil, false
 	}
-	arms := make(map[int]bool, meta.Cases)
-	for _, fact := range partition.Values() {
-		if !strings.HasPrefix(fact.Key, "select/constraint/") {
-			continue
-		}
-		var constraint selectConstraintWire
-		if json.Unmarshal(fact.Value, &constraint) != nil || constraint.Select != string(selectID) || constraint.Default {
-			continue
-		}
-		for _, arm := range constraint.Arms {
-			if arm >= 0 && arm < meta.Cases {
-				arms[arm] = true
-			}
-		}
-	}
-	if len(arms) == 0 {
-		for arm := 0; arm < meta.Cases; arm++ {
-			arms[arm] = true
-		}
+	arms, ok := selectConstrainedArms(selectID, meta.Cases, partition)
+	if !ok {
+		return nil, false
 	}
 	members := make([]typ.Type, 0, len(arms))
 	for arm := 0; arm < meta.Cases; arm++ {
@@ -18792,7 +18955,12 @@ func selectPayloadValue(term []byte, partition equation.Partition) ([]byte, bool
 		if err != nil {
 			return nil, false
 		}
-		payload, err := typ.DecodeCanonical(context.Background(), encoded)
+		// The arm payload is the select kernel's own closed publication of a
+		// declared Channel<T> argument, so it is read back with the structural
+		// decoder that the rest of the shape-fact family uses. A recursive
+		// payload type carries no declaration identity through canonical bytes;
+		// requiring one here would silently drop the arm and widen the read.
+		payload, err := typ.DecodeCanonicalStructural(context.Background(), encoded)
 		if err != nil || payload == nil {
 			return nil, false
 		}
