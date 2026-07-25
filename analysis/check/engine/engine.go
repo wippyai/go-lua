@@ -4461,7 +4461,10 @@ func placementReturnedClosureWitnesses(child front.Compilation, partition equati
 		}
 		target, hasTarget := artifactOperand(operation.Operands, "container")
 		value, hasValue := artifactOperand(operation.Operands, "value")
-		if !hasTarget || !hasValue || !captures[string(target)] || !placementTableWitnessType(formals[string(value)]) {
+		if !hasTarget || !hasValue || !captures[string(target)] {
+			continue
+		}
+		if !placementTableWitnessType(formals[string(value)]) && !placementFormalElementWitness(child, string(value), formals) {
 			continue
 		}
 		identity := "formal-store/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s/%s", child.Body, value, operation.Target.Name)))
@@ -4489,6 +4492,80 @@ func placementReturnedClosureWitnesses(child front.Compilation, partition equati
 		}
 	}
 	return facts
+}
+
+// placementFormalElementWitness reports whether value is the element handle
+// produced by a generic-for over an ipairs/pairs iteration of a formal
+// container whose element type is itself a heap table. Such an element is an
+// inbound handle reachable from the formal graph, so retaining it in an
+// actor-local capture is a shared-handle retain, exactly like retaining the
+// formal directly. The trace is entirely structural over the child artifact:
+// an iterator that is not an exact ipairs/pairs of a formal stays unmatched.
+func placementFormalElementWitness(child front.Compilation, value string, formals map[string]typ.Type) bool {
+	iterator, ok := placementGenericForElementIterator(child, value)
+	if !ok {
+		return false
+	}
+	container, ok := placementIteratorFormalContainer(child, iterator)
+	if !ok {
+		return false
+	}
+	formal, isFormal := formals[container]
+	if !isFormal {
+		return false
+	}
+	element, ok := declaredElementContract(formal)
+	return ok && placementTableWitnessType(element)
+}
+
+// placementGenericForElementIterator returns the iterator term of the
+// generic-for that binds value as its element (value) slot. Only the second
+// loop result is the element; the first is the numeric index or map key, which
+// is never an inbound table handle.
+func placementGenericForElementIterator(child front.Compilation, value string) (string, bool) {
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "generic-for" {
+			continue
+		}
+		element, ok := artifactOperand(operation.Operands, "result-00000001")
+		if !ok || string(element) != value {
+			continue
+		}
+		iterator, ok := artifactOperand(operation.Operands, "iterator")
+		if ok {
+			return string(iterator), true
+		}
+	}
+	return "", false
+}
+
+// placementIteratorFormalContainer resolves an iterator term to the container
+// term of its ipairs/pairs call. Any other provider or a spread argument keeps
+// the iteration opaque and unmatched.
+func placementIteratorFormalContainer(child front.Compilation, iterator string) (string, bool) {
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		result, ok := artifactOperand(operation.Operands, "result-00000000")
+		if !ok || string(result) != iterator {
+			continue
+		}
+		provider, ok := artifactOperand(operation.Operands, "provider")
+		if !ok {
+			return "", false
+		}
+		name, ok := placementGlobalProviderName(provider)
+		if !ok || (name != "ipairs" && name != "pairs") {
+			return "", false
+		}
+		container, ok := artifactOperand(operation.Operands, "argument-00000000")
+		if !ok {
+			return "", false
+		}
+		return string(container), true
+	}
+	return "", false
 }
 
 func placementTableWitnessType(value typ.Type) bool {
