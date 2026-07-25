@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -42,20 +43,7 @@ func concatBuiltinBodyFacts(compilation front.Compilation) []NativeFact {
 		carrier string
 		nilable bool
 	}
-	key := func(operand wir.Operand) string {
-		switch operand.Kind {
-		case wir.OperandPath:
-			path := body.Path(wir.PathRef(operand.Ref))
-			if path.Symbol != 0 {
-				return fmt.Sprintf("sym%d", path.Symbol)
-			}
-			return string(path.Key())
-		case wir.OperandTemp:
-			return fmt.Sprintf("temp/%d", operand.Ref)
-		default:
-			return ""
-		}
-	}
+	key := func(operand wir.Operand) string { return nativeOperandKey(body, operand) }
 	values := make(map[string]scalarValue)
 	set := func(operand wir.Operand, value scalarValue) {
 		if name := key(operand); name != "" {
@@ -256,20 +244,7 @@ func numericBodyFacts(compilation front.Compilation) []NativeFact {
 		}
 	}
 
-	key := func(operand wir.Operand) string {
-		switch operand.Kind {
-		case wir.OperandPath:
-			path := body.Path(wir.PathRef(operand.Ref))
-			if path.Symbol != 0 {
-				return fmt.Sprintf("sym%d", path.Symbol)
-			}
-			return string(path.Key())
-		case wir.OperandTemp:
-			return fmt.Sprintf("temp/%d", operand.Ref)
-		default:
-			return ""
-		}
-	}
+	key := func(operand wir.Operand) string { return nativeOperandKey(body, operand) }
 	value := func(operand wir.Operand) (numericValue, bool) {
 		if operand.Kind == wir.OperandConst {
 			constant := body.Const(wir.ConstRef(operand.Ref))
@@ -433,35 +408,103 @@ func numericBodyFacts(compilation front.Compilation) []NativeFact {
 
 	// A declaration-bound literal carries its VM arm independently of its
 	// language-level number annotation. This reads the exact lowered write and
-	// annotation relation rather than re-parsing the source literal.
+	// annotation relation rather than re-parsing the source literal. The
+	// constant itself belongs to the constant_value family published by the
+	// ordinary value closure; only its numeric arm is classified here.
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
-		if instruction.Op != wir.OpAssign || instruction.A.Kind != wir.OperandConst {
+		representation, ok := nativeConstantRepresentation(body, instruction, assignments)
+		// Only a number literal has a numeric arm to classify: the machine word
+		// of a string or a boolean is not one this family ranges over.
+		if !ok || representation != "integer" && representation != "float" {
 			continue
 		}
-		constant := body.Const(wir.ConstRef(instruction.A.Ref))
 		occurrence := fmt.Sprintf("op-%08d", index)
-		if assignments[key(instruction.Dst)] != 1 {
-			continue
-		}
-		switch constant.Kind {
-		case wir.ConstNumber:
-			representation := "float"
-			if numericLiteralIsInteger(constant.Number) {
-				representation = "integer"
-			}
-			out = append(out, row("constant_value", occurrence, subject(instruction.Dst), "representation="+representation+" value="+constant.Number))
-			out = append(out, row("representation", occurrence, subject(instruction.Dst), "exact=true representation="+representation))
-		case wir.ConstString:
-			// A string constant carries no numeric arm, so it publishes the
-			// constant alone: its machine word is a reference, not an integer or
-			// a float the representation family classifies.
-			out = append(out, row("constant_value", occurrence, subject(instruction.Dst), "representation=string value="+strconv.Quote(constant.Str)))
-		case wir.ConstBool:
-			out = append(out, row("constant_value", occurrence, subject(instruction.Dst), "representation=boolean value="+strconv.FormatBool(constant.Bool)))
-		}
+		out = append(out, row("representation", occurrence, subject(instruction.Dst), "exact=true representation="+representation))
 	}
 	return out
+}
+
+// publishedConstantValues publishes the exact machine word a single-assignment
+// literal write installs. It belongs to the ordinary value closure: `42` and
+// `42.0` are different machine words, so the constant is a conclusion every
+// consumer reads at the same public cut, not a native side channel. A binding
+// written more than once has no single constant and is withheld.
+func publishedConstantValues(root front.Compilation) []equation.Fact {
+	var rows []equation.Fact
+	var visit func(front.Compilation)
+	visit = func(compilation front.Compilation) {
+		body := compilation.WIR
+		if body != nil {
+			assignments := nativeAssignmentCounts(body)
+			for index := 0; index < body.Len(); index++ {
+				instruction := body.Instr(index)
+				representation, ok := nativeConstantRepresentation(body, instruction, assignments)
+				if !ok {
+					continue
+				}
+				constant := body.Const(wir.ConstRef(instruction.A.Ref))
+				value := ""
+				switch constant.Kind {
+				case wir.ConstNumber:
+					value = constant.Number
+				case wir.ConstString:
+					value = strconv.Quote(constant.Str)
+				case wir.ConstBool:
+					value = strconv.FormatBool(constant.Bool)
+				}
+				rows = append(rows, equation.Fact{
+					Key:   fmt.Sprintf("constant_value/%x/op-%08d", compilation.Body, index),
+					Value: []byte("representation=" + representation + " value=" + value),
+				})
+			}
+		}
+		for _, child := range compilation.Nested {
+			visit(child)
+		}
+	}
+	visit(root)
+	return rows
+}
+
+// nativeConstantRepresentation names the machine representation a lowered
+// constant write installs, and withholds it when the destination is written
+// more than once: a rebound destination has no single constant word.
+func nativeConstantRepresentation(body *wir.Body, instruction wir.Instruction, assignments map[string]int) (string, bool) {
+	if instruction.Op != wir.OpAssign || instruction.A.Kind != wir.OperandConst {
+		return "", false
+	}
+	if assignments[nativeOperandKey(body, instruction.Dst)] != 1 {
+		return "", false
+	}
+	constant := body.Const(wir.ConstRef(instruction.A.Ref))
+	switch constant.Kind {
+	case wir.ConstNumber:
+		if numericLiteralIsInteger(constant.Number) {
+			return "integer", true
+		}
+		return "float", true
+	case wir.ConstString:
+		// A string constant carries no numeric arm: its machine word is a
+		// reference, not an integer or a float the representation family
+		// classifies.
+		return "string", true
+	case wir.ConstBool:
+		return "boolean", true
+	default:
+		return "", false
+	}
+}
+
+func nativeAssignmentCounts(body *wir.Body) map[string]int {
+	assignments := make(map[string]int)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpAssign {
+			assignments[nativeOperandKey(body, instruction.Dst)]++
+		}
+	}
+	return assignments
 }
 
 func numericType(value typ.Type) (numericValue, bool) {

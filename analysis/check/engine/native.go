@@ -150,7 +150,6 @@ func publishedNativeFactsForCompilation(compilation front.Compilation, values, o
 	index.derived = append(numericNativeFacts(compilation), tableNativeFacts(compilation)...)
 	index.derived = append(index.derived, nilabilityNativeFacts(compilation)...)
 	index.derived = append(index.derived, aliasNativeFacts(compilation)...)
-	index.derived = append(index.derived, publicationIdentityFacts(compilation)...)
 	index.derived = append(index.derived, branchNativeFacts(compilation, closedBranchCoordinates(values))...)
 	index.derived = append(index.derived, frozenBodyNativeFacts(compilation)...)
 	index.derived = append(index.derived, metatableNativeFacts(compilation)...)

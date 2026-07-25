@@ -352,6 +352,8 @@ func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding,
 func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, closure equation.OutputClosure, transactions int, parseElapsed, evaluateElapsed time.Duration) Result {
 	artifact := compilation.Artifact
 	closure.Values = append(closure.Values, publishedNativeContracts(compilation)...)
+	closure.Values = append(closure.Values, publishedPublicationIdentities(compilation)...)
+	closure.Values = append(closure.Values, publishedConstantValues(compilation)...)
 	// An unbound annotation has a direct lexical diagnostic. Its unresolved
 	// reference must not also be presented as an ordinary failed type claim:
 	// no declared type witness exists to validate in the first place.

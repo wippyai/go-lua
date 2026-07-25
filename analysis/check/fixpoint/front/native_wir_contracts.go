@@ -110,6 +110,8 @@ func nativeShapeContracts(compilation Compilation) []NativeContract {
 }
 
 func nativeRecordConstructionContracts(body *wir.Body) []NativeContract {
+	escaped := nativeEscapedTableConstructors(body)
+	products := nativeMultiplicationResults(body)
 	var contracts []NativeContract
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
@@ -128,9 +130,104 @@ func nativeRecordConstructionContracts(body *wir.Body) []NativeContract {
 		}
 		// Every entry is already an exact WIR constructor slot.  The row says
 		// nothing about optional-field presence beyond what the literal wrote.
-		contracts = append(contracts, NativeContract{Family: "record_construction", Value: fmt.Sprintf("entries=%d entry_storage=committed", direct)})
+		contract := NativeContract{Family: "record_construction", Value: nativeRecordConstructionValue(body, entries, direct, products)}
+		if escaped[index] {
+			contract.Revocations = []string{"escape"}
+		}
+		contracts = append(contracts, contract)
 	}
 	return contracts
+}
+
+// nativeRecordConstructionValue reads the storage class of each entry from the
+// resolved producer of its operand.  A boolean entry has a canonical tagged
+// slot; an entry produced by a multiplication keeps both runtime number arms,
+// because an integer product may promote.  Neither is read from a source
+// spelling: an entry whose producer is not resolved adds nothing.
+func nativeRecordConstructionValue(body *wir.Body, entries []wir.TableEntry, direct int, products map[wir.Operand]bool) string {
+	value := fmt.Sprintf("entries=%d entry_storage=committed", direct)
+	boolean, multiplication := false, false
+	for _, entry := range entries {
+		if entry.Value.Kind == wir.OperandConst && body.Const(wir.ConstRef(entry.Value.Ref)).Kind == wir.ConstBool {
+			boolean = true
+		}
+		if products[entry.Value] {
+			multiplication = true
+		}
+	}
+	if boolean {
+		value += " boolean_storage=canonical_tag"
+	}
+	if multiplication {
+		value += " field_carrier=numeric_union overflow=promote_integer_to_number"
+	}
+	return value
+}
+
+// nativeMultiplicationResults names every operand a multiplication writes.
+func nativeMultiplicationResults(body *wir.Body) map[wir.Operand]bool {
+	products := make(map[wir.Operand]bool)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpBinOp && instruction.Operator == wir.BinMul && instruction.Dst.Kind != wir.OperandNone {
+			products[instruction.Dst] = true
+		}
+	}
+	return products
+}
+
+// nativeEscapedTableConstructors follows copies of a constructor's destination
+// through resolved WIR.  Reaching a callee — as an argument or as a method
+// receiver — is a publication boundary: the allocation is no longer local, so
+// its constructor contract carries the escape deopt class instead of an
+// unbounded grant.  A destination reassigned from an unrelated producer loses
+// the association, and an operand kind that carries no root binding never
+// proves an escape at all.
+func nativeEscapedTableConstructors(body *wir.Body) map[int]bool {
+	escaped := make(map[int]bool)
+	if body == nil {
+		return escaped
+	}
+	rootKey := func(operand wir.Operand) string {
+		if operand.Kind != wir.OperandPath {
+			return ""
+		}
+		item := body.Path(wir.PathRef(operand.Ref))
+		item.Segments = nil
+		item.Version = 0
+		return string(item.Key())
+	}
+	constructors := make(map[string]int)
+	reaches := func(operand wir.Operand) {
+		if source, found := constructors[rootKey(operand)]; found {
+			escaped[source] = true
+		}
+	}
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		switch instruction.Op {
+		case wir.OpMakeTable:
+			if key := rootKey(instruction.Dst); key != "" {
+				constructors[key] = index
+			}
+		case wir.OpAssign:
+			destination := rootKey(instruction.Dst)
+			if destination == "" {
+				continue
+			}
+			if source, found := constructors[rootKey(instruction.A)]; found {
+				constructors[destination] = source
+			} else {
+				delete(constructors, destination)
+			}
+		case wir.OpCall:
+			for _, argument := range body.Operands(instruction.List) {
+				reaches(argument)
+			}
+			reaches(instruction.Call.Receiver)
+		}
+	}
+	return escaped
 }
 
 // nativePhysicalRecordShape accepts only a closed, presence-complete record.

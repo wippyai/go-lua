@@ -306,11 +306,10 @@ func nativeContracts(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
 		}
 		out = append(out, NativeContract{Family: "call_scc", Value: value, Revocations: revocations})
 	}
-	// Table constructors and static member writes are binder-owned lexical
-	// topology too.  Publish them through the same ordinary value closure as
-	// the other native contracts: an open constructor or a dynamic write has no
-	// exact record row.  In particular, this never treats an annotation as a
-	// proof of a physical layout.
+	// Static member writes, entry ownership and repeated layouts are binder-owned
+	// lexical topology.  The record_construction row itself is WIR-owned: only
+	// the resolved lowering carries the constructor's destination, which its
+	// escape boundary is published from.
 	out = append(out, recordNativeContracts(stmts)...)
 	// Operation rows are derived from the same admitted, binder-owned syntax
 	// tree as topology contracts and remain absent when a boundary is unknown.
@@ -323,10 +322,6 @@ func nativeContracts(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
 // does not model aliases, dynamic keys, or an optional field's absent shape.
 // Those cases have no unique physical layout and must remain un-published.
 func recordNativeContracts(stmts []ast.Stmt) []NativeContract {
-	type literal struct {
-		entries int
-		shape   string
-	}
 	var out []NativeContract
 	shapes := make(map[string]int)
 	factories := make(map[string]bool)
@@ -362,45 +357,26 @@ func recordNativeContracts(stmts []ast.Stmt) []NativeContract {
 	}
 	collectFactories(stmts)
 
-	var walkExpr func(ast.Expr, map[string]literal)
-	var walkStmts func([]ast.Stmt, map[string]literal)
-	constructor := func(table *ast.TableExpr) (literal, NativeContract, bool) {
+	var walkExpr func(ast.Expr, map[string]string)
+	var walkStmts func([]ast.Stmt, map[string]string)
+	// A closed constructor is named by its canonical field set, which is the
+	// layout identity the rows below key on.
+	constructor := func(table *ast.TableExpr) (string, bool) {
 		if table == nil {
-			return literal{}, NativeContract{}, false
+			return "", false
 		}
 		fields := make([]string, 0, len(table.Fields))
-		boolean := false
 		for _, field := range table.Fields {
 			if field == nil {
-				return literal{}, NativeContract{}, false
+				return "", false
 			}
 			name := ast.KeyName(field.Key)
 			if name == "" {
-				return literal{}, NativeContract{}, false
+				return "", false
 			}
 			fields = append(fields, name)
-			switch field.Value.(type) {
-			case *ast.TrueExpr, *ast.FalseExpr:
-				boolean = true
-			}
 		}
 		sort.Strings(fields)
-		shape := strings.Join(fields, ",")
-		value := fmt.Sprintf("entries=%d entry_storage=committed", len(fields))
-		if boolean {
-			value += " boolean_storage=canonical_tag"
-		}
-		// Arithmetic over an integer formal keeps both runtime number arms.  The
-		// multiplication itself is still evaluated by the ordinary solver; this
-		// record row only preserves that established carrier at the constructor
-		// boundary instead of narrowing it from a caller literal.
-		for _, field := range table.Fields {
-			arithmetic, ok := field.Value.(*ast.ArithmeticOpExpr)
-			if ok && arithmetic.Operator == "*" {
-				value += " field_carrier=numeric_union overflow=promote_integer_to_number"
-				break
-			}
-		}
 		// A literal nested directly in an entry is a freshly produced child.
 		// Its edge is explicit in the closed constructor topology, so it may
 		// carry the write barrier and the exact field-write deopt class.
@@ -428,7 +404,7 @@ func recordNativeContracts(stmts []ast.Stmt) []NativeContract {
 				out = append(out, NativeContract{Family: "record_entry_ownership", Value: "field=" + name + " ownership=move producer_bound=true write_barrier=required", Revocations: []string{"write.field"}})
 			}
 		}
-		return literal{entries: len(fields), shape: shape}, NativeContract{Family: "record_construction", Value: value}, true
+		return strings.Join(fields, ","), true
 	}
 	written := func(stmt *ast.AssignStmt) (string, bool) {
 		if stmt == nil || len(stmt.Lhs) != 1 || len(stmt.Rhs) != 1 {
@@ -447,12 +423,11 @@ func recordNativeContracts(stmts []ast.Stmt) []NativeContract {
 		}
 		return owner.Value, true
 	}
-	walkExpr = func(expr ast.Expr, locals map[string]literal) {
+	walkExpr = func(expr ast.Expr, locals map[string]string) {
 		switch item := expr.(type) {
 		case *ast.TableExpr:
-			if layout, row, ok := constructor(item); ok {
-				out = append(out, row)
-				shapes[layout.shape]++
+			if shape, ok := constructor(item); ok {
+				shapes[shape]++
 			}
 			for _, field := range item.Fields {
 				if field != nil {
@@ -489,47 +464,19 @@ func recordNativeContracts(stmts []ast.Stmt) []NativeContract {
 		case *ast.UnaryBNotOpExpr:
 			walkExpr(item.Expr, locals)
 		case *ast.FunctionExpr:
-			walkStmts(item.Stmts, make(map[string]literal))
+			walkStmts(item.Stmts, make(map[string]string))
 		}
 	}
-	walkStmts = func(body []ast.Stmt, locals map[string]literal) {
-		escaping := make(map[string]bool)
-		for _, stmt := range body {
-			callStmt, ok := stmt.(*ast.FuncCallStmt)
-			if !ok || callStmt.Expr == nil {
-				continue
-			}
-			call, ok := callStmt.Expr.(*ast.FuncCallExpr)
-			if !ok {
-				continue
-			}
-			callee, ok := call.Func.(*ast.AttrGetExpr)
-			if !ok || ast.KeyName(callee.Key) != "send" || len(call.Args) == 0 {
-				continue
-			}
-			owner, ok := callee.Object.(*ast.IdentExpr)
-			if !ok || owner.Value != "process" {
-				continue
-			}
-			for _, arg := range call.Args {
-				if name, ok := arg.(*ast.IdentExpr); ok {
-					escaping[name.Value] = true
-				}
-			}
-		}
+	walkStmts = func(body []ast.Stmt, locals map[string]string) {
 		for _, stmt := range body {
 			switch item := stmt.(type) {
 			case *ast.LocalAssignStmt:
 				for index, expr := range item.Exprs {
 					if index < len(item.Names) {
 						if table, ok := expr.(*ast.TableExpr); ok {
-							if layout, row, closed := constructor(table); closed {
-								locals[item.Names[index]] = layout
-								if escaping[item.Names[index]] {
-									row.Revocations = []string{"escape"}
-								}
-								out = append(out, row)
-								shapes[layout.shape]++
+							if shape, closed := constructor(table); closed {
+								locals[item.Names[index]] = shape
+								shapes[shape]++
 								for _, field := range table.Fields {
 									if field != nil {
 										walkExpr(field.Value, locals)
@@ -561,7 +508,7 @@ func recordNativeContracts(stmts []ast.Stmt) []NativeContract {
 				}
 			case *ast.FuncDefStmt:
 				if item.Func != nil {
-					walkStmts(item.Func.Stmts, make(map[string]literal))
+					walkStmts(item.Func.Stmts, make(map[string]string))
 				}
 			case *ast.FuncCallStmt:
 				walkExpr(item.Expr, locals)
@@ -571,30 +518,30 @@ func recordNativeContracts(stmts []ast.Stmt) []NativeContract {
 				}
 			case *ast.IfStmt:
 				walkExpr(item.Condition, locals)
-				walkStmts(item.Then, make(map[string]literal))
-				walkStmts(item.Else, make(map[string]literal))
+				walkStmts(item.Then, make(map[string]string))
+				walkStmts(item.Else, make(map[string]string))
 			case *ast.DoBlockStmt:
-				walkStmts(item.Stmts, make(map[string]literal))
+				walkStmts(item.Stmts, make(map[string]string))
 			case *ast.WhileStmt:
 				walkExpr(item.Condition, locals)
-				walkStmts(item.Stmts, make(map[string]literal))
+				walkStmts(item.Stmts, make(map[string]string))
 			case *ast.RepeatStmt:
-				walkStmts(item.Stmts, make(map[string]literal))
+				walkStmts(item.Stmts, make(map[string]string))
 				walkExpr(item.Condition, locals)
 			case *ast.NumberForStmt:
 				walkExpr(item.Init, locals)
 				walkExpr(item.Limit, locals)
 				walkExpr(item.Step, locals)
-				walkStmts(item.Stmts, make(map[string]literal))
+				walkStmts(item.Stmts, make(map[string]string))
 			case *ast.GenericForStmt:
 				for _, expr := range item.Exprs {
 					walkExpr(expr, locals)
 				}
-				walkStmts(item.Stmts, make(map[string]literal))
+				walkStmts(item.Stmts, make(map[string]string))
 			}
 		}
 	}
-	walkStmts(stmts, make(map[string]literal))
+	walkStmts(stmts, make(map[string]string))
 	for shape, count := range shapes {
 		if shape == "" || count < 2 {
 			continue
