@@ -151,7 +151,25 @@ func publishedNativeFactsForCompilation(compilation front.Compilation, values, o
 	index.derived = append(index.derived, nilabilityNativeFacts(compilation)...)
 	index.derived = append(index.derived, aliasNativeFacts(compilation)...)
 	index.derived = append(index.derived, publicationIdentityFacts(compilation)...)
+	index.derived = append(index.derived, branchNativeFacts(compilation, closedBranchCoordinates(values))...)
+	index.derived = append(index.derived, frozenBodyNativeFacts(compilation)...)
+	index.derived = append(index.derived, metatableNativeFacts(compilation)...)
+	index.derived = append(index.derived, summaryNativeFacts(compilation)...)
 	return index
+}
+
+// closedBranchCoordinates names every branch the value closure already
+// partitioned. The WIR projection defers to those coordinates so one branch
+// never carries two verdicts.
+func closedBranchCoordinates(values []equation.Fact) map[string]bool {
+	closed := make(map[string]bool)
+	for _, fact := range values {
+		body, occurrence, _, ok := nativeBranchProof(fact.Key, "branch-proof/")
+		if ok {
+			closed[body+"/"+occurrence] = true
+		}
+	}
+	return closed
 }
 
 // Facts returns every published row in a deterministic order: lane, then key,

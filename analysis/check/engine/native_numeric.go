@@ -440,17 +440,25 @@ func numericBodyFacts(compilation front.Compilation) []NativeFact {
 			continue
 		}
 		constant := body.Const(wir.ConstRef(instruction.A.Ref))
-		if constant.Kind != wir.ConstNumber {
+		occurrence := fmt.Sprintf("op-%08d", index)
+		if assignments[key(instruction.Dst)] != 1 {
 			continue
 		}
-		occurrence := fmt.Sprintf("op-%08d", index)
-		if assignments[key(instruction.Dst)] == 1 {
+		switch constant.Kind {
+		case wir.ConstNumber:
 			representation := "float"
 			if numericLiteralIsInteger(constant.Number) {
 				representation = "integer"
 			}
 			out = append(out, row("constant_value", occurrence, subject(instruction.Dst), "representation="+representation+" value="+constant.Number))
 			out = append(out, row("representation", occurrence, subject(instruction.Dst), "exact=true representation="+representation))
+		case wir.ConstString:
+			// A string constant carries no numeric arm, so it publishes the
+			// constant alone: its machine word is a reference, not an integer or
+			// a float the representation family classifies.
+			out = append(out, row("constant_value", occurrence, subject(instruction.Dst), "representation=string value="+strconv.Quote(constant.Str)))
+		case wir.ConstBool:
+			out = append(out, row("constant_value", occurrence, subject(instruction.Dst), "representation=boolean value="+strconv.FormatBool(constant.Bool)))
 		}
 	}
 	return out

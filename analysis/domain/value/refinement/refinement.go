@@ -301,6 +301,21 @@ func isSubtypeCached(typeCache *typevalue.Cache, sub, super typ.Type) bool {
 	return subtype.IsSubtype(sub, super)
 }
 
+// TypeAdmitsTruthy reports whether a value of t may evaluate truthy under Lua
+// truthiness. It is the type-domain entry point to the same lattice CanBeTruthy
+// reaches through a product value, for a caller that already holds the resolved
+// type. A missing type admits truth.
+func TypeAdmitsTruthy(t typ.Type) bool {
+	return typeAdmitsTruthy(t, nil)
+}
+
+// TypeAdmitsFalsy reports whether a value of t may evaluate falsy under Lua
+// truthiness: only nil and false are falsy, so a string, a number and a table
+// admit no falsy value.
+func TypeAdmitsFalsy(t typ.Type) bool {
+	return typeAdmitsFalsy(t, nil)
+}
+
 func typeAdmitsTruthy(t typ.Type, typeCache *typevalue.Cache) bool {
 	return typeAdmitsTruthySeen(t, &typegraph.Path{}, typeCache)
 }

@@ -9990,14 +9990,23 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 // unchecked assertion still leaves its result claimed, while the operation's
 // nil throw arm remains a proven property of the lowered ClaimAssert itself.
 func claimAssertThrowTemplate(operation equation.BoundEquation, kind string) equation.Fact {
-	if kind != "claim-kind/2" {
+	if kind != claimAssertKind {
 		return equation.Fact{}
 	}
 	return equation.Fact{
 		Key:   "throw_template/" + operation.Target.Name,
-		Value: []byte("allocates=false;false_arm=passes;kind=claim_assert;nil_arm=throws;preserves_word_on_success=true"),
+		Value: []byte(claimAssertThrowTemplateValue),
 	}
 }
+
+const (
+	// claimAssertKind is the claim occurrence encoding of a non-nil assertion.
+	claimAssertKind = "claim-kind/2"
+	// claimAssertThrowTemplateValue is the single published spelling of that
+	// assertion's terminal contract, shared with the native projection of a
+	// frozen body so one occurrence never carries two vocabularies.
+	claimAssertThrowTemplateValue = "allocates=false;false_arm=passes;kind=claim_assert;nil_arm=throws;preserves_word_on_success=true"
+)
 
 // evalNodeKernel publishes only the structural operation named by a NodeEval
 // coordinate. It deliberately carries no type, dispatch, lifetime, or
@@ -15187,20 +15196,89 @@ func sendIsolationState(operation equation.BoundEquation, operands directCallOpe
 			return equation.TransactionResult{Complete: true}, true
 		}
 		payload := operands.arguments[2]
-		if isolationStatePresent(partition, isolationEscapedPrefix, payload) {
-			return sendIsolationDiagnostic(operation, "send payload has a proven escaping alias; zero-copy transfer is rejected"), true
-		}
-		if isolationStatePresent(partition, isolationFrozenPrefix, payload) {
-			return sendIsolationDiagnostic(operation, "send payload is proven immutable for zero-copy sharing"), true
-		}
 		value, known := resolveKnownCurrentValue(payload, partition)
-		if strings.HasPrefix(string(payload), "temp/") && known && isIsolatedLiteral(value) {
-			return sendIsolationDiagnostic(operation, "send payload is proven isolated for zero-copy transfer"), true
+		switch {
+		case isolationStatePresent(partition, isolationEscapedPrefix, payload):
+			return sendSafetyResult(operation, sendSafetyEscaped), true
+		case known && carriesClosureIdentity(value):
+			return sendSafetyResult(operation, sendSafetyCaptured), true
+		case isolationStatePresent(partition, isolationFrozenPrefix, payload):
+			return sendSafetyResult(operation, sendSafetyImmutable), true
+		case strings.HasPrefix(string(payload), "temp/") && known && isIsolatedLiteral(value):
+			return sendSafetyResult(operation, sendSafetyIsolated), true
+		default:
+			return sendSafetyResult(operation, sendSafetyUnproven), true
 		}
-		return sendIsolationDiagnostic(operation, "send payload is not proven isolated or immutable; runtime will copy"), true
 	default:
 		return equation.TransactionResult{}, false
 	}
+}
+
+// sendSafetyVerdict pairs the source-facing hint with the structural row a
+// native transfer consumer reads. The row names the transfer the runtime
+// performs and the deopt event classes the verdict is bound to, so admission
+// never depends on matching the message text.
+type sendSafetyVerdict struct {
+	message string
+	content string
+	events  string
+}
+
+var (
+	sendSafetyIsolated = sendSafetyVerdict{
+		message: "send payload is proven isolated for zero-copy transfer",
+		content: "copy_required=false transfer=move verdict=isolated",
+		events:  "escape,write.field",
+	}
+	sendSafetyImmutable = sendSafetyVerdict{
+		message: "send payload is proven immutable for zero-copy sharing",
+		content: "copy_required=false transfer=share verdict=immutable",
+	}
+	// The escape is what ended the payload's isolation, so the refutation names
+	// that class as the point the isolation was lost.
+	sendSafetyEscaped = sendSafetyVerdict{
+		message: "send payload has a proven escaping alias; zero-copy transfer is rejected",
+		content: "basis=owner_store copy_required=true verdict=escaped_refuted",
+		events:  "escape",
+	}
+	// A captured environment refutes the transfer by proof rather than leaving
+	// it unproven, so the row is a refutation while the hint stays the copy
+	// fallback the source-facing rule already reports.
+	sendSafetyCaptured = sendSafetyVerdict{
+		message: "send payload is not proven isolated or immutable; runtime will copy",
+		content: "basis=closure_capture copy_required=true verdict=escaped_refuted",
+	}
+	sendSafetyUnproven = sendSafetyVerdict{
+		message: "send payload is not proven isolated or immutable; runtime will copy",
+		content: "copy_required=true verdict=unproven_copy",
+	}
+)
+
+func sendSafetyResult(operation equation.BoundEquation, verdict sendSafetyVerdict) equation.TransactionResult {
+	key := "send_safety/" + operation.Target.Name
+	if verdict.events != "" {
+		key += "/contract-revocation/" + verdict.events
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
+		Values:      []equation.Fact{{Key: key, Value: []byte(verdict.content)}},
+		Diagnostics: []equation.Fact{{Key: "send.isolation/" + operation.Target.Name, Value: []byte(verdict.message)}},
+	}}
+}
+
+// carriesClosureIdentity is a refutation, not an absence of proof: a closed
+// payload whose member is a function transports that function's captured
+// environment across the actor boundary, and no transfer mode admits it.
+func carriesClosureIdentity(value []byte) bool {
+	table, ok := shapefact.DecodeTable(value)
+	if !ok || !table.Closed {
+		return false
+	}
+	for _, member := range table.Members {
+		if member.Present && strings.HasPrefix(member.Value, "scalar/function/") {
+			return true
+		}
+	}
+	return false
 }
 
 const (
