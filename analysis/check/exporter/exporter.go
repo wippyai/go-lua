@@ -330,10 +330,6 @@ func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]expo
 		relation.Conditional = conditional
 		return relation, relation.Valid()
 	}
-	if borrow, ok := borrowedParameters(fn, params); ok {
-		relation.Borrow = borrow
-		return relation, relation.Valid()
-	}
 	return exportrelation.Function{}, false
 }
 
@@ -520,99 +516,6 @@ func moduleCaptureStoreRelation(fn *ast.FunctionExpr, params map[string]int) (*e
 		return nil, false
 	}
 	return &exportrelation.OwnershipStore{Value: index, EscapingRoot: true}, true
-}
-
-// borrowedParameters admits a body that only reads its parameters. It makes no
-// call and no assignment, and every declared return type is a provable scalar,
-// so no parameter graph can be stored, sent, re-passed, or aliased out through
-// a returned value. Each parameter therefore stays frame-local at the caller.
-func borrowedParameters(fn *ast.FunctionExpr, params map[string]int) ([]int, bool) {
-	if fn == nil || len(params) == 0 || len(fn.ReturnTypes) == 0 {
-		return nil, false
-	}
-	for _, declared := range fn.ReturnTypes {
-		if !scalarReturnType(declared) {
-			return nil, false
-		}
-	}
-	if !readOnlyStatements(fn.Stmts) {
-		return nil, false
-	}
-	indices := make([]int, 0, len(params))
-	for _, index := range params {
-		indices = append(indices, index)
-	}
-	sort.Ints(indices)
-	return indices, true
-}
-
-// scalarReturnType reports whether a declared return type is a value that
-// cannot carry a table graph out of the wrapper.
-func scalarReturnType(expr ast.TypeExpr) bool {
-	switch value := expr.(type) {
-	case *ast.PrimitiveTypeExpr:
-		switch value.Name {
-		case "string", "number", "integer", "boolean", "nil":
-			return true
-		}
-		return false
-	case *ast.OptionalTypeExpr:
-		return scalarReturnType(value.Inner)
-	default:
-		return false
-	}
-}
-
-// readOnlyStatements reports whether a body contains no call and no assignment,
-// so it can neither retain nor mutate a parameter. Only return statements and
-// the branch structure that guards them are admitted.
-func readOnlyStatements(stmts []ast.Stmt) bool {
-	for _, stmt := range stmts {
-		switch value := stmt.(type) {
-		case *ast.ReturnStmt:
-			for _, expr := range value.Exprs {
-				if !readOnlyExpr(expr) {
-					return false
-				}
-			}
-		case *ast.IfStmt:
-			if !readOnlyExpr(value.Condition) || !readOnlyStatements(value.Then) || !readOnlyStatements(value.Else) {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// readOnlyExpr reports whether an expression performs no call, so evaluating it
-// cannot re-pass a parameter to an opaque callee.
-func readOnlyExpr(expr ast.Expr) bool {
-	switch value := expr.(type) {
-	case nil, *ast.IdentExpr, *ast.NumberExpr, *ast.StringExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr, *ast.Comma3Expr:
-		return true
-	case *ast.AttrGetExpr:
-		return readOnlyExpr(value.Object) && readOnlyExpr(value.Key)
-	case *ast.LogicalOpExpr:
-		return readOnlyExpr(value.Lhs) && readOnlyExpr(value.Rhs)
-	case *ast.RelationalOpExpr:
-		return readOnlyExpr(value.Lhs) && readOnlyExpr(value.Rhs)
-	case *ast.StringConcatOpExpr:
-		return readOnlyExpr(value.Lhs) && readOnlyExpr(value.Rhs)
-	case *ast.ArithmeticOpExpr:
-		return readOnlyExpr(value.Lhs) && readOnlyExpr(value.Rhs)
-	case *ast.UnaryMinusOpExpr:
-		return readOnlyExpr(value.Expr)
-	case *ast.UnaryNotOpExpr:
-		return readOnlyExpr(value.Expr)
-	case *ast.UnaryLenOpExpr:
-		return readOnlyExpr(value.Expr)
-	case *ast.UnaryBNotOpExpr:
-		return readOnlyExpr(value.Expr)
-	default:
-		return false
-	}
 }
 
 func forwardedImportedReturn(expr ast.Expr, params map[string]int, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Value, bool) {

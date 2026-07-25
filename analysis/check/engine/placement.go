@@ -624,30 +624,6 @@ func placementImportedStoreFacts(lexical *lexicalEvaluator, operation equation.B
 	return facts
 }
 
-// placementImportedBorrowFacts discharges the opaque-call fallback for the exact
-// formal positions a published read-only wrapper never retains. The relation is
-// admitted only after the module exporter proved the body stores, sends,
-// re-passes, and returns no parameter graph, so each borrowed argument keeps
-// whatever placement its own allocation proves.
-func placementImportedBorrowFacts(lexical *lexicalEvaluator, operation equation.BoundEquation, provider []byte, arguments [][]byte, partition equation.Partition) []equation.Fact {
-	function, application, ok := importedCallRelation(lexical, operation, provider, len(arguments))
-	if !ok || len(function.Borrow) == 0 {
-		return nil
-	}
-	var facts []equation.Fact
-	for _, index := range function.Borrow {
-		if index < 0 || index >= len(arguments) {
-			continue
-		}
-		allocation, found := placementAllocationForTerm(arguments[index], partition)
-		if !found {
-			continue
-		}
-		facts = append(facts, placementContractFact(allocation.Identity, "borrow", application))
-	}
-	return facts
-}
-
 // typedChannelReceiver admits the channel send placement boundary only when
 // the receiver's payload contract has already been published. An untyped
 // lookalike send remains opaque and therefore cannot gain a sharing proof.
