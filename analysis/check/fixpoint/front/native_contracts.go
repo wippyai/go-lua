@@ -16,8 +16,14 @@ import (
 )
 
 type NativeContract struct {
-	Family      string
-	Value       string
+	Family string
+	Value  string
+	// Subject is the closed term encoding of the binding the contract concerns,
+	// in the same spelling the equations publish an operand term in. Publication
+	// anchors the row on it, so a source display name reaches the consumer
+	// without a second name resolution. It is empty when no single binding owns
+	// the row.
+	Subject     string
 	Revocations []string
 }
 
@@ -321,41 +327,11 @@ func nativeContracts(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
 // receiver is a local literal binding in the same lexical body.  It deliberately
 // does not model aliases, dynamic keys, or an optional field's absent shape.
 // Those cases have no unique physical layout and must remain un-published.
+// Entry ownership belongs to the WIR publisher next to record_construction:
+// only the resolved lowering names the producer each entry value came from.
 func recordNativeContracts(stmts []ast.Stmt) []NativeContract {
 	var out []NativeContract
 	shapes := make(map[string]int)
-	factories := make(map[string]bool)
-	var collectFactories func([]ast.Stmt)
-	collectFactories = func(body []ast.Stmt) {
-		for _, stmt := range body {
-			var name string
-			var fn *ast.FunctionExpr
-			switch item := stmt.(type) {
-			case *ast.FuncDefStmt:
-				fn = item.Func
-				if item.Name != nil {
-					if ident, ok := item.Name.Func.(*ast.IdentExpr); ok {
-						name = ident.Value
-					}
-				}
-			case *ast.LocalAssignStmt:
-				if len(item.Names) == 1 && len(item.Exprs) == 1 {
-					name, _ = item.Names[0], true
-					fn, _ = item.Exprs[0].(*ast.FunctionExpr)
-				}
-			}
-			if fn == nil {
-				continue
-			}
-			if len(fn.Stmts) == 1 {
-				if returned, ok := fn.Stmts[0].(*ast.ReturnStmt); ok && len(returned.Exprs) == 1 {
-					_, factories[name] = returned.Exprs[0].(*ast.TableExpr)
-				}
-			}
-			collectFactories(fn.Stmts)
-		}
-	}
-	collectFactories(stmts)
 
 	var walkExpr func(ast.Expr, map[string]string)
 	var walkStmts func([]ast.Stmt, map[string]string)
@@ -377,33 +353,6 @@ func recordNativeContracts(stmts []ast.Stmt) []NativeContract {
 			fields = append(fields, name)
 		}
 		sort.Strings(fields)
-		// A literal nested directly in an entry is a freshly produced child.
-		// Its edge is explicit in the closed constructor topology, so it may
-		// carry the write barrier and the exact field-write deopt class.
-		for _, field := range table.Fields {
-			if _, nested := field.Value.(*ast.TableExpr); !nested {
-				continue
-			}
-			name := ast.KeyName(field.Key)
-			if name == "" {
-				continue
-			}
-			out = append(out, NativeContract{Family: "record_entry_ownership", Value: "field=" + name + " ownership=move producer_bound=true write_barrier=required", Revocations: []string{"write.field"}})
-		}
-		for _, field := range table.Fields {
-			call, ok := field.Value.(*ast.FuncCallExpr)
-			if !ok {
-				continue
-			}
-			callee, ok := call.Func.(*ast.IdentExpr)
-			if !ok || !factories[callee.Value] {
-				continue
-			}
-			name := ast.KeyName(field.Key)
-			if name != "" {
-				out = append(out, NativeContract{Family: "record_entry_ownership", Value: "field=" + name + " ownership=move producer_bound=true write_barrier=required", Revocations: []string{"write.field"}})
-			}
-		}
 		return strings.Join(fields, ","), true
 	}
 	written := func(stmt *ast.AssignStmt) (string, bool) {

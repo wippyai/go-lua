@@ -461,18 +461,31 @@ func publishedNativeContracts(compilation front.Compilation) []equation.Fact {
 		if contract.Family == "" || contract.Value == "" {
 			continue
 		}
-		if len(contract.Revocations) == 0 {
-			values = append(values, equation.Fact{Key: fmt.Sprintf("%s/contract/%08d", contract.Family, index), Value: []byte(contract.Value)})
-			continue
+		key := fmt.Sprintf("%s/contract/%08d", contract.Family, index)
+		// The subject stays a key segment so the ordinary anchor scan recovers
+		// the term and its source display name from published data alone.
+		if contract.Subject != "" {
+			key += "/" + contract.Subject
 		}
-		for _, event := range contract.Revocations {
-			if event == "" {
-				continue
-			}
-			values = append(values, equation.Fact{Key: fmt.Sprintf("%s/contract/%08d/contract-revocation/%s", contract.Family, index, event), Value: []byte(contract.Value)})
+		// A contract with several invalidators is one grant with a set of deopt
+		// points, so its whole class set travels in one key suffix. Emitting a
+		// fact per event would publish the same grant several times over.
+		if events := nativeContractEvents(contract.Revocations); events != "" {
+			key += "/contract-revocation/" + events
 		}
+		values = append(values, equation.Fact{Key: key, Value: []byte(contract.Value)})
 	}
 	return values
+}
+
+func nativeContractEvents(revocations []string) string {
+	events := make([]string, 0, len(revocations))
+	for _, event := range revocations {
+		if event != "" {
+			events = append(events, event)
+		}
+	}
+	return strings.Join(events, ",")
 }
 
 func publishedPolicyDiagnostics(diagnostics []front.ControlDiagnostic) []PublishedDiagnostic {

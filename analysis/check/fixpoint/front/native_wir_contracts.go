@@ -44,6 +44,9 @@ func nativeWIRContracts(root Compilation) []NativeContract {
 		if contracts[i].Value != contracts[j].Value {
 			return contracts[i].Value < contracts[j].Value
 		}
+		if contracts[i].Subject != contracts[j].Subject {
+			return contracts[i].Subject < contracts[j].Subject
+		}
 		return strings.Join(contracts[i].Revocations, "/") < strings.Join(contracts[j].Revocations, "/")
 	})
 	return contracts
@@ -109,34 +112,137 @@ func nativeShapeContracts(compilation Compilation) []NativeContract {
 	return append(contracts, nativeShapeTransitionContracts(body)...)
 }
 
+// nativeOwnershipRevocations is the closed deopt class set of a fresh record
+// the body owns.  Each class ends the disposition for a different reason: an
+// escape gives the allocation a second owner, an opaque callee can reach and
+// mutate everything the allocation holds, and a metatable turns a direct slot
+// store into a dispatch.
+var nativeOwnershipRevocations = []string{"escape", "call.opaque", "meta.set"}
+
 func nativeRecordConstructionContracts(body *wir.Body) []NativeContract {
 	escaped := nativeEscapedTableConstructors(body)
+	owned := nativeOwnedTableConstructors(body)
 	products := nativeMultiplicationResults(body)
+	// produced carries the operands this body has already produced at each
+	// instruction, so a constructor reads the entry producers that were live
+	// where it ran rather than a whole-body summary.
+	produced := make(map[wir.Operand]bool)
 	var contracts []NativeContract
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
-		if instruction.Op != wir.OpMakeTable || !instruction.StaticStringKeysComplete {
-			continue
-		}
-		entries := body.TableEntries(instruction.TableEntries)
-		direct := 0
-		for _, entry := range entries {
-			if _, ok := segment.DirectFieldName(entry.Suffix.Segments); ok {
-				direct++
+		switch instruction.Op {
+		case wir.OpMakeTable:
+			contracts = append(contracts, nativeRecordConstructorContracts(body, instruction, index, escaped, owned, products, produced)...)
+			nativeSetProduced(produced, instruction.Dst, true)
+		case wir.OpCall:
+			for _, result := range body.Operands(instruction.Results) {
+				nativeSetProduced(produced, result, true)
 			}
+		case wir.OpAssign, wir.OpClaim:
+			nativeSetProduced(produced, instruction.Dst, produced[instruction.A])
+		default:
+			nativeSetProduced(produced, instruction.Dst, false)
 		}
-		if direct == 0 {
-			continue
-		}
-		// Every entry is already an exact WIR constructor slot.  The row says
-		// nothing about optional-field presence beyond what the literal wrote.
-		contract := NativeContract{Family: "record_construction", Value: nativeRecordConstructionValue(body, entries, direct, products)}
-		if escaped[index] {
-			contract.Revocations = []string{"escape"}
-		}
-		contracts = append(contracts, contract)
 	}
 	return contracts
+}
+
+func nativeRecordConstructorContracts(body *wir.Body, instruction wir.Instruction, index int, escaped, owned map[int]bool, products map[wir.Operand]bool, produced map[wir.Operand]bool) []NativeContract {
+	if !instruction.StaticStringKeysComplete {
+		return nil
+	}
+	entries := body.TableEntries(instruction.TableEntries)
+	direct := 0
+	for _, entry := range entries {
+		if _, ok := segment.DirectFieldName(entry.Suffix.Segments); ok {
+			direct++
+		}
+	}
+	if direct == 0 {
+		return nil
+	}
+	edges := nativeRecordEntryEdges(entries, produced)
+	// Every entry is already an exact WIR constructor slot.  The row says
+	// nothing about optional-field presence beyond what the literal wrote.
+	contract := NativeContract{
+		Family:  "record_construction",
+		Value:   nativeRecordConstructionValue(body, entries, direct, products, edges, owned[index]),
+		Subject: nativeOperandSubject(body, instruction.Dst),
+	}
+	switch {
+	case owned[index]:
+		contract.Revocations = nativeOwnershipRevocations
+	case escaped[index]:
+		contract.Revocations = []string{"escape"}
+	}
+	contracts := make([]NativeContract, 0, 1+len(edges))
+	contracts = append(contracts, contract)
+	for _, edge := range edges {
+		contracts = append(contracts, NativeContract{
+			Family:      "record_entry_ownership",
+			Value:       fmt.Sprintf("field=%s ownership=%s producer_bound=true write_barrier=required", edge.field, edge.ownership()),
+			Revocations: []string{"write.field"},
+		})
+	}
+	return contracts
+}
+
+// nativeRecordEntryEdge is one constructor entry whose value this body produced
+// and can therefore name a producer for.  The first edge that consumes such a
+// value moves it into the slot; a later edge to the same value cannot move it a
+// second time and retains it instead.
+type nativeRecordEntryEdge struct {
+	field string
+	moved bool
+}
+
+func (edge nativeRecordEntryEdge) ownership() string {
+	if edge.moved {
+		return "move"
+	}
+	return "retain"
+}
+
+func nativeRecordEntryEdges(entries []wir.TableEntry, produced map[wir.Operand]bool) []nativeRecordEntryEdge {
+	var edges []nativeRecordEntryEdge
+	consumed := make(map[wir.Operand]bool, len(entries))
+	for _, entry := range entries {
+		field, ok := segment.DirectFieldName(entry.Suffix.Segments)
+		if !ok || field == "" || !produced[entry.Value] {
+			continue
+		}
+		edges = append(edges, nativeRecordEntryEdge{field: field, moved: !consumed[entry.Value]})
+		consumed[entry.Value] = true
+	}
+	return edges
+}
+
+// nativeSetProduced records whether an operand currently holds a value this
+// body produced.  Only a named binding or a temporary can carry one; a
+// destination written from anything else drops the association.
+func nativeSetProduced(produced map[wir.Operand]bool, operand wir.Operand, holds bool) {
+	if operand.Kind != wir.OperandPath && operand.Kind != wir.OperandTemp {
+		return
+	}
+	if holds {
+		produced[operand] = true
+		return
+	}
+	delete(produced, operand)
+}
+
+// nativeOperandSubject spells the closed term of a named binding exactly as the
+// equations publish it, so publication can anchor a contract row on the same
+// term the value closure already carries a display name for.
+func nativeOperandSubject(body *wir.Body, operand wir.Operand) string {
+	if operand.Kind != wir.OperandPath {
+		return ""
+	}
+	key := body.Path(wir.PathRef(operand.Ref)).Key()
+	if key == "" {
+		return ""
+	}
+	return "path/" + string(key)
 }
 
 // nativeRecordConstructionValue reads the storage class of each entry from the
@@ -144,7 +250,11 @@ func nativeRecordConstructionContracts(body *wir.Body) []NativeContract {
 // slot; an entry produced by a multiplication keeps both runtime number arms,
 // because an integer product may promote.  Neither is read from a source
 // spelling: an entry whose producer is not resolved adds nothing.
-func nativeRecordConstructionValue(body *wir.Body, entries []wir.TableEntry, direct int, products map[wir.Operand]bool) string {
+//
+// The allocation is always this body's own constructor, so the row is fresh.
+// Its outgoing entry edges, their duplicate targets and their lowering order
+// are read off the resolved entry list, never re-parsed from source.
+func nativeRecordConstructionValue(body *wir.Body, entries []wir.TableEntry, direct int, products map[wir.Operand]bool, edges []nativeRecordEntryEdge, owned bool) string {
 	value := fmt.Sprintf("entries=%d entry_storage=committed", direct)
 	boolean, multiplication := false, false
 	for _, entry := range entries {
@@ -161,7 +271,47 @@ func nativeRecordConstructionValue(body *wir.Body, entries []wir.TableEntry, dir
 	if multiplication {
 		value += " field_carrier=numeric_union overflow=promote_integer_to_number"
 	}
+	if len(edges) != 0 {
+		duplicates := 0
+		for _, edge := range edges {
+			if !edge.moved {
+				duplicates++
+			}
+		}
+		value += fmt.Sprintf(" duplicate_children=%d edges=%d", duplicates, len(edges))
+	}
+	if nativeEntriesInLoweringOrder(entries) {
+		value += " evaluation_order=preserved"
+	}
+	value += " fresh=true"
+	if owned {
+		value += " ownership=move"
+	}
 	return value
+}
+
+// nativeEntriesInLoweringOrder reports that the resolved entry list runs in
+// source order.  An entry without a span, or one lowered ahead of an entry
+// written before it, leaves the order unproven.
+func nativeEntriesInLoweringOrder(entries []wir.TableEntry) bool {
+	previous := wir.Span{}
+	for _, entry := range entries {
+		if !entry.ValueSpan.Valid() {
+			return false
+		}
+		if previous.Valid() && nativeSpanPrecedes(entry.ValueSpan, previous) {
+			return false
+		}
+		previous = entry.ValueSpan
+	}
+	return len(entries) != 0
+}
+
+func nativeSpanPrecedes(span, other wir.Span) bool {
+	if span.StartLine != other.StartLine {
+		return span.StartLine < other.StartLine
+	}
+	return span.StartCol < other.StartCol
 }
 
 // nativeMultiplicationResults names every operand a multiplication writes.
@@ -228,6 +378,65 @@ func nativeEscapedTableConstructors(body *wir.Body) map[int]bool {
 		}
 	}
 	return escaped
+}
+
+// nativeOwnedTableConstructors names every constructor whose allocation stays
+// this body's own storage.  The disposition is the license the body already
+// exercises: it stores into the allocation's members in place, through one
+// binding, without a guard.  A second root assigned from the constructor gives
+// the storage a second reachable owner and withdraws the proof, and a
+// constructor the body only reads or hands on carries no ownership at all.
+func nativeOwnedTableConstructors(body *wir.Body) map[int]bool {
+	owned := make(map[int]bool)
+	if body == nil {
+		return owned
+	}
+	rootKey := func(operand wir.Operand) string {
+		if operand.Kind != wir.OperandPath {
+			return ""
+		}
+		item := body.Path(wir.PathRef(operand.Ref))
+		item.Segments = nil
+		item.Version = 0
+		return string(item.Key())
+	}
+	constructors := make(map[string]int)
+	owners := make(map[int]int)
+	written := make(map[int]bool)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		switch instruction.Op {
+		case wir.OpMakeTable:
+			if key := rootKey(instruction.Dst); key != "" {
+				constructors[key] = index
+				owners[index]++
+			}
+		case wir.OpAssign:
+			destination := rootKey(instruction.Dst)
+			if destination == "" {
+				continue
+			}
+			source, found := constructors[rootKey(instruction.A)]
+			if !found {
+				delete(constructors, destination)
+				continue
+			}
+			if current, held := constructors[destination]; !held || current != source {
+				owners[source]++
+			}
+			constructors[destination] = source
+		case wir.OpStaticMemberWrite:
+			if source, found := constructors[rootKey(instruction.Dst)]; found {
+				written[source] = true
+			}
+		}
+	}
+	for index := range written {
+		if owners[index] == 1 {
+			owned[index] = true
+		}
+	}
+	return owned
 }
 
 // nativePhysicalRecordShape accepts only a closed, presence-complete record.

@@ -148,6 +148,7 @@ func publishedNativeFactsForCompilation(compilation front.Compilation, values, o
 	index := publishedNativeFacts(compilation.Artifact, values, outcomes, diagnostics)
 	index.compilation = &compilation
 	index.derived = append(numericNativeFacts(compilation), tableNativeFacts(compilation)...)
+	index.derived = append(index.derived, elementNativeFacts(compilation)...)
 	index.derived = append(index.derived, nilabilityNativeFacts(compilation)...)
 	index.derived = append(index.derived, aliasNativeFacts(compilation)...)
 	index.derived = append(index.derived, branchNativeFacts(compilation, closedBranchCoordinates(values))...)
@@ -279,14 +280,24 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 		memberIdentityPrefix = "heap/member-identity/"
 		metaAttachedPrefix   = "heap/meta-attached/"
 		indexPresencePrefix  = "heap/index-presence/"
+		callArgumentPrefix   = "call-argument/"
 		freezePrefix         = "effect.freeze/"
 		branchProofPrefix    = "branch-proof/"
 	)
 	type identityAnchor struct{ term, subject string }
+	type memberRead struct{ identity, member, occurrence string }
+	type sealedClaim struct {
+		attributes []string
+		row        NativeFact
+	}
 
 	identityAnchors := make(map[string]identityAnchor)
+	identityTerms := make(map[string]map[string]bool)
 	closed := make(map[string]NativeFact)
 	attached := make(map[string]bool)
+	attachReceivers := make(map[string]map[string]bool)
+	callArguments := make(map[string][]string)
+	var memberReads []memberRead
 	initialMembers := make(map[string]map[string]bool)
 	laterMembers := make(map[string]bool)
 	children := make(map[string]map[string]bool)
@@ -300,6 +311,7 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 		case strings.HasPrefix(fact.Key, tableIdentityPrefix):
 			if fact.Term != "" && fact.Value != "" {
 				identityAnchors[fact.Value] = identityAnchor{term: fact.Term, subject: fact.Subject}
+				identityTerms[fact.Term] = nativeSetAdd(identityTerms[fact.Term], base64.RawURLEncoding.EncodeToString([]byte(fact.Value)))
 			}
 		case strings.HasPrefix(fact.Key, tableClosedPrefix) && fact.Value == "closed":
 			identity, occurrence, ok := nativeIdentityOccurrence(fact.Key, tableClosedPrefix)
@@ -311,22 +323,28 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 				}
 			}
 		case strings.HasPrefix(fact.Key, metaAttachedPrefix) && fact.Value == "attached":
-			identity, _, ok := nativeIdentityOccurrence(fact.Key, metaAttachedPrefix)
+			identity, occurrence, ok := nativeIdentityOccurrence(fact.Key, metaAttachedPrefix)
 			if ok {
 				attached[identity] = true
+				attachReceivers[occurrence] = nativeSetAdd(attachReceivers[occurrence], identity)
 			}
 		case strings.HasPrefix(fact.Key, memberPrefix):
+			// Rows arrive in key order, so a member is read before the close of
+			// its own allocation. The key set is resolved once every close is
+			// known, below.
 			identity, member, occurrence, ok := nativeMemberOccurrence(fact.Key, memberPrefix)
-			if !ok {
-				continue
-			}
-			if close, found := closed[identity]; found && occurrence == close.Occurrence {
-				initialMembers[identity] = nativeSetAdd(initialMembers[identity], member)
+			if ok {
+				memberReads = append(memberReads, memberRead{identity: identity, member: member, occurrence: occurrence})
 			}
 		case strings.HasPrefix(fact.Key, memberIdentityPrefix):
 			parent, _, _, ok := nativeMemberOccurrence(fact.Key, memberIdentityPrefix)
 			if ok && fact.Value != "" {
 				children[parent] = nativeSetAdd(children[parent], base64.RawURLEncoding.EncodeToString([]byte(fact.Value)))
+			}
+		case strings.HasPrefix(fact.Key, callArgumentPrefix):
+			occurrence, position, found := strings.Cut(strings.TrimPrefix(fact.Key, callArgumentPrefix), "/")
+			if found && occurrence != "" && position != "" && !strings.Contains(position, "/") && fact.Value != "" {
+				callArguments[occurrence] = append(callArguments[occurrence], fact.Value)
 			}
 		case strings.HasPrefix(fact.Key, freezePrefix):
 			term, _, ok := nativeFreezeTerm(fact.Key, freezePrefix)
@@ -336,43 +354,62 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 		}
 	}
 
-	// A member first published after the close changes the key set. Re-reads of
-	// a member that was already present do not invalidate the closed allocation.
-	for _, fact := range facts {
-		if fact.Lane != NativeLaneValues || !strings.HasPrefix(fact.Key, memberPrefix) {
+	// The members published at the close occurrence are the allocation's initial
+	// key set. A member first published after the close changes that key set;
+	// re-reads of a member that was already present do not.
+	for _, read := range memberReads {
+		if close, found := closed[read.identity]; found && read.occurrence == close.Occurrence {
+			initialMembers[read.identity] = nativeSetAdd(initialMembers[read.identity], read.member)
+		}
+	}
+	for _, read := range memberReads {
+		close, found := closed[read.identity]
+		if !found || read.occurrence <= close.Occurrence {
 			continue
 		}
-		identity, member, occurrence, ok := nativeMemberOccurrence(fact.Key, memberPrefix)
-		if !ok {
-			continue
+		if !initialMembers[read.identity][read.member] {
+			laterMembers[read.identity] = true
 		}
-		close, found := closed[identity]
-		if !found || occurrence <= close.Occurrence {
-			continue
-		}
-		if !initialMembers[identity][member] {
-			laterMembers[identity] = true
+	}
+
+	// A metatable attach names its receiver and publishes the same call's
+	// argument terms at the same coordinate, so the installed metatable is the
+	// argument that is not the receiver. That table's key set is read through
+	// `__index` dispatch, and so is the key set of every table reachable from it.
+	// Dispatch ends at a mutation of the metatable itself, a class no attribute
+	// of a sealed row establishes, so those allocations publish no seal at all.
+	metatables := make(map[string]bool)
+	for occurrence, receivers := range attachReceivers {
+		for _, argument := range callArguments[occurrence] {
+			for identity := range identityTerms[argument] {
+				if !receivers[identity] {
+					markNativeReachable(identity, children, metatables)
+				}
+			}
 		}
 	}
 
 	rows := make([]NativeFact, 0)
-	sealed := make(map[string]NativeFact)
+	claims := make(map[string]sealedClaim)
 	for identity, source := range closed {
-		if attached[identity] || laterMembers[identity] {
+		if metatables[identity] || laterMembers[identity] {
 			continue
 		}
 		anchor, anchored := identityAnchors[nativeDecodedIdentity(identity)]
 		if !anchored {
 			continue
 		}
-		row := NativeFact{
-			Lane: NativeLaneValues, Family: "sealed_table",
-			Key:   "sealed_table/" + identity + "/" + source.Occurrence,
-			Value: "closed=true key_set=complete sealed=true",
-			Term:  anchor.term, Subject: anchor.subject, Occurrence: source.Occurrence,
-			Trust: NativeTrustProven,
+		// An allocation that receives a metatable keeps the seal it holds before
+		// the install: up to that point no metatable is attached. The complete
+		// key set is not published for it, because an installed `__index` makes
+		// an absent-key read observable.
+		attributes := []string{"closed=true", "key_set=complete", "sealed=true"}
+		if attached[identity] {
+			attributes = []string{"sealed=true", "shape=pre_install"}
 		}
-		sealed[identity] = row
+		row := nativeSealedRow("sealed_table/"+identity+"/"+source.Occurrence, attributes,
+			anchor.term, anchor.subject, source.Occurrence)
+		claims[identity] = sealedClaim{attributes: attributes, row: row}
 		rows = append(rows, row)
 	}
 
@@ -381,24 +418,29 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 	frozen := make(map[string]bool)
 	for identity, anchor := range identityAnchors {
 		if frozenTerms[anchor.term] {
-			markFrozenIdentity(base64.RawURLEncoding.EncodeToString([]byte(identity)), children, frozen)
+			markNativeReachable(base64.RawURLEncoding.EncodeToString([]byte(identity)), children, frozen)
 		}
 	}
 	for identity := range frozen {
-		row, found := sealed[identity]
+		claim, found := claims[identity]
 		if !found {
 			continue
 		}
-		row.Key = "sealed_table/" + identity + "/frozen/" + row.Occurrence
-		row.Value = "closed=true depth=deep frozen=true sealed=true key_set=complete"
-		rows = append(rows, row)
+		rows = append(rows, nativeSealedRow("sealed_table/"+identity+"/frozen/"+claim.row.Occurrence,
+			append(append([]string(nil), claim.attributes...), "depth=deep", "frozen=true"),
+			claim.row.Term, claim.row.Subject, claim.row.Occurrence))
 	}
 
+	// An index the value closure proved present publishes the same guarded-read
+	// contract the WIR projection publishes for a declared array parameter, in
+	// the same deopt vocabulary. The two substrates prove presence for disjoint
+	// containers — one an allocation identity this evaluation closed, the other
+	// an opaque-origin binding — so the family keeps one contract spelling.
 	for _, fact := range facts {
 		if fact.Lane != NativeLaneValues || !strings.HasPrefix(fact.Key, indexPresencePrefix) || fact.Value != "proven" {
 			continue
 		}
-		identity, index, occurrence, ok := nativeIndexOccurrence(fact.Key, indexPresencePrefix)
+		identity, index, occurrence, ok := nativeMemberOccurrence(fact.Key, indexPresencePrefix)
 		if !ok {
 			continue
 		}
@@ -408,7 +450,8 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 		}
 		rows = append(rows, NativeFact{
 			Lane: NativeLaneValues, Family: "table_element",
-			Key:   "table_element/" + identity + "/" + index + "/" + occurrence,
+			Key: "table_element/" + identity + "/" + index + "/" + occurrence +
+				"/contract-revocation/" + strings.Join(nativeGuardedElementDeopts, ","),
 			Value: "presence=proven result_nilability=non_nil",
 			Term:  anchor.term, Subject: anchor.subject, Occurrence: occurrence,
 			Trust: NativeTrustProven,
@@ -432,7 +475,52 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 			Value: value, Occurrence: occurrence, Trust: NativeTrustProven,
 		})
 	}
-	return rows
+	return coalesceNativeContractRevocations(rows)
+}
+
+// nativeSealedDeopts is the closed vocabulary of a sealed-table claim: every
+// attribute a row may assert, and the deopt class that ends it. A published row
+// carries exactly the classes of the attributes it asserts, so a consumer that
+// acts on the row installs a guard for every way the row can stop holding.
+var nativeSealedDeopts = []struct{ attribute, event string }{
+	// A complete static key set ends at a field store.
+	{"key_set=complete", "write.field"},
+	// An absent metatable ends at a metatable install.
+	{"sealed=true", "meta.set"},
+	// A pre-install physical shape ends at the transition the install performs.
+	{"shape=pre_install", "shape.transition"},
+}
+
+// nativeSealedRow publishes one sealed-table claim. The attributes are the whole
+// content of the row, and they alone name the row's revocation set: the key
+// carries the deopt classes in the transport spelling the contract coalescer
+// splits, so a claim with several invalidators stays one row.
+func nativeSealedRow(stem string, attributes []string, term, subject, occurrence string) NativeFact {
+	sorted := append([]string(nil), attributes...)
+	sort.Strings(sorted)
+	key := stem
+	if events := nativeSealedDeoptEvents(sorted); events != "" {
+		key += "/contract-revocation/" + events
+	}
+	return NativeFact{
+		Lane: NativeLaneValues, Family: "sealed_table",
+		Key: key, Value: strings.Join(sorted, " "),
+		Term: term, Subject: subject, Occurrence: occurrence,
+		Trust: NativeTrustProven,
+	}
+}
+
+func nativeSealedDeoptEvents(attributes []string) string {
+	events := make([]string, 0, len(nativeSealedDeopts))
+	for _, deopt := range nativeSealedDeopts {
+		for _, attribute := range attributes {
+			if attribute == deopt.attribute {
+				events = append(events, deopt.event)
+				break
+			}
+		}
+	}
+	return strings.Join(events, ",")
 }
 
 func nativeSetAdd(set map[string]bool, value string) map[string]bool {
@@ -443,13 +531,16 @@ func nativeSetAdd(set map[string]bool, value string) map[string]bool {
 	return set
 }
 
-func markFrozenIdentity(identity string, children map[string]map[string]bool, frozen map[string]bool) {
-	if frozen[identity] {
+// markNativeReachable closes a marked set over the published ownership graph:
+// an identity carries its mark to every identity published as one of its member
+// values.
+func markNativeReachable(identity string, children map[string]map[string]bool, marked map[string]bool) {
+	if marked[identity] {
 		return
 	}
-	frozen[identity] = true
+	marked[identity] = true
 	for child := range children[identity] {
-		markFrozenIdentity(child, children, frozen)
+		markNativeReachable(child, children, marked)
 	}
 }
 
@@ -472,10 +563,6 @@ func nativeMemberOccurrence(key, prefix string) (identity, member, occurrence st
 		return "", "", "", false
 	}
 	return parts[0], parts[1], parts[2], true
-}
-
-func nativeIndexOccurrence(key, prefix string) (identity, index, occurrence string, ok bool) {
-	return nativeMemberOccurrence(key, prefix)
 }
 
 func nativeFreezeTerm(key, prefix string) (term, occurrence string, ok bool) {

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -426,36 +427,25 @@ func numericBodyFacts(compilation front.Compilation) []NativeFact {
 }
 
 // publishedConstantValues publishes the exact machine word a single-assignment
-// literal write installs. It belongs to the ordinary value closure: `42` and
-// `42.0` are different machine words, so the constant is a conclusion every
-// consumer reads at the same public cut, not a native side channel. A binding
-// written more than once has no single constant and is withheld.
+// write installs. It belongs to the ordinary value closure: `42` and `42.0` are
+// different machine words, so the constant is a conclusion every consumer reads
+// at the same public cut, not a native side channel. The word comes from the
+// body's constant lattice, so a literal reaches through the bindings it is
+// copied and computed into rather than stopping at the first one.
 func publishedConstantValues(root front.Compilation) []equation.Fact {
 	var rows []equation.Fact
 	var visit func(front.Compilation)
 	visit = func(compilation front.Compilation) {
-		body := compilation.WIR
-		if body != nil {
-			assignments := nativeAssignmentCounts(body)
+		if body := compilation.WIR; body != nil {
+			folded := nativeFoldedConstants(body)
 			for index := 0; index < body.Len(); index++ {
-				instruction := body.Instr(index)
-				representation, ok := nativeConstantRepresentation(body, instruction, assignments)
+				word, ok := folded[index]
 				if !ok {
 					continue
 				}
-				constant := body.Const(wir.ConstRef(instruction.A.Ref))
-				value := ""
-				switch constant.Kind {
-				case wir.ConstNumber:
-					value = constant.Number
-				case wir.ConstString:
-					value = strconv.Quote(constant.Str)
-				case wir.ConstBool:
-					value = strconv.FormatBool(constant.Bool)
-				}
 				rows = append(rows, equation.Fact{
 					Key:   fmt.Sprintf("constant_value/%x/op-%08d", compilation.Body, index),
-					Value: []byte("representation=" + representation + " value=" + value),
+					Value: []byte("representation=" + word.representation + " value=" + word.text),
 				})
 			}
 		}
@@ -465,6 +455,284 @@ func publishedConstantValues(root front.Compilation) []equation.Fact {
 	}
 	visit(root)
 	return rows
+}
+
+// nativeConstantWord is an exactly known machine word: the representation arm
+// and the published spelling, together with the numeric payload arithmetic
+// folding reads. A word carries a payload only when its exact value is known,
+// so a spelling this cannot evaluate still names a value but never feeds an
+// operation.
+type nativeConstantWord struct {
+	representation string
+	text           string
+	integer        int64
+	float          float64
+	hasInteger     bool
+	hasFloat       bool
+}
+
+// floatValue reads the word on the float arm. An integer word converts only
+// while the conversion is exact: beyond the 53-bit mantissa the float is a
+// different value than the integer it came from.
+func (word nativeConstantWord) floatValue() (float64, bool) {
+	if word.hasFloat {
+		return word.float, true
+	}
+	if word.hasInteger && word.integer >= -(1<<53) && word.integer <= 1<<53 {
+		return float64(word.integer), true
+	}
+	return 0, false
+}
+
+// nativeFoldedConstants folds the body's constant lattice and maps each
+// instruction index to the machine word its write installs. Literal writes seed
+// the lattice; copies and exactly evaluable arithmetic propagate it. The lattice
+// fails closed: an operand that does not resolve, a destination written more
+// than once, a binding a nested closure captures, and an operation whose exact
+// result this cannot name all stop the fold rather than approximate it.
+func nativeFoldedConstants(body *wir.Body) map[int]nativeConstantWord {
+	writes := nativeConstantWriteCounts(body)
+	captured := nativeCapturedBindings(body)
+	known := make(map[string]nativeConstantWord)
+	folded := make(map[int]nativeConstantWord)
+	resolve := func(item wir.Operand) (nativeConstantWord, bool) {
+		if item.Kind == wir.OperandConst {
+			return nativeLiteralWord(body.Const(wir.ConstRef(item.Ref)))
+		}
+		name := nativeOperandKey(body, item)
+		if name == "" {
+			return nativeConstantWord{}, false
+		}
+		word, ok := known[name]
+		return word, ok
+	}
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		var word nativeConstantWord
+		ok := false
+		switch instruction.Op {
+		case wir.OpAssign:
+			word, ok = resolve(instruction.A)
+		case wir.OpUnOp:
+			if operand, resolved := resolve(instruction.A); resolved {
+				word, ok = nativeFoldUnary(instruction.Operator, operand)
+			}
+		case wir.OpBinOp:
+			left, leftOK := resolve(instruction.A)
+			right, rightOK := resolve(instruction.B)
+			if leftOK && rightOK {
+				word, ok = nativeFoldBinary(instruction.Operator, left, right)
+			}
+		}
+		if !ok {
+			continue
+		}
+		// The word is the one this write installs, so a destination whose other
+		// writes are outside this body's reach carries no single constant.
+		name := nativeOperandKey(body, instruction.Dst)
+		if name == "" || writes[name] != 1 || captured[name] {
+			continue
+		}
+		known[name] = word
+		folded[index] = word
+	}
+	return folded
+}
+
+// nativeLiteralWord reads a lowered literal into a machine word. The number arm
+// keeps the source spelling as its text, so an integral float stays distinct
+// from the integer of the same value.
+func nativeLiteralWord(constant wir.Const) (nativeConstantWord, bool) {
+	switch constant.Kind {
+	case wir.ConstNumber:
+		if numericLiteralIsInteger(constant.Number) {
+			value, err := strconv.ParseInt(constant.Number, 10, 64)
+			return nativeConstantWord{representation: "integer", text: constant.Number, integer: value, hasInteger: err == nil}, true
+		}
+		value, err := strconv.ParseFloat(constant.Number, 64)
+		exact := err == nil && !math.IsInf(value, 0) && !math.IsNaN(value)
+		return nativeConstantWord{representation: "float", text: constant.Number, float: value, hasFloat: exact}, true
+	case wir.ConstString:
+		return nativeConstantWord{representation: "string", text: strconv.Quote(constant.Str)}, true
+	case wir.ConstBool:
+		return nativeConstantWord{representation: "boolean", text: strconv.FormatBool(constant.Bool)}, true
+	default:
+		return nativeConstantWord{}, false
+	}
+}
+
+// nativeIntegerWord names an exact integer machine word.
+func nativeIntegerWord(value int64) (nativeConstantWord, bool) {
+	return nativeConstantWord{representation: "integer", text: strconv.FormatInt(value, 10), integer: value, hasInteger: true}, true
+}
+
+// nativeFloatWord names an exact float machine word. Its text round-trips to the
+// same float64 and always spells a float, so the word stays distinct from the
+// integer of the same value. A non-finite result is no machine word this family
+// ranges over and is withheld.
+func nativeFloatWord(value float64) (nativeConstantWord, bool) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nativeConstantWord{}, false
+	}
+	text := strconv.FormatFloat(value, 'g', -1, 64)
+	if !strings.ContainsAny(text, ".eE") {
+		text += ".0"
+	}
+	return nativeConstantWord{representation: "float", text: text, float: value, hasFloat: true}, true
+}
+
+// nativeFoldUnary evaluates unary minus. Negating the most negative integer
+// leaves the integer range, so it carries no exact word.
+func nativeFoldUnary(operator wir.Operator, value nativeConstantWord) (nativeConstantWord, bool) {
+	if operator != wir.UnNeg {
+		return nativeConstantWord{}, false
+	}
+	if value.hasInteger {
+		if value.integer == math.MinInt64 {
+			return nativeConstantWord{}, false
+		}
+		return nativeIntegerWord(-value.integer)
+	}
+	if value.representation == "float" && value.hasFloat {
+		return nativeFloatWord(-value.float)
+	}
+	return nativeConstantWord{}, false
+}
+
+// nativeFoldBinary evaluates a binary operation over two exactly known words.
+// Two integers stay on the integer arm, a float operand promotes the result to
+// the float arm, and division and exponentiation are withheld because their
+// exact word is not one this names. String and boolean words take part in no
+// arithmetic at all.
+func nativeFoldBinary(operator wir.Operator, left, right nativeConstantWord) (nativeConstantWord, bool) {
+	if !nativeNumericWord(left) || !nativeNumericWord(right) {
+		return nativeConstantWord{}, false
+	}
+	if left.hasInteger && right.hasInteger {
+		return nativeFoldIntegerArithmetic(operator, left.integer, right.integer)
+	}
+	switch operator {
+	case wir.BinAdd, wir.BinSub, wir.BinMul:
+	default:
+		return nativeConstantWord{}, false
+	}
+	leftValue, leftOK := left.floatValue()
+	rightValue, rightOK := right.floatValue()
+	if !leftOK || !rightOK {
+		return nativeConstantWord{}, false
+	}
+	switch operator {
+	case wir.BinAdd:
+		return nativeFloatWord(leftValue + rightValue)
+	case wir.BinSub:
+		return nativeFloatWord(leftValue - rightValue)
+	default:
+		return nativeFloatWord(leftValue * rightValue)
+	}
+}
+
+func nativeNumericWord(word nativeConstantWord) bool {
+	return word.representation == "integer" || word.representation == "float"
+}
+
+// nativeFoldIntegerArithmetic evaluates Lua integer arithmetic exactly. Addition,
+// subtraction and multiplication withhold rather than wrap; floor division and
+// modulo follow Lua's floor semantics and withhold on a zero divisor and on the
+// one quotient that leaves the integer range.
+func nativeFoldIntegerArithmetic(operator wir.Operator, left, right int64) (nativeConstantWord, bool) {
+	switch operator {
+	case wir.BinAdd:
+		result := left + right
+		if (right > 0 && result < left) || (right < 0 && result > left) {
+			return nativeConstantWord{}, false
+		}
+		return nativeIntegerWord(result)
+	case wir.BinSub:
+		result := left - right
+		if (right < 0 && result < left) || (right > 0 && result > left) {
+			return nativeConstantWord{}, false
+		}
+		return nativeIntegerWord(result)
+	case wir.BinMul:
+		if left == -1 && right == math.MinInt64 || right == -1 && left == math.MinInt64 {
+			return nativeConstantWord{}, false
+		}
+		result := left * right
+		if left != 0 && result/left != right {
+			return nativeConstantWord{}, false
+		}
+		return nativeIntegerWord(result)
+	case wir.BinIDiv:
+		if right == 0 || left == math.MinInt64 && right == -1 {
+			return nativeConstantWord{}, false
+		}
+		quotient := left / right
+		if left%right != 0 && (left < 0) != (right < 0) {
+			quotient--
+		}
+		return nativeIntegerWord(quotient)
+	case wir.BinMod:
+		if right == 0 {
+			return nativeConstantWord{}, false
+		}
+		if left == math.MinInt64 && right == -1 {
+			return nativeIntegerWord(0)
+		}
+		remainder := left % right
+		if remainder != 0 && (remainder < 0) != (right < 0) {
+			remainder += right
+		}
+		return nativeIntegerWord(remainder)
+	default:
+		return nativeConstantWord{}, false
+	}
+}
+
+// nativeConstantWriteCounts counts the writes that install a value in a
+// destination. A claim narrows the value already there and is not a write; a
+// call or loop header installs its results, so those destinations count too.
+func nativeConstantWriteCounts(body *wir.Body) map[string]int {
+	writes := make(map[string]int)
+	count := func(operand wir.Operand) {
+		if name := nativeOperandKey(body, operand); name != "" {
+			writes[name]++
+		}
+	}
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		switch instruction.Op {
+		case wir.OpClaim:
+		case wir.OpCall, wir.OpIterate:
+			for _, result := range body.Operands(instruction.Results) {
+				count(result)
+			}
+		default:
+			if instruction.WritesAssignmentPoint() {
+				count(instruction.Dst)
+			}
+		}
+	}
+	return writes
+}
+
+// nativeCapturedBindings names the bindings a nested closure captures. A capture
+// is writable from the nested body, whose instructions this body's write counts
+// do not range over, so a captured binding holds no constant this body can
+// prove.
+func nativeCapturedBindings(body *wir.Body) map[string]bool {
+	captured := make(map[string]bool)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op != wir.OpClosure {
+			continue
+		}
+		for _, capture := range body.Operands(instruction.List) {
+			if name := nativeOperandKey(body, capture); name != "" {
+				captured[name] = true
+			}
+		}
+	}
+	return captured
 }
 
 // nativeConstantRepresentation names the machine representation a lowered
@@ -477,23 +745,14 @@ func nativeConstantRepresentation(body *wir.Body, instruction wir.Instruction, a
 	if assignments[nativeOperandKey(body, instruction.Dst)] != 1 {
 		return "", false
 	}
-	constant := body.Const(wir.ConstRef(instruction.A.Ref))
-	switch constant.Kind {
-	case wir.ConstNumber:
-		if numericLiteralIsInteger(constant.Number) {
-			return "integer", true
-		}
-		return "float", true
-	case wir.ConstString:
-		// A string constant carries no numeric arm: its machine word is a
-		// reference, not an integer or a float the representation family
-		// classifies.
-		return "string", true
-	case wir.ConstBool:
-		return "boolean", true
-	default:
+	// A string constant carries no numeric arm: its machine word is a
+	// reference, not an integer or a float the representation family
+	// classifies.
+	word, ok := nativeLiteralWord(body.Const(wir.ConstRef(instruction.A.Ref)))
+	if !ok {
 		return "", false
 	}
+	return word.representation, true
 }
 
 func nativeAssignmentCounts(body *wir.Body) map[string]int {
