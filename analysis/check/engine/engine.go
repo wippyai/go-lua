@@ -15342,16 +15342,47 @@ func heapMetaNewIndexCurrent(identity []byte, partition equation.Partition) ([]b
 	return append([]byte(nil), value...), value != nil
 }
 
+// heapMemberCurrent reads one heap member publication.  It reconverges for the
+// same reason ordinary values do: a member written on a branch edge is the
+// current member of that edge, and the point both edges reach holds their join.
+// The member-identity lane joins by agreement only -- an allocation identity is
+// a name, not a lattice, so edges naming different objects publish no identity
+// at all rather than a widened one.
 func heapMemberCurrent(prefix string, identity []byte, suffix string, partition equation.Partition) ([]byte, bool) {
 	want := prefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/"
-	var value []byte
-	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, want) && (value == nil || fact.Key > latest) {
-			value, latest = fact.Value, fact.Key
+	join := joinPublishedValues
+	if prefix == heapMemberIdentityPrefix {
+		join = joinAgreedValues
+	}
+	fact, found := partition.Reconverged(want, equation.Reconvergence{Current: latestPublication, Join: join})
+	if !found {
+		return nil, false
+	}
+	return fact.Value, true
+}
+
+// latestPublication is the current row inside one fully decided guard cube.
+// Engine value keys end in the publishing operation coordinate, so the latest
+// key is the last completed write that cube performed.
+func latestPublication(candidates []equation.Fact) (equation.Fact, bool) {
+	var latest equation.Fact
+	selected := false
+	for _, candidate := range candidates {
+		if !selected || candidate.Key > latest.Key {
+			latest, selected = candidate, true
 		}
 	}
-	return append([]byte(nil), value...), value != nil
+	return latest, selected
+}
+
+// joinAgreedValues is the lattice for a payload that names something rather
+// than describing it.  Agreement survives the join; disagreement withholds,
+// because no widened name exists.
+func joinAgreedValues(left, right []byte) ([]byte, bool) {
+	if !bytes.Equal(left, right) {
+		return nil, false
+	}
+	return append([]byte(nil), left...), true
 }
 
 func heapTableClosed(identity []byte, partition equation.Partition) bool {
@@ -19265,32 +19296,19 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	if value, found := typedPathValue(term, partition); found {
 		return value, nil
 	}
-	prefix := "value/" + string(term) + "/"
-	var value []byte
-	latestKey := ""
-	for _, fact := range partition.Values() {
-		name := strings.TrimPrefix(fact.Key, prefix)
-		if strings.HasPrefix(fact.Key, prefix) && name <= cutoff && (value == nil || fact.Key > latestKey) {
-			value = fact.Value
-			latestKey = fact.Key
-		}
+	if value, found := reconvergedValue(term, cutoff, partition); found {
+		return value, nil
 	}
-	if value == nil {
-		if joined, found := joinedGuardedValue(term, partition); found {
-			return joined, nil
-		}
-		switch string(absence) {
-		case "front/absence/nil":
-			return []byte("scalar/nil"), nil
-		case "front/absence/top":
-			return []byte("scalar/top"), nil
-		case "front/absence/error":
-			return nil, fmt.Errorf("engine: value path %q has no completed write before %q", term, cutoff)
-		default:
-			return nil, fmt.Errorf("engine: malformed assignment absence policy %q", absence)
-		}
+	switch string(absence) {
+	case "front/absence/nil":
+		return []byte("scalar/nil"), nil
+	case "front/absence/top":
+		return []byte("scalar/top"), nil
+	case "front/absence/error":
+		return nil, fmt.Errorf("engine: value path %q has no completed write before %q", term, cutoff)
+	default:
+		return nil, fmt.Errorf("engine: malformed assignment absence policy %q", absence)
 	}
-	return append([]byte(nil), value...), nil
 }
 
 // assertionNarrowedValue reads a completed assert postcondition. Its operation
@@ -19355,34 +19373,22 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 	if value, found := provenSequenceIndexValue(term, partition); found {
 		return value, nil
 	}
-	prefix := "value/" + string(term) + "/"
-	var value []byte
-	latestKey := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latestKey) {
-			value = fact.Value
-			latestKey = fact.Key
-		}
+	if value, found := reconvergedValue(term, "", partition); found {
+		return value, nil
 	}
-	if value == nil {
-		if value, found := typedPathValue(term, partition); found {
-			return value, nil
-		}
-		if joined, found := joinedGuardedValue(term, partition); found {
-			return joined, nil
-		}
-		if member, found := shapeMemberValue(term, partition); found {
-			return member, nil
-		}
-		// A member/index path has a concrete Lua source but its heap write can
-		// be outside this scalar model. Root paths remain strict so an absent
-		// variable is never fabricated as a truthy or falsy value.
-		if derivedPathTerm(term) {
-			return []byte("scalar/top"), nil
-		}
-		return nil, fmt.Errorf("engine: value path %q has no completed write", term)
+	if value, found := typedPathValue(term, partition); found {
+		return value, nil
 	}
-	return append([]byte(nil), value...), nil
+	if member, found := shapeMemberValue(term, partition); found {
+		return member, nil
+	}
+	// A member/index path has a concrete Lua source but its heap write can
+	// be outside this scalar model. Root paths remain strict so an absent
+	// variable is never fabricated as a truthy or falsy value.
+	if derivedPathTerm(term) {
+		return []byte("scalar/top"), nil
+	}
+	return nil, fmt.Errorf("engine: value path %q has no completed write", term)
 }
 
 // correlationConeCurrentValue selects only a currently valid guarded
@@ -19428,25 +19434,72 @@ func correlationConeEpochsCurrent(epochs []correlationConeEpoch, partition equat
 	return true
 }
 
-// joinedGuardedValue is the only post-join fallback for ordinary values.  A
-// single guarded value remains precise; multiple incompatible values collapse
-// to Top rather than selecting a writer by operation-name ordering.
-func joinedGuardedValue(term []byte, partition equation.Partition) ([]byte, bool) {
+// reconvergedValue is the single value-lane read for a term.  Inside a
+// partition whose guards already decide every branch the latest write depends
+// on it is the ordinary latest publication.  Past such a branch it is the
+// control-flow join the evaluator computes over that decision's edges, so an
+// arm write reaches its post-dominator as a union with the value the other edge
+// carries rather than staying private to the arm.
+//
+// cutoff is the caller's read boundary: an empty boundary reads the current
+// value, and a non-empty one admits only publications at or before it.  The
+// boundary is applied inside every edge, so each edge resolves its own current
+// value with the same timing rule.
+func reconvergedValue(term []byte, cutoff string, partition equation.Partition) ([]byte, bool) {
 	prefix := "value/" + string(term) + "/"
-	var value []byte
-	for _, fact := range partition.AllValues() {
-		if !strings.HasPrefix(fact.Key, prefix) {
-			continue
-		}
-		if value == nil {
-			value = fact.Value
-			continue
-		}
-		if string(value) != string(fact.Value) {
-			return []byte("scalar/top"), true
-		}
+	fact, found := partition.Reconverged(prefix, equation.Reconvergence{
+		Current: func(candidates []equation.Fact) (equation.Fact, bool) {
+			if cutoff == "" {
+				return latestPublication(candidates)
+			}
+			bounded := make([]equation.Fact, 0, len(candidates))
+			for _, candidate := range candidates {
+				if strings.TrimPrefix(candidate.Key, prefix) <= cutoff {
+					bounded = append(bounded, candidate)
+				}
+			}
+			return latestPublication(bounded)
+		},
+		Join: joinPublishedValues,
+	})
+	if !found {
+		return nil, false
 	}
-	return append([]byte(nil), value...), value != nil
+	return fact.Value, true
+}
+
+// joinPublishedValues is the value lattice at a reconvergence point.  Edges
+// that published the same value keep it exactly.  Otherwise the point holds the
+// union of the edge witnesses, and a payload that contributes no witness widens
+// to the unknown scalar: one edge must never speak for a point both edges
+// reach.
+func joinPublishedValues(left, right []byte) ([]byte, bool) {
+	if bytes.Equal(left, right) {
+		return append([]byte(nil), left...), true
+	}
+	if isUnknownScalar(left) || isUnknownScalar(right) {
+		return []byte("scalar/top"), true
+	}
+	leftWitness, leftKnown := joinedValueWitness(left)
+	rightWitness, rightKnown := joinedValueWitness(right)
+	if !leftKnown || !rightKnown {
+		return []byte("scalar/top"), true
+	}
+	encoded, ok := shapefact.EncodeTarget(normalize.UnionForEvidence(leftWitness, rightWitness))
+	if !ok {
+		return []byte("scalar/top"), true
+	}
+	return encoded, true
+}
+
+// joinedValueWitness is the type a published payload contributes to a join. A
+// sealed literal table contributes its recorded structure, so joining two arm
+// tables keeps their members instead of collapsing the point to a broad table.
+func joinedValueWitness(value []byte) (typ.Type, bool) {
+	if witness, ok := scalarWitnessType(value); ok {
+		return witness, true
+	}
+	return sealedShapeReceiverType(value)
 }
 
 // shapeMemberValue projects a member only from a prior, sealed literal fact.
@@ -19935,15 +19988,7 @@ func memberMissingMessage(source string, value []byte) string {
 }
 
 func latestValue(term []byte, partition equation.Partition) ([]byte, bool) {
-	prefix := "value/" + string(term) + "/"
-	var value []byte
-	latestKey := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latestKey) {
-			value, latestKey = fact.Value, fact.Key
-		}
-	}
-	return append([]byte(nil), value...), value != nil
+	return reconvergedValue(term, "", partition)
 }
 
 func luaTruthy(value []byte) (bool, error) {

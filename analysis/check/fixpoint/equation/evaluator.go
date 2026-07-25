@@ -261,9 +261,12 @@ func (p Partition) Diagnostics() []Fact {
 	return visibleFacts(p.closure.Diagnostics, p.closure.Values, p.guards)
 }
 
-// AllValues is deliberately an explicit escape hatch for a consumer that is
-// joining mutually exclusive values at a post-dominator.  Ordinary reads use
-// Values and therefore cannot accidentally observe an incompatible guard.
+// AllValues is the unfiltered publication history.  Joining mutually exclusive
+// values at a post-dominator is Reconverged's work: it owns the guard algebra
+// and the completeness rule, so no consumer has to reconstruct either.  This
+// remains for the one consumer that reads a guard inventory recorded inside the
+// payloads rather than in the fact guards.  Ordinary reads use Values and
+// therefore cannot accidentally observe an incompatible guard.
 func (p Partition) AllValues() []Fact { return copyFacts(p.closure.Values, nil) }
 func (p Partition) AllocationRekeys() []AllocationRekey {
 	return append([]AllocationRekey(nil), p.closure.AllocationRekeys...)
