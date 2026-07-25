@@ -471,7 +471,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	// The escape summary is computed last and reads only its own evaluated
 	// outcomes, so it observes the finalized module closure without altering any
 	// field already projected above.
-	functionEscapes, allocatedReturns := lexical.escapeSummaryForExport(closure)
+	functionEscapes, allocatedReturns := lexical.escapeSummaryForExport(compilation.Body, closure)
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: outcomes, Diagnostics: closure.Diagnostics,
@@ -3036,7 +3036,7 @@ type lexicalEvaluator struct {
 	importedTypes       map[string]typ.Type
 	importedRelations   map[string]exportrelation.Summary
 	globalTypes         map[string]typ.Type
-	importedAuthorities map[string]typ.Type
+	importedAuthorities map[importedAuthorityKey]typ.Type
 	typeOrigins         map[string]typ.Type
 	typeDefinitions     map[string]typ.Type
 	typeFieldSpans      map[string]map[string]wir.Span
@@ -3146,25 +3146,34 @@ func (l *lexicalEvaluator) globalType(name string) (typ.Type, bool) {
 	return value, ok
 }
 
-func (l *lexicalEvaluator) setImportedAuthority(term string, value typ.Type) {
+// importedAuthorityKey scopes an import authority to the body that published
+// it. A term name is unique only inside one compiled body, so the owning body
+// is part of the identity: without it a temporary in one body would answer for
+// an unrelated temporary of the same name in another.
+type importedAuthorityKey struct {
+	body equation.BodyID
+	term string
+}
+
+func (l *lexicalEvaluator) setImportedAuthority(body equation.BodyID, term string, value typ.Type) {
 	if l == nil || term == "" || value == nil {
 		return
 	}
 	l.importedAuthorityMu.Lock()
 	defer l.importedAuthorityMu.Unlock()
 	if l.importedAuthorities == nil {
-		l.importedAuthorities = make(map[string]typ.Type)
+		l.importedAuthorities = make(map[importedAuthorityKey]typ.Type)
 	}
-	l.importedAuthorities[term] = value
+	l.importedAuthorities[importedAuthorityKey{body: body, term: term}] = value
 }
 
-func (l *lexicalEvaluator) importedAuthority(term string) (typ.Type, bool) {
+func (l *lexicalEvaluator) importedAuthority(body equation.BodyID, term string) (typ.Type, bool) {
 	if l == nil || term == "" {
 		return nil, false
 	}
 	l.importedAuthorityMu.RLock()
 	defer l.importedAuthorityMu.RUnlock()
-	value, ok := l.importedAuthorities[term]
+	value, ok := l.importedAuthorities[importedAuthorityKey{body: body, term: term}]
 	return value, ok
 }
 
@@ -5401,7 +5410,7 @@ func latestUnconditionalNilWriteBefore(operations []equation.Equation, target []
 // captured typed provider. The guarded call is still a possible source path;
 // this helper merely publishes the two existing member contracts without
 // choosing any intervening branch.
-func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *equation.OutputClosure, child front.Compilation, captures []string, partition equation.Partition) {
+func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *equation.OutputClosure, body equation.BodyID, child front.Compilation, captures []string, partition equation.Partition) {
 	// This allocation-time projector is deliberately bounded. Large bodies are
 	// evaluated only through ordinary demanded flow so this source-only scan
 	// cannot consume the solver budget needed by their recursive summaries.
@@ -5414,7 +5423,7 @@ func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *
 		if !known || isUnknownScalar(value) {
 			return
 		}
-		if imported, found := l.importedAuthority(captures[index]); found {
+		if imported, found := l.importedAuthority(body, captures[index]); found {
 			encoded, encodedOK := shapefact.EncodeTarget(imported)
 			if !encodedOK {
 				return
@@ -6130,7 +6139,7 @@ func (l *lexicalEvaluator) uncalledStaticCapturedReturnBoundary(child front.Comp
 // The body has no branches, dynamic lookup, or writes beyond ordinary call
 // result bindings, so evaluating it at allocation time cannot invent a path
 // condition or a caller-owned heap fact.
-func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(child front.Compilation, partition equation.Partition) bool {
+func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(body equation.BodyID, child front.Compilation, partition equation.Partition) bool {
 	if l == nil || child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) != 0 || len(child.Boundary.Captures) == 0 {
 		return false
 	}
@@ -6149,7 +6158,7 @@ func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(child front.Compilat
 			}
 			continue
 		}
-		if _, imported := l.importedAuthority(term); !imported {
+		if _, imported := l.importedAuthority(body, term); !imported {
 			return false
 		}
 	}
@@ -6173,7 +6182,7 @@ func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(child front.Compilat
 			if !member || !captures[string(root)] {
 				return false
 			}
-			if _, imported := l.importedAuthority(string(root)); !imported {
+			if _, imported := l.importedAuthority(body, string(root)); !imported {
 				return false
 			}
 			applications["call/"+operation.Target.Name] = true
@@ -6187,6 +6196,52 @@ func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(child front.Compilat
 		}
 	}
 	return foundArithmeticCall
+}
+
+// uncalledImportedCaptureBoundary admits a body whose every boundary input
+// already has an exact authority independent of any call site: each formal
+// carries a declared type, and each capture is an immutable module binding whose
+// project-selected export type was published when require's result was written.
+// Neither input is reconstructed and neither is a caller's value, so the entry
+// states exactly what a real call site would state about them.
+//
+// The body needs no operation whitelist. Every operation this entry does not
+// close evaluates to top, and top proves no obligation, so widening admission
+// here can only add diagnostics the body's own declarations already refute.
+//
+// Lifecycle and select bodies keep their own dedicated allocation-time lanes
+// below; those lanes own the epoch and case entries their proofs depend on, and
+// a second entry for the same body would restate the same coordinates.
+func (l *lexicalEvaluator) uncalledImportedCaptureBoundary(body equation.BodyID, child front.Compilation, partition equation.Partition) ([]entrySeed, bool) {
+	if l == nil || child.WIR == nil || len(child.Boundary.Captures) == 0 {
+		return nil, false
+	}
+	if childHasChannelLifecycle(child) || childHasResourceLifecycle(child) || childHasSelect(child) {
+		return nil, false
+	}
+	for _, capture := range child.Boundary.Captures {
+		if capture.Mutable {
+			return nil, false
+		}
+		term := boundaryTerm(capture.Symbol)
+		if _, imported := l.importedAuthority(body, term); !imported {
+			return nil, false
+		}
+		if _, closure := closureHandleFor([]byte(term), partition); closure {
+			return nil, false
+		}
+	}
+	return declaredFormalSeeds(child)
+}
+
+// importedCaptureBoundaryDiagnostic names the obligations a declaration and
+// import-authority entry alone discharges: an assignment contract and a member
+// absent from a stated shape are both refuted by those declarations. This
+// boundary can refute an obligation its authorities state; its failure to prove
+// one is not a fact about the body, since a real call site supplies argument and
+// heap evidence the entry withholds.
+func importedCaptureBoundaryDiagnostic(key string) bool {
+	return strings.HasPrefix(key, "type.assignment/") || strings.HasPrefix(key, "type.member.missing/")
 }
 
 func unannotatedArithmeticFormal(child front.Compilation) bool {
@@ -6829,8 +6884,8 @@ func hasDeclaredFormalMethodCall(child front.Compilation, operation equation.Equ
 // participate in later validation, while a sealed local closure contributes
 // only its already-published call capability. Unknown or non-callable captures
 // therefore leave the child dormant rather than receiving a synthetic entry.
-func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies, declaredProviderBoundary bool, gradualBoundaryTerms ...[]string) ([]byte, bool, error) {
-	seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, admitted := l.childEntrySeedSet(child, formalSeeds, partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies)
+func (l *lexicalEvaluator) uncalledChildEntry(body equation.BodyID, child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies, declaredProviderBoundary bool, gradualBoundaryTerms ...[]string) ([]byte, bool, error) {
+	seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, admitted := l.childEntrySeedSet(body, child, formalSeeds, partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies)
 	if !admitted {
 		return nil, false, nil
 	}
@@ -6854,7 +6909,7 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 // cannot be reconstructed from an already-published capability, keeping the
 // caller fail-closed. The encode step (declared or placement-bearing) belongs to
 // the caller so a summary lane can add its own capabilities to the same seeds.
-func (l *lexicalEvaluator) childEntrySeedSet(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies bool) ([]entrySeed, []entryClosureSeed, []entryMemberClosureSeed, []entryTableIdentitySeed, []entryMemberCellSeed, bool) {
+func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies bool) ([]entrySeed, []entryClosureSeed, []entryMemberClosureSeed, []entryTableIdentitySeed, []entryMemberCellSeed, bool) {
 	seeds := append([]entrySeed(nil), formalSeeds...)
 	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
 	for _, capture := range child.Boundary.Captures {
@@ -6873,7 +6928,7 @@ func (l *lexicalEvaluator) childEntrySeedSet(child front.Compilation, formalSeed
 			// exact authority was published when require's result was written.
 			// It is admitted only on the typed static paths that already require
 			// a complete capture entry.
-			if imported, found := l.importedAuthority(term); allowImportedCaptures {
+			if imported, found := l.importedAuthority(body, term); allowImportedCaptures {
 				encoded, encodedOK := shapefact.EncodeTarget(imported)
 				if !found || !encodedOK {
 					return nil, nil, nil, nil, nil, false
@@ -8827,7 +8882,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	}
 	lexical.publishNilOriginUnsafeUse(&closure, child)
 	lexical.publishNilOriginOptionalFieldUse(&closure, child)
-	lexical.publishCapturedOptionalMemberCallDiagnostic(&closure, child, captures, partition)
+	lexical.publishCapturedOptionalMemberCallDiagnostic(&closure, operation.Target.Body, child, captures, partition)
 	lexical.publishUncalledFalseEdgeAnyAssignment(&closure, child, captures, partition)
 	// A parameter-free child is closed at allocation time. A capture-free child
 	// whose entire boundary is explicitly any is closed too: each formal has a
@@ -8884,7 +8939,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		gradualLogicalBoundary = true
 	}
 	staticCapturedReturnBoundary := lexical.uncalledStaticCapturedReturnBoundary(child, partition)
-	arithmeticBoundary := lexical.uncalledStaticArithmeticBoundary(child, partition)
+	arithmeticBoundary := lexical.uncalledStaticArithmeticBoundary(operation.Target.Body, child, partition)
 	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
 	// The static member read boundary is the fallback for a declared receiver
 	// that no richer boundary admits. It authorizes missing members alone, so a
@@ -8910,14 +8965,29 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			declaredFormalCallBoundary = true
 		}
 	}
+	// A body closing only over module bindings is the final fallback. Every
+	// lane above supplies its own seeds from the allocating partition; this one
+	// states the import authorities those lanes refuse to transport.
+	importedCaptureBoundary := false
+	if !explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
+		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary &&
+		!staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary &&
+		!declaredFormalCallBoundary {
+		if importedSeeds, admitted := lexical.uncalledImportedCaptureBoundary(operation.Target.Body, child, partition); admitted {
+			uncalledSeeds = importedSeeds
+			importedCaptureBoundary = true
+		}
+	}
 	// A parameter-free, capture-free body is closed by its own entry: nothing
 	// a caller can supply refines it. Admission must therefore not depend on
 	// an arbitrary body-size cap.
 	closedBoundary := len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0
-	if child.Cyclic == nil && (closedBoundary || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary) {
+	if (child.Cyclic == nil || importedCaptureBoundary) && (closedBoundary || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary || importedCaptureBoundary) {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
+		} else if importedCaptureBoundary {
+			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, false, true, false, false)
 		} else if declaredBoundary || declaredFormalCallBoundary {
 			entry, entryErr = encodeDeclaredChildEntry(uncalledSeeds)
 		} else if len(child.Boundary.Captures) == 0 {
@@ -8928,7 +8998,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				entry, entryErr = encodeChildEntry(seeds, closureSeeds...)
 			}
 		} else {
-			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, gradualLogicalBoundary || staticAssignmentBoundary || staticCapturedReturnBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary, staticAssignmentBoundary, gradualLogicalTerms)
+			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, gradualLogicalBoundary || staticAssignmentBoundary || staticCapturedReturnBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary, staticAssignmentBoundary, gradualLogicalTerms)
 		}
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
@@ -9002,6 +9072,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if declaredFormalCallBoundary && !declaredFormalCallDiagnostic(diagnostic.Key) {
 				continue
 			}
+			if importedCaptureBoundary && !importedCaptureBoundaryDiagnostic(diagnostic.Key) {
+				continue
+			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			if span, ok := spans[diagnostic.Key]; ok {
@@ -9053,6 +9126,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if declaredFormalCallBoundary && !declaredFormalCallDiagnostic(item.Fact.Key) {
 				continue
 			}
+			if importedCaptureBoundary && !importedCaptureBoundaryDiagnostic(item.Fact.Key) {
+				continue
+			}
 			key := "child/" + body + "/" + item.Fact.Key
 			lexical.childPublished[key] = PublishedDiagnostic{
 				Fact:     equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)},
@@ -9091,7 +9167,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// declared formals and already-published captures form a closed entry; only
 	// stack witnesses without any boundary evidence cross the child projector.
 	if seeds, eligible := cyclicPlacementWitnessEntry(child); eligible {
-		entry, admitted, entryErr := lexical.uncalledChildEntry(child, seeds, partition, true, false, false, false)
+		entry, admitted, entryErr := lexical.uncalledChildEntry(operation.Target.Body, child, seeds, partition, true, false, false, false)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -9108,7 +9184,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// projection retains only the child's completed placement facts, so any
 	// opaque boundary remains conservative in the public plan.
 	if seeds, eligible := placementReturnWitnessEntry(child); eligible && lexical.publishesClosureReturn(operation.Target.Body, result) {
-		entry, admitted, entryErr := lexical.uncalledChildEntry(child, seeds, partition, false, false, false, false)
+		entry, admitted, entryErr := lexical.uncalledChildEntry(operation.Target.Body, child, seeds, partition, false, false, false, false)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -9797,8 +9873,8 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if providerAny, ok := currentEpochFact("provider-any-result/", operands["value"], partition); ok {
 		values = append(values, equation.Fact{Key: "provider-any-result/" + target + "/" + operation.Target.Name, Value: providerAny})
 	}
-	if authority, ok := lexical.importedAuthority(string(operands["value"])); ok {
-		lexical.setImportedAuthority(target, authority)
+	if authority, ok := lexical.importedAuthority(operation.Target.Body, string(operands["value"])); ok {
+		lexical.setImportedAuthority(operation.Target.Body, target, authority)
 	}
 	// An ordinary write can establish a table alias. Preserve the table identity
 	// through that already-published write so a later exact dynamic mutation is
@@ -11205,7 +11281,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	for _, operand := range operation.Operands {
 		if operand.Role == "shape-target" {
 			shapeTarget = operand.Value
-			shapeRelation = assignmentShapeRelation(lexical, source, value, operand.Value, partition)
+			shapeRelation = assignmentShapeRelation(lexical, operation.Target.Body, source, value, operand.Value, partition)
 			if shapeRelation == shapeRefuted {
 				if target, ok := shapefact.DecodeTarget(operand.Value); ok {
 					memberSurface, _ = lexicalMemberCallableSurface(lexical, source, target, partition)
@@ -11610,12 +11686,12 @@ const (
 
 // assignmentShapeRelation is deliberately proof-oriented: a malformed or
 // unsupported target/type member is unknown, never a compatibility result.
-func assignmentShapeRelation(lexical *lexicalEvaluator, source, value, encodedTarget []byte, partition equation.Partition) shapeRelation {
+func assignmentShapeRelation(lexical *lexicalEvaluator, body equation.BodyID, source, value, encodedTarget []byte, partition equation.Partition) shapeRelation {
 	target, ok := shapefact.DecodeTarget(encodedTarget)
 	if !ok {
 		return shapeUnknown
 	}
-	if authoritative, ok := lexical.importedAuthority(string(source)); ok {
+	if authoritative, ok := lexical.importedAuthority(body, string(source)); ok {
 		if resolved, found := lexical.typeOrigin(encodedTarget); found {
 			target = resolved
 		}
@@ -18539,7 +18615,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if host, ok := hostGlobalProviderResultType(lexical, provider, index, argumentTerms, partition); ok {
 					value, _ = providerReturnTypeValue(host)
 					importedSummary = host
-					lexical.setImportedAuthority(string(result), host)
+					lexical.setImportedAuthority(operation.Target.Body, string(result), host)
 				}
 				if imported, ok := importedProviderResultValue(lexical, provider, index, argumentTerms, partition); ok {
 					value = imported
@@ -18564,7 +18640,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					// concrete relation as the assignment authority.
 					if !importedRelation {
 						importedSummary = summary
-						lexical.setImportedAuthority(string(result), summary)
+						lexical.setImportedAuthority(operation.Target.Body, string(result), summary)
 					}
 					if index == 0 && !placementReturnGraphPublished {
 						values = append(values, placementImportedDeclaredReturnFacts(lexical, provider, summary, string(result), strings.TrimPrefix(string(application), "call/"), len(argumentTerms))...)

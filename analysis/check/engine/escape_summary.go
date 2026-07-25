@@ -24,7 +24,7 @@ import (
 // The pass is fail-open on data only: any body that cannot be seeded or
 // evaluated contributes no entry, and a panic in a downstream kernel is absorbed
 // so the summary can never disturb the module verdict.
-func (l *lexicalEvaluator) escapeSummaryForExport(closure equation.OutputClosure) (summary map[string][]signature.ParamRelation, allocatedReturns map[string]bool) {
+func (l *lexicalEvaluator) escapeSummaryForExport(body equation.BodyID, closure equation.OutputClosure) (summary map[string][]signature.ParamRelation, allocatedReturns map[string]bool) {
 	defer func() {
 		if recover() != nil {
 			summary, allocatedReturns = nil, nil
@@ -51,7 +51,7 @@ func (l *lexicalEvaluator) escapeSummaryForExport(closure equation.OutputClosure
 		if !found {
 			continue
 		}
-		relations, allocatedReturn, ok := l.escapeRelationsForPrototype(child, partition)
+		relations, allocatedReturn, ok := l.escapeRelationsForPrototype(body, child, partition)
 		if !ok {
 			continue
 		}
@@ -102,8 +102,8 @@ func exportedFunctionHandles(values []equation.Fact) map[string]closureHandle {
 // placement facts. The same evaluation also decides whether the body returns a
 // graph of its own. It returns ok=false when the body cannot be seeded (a
 // vararg or `any` formal, an unreconstructable capture) or its evaluation fails.
-func (l *lexicalEvaluator) escapeRelationsForPrototype(child front.Compilation, partition equation.Partition) ([]signature.ParamRelation, bool, bool) {
-	entry, identities, ok := l.escapeChildEntry(child, partition)
+func (l *lexicalEvaluator) escapeRelationsForPrototype(body equation.BodyID, child front.Compilation, partition equation.Partition) ([]signature.ParamRelation, bool, bool) {
+	entry, identities, ok := l.escapeChildEntry(body, child, partition)
 	if !ok {
 		return nil, false, false
 	}
@@ -140,7 +140,7 @@ func allocatedReturnGraph(values []equation.Fact, identities map[int]string) boo
 // then publishes a placement fact keyed to its identity. A closed scalar formal
 // is value-copied and cannot escape by reference, so it carries no allocation
 // and stays a borrow.
-func (l *lexicalEvaluator) escapeChildEntry(child front.Compilation, partition equation.Partition) ([]byte, map[int]string, bool) {
+func (l *lexicalEvaluator) escapeChildEntry(body equation.BodyID, child front.Compilation, partition equation.Partition) ([]byte, map[int]string, bool) {
 	if child.WIR == nil || len(child.Boundary.Parameters) == 0 {
 		return nil, nil, false
 	}
@@ -167,7 +167,7 @@ func (l *lexicalEvaluator) escapeChildEntry(child front.Compilation, partition e
 		})
 		identities[index] = identity
 	}
-	seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, admitted := l.childEntrySeedSet(child, formalSeeds, partition, true, false, false)
+	seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, admitted := l.childEntrySeedSet(body, child, formalSeeds, partition, true, false, false)
 	if !admitted {
 		return nil, nil, false
 	}
