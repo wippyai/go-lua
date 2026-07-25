@@ -79,6 +79,13 @@ const callReturnArityPrefix = "call-return-arity/"
 // body that declares none, published beside the term the closure allocated.
 const inferredCallableReturnPrefix = "inferred-callable-return/"
 
+// contextualCallablePrefix keys the complete callable contract a function
+// literal inherits from the callee position that consumes it: the declared
+// callback parameters instantiated at the type arguments the call's other
+// arguments proved, and the result its body derives under exactly those
+// parameters.
+const contextualCallablePrefix = "contextual-callable/"
+
 const summaryTypePrefix = "summary-type/"
 const methodReturnSummaryPrefix = "method-return-summary/"
 const returnMemberSummaryPrefix = "return-member-summary/"
@@ -1947,6 +1954,17 @@ func enrichMissingMemberCallDiagnostic(item PublishedDiagnostic, operation equat
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "member call"}}
 	item.Help = fmt.Sprintf("Narrow the receiver before reading `%s`, or add `%s` to every reachable receiver shape.", method, method)
 	return item
+}
+
+// qualifiedChildDiagnosticKey names the body that proved a diagnostic. A fact a
+// nested allocation already published carries that body's own qualification and
+// the span registered under it, so an intermediate body relays it unchanged
+// instead of naming itself as the proving body.
+func qualifiedChildDiagnosticKey(body, key string) string {
+	if _, nested := childDiagnosticKey(key); nested {
+		return key
+	}
+	return "child/" + body + "/" + key
 }
 
 func childDiagnosticKey(key string) (string, bool) {
@@ -5115,6 +5133,182 @@ func declaredFormalCallDiagnostic(key string) bool {
 		return true
 	}
 	return false
+}
+
+// contextualCallbackBoundary seeds an unannotated function literal from the
+// callee position that consumes it. A generic callee states its callback
+// parameter as a function over its own type parameters; the declaration's
+// dependency order is therefore that every such parameter is proven by another
+// argument before the callback contract exists at all. Once the other
+// arguments have bound them, the instantiated declared parameter type is the
+// exact contract this literal is passed under, so the body is evaluated with
+// its formals seeded from it instead of having no root at all.
+//
+// Nothing is seeded from an unbound parameter, and a formal the literal
+// declares keeps that declaration as its own authority.
+func (l *lexicalEvaluator) contextualCallbackBoundary(body equation.BodyID, child front.Compilation, result string, partition equation.Partition) ([]entrySeed, []typ.Type, bool) {
+	if l == nil || child.WIR == nil || child.Cyclic != nil || result == "" {
+		return nil, nil, false
+	}
+	if len(child.Boundary.Parameters) == 0 || len(child.Boundary.Captures) != 0 {
+		return nil, nil, false
+	}
+	parent, found := l.byBody[body]
+	if !found {
+		return nil, nil, false
+	}
+	provider, position, arguments, located := contextualCallbackArgument(parent.Artifact, result)
+	if !located {
+		return nil, nil, false
+	}
+	function, resolved := importedCalleeFunction(l, provider, partition)
+	if !resolved || len(function.TypeParams) == 0 || position >= len(function.Params) {
+		return nil, nil, false
+	}
+	expected, callable := unwrap.Alias(function.Params[position].Type).(*typ.Function)
+	if !callable || expected == nil || expected.Variadic != nil || len(expected.Params) != len(child.Boundary.Parameters) {
+		return nil, nil, false
+	}
+	params := make(map[string]bool, len(function.TypeParams))
+	for _, parameter := range function.TypeParams {
+		if parameter == nil || parameter.Name == "" {
+			return nil, nil, false
+		}
+		params[parameter.Name] = true
+	}
+	// Every other argument position must decide the parameters it names. A
+	// position this call site leaves unproven fails the boundary closed rather
+	// than seeding the literal from a partial contract.
+	bindings := make(map[string]typ.Type, len(params))
+	for index, declared := range function.Params {
+		if index == position || declared.Type == nil {
+			continue
+		}
+		argument, present := arguments[index]
+		if !present {
+			return nil, nil, false
+		}
+		actual, decoded := publishedProviderArgumentType(argument, partition)
+		if !decoded || !inferImportedTypeArgs(declared.Type, actual, params, bindings) {
+			return nil, nil, false
+		}
+	}
+	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
+	contextual := make([]typ.Type, 0, len(child.Boundary.Parameters))
+	for index, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type != 0 || expected.Params[index].Type == nil {
+			return nil, nil, false
+		}
+		formal := subst.Substitute(expected.Params[index].Type, bindings)
+		if formal == nil || openTypeParameter(formal, map[typ.Type]bool{}) {
+			return nil, nil, false
+		}
+		value, encoded := shapefact.EncodeTarget(formal)
+		if !encoded {
+			return nil, nil, false
+		}
+		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
+		contextual = append(contextual, formal)
+	}
+	return seeds, contextual, true
+}
+
+// contextualCallbackArgument locates the single resolved-provider call that
+// consumes this exact term as an argument, together with every argument term
+// that call supplies. A term reaching more than one such call states no single
+// contextual contract; a call with no resolved provider states none at all.
+func contextualCallbackArgument(artifact equation.Artifact, term string) ([]byte, int, map[int][]byte, bool) {
+	var provider []byte
+	var arguments map[int][]byte
+	position, matches := -1, 0
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		candidate, hasProvider := artifactOperand(operation.Operands, "provider")
+		if !hasProvider {
+			continue
+		}
+		terms := make(map[int][]byte)
+		at := -1
+		for _, operand := range operation.Operands {
+			if !strings.HasPrefix(operand.Role, "argument-") {
+				continue
+			}
+			index, err := callArgumentIndex(operand.Role)
+			if err != nil {
+				continue
+			}
+			terms[index] = append([]byte(nil), operand.Term.Encoding...)
+			if string(operand.Term.Encoding) == term {
+				at = index
+			}
+		}
+		if at < 0 {
+			continue
+		}
+		matches++
+		provider, position, arguments = candidate, at, terms
+	}
+	if matches != 1 {
+		return nil, -1, nil, false
+	}
+	return provider, position, arguments, true
+}
+
+// openTypeParameter reports that a generic parameter survives in this graph. A
+// contextual seed is admissible only once the call site has proven every
+// parameter the declared contract mentions; the visited set reads a recursive
+// declaration coinductively rather than diverging on its back edge.
+func openTypeParameter(value typ.Type, seen map[typ.Type]bool) bool {
+	if value == nil {
+		return true
+	}
+	if seen[value] {
+		return false
+	}
+	seen[value] = true
+	switch value.Kind() {
+	case kind.TypeParam, kind.Generic:
+		return true
+	}
+	return typ.WalkChildren(value, func(child typ.Type) bool { return openTypeParameter(child, seen) })
+}
+
+// contextualCallableContract completes the callable surface a contextually
+// seeded literal proves: the parameters its call site instantiated and the
+// single result its body derived under exactly those parameters. A body with
+// no derived result states no contract.
+func contextualCallableContract(parameters []typ.Type, outcome equation.OutputClosure) (typ.Type, bool) {
+	result, derived := inferredUncalledReturnType(outcome)
+	if !derived {
+		return nil, false
+	}
+	builder := typ.Func()
+	builder.ReserveParams(len(parameters))
+	for _, parameter := range parameters {
+		if parameter == nil {
+			return nil, false
+		}
+		builder.Param("", parameter)
+	}
+	builder.Returns(result)
+	return builder.Build(), true
+}
+
+// contextualCallable reads the callable contract published for a literal that
+// its allocation seeded from this same call's declared parameter type.
+func contextualCallable(term []byte, partition equation.Partition) (typ.Type, bool) {
+	prefix := contextualCallablePrefix + string(term) + "/"
+	latest, found := partition.LatestValuePrefix(prefix)
+	if !found || len(latest.Value) == 0 {
+		return nil, false
+	}
+	contract, decoded := shapefact.DecodeTarget(latest.Value)
+	if !decoded || contract == nil {
+		return nil, false
+	}
+	return contract, true
 }
 
 // uncalledDeclaredLocalUnionReadBoundary admits one allocation-time relay:
@@ -9258,6 +9452,22 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		!importedCaptureBoundary && !staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary {
 		sealedCaptureBoundary = uncalledSealedCaptureBoundary(lexical, child, partition)
 	}
+	// A function literal passed straight into a generic callee has no root of
+	// its own: its formals are unannotated and every lane above states a
+	// contract the declaration already carries. The call site does carry one —
+	// the callee's declared callback parameter at the type arguments its other
+	// arguments proved — so this final fallback seeds the literal from exactly
+	// that instantiated contract and owns its full seed-derived surface.
+	contextualCallbackBoundary, contextualParameters := false, []typ.Type(nil)
+	if !closedBoundary && !explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
+		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary && !declaredFormalCallBoundary &&
+		!importedCaptureBoundary && !sealedCaptureBoundary && !staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary {
+		if contextualSeeds, parameters, admitted := lexical.contextualCallbackBoundary(operation.Target.Body, child, result, partition); admitted {
+			uncalledSeeds = contextualSeeds
+			contextualParameters = parameters
+			contextualCallbackBoundary = true
+		}
+	}
 	if (child.Cyclic == nil || importedCaptureBoundary) && (closedBoundary || sealedCaptureBoundary || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary || importedCaptureBoundary) {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
@@ -9301,6 +9511,18 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				inferredReturnPublished = true
 			}
 		}
+		// The contextual entry is the only one that knows both halves of this
+		// literal's contract, so it publishes them together: the parameters its
+		// call site instantiated and the result the body proved under them. A
+		// consumer therefore never pairs a derived result with parameters some
+		// other boundary supplied.
+		if contextualCallbackBoundary {
+			if contract, stated := contextualCallableContract(contextualParameters, outcome); stated {
+				if encoded, ok := shapefact.EncodeTarget(contract); ok {
+					closure.Values = append(closure.Values, equation.Fact{Key: contextualCallablePrefix + result + "/" + operation.Target.Name, Value: encoded})
+				}
+			}
+		}
 		body := fmt.Sprintf("%x", child.Body)
 		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
 		claimOwnedReads := claimConsumedStaticReads(child.Artifact)
@@ -9314,10 +9536,17 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// lane names the exact families its entry can discharge; a family with no
 		// admission reason stays dormant until a concrete call path supplies one.
 		laneWithholds := func(diagnostic equation.Fact) bool {
+			// A nested allocation publishes its refutations already qualified by
+			// the body that proved them. A lane names the families its own seeds
+			// discharge, and a family states the same obligation whichever body
+			// carries it, so every family test below reads the inner key. The
+			// tests scoped to this body's own artifact keep the qualified key and
+			// therefore never claim a nested operation.
+			family, _ := childDiagnosticKey(diagnostic.Key)
 			if claimOwnedReads[strings.TrimPrefix(diagnostic.Key, "type.member.missing/")] && strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				return true
 			}
-			if closedAnyFormalBoundary && closedAnyFormalObligation(diagnostic.Key) {
+			if closedAnyFormalBoundary && closedAnyFormalObligation(family) {
 				return false
 			}
 			// An allocation-time any boundary can prove only a strict assignment
@@ -9330,47 +9559,47 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(diagnostic) {
 				return true
 			}
-			if gradualLogicalBoundary && !strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/") {
+			if gradualLogicalBoundary && !strings.HasPrefix(family, "type.call.direct.argument_type/") {
 				return true
 			}
 			// A declaration-only entry is sufficient for a member that is absent
 			// from a reachable declared union arm. Other obligations may depend on
 			// a call-specific refinement and therefore remain demand-driven.
-			if declaredBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") &&
-				(!declaredMethodBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) &&
-				(!declaredArithmeticReturnBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) &&
-				(!declaredAssignmentBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment/")) &&
-				(!declaredMemberWriteBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment.optional_target/")) &&
+			if declaredBoundary && !strings.HasPrefix(family, "type.member.missing/") &&
+				(!declaredMethodBoundary || !strings.HasPrefix(family, "type.return.contract/")) &&
+				(!declaredArithmeticReturnBoundary || !strings.HasPrefix(family, "type.return.contract/")) &&
+				(!declaredAssignmentBoundary || !strings.HasPrefix(family, "type.assignment/")) &&
+				(!declaredMemberWriteBoundary || !strings.HasPrefix(family, "type.assignment.optional_target/")) &&
 				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) &&
 				(!declaredComparisonBoundary || !declaredOrderedComparisonDiagnostic(declaredComparisonOperations, diagnostic.Key)) &&
 				!uncalledDeclaredProviderResultDiagnostic(child, diagnostic.Key) {
 				return true
 			}
-			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
+			if staticMemberReadBoundary && !strings.HasPrefix(family, "type.member.missing/") {
 				return true
 			}
 			if staticAssignmentBoundary && !lexical.uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key, partition) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, diagnostic) && !uncalledStaticResultCallDiagnostic(child.Artifact, diagnostic.Key) {
 				return true
 			}
-			if arithmeticBoundary && !strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/") {
+			if arithmeticBoundary && !strings.HasPrefix(family, "type.call.direct.argument_type/") {
 				return true
 			}
-			if staticCapturedReturnBoundary && !uncalledStaticCapturedReturnDiagnostic(diagnostic.Key) {
+			if staticCapturedReturnBoundary && !uncalledStaticCapturedReturnDiagnostic(family) {
 				return true
 			}
-			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
+			if indexedReadBoundary && !strings.HasPrefix(family, "type.assignment/") && !strings.HasPrefix(family, "type.return.contract/") {
 				return true
 			}
 			// The union this boundary admits is the declaration itself, so a
 			// member absent from one of its arms is refuted by that declaration
 			// alone, exactly as it is for a declared-parameter boundary.
-			if localUnionReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
+			if localUnionReadBoundary && !strings.HasPrefix(family, "type.assignment/") && !strings.HasPrefix(family, "type.member.missing/") {
 				return true
 			}
-			if declaredFormalCallBoundary && !declaredFormalCallDiagnostic(diagnostic.Key) {
+			if declaredFormalCallBoundary && !declaredFormalCallDiagnostic(family) {
 				return true
 			}
-			if importedCaptureBoundary && !importedCaptureBoundaryDiagnostic(diagnostic.Key) {
+			if importedCaptureBoundary && !importedCaptureBoundaryDiagnostic(family) {
 				return true
 			}
 			return false
@@ -9379,7 +9608,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if laneWithholds(diagnostic) {
 				continue
 			}
-			key := "child/" + body + "/" + diagnostic.Key
+			key := qualifiedChildDiagnosticKey(body, diagnostic.Key)
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			if span, ok := spans[diagnostic.Key]; ok {
 				lexical.diagnosticSpans[key] = span
@@ -21346,22 +21575,53 @@ func hasStaticMemberPathWrite(term []byte, partition equation.Partition) bool {
 }
 
 func importedProviderResultType(lexical *lexicalEvaluator, provider []byte, index int, arguments map[int][]byte, partition equation.Partition) (typ.Type, bool) {
-	modulePath, suffix, requireResult, ok := importedProviderTarget(provider)
+	modulePath, _, requireResult, ok := importedProviderTarget(provider)
 	if !ok {
+		return nil, false
+	}
+	if requireResult {
+		imported, resolved := importedModuleType(lexical, modulePath, partition)
+		if !resolved || index != 0 {
+			return nil, false
+		}
+		return imported, true
+	}
+	function, ok := importedCalleeFunction(lexical, provider, partition)
+	if !ok || index < 0 || index >= len(function.Returns) || function.Returns[index] == nil {
+		return nil, false
+	}
+	returnType, ok := instantiateProviderReturn(function, arguments, partition, index)
+	if !ok {
+		return nil, false
+	}
+	return returnType, true
+}
+
+// importedModuleType is the export a module path already resolved to, taken
+// either from the consumer's own import table or from the require-seeded entry.
+func importedModuleType(lexical *lexicalEvaluator, modulePath string, partition equation.Partition) (typ.Type, bool) {
+	if lexical == nil {
 		return nil, false
 	}
 	imported, ok := lexical.importedType(modulePath)
 	if !ok {
 		imported, ok = importedEntryType(modulePath, partition)
 	}
-	if !ok {
+	return imported, ok
+}
+
+// importedCalleeFunction resolves the declared function surface a module
+// provider names. The generic applications in its parameter and return
+// positions stay nominal, so both the argument unification and a contextual
+// parameter instantiation read the type arguments the declaration states.
+func importedCalleeFunction(lexical *lexicalEvaluator, provider []byte, partition equation.Partition) (*typ.Function, bool) {
+	modulePath, suffix, requireResult, ok := importedProviderTarget(provider)
+	if !ok || requireResult {
 		return nil, false
 	}
-	if requireResult {
-		if index != 0 {
-			return nil, false
-		}
-		return imported, true
+	imported, ok := importedModuleType(lexical, modulePath, partition)
+	if !ok {
+		return nil, false
 	}
 	segments, valid := segment.ParseFormattedSegments(suffix)
 	if !valid && suffix != "" {
@@ -21375,15 +21635,7 @@ func importedProviderResultType(lexical *lexicalEvaluator, provider []byte, inde
 			return nil, false
 		}
 	}
-	function, ok := genericCalleeSurface(callee)
-	if !ok || index < 0 || index >= len(function.Returns) || function.Returns[index] == nil {
-		return nil, false
-	}
-	returnType, ok := instantiateProviderReturn(function, arguments, partition, index)
-	if !ok {
-		return nil, false
-	}
-	return returnType, true
+	return genericCalleeSurface(callee)
 }
 
 // importedReturnValue keeps an explicit any only when it is the sealed result
@@ -21495,6 +21747,13 @@ func publishedProviderArgumentType(term []byte, partition equation.Partition) (t
 	// derived result completes that contract for this argument position, so a
 	// generic parameter can bind from the body the allocation already evaluated.
 	if function, callable := unwrap.Alias(argument).(*typ.Function); callable {
+		// An unannotated literal states no parameters at all. Where its
+		// allocation seeded it from this call's own declared callback type, that
+		// published contract is the complete surface — both the parameters the
+		// call site instantiated and the result they proved.
+		if contract, contextual := contextualCallable(term, partition); contextual {
+			return contract, true
+		}
 		if result, inferred := inferredCallableReturn(term, partition); inferred {
 			if completed, ok := withInferredReturn(function, result); ok {
 				return completed, true
