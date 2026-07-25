@@ -12511,12 +12511,36 @@ func assignmentShapeRelation(lexical *lexicalEvaluator, body equation.BodyID, so
 		if relation := publishedContainerOriginRelation(source, value, target, partition); relation != shapeUnknown {
 			return relation
 		}
+		if relation := publishedSummaryRelation(source, target, partition); relation != shapeUnknown {
+			return relation
+		}
 	} else if member := lexicalMemberCallableRelation(lexical, source, target, partition); member != shapeUnknown {
 		return member
 	} else {
 		return relation
 	}
 	return lexicalMemberCallableRelation(lexical, source, target, partition)
+}
+
+// publishedSummaryRelation decides an assignment from the contract already
+// published for the source term. A discriminated-record union is published as a
+// summary and never as a value: the value lattice keeps no unselected arm, so a
+// call result carrying such a union has nothing for the value relation to read.
+// The summary is exactly what that term is entitled to, so it decides the
+// assignment the same way a value witness does.
+func publishedSummaryRelation(source []byte, target typ.Type, partition equation.Partition) shapeRelation {
+	encoded, found := currentPublishedTermFact(summaryTypePrefix, source, partition)
+	if !found {
+		return shapeUnknown
+	}
+	summary, err := typ.DecodeCanonical(context.Background(), encoded)
+	if err != nil || summary == nil {
+		return shapeUnknown
+	}
+	if subtype.IsSubtype(summary, target) {
+		return shapeProven
+	}
+	return shapeRefuted
 }
 
 // declaredAliasRelation decides an assignment whose value is a table snapshot
@@ -19762,8 +19786,16 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		var importedSummary typ.Type
 		var methodSummary typ.Type
 		var localSummary typ.Type
-		localUnionSummary, localUnion := inferredLocalCallableResultType(lexical, callee, mustCallResultIndex(key), partition)
-		retainLocalUnion := localUnion && requiresLocalUnionProof(localUnionSummary) && !closedScalarCallArguments(argumentTerms, partition)
+		localUnionSummary, localUnion, localDeclaredReturn := inferredLocalCallableResultType(lexical, callee, mustCallResultIndex(key), partition)
+		// A closed scalar argument may specialize an inferred return union: the
+		// body is that union's only authority, so the arm it took for this exact
+		// argument is the result. A declared union has an authority above the
+		// body. Its arms are the contract the callee published, and the caller is
+		// entitled to exactly that: a body evaluated with one call's arguments
+		// reaches one arm, but selecting it here would let a caller proof rest on
+		// the body rather than on the declaration it was checked against.
+		retainLocalUnion := (localUnion && requiresLocalUnionProof(localUnionSummary) && !closedScalarCallArguments(argumentTerms, partition)) ||
+			requiresLocalUnionProof(localDeclaredReturn)
 		// A known lexical apply seals its child outcome under the same
 		// application coordinate. call-results is the sole owner of caller
 		// result terms, so it consumes that private projection rather than
@@ -20471,16 +20503,35 @@ func sealedCallableResultType(lexical *lexicalEvaluator, callee []byte, index in
 // return candidate is already a sealed literal shape in the callee artifact.
 // This is summary metadata, not a runtime table value: callers still need a
 // branch or a literal-correlated boundary relation before one arm can become
-// concrete.
-func inferredLocalCallableResultType(lexical *lexicalEvaluator, callee []byte, index int, partition equation.Partition) (typ.Type, bool) {
+// concrete. It reports the callee's declared return at the same slot beside it,
+// so a result owner can tell an inference the body alone supports from a
+// contract the callee published.
+func inferredLocalCallableResultType(lexical *lexicalEvaluator, callee []byte, index int, partition equation.Partition) (typ.Type, bool, typ.Type) {
 	if lexical == nil || callee == nil || index < 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	handle, local := closureHandleFor(callee, partition)
 	if !local {
-		return nil, false
+		return nil, false, nil
 	}
-	return inferredClosureResultAtIndex(lexical, handle, index)
+	summary, finite := inferredClosureResultAtIndex(lexical, handle, index)
+	return summary, finite, declaredClosureResultAtIndex(lexical, handle, index)
+}
+
+// declaredClosureResultAtIndex reads the return type a local callee declares at
+// this slot. The declaration is the callee's published contract, so it is the
+// authority a caller reads; the body is checked against it rather than read
+// through it.
+func declaredClosureResultAtIndex(lexical *lexicalEvaluator, handle closureHandle, index int) typ.Type {
+	child, found := lexical.byPrototype[handle.Prototype]
+	if !found || child.WIR == nil || index < 0 || index >= len(child.Boundary.DeclaredReturns) {
+		return nil
+	}
+	reference := child.Boundary.DeclaredReturns[index]
+	if reference == 0 {
+		return nil
+	}
+	return unwrap.Alias(child.WIR.Type(reference))
 }
 
 // inferredClosureResultAtIndex retains a finite union only when every return
