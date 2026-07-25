@@ -171,17 +171,45 @@ func classifyEscapeParameters(child front.Compilation, values []equation.Fact, i
 	for index := range child.Boundary.Parameters {
 		relation := signature.ParamRelation{Param: index, EscapeClass: signature.EscapeBorrow, PlacementConsequence: signature.PlacementConsequenceKeep}
 		if identity, seeded := identities[index]; seeded {
-			relation = classifyEscapeIdentity(index, identity, parsed, values, opKinds)
+			relation = classifyEscapeIdentity(index, identity, parsed, values, opKinds, identities)
 		}
 		relations = append(relations, relation)
 	}
 	return relations
 }
 
-func classifyEscapeIdentity(index int, identity string, parsed publishedPlacementFacts, values []equation.Fact, opKinds map[string]string) signature.ParamRelation {
+// storeContainerFormal names the formal a stored formal is stored into. A store
+// boundary retains both the stored graph and the container receiving it under
+// one operation and owns the stored graph alone, so the container is the single
+// other seeded formal that same operation retains without owning. An absent or
+// ambiguous container leaves the relation ownerless and the consumer reads the
+// store as an escaping root.
+func storeContainerFormal(param int, ownedOps []string, values []equation.Fact, identities map[int]string, opKinds map[string]string) (int, bool) {
+	boundaries := make(map[string]bool)
+	for _, operation := range ownedOps {
+		if opKinds[operation] != "publication" {
+			boundaries[operation] = true
+		}
+	}
+	container, candidates := 0, 0
+	for other, identity := range identities {
+		if other == param || len(placementProvenOperations(values, placementEventPrefix, identity, placementEventOwned)) != 0 {
+			continue
+		}
+		for _, operation := range placementProvenOperations(values, placementContractPrefix, identity, "retain") {
+			if boundaries[operation] {
+				container, candidates = other, candidates+1
+				break
+			}
+		}
+	}
+	return container, candidates == 1
+}
+
+func classifyEscapeIdentity(index int, identity string, parsed publishedPlacementFacts, values []equation.Fact, opKinds map[string]string, identities map[int]string) signature.ParamRelation {
 	relation := signature.ParamRelation{Param: index, EscapeClass: signature.EscapeBorrow, PlacementConsequence: signature.PlacementConsequenceKeep}
 	events := parsed.events[identity]
-	ownedOps := placementOwnedEventOperations(values, identity)
+	ownedOps := placementProvenOperations(values, placementEventPrefix, identity, placementEventOwned)
 	storeOwned, returnOwned := false, false
 	for _, operation := range ownedOps {
 		if opKinds[operation] == "publication" {
@@ -201,6 +229,7 @@ func classifyEscapeIdentity(index int, identity string, parsed publishedPlacemen
 	case storeOwned || containedOwned:
 		relation.EscapeClass = signature.EscapeStore
 		relation.PlacementConsequence = signature.PlacementConsequenceOwnedHeap
+		relation.StoredInto, relation.HasStoredInto = storeContainerFormal(index, ownedOps, values, identities, opKinds)
 	case returnOwned:
 		relation.EscapeClass = signature.EscapeExport
 		relation.ThroughReturn = true
@@ -212,17 +241,17 @@ func classifyEscapeIdentity(index int, identity string, parsed publishedPlacemen
 	return relation
 }
 
-// placementOwnedEventOperations returns the operations that published an owned
-// event on identity. The operation kind distinguishes a store from a return
-// escape without inspecting source.
-func placementOwnedEventOperations(values []equation.Fact, identity string) []string {
-	prefix := placementEventPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + placementEventOwned + "/"
+// placementProvenOperations returns the operations that published a proven
+// placement fact for identity under one boundary of the named fact family. The
+// operation kind distinguishes a store from a return escape without inspecting
+// source.
+func placementProvenOperations(values []equation.Fact, family, identity, boundary string) []string {
+	prefix := family + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + boundary + "/"
 	var operations []string
 	for _, fact := range values {
-		if string(fact.Value) != "proven" || !strings.HasPrefix(fact.Key, prefix) {
-			continue
+		if string(fact.Value) == "proven" && strings.HasPrefix(fact.Key, prefix) {
+			operations = append(operations, strings.TrimPrefix(fact.Key, prefix))
 		}
-		operations = append(operations, strings.TrimPrefix(fact.Key, prefix))
 	}
 	return operations
 }

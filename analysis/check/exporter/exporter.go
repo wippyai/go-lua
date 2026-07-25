@@ -124,17 +124,16 @@ func trackFunctionScope(stmts []ast.Stmt) functionScope {
 					if ident, identOK := left.(*ast.IdentExpr); identOK {
 						delete(scope.locals, ident.Value)
 						delete(scope.storeAliases, ident.Value)
-						invalidateFunctions(scope.functions, ident.Value)
-						invalidateStoreRelations(scope.stores, ident.Value)
+						invalidateRooted(scope.functions, ident.Value)
+						invalidateRooted(scope.stores, ident.Value)
 					}
 					continue
 				}
 				if ident, identOK := left.(*ast.IdentExpr); identOK {
-					// Replacing a root invalidates every relation rooted there.
 					delete(scope.locals, ident.Value)
 					delete(scope.storeAliases, ident.Value)
-					invalidateFunctions(scope.functions, ident.Value)
-					invalidateStoreRelations(scope.stores, ident.Value)
+					invalidateRooted(scope.functions, ident.Value)
+					invalidateRooted(scope.stores, ident.Value)
 					continue
 				}
 				if ownershipStoreReference(item.Rhs[i]) {
@@ -176,6 +175,11 @@ func functionRelations(scope functionScope, roots map[string]bool, export typ.Ty
 		if cut := strings.IndexByte(path, '.'); cut > 0 {
 			relative = path[cut+1:]
 		}
+		// A re-exported ownership.store is the builtin value itself, not a body:
+		// it has no prototype for the engine to evaluate, so the escape summary
+		// carries no relation for it and the store contract is read from the
+		// re-export instead. Every wrapper with a body takes its disposition from
+		// the escape summary below.
 		if scope.stores[path] && returnedModuleMember(path, roots) {
 			out = append(out, exportrelation.Function{
 				Path: relative, Arity: 2, Store: &exportrelation.OwnershipStore{Value: 0, Owner: 1},
@@ -189,18 +193,12 @@ func functionRelations(scope functionScope, roots map[string]bool, export typ.Ty
 	return out
 }
 
-func invalidateFunctions(functions map[string]*ast.FunctionExpr, root string) {
-	for path := range functions {
+// invalidateRooted drops every member path rooted at root. Replacing the root
+// binding invalidates each relation reached through it.
+func invalidateRooted[T any](relations map[string]T, root string) {
+	for path := range relations {
 		if path == root || strings.HasPrefix(path, root+".") {
-			delete(functions, path)
-		}
-	}
-}
-
-func invalidateStoreRelations(stores map[string]bool, root string) {
-	for path := range stores {
-		if path == root || strings.HasPrefix(path, root+".") {
-			delete(stores, path)
+			delete(relations, path)
 		}
 	}
 }
@@ -291,10 +289,6 @@ func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.Par
 		params[name] = i
 	}
 	relation := exportrelation.Function{Path: path, Arity: len(params)}
-	if store, ok := ownershipStoreRelation(fn, params); ok {
-		relation.Store = store
-		return relation, relation.Valid()
-	}
 	if store, ok := escapeStoreRelation(escapes, relation.Arity); ok {
 		relation.Store = store
 		return relation, relation.Valid()
@@ -340,9 +334,11 @@ func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.Par
 
 // escapeStoreRelation reads the engine's per-parameter escape summary for one
 // exported body. A parameter classified EscapeStore (or EscapeRetain) escaped
-// into module state, so the whole parameter graph is retained past the caller
-// frame exactly like an escaping-root ownership.store. The disposition is the
-// abstract interpretation's own conclusion, not a source spelling.
+// past the caller frame, so its whole graph is retained. When the summary also
+// names the formal that received it, the relation carries that owner position;
+// otherwise the value reached a container with no allocation in the wrapper's
+// own frame and the store is an escaping root. The disposition is the abstract
+// interpretation's own conclusion, not a source spelling.
 func escapeStoreRelation(escapes []signature.ParamRelation, arity int) (*exportrelation.OwnershipStore, bool) {
 	for _, relation := range escapes {
 		if relation.Param < 0 || relation.Param >= arity {
@@ -350,6 +346,9 @@ func escapeStoreRelation(escapes []signature.ParamRelation, arity int) (*exportr
 		}
 		switch relation.EscapeClass {
 		case signature.EscapeStore, signature.EscapeRetain:
+			if relation.HasStoredInto && relation.StoredInto >= 0 && relation.StoredInto < arity && relation.StoredInto != relation.Param {
+				return &exportrelation.OwnershipStore{Value: relation.Param, Owner: relation.StoredInto}, true
+			}
 			return &exportrelation.OwnershipStore{Value: relation.Param, EscapingRoot: true}, true
 		}
 	}
@@ -484,40 +483,6 @@ func literalParameterPredicate(expr ast.Expr, params map[string]int) (int, strin
 		return parameter, literal.Scalar, true
 	}
 	return 0, "", false
-}
-
-// ownershipStoreRelation admits only positional ownership.store wrappers.
-func ownershipStoreRelation(fn *ast.FunctionExpr, params map[string]int) (*exportrelation.OwnershipStore, bool) {
-	if fn == nil || len(fn.Stmts) != 1 {
-		return nil, false
-	}
-	statement, ok := fn.Stmts[0].(*ast.FuncCallStmt)
-	if !ok {
-		return nil, false
-	}
-	call, ok := statement.Expr.(*ast.FuncCallExpr)
-	if !ok || call.Receiver != nil || call.Method != "" || len(call.Args) != 2 {
-		return nil, false
-	}
-	callee, ok := call.Func.(*ast.AttrGetExpr)
-	if !ok || ast.KeyName(callee.Key) != "store" {
-		return nil, false
-	}
-	global, ok := callee.Object.(*ast.IdentExpr)
-	if !ok || global.Value != "ownership" {
-		return nil, false
-	}
-	value, valueOK := call.Args[0].(*ast.IdentExpr)
-	owner, ownerOK := call.Args[1].(*ast.IdentExpr)
-	if !valueOK || !ownerOK {
-		return nil, false
-	}
-	valueIndex, valueOK := params[value.Value]
-	ownerIndex, ownerOK := params[owner.Value]
-	if !valueOK || !ownerOK || valueIndex == ownerIndex {
-		return nil, false
-	}
-	return &exportrelation.OwnershipStore{Value: valueIndex, Owner: ownerIndex}, true
 }
 
 func forwardedImportedReturn(expr ast.Expr, params map[string]int, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Value, bool) {

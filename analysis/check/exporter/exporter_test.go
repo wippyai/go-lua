@@ -211,6 +211,49 @@ return M`
 	}
 }
 
+// TestDeriveSummaryPublishesFactDerivedStoreOwner proves the exported store
+// relation reads its formal positions from the engine's per-parameter escape
+// summary. The positional wrapper's owner comes from the placement facts that
+// name the container of the store; a wrapper that writes into module-captured
+// state has no owner formal and publishes an escaping root instead.
+func TestDeriveSummaryPublishesFactDerivedStoreOwner(t *testing.T) {
+	source := `type Item = { id: string }
+type Box = { label: string }
+local M = {}
+local saved: {[string]: Item} = {}
+
+function M.store_item(item: Item, box: Box)
+    ownership.store(item, box)
+end
+
+function M.keep_item(item: Item)
+    saved.last = item
+end
+
+return M`
+	result, err := engine.Check(source)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	summary := exporter.DeriveSummary(result, source)
+
+	store, ok := summary.Function("store_item", 2)
+	if !ok || !store.Store.Valid(2) {
+		t.Fatalf("store_item relation = %#v, want a valid store", store)
+	}
+	if store.Store.EscapingRoot || store.Store.Value != 0 || store.Store.Owner != 1 {
+		t.Fatalf("store_item store = %#v, want the fact-derived owner formal at 1", store.Store)
+	}
+
+	keep, ok := summary.Function("keep_item", 1)
+	if !ok || !keep.Store.Valid(1) {
+		t.Fatalf("keep_item relation = %#v, want a valid store", keep)
+	}
+	if !keep.Store.EscapingRoot || keep.Store.Value != 0 {
+		t.Fatalf("keep_item store = %#v, want an escaping root at formal 0", keep.Store)
+	}
+}
+
 func TestDeriveSummaryPublishesOwnershipStoreAlias(t *testing.T) {
 	source := `local M = {}
 local store_item = ownership.store
