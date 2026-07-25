@@ -9372,6 +9372,15 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		if typedChannelSendBoundary {
 			closure.Values = append(closure.Values, placementFactsFromChild(outcome.Values)...)
 		}
+		// A body closing only over module authorities is evaluated from a closed
+		// entry: every capture is an already-published import and every formal is
+		// its own declaration. Its allocations and their dispositions are
+		// therefore established facts about this body, not caller-specific
+		// reconstructions, and a boundary the entry cannot certify still leaves
+		// its own blocker.
+		if importedCaptureBoundary {
+			closure.Values = append(closure.Values, placementUncalledBodyFacts(child.Artifact.Equations, outcome.Values)...)
+		}
 	}
 	// A closure with no formals or captures has a fully closed body at its
 	// allocation boundary.  Its placement conclusions are independent of the
@@ -19262,9 +19271,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 							receiverResult, receiverResultTerm = true, argument
 						}
 					}
-					returnFacts := placementImportedReturnFacts(template, string(result), strings.TrimPrefix(string(application), "call/"))
-					placementReturnGraphPublished = len(returnFacts) != 0
-					values = append(values, returnFacts...)
+					if function, found := importedProviderFunction(lexical, provider, len(argumentTerms)); found {
+						returnFacts := placementImportedReturnFacts(operation.Target.Body, template, string(result), strings.TrimPrefix(string(application), "call/"), placementImportedReturnKind(function))
+						placementReturnGraphPublished = len(returnFacts) != 0
+						values = append(values, returnFacts...)
+					}
 				}
 				if summary, ok := importedProviderResultType(lexical, provider, index, argumentTerms, partition); ok {
 					// A parameterized export relation has already materialized the
@@ -19276,7 +19287,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 						lexical.setImportedAuthority(operation.Target.Body, string(result), summary)
 					}
 					if index == 0 && !placementReturnGraphPublished {
-						values = append(values, placementImportedDeclaredReturnFacts(lexical, provider, summary, string(result), strings.TrimPrefix(string(application), "call/"), len(argumentTerms))...)
+						values = append(values, placementImportedDeclaredReturnFacts(lexical, operation.Target.Body, provider, summary, string(result), strings.TrimPrefix(string(application), "call/"), len(argumentTerms))...)
 					}
 				}
 			}
@@ -20683,7 +20694,7 @@ func importedProviderFunction(lexical *lexicalEvaluator, provider []byte, arity 
 // returned root is a graph the callee allocated rather than state it already
 // held, and the checked return type supplies that graph's shape. Nothing here
 // materializes a value; the result keeps whatever the type lane concluded.
-func placementImportedDeclaredReturnFacts(lexical *lexicalEvaluator, provider []byte, declared typ.Type, result, application string, arity int) []equation.Fact {
+func placementImportedDeclaredReturnFacts(lexical *lexicalEvaluator, body equation.BodyID, provider []byte, declared typ.Type, result, application string, arity int) []equation.Fact {
 	if relationReturnTypeSafe(declared, make(map[typ.Type]bool)) {
 		return nil
 	}
@@ -20695,7 +20706,7 @@ func placementImportedDeclaredReturnFacts(lexical *lexicalEvaluator, provider []
 	if !ok {
 		return nil
 	}
-	return placementImportedReturnFacts(template, result, application)
+	return placementImportedReturnFacts(body, template, result, application, placementImportedAllocationKind)
 }
 
 // importedReturnTemplate selects only a closed relation that the provider

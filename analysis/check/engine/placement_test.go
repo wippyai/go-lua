@@ -1,9 +1,11 @@
 package engine_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
+	"github.com/wippyai/go-lua/analysis/check/lint"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 )
 
@@ -336,5 +338,207 @@ ownership.store(item, box)`)
 	}
 	if owner != 3 || stored != 2 || ownedDepth != 2 {
 		t.Fatalf("owner=%d stored=%d owned depth=%d, want the three-table owner and the two-table stored graph", owner, stored, ownedDepth)
+	}
+}
+
+// checkModulesPlacement runs the project checker over modules given in
+// dependency order and returns the published placement plan. The last module is
+// the target, matching the fixture corpus layout.
+func checkModulesPlacement(t *testing.T, order []string, sources map[string]string, packages ...string) *engine.PlacementPlan {
+	t.Helper()
+	entries := make([]lint.Entry, 0, len(order))
+	for _, name := range order {
+		entries = append(entries, lint.Entry{Path: name + ".lua", ModulePath: name, Source: sources[name]})
+	}
+	input := lint.ProjectInput{Entries: entries, Targets: []string{order[len(order)-1]}}
+	for _, pkg := range packages {
+		input.Manifests = append(input.Manifests, fixtureHostManifest(pkg))
+	}
+	result, err := lint.CheckProject(context.Background(), input)
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	return result.Placement
+}
+
+const placementBoxLibraryModule = `
+type Boxed = {
+    tag: string,
+    body: string,
+}
+
+local M = {}
+M.Boxed = Boxed
+
+function M.wrap(payload: string): M.Boxed
+    local box: M.Boxed = { tag = "boxed", body = payload }
+    return box
+end
+
+return M
+`
+
+// placementSharedTables counts the sent graph of the shared library: a table
+// site placed on the shared heap with its sealing proof already established.
+func placementSharedTables(plan *engine.PlacementPlan) int {
+	count := 0
+	for _, item := range plan.Allocations {
+		if item.Placement == placement.SharedHeap && item.Kind == "lua.table" && item.SealBeforeShare {
+			count++
+		}
+	}
+	return count
+}
+
+// TestCheckPlacementDivergesPerConsumerOfSharedLibrary proves one library
+// allocation site reaches a different placement in each consumer that uses it.
+// The consumer bodies are never invoked inside their own module, so the graph
+// each one materializes is established from the imported relation alone; the
+// send is the only boundary that promotes it past actor-local ownership.
+func TestCheckPlacementDivergesPerConsumerOfSharedLibrary(t *testing.T) {
+	plan := checkModulesPlacement(t, []string{"lib", "reader", "sender", "main"}, map[string]string{
+		"lib": placementBoxLibraryModule,
+		"reader": `local lib = require("lib")
+
+local M = {}
+
+function M.run(): string
+    local box: lib.Boxed = lib.wrap("payload-read")
+    return box.body
+end
+
+return M
+`,
+		"sender": `local lib = require("lib")
+
+local M = {}
+
+function M.run()
+    local box: lib.Boxed = lib.wrap("payload-send")
+    process.send("worker", "topic", box)
+end
+
+return M
+`,
+		"main": `local reader = require("reader")
+local sender = require("sender")
+
+sender.run()
+print(reader.run())
+`,
+	}, "process")
+	if plan == nil || !plan.Complete {
+		t.Fatalf("placement = %#v, want a complete plan", plan)
+	}
+	shared, owned := 0, 0
+	for _, item := range plan.Allocations {
+		switch {
+		case item.Placement == placement.SharedHeap:
+			if !item.SealBeforeShare || item.Kind != "lua.table" || len(item.Obligations) != 0 {
+				t.Fatalf("allocation = %#v, want the sent table sealed before it is shared", item)
+			}
+			shared++
+		case item.Placement == placement.OwnedHeap && item.Kind == "lua.table" && item.Target == "":
+			// The library's published return template: the graph every consumer
+			// materializes, before any consumer-specific boundary applies.
+			owned++
+		}
+		if item.Placement == placement.Unknown {
+			t.Fatalf("allocation = %#v, want no unknown placement", item)
+		}
+	}
+	if shared != 1 || owned == 0 {
+		t.Fatalf("shared=%d library templates=%d in %#v, want exactly the sender's graph shared", shared, owned, plan.Allocations)
+	}
+}
+
+// TestCheckPlacementSeparatesSiblingImportedReturnGraphs proves two bodies of
+// the same module each materialize their own graph from the same library call.
+// Both calls occupy the same operation slot inside their own body, so an
+// identity keyed by the application alone would alias them and hand the read-only
+// graph the sender's sharing and sealing proofs.
+func TestCheckPlacementSeparatesSiblingImportedReturnGraphs(t *testing.T) {
+	plan := checkModulesPlacement(t, []string{"lib", "consumer", "main"}, map[string]string{
+		"lib": placementBoxLibraryModule,
+		"consumer": `local lib = require("lib")
+
+local M = {}
+
+function M.emit()
+    local sent: lib.Boxed = lib.wrap("sent")
+    process.send("worker", "topic", sent)
+end
+
+function M.read(): string
+    local kept: lib.Boxed = lib.wrap("kept")
+    return kept.body
+end
+
+return M
+`,
+		"main": `local consumer = require("consumer")
+
+consumer.emit()
+print(consumer.read())
+`,
+	}, "process")
+	if plan == nil || !plan.Complete {
+		t.Fatalf("placement = %#v, want a complete plan", plan)
+	}
+	owned := 0
+	for _, item := range plan.Allocations {
+		if item.Placement == placement.OwnedHeap && item.Kind == "lua.table" {
+			owned++
+		}
+	}
+	// The sent graph, the read graph, the consumer module table, the library
+	// module table, and the library return template are five distinct sites.
+	// An aliased identity would merge the two library graphs into one.
+	if shared, want := placementSharedTables(plan), 4; shared != 1 || owned != want {
+		t.Fatalf("shared=%d owned tables=%d (want 1 and %d) in %#v", shared, owned, want, plan.Allocations)
+	}
+}
+
+// TestCheckPlacementWithholdsForwardedGraphFromUncalledBody proves a body that
+// returns the graph of an imported call publishes no site of its own for it.
+// The forwarder's frame carries the graph in transit only; the caller's own call
+// site and the module's published return relation already place it, so a second
+// caller-less site would count one runtime object twice.
+func TestCheckPlacementWithholdsForwardedGraphFromUncalledBody(t *testing.T) {
+	plan := checkModulesPlacement(t, []string{"lib", "pass", "main"}, map[string]string{
+		"lib": placementBoxLibraryModule,
+		"pass": `local lib = require("lib")
+
+type Boxed = lib.Boxed
+
+local M = {}
+M.Boxed = Boxed
+
+function M.build(payload: string): Boxed
+    return lib.wrap(payload)
+end
+
+return M
+`,
+		"main": `local pass = require("pass")
+
+local box: pass.Boxed = pass.build("payload")
+print(box.body)
+`,
+	})
+	if plan == nil || !plan.Complete {
+		t.Fatalf("placement = %#v, want a complete plan", plan)
+	}
+	for _, item := range plan.Allocations {
+		if item.Placement == placement.Unknown {
+			t.Fatalf("allocation = %#v, want no unknown placement", item)
+		}
+	}
+	// The whole plan is the library module table and its published return
+	// relation, the forwarder module table and its own published relation, and
+	// the entry module's instantiation of that relation. The forwarder body
+	// carries the graph in transit only and contributes no sixth site.
+	if len(plan.Allocations) != 5 {
+		t.Fatalf("allocations = %d in %#v, want no site for the graph in transit", len(plan.Allocations), plan.Allocations)
 	}
 }

@@ -344,17 +344,28 @@ func placementAllocation(identity, result string, facts []equation.Fact) (placem
 // matched it to this provider and return slot. These are fresh allocation
 // witnesses at this call boundary, not aliases reconstructed from a result
 // type or source spelling.
-func placementImportedReturnFacts(template exportrelation.Value, result, application string) []equation.Fact {
-	if result == "" || application == "" || len(template.Table) == 0 {
+//
+// The kind names the provenance of the instantiated site and is supplied by the
+// lane that owns the template: placementImportedReturnKind for an
+// exporter-validated literal return relation, and the manifest boundary kind for
+// a graph projected from a declared type alone.
+//
+// The identity is sealed by the evaluating body as well as the application,
+// because an application name is only unique inside one body. Two sibling
+// bodies of the same parent reach the same caller partition, and an
+// application-only identity would let their independent graphs alias.
+func placementImportedReturnFacts(body equation.BodyID, template exportrelation.Value, result, application, kind string) []equation.Fact {
+	if result == "" || application == "" || kind == "" || len(template.Table) == 0 {
 		return nil
 	}
+	scope := base64.RawURLEncoding.EncodeToString([]byte(string(body[:]) + "/" + application))
 	var facts []equation.Fact
 	var instantiate func(exportrelation.Value, string, string) string
 	instantiate = func(value exportrelation.Value, target, suffix string) string {
 		if len(value.Table) == 0 {
 			return ""
 		}
-		identity := "allocation/imported/" + base64.RawURLEncoding.EncodeToString([]byte(application)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix))
+		identity := "allocation/imported/" + scope + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix))
 		children := make([]string, 0)
 		for _, member := range value.Table {
 			if len(member.Value.Table) == 0 {
@@ -367,7 +378,7 @@ func placementImportedReturnFacts(template exportrelation.Value, result, applica
 			}
 		}
 		encoded, err := encodePlacementAllocation(placementAllocationFact{
-			Identity: identity, Result: target, Kind: "manifest.allocation", Complete: true, Children: children,
+			Identity: identity, Result: target, Kind: kind, Complete: true, Children: children,
 		})
 		if err == nil {
 			facts = append(facts,
@@ -385,6 +396,26 @@ func placementImportedReturnFacts(template exportrelation.Value, result, applica
 	}
 	instantiate(template, result, "root")
 	return facts
+}
+
+// placementImportedAllocationKind is the site kind of a graph reconstructed from
+// a declared boundary rather than from a producer-evaluated literal. Its members
+// come from the declared type, including a keyed container's representative
+// element, so no program point of the producer materializes them one for one.
+const placementImportedAllocationKind = "manifest.allocation"
+
+// placementImportedReturnKind names the site an exporter-validated return
+// relation instantiates at a call boundary. A producer that materializes its
+// returned table itself yields a real Lua table here; a one-step forwarder only
+// republishes the graph of the module it calls, so its site stays the
+// manifest-backed boundary. This is the same split the module-level relation
+// projection publishes, so one graph does not read as two different kinds
+// depending on which lane names it.
+func placementImportedReturnKind(function exportrelation.Function) string {
+	if function.Forwarded {
+		return placementImportedAllocationKind
+	}
+	return "lua.table"
 }
 
 // placementMapRepresentativeSuffix names the one element allocation that stands
@@ -849,6 +880,47 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 		}
 	}
 	return projected
+}
+
+// placementUncalledBodyFacts transports the placement conclusions of a body
+// evaluated at its allocation site rather than at a call. Such a body has no
+// caller, so it may publish only the dispositions its own frame settles: a
+// graph it returns is handed to whichever caller invokes it, and that caller's
+// own call-site instantiation -- or the module's published return relation --
+// is the site that places it. Publishing a second, caller-less site for the
+// same graph would count one runtime object twice, so a body carrying an
+// allocation through a return withholds the whole projection. Withholding is
+// conservative: this lane only ever adds sites.
+func placementUncalledBodyFacts(operations []equation.Equation, values []equation.Fact) []equation.Fact {
+	if placementReturnsAllocation(operations, values) {
+		return nil
+	}
+	return placementFactsFromChild(values)
+}
+
+// placementReturnsAllocation reports whether any allocation of this body
+// reached one of its return occurrences. The return kernel publishes the
+// ownership event under the publication operation itself, so the transported
+// facts name the boundary without re-reading the returned term.
+func placementReturnsAllocation(operations []equation.Equation, values []equation.Fact) bool {
+	publications := make(map[string]bool)
+	for _, operation := range operations {
+		if operation.Occurrence.Kind == "publication" {
+			publications[operation.Target.Name] = true
+		}
+	}
+	if len(publications) == 0 {
+		return false
+	}
+	for _, fact := range values {
+		if !strings.HasPrefix(fact.Key, placementEventPrefix) {
+			continue
+		}
+		if parts, ok := placementProvenFactParts(fact); ok && publications[parts[4]] {
+			return true
+		}
+	}
+	return false
 }
 
 // placementStackWitnessFacts projects only complete child allocations with no
