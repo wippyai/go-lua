@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -16,8 +17,10 @@ import (
 
 // nilabilityNativeFacts projects only refinements that the lowered body has
 // already made explicit: a nil-capable path, plus a normalized branch or
-// assertion that establishes its non-nil (or nil) arm. It does not attempt to
-// reconstruct control flow or infer optionality from source spelling.
+// assertion that establishes its non-nil (or nil) arm. It consults the
+// authoritative CFG for loop membership so a guard whose narrowing a backedge
+// revokes widens to maybe_nil, but it never reconstructs that topology or
+// infers optionality from source spelling.
 func nilabilityNativeFacts(root front.Compilation) []NativeFact {
 	var rows []NativeFact
 	forEachNativeBody(root, func(compilation front.Compilation) {
@@ -34,6 +37,7 @@ func nilabilityBodyFacts(compilation front.Compilation) []NativeFact {
 	types := nativePathTypes(body)
 	var rows []NativeFact
 	seenBranches := make(map[string]struct{})
+	backedge := newBackedgeCarriers(compilation)
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		occurrence := fmt.Sprintf("op-%08d", index)
@@ -52,9 +56,16 @@ func nilabilityBodyFacts(compilation front.Compilation) []NativeFact {
 				"else_edge="+otherwise+" nilability=non_nil then_edge="+then))
 			switch check.Kind {
 			case wir.CheckNotNil:
-				// A direct `~= nil` establishes both arm facts independently.
+				// A direct `~= nil` establishes both arm facts independently. When a
+				// loop backedge reassigns the carrier from an optional source before
+				// re-entering this guard, the then-arm non_nil does not survive to the
+				// loop header: the loop-carried value there is maybe_nil.
+				arm := "nilability=non_nil"
+				if backedge.widens(instruction.Point, path, types) {
+					arm = "nilability=maybe_nil"
+				}
 				rows = append(rows,
-					nilabilityNativeRow(compilation, occurrence, path, "nilability=non_nil"),
+					nilabilityNativeRow(compilation, occurrence, path, arm),
 					nilabilityNativeRow(compilation, occurrence, path, "nilability=nil"),
 				)
 			case wir.CheckTruthy, wir.CheckFalsy:
@@ -88,6 +99,93 @@ func nilabilityBodyFacts(compilation front.Compilation) []NativeFact {
 		}
 	}
 	return rows
+}
+
+// backedgeCarriers answers whether a guard's non-nil narrowing survives a loop
+// backedge. It uses the body's authoritative CFG reachability, never
+// instruction order, so a reassignment that merely follows a guard in source is
+// not mistaken for one that flows back to it. Reachability is built once and
+// only when the source topology actually has a cycle.
+type backedgeCarriers struct {
+	body  *wir.Body
+	reach *cfg.Reachability
+}
+
+func newBackedgeCarriers(compilation front.Compilation) backedgeCarriers {
+	carriers := backedgeCarriers{body: compilation.WIR}
+	// Cyclic is non-nil exactly when the body's source topology has a cycle, so a
+	// backedge is possible. An acyclic body needs no reachability query.
+	if compilation.Graph != nil && compilation.Cyclic != nil {
+		carriers.reach = cfg.NewReachability(compilation.Graph)
+	}
+	return carriers
+}
+
+// widens reports that the carrier guarded at branch is reassigned from an
+// optional source at a point sharing a cycle with the branch. The backedge then
+// carries a possibly-nil value back to the loop header, so the guard's non_nil
+// narrowing must widen to maybe_nil there.
+func (c backedgeCarriers) widens(branch cfg.Point, carrier path.Path, types map[string]typ.Type) bool {
+	if c.reach == nil || c.body == nil || len(carrier.Segments) != 0 {
+		return false
+	}
+	for index := 0; index < c.body.Len(); index++ {
+		instruction := c.body.Instr(index)
+		if instruction.Dst.Kind != wir.OperandPath {
+			continue
+		}
+		target := c.body.Path(wir.PathRef(instruction.Dst.Ref))
+		if len(target.Segments) != 0 || target.Symbol != carrier.Symbol || target.Root != carrier.Root {
+			continue
+		}
+		if !c.reach.CanReach(branch, instruction.Point) || !c.reach.CanReach(instruction.Point, branch) {
+			continue
+		}
+		if nativeWriteSourceOptional(c.body, instruction, types) {
+			return true
+		}
+	}
+	return false
+}
+
+// nativeWriteSourceOptional reports whether the value a write binds into its
+// destination is nil-capable. Only an optional source leaves a loop-carried
+// carrier maybe_nil at the loop header; a write of a proven non-nil value does
+// not revoke the guard.
+func nativeWriteSourceOptional(body *wir.Body, instruction wir.Instruction, types map[string]typ.Type) bool {
+	switch instruction.Op {
+	case wir.OpDynamicIndexRead:
+		container, ok := nativeOperandPath(body, instruction.A)
+		if !ok {
+			return false
+		}
+		containerType, ok := nativePathType(container, types)
+		if !ok || containerType == nil {
+			return false
+		}
+		element, ok := access.RuntimeIndex(containerType, nativeIndexKeyType(body, instruction.B, types))
+		return ok && element != nil && typevalue.TypeIncludesNil(element)
+	case wir.OpAssign:
+		source, ok := nativeOperandPath(body, instruction.A)
+		if !ok {
+			return false
+		}
+		sourceType, ok := nativePathType(source, types)
+		return ok && sourceType != nil && typevalue.TypeIncludesNil(sourceType)
+	}
+	return false
+}
+
+// nativeIndexKeyType recovers the key type of a dynamic index read so element
+// projection distinguishes array from keyed-container element optionality. A key
+// with no witnessed type defaults to a numeric index, the array read shape.
+func nativeIndexKeyType(body *wir.Body, operand wir.Operand, types map[string]typ.Type) typ.Type {
+	if key, ok := nativeOperandPath(body, operand); ok {
+		if value, ok := nativePathType(key, types); ok && value != nil {
+			return value
+		}
+	}
+	return typ.Number
 }
 
 func nativePathTypes(body *wir.Body) map[string]typ.Type {

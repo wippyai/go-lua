@@ -78,6 +78,10 @@ type Compilation struct {
 	// may inspect it only as descriptive input; evaluation remains exclusively
 	// owned by Artifact and the engine kernels.
 	WIR *wir.Body
+	// Graph is the source-owned CFG for WIR. It is the authoritative control
+	// topology a consumer must use for reachability questions (loop membership,
+	// backedges); it is never reconstructed from instruction order.
+	Graph cfg.Graph
 	// Body is the stable lexical identity for this independently admitted WIR
 	// body. Evaluation still starts exclusively at the root artifact.
 	Body          equation.BodyID
@@ -262,6 +266,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	claimSpans, claimTargetSpans := claimSpans(body, artifact)
 	effects := effectSpans(body, artifact)
 	compilation := newCompilation(rootBody, 0, "", body.LexicalPath(), body.Boundary(), body, artifact, mergeSpans(claimSpans, effectValueSpans(body, artifact)), mergeSpans(claimTargetSpans, effectTargetSpans(body, artifact)), callSpans(body, artifact), branchSpans(body, artifact), effects, expressionSpans(body, artifact))
+	compilation.Graph = built.Graph
 	cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 	if err != nil {
 		return Compilation{}, err
@@ -829,6 +834,7 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 		claimSpans, claimTargetSpans := claimSpans(proto.Body, artifact)
 		effects := effectSpans(proto.Body, artifact)
 		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, proto.Body, artifact, mergeSpans(claimSpans, effectValueSpans(proto.Body, artifact)), mergeSpans(claimTargetSpans, effectTargetSpans(proto.Body, artifact)), callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effects, expressionSpans(proto.Body, artifact))
+		child.Graph = proto.Graph
 		cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
 		if err != nil {
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
