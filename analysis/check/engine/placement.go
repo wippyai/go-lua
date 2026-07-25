@@ -464,34 +464,51 @@ func placementInvokedClosureCaptureFacts(operation equation.BoundEquation, opera
 	return facts
 }
 
-// placementImportedStoreFacts consumes an ownership boundary only when an
-// imported module has already published a checked, one-statement wrapper for
-// ownership.store. The relation supplies exact formal positions; no imported
-// source spelling or arbitrary external callable can retain a graph.
-func placementImportedStoreFacts(lexical *lexicalEvaluator, operation equation.BoundEquation, provider []byte, arguments [][]byte, partition equation.Partition) []equation.Fact {
+// importedCallRelation resolves the published, checked wrapper relation for an
+// imported provider call and the caller-visible application it discharges. No
+// imported source spelling or arbitrary external callable resolves here.
+func importedCallRelation(lexical *lexicalEvaluator, operation equation.BoundEquation, provider []byte, arity int) (exportrelation.Function, string, bool) {
 	if lexical == nil {
-		return nil
+		return exportrelation.Function{}, "", false
 	}
 	module, suffix, load, ok := importedProviderTarget(provider)
 	if !ok || load || suffix == "" {
-		return nil
+		return exportrelation.Function{}, "", false
 	}
 	lexical.importedAuthorityMu.RLock()
 	summary, found := lexical.importedRelations[module]
 	lexical.importedAuthorityMu.RUnlock()
 	if !found {
-		return nil
+		return exportrelation.Function{}, "", false
 	}
-	function, found := summary.Function(strings.TrimPrefix(suffix, "."), len(arguments))
-	if !found || !function.Store.Valid(len(arguments)) {
-		return nil
+	function, found := summary.Function(strings.TrimPrefix(suffix, "."), arity)
+	if !found {
+		return exportrelation.Function{}, "", false
 	}
 	application := strings.TrimPrefix(string(operationOperandValue(operation, "application")), "call/")
 	if application == "" {
+		return exportrelation.Function{}, "", false
+	}
+	return function, application, true
+}
+
+// placementImportedStoreFacts consumes an ownership boundary only when an
+// imported module has already published a checked, one-statement store
+// wrapper. A positional ownership.store names both the stored value and its
+// owner; an escaping-root wrapper writes the value into module state and has no
+// owner formal. Either way only the stored graph is retained; no imported
+// source spelling or arbitrary external callable can retain a graph.
+func placementImportedStoreFacts(lexical *lexicalEvaluator, operation equation.BoundEquation, provider []byte, arguments [][]byte, partition equation.Partition) []equation.Fact {
+	function, application, ok := importedCallRelation(lexical, operation, provider, len(arguments))
+	if !ok || !function.Store.Valid(len(arguments)) {
 		return nil
 	}
+	indices := []int{function.Store.Value}
+	if !function.Store.EscapingRoot {
+		indices = append(indices, function.Store.Owner)
+	}
 	var facts []equation.Fact
-	for _, index := range []int{function.Store.Value, function.Store.Owner} {
+	for _, index := range indices {
 		allocation, found := placementAllocationForTerm(arguments[index], partition)
 		if !found {
 			continue
@@ -500,6 +517,30 @@ func placementImportedStoreFacts(lexical *lexicalEvaluator, operation equation.B
 		if index == function.Store.Value {
 			facts = append(facts, placementEventFact(allocation.Identity, application, placementEventOwned))
 		}
+	}
+	return facts
+}
+
+// placementImportedBorrowFacts discharges the opaque-call fallback for the exact
+// formal positions a published read-only wrapper never retains. The relation is
+// admitted only after the module exporter proved the body stores, sends,
+// re-passes, and returns no parameter graph, so each borrowed argument keeps
+// whatever placement its own allocation proves.
+func placementImportedBorrowFacts(lexical *lexicalEvaluator, operation equation.BoundEquation, provider []byte, arguments [][]byte, partition equation.Partition) []equation.Fact {
+	function, application, ok := importedCallRelation(lexical, operation, provider, len(arguments))
+	if !ok || len(function.Borrow) == 0 {
+		return nil
+	}
+	var facts []equation.Fact
+	for _, index := range function.Borrow {
+		if index < 0 || index >= len(arguments) {
+			continue
+		}
+		allocation, found := placementAllocationForTerm(arguments[index], partition)
+		if !found {
+			continue
+		}
+		facts = append(facts, placementContractFact(allocation.Identity, "borrow", application))
 	}
 	return facts
 }

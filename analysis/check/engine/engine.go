@@ -18025,6 +18025,7 @@ func externalCallKernel(lexical *lexicalEvaluator, operation equation.BoundEquat
 	}
 	values := placementExternalOwnershipFacts(operation, operands["provider"], arguments, partition)
 	values = append(values, placementImportedStoreFacts(lexical, operation, operands["provider"], arguments, partition)...)
+	values = append(values, placementImportedBorrowFacts(lexical, operation, operands["provider"], arguments, partition)...)
 	values = append(values, opaqueCallbackCaptureEffects(lexical, operands["provider"], arguments, operation.Target.Name, partition)...)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
 		Values: values,

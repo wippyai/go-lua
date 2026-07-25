@@ -31,6 +31,10 @@ type Function struct {
 	Forwarded    bool
 	Store        *OwnershipStore
 	NormalEqual  *Equality
+	// Borrow lists the formal positions a read-only wrapper never retains: the
+	// body neither stores, sends, re-passes, nor returns their graph, so each
+	// argument stays frame-local at the caller.
+	Borrow []int
 }
 
 // ReturnTuple is one complete positional return alternative. Every value is a
@@ -48,9 +52,15 @@ type ConditionalReturn struct {
 	Otherwise Value
 }
 
-// OwnershipStore carries the two exact formal positions of an exported
-// wrapper around the already-published ownership.store contract.
-type OwnershipStore struct{ Value, Owner int }
+// OwnershipStore carries the exact formal position of an exported store
+// wrapper. Owner names the second formal of a positional ownership.store
+// wrapper. When EscapingRoot is set the wrapper instead writes the value into a
+// container with no allocation in its own frame (a module-captured local or a
+// global), so there is no owner formal and Owner is unused.
+type OwnershipStore struct {
+	Value, Owner int
+	EscapingRoot bool
+}
 
 // Equality is a normal-return-only equality between two formal parameters.
 type Equality struct{ Left, Right int }
@@ -83,7 +93,7 @@ func (s Summary) Function(path string, arity int) (Function, bool) {
 }
 
 func (f Function) Valid() bool {
-	if f.Path == "" || f.Arity < 0 || (!f.Return.Valid(f.Arity) && !f.Conditional.Valid(f.Arity) && !validReturnTuples(f.ReturnTuples, f.Arity) && !f.Store.Valid(f.Arity)) {
+	if f.Path == "" || f.Arity < 0 || (!f.Return.Valid(f.Arity) && !f.Conditional.Valid(f.Arity) && !validReturnTuples(f.ReturnTuples, f.Arity) && !f.Store.Valid(f.Arity) && !validBorrow(f.Borrow, f.Arity)) {
 		return false
 	}
 	if (f.Return.Valid(f.Arity) && f.Conditional != nil) ||
@@ -119,7 +129,29 @@ func (c *ConditionalReturn) Valid(arity int) bool {
 }
 
 func (s *OwnershipStore) Valid(arity int) bool {
-	return s != nil && s.Value >= 0 && s.Owner >= 0 && s.Value != s.Owner && s.Value < arity && s.Owner < arity
+	if s == nil || s.Value < 0 || s.Value >= arity {
+		return false
+	}
+	if s.EscapingRoot {
+		return true
+	}
+	return s.Owner >= 0 && s.Owner < arity && s.Value != s.Owner
+}
+
+// validBorrow reports whether every borrowed formal position is a distinct,
+// in-range parameter. An empty list carries no disposition.
+func validBorrow(borrow []int, arity int) bool {
+	if len(borrow) == 0 {
+		return false
+	}
+	seen := make(map[int]bool, len(borrow))
+	for _, index := range borrow {
+		if index < 0 || index >= arity || seen[index] {
+			return false
+		}
+		seen[index] = true
+	}
+	return true
 }
 
 // Closed reports whether v is an exact immutable literal tree without a
