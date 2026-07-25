@@ -1817,6 +1817,12 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 					operands = append(operands, equation.Operand{Role: "payload-type-" + caseName, Term: payload})
 				}
 			}
+			for liveIndex, term := range suspensionLives[instruction.Point] {
+				operands = append(operands, equation.Operand{
+					Role: "suspension-live-" + fmt.Sprintf("%08d", liveIndex),
+					Term: term,
+				})
+			}
 			draft.Occurrence = occurrence("channel-select")
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = operands
@@ -3539,10 +3545,10 @@ func loopHeaderGuards(graph cfg.Graph, reachability *reachabilityCache, point cf
 
 // suspensionLiveAllocations records an allocation root only when the immutable
 // WIR and CFG establish all three parts of the lifetime witness: construction
-// reaches a receive call, the allocation root is not rebound before that call,
-// and a read of that root (or one of its members) is reachable after it.  It is
-// deliberately a front-side relation rather than a placement heuristic: later
-// stages consume the exact root term that the allocation already published.
+// reaches a suspension point, the allocation root is not rebound before that
+// point, and a read of that root (or one of its members) is reachable after it.
+// It is deliberately a front-side relation rather than a placement heuristic:
+// later stages consume the exact root term that the allocation already published.
 func suspensionLiveAllocations(body *wir.Body, graph cfg.Graph, reachability *reachabilityCache) map[cfg.Point][]equation.Term {
 	if body == nil || graph == nil || reachability == nil {
 		return nil
@@ -3567,25 +3573,36 @@ func suspensionLiveAllocations(body *wir.Body, graph cfg.Graph, reachability *re
 		return nil
 	}
 	live := make(map[cfg.Point][]equation.Term)
-	for callIndex := 0; callIndex < body.Len(); callIndex++ {
-		call := body.Instr(callIndex)
-		if !receiveCall(body, call) {
+	for pointIndex := 0; pointIndex < body.Len(); pointIndex++ {
+		suspension := body.Instr(pointIndex)
+		if !suspensionPoint(body, suspension) {
 			continue
 		}
 		for _, candidate := range allocations {
-			if candidate.index >= callIndex || !reachability.reaches(candidate.point, call.Point) ||
-				reboundRootBefore(body, candidate.root, candidate.index+1, callIndex) ||
-				!rootReadAfter(body, reachability, candidate.root, call.Point, callIndex+1) {
+			if candidate.index >= pointIndex || !reachability.reaches(candidate.point, suspension.Point) ||
+				reboundRootBefore(body, candidate.root, candidate.index+1, pointIndex) ||
+				!rootReadAfter(body, reachability, candidate.root, suspension.Point, pointIndex+1) {
 				continue
 			}
 			term, err := scalarTerm(body, candidate.root)
 			if err != nil {
 				continue
 			}
-			live[call.Point] = append(live[call.Point], term)
+			live[suspension.Point] = append(live[suspension.Point], term)
 		}
 	}
 	return live
+}
+
+// suspensionPoint reports the lowered instructions that hand the frame back to
+// the scheduler: a channel receive call, and a select that carries no default
+// arm and therefore blocks until a case fires. Both park the frame, so an
+// allocation live across either one outlives its caller's stack region.
+func suspensionPoint(body *wir.Body, instruction wir.Instruction) bool {
+	if instruction.Op == wir.OpSelect {
+		return !instruction.SelectDefault
+	}
+	return receiveCall(body, instruction)
 }
 
 func receiveCall(body *wir.Body, instruction wir.Instruction) bool {

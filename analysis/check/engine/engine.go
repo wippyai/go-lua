@@ -4988,6 +4988,42 @@ func uncalledDeclaredFormalFunctionCall(operation equation.Equation, formalFunct
 	return false
 }
 
+// bodyLocalClosureTerms names the terms this body materializes its own lexical
+// closures into. The materialization operand list is the sole authority: a term
+// a body did not allocate a closure into is not one of its own callables.
+func bodyLocalClosureTerms(child front.Compilation) map[string]bool {
+	terms := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "object-materialization" {
+			continue
+		}
+		kind, hasKind := artifactOperand(operation.Operands, "kind")
+		result, hasResult := artifactOperand(operation.Operands, "result")
+		if !hasKind || !hasResult || string(kind) != "object-kind/closure" {
+			continue
+		}
+		terms[string(result)] = true
+	}
+	return terms
+}
+
+// uncalledLocalClosureCall recognizes a direct call whose callee is a closure
+// this same body materialized. A captureless body owns every cell such a closure
+// can capture, so the callee's prototype and its whole environment are already
+// inside this evaluation: the call needs no caller-owned value.
+func uncalledLocalClosureCall(operation equation.Equation, localClosures map[string]bool) bool {
+	if operation.Occurrence.Kind != "apply" || len(localClosures) == 0 {
+		return false
+	}
+	for _, operand := range operation.Operands {
+		if operand.Role != "callee" {
+			continue
+		}
+		return localClosures[string(operand.Term.Encoding)]
+	}
+	return false
+}
+
 // childCallsFormalFunction reports whether a body applies one of its own formals
 // that is seeded as a function type. Such a call resolves against the formal's
 // abstract declared contract, so an uncalled placement witness would seed the
@@ -5053,13 +5089,16 @@ func (l *lexicalEvaluator) callbackCompositionCall(operands directCallOperands, 
 }
 
 // uncalledDeclaredFormalCallBoundary admits a body whose calls resolve entirely
-// from the declared function contracts of its own formals. The formal is seeded
-// as its declared type (an axiom under test, never a caller value); a call
-// through it derives its result from that declared return and checks arguments
-// against the declared parameters. Every root is therefore seeded — no capture,
-// no unseeded Top — so the body's full diagnostic surface traces to seeded
-// facts. A capture, a dynamic read or select from any root, or a call through a
-// value with no declared function contract keeps the body dormant.
+// from contracts the boundary itself supplies: the declared function type of one
+// of its own formals, or a closure this same body allocated. The formal is
+// seeded as its declared type (an axiom under test, never a caller value); a
+// call through it derives its result from that declared return and checks
+// arguments against the declared parameters. A body-local closure needs no
+// contract at all — its prototype and its capture cells belong to this captureless
+// body, so the call resolves inside the same evaluation. Every root is therefore
+// seeded — no capture, no unseeded Top — so the body's full diagnostic surface
+// traces to seeded facts. A capture, a dynamic read or select from any root, or
+// a call through a value with neither authority keeps the body dormant.
 func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, bool) {
 	if !capturelessFormalBody(child) {
 		return nil, false
@@ -5098,16 +5137,17 @@ func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, b
 			externalApplications[string(application)] = true
 		}
 	}
+	localClosures := bodyLocalClosureTerms(child)
 	memberCalls := make(map[string]bool)
-	hasFormalCall := false
+	hasClosedCall := false
 	for _, operation := range child.Artifact.Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
 		application := "call/" + operation.Target.Name
-		if uncalledDeclaredFormalFunctionCall(operation, formalFunctions) {
+		if uncalledDeclaredFormalFunctionCall(operation, formalFunctions) || uncalledLocalClosureCall(operation, localClosures) {
 			memberCalls[application] = true
-			hasFormalCall = true
+			hasClosedCall = true
 			continue
 		}
 		if uncalledDeclaredMemberCall(child, operation, formals) || externalApplications[application] {
@@ -5116,7 +5156,7 @@ func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, b
 		}
 		return nil, false
 	}
-	if !hasFormalCall {
+	if !hasClosedCall {
 		return nil, false
 	}
 	for _, operation := range child.Artifact.Equations {
@@ -14251,15 +14291,20 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 		(!strings.EqualFold(string(operands["default"]), "select/default/true") && !strings.EqualFold(string(operands["default"]), "select/default/false")) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed channel select")
 	}
+	// A select without a default arm parks the frame, so every root the front
+	// proved live across it outlives the frame's stack region. The lifetime
+	// conclusion is independent of whether the case payloads refine the result,
+	// so it rides both the unrefined and the refined closure.
+	suspensionFacts := placementSuspendedLiveFacts(operation, partition)
 	// A select writes its result on every path it can take, so the destination is
 	// written even when no case yields a payload this transaction can prove.
 	// Withholding the refined result type is a precision decision; withholding
 	// the write itself would leave a read with no completed producer, which is an
 	// artifact malformation rather than an absent fact.
-	unrefined := equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{
+	unrefined := equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: append([]equation.Fact{
 		{Key: "value/" + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte("scalar/top")},
 		{Key: epochFactPrefix + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
-	}}}
+	}, suspensionFacts...)}}
 	type selectCase struct {
 		term, display string
 		payload       typ.Type
@@ -14292,7 +14337,7 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 				return unrefined, nil
 			}
 			item.payload = payload
-		case operand.Role == "result" || operand.Role == "default":
+		case operand.Role == "result" || operand.Role == "default" || strings.HasPrefix(operand.Role, "suspension-live-"):
 		default:
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed channel select role %q", operand.Role)
 		}
@@ -14354,6 +14399,7 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 		{Key: "select/meta/" + selectID, Value: meta},
 	}
 	values = append(values, armFacts...)
+	values = append(values, suspensionFacts...)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
@@ -19352,7 +19398,66 @@ func opaqueCallbackCaptureEffects(lexical *lexicalEvaluator, provider []byte, ar
 			}
 			seen[string(identity)] = true
 			facts = append(facts, heapExternalCallbackFact(identity, operation))
+			facts = append(facts, opaqueCallbackMemberJoins(child, boundaryTerm(capture.Symbol), identity, operation, partition)...)
 		}
+	}
+	return facts
+}
+
+// opaqueCallbackMemberJoins weakens each caller member cell the callback body
+// statically writes. An unresolved provider decides on its own whether to invoke
+// the callback, so the cell the caller reads after the call holds the join of
+// the value it proved and the value the callback would write. The written value
+// comes from the callback's own lowered operand; one the body does not close is
+// unknown and joins to the unknown scalar rather than leaving the caller's proof
+// standing. A cell the caller never proved has nothing to weaken.
+func opaqueCallbackMemberJoins(child front.Compilation, capture string, identity []byte, operation string, partition equation.Partition) []equation.Fact {
+	written := make(map[string][]byte)
+	order := make([]string, 0)
+	for _, item := range child.Artifact.Equations {
+		switch item.Occurrence.Kind {
+		case "environment-write", "path-replacement", "index-mutation", "path-invalidation":
+		default:
+			continue
+		}
+		target, found := artifactOperand(item.Operands, "target")
+		if !found {
+			continue
+		}
+		root, suffix, ok := heapTableAddress(target)
+		if !ok || suffix == "" || string(root) != capture {
+			continue
+		}
+		value, hasValue := artifactOperand(item.Operands, "value")
+		if !hasValue || !strings.HasPrefix(string(value), "scalar/") {
+			value = []byte("scalar/top")
+		}
+		prior, repeated := written[suffix]
+		if !repeated {
+			order = append(order, suffix)
+			written[suffix] = append([]byte(nil), value...)
+			continue
+		}
+		// The callback body orders its own writes, but the caller observes only
+		// that the call happened, so every candidate this slot can hold after the
+		// callback runs joins into the one cell.
+		joined, joinable := joinPublishedValues(prior, value)
+		if !joinable {
+			joined = []byte("scalar/top")
+		}
+		written[suffix] = joined
+	}
+	facts := make([]equation.Fact, 0, len(order))
+	for _, suffix := range order {
+		current, found := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition)
+		if !found {
+			continue
+		}
+		joined, joinable := joinPublishedValues(current, written[suffix])
+		if !joinable {
+			joined = []byte("scalar/top")
+		}
+		facts = append(facts, heapMemberFact(identity, suffix, operation, joined))
 	}
 	return facts
 }

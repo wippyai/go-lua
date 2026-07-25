@@ -645,6 +645,14 @@ func placementSuspensionFacts(operation equation.BoundEquation, operands directC
 	if operands.method != "receive" || !typedChannelReceiver(operands.receiver, partition) {
 		return nil
 	}
+	return placementSuspendedLiveFacts(operation, partition)
+}
+
+// placementSuspendedLiveFacts converts the front's suspension-live operands into
+// the suspend event that each named allocation root carries. The operand list is
+// the whole authority: a gap in it, or a root the partition cannot resolve to an
+// allocation, withholds the entire set rather than publishing a partial picture.
+func placementSuspendedLiveFacts(operation equation.BoundEquation, partition equation.Partition) []equation.Fact {
 	live := make(map[int][]byte)
 	for _, operand := range operation.Operands {
 		if !strings.HasPrefix(operand.Role, "suspension-live-") {
