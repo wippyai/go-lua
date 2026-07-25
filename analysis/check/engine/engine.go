@@ -9102,14 +9102,10 @@ func latestClosedValue(term []byte, facts []equation.Fact) ([]byte, bool) {
 	return append([]byte(nil), value...), value != nil
 }
 
-// childReturnValues reads the child's completed return. Several reachable
-// return statements are alternatives, and the caller owns a single result
-// tuple: they are joinable only when every candidate published the identical
-// arity and slot values, which is one result rather than a choice between two.
-// Any disagreement remains an unresolved alternative for the caller to reject.
-// A select body is excluded: its arms are evaluated in separate partitions, so
-// its branch-local return tuples are not comparable at this boundary.
-func childReturnValues(closure equation.OutputClosure, joinAlternatives bool) ([][]byte, error) {
+// childReturnCandidates names each return occurrence the body published, in
+// outcome order. Every occurrence owns one complete tuple; the caller decides
+// whether those tuples must agree exactly or may be joined.
+func childReturnCandidates(closure equation.OutputClosure) ([]string, error) {
 	candidates := make([]string, 0, 2)
 	seen := make(map[string]bool, 2)
 	for _, outcome := range closure.Outcomes {
@@ -9124,6 +9120,21 @@ func childReturnValues(closure equation.OutputClosure, joinAlternatives bool) ([
 			seen[candidate], candidates = true, append(candidates, candidate)
 		}
 	}
+	return candidates, nil
+}
+
+// childReturnValues reads the child's completed return. Several reachable
+// return statements are alternatives, and the caller owns a single result
+// tuple: they are joinable only when every candidate published the identical
+// arity and slot values, which is one result rather than a choice between two.
+// Any disagreement remains an unresolved alternative for the caller to reject.
+// A select body is excluded: its arms are evaluated in separate partitions, so
+// its branch-local return tuples are not comparable at this boundary.
+func childReturnValues(closure equation.OutputClosure, joinAlternatives bool) ([][]byte, error) {
+	candidates, err := childReturnCandidates(closure)
+	if err != nil {
+		return nil, err
+	}
 	if len(candidates) == 0 {
 		// A body with no return statement has a complete zero-result outcome.
 		return nil, nil
@@ -9131,9 +9142,9 @@ func childReturnValues(closure equation.OutputClosure, joinAlternatives bool) ([
 	if len(candidates) > 1 && !joinAlternatives {
 		return nil, errMultipleChildReturnAlternatives
 	}
-	joined, err := childReturnCandidateValues(closure, candidates[0])
-	if err != nil {
-		return nil, err
+	joined, joinErr := childReturnCandidateValues(closure, candidates[0])
+	if joinErr != nil {
+		return nil, joinErr
 	}
 	for _, candidate := range candidates[1:] {
 		values, err := childReturnCandidateValues(closure, candidate)
@@ -10734,21 +10745,35 @@ func inferredCallableReturnFact(lexical *lexicalEvaluator, child front.Compilati
 	return equation.Fact{Key: inferredCallableReturnPrefix + result + "/" + operation, Value: encoded}, true, nil
 }
 
-// inferredUncalledReturnType is the single result an evaluated child body
-// produces. A body with several result slots, several disagreeing return
-// candidates, or a result whose value carries no concrete witness states no
+// inferredUncalledReturnType is the single-slot result an evaluated child body
+// produces. Each return occurrence states one alternative of that slot, so the
+// derived contract is their join: a body whose branches return a decoded field
+// and a literal states the union of both, not nothing. A body with several
+// result slots, or a return whose value carries no concrete witness, states no
 // derived contract at all: a partial tuple would misdescribe the callable's
 // arity as much as an invented value would misdescribe its type.
 func inferredUncalledReturnType(outcome equation.OutputClosure) (typ.Type, bool) {
-	values, err := childReturnValues(outcome, false)
-	if err != nil || len(values) != 1 {
+	candidates, err := childReturnCandidates(outcome)
+	if err != nil || len(candidates) == 0 {
 		return nil, false
 	}
-	result, concrete := providerArgumentType(values[0])
-	if !concrete || result == nil {
+	results := make([]typ.Type, 0, len(candidates))
+	for _, candidate := range candidates {
+		values, valueErr := childReturnCandidateValues(outcome, candidate)
+		if valueErr != nil || len(values) != 1 {
+			return nil, false
+		}
+		result, concrete := providerArgumentType(values[0])
+		if !concrete || result == nil {
+			return nil, false
+		}
+		results = append(results, result)
+	}
+	joined := typ.MaterializeUnion(results)
+	if joined == nil {
 		return nil, false
 	}
-	return result, true
+	return joined, true
 }
 
 // inferredCallableReturn reads the derived result contract published for a
@@ -17555,6 +17580,17 @@ func typedChannelPayload(term []byte, partition equation.Partition) (typ.Type, b
 			}
 		}
 	}
+	// A term whose current value is itself a proven Channel<X> shape states the
+	// payload directly. This is the same witness the declaration lane above
+	// publishes, reached through the value the call result already established
+	// rather than through a source annotation.
+	if value, found := resolveKnownCurrentValue(term, partition); found {
+		if channel, decoded := shapefact.DecodeTarget(value); decoded {
+			if payload, ok := ambient.ChannelPayloadType(channel); ok && payload != nil {
+				return payload, true
+			}
+		}
+	}
 	channel, ok := typedPathType(term, partition)
 	if !ok || channel == nil {
 		return nil, false
@@ -22411,6 +22447,15 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 				// return tuple. Omit only that optional contract check.
 				continue
 			}
+			if openTypeParameter(declaredType, map[typ.Type]bool{}) {
+				// The same holds for a declaration whose parameter survives inside
+				// an application (Channel<T>): it is a schema over every
+				// instantiation, not a concrete contract, so a body evaluated at
+				// one instantiation has nothing to refute against here. The
+				// generic evaluation of the same body still checks the return
+				// with its parameters rigid.
+				continue
+			}
 			declared[index] = declaredType
 			continue
 		}
@@ -23591,6 +23636,21 @@ func decodeSummaryType(encoded []byte) (typ.Type, error) {
 	return decoded, err
 }
 
+// declaredMemberSurface admits a declaration that states members of its own. A
+// gradual or opaque declaration states none, so it must not become the surface
+// a member read is decided against.
+func declaredMemberSurface(value typ.Type) bool {
+	resolved := unwrap.Alias(unwrap.Annotations(value))
+	if resolved == nil || typ.IsTopLike(resolved) {
+		return false
+	}
+	switch resolved.Kind() {
+	case kind.Any, kind.Unknown, kind.Never, kind.TypeParam, kind.Generic:
+		return false
+	}
+	return true
+}
+
 func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment.Segment, typ.Type, bool) {
 	path := strings.TrimPrefix(string(term), "path/")
 	if path == string(term) {
@@ -23630,11 +23690,19 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 				return rootTerm, segs, typeValue, true
 			}
 		}
-		if typeValue, declared := declaredTypeForTerm(rootTerm, partition); declared && optionalConcreteWitnessType(typeValue) {
-			// A sealed table publication is this root's current runtime value and
-			// proves its presence, so the declaration's nilability is not what a
-			// member read descends through.
-			if value, found := latestValue(rootTerm, partition); !found || !shapefact.IsTable(value) {
+		if typeValue, declared := declaredTypeForTerm(rootTerm, partition); declared {
+			if optionalConcreteWitnessType(typeValue) {
+				// A sealed table publication is this root's current runtime value and
+				// proves its presence, so the declaration's nilability is not what a
+				// member read descends through.
+				if value, found := latestValue(rootTerm, partition); !found || !shapefact.IsTable(value) {
+					return rootTerm, segs, typeValue, true
+				}
+			} else if value, found := latestValue(rootTerm, partition); found && string(value) == "scalar/top" && declaredMemberSurface(typeValue) {
+				// Top is an honest unknown value, not a retraction of the
+				// declaration every write to this root already had to satisfy. The
+				// declared surface therefore remains what a member read descends
+				// through; only a concrete competing value can displace it.
 				return rootTerm, segs, typeValue, true
 			}
 		}
