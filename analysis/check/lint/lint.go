@@ -383,10 +383,11 @@ func projectPlacement(entries []EntryResult) *engine.PlacementPlan {
 			}
 			for _, allocation := range entry.Placement.Allocations {
 				// A frame-local closure fact identifies executable code whose
-				// environment has not escaped. It is not a materialized data
-				// allocation site; retained closures remain visible because their
-				// environment is part of the ownership result.
-				if allocation.Kind == "lua.closure" && (hasTableReturn || allocation.FrameLocal && hasLocalTable) {
+				// environment has not escaped, and a live-environment one is heap
+				// resident only for its own local invocation. Neither is a
+				// materialized data allocation site; retained closures remain
+				// visible because their environment is part of the ownership result.
+				if allocation.Kind == "lua.closure" && (hasTableReturn || (allocation.FrameLocal || allocation.LiveEnvironment) && hasLocalTable) {
 					continue
 				}
 				plan.Allocations = append(plan.Allocations, allocation)

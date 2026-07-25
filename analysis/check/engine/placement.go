@@ -46,6 +46,11 @@ type PlacementAllocation struct {
 	OwnerIdentity           bool
 	SealBeforeShare         bool
 	Obligations             []string
+	// LiveEnvironment marks an allocation whose only heap-ownership evidence is
+	// a local invocation making its closed environment live. Nothing carries it
+	// past the frame that materialized it, so it is executable-code residency
+	// rather than a retained data allocation.
+	LiveEnvironment bool
 }
 
 // PlacementHoistableLoad is deliberately sparse: the plan reports a load only
@@ -70,6 +75,12 @@ const (
 	placementEventOwned  = "owned"
 	placementEventShared = "shared"
 	placementEventSealed = "sealed"
+	// placementEventEnvironment records that a local invocation made a closure's
+	// closed environment live. It carries the same heap residency as an owned
+	// event for the closure itself, but it is not a retention: no boundary has
+	// carried the closure value past the frame that materialized it, so it never
+	// propagates through containment the way a retained graph does.
+	placementEventEnvironment = "environment"
 	// A suspension event is lifetime evidence, not an ownership transfer. The
 	// allocation remains stack-placed, but neither frame-local license holds.
 	placementEventSuspended = "suspended"
@@ -668,8 +679,13 @@ func placementInvokedClosureCaptureFacts(operation equation.BoundEquation, opera
 	if len(facts) == 0 {
 		return nil
 	}
+	// The closure's own heap residency comes from this invocation making its
+	// closed environment live, not from anything retaining the closure value.
+	// It is published under its own event so a consumer can tell the two apart;
+	// a stored, sent, or returned closure still carries the ordinary owned or
+	// shared event from its own allocation boundary.
 	if closure, found := placementAllocationForTerm(operands.callee, partition); found {
-		facts = append(facts, placementEventFact(closure.Identity, operation.Target.Name, placementEventOwned))
+		facts = append(facts, placementEventFact(closure.Identity, operation.Target.Name, placementEventEnvironment))
 	}
 	return facts
 }
@@ -1101,8 +1117,9 @@ func projectPlacementAllocation(identity string, allocation placementAllocationF
 		if !item.SealBeforeShare {
 			item.Obligations = append(item.Obligations, "seal-before-share")
 		}
-	case events[identity][placementEventOwned]:
+	case events[identity][placementEventOwned] || events[identity][placementEventEnvironment]:
 		item.Placement, item.OwnerIdentity = placement.OwnedHeap, true
+		item.LiveEnvironment = !events[identity][placementEventOwned]
 	default:
 		item.Placement, item.HasDiesBeforeSuspension = placement.Stack, true
 		if events[identity][placementEventSuspended] {

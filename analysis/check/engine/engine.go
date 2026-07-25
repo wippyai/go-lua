@@ -15751,12 +15751,12 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 				captureInvalidations = lexical.capturedMemberWriteInvalidations(handle, operation.Target.Name, partition)
 			}
 			// A1: the fast declared-return path above never observes the body's
-			// placement graph. When the call forwards a concrete closure into a
-			// function-typed formal the body invokes, evaluate the body privately
-			// with that closure seeded and lift only its placement conclusions.
-			// Value typing is untouched: no result value, summary, or diagnostic
-			// from this evaluation crosses the boundary.
-			if localCallable && lexical.callbackCompositionCall(operands, handle, partition) {
+			// placement graph. Evaluate the body privately whenever it materializes
+			// one — a forwarded concrete closure the body invokes, or a table the
+			// body allocates — and lift only its placement conclusions. Value
+			// typing is untouched: no result value, summary, or diagnostic from
+			// this evaluation crosses the boundary.
+			if localCallable && (lexical.hasTableAllocation(handle.Prototype) || lexical.callbackCompositionCall(operands, handle, partition)) {
 				if outcome, applyErr := lexical.applyKnown(operation, operands, handle, partition); applyErr == nil {
 					projected := placementFactsFromChild(outcome.Closure.Values)
 					placementFacts = append(placementFacts, projected...)

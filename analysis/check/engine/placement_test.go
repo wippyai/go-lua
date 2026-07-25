@@ -205,6 +205,78 @@ local value = read()`)
 	}
 }
 
+// A closure that only its own frame invokes is heap resident for that
+// invocation alone, while a closure stored into a returned graph is retained by
+// it. Both are owned; only the first is a live environment.
+func TestCheckPlacementSeparatesLiveEnvironmentFromRetainedClosure(t *testing.T) {
+	invoked, err := engine.Check(`local state = { value = 1 }
+local read = function() return state.value end
+local value = read()`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range invoked.Placement.Allocations {
+		if (item.Kind == "lua.closure") != item.LiveEnvironment {
+			t.Fatalf("allocation = %#v, want live environment on the invoked closure only", item)
+		}
+	}
+	retained, err := engine.Check(`local state = { value = 1 }
+local read = function() return state.value end
+local holder = { read = read }
+return holder`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	closures := 0
+	for _, item := range retained.Placement.Allocations {
+		if item.Kind != "lua.closure" {
+			continue
+		}
+		closures++
+		if item.Placement != placement.OwnedHeap || item.LiveEnvironment {
+			t.Fatalf("allocation = %#v, want a retained closure without live-environment residency", item)
+		}
+	}
+	if closures == 0 {
+		t.Fatalf("placement = %#v, want the stored closure allocation", retained.Placement)
+	}
+}
+
+// The declared-return fast path publishes no child value facts, but the graph a
+// local body allocates and stores into an escaping container still joins upward
+// through containment at its caller.
+func TestCheckPlacementLiftsDeclaredLocalBodyAllocationGraph(t *testing.T) {
+	result, err := engine.Check(`type Row = { id: string, meta: { source: string } }
+local cache: {[string]: Row} = {}
+process.send("worker-1", "cache.ready", cache)
+local function build(id: string): Row
+    local row: Row = { id = id, meta = { source = "builder" } }
+    cache[row.id] = row
+    return row
+end
+local row = build("x")
+print(row.id)`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if result.Placement == nil {
+		t.Fatal("placement = nil, want the callee allocation graph")
+	}
+	shared, depth := 0, 0
+	for _, item := range result.Placement.Allocations {
+		if item.Kind != "lua.table" || item.Placement != placement.SharedHeap {
+			continue
+		}
+		shared++
+		if item.Depth > depth {
+			depth = item.Depth
+		}
+	}
+	if shared != 3 || depth < 3 {
+		t.Fatalf("placement = %#v, want the cache, row and meta tables shared through containment", result.Placement)
+	}
+}
+
 func TestCheckPlacementCarriesAliasIntoSharedContainer(t *testing.T) {
 	result, err := engine.Check(`local shared = { label = "shared" }
 process.send("worker", "ready", shared)
