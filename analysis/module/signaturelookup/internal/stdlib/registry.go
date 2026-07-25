@@ -323,12 +323,23 @@ var registry = map[string]signature.Function{
 			ownership.BorrowAll{},
 		)
 	}(),
-	"table.pack": sig(
-		typ.Func().
-			Variadic(typ.Any).
-			Returns(typ.Any).
-			Build(),
-	),
+	// table.pack collects its arguments into a fresh table: the arguments land
+	// under integer keys and n records how many were passed. Both halves are
+	// published, so a caller reads the count as an integer and an entry as the
+	// argument type the call site supplied.
+	"table.pack": func() signature.Function {
+		elem := typ.NewTypeParam("T", nil)
+		return sig(
+			typ.Func().
+				TypeParamRef(elem).
+				Variadic(elem).
+				Returns(typetable.NewRecord().
+					Field("n", typ.Integer).
+					MapComponent(typ.Integer, elem).
+					Build()).
+				Build(),
+		)
+	}(),
 	"table.move": sig(
 		typ.Func().
 			Param("a1", typ.Any).

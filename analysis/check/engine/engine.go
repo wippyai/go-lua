@@ -11418,7 +11418,7 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 	}
 	if diagnostic, found := closedDynamicWriteDiagnostic(operation, operands, partition); found {
 		result.Closure.Diagnostics = append(result.Closure.Diagnostics, diagnostic)
-	} else if diagnostic, found := declaredMapWriteDiagnostic(operation, operands, partition); found {
+	} else if diagnostic, found := declaredElementWriteDiagnostic(operation, operands, partition); found {
 		result.Closure.Diagnostics = append(result.Closure.Diagnostics, diagnostic)
 	}
 	if identity, found := tableIdentityForTerm(operands["container"], partition); found {
@@ -11448,32 +11448,39 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 	return result, nil
 }
 
-// declaredMapWriteDiagnostic checks a dynamic write against the map value
+// declaredElementWriteDiagnostic checks a dynamic write against the element
 // contract already published for its exact container. A literal shape is not
 // required: the declaration itself is the authority. Unknown values remain
 // unreported, while an explicit-any boundary and a concrete refutation cannot
-// silently enter the homogeneous map.
-func declaredMapWriteDiagnostic(operation equation.BoundEquation, operands map[string][]byte, partition equation.Partition) (equation.Fact, bool) {
-	// A non-empty suffix writes through the selected map element (for example
-	// slots[key].value), so the map's value contract does not describe the
-	// assigned leaf. That case is owned by the existing path/heap projection.
+// silently enter the homogeneous container.
+func declaredElementWriteDiagnostic(operation equation.BoundEquation, operands map[string][]byte, partition equation.Partition) (equation.Fact, bool) {
+	// A non-empty suffix writes through the selected element (for example
+	// slots[key].value), so the container's element contract does not describe
+	// the assigned leaf. That case is owned by the existing path/heap projection.
 	if string(operands["suffix"]) != "suffix/" {
 		return equation.Fact{}, false
 	}
 	declared, found := declaredTypeForTerm(operands["container"], partition)
-	if !found || declared == nil {
+	if !found {
 		return equation.Fact{}, false
 	}
-	mapping, ok := unwrap.Alias(subst.ExpandInstantiated(declared)).(*typ.Map)
-	if !ok || mapping == nil || mapping.Value == nil {
+	element, ok := declaredElementContract(declared)
+	if !ok {
 		return equation.Fact{}, false
 	}
 	value, err := resolveCurrentValue(operands["value"], partition)
 	if err != nil {
 		return equation.Fact{}, false
 	}
+	// Storing nil under a key removes that entry instead of placing a value in
+	// it, so the element contract does not describe the store. Reads already
+	// carry the resulting absence: an element is optional until an in-range
+	// proof discharges it.
+	if string(value) == "scalar/nil" {
+		return equation.Fact{}, false
+	}
 	anySource := isExplicitAnyValue(value) || sourceHasAnyBoundary(operands["value"], partition.Values())
-	if !anySource && valueAgainstType(value, mapping.Value) != shapeRefuted {
+	if !anySource && valueAgainstType(value, element) != shapeRefuted {
 		return equation.Fact{}, false
 	}
 	source := "value"
@@ -11483,7 +11490,7 @@ func declaredMapWriteDiagnostic(operation equation.BoundEquation, operands map[s
 			break
 		}
 	}
-	expected := typeformat.Short(mapping.Value)
+	expected := typeformat.Short(element)
 	message := "cannot assign " + source + " because it is " + assignmentEvidenceValue(value) + ", not " + expected
 	if anySource {
 		message = "cannot assign " + source + " because it is any, not " + expected
@@ -11491,14 +11498,48 @@ func declaredMapWriteDiagnostic(operation equation.BoundEquation, operands map[s
 	return equation.Fact{Key: "type.assignment/" + operation.Target.Name, Value: []byte(message)}, true
 }
 
+// declaredElementContract returns the type a declared homogeneous container
+// admits at any one key. Both spellings a Lua declaration can carry are the
+// same contract: a map's value type and a list's element type describe every
+// entry, so an unproven key writes against exactly that type.
+func declaredElementContract(declared typ.Type) (typ.Type, bool) {
+	if declared == nil {
+		return nil, false
+	}
+	switch container := unwrap.Alias(subst.ExpandInstantiated(declared)).(type) {
+	case *typ.Map:
+		if container == nil || container.Value == nil {
+			return nil, false
+		}
+		return container.Value, true
+	case *typ.Array:
+		if container == nil || container.Element == nil {
+			return nil, false
+		}
+		return container.Element, true
+	default:
+		return nil, false
+	}
+}
+
 // closedDynamicWriteDiagnostic rejects a broad write only when the exact
 // table shape, every member value, and the assigned value have already been
 // published. A prior dynamic mutation invalidates this narrow literal-shape
 // authority, so later writes deliberately receive no inferred contract.
+//
+// A declared container has no inferred contract either. The constructor's
+// members describe what the table currently holds, while the declaration states
+// what every key admits; deriving the obligation from the members instead would
+// reject writes the declared type allows.
 func closedDynamicWriteDiagnostic(operation equation.BoundEquation, operands map[string][]byte, partition equation.Partition) (equation.Fact, bool) {
 	identity, found := tableIdentityForTerm(operands["container"], partition)
 	if !found || !heapTableClosed(identity, partition) || heapIndexWasMutated(identity, operation.Target.Name, partition) {
 		return equation.Fact{}, false
+	}
+	if declared, hasDeclaration := declaredTypeForTerm(operands["container"], partition); hasDeclaration {
+		if _, homogeneous := declaredElementContract(declared); homogeneous {
+			return equation.Fact{}, false
+		}
 	}
 	container, containerErr := resolveCurrentValue(operands["container"], partition)
 	table, sealed := shapefact.DecodeTable(container)
@@ -11831,6 +11872,15 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 		(!strings.EqualFold(string(operands["default"]), "select/default/true") && !strings.EqualFold(string(operands["default"]), "select/default/false")) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed channel select")
 	}
+	// A select writes its result on every path it can take, so the destination is
+	// written even when no case yields a payload this transaction can prove.
+	// Withholding the refined result type is a precision decision; withholding
+	// the write itself would leave a read with no completed producer, which is an
+	// artifact malformation rather than an absent fact.
+	unrefined := equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{
+		{Key: "value/" + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte("scalar/top")},
+		{Key: epochFactPrefix + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
+	}}}
 	type selectCase struct {
 		term, display string
 		payload       typ.Type
@@ -11860,7 +11910,7 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 			}
 			payload, ok := shapefact.DecodeTarget(operand.Value)
 			if !ok || payload == nil || payload == typ.Any || payload == typ.Unknown {
-				return equation.TransactionResult{Complete: true}, nil
+				return unrefined, nil
 			}
 			item.payload = payload
 		case operand.Role == "result" || operand.Role == "default":
@@ -11879,7 +11929,7 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 	for index, name := range ordered {
 		item := cases[name]
 		if item == nil || item.display == "" {
-			return equation.TransactionResult{Complete: true}, nil
+			return unrefined, nil
 		}
 		if item.payload == nil {
 			// The front carries a payload operand when the WIR root has a
@@ -11889,13 +11939,13 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 			// select fact.
 			payload, known := typedChannelPayload([]byte(item.term), partition)
 			if !known {
-				return equation.TransactionResult{Complete: true}, nil
+				return unrefined, nil
 			}
 			item.payload = payload
 		}
 		identity, ok := resolveCurrentIdentity([]byte(item.term), partition)
 		if !ok || !isChannelIdentity(identity) {
-			return equation.TransactionResult{Complete: true}, nil
+			return unrefined, nil
 		}
 		item.identity = identity
 		resultCases = append(resultCases, channelselect.ResultCase{Index: index, Payload: item.payload})
@@ -11907,11 +11957,11 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 	}
 	resultType, ok := channelselect.ResultValueTypeWithDefault(selectID, resultCases, string(operands["default"]) == "select/default/true")
 	if !ok {
-		return equation.TransactionResult{Complete: true}, nil
+		return unrefined, nil
 	}
 	encodedResult, ok := shapefact.EncodeTarget(resultType)
 	if !ok {
-		return equation.TransactionResult{Complete: true}, nil
+		return unrefined, nil
 	}
 	meta, marshalErr := json.Marshal(selectMetaWire{Cases: len(ordered), HasDefault: string(operands["default"]) == "select/default/true"})
 	if marshalErr != nil {
@@ -18831,7 +18881,10 @@ func closedMemberSurface(value typ.Type) bool {
 	value = unwrap.Alias(subst.ExpandInstantiated(value))
 	switch item := value.(type) {
 	case *typ.Record:
-		return item != nil && !item.Open
+		// A map component types every key in its domain, so those keys are
+		// entries the record admits rather than members it refutes. Only the
+		// named surface is closed, and a record carrying one is not.
+		return item != nil && !item.Open && !item.HasMapComponent()
 	case *typ.Union:
 		if item == nil || len(item.Members) == 0 {
 			return false

@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/lint"
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/module/typelookup"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -523,6 +524,86 @@ end
 		}
 	}
 	t.Fatalf("broad dynamic write did not reject sealed literal contract: diagnostics=%#v facts=%#v", result.PublishedDiagnostics, result.ValueFacts)
+}
+
+func TestCheckPublishesASelectResultWhenNoCasePayloadIsProven(t *testing.T) {
+	channelModule := manifest.New("channel")
+	channelModule.SetExport(typ.Any)
+	resolver := typelookup.Source{
+		Manifests: []*manifest.Manifest{channelModule},
+		Aliases:   map[string]string{"channel": "channel"},
+	}
+	for _, source := range []string{`
+local channel = require("channel")
+local a = channel.new(1)
+local outcome = channel.select({a:case_receive()})
+return outcome
+`, `
+local channel = require("channel")
+local outcome = channel.select({})
+return outcome
+`} {
+		result, err := engine.CheckWithImportsResolverAndGlobalsAndRelations(source, map[string]typ.Type{"channel": typ.Any}, nil, resolver, nil, "main.lua")
+		if err != nil {
+			t.Fatalf("Check: %v", err)
+		}
+		for _, diagnostic := range result.Diagnostics {
+			t.Fatalf("select over an unproven case abandoned the module: %s: %s\nsource: %s", diagnostic.Key, diagnostic.Value, source)
+		}
+	}
+}
+
+func TestCheckPublishesTablePackCountAsAnInteger(t *testing.T) {
+	result, err := engine.Check(`
+local packed = table.pack("a", "b")
+local count: integer = packed.n
+return count
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		t.Fatalf("table.pack count is not published as an integer: %s: %s", diagnostic.Code, diagnostic.Message)
+	}
+}
+
+func TestCheckAdmitsDeclaredListElementWriteAtAnUnprovenIndex(t *testing.T) {
+	for _, source := range []string{`
+local xs: {number} = {1, 2, 3}
+xs[#xs + 1] = 9
+`, `
+local names: {string} = {"a", "b"}
+names[#names + 1] = "c"
+`, `
+local xs: {number} = {1, 2, 3}
+xs[#xs] = nil
+`} {
+		result, err := engine.Check(source)
+		if err != nil {
+			t.Fatalf("Check: %v", err)
+		}
+		for _, diagnostic := range result.PublishedDiagnostics {
+			if diagnostic.Code == "type.assignment" {
+				t.Fatalf("declared element write rejected: %s\nsource: %s", diagnostic.Message, source)
+			}
+		}
+	}
+}
+
+func TestCheckRejectsDeclaredListElementWriteThatTheElementTypeRefutes(t *testing.T) {
+	result, err := engine.Check(`
+local xs: {number} = {1, 2, 3}
+xs[#xs + 1] = "nine"
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && strings.HasSuffix(diagnostic.Message, "not number") {
+			return
+		}
+	}
+	t.Fatalf("declared element write was not checked against the declaration: %#v", result.PublishedDiagnostics)
 }
 
 func TestCheckProjectsRecursiveRecordFieldMismatch(t *testing.T) {

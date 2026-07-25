@@ -6,6 +6,20 @@ import (
   "github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
+// parenthesizedType closes a parenthesized type. Parentheses around a type and
+// the parameter list of a function type are the same token sequence, so both
+// reduce through funcparamlist and the arrow that follows decides which one was
+// written. Without an arrow the parentheses group exactly one type, so a
+// parameter name, a variadic marker, or a second entry is a parameter list with
+// no function type to belong to.
+func parenthesizedType(yylex yyLexer, params []ast.FunctionParamExpr, open ast.Token) ast.TypeExpr {
+  if len(params) == 1 && params[0].Name == "" && params[0].Type != nil {
+    return params[0].Type
+  }
+  yylex.(*Lexer).TokenError(open, "parameter list is not a type: expected -> after )")
+  return &ast.PrimitiveTypeExpr{Name: "unknown"}
+}
+
 func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast.PositionHolder) {
   if node == nil {
     return
@@ -1020,29 +1034,8 @@ primarytypeexpr:
             $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: []ast.TypeExpr{}}
             $$.SetPosFromToken($1.Pos)
         } |
-        '(' '(' funcparamlist ')' TArrow typeexpr ')' {
-            $$ = &ast.FunctionTypeExpr{Params: $3, Returns: []ast.TypeExpr{$6}}
-            $$.SetPosFromToken($1.Pos)
-        } |
-        '(' '(' ')' TArrow typeexpr ')' {
-            $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: []ast.TypeExpr{$5}}
-            $$.SetPosFromToken($1.Pos)
-        } |
-        '(' '(' funcparamlist ')' TArrow '(' typeexprlist2 ')' ')' {
-            $$ = &ast.FunctionTypeExpr{Params: $3, Returns: $7}
-            $$.SetPosFromToken($1.Pos)
-        } |
-        '(' '(' funcparamlist ')' TArrow '(' ')' ')' {
-            $$ = &ast.FunctionTypeExpr{Params: $3, Returns: []ast.TypeExpr{}}
-            $$.SetPosFromToken($1.Pos)
-        } |
-        '(' '(' ')' TArrow '(' typeexprlist2 ')' ')' {
-            $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: $6}
-            $$.SetPosFromToken($1.Pos)
-        } |
-        '(' '(' ')' TArrow '(' ')' ')' {
-            $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: []ast.TypeExpr{}}
-            $$.SetPosFromToken($1.Pos)
+        '(' funcparamlist ')' {
+            $$ = parenthesizedType(yylex, $2, $1)
         } |
         TFun '(' funcparamlist ')' ':' typeexpr {
             $$ = &ast.FunctionTypeExpr{Params: $3, Returns: []ast.TypeExpr{$6}}

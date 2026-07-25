@@ -460,6 +460,62 @@ func TestParseFunctionTypeNamedParams(t *testing.T) {
 	}
 }
 
+func TestParseParenthesizedFunctionTypeAsParameter(t *testing.T) {
+	input := "local fn: (() -> ()) -> ()"
+	stmts, err := Parse(strings.NewReader(input), "test")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	local := stmts[0].(*ast.LocalAssignStmt)
+	outer, ok := local.Types[0].(*ast.FunctionTypeExpr)
+	if !ok {
+		t.Fatalf("type = %T, want *ast.FunctionTypeExpr", local.Types[0])
+	}
+	if len(outer.Params) != 1 || len(outer.Returns) != 0 {
+		t.Fatalf("outer signature = %d params / %d returns, want 1 / 0", len(outer.Params), len(outer.Returns))
+	}
+	inner, ok := outer.Params[0].Type.(*ast.FunctionTypeExpr)
+	if !ok {
+		t.Fatalf("parameter type = %T, want *ast.FunctionTypeExpr", outer.Params[0].Type)
+	}
+	if len(inner.Params) != 0 || len(inner.Returns) != 0 {
+		t.Fatalf("inner signature = %d params / %d returns, want 0 / 0", len(inner.Params), len(inner.Returns))
+	}
+}
+
+func TestParseParenthesizedTypeVariants(t *testing.T) {
+	tests := []struct {
+		input string
+		desc  string
+	}{
+		{"local x: ((integer) -> integer)?", "optional parenthesized function type"},
+		{"local x: {((integer) -> integer)}", "array of parenthesized function types"},
+		{"local x: (() -> ())", "parenthesized void function type"},
+		{"local x: ((integer) -> (integer, string))", "parenthesized multiple returns"},
+		{"local x: ((integer) -> integer) -> integer", "parenthesized function type as parameter"},
+		{"local x: (integer) -> ((integer) -> integer)", "parenthesized function type as return"},
+		{"local x: (number)", "parenthesized primitive"},
+		{"local x: ({number}) -> ()", "parenthesized array parameter"},
+	}
+	for _, tt := range tests {
+		if _, err := Parse(strings.NewReader(tt.input), "test"); err != nil {
+			t.Errorf("Parse(%q) [%s] error: %v", tt.input, tt.desc, err)
+		}
+	}
+}
+
+func TestParseRejectsParameterListWithoutAFunctionType(t *testing.T) {
+	for _, input := range []string{
+		"local x: (a: number)",
+		"local x: (number, string)",
+		"local x: (...number)",
+	} {
+		if _, err := Parse(strings.NewReader(input), "test"); err == nil {
+			t.Errorf("Parse(%q) accepted a parameter list as a type", input)
+		}
+	}
+}
+
 func TestParseFunctionTypeMixedParams(t *testing.T) {
 	// Test mixing named and anonymous params
 	tests := []struct {
