@@ -169,3 +169,68 @@ func mustBindCyclicEntry(t *testing.T, artifact CyclicArtifact, entry EntryBindi
 	}
 	return bound
 }
+
+// TestCyclicVMStampsPublicationsWithProducerGuards fixes the arm-isolation rule
+// the cyclic solution depends on: a publication carries the branch view it was
+// produced under, so a consumer on the other edge cannot read it and a consumer
+// past the branch sees it only through the guard algebra.
+func TestCyclicVMStampsPublicationsWithProducerGuards(t *testing.T) {
+	body := testBody(107)
+	entry := EntryParameter{Body: body, Name: "entry"}
+	contracts := []ContentID{testID(107), testID(108)}
+	guard := Guard{Body: body, Encoding: []byte("front/branch/op-1/true")}
+	artifact := Artifact{Equations: []Equation{
+		{Target: Coordinate{Body: body, Name: "seed"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: contracts[0]}, KernelID: "seed", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "arm"}, Entry: entry, Occurrence: Occurrence{Kind: "claim", ContractID: contracts[1]}, KernelID: "arm", Guards: []Guard{guard}, Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
+	}}
+	plan, err := solve.FreezeWTOPlan([]CellID{"seed", "arm"}, []solve.WTOElement[CellID]{{Vertex: "seed"}, {Vertex: "arm", Body: []solve.WTOElement[CellID]{}}}, []solve.WTOInfluence[CellID]{{From: "seed", To: "arm"}, {From: "arm", To: "arm"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cyclic, err := NewCyclicArtifact(artifact, map[Coordinate]CellID{artifact.Equations[0].Target: "seed", artifact.Equations[1].Target: "arm"}, plan,
+		[]SemanticDependency{{From: "seed", To: "arm", Reason: EdgeContractRead}, {From: "arm", To: "arm", Reason: EdgeContractAdvance}},
+		[]OutputSelector{{ID: "normal", Cells: []CellID{"seed", "arm"}}}, []CellID{"seed", "arm"}, []CellID{"seed", "arm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := NewCyclicKernelRegistry([]CyclicKernelBinding{
+		{KernelID: "seed", ContractID: contracts[0], Kernel: CyclicKernelFunc(func(_ context.Context, _ BoundCyclicEquation, _ CyclicSnapshot) (TransactionResult, error) {
+			return TransactionResult{Complete: true, Closure: OutputClosure{Values: []Fact{{Key: "seed", Value: []byte("concrete")}}}}, nil
+		})},
+		{KernelID: "arm", ContractID: contracts[1], Kernel: CyclicKernelFunc(func(_ context.Context, _ BoundCyclicEquation, _ CyclicSnapshot) (TransactionResult, error) {
+			return TransactionResult{Complete: true, Closure: OutputClosure{Values: []Fact{{Key: "arm", Value: []byte("edge-local")}}}}, nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm, err := NewCyclicVM(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := BindCyclicEntry(cyclic, EntryBinding{Parameter: entry, Value: []byte("caller-entry")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluation, err := vm.Evaluate(context.Background(), bound, []string{"normal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := PartitionFromClosuresWithGuards(nil, evaluation.Closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, visible := partition.Value("arm"); visible {
+		t.Fatalf("arm publication is visible without its guard: %#v", evaluation.Closure.Values)
+	}
+	if _, visible := partition.Value("seed"); !visible {
+		t.Fatalf("unguarded publication is not visible: %#v", evaluation.Closure.Values)
+	}
+	guarded, err := PartitionFromClosuresWithGuards([]Guard{guard}, evaluation.Closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, visible := guarded.Value("arm"); !visible {
+		t.Fatalf("arm publication is not visible on its own edge: %#v", evaluation.Closure.Values)
+	}
+}

@@ -1,0 +1,7 @@
+{
+  "description": "A body with a loop evaluates its branch arms: a discriminant guard selects one union arm on each edge, so both arms prove their own reads and refute the wrong ones.",
+  "files": ["main.lua"],
+  "run": {
+    "skip": "checker-only branch-arm evaluation surface"
+  }
+}

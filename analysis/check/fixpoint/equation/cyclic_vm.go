@@ -419,7 +419,11 @@ func (vm *CyclicVM) Evaluate(ctx context.Context, bound BoundCyclicArtifact, sel
 					return GuardedPartition{}
 				}
 			}
-			closure, canonicalErr := joinClosure(result.Closure)
+			// A cyclic publication carries the branch view it was produced
+			// under, the same stamp the acyclic VM applies. Without it an
+			// arm-local write rejoins the solution unguarded and becomes
+			// visible to the other arm and to everything past the branch.
+			closure, canonicalErr := joinClosure(stampClosure(result.Closure, equation.Equation.Guards))
 			if canonicalErr != nil {
 				executionErr = fmt.Errorf("equation: cyclic transaction %s output: %w", equation.Equation.Target.Name, canonicalErr)
 				return GuardedPartition{}

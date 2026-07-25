@@ -2862,93 +2862,17 @@ func cyclicKernel(kernel equation.Kernel) equation.CyclicKernel {
 		for _, predecessor := range snapshot.Predecessors(operation.Cell) {
 			collect(predecessor)
 		}
-		partition, err := equation.PartitionFromClosuresWithGuards(nil, closures...)
+		// The consumer's own guards are the branch view it is compiled under,
+		// exactly as in the acyclic VM. The snapshot leaves are guard-stamped
+		// publications, so an arm-specific fact stays invisible to any consumer
+		// that does not carry the same edge, and a consumer on the edge sees the
+		// outcome the branch kernel published for it.
+		partition, err := equation.PartitionFromClosuresWithGuards(operation.Equation.Guards, closures...)
 		if err != nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: cyclic snapshot partition: %w", err)
 		}
-		if guards, exact := typedLiteralPartitionGuards(operation.Equation.Guards, closures); exact {
-			candidate, candidateErr := equation.PartitionFromClosuresWithGuards(guards, closures...)
-			if candidateErr != nil {
-				return equation.TransactionResult{}, fmt.Errorf("engine: cyclic guarded snapshot partition: %w", candidateErr)
-			}
-			if cyclicOptionalClaim(operation.Equation, candidate) {
-				partition = candidate
-			}
-		}
 		return kernel.Execute(operation.Equation, partition)
 	})
-}
-
-// typedLiteralPartitionGuards admits a cyclic branch view only after every
-// requested guard is backed by the matching literal-discriminant narrowing.
-// A branch fact from another predicate may coexist in the snapshot, but it
-// cannot make an arm-specific value visible to this consumer.
-func typedLiteralPartitionGuards(guards []equation.Guard, closures []equation.OutputClosure) ([]equation.Guard, bool) {
-	if len(guards) == 0 {
-		return nil, false
-	}
-	active := make([]equation.Guard, 0, len(guards))
-	for _, guard := range guards {
-		parts := strings.Split(string(guard.Encoding), "/")
-		if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || (parts[3] != "true" && parts[3] != "false") {
-			return nil, false
-		}
-		key, value := "narrowing/"+parts[2], "typed/"+parts[3]
-		found := false
-		for _, closure := range closures {
-			for _, fact := range closure.Outcomes {
-				if fact.Key != key || string(fact.Value) != value {
-					continue
-				}
-				for _, factGuard := range fact.Guards {
-					if factGuard.Body == guard.Body && bytes.Equal(factGuard.Encoding, guard.Encoding) {
-						found = true
-						break
-					}
-				}
-				if found {
-					break
-				}
-			}
-			if found {
-				break
-			}
-		}
-		if !found {
-			return nil, false
-		}
-		active = append(active, guard)
-	}
-	return active, true
-}
-
-// cyclicOptionalClaim admits only a positive branch-local optional assignment
-// into the cyclic snapshot. The claim already owns the source and declared
-// target; calls, expressions, and non-optional writes remain unavailable until
-// the cyclic evaluator can model their recurrence without borrowing an arm.
-func cyclicOptionalClaim(operation equation.BoundEquation, partition equation.Partition) bool {
-	if operation.Occurrence.Kind != "claim" || len(operation.Guards) == 0 {
-		return false
-	}
-	for _, guard := range operation.Guards {
-		if !strings.HasSuffix(string(guard.Encoding), "/true") {
-			return false
-		}
-	}
-	operands, err := requiredOperandsByRole(operation.Operands, "value", "type")
-	if err != nil {
-		return false
-	}
-	value, available, err := resolveClaimValue(operands["value"], partition)
-	if err != nil || !available {
-		return false
-	}
-	source, decoded := shapefact.DecodeTarget(value)
-	if !decoded || source == nil || !proof.OptionalTypeHasConcreteValue(source) {
-		return false
-	}
-	target, err := strconv.Unquote(strings.TrimPrefix(string(operands["type"]), "claim-type/"))
-	return err == nil && target != "" && target != "any" && target != "nil" && !strings.HasSuffix(target, "?")
 }
 
 // childEntryWire is deliberately a closed entry payload.  It is decoded only
@@ -14714,6 +14638,37 @@ type impliedNarrowing struct {
 	narrowed typ.Type
 }
 
+// discriminantCandidate is one value a member comparison can refine, together
+// with the member path that still separates it from the compared member.
+type discriminantCandidate struct {
+	term  []byte
+	value typ.Type
+	rest  []segment.Segment
+}
+
+// discriminantCandidates lists the values a member comparison refines,
+// outermost first. `a.b.c == lit` states something about `a` only when a's own
+// arms differ at `b.c`; when they do not, the value carrying the arms is the
+// nested `a.b`, and the outer record merely contains it. A caller takes the
+// first candidate its own narrowing rule strictly refines, so the established
+// receiver-level result is unchanged wherever it already applied.
+func discriminantCandidates(root []byte, suffix []segment.Segment, source typ.Type) []discriminantCandidate {
+	out := make([]discriminantCandidate, 0, len(suffix))
+	out = append(out, discriminantCandidate{term: root, value: source, rest: suffix})
+	for split := 1; split < len(suffix); split++ {
+		member, found := variant.FieldAtPath(source, suffix[:split])
+		if !found || member == nil {
+			break
+		}
+		out = append(out, discriminantCandidate{
+			term:  []byte(string(root) + segment.FormatSegments(suffix[:split])),
+			value: member,
+			rest:  suffix[split:],
+		})
+	}
+	return out
+}
+
 // impliedTrueEdgeNarrowings folds every true-edge check into the type its path
 // carries on that edge. The checks are applied in publication order and each
 // one reads the result of the ones before it, so a conjunction narrows exactly
@@ -14805,16 +14760,22 @@ func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equat
 			if value, seen := narrowed[string(root)]; seen {
 				source = value
 			}
-			selected := typ.Type(nil)
-			if (predicate.Kind == "literal-equal") != predicate.Negated {
-				selected, ok = variant.NarrowByPathLiteral(source, suffix, literal)
-			} else {
-				selected, ok = variant.NarrowByPathLiteralNot(source, suffix, literal)
+			for _, candidate := range discriminantCandidates(root, suffix, source) {
+				if value, seen := narrowed[string(candidate.term)]; seen {
+					candidate.value = value
+				}
+				selected := typ.Type(nil)
+				if (predicate.Kind == "literal-equal") != predicate.Negated {
+					selected, ok = variant.NarrowByPathLiteral(candidate.value, candidate.rest, literal)
+				} else {
+					selected, ok = variant.NarrowByPathLiteralNot(candidate.value, candidate.rest, literal)
+				}
+				if !ok || selected == nil || typ.IsNever(selected) {
+					continue
+				}
+				record(string(candidate.term), selected)
+				break
 			}
-			if !ok || selected == nil || typ.IsNever(selected) {
-				continue
-			}
-			record(string(root), selected)
 		case "type-equal", "type-not":
 			// A runtime-type guard states the Lua tag its path carries on this
 			// edge. The union arms whose own tag is decidable either match that
@@ -15919,14 +15880,21 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 	root, suffix, source, ok := typedAncestor(term, partition)
 	trueType, falseType := typ.Type(nil), typ.Type(nil)
 	if ok && len(suffix) != 0 {
-		var trueOK, falseOK bool
-		trueType, trueOK = variant.NarrowByPathLiteral(source, suffix, literal)
-		falseType, falseOK = variant.NarrowByPathLiteralNot(source, suffix, literal)
-		if predicate.Kind == "literal-not" || predicate.Kind == "falsy" {
-			trueType, falseType = falseType, trueType
-			trueOK, falseOK = falseOK, trueOK
+		selected := false
+		for _, candidate := range discriminantCandidates(root, suffix, source) {
+			trueCandidate, trueOK := variant.NarrowByPathLiteral(candidate.value, candidate.rest, literal)
+			falseCandidate, falseOK := variant.NarrowByPathLiteralNot(candidate.value, candidate.rest, literal)
+			if predicate.Kind == "literal-not" || predicate.Kind == "falsy" {
+				trueCandidate, falseCandidate = falseCandidate, trueCandidate
+				trueOK, falseOK = falseOK, trueOK
+			}
+			if !trueOK || !falseOK {
+				continue
+			}
+			root, trueType, falseType, selected = candidate.term, trueCandidate, falseCandidate, true
+			break
 		}
-		if !trueOK || !falseOK {
+		if !selected {
 			return equation.OutputClosure{}, false, nil
 		}
 	} else {
