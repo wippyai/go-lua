@@ -3016,6 +3016,8 @@ type lexicalEvaluator struct {
 	byPrototype       map[string]front.Compilation
 	byBody            map[equation.BodyID]front.Compilation
 	requiresBody      map[string]bool
+	parameterWrites   map[string]map[string]bool
+	heapMutators      map[string]bool
 	diagnosticSpans   map[string]wir.Span
 	callSpans         map[string]wir.Span
 	lifecycleEvidence map[string][]DiagnosticEvidence
@@ -3271,7 +3273,7 @@ func hasProjectableTableResult(child front.Compilation) bool {
 
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	table := interproc.NewProjectedTable()
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), captureWrites: make(map[string]map[string]bool), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions), typeFieldSpans: root.TypeFieldSpans}
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), parameterWrites: make(map[string]map[string]bool), heapMutators: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), captureWrites: make(map[string]map[string]bool), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions), typeFieldSpans: root.TypeFieldSpans}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
 		l.byBody[compilation.Body] = compilation
@@ -3293,6 +3295,7 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 		// only when their sealed result tuple has a caller-owned slot.
 		diagnosticRelay := compilationRequiresDiagnosticPublication(compilation)
 		captureWrites := capturedMemberWriteTerms(compilation)
+		parameterWrites := parameterMemberWriteTerms(compilation)
 		required := len(compilation.Boundary.Captures) != 0 || diagnosticRelay
 		// A body that statically writes a member of one of its own captures owns
 		// an effect the caller can observe. Its writeback is exactly the capture
@@ -3307,6 +3310,9 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 		if compilation.PrototypeName != "" {
 			if len(captureWrites) != 0 {
 				l.captureWrites[compilation.PrototypeName] = captureWrites
+			}
+			if len(parameterWrites) != 0 {
+				l.parameterWrites[compilation.PrototypeName] = parameterWrites
 			}
 			l.requiresBody[compilation.PrototypeName] = required
 		}
@@ -3439,6 +3445,105 @@ func capturedMemberWriteTerms(compilation front.Compilation) map[string]bool {
 	for _, capture := range compilation.Boundary.Captures {
 		captured[boundaryTerm(capture.Symbol)] = true
 	}
+	return memberWriteRoots(compilation, captured)
+}
+
+// formalMemberWriteEscape reports whether this application must evaluate its
+// callee because the callee writes a member of a table the caller owns. It is
+// the call-site companion of parameterMemberWriteTerms: the prototype supplies
+// the written formals, the call site supplies the arguments whose identities
+// those writes land on.
+func (l *lexicalEvaluator) formalMemberWriteEscape(handle closureHandle, operands directCallOperands, partition equation.Partition) bool {
+	if l == nil || len(l.parameterWrites[handle.Prototype]) == 0 {
+		return false
+	}
+	child, known := l.byPrototype[handle.Prototype]
+	if !known {
+		return false
+	}
+	arguments := operands.arguments
+	if operands.receiver != nil {
+		arguments = append([][]byte{operands.receiver}, arguments...)
+	}
+	if operands.spread || len(arguments) != len(child.Boundary.Parameters) {
+		return false
+	}
+	return len(writtenFormalIdentitySources(l, child, handle, arguments, nil, partition)) != 0
+}
+
+// writtenFormalIdentitySources maps each written formal to the caller cell it
+// binds, and withholds the whole map when two of those cells share one heap
+// identity. Capture sources pass through unchanged: a capture already spells
+// the same term on both sides of the boundary.
+func writtenFormalIdentitySources(l *lexicalEvaluator, child front.Compilation, handle closureHandle, arguments [][]byte, base map[string][]byte, partition equation.Partition) map[string][]byte {
+	written := l.parameterWrites[handle.Prototype]
+	sources := make(map[string][]byte, len(base))
+	for index, capture := range child.Boundary.Captures {
+		if index < len(handle.Captures) {
+			sources[boundaryTerm(capture.Symbol)] = []byte(handle.Captures[index])
+		}
+	}
+	if len(written) == 0 {
+		return sources
+	}
+	seen := make(map[string]bool, len(child.Boundary.Parameters))
+	formals := make(map[string][]byte, len(child.Boundary.Parameters))
+	for index, parameter := range child.Boundary.Parameters {
+		term := boundaryTerm(parameter.Symbol)
+		if !written[term] || index >= len(arguments) || !strings.HasPrefix(string(arguments[index]), "path/") {
+			continue
+		}
+		identity, found := tableIdentityForTerm(arguments[index], partition)
+		if !found {
+			continue
+		}
+		if seen[string(identity)] {
+			return sources
+		}
+		seen[string(identity)] = true
+		formals[term] = append([]byte(nil), arguments[index]...)
+	}
+	for term, source := range formals {
+		sources[term] = source
+	}
+	return sources
+}
+
+// parameterMemberWriteTerms names the formals whose members this body writes.
+// Lua binds a table argument by reference, so such a write is a write to the
+// caller's own table and is as observable as a capture write.
+func parameterMemberWriteTerms(compilation front.Compilation) map[string]bool {
+	if len(compilation.Boundary.Parameters) == 0 {
+		return nil
+	}
+	formals := make(map[string]bool, len(compilation.Boundary.Parameters))
+	for _, parameter := range compilation.Boundary.Parameters {
+		formals[boundaryTerm(parameter.Symbol)] = true
+	}
+	written := memberWriteRoots(compilation, formals)
+	if len(written) == 0 {
+		return nil
+	}
+	// A formal stored into another formal's member becomes reachable from the
+	// caller through that member, so its own identity is part of the same
+	// caller-observable effect and must cross the boundary with it.
+	for _, item := range compilation.Artifact.Equations {
+		if item.Occurrence.Kind != "path-replacement" && item.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		target, hasTarget := artifactOperand(item.Operands, "target")
+		value, hasValue := artifactOperand(item.Operands, "value")
+		if !hasTarget || !hasValue || !formals[string(value)] {
+			continue
+		}
+		if _, suffix, ok := heapTableAddress(target); ok && suffix != "" {
+			written[string(value)] = true
+		}
+	}
+	return written
+}
+
+func memberWriteRoots(compilation front.Compilation, roots map[string]bool) map[string]bool {
 	var written map[string]bool
 	for _, item := range compilation.Artifact.Equations {
 		if item.Occurrence.Kind != "path-replacement" && item.Occurrence.Kind != "environment-write" {
@@ -3449,11 +3554,11 @@ func capturedMemberWriteTerms(compilation front.Compilation) map[string]bool {
 			continue
 		}
 		root, suffix, ok := heapTableAddress(target)
-		if !ok || suffix == "" || !captured[string(root)] {
+		if !ok || suffix == "" || !roots[string(root)] {
 			continue
 		}
 		if written == nil {
-			written = make(map[string]bool, len(captured))
+			written = make(map[string]bool, len(roots))
 		}
 		written[string(root)] = true
 	}
@@ -4291,6 +4396,48 @@ func uncalledGradualLogicalCallBoundary(child front.Compilation) ([]entrySeed, [
 // at least one formal. A caller supplies its own withholding value.
 func capturelessFormalBody(child front.Compilation) bool {
 	return child.WIR != nil && child.Cyclic == nil && len(child.Boundary.Captures) == 0 && len(child.Boundary.Parameters) != 0
+}
+
+// uncalledSealedCaptureBoundary admits a parameter-free body whose entire free
+// environment is a set of never-reassigned lexical functions. Such a body is
+// closed at allocation time exactly like a capture-free one: it takes no
+// argument a caller could refine, and WIR's immutability bit proves no lexical
+// write can rebind a capture cell between allocation and any later call, so the
+// callable resolved here is the callable every invocation observes. A mutable
+// cell, a non-callable capture (whose contents a later member write could
+// change), or a capture whose own closure environment is not scalar leaves the
+// body dormant.
+func uncalledSealedCaptureBoundary(lexical *lexicalEvaluator, child front.Compilation, partition equation.Partition) bool {
+	if lexical == nil || child.WIR == nil || child.Cyclic != nil ||
+		len(child.Boundary.Parameters) != 0 || len(child.Boundary.Captures) == 0 {
+		return false
+	}
+	for _, capture := range child.Boundary.Captures {
+		if capture.Mutable {
+			return false
+		}
+		term := []byte(boundaryTerm(capture.Symbol))
+		value, known := resolveKnownCurrentValue(term, partition)
+		if !known || isUnknownScalar(value) || !isCallableValue(value) {
+			return false
+		}
+		handle, found := closureHandleFor(term, partition)
+		if !found {
+			return false
+		}
+		if _, admitted := lexical.byPrototype[handle.Prototype]; !admitted {
+			return false
+		}
+		// A captured closure that itself closes over a cell would reintroduce
+		// the staleness this boundary excludes. Only a scalar-closed callable
+		// keeps the environment exact.
+		for _, nested := range handle.Captures {
+			if !strings.HasPrefix(nested, "scalar/") {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // declaredFormalSeeds encodes every declared, non-variadic formal of a body as
@@ -5235,7 +5382,7 @@ func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.Compilation, 
 	if len(closures) == 0 {
 		return nil, false, nil
 	}
-	entry, err := encodeChildEntryWithCapabilities(seeds, closures, childEntryMemberClosureSeeds(seeds, nil, partition), tableIdentitySeedsForEntry(seeds, partition), memberCellSeedsForEntry(seeds, partition))
+	entry, err := encodeChildEntryWithCapabilities(seeds, closures, childEntryMemberClosureSeeds(seeds, nil, partition), tableIdentitySeedsForEntry(seeds, nil, partition), memberCellSeedsForEntry(seeds, nil, partition))
 	if err != nil {
 		return nil, false, err
 	}
@@ -6632,6 +6779,24 @@ func uncalledPublishedResultPaths(operations []equation.Equation, applications m
 			paths[string(target)] = true
 		}
 	}
+	// A generic-for over one of those published results binds its loop
+	// variables from the iterator's own declared result contract, so those
+	// variables are closed by the same registry publication that closed the
+	// iterator. Nothing a caller supplies refines them.
+	for _, operation := range operations {
+		if operation.Occurrence.Kind != "generic-for" {
+			continue
+		}
+		iterator, found := artifactOperand(operation.Operands, "iterator")
+		if !found || (!results[string(iterator)] && !paths[string(iterator)]) {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if strings.HasPrefix(operand.Role, "result-") {
+				paths[string(operand.Term.Encoding)] = true
+			}
+		}
+	}
 	return paths
 }
 
@@ -6992,8 +7157,8 @@ func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.C
 	boundarySeeds := append([]entrySeed(nil), seeds...)
 	seeds = append(seeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
 	memberClosureSeeds := childEntryMemberClosureSeeds(seeds, nil, partition)
-	tableIdentitySeeds := tableIdentitySeedsForEntry(seeds, partition)
-	memberCellSeeds := memberCellSeedsForEntry(seeds, partition)
+	tableIdentitySeeds := tableIdentitySeedsForEntry(seeds, nil, partition)
+	memberCellSeeds := memberCellSeedsForEntry(seeds, nil, partition)
 	return seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, true
 }
 
@@ -7475,8 +7640,14 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		memberSources[boundaryTerm(capture.Symbol)] = []byte(handle.Captures[index])
 	}
 	memberClosureSeeds := childEntryMemberClosureSeeds(entrySeeds, memberSources, partition)
-	tableIdentitySeeds := tableIdentitySeedsForEntry(entrySeeds, partition)
-	memberCellSeeds := memberCellSeedsForEntry(entrySeeds, partition)
+	// A formal binds the caller's own table, so its heap identity crosses the
+	// entry exactly where the callee's member write must reach back. The lens
+	// opens only for the formals this body writes, and only while every such
+	// argument names a distinct cell: two formals resolving to one identity
+	// leave that cell's post-call ownership undecided, so the lens stays closed.
+	identitySources := writtenFormalIdentitySources(l, child, handle, arguments, memberSources, partition)
+	tableIdentitySeeds := tableIdentitySeedsForEntry(entrySeeds, identitySources, partition)
+	memberCellSeeds := memberCellSeedsForEntry(entrySeeds, identitySources, partition)
 	placementSeeds := placementSeedsForEntry(entrySeeds, partition)
 	entry, err := encodeChildEntryWithPlacementCapabilities(entrySeeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, placementSeeds, gradualAnyTerms)
 	if err != nil {
@@ -7516,6 +7687,34 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	}
 	projected := projectCallResults(operation, returns, closure)
 	projected.Values = append(projected.Values, projectExternalCallbackReturnFacts(operation, child, closure)...)
+	// The child snapshot is only needed to read a capture or transported heap
+	// cell back, so it is built once on demand rather than for every
+	// application.
+	childPartition, childPartitionBuilt := equation.Partition{}, false
+	buildChildPartition := func() error {
+		if childPartitionBuilt {
+			return nil
+		}
+		built, partitionErr := equation.PartitionFromClosuresWithGuards(nil, closure)
+		if partitionErr != nil {
+			return partitionErr
+		}
+		childPartition, childPartitionBuilt = built, true
+		return nil
+	}
+	// A callee that mutates a member of a table the caller transported into it
+	// mutates the caller's own heap cell: the identity crossed the boundary, not
+	// a copy. Project those writes back onto the caller's cells so a later read
+	// observes the post-call value instead of the pre-call one. Only identities
+	// this call actually transported participate, and only cells the callee
+	// itself authored (an entry-authored cell is the caller's own pre-call
+	// value).
+	if transported := transportedHeapIdentities(tableIdentitySeeds, memberCellSeeds); len(transported) != 0 && l.childMutatesHeapMembers(child) {
+		if partitionErr := buildChildPartition(); partitionErr != nil {
+			return equation.TransactionResult{}, partitionErr
+		}
+		projected.Values = append(projected.Values, childMemberWritebacks(transported, childPartition, operation.Target.Name)...)
+	}
 	for _, fact := range closure.Values {
 		if !strings.HasPrefix(fact.Key, typePredicateTargetPrefix) {
 			continue
@@ -7558,9 +7757,6 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		projected.Values = append(projected.Values, values...)
 		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("call-member-closure/%s/%08d/%s", strings.TrimPrefix(operation.Target.Name, "call/"), resultIndex, parts[2]), Value: encoded})
 	}
-	// The child snapshot is only needed to read a capture cell back, so it is
-	// built once on demand rather than for every application.
-	childPartition, childPartitionBuilt := equation.Partition{}, false
 	for index, capture := range child.Boundary.Captures {
 		value, found := latestClosedValue([]byte(boundaryTerm(capture.Symbol)), closure.Values)
 		if !found {
@@ -7569,12 +7765,8 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		// A static member write inside the child advances that heap cell without
 		// republishing the capture's aggregate value. Consume the child's member
 		// authority so the writeback carries the mutation the callee made.
-		if !childPartitionBuilt {
-			built, partitionErr := equation.PartitionFromClosuresWithGuards(nil, closure)
-			if partitionErr != nil {
-				return equation.TransactionResult{}, partitionErr
-			}
-			childPartition, childPartitionBuilt = built, true
+		if partitionErr := buildChildPartition(); partitionErr != nil {
+			return equation.TransactionResult{}, partitionErr
 		}
 		value = heapMemberSurface([]byte(boundaryTerm(capture.Symbol)), value, childPartition)
 		// A capture cell may be the same caller cell as another capture or a
@@ -7633,7 +7825,9 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	}
 	// Parameter writes only escape when the caller supplied that parameter as
 	// a capture-cell alias.  Rebind those writes through every matching capture
-	// lens; ordinary pass-by-value parameters deliberately have no writeback.
+	// lens; a parameter rebinding is otherwise callee-local. A member the callee
+	// wrote on the argument's own table is a different effect and reaches the
+	// caller through the shared heap identity above.
 	for parameterIndex, parameter := range child.Boundary.Parameters {
 		value, found := latestClosedValue([]byte(boundaryTerm(parameter.Symbol)), closure.Values)
 		if !found {
@@ -8982,7 +9176,19 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// a caller can supply refines it. Admission must therefore not depend on
 	// an arbitrary body-size cap.
 	closedBoundary := len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0
-	if (child.Cyclic == nil || importedCaptureBoundary) && (closedBoundary || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary || importedCaptureBoundary) {
+	// The sealed-capture boundary extends that same closedness to a
+	// parameter-free body whose free environment is exclusively immutable
+	// lexical callables. It is disjoint from the imported lane above, which
+	// states module authorities and refuses exactly the closure-handle captures
+	// this one requires; it runs last so an already admitted body keeps its own
+	// seeds and its own diagnostic surface.
+	sealedCaptureBoundary := false
+	if !closedBoundary && !explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
+		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary && !declaredFormalCallBoundary &&
+		!importedCaptureBoundary && !staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary {
+		sealedCaptureBoundary = uncalledSealedCaptureBoundary(lexical, child, partition)
+	}
+	if (child.Cyclic == nil || importedCaptureBoundary) && (closedBoundary || sealedCaptureBoundary || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary || importedCaptureBoundary) {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
@@ -8998,7 +9204,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				entry, entryErr = encodeChildEntry(seeds, closureSeeds...)
 			}
 		} else {
-			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, gradualLogicalBoundary || staticAssignmentBoundary || staticCapturedReturnBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary, staticAssignmentBoundary, gradualLogicalTerms)
+			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, gradualLogicalBoundary || staticAssignmentBoundary || staticCapturedReturnBoundary || arithmeticBoundary || sealedCaptureBoundary, arithmeticBoundary, arithmeticBoundary || sealedCaptureBoundary, staticAssignmentBoundary, gradualLogicalTerms)
 		}
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
@@ -9561,8 +9767,8 @@ func (l *lexicalEvaluator) selectChildEntry(child front.Compilation, captures []
 		}
 	}
 	memberClosureSeeds := childEntryMemberClosureSeeds(seeds, sources, partition)
-	tableIdentitySeeds := tableIdentitySeedsForEntry(seeds, partition)
-	memberCellSeeds := memberCellSeedsForEntry(seeds, partition)
+	tableIdentitySeeds := tableIdentitySeedsForEntry(seeds, nil, partition)
+	memberCellSeeds := memberCellSeedsForEntry(seeds, nil, partition)
 	placementSeeds := placementSeedsForEntry(seeds, partition)
 	return encodeChildEntryWithPlacementCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, placementSeeds)
 }
@@ -13428,6 +13634,16 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 	}
 	iteratorElement, indexedIterator := currentEpochFact(iteratorElementPrefix, operands["iterator"], partition)
 	iteratorKey, keyedIterator := currentEpochFact(iteratorKeyPrefix, operands["iterator"], partition)
+	// A generic iterator that is an exact callable publishes its own result
+	// contract. Lua binds the loop variables to that callable's results in
+	// order, so the declared tuple types every bound variable; the pairs/ipairs
+	// element witnesses above stay authoritative where they already apply.
+	iteratorReturns := []typ.Type(nil)
+	if !keyedIterator && !indexedIterator && string(operands["iteration-kind"]) != "iteration-kind/numeric" {
+		if bound, known := resolveKnownCurrentValue(operands["iterator"], partition); known {
+			iteratorReturns, _ = iteratorCallableReturns(bound)
+		}
+	}
 	values := make([]equation.Fact, 0)
 	for _, operand := range operation.Operands {
 		if !strings.HasPrefix(operand.Role, "result-") {
@@ -13462,6 +13678,25 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 			} else {
 				resultValue = iteratorElement
 			}
+		} else if len(iteratorReturns) != 0 {
+			index, indexErr := strconv.Atoi(strings.TrimPrefix(operand.Role, "result-"))
+			if indexErr != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
+			}
+			if index < len(iteratorReturns) {
+				bound := iteratorReturns[index]
+				if index == 0 {
+					// The loop body runs only while the control result is
+					// non-nil, so the first bound variable is that result's
+					// non-nil projection inside the body.
+					if projected := proof.ProjectionWithoutNil(bound); projected != nil && !typ.IsNever(projected) {
+						bound = projected
+					}
+				}
+				if encoded, ok := shapefact.EncodeTarget(bound); ok {
+					resultValue = encoded
+				}
+			}
 		}
 		values = append(values, equation.Fact{Key: "value/" + result + "/" + operation.Target.Name, Value: append([]byte(nil), resultValue...)})
 		if numericInduction {
@@ -13469,6 +13704,36 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+// iteratorCallableReturns reads the declared result tuple of a generic-for
+// iterator whose current value is an exact callable. Lua's generic for calls
+// that callable once per step and binds the loop variables to its results in
+// order, so the callable's own published return contract is the authority for
+// every bound variable. Only an exactly known function value qualifies: an
+// unknown or non-callable iterator keeps the loop variables at Top.
+func iteratorCallableReturns(value []byte) ([]typ.Type, bool) {
+	if len(value) == 0 || isUnknownScalar(value) {
+		return nil, false
+	}
+	decoded, ok := shapefact.DecodeTarget(value)
+	if !ok {
+		if decoded, ok = sealedFunctionType(value); !ok {
+			return nil, false
+		}
+	}
+	function, isFunction := unwrap.Alias(subst.ExpandInstantiated(decoded)).(*typ.Function)
+	if !isFunction || function == nil || len(function.Returns) == 0 {
+		return nil, false
+	}
+	// A free type parameter has no closed result contract at this site; the
+	// generic instantiation belongs to the call kernel, not to the loop header.
+	for _, returned := range function.Returns {
+		if returned == nil || refinement.ContainsFreeTypeParam(returned) {
+			return nil, false
+		}
+	}
+	return function.Returns, true
 }
 
 // iteratorElementWitness reifies an iterator's declared result relation. The
@@ -15475,8 +15740,12 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// summary boundary. Its sealed allocation is the existing publication; a
 		// declaration alone remains insufficient.
 		tableProjectionUnsafe := !childKnown || !hasProjectableTableResult(child)
-		if lexical == nil || !localCallable || (operands.resultArity == 0 && !lexical.requiresBody[handle.Prototype]) ||
-			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] &&
+		// A callee that writes a member of one of this call's own table
+		// arguments has an effect the caller observes, so its body is demanded
+		// here even though nothing consumes a result.
+		formalWriteEscape := lexical != nil && localCallable && lexical.formalMemberWriteEscape(handle, operands, partition)
+		if lexical == nil || !localCallable || (operands.resultArity == 0 && !lexical.requiresBody[handle.Prototype] && !formalWriteEscape) ||
+			(operands.resultArity != 0 && !lexical.requiresBody[handle.Prototype] && !formalWriteEscape &&
 				((lexical.hasClaim(handle.Prototype) && !lexical.hasRuntimeCastClaim(handle.Prototype)) || lexical.hasTableAllocation(handle.Prototype) && tableProjectionUnsafe && !recursiveDemand) && !childHasSelect(child)) {
 			if localCallable {
 				captureInvalidations = lexical.capturedMemberWriteInvalidations(handle, operation.Target.Name, partition)
@@ -16810,14 +17079,128 @@ func currentMemberCell(identity []byte, suffix string, partition equation.Partit
 	return cell, true
 }
 
+// childMutatesHeapMembers reports whether a callee body contains any operation
+// that can advance a heap cell. It is a structural artifact question, so an
+// unrelated call never pays for the child snapshot the writeback needs.
+func (l *lexicalEvaluator) childMutatesHeapMembers(child front.Compilation) bool {
+	if l != nil && child.PrototypeName != "" {
+		if cached, known := l.heapMutators[child.PrototypeName]; known {
+			return cached
+		}
+	}
+	mutates := false
+	for _, item := range child.Artifact.Equations {
+		switch item.Occurrence.Kind {
+		case "path-replacement", "index-mutation", "path-invalidation":
+			mutates = true
+		}
+		if mutates {
+			break
+		}
+	}
+	if l != nil && child.PrototypeName != "" {
+		l.heapMutators[child.PrototypeName] = mutates
+	}
+	return mutates
+}
+
+// transportedHeapIdentities is the exact set of table identities one call
+// carried into its callee: the seeded roots plus every cell identity the entry
+// transport reached from them.
+func transportedHeapIdentities(identitySeeds []entryTableIdentitySeed, cellSeeds []entryMemberCellSeed) [][]byte {
+	seen := make(map[string]bool, len(identitySeeds)+len(cellSeeds))
+	out := make([][]byte, 0, len(identitySeeds)+len(cellSeeds))
+	add := func(identity []byte) {
+		if len(identity) == 0 || seen[string(identity)] {
+			return
+		}
+		seen[string(identity)] = true
+		out = append(out, append([]byte(nil), identity...))
+	}
+	for _, seed := range identitySeeds {
+		add(seed.Identity)
+	}
+	for _, seed := range cellSeeds {
+		add(seed.Identity)
+		add(seed.Wire.MemberIdentity)
+	}
+	return out
+}
+
+// entrySeedSource resolves the caller term that owns a child entry seed. A
+// capture symbol is the declaring symbol, so it spells the same term on both
+// sides; a formal has its own symbol and only the call's argument mapping
+// names the caller cell it binds. Lua passes tables by reference, so that cell
+// is the callee's parameter and its identity crosses the entry with it.
+func entrySeedSource(seed entrySeed, sources map[string][]byte) []byte {
+	if source := sources[seed.Term]; len(source) != 0 {
+		return source
+	}
+	return []byte(seed.Term)
+}
+
+// childMemberWritebacks republishes, under the calling operation, every heap
+// cell the callee authored on one of the transported identities. The callee
+// holds the caller's own table there, so its static member write is a write the
+// caller must observe; a cell still authored by the entry carries the caller's
+// pre-call value and is left alone.
+func childMemberWritebacks(identities [][]byte, childPartition equation.Partition, operation string) []equation.Fact {
+	var facts []equation.Fact
+	type authoredCell struct {
+		author  string
+		encoded []byte
+	}
+	latest := make(map[string]authoredCell)
+	for _, identity := range identities {
+		prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+		clear(latest)
+		for _, fact := range childPartition.ValuesPrefix(prefix) {
+			rest := strings.TrimPrefix(fact.Key, prefix)
+			cut := strings.LastIndexByte(rest, '/')
+			if cut <= 0 || cut == len(rest)-1 {
+				continue
+			}
+			if prior, exists := latest[rest[:cut]]; !exists || rest[cut+1:] > prior.author {
+				latest[rest[:cut]] = authoredCell{author: rest[cut+1:], encoded: fact.Value}
+			}
+		}
+		encodedSuffixes := make([]string, 0, len(latest))
+		for encodedSuffix, cell := range latest {
+			if cell.author != "entry" {
+				encodedSuffixes = append(encodedSuffixes, encodedSuffix)
+			}
+		}
+		sort.Strings(encodedSuffixes)
+		for _, encodedSuffix := range encodedSuffixes {
+			suffixBytes, err := base64.RawURLEncoding.DecodeString(encodedSuffix)
+			if err != nil || !segment.ValidFormattedSegments(string(suffixBytes)) {
+				continue
+			}
+			var cell memberCellWire
+			if json.Unmarshal(latest[encodedSuffix].encoded, &cell) != nil || len(cell.Value) == 0 {
+				continue
+			}
+			suffix := string(suffixBytes)
+			facts = append(facts,
+				equation.Fact{Key: memberCellFactKey(identity, suffix, operation), Value: append([]byte(nil), latest[encodedSuffix].encoded...)},
+				heapMemberFact(identity, suffix, operation, cell.Value),
+			)
+			if len(cell.MemberIdentity) != 0 {
+				facts = append(facts, heapMemberIdentityFact(identity, suffix, operation, cell.MemberIdentity))
+			}
+		}
+	}
+	return facts
+}
+
 // memberCellSeedsForEntry follows only identities already reachable from an
 // exact entry seed.  It is intentionally a closed heap snapshot: no source
 // path or declared table type is converted into a callable capability.
-func memberCellSeedsForEntry(seeds []entrySeed, partition equation.Partition) []entryMemberCellSeed {
+func memberCellSeedsForEntry(seeds []entrySeed, sources map[string][]byte, partition equation.Partition) []entryMemberCellSeed {
 	queue := make([][]byte, 0, len(seeds))
 	seenIdentity := make(map[string]bool)
 	for _, seed := range seeds {
-		if identity, found := tableIdentityForTerm([]byte(seed.Term), partition); found {
+		if identity, found := tableIdentityForTerm(entrySeedSource(seed, sources), partition); found {
 			queue = append(queue, identity)
 		}
 	}
@@ -16866,10 +17249,10 @@ func memberCellSeedsForEntry(seeds []entrySeed, partition equation.Partition) []
 	return out
 }
 
-func tableIdentitySeedsForEntry(seeds []entrySeed, partition equation.Partition) []entryTableIdentitySeed {
+func tableIdentitySeedsForEntry(seeds []entrySeed, sources map[string][]byte, partition equation.Partition) []entryTableIdentitySeed {
 	byTerm := make(map[string]entryTableIdentitySeed, len(seeds))
 	for _, seed := range seeds {
-		if identity, found := tableIdentityForTerm([]byte(seed.Term), partition); found {
+		if identity, found := tableIdentityForTerm(entrySeedSource(seed, sources), partition); found {
 			byTerm[seed.Term] = entryTableIdentitySeed{Term: seed.Term, Identity: append([]byte(nil), identity...)}
 		}
 	}
@@ -20252,7 +20635,22 @@ func heapMemberSurface(term, value []byte, partition equation.Partition) []byte 
 		return value
 	}
 	identity, found := tableIdentityForTerm(term, partition)
-	if !found || heapHasExternalCallback(identity, partition) {
+	if !found {
+		return value
+	}
+	return heapMemberSurfaceForIdentity(identity, value, partition)
+}
+
+// heapMemberSurfaceForIdentity folds a partition's member authority for one
+// exact heap identity into an aggregate table value. It is the identity-keyed
+// form of heapMemberSurface, used when the reader names the cell by identity
+// rather than by a term the writing partition spells.
+func heapMemberSurfaceForIdentity(identity, value []byte, partition equation.Partition) []byte {
+	table, sealed := shapefact.DecodeTable(value)
+	if !sealed || !table.Closed {
+		return value
+	}
+	if len(identity) == 0 || heapHasExternalCallback(identity, partition) {
 		return value
 	}
 	prefix := heapMemberPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
