@@ -4738,6 +4738,141 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 	return declaredBoundaryAdmission{Seeds: seeds, Admitted: true, Method: hasDirectMethod, MemberWrite: hasDeclaredMemberWrite, ArithmeticAssignment: hasDeclaredArithmeticAssignment, ArithmeticReturn: hasDeclaredArithmeticReturn, Concat: concatOperations, Comparison: comparisonOperations}
 }
 
+// functionFormalType resolves the underlying function contract of a declared
+// formal that is a function type or an optional function type. A nil guard
+// narrows the optional to this function before any call through it, so the
+// function is the sole callable authority the boundary can exercise.
+func functionFormalType(declared typ.Type) (*typ.Function, bool) {
+	if declared == nil {
+		return nil, false
+	}
+	resolved := unwrap.Alias(subst.ExpandInstantiated(declared))
+	if optional, ok := resolved.(*typ.Optional); ok && optional != nil && optional.Inner != nil {
+		resolved = unwrap.Alias(subst.ExpandInstantiated(optional.Inner))
+	}
+	function, ok := resolved.(*typ.Function)
+	return function, ok && function != nil
+}
+
+// uncalledDeclaredFormalFunctionCall recognizes a direct call whose callee is a
+// declared formal seeded as a function type. The result and parameter contracts
+// are the formal's own declared function type, so the call needs no caller-owned
+// value: seeding the formal is the authority, exactly as for a declared member
+// read.
+func uncalledDeclaredFormalFunctionCall(operation equation.Equation, formalFunctions map[string]bool) bool {
+	if operation.Occurrence.Kind != "apply" {
+		return false
+	}
+	for _, operand := range operation.Operands {
+		if operand.Role != "callee" {
+			continue
+		}
+		return formalFunctions[string(operand.Term.Encoding)]
+	}
+	return false
+}
+
+// uncalledDeclaredFormalCallBoundary admits a body whose calls resolve entirely
+// from the declared function contracts of its own formals. The formal is seeded
+// as its declared type (an axiom under test, never a caller value); a call
+// through it derives its result from that declared return and checks arguments
+// against the declared parameters. Every root is therefore seeded — no capture,
+// no unseeded Top — so the body's full diagnostic surface traces to seeded
+// facts. A capture, a dynamic read or select from any root, or a call through a
+// value with no declared function contract keeps the body dormant.
+func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, bool) {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
+		return nil, false
+	}
+	formals := make(map[string]bool, len(child.Boundary.Parameters))
+	formalFunctions := make(map[string]bool, len(child.Boundary.Parameters))
+	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			return nil, false
+		}
+		declared := child.WIR.Type(parameter.Type)
+		value, ok := shapefact.EncodeTarget(declared)
+		if !ok || declared == nil {
+			return nil, false
+		}
+		term := boundaryTerm(parameter.Symbol)
+		formals[term] = true
+		if _, isFunction := functionFormalType(declared); isFunction {
+			formalFunctions[term] = true
+		}
+		seeds = append(seeds, entrySeed{Term: term, Value: value})
+	}
+	// An external-call equation is emitted only for a resolved provider (a
+	// standard-library or imported module function). Its result is owned by the
+	// published registry contract; since this boundary has no capture and every
+	// formal is seeded, every argument already traces to a seeded root, so the
+	// call needs no additional closedness proof.
+	externalApplications := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "external-call" {
+			continue
+		}
+		application, hasApplication := artifactOperand(operation.Operands, "application")
+		if _, hasProvider := artifactOperand(operation.Operands, "provider"); hasApplication && hasProvider {
+			externalApplications[string(application)] = true
+		}
+	}
+	memberCalls := make(map[string]bool)
+	hasFormalCall := false
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		application := "call/" + operation.Target.Name
+		if uncalledDeclaredFormalFunctionCall(operation, formalFunctions) {
+			memberCalls[application] = true
+			hasFormalCall = true
+			continue
+		}
+		if uncalledDeclaredMemberCall(child, operation, formals) || externalApplications[application] {
+			memberCalls[application] = true
+			continue
+		}
+		return nil, false
+	}
+	if !hasFormalCall {
+		return nil, false
+	}
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "apply":
+			if !memberCalls["call/"+operation.Target.Name] {
+				return nil, false
+			}
+		case "external-call":
+			application, found := artifactOperand(operation.Operands, "application")
+			if !found || !memberCalls[string(application)] {
+				return nil, false
+			}
+		case "dynamic-index-read", "channel-select":
+			return nil, false
+		}
+	}
+	return seeds, true
+}
+
+// declaredFormalCallDiagnostic whitelists the refutation families a fully
+// seeded formal-call body may publish. Each names a concrete conflict proven
+// against a seeded root; an absence family (an unproven claim over a value that
+// resolved to Top) is never a positive fact and is withheld.
+func declaredFormalCallDiagnostic(key string) bool {
+	switch {
+	case strings.HasPrefix(key, "type.member.missing/"),
+		strings.HasPrefix(key, "type.assignment/"),
+		strings.HasPrefix(key, "type.assignment.optional_target/"),
+		strings.HasPrefix(key, "type.return.contract/"),
+		strings.HasPrefix(key, "type.call."):
+		return true
+	}
+	return false
+}
+
 // uncalledDeclaredLocalUnionReadBoundary admits one allocation-time relay:
 // declared formals feed an already-published local closure, whose sole result
 // is assigned and read through an exact static key. The call capability and
@@ -8653,6 +8788,19 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		uncalledSeeds = staticSeeds
 		explicitAnyBoundary = false
 	}
+	// The formal-call boundary is the last fallback: a body whose calls resolve
+	// entirely from the declared function contracts of its own formals. It fires
+	// only when no richer boundary admits, seeds every formal as its declared
+	// type, and publishes its full seed-owned diagnostic surface.
+	declaredFormalCallBoundary := false
+	if !explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
+		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary &&
+		!staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary {
+		if formalSeeds, admitted := uncalledDeclaredFormalCallBoundary(child); admitted {
+			uncalledSeeds = formalSeeds
+			declaredFormalCallBoundary = true
+		}
+	}
 	// A parameter-free, capture-free body is closed by its own entry: nothing
 	// a caller can supply refines it. Admission must therefore not depend on
 	// an arbitrary body-size cap.
@@ -8661,7 +8809,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
-		} else if declaredBoundary {
+		} else if declaredBoundary || declaredFormalCallBoundary {
 			entry, entryErr = encodeDeclaredChildEntry(uncalledSeeds)
 		} else if len(child.Boundary.Captures) == 0 {
 			if gradualLogicalBoundary {
@@ -8742,6 +8890,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if localUnionReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
 			}
+			if declaredFormalCallBoundary && !declaredFormalCallDiagnostic(diagnostic.Key) {
+				continue
+			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			if span, ok := spans[diagnostic.Key]; ok {
@@ -8788,6 +8939,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				continue
 			}
 			if localUnionReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
+				continue
+			}
+			if declaredFormalCallBoundary && !declaredFormalCallDiagnostic(item.Fact.Key) {
 				continue
 			}
 			key := "child/" + body + "/" + item.Fact.Key
@@ -12773,6 +12927,20 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 				}
 			}
 		}
+	}
+	// A dynamic-key store places its value inside the container exactly as a
+	// static member write does. Mirror pathReplacementKernel: containment when
+	// both allocations are proven, retain-ownership when the container is an
+	// escaping root (import / global / boundary cell) with no frame allocation.
+	// Publication is gated on the value allocation being proven, so an unknown
+	// value or container stays fail-closed with no synthesized edge.
+	parentAlloc, hasParent := placementAllocationForTerm(operands["container"], partition)
+	childAlloc, hasChild := placementAllocationForTerm(operands["value"], partition)
+	switch {
+	case hasParent && hasChild && parentAlloc.Identity != childAlloc.Identity:
+		result.Closure.Values = append(result.Closure.Values, placementContainmentFact(parentAlloc.Identity, childAlloc.Identity, operation.Target.Name))
+	case hasChild && !hasParent:
+		result.Closure.Values = append(result.Closure.Values, placementEventFact(childAlloc.Identity, operation.Target.Name, placementEventOwned))
 	}
 	return result, nil
 }
@@ -17990,6 +18158,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if localSummary == nil && localUnion && requiresLocalUnionProof(localUnionSummary) {
 					localSummary = localUnionSummary
 				}
+				if localSummary == nil {
+					if summary, ok := typedCallableResultType(callee, index, argumentTerms, partition); ok && requiresLocalUnionProof(summary) {
+						localSummary = summary
+					}
+				}
 			}
 			if string(value) == "scalar/top" {
 				if contract, ok := typedCallableResultValue(callee, index, argumentTerms, partition); ok {
@@ -18673,6 +18846,20 @@ func inferredReturnMemberSummaries(lexical *lexicalEvaluator, values []equation.
 // (including a typed member projection); declarations and source spelling are
 // not alternate authorities, and unresolved/generic return slots stay Top.
 func typedCallableResultValue(callee []byte, index int, arguments map[int][]byte, partition equation.Partition) ([]byte, bool) {
+	function, ok := typedCalleeFunction(callee, index, partition)
+	if !ok {
+		return nil, false
+	}
+	result, instantiated := instantiateProviderReturn(function, arguments, partition, index)
+	returnValue, materialized := providerReturnTypeValue(result)
+	return returnValue, instantiated && materialized
+}
+
+// typedCalleeFunction resolves the sealed function type a direct callee term
+// currently holds when that value is a shape target rather than a scalar
+// function literal. A nil-narrowed optional function formal resolves through
+// this path once its guard has proven it non-nil.
+func typedCalleeFunction(callee []byte, index int, partition equation.Partition) (*typ.Function, bool) {
 	if callee == nil || index < 0 {
 		return nil, false
 	}
@@ -18688,9 +18875,20 @@ func typedCallableResultValue(callee []byte, index int, arguments map[int][]byte
 	if !ok || function == nil || index >= len(function.Returns) || function.Returns[index] == nil {
 		return nil, false
 	}
-	result, instantiated := instantiateProviderReturn(function, arguments, partition, index)
-	returnValue, materialized := providerReturnTypeValue(result)
-	return returnValue, instantiated && materialized
+	return function, true
+}
+
+// typedCallableResultType exposes a direct callee's declared union return as
+// summary metadata. It is the union analogue of typedCallableResultValue: a
+// finite record union cannot materialize a single concrete value, so it is
+// retained so a later discriminant can select one arm. A concrete return is
+// owned by typedCallableResultValue instead.
+func typedCallableResultType(callee []byte, index int, arguments map[int][]byte, partition equation.Partition) (typ.Type, bool) {
+	function, ok := typedCalleeFunction(callee, index, partition)
+	if !ok {
+		return nil, false
+	}
+	return instantiateProviderReturn(function, arguments, partition, index)
 }
 
 // sealedMethodResultValue is the method analogue of the direct-callee bridge.
