@@ -2534,18 +2534,18 @@ func claimTypeTerm(body *wir.Body, instruction wir.Instruction) (equation.Term, 
 
 // diagnosticPathDisplay derives a quoted string-index display from the
 // already-bound path segments. It deliberately does not parse source text or
-// infer a key: only a statically classified string segment receives quotes.
+// infer a key: every statically classified string segment receives quotes, so a
+// rendered member chain reads back as the authored expression at any depth,
+// while the internal Path spelling stays unquoted.
 func diagnosticPathDisplay(value path.Path) string {
-	display := value.String()
-	if display == "" || len(value.Segments) == 0 {
-		return display
+	if value.Root == "" && value.Symbol == 0 {
+		return ""
 	}
-	last := value.Segments[len(value.Segments)-1]
-	if last.Kind != segment.SegmentIndexString {
-		return display
+	root := value.Root
+	if root == "" {
+		root = "$sym" + strconv.FormatUint(uint64(value.Symbol), 10)
 	}
-	suffix := "[" + last.Name + "]"
-	return strings.TrimSuffix(display, suffix) + "[" + strconv.Quote(last.Name) + "]"
+	return root + segment.FormatSegments(value.Segments)
 }
 
 // applyOperands preserves the complete source-side call shape. The kernel,

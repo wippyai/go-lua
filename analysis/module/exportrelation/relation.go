@@ -35,6 +35,14 @@ type Function struct {
 	// body neither stores, sends, re-passes, nor returns their graph, so each
 	// argument stays frame-local at the caller.
 	Borrow []int
+	// AllocatedReturn marks a body the producer proved returns a graph that did
+	// not exist before the call: evaluating it published a single owned return
+	// escape, on an allocation of that evaluation rather than on one of its own
+	// parameters. It carries no shape, so a consumer that needs the returned
+	// graph still reads the checked return type. A returned capture, module
+	// table, or parameter stays unmarked, and a consumer therefore cannot
+	// mistake state the producer or the caller already holds for a fresh graph.
+	AllocatedReturn bool
 }
 
 // ReturnTuple is one complete positional return alternative. Every value is a
@@ -93,7 +101,7 @@ func (s Summary) Function(path string, arity int) (Function, bool) {
 }
 
 func (f Function) Valid() bool {
-	if f.Path == "" || f.Arity < 0 || (!f.Return.Valid(f.Arity) && !f.Conditional.Valid(f.Arity) && !validReturnTuples(f.ReturnTuples, f.Arity) && !f.Store.Valid(f.Arity) && !validBorrow(f.Borrow, f.Arity)) {
+	if f.Path == "" || f.Arity < 0 || (!f.Return.Valid(f.Arity) && !f.Conditional.Valid(f.Arity) && !validReturnTuples(f.ReturnTuples, f.Arity) && !f.Store.Valid(f.Arity) && !validBorrow(f.Borrow, f.Arity) && !f.AllocatedReturn) {
 		return false
 	}
 	if (f.Return.Valid(f.Arity) && f.Conditional != nil) ||

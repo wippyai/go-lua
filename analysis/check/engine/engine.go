@@ -182,8 +182,12 @@ type Result struct {
 	// derived from placement facts. It is keyed by exported member name and is
 	// pure data: it changes no diagnostic, placement plan, or module allocation.
 	FunctionEscapes map[string][]signature.ParamRelation
-	Transactions    int
-	Timings         Timings
+	// FunctionAllocatedReturns names the exported functions whose evaluated body
+	// returns a graph that same body allocated. It comes from the identical
+	// evaluation as FunctionEscapes and is likewise pure data here.
+	FunctionAllocatedReturns map[string]bool
+	Transactions             int
+	Timings                  Timings
 }
 
 // PublishedDiagnostic enriches one equation diagnostic fact at the public
@@ -467,21 +471,22 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	// The escape summary is computed last and reads only its own evaluated
 	// outcomes, so it observes the finalized module closure without altering any
 	// field already projected above.
-	functionEscapes := lexical.escapeSummaryForExport(closure)
+	functionEscapes, allocatedReturns := lexical.escapeSummaryForExport(closure)
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: outcomes, Diagnostics: closure.Diagnostics,
-		ReturnCandidates:     cloneFacts(closure.Outcomes),
-		ValueFacts:           valueFacts,
-		Native:               publishedNativeFactsForCompilation(compilation, valueFacts, outcomes, closure.Diagnostics),
-		PublishedDiagnostics: published,
-		PolicyDiagnostics:    publishedPolicyDiagnostics(compilation.PolicyDiagnostics),
-		DiagnosticSpans:      diagnosticSpans,
-		Placement:            placement,
-		TypeDefinitions:      cloneTypeDefinitions(compilation.TypeDefinitions),
-		FunctionEscapes:      functionEscapes,
-		Transactions:         transactions,
-		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
+		ReturnCandidates:         cloneFacts(closure.Outcomes),
+		ValueFacts:               valueFacts,
+		Native:                   publishedNativeFactsForCompilation(compilation, valueFacts, outcomes, closure.Diagnostics),
+		PublishedDiagnostics:     published,
+		PolicyDiagnostics:        publishedPolicyDiagnostics(compilation.PolicyDiagnostics),
+		DiagnosticSpans:          diagnosticSpans,
+		Placement:                placement,
+		TypeDefinitions:          cloneTypeDefinitions(compilation.TypeDefinitions),
+		FunctionEscapes:          functionEscapes,
+		FunctionAllocatedReturns: allocatedReturns,
+		Transactions:             transactions,
+		Timings:                  Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
 	}
 }
 
@@ -18430,6 +18435,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		localCallableResult := false
 		projectedLocalResult := false
 		importedRelation := false
+		placementReturnGraphPublished := false
 		receiverResult := false
 		receiverResultTerm := receiver
 		setMetatableReceiver := []byte(nil)
@@ -18547,7 +18553,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 							receiverResult, receiverResultTerm = true, argument
 						}
 					}
-					values = append(values, placementImportedReturnFacts(template, string(result), strings.TrimPrefix(string(application), "call/"))...)
+					returnFacts := placementImportedReturnFacts(template, string(result), strings.TrimPrefix(string(application), "call/"))
+					placementReturnGraphPublished = len(returnFacts) != 0
+					values = append(values, returnFacts...)
 				}
 				if summary, ok := importedProviderResultType(lexical, provider, index, argumentTerms, partition); ok {
 					// A parameterized export relation has already materialized the
@@ -18557,6 +18565,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					if !importedRelation {
 						importedSummary = summary
 						lexical.setImportedAuthority(string(result), summary)
+					}
+					if index == 0 && !placementReturnGraphPublished {
+						values = append(values, placementImportedDeclaredReturnFacts(lexical, provider, summary, string(result), strings.TrimPrefix(string(application), "call/"), len(argumentTerms))...)
 					}
 				}
 			}
@@ -19905,18 +19916,7 @@ func importedProviderRelationValue(lexical *lexicalEvaluator, provider, applicat
 	if lexical == nil || index != 0 {
 		return nil, exportrelation.Value{}, false, false
 	}
-	module, suffix, load, ok := importedProviderTarget(provider)
-	if !ok || load || suffix == "" {
-		return nil, exportrelation.Value{}, false, false
-	}
-	suffix = strings.TrimPrefix(suffix, ".")
-	lexical.importedAuthorityMu.RLock()
-	summary, found := lexical.importedRelations[module]
-	lexical.importedAuthorityMu.RUnlock()
-	if !found {
-		return nil, exportrelation.Value{}, false, false
-	}
-	function, found := summary.Function(suffix, len(arguments))
+	function, found := importedProviderFunction(lexical, provider, len(arguments))
 	if !found {
 		return nil, exportrelation.Value{}, false, false
 	}
@@ -19930,6 +19930,54 @@ func importedProviderRelationValue(lexical *lexicalEvaluator, provider, applicat
 	}
 	value, ok := materializeImportedReturn(template, application, arguments, partition)
 	return value, template, templateUsesParameter(template), ok
+}
+
+// importedProviderFunction resolves the relation row an imported module already
+// published for this exact member at this call's arity. It is the single lookup
+// shared by the value relation and the placement return graph.
+func importedProviderFunction(lexical *lexicalEvaluator, provider []byte, arity int) (exportrelation.Function, bool) {
+	if lexical == nil {
+		return exportrelation.Function{}, false
+	}
+	module, suffix, load, ok := importedProviderTarget(provider)
+	if !ok || load || suffix == "" {
+		return exportrelation.Function{}, false
+	}
+	lexical.importedAuthorityMu.RLock()
+	summary, found := lexical.importedRelations[module]
+	lexical.importedAuthorityMu.RUnlock()
+	if !found {
+		return exportrelation.Function{}, false
+	}
+	return summary.Function(strings.TrimPrefix(suffix, "."), arity)
+}
+
+// placementImportedDeclaredReturnFacts instantiates the caller-visible return
+// graph of an imported call whose return type the value relation lane refuses.
+// That lane represents a return as a finite member template and therefore
+// rejects a keyed container outright, so a provider returning one leaves its
+// result bound to no allocation at all and every member read or send of that
+// result unattributable. The gate is exactly the complement of
+// relationReturnTypeSafe: placement covers the returns the value lane cannot,
+// and never competes with it.
+//
+// Two producer proofs admit it: the relation row carries AllocatedReturn, so the
+// returned root is a graph the callee allocated rather than state it already
+// held, and the checked return type supplies that graph's shape. Nothing here
+// materializes a value; the result keeps whatever the type lane concluded.
+func placementImportedDeclaredReturnFacts(lexical *lexicalEvaluator, provider []byte, declared typ.Type, result, application string, arity int) []equation.Fact {
+	if relationReturnTypeSafe(declared, make(map[typ.Type]bool)) {
+		return nil
+	}
+	function, found := importedProviderFunction(lexical, provider, arity)
+	if !found || !function.AllocatedReturn {
+		return nil
+	}
+	template, ok := placementDeclaredReturnTemplate(declared)
+	if !ok {
+		return nil
+	}
+	return placementImportedReturnFacts(template, result, application)
 }
 
 // importedReturnTemplate selects only a closed relation that the provider

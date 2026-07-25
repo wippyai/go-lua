@@ -24,22 +24,22 @@ import (
 // The pass is fail-open on data only: any body that cannot be seeded or
 // evaluated contributes no entry, and a panic in a downstream kernel is absorbed
 // so the summary can never disturb the module verdict.
-func (l *lexicalEvaluator) escapeSummaryForExport(closure equation.OutputClosure) (summary map[string][]signature.ParamRelation) {
+func (l *lexicalEvaluator) escapeSummaryForExport(closure equation.OutputClosure) (summary map[string][]signature.ParamRelation, allocatedReturns map[string]bool) {
 	defer func() {
 		if recover() != nil {
-			summary = nil
+			summary, allocatedReturns = nil, nil
 		}
 	}()
 	if l == nil {
-		return nil
+		return nil, nil
 	}
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, closure)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	exports := exportedFunctionHandles(closure.Values)
 	if len(exports) == 0 {
-		return nil
+		return nil, nil
 	}
 	names := make([]string, 0, len(exports))
 	for name := range exports {
@@ -51,7 +51,7 @@ func (l *lexicalEvaluator) escapeSummaryForExport(closure equation.OutputClosure
 		if !found {
 			continue
 		}
-		relations, ok := l.escapeRelationsForPrototype(child, partition)
+		relations, allocatedReturn, ok := l.escapeRelationsForPrototype(child, partition)
 		if !ok {
 			continue
 		}
@@ -59,8 +59,14 @@ func (l *lexicalEvaluator) escapeSummaryForExport(closure equation.OutputClosure
 			summary = make(map[string][]signature.ParamRelation)
 		}
 		summary[name] = relations
+		if allocatedReturn {
+			if allocatedReturns == nil {
+				allocatedReturns = make(map[string]bool)
+			}
+			allocatedReturns[name] = true
+		}
 	}
-	return summary
+	return summary, allocatedReturns
 }
 
 // exportedFunctionHandles reads the returned-table member closure capabilities
@@ -93,18 +99,39 @@ func exportedFunctionHandles(values []equation.Fact) map[string]closureHandle {
 
 // escapeRelationsForPrototype evaluates one exported body with its formals
 // seeded as allocation identities and classifies each formal from the published
-// placement facts. It returns ok=false when the body cannot be seeded (a vararg
-// or `any` formal, an unreconstructable capture) or its evaluation fails.
-func (l *lexicalEvaluator) escapeRelationsForPrototype(child front.Compilation, partition equation.Partition) ([]signature.ParamRelation, bool) {
+// placement facts. The same evaluation also decides whether the body returns a
+// graph of its own. It returns ok=false when the body cannot be seeded (a
+// vararg or `any` formal, an unreconstructable capture) or its evaluation fails.
+func (l *lexicalEvaluator) escapeRelationsForPrototype(child front.Compilation, partition equation.Partition) ([]signature.ParamRelation, bool, bool) {
 	entry, identities, ok := l.escapeChildEntry(child, partition)
 	if !ok {
-		return nil, false
+		return nil, false, false
 	}
 	outcome, _, err := l.evaluate(child, entry)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
-	return classifyEscapeParameters(child, outcome.Values, identities), true
+	return classifyEscapeParameters(child, outcome.Values, identities), allocatedReturnGraph(outcome.Values, identities), true
+}
+
+// allocatedReturnGraph reports whether the evaluated body returns a graph that
+// did not already exist before the call. The publication kernel publishes the
+// owned return escape on the allocation a return operand resolves to, so a
+// unique owned root is the returned graph. A returned capture or module table
+// carries no allocation in this evaluation and therefore leaves the body
+// unproven; a returned formal resolves to its own seeded parameter identity and
+// is excluded here, because the caller already owns that graph.
+func allocatedReturnGraph(values []equation.Fact, identities map[int]string) bool {
+	root, ok := placementReturnedRoot(values)
+	if !ok {
+		return false
+	}
+	for _, identity := range identities {
+		if identity == root {
+			return false
+		}
+	}
+	return true
 }
 
 // escapeChildEntry seeds every formal with its declared shape and, for a formal
@@ -234,7 +261,7 @@ func classifyEscapeIdentity(index int, identity string, parsed publishedPlacemen
 		relation.EscapeClass = signature.EscapeExport
 		relation.ThroughReturn = true
 		relation.PlacementConsequence = signature.PlacementConsequenceKeep
-	case parsed.blockers[identity]["opaque-call"]:
+	case parsed.blockers[identity]["opaque-call"] && placementBlockerStands(identity, "opaque-call", parsed.blockerOperations, parsed.contracts):
 		relation.EscapeClass = signature.EscapeOpaque
 		relation.PlacementConsequence = signature.PlacementConsequenceOwnedHeap
 	}

@@ -42,22 +42,22 @@ func Derive(result engine.Result) typ.Type {
 // DeriveSummary publishes only direct, unconditional return templates.
 func DeriveSummary(result engine.Result, source string) exportrelation.Summary {
 	export := Derive(result)
-	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, nil, nil)}
+	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, result.FunctionAllocatedReturns, nil, nil)}
 }
 
 // DeriveSummaryWithImports forwards only an already-published import relation.
 func DeriveSummaryWithImports(result engine.Result, source string, imports map[string]exportrelation.Summary, aliases map[string]string) exportrelation.Summary {
 	export := Derive(result)
-	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, imports, aliases)}
+	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, result.FunctionAllocatedReturns, imports, aliases)}
 }
 
-func deriveFunctions(source string, export typ.Type, escapes map[string][]signature.ParamRelation, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
+func deriveFunctions(source string, export typ.Type, escapes map[string][]signature.ParamRelation, allocatedReturns map[string]bool, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
 	stmts, ok := parseFunctionStatements(source)
 	if !ok {
 		return nil
 	}
 	scope := trackFunctionScope(stmts)
-	return functionRelations(scope, returnedModuleRoots(stmts), export, escapes, imports, aliases)
+	return functionRelations(scope, returnedModuleRoots(stmts), export, escapes, allocatedReturns, imports, aliases)
 }
 
 func parseFunctionStatements(source string) ([]ast.Stmt, bool) {
@@ -158,7 +158,7 @@ func trackFunctionScope(stmts []ast.Stmt) functionScope {
 	return scope
 }
 
-func functionRelations(scope functionScope, roots map[string]bool, export typ.Type, escapes map[string][]signature.ParamRelation, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
+func functionRelations(scope functionScope, roots map[string]bool, export typ.Type, escapes map[string][]signature.ParamRelation, allocatedReturns map[string]bool, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
 	paths := make([]string, 0, len(scope.functions)+len(scope.stores))
 	for path := range scope.functions {
 		paths = append(paths, path)
@@ -186,7 +186,7 @@ func functionRelations(scope functionScope, roots map[string]bool, export typ.Ty
 			})
 			continue
 		}
-		if relation, ok := functionRelation(relative, scope.functions[path], escapes[relative], imports, aliases); ok && publishedFunction(export, relative, relation.Arity) {
+		if relation, ok := functionRelation(relative, scope.functions[path], escapes[relative], allocatedReturns[relative], imports, aliases); ok && publishedFunction(export, relative, relation.Arity) {
 			out = append(out, relation)
 		}
 	}
@@ -280,7 +280,7 @@ func memberPath(expr ast.Expr) (string, bool) {
 	}
 }
 
-func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.ParamRelation, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Function, bool) {
+func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.ParamRelation, allocatedReturn bool, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Function, bool) {
 	if fn == nil || fn.ParList == nil || fn.ParList.HasVargs {
 		return exportrelation.Function{}, false
 	}
@@ -288,7 +288,7 @@ func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.Par
 	for i, name := range fn.ParList.Names {
 		params[name] = i
 	}
-	relation := exportrelation.Function{Path: path, Arity: len(params)}
+	relation := exportrelation.Function{Path: path, Arity: len(params), AllocatedReturn: allocatedReturn}
 	if store, ok := escapeStoreRelation(escapes, relation.Arity); ok {
 		relation.Store = store
 		return relation, relation.Valid()
@@ -329,7 +329,9 @@ func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.Par
 		relation.Borrow = borrow
 		return relation, relation.Valid()
 	}
-	return exportrelation.Function{}, false
+	// A body with no publishable value relation still carries the producer's
+	// proven return disposition, which consumers read on its own.
+	return relation, relation.Valid()
 }
 
 // escapeStoreRelation reads the engine's per-parameter escape summary for one

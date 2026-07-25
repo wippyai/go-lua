@@ -10,11 +10,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // PlacementPlan is the public, read-only projection of placement facts closed
@@ -157,11 +160,14 @@ func placementContractFact(identity, boundary, operation string) equation.Fact {
 	return equation.Fact{Key: placementContractPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + boundary + "/" + operation, Value: []byte("proven")}
 }
 
-// placementExternalOwnershipFacts consumes retaining ownership labels from the
-// published provider signature. The external-call factor has the exact
-// provider identity and matching apply coordinate, so it can discharge only
-// the opaque-call fallback emitted for that same application. Unknown
-// providers, unlabelled calls, and non-retaining labels stay blocked.
+// placementExternalOwnershipFacts consumes the ownership labels of a published
+// provider signature. The external-call factor has the exact provider identity
+// and matching apply coordinate, so every conclusion it draws is confined to
+// that same application. A retaining label publishes its ownership event; a
+// label that names an argument the provider does not retain past the call
+// publishes only the matching contract, which discharges the opaque-call
+// fallback for that argument and leaves its placement to its own allocation.
+// Unknown providers, unlabelled calls, and open effect rows stay blocked.
 func placementExternalOwnershipFacts(operation equation.BoundEquation, provider []byte, arguments [][]byte, partition equation.Partition) []equation.Fact {
 	name, found := placementGlobalProviderName(provider)
 	if !found {
@@ -176,12 +182,16 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 		return nil
 	}
 	var facts []equation.Fact
+	published := partition.Values()
+	// A term resolution reads the whole partition, so each argument is resolved
+	// at most once for every label of this signature.
+	allocations := make(map[int]placementAllocationFact, len(arguments))
 	for _, label := range signature.Effect.Labels {
 		var from int
-		boundary, event := "", ""
+		boundary, event, trailing := "", "", false
 		switch value := effect.NormalizeLabel(label).(type) {
 		case ownership.Send:
-			from = value.FromParam
+			from, trailing = value.FromParam, true
 			boundary, event = "send", placementEventShared
 		case ownership.SendParam:
 			var resolved bool
@@ -189,7 +199,7 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 			if !resolved {
 				continue
 			}
-			boundary, event = "send", placementEventShared
+			trailing, boundary, event = true, "send", placementEventShared
 		case ownership.Retain:
 			var resolved bool
 			from, resolved = effect.ResolveParamIndex(value.Param, len(arguments))
@@ -197,6 +207,25 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 				continue
 			}
 			boundary, event = "retain", placementEventOwned
+		case ownership.Borrow:
+			var resolved bool
+			from, resolved = effect.ResolveParamIndex(value.Param, len(arguments))
+			if !resolved {
+				continue
+			}
+			boundary = "borrow"
+		case ownership.BorrowAll:
+			from, trailing, boundary = 0, true, "borrow"
+		case iteration.Iterator:
+			// An iterator reads its source for the duration of the caller's loop
+			// and publishes no retention of it, so the source keeps whatever
+			// placement its own allocation proves.
+			var resolved bool
+			from, resolved = effect.ResolveParamIndex(value.Source, len(arguments))
+			if !resolved {
+				continue
+			}
+			boundary = "borrow"
 		default:
 			continue
 		}
@@ -204,17 +233,21 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 			continue
 		}
 		for index := from; index < len(arguments); index++ {
-			if boundary == "retain" && index != from {
+			if !trailing && index != from {
 				break
 			}
-			allocation, exists := placementAllocationForTerm(arguments[index], partition)
-			if !exists {
+			allocation, cached := allocations[index]
+			if !cached {
+				allocation, _ = placementAllocationInFacts(string(arguments[index]), published)
+				allocations[index] = allocation
+			}
+			if allocation.Identity == "" {
 				continue
 			}
-			facts = append(facts,
-				placementEventFact(allocation.Identity, application, event),
-				placementContractFact(allocation.Identity, boundary, application),
-			)
+			if event != "" {
+				facts = append(facts, placementEventFact(allocation.Identity, application, event))
+			}
+			facts = append(facts, placementContractFact(allocation.Identity, boundary, application))
 		}
 	}
 	return facts
@@ -263,14 +296,25 @@ func placementAllocationForTerm(term []byte, partition equation.Partition) (plac
 	if len(term) == 0 {
 		return placementAllocationFact{}, false
 	}
-	if identity, found := placementBindingForTerm(string(term), partition); found {
-		return placementAllocation(identity, "", partition)
-	}
-	return placementAllocation("", string(term), partition)
+	return placementAllocationInFacts(string(term), partition.Values())
 }
 
-func placementAllocation(identity, result string, partition equation.Partition) (placementAllocationFact, bool) {
-	for _, fact := range partition.Values() {
+// placementAllocationInFacts resolves a term against one already-read partition
+// snapshot. Reading the partition is the dominant cost of a placement lookup, so
+// a caller resolving several terms of the same operation reads it once and every
+// resolution shares that snapshot.
+func placementAllocationInFacts(term string, facts []equation.Fact) (placementAllocationFact, bool) {
+	if term == "" {
+		return placementAllocationFact{}, false
+	}
+	if identity, found := placementBindingInFacts(term, facts); found {
+		return placementAllocation(identity, "", facts)
+	}
+	return placementAllocation("", term, facts)
+}
+
+func placementAllocation(identity, result string, facts []equation.Fact) (placementAllocationFact, bool) {
+	for _, fact := range facts {
 		if !strings.HasPrefix(fact.Key, placementAllocationPrefix) {
 			continue
 		}
@@ -330,6 +374,64 @@ func placementImportedReturnFacts(template exportrelation.Value, result, applica
 	}
 	instantiate(template, result, "root")
 	return facts
+}
+
+// placementMapRepresentativeSuffix names the one element allocation that stands
+// for every key of a keyed container. A map has no fixed member suffixes, so a
+// single representative is the may-analysis over-approximation of its elements:
+// every conclusion proved for one element is taken to hold for all of them, and
+// an escape of any element can therefore never be missed.
+const placementMapRepresentativeSuffix = "[*]"
+
+// placementDeclaredReturnTemplate projects a checked return type into the finite
+// table template placementImportedReturnFacts instantiates. It exists because
+// the value relation lane cannot represent a keyed container at all, so a
+// provider returning one publishes no return template even though its returned
+// graph is a proven fresh allocation. This projection is placement-only: it
+// yields allocation sites, never a value, and the caller keeps reading the
+// checked return type for typing.
+//
+// Every declared member becomes a template member so a record of scalars still
+// reads as a table; only members that are themselves tables acquire an
+// allocation. A keyed container contributes exactly one representative element.
+// A type already on the current path is cut, so a recursive declaration stays
+// finite.
+func placementDeclaredReturnTemplate(declared typ.Type) (exportrelation.Value, bool) {
+	value := placementDeclaredTemplateValue(declared, make(map[typ.Type]bool))
+	return value, len(value.Table) != 0
+}
+
+func placementDeclaredTemplateValue(declared typ.Type, path map[typ.Type]bool) exportrelation.Value {
+	declared = unwrap.Alias(declared)
+	if declared == nil || path[declared] {
+		return exportrelation.Value{}
+	}
+	path[declared] = true
+	defer delete(path, declared)
+	var members []exportrelation.Member
+	member := func(suffix string, declared typ.Type) {
+		members = append(members, exportrelation.Member{Suffix: suffix, Value: placementDeclaredTemplateValue(declared, path)})
+	}
+	switch item := declared.(type) {
+	case *typ.Optional:
+		return placementDeclaredTemplateValue(item.Inner, path)
+	case *typ.Record:
+		for _, field := range item.Fields {
+			member("."+field.Name, field.Type)
+		}
+		if item.MapValue != nil {
+			member(placementMapRepresentativeSuffix, item.MapValue)
+		}
+	case *typ.Map:
+		member(placementMapRepresentativeSuffix, item.Value)
+	case *typ.ReadonlyMap:
+		member(placementMapRepresentativeSuffix, item.Value)
+	case *typ.Array:
+		member(placementMapRepresentativeSuffix, item.Element)
+	default:
+		return exportrelation.Value{}
+	}
+	return exportrelation.Value{Table: members}
 }
 
 // placementReturnedRoot names the root a locally evaluated body returns: the
@@ -425,9 +527,13 @@ func placementSingleTableChild(identity string, parsed publishedPlacementFacts, 
 }
 
 func placementBindingForTerm(term string, partition equation.Partition) (string, bool) {
+	return placementBindingInFacts(term, partition.Values())
+}
+
+func placementBindingInFacts(term string, facts []equation.Fact) (string, bool) {
 	prefix := placementBindingPrefix + base64.RawURLEncoding.EncodeToString([]byte(term)) + "/"
 	latest, identity := "", ""
-	for _, fact := range partition.Values() {
+	for _, fact := range facts {
 		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest && len(fact.Value) != 0 {
 			latest, identity = fact.Key, string(fact.Value)
 		}
@@ -443,8 +549,9 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 		return nil
 	}
 	var facts []equation.Fact
+	published := partition.Values()
 	for index, argument := range operands.arguments {
-		allocation, found := placementAllocationForTerm(argument, partition)
+		allocation, found := placementAllocationInFacts(string(argument), published)
 		if !found {
 			// A member of a locally returned graph has no binding of its own; it
 			// reaches its allocation only by descent from the bound root.
@@ -924,6 +1031,29 @@ func projectPublishedPlacement(parsed publishedPlacementFacts, children map[stri
 	return plan
 }
 
+// placementBlockerStands is the single discharge rule for a published blocker.
+// Only the opaque-call fallback can be discharged, and only when every
+// application that raised it also published a contract naming that same
+// allocation and application; every other blocker is final. Both the placement
+// plan and the exported escape summary read an allocation's disposition through
+// this rule, so a contracted call cannot be a borrow in one and opaque in the
+// other.
+func placementBlockerStands(identity, blocker string, blockerOperations map[string]map[string]map[string]bool, contracts map[string]map[string]bool) bool {
+	if blocker != "opaque-call" {
+		return true
+	}
+	operations := blockerOperations[identity][blocker]
+	if len(operations) == 0 {
+		return true
+	}
+	for operation := range operations {
+		if !contracts[identity][operation] {
+			return true
+		}
+	}
+	return false
+}
+
 func placementAllocationDepth(allocations map[string]placementAllocationFact, children map[string][]string) func(string) int {
 	depth := make(map[string]int, len(allocations))
 	var allocationDepth func(string, map[string]bool) int
@@ -957,14 +1087,8 @@ func projectPlacementAllocation(identity string, allocation placementAllocationF
 		}
 	}
 	for blocker := range blockers[identity] {
-		if blocker == "opaque-call" {
-			allContracted := len(blockerOperations[identity][blocker]) != 0
-			for operation := range blockerOperations[identity][blocker] {
-				allContracted = allContracted && contracts[identity][operation]
-			}
-			if allContracted {
-				continue
-			}
+		if !placementBlockerStands(identity, blocker, blockerOperations, contracts) {
+			continue
 		}
 		item.Blockers = append(item.Blockers, blocker)
 	}
