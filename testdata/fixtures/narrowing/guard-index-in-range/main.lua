@@ -73,4 +73,15 @@ local function mutated(xs: {number}, i: number): number
     return 0
 end
 
-return at, at_strict, at_flipped, at_nested, no_upper, no_lower, wrong_array, mutated
+-- The index is advanced past its proven bound after the guard, so the proof
+-- belongs to an earlier value of the binding and the read stays optional.
+local function advanced(xs: {number}, i: number): number
+    if i >= 1 and i <= #xs then
+        i = i + 100
+        local v: number = xs[i] -- expect-error
+        return v
+    end
+    return 0
+end
+
+return at, at_strict, at_flipped, at_nested, no_upper, no_lower, wrong_array, mutated, advanced

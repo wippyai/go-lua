@@ -7099,10 +7099,16 @@ func uncalledDeclaredIndexedReadBoundary(child front.Compilation) ([]entrySeed, 
 }
 
 // uncalledDeclaredIndexedBranch admits only the numeric bound evidence that
-// typedIndexBranchClosure already carries as guarded publications. Other
-// branch families can refine arbitrary values, so they remain caller-owned.
+// typedIndexBranchClosure already carries as guarded publications: a normalized
+// floor or index-in-range predicate, or a difference descriptor relating an
+// operand to an array length, which that same closure discharges through the
+// solver portfolio. Other branch families can refine arbitrary values, so they
+// remain caller-owned.
 func uncalledDeclaredIndexedBranch(operation equation.Equation) bool {
 	for _, operand := range operation.Operands {
+		if artifactTrueEdgeLengthRelation(operand.Role, operand.Term.Encoding) {
+			return true
+		}
 		predicate, trueEdge, ok := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
 		if !ok || !trueEdge || predicate.Negated {
 			continue
@@ -11092,6 +11098,13 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	values := []equation.Fact{{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value}}
+	// An expression whose destination is a binding replaces that binding's
+	// current value exactly as an assignment does. The epoch lane is the
+	// engine's single record of that replacement, so facts derived from the
+	// previous value are revoked here rather than surviving the write.
+	if strings.HasPrefix(string(result), "path/") {
+		values = append(values, equation.Fact{Key: epochFactPrefix + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)})
+	}
 	values = append(values, originFacts...)
 	if wir.Op(kind) == wir.OpLogical {
 		for _, source := range boundarySources {
@@ -12032,6 +12045,12 @@ func indexPresenceProven(container, index []byte, partition equation.Partition) 
 		}
 	}
 	if proof == "" {
+		return false
+	}
+	// A bound proves nothing about a value the body has since replaced. The
+	// index term's current epoch is exactly that replacement event, so a proof
+	// established before it belongs to an earlier value of the same term.
+	if epoch, versioned := currentEpoch(index, partition); versioned && epoch > factOperation(proof) {
 		return false
 	}
 	revokePrefix := heapIndexRevokePrefix + subject + "/"
@@ -15998,6 +16017,7 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			predicates = append(predicates, predicate)
 		}
 	}
+	differences := trueEdgeBranchDifferences(operation)
 	hasIndexBound := false
 	for _, predicate := range predicates {
 		hasIndexBound = hasIndexBound || predicate.Kind == "index-in-range"
@@ -16035,6 +16055,22 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			upper[encodedIndex+"/"+encodedContainer] = struct{ index, container []byte }{index, container}
 			closure.Values = append(closure.Values, equation.Fact{Key: heapIndexUpperPrefix + encodedIndex + "/" + encodedContainer + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
 		}
+	}
+	// The branch's difference descriptors are the same guard evidence in
+	// relational form. An index whose floor this branch already proved gains
+	// its upper bound from the wired solver portfolio, so an arithmetic,
+	// transitive, cross-length, or bounded-sum guard reaches the identical
+	// in-range publication a direct index-in-range predicate produces.
+	for _, derived := range relationalIndexUpperBounds(predicates, differences, provenFloorPaths(lower)) {
+		index := []byte("path/" + derived.index)
+		container := []byte("path/" + derived.container)
+		encodedIndex := base64.RawURLEncoding.EncodeToString(index)
+		encodedContainer := base64.RawURLEncoding.EncodeToString(container)
+		if _, found := upper[encodedIndex+"/"+encodedContainer]; found {
+			continue
+		}
+		upper[encodedIndex+"/"+encodedContainer] = struct{ index, container []byte }{index, container}
+		closure.Values = append(closure.Values, equation.Fact{Key: heapIndexUpperPrefix + encodedIndex + "/" + encodedContainer + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
 	}
 	for relation, pair := range upper {
 		encodedIndex, _, _ := strings.Cut(relation, "/")
