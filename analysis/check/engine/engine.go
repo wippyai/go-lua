@@ -13487,6 +13487,35 @@ func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equat
 				continue
 			}
 			record(string(root), selected)
+		case "path-equal":
+			// An equality relates two typed paths on its true edge: each side's
+			// value set is the intersection of the two. When a side is a member of
+			// a tagged union, its receiver keeps only the arms whose member can
+			// equal the peer's value set and refutes the arms proven disjoint. The
+			// relation is symmetric, so both receivers narrow the same way; a peer
+			// with no member ancestor simply supplies the constraint type.
+			if predicate.Negated || predicate.OtherPath == "" {
+				continue
+			}
+			for _, pair := range [2][2]string{{predicate.Path, predicate.OtherPath}, {predicate.OtherPath, predicate.Path}} {
+				memberPath, peerPath := pair[0], pair[1]
+				root, suffix, source, found := typedAncestor([]byte("path/"+memberPath), partition)
+				if !found || len(suffix) == 0 {
+					continue
+				}
+				if value, seen := narrowed[string(root)]; seen {
+					source = value
+				}
+				peer, peerKnown := current([]byte("path/" + peerPath))
+				if !peerKnown || peer == nil {
+					continue
+				}
+				selected, ok := variant.NarrowByPathType(source, suffix, peer)
+				if !ok || selected == nil || typ.IsNever(selected) {
+					continue
+				}
+				record(string(root), selected)
+			}
 		}
 	}
 	out := make([]impliedNarrowing, 0, len(order))
@@ -13641,12 +13670,23 @@ func soleBranchPredicate(operation equation.BoundEquation) (branchPredicateWire,
 	return predicate, found, nil
 }
 
+// typePredicateBranchClosure projects the `T:is(value)` witness through the
+// exact polarity of a guard over its error slot. Both polarities are the two
+// halves of the same contract: the error slot is non-nil exactly when the value
+// slot is nil, so a not-nil error edge proves the value nil, and a nil error
+// edge proves the value the checked type T. Only the true edge carries a
+// projection; the false edge negates a compound guard and proves nothing here.
 func typePredicateBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool) {
 	var errorPath string
+	errorAbsent := false
 	for _, operand := range operation.Operands {
 		predicate, trueEdge, ok := branchEvidencePredicate(operand)
-		if ok && trueEdge && !predicate.Negated && predicate.Kind == "not-nil" && predicate.Path != "" {
+		if !ok || !trueEdge || predicate.Negated || predicate.Path == "" {
+			continue
+		}
+		if predicate.Kind == "not-nil" || predicate.Kind == "nil" {
 			errorPath = "path/" + predicate.Path
+			errorAbsent = predicate.Kind == "nil"
 			break
 		}
 	}
@@ -13669,6 +13709,12 @@ func typePredicateBranchClosure(operation equation.BoundEquation, partition equa
 		if err != nil || !strings.HasPrefix(string(valuePath), "path/") {
 			continue
 		}
+		// A nil error edge validates the value: it holds the checked type T. A
+		// non-nil error edge invalidates it: the value slot is nil.
+		trueValue := []byte("scalar/nil")
+		if errorAbsent {
+			trueValue = append([]byte(nil), fact.Value...)
+		}
 		trueGuard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
 		falseGuard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/false")}
 		return equation.OutputClosure{
@@ -13678,7 +13724,7 @@ func typePredicateBranchClosure(operation equation.BoundEquation, partition equa
 				{Key: "narrowing/" + operation.Target.Name, Value: []byte("type-predicate/true"), Guards: []equation.Guard{trueGuard}},
 				{Key: "narrowing/" + operation.Target.Name, Value: []byte("type-predicate/false"), Guards: []equation.Guard{falseGuard}},
 			},
-			Values: []equation.Fact{{Key: "value/" + string(valuePath) + "/" + operation.Target.Name, Value: []byte("scalar/nil"), Guards: []equation.Guard{trueGuard}}},
+			Values: []equation.Fact{{Key: "value/" + string(valuePath) + "/" + operation.Target.Name, Value: trueValue, Guards: []equation.Guard{trueGuard}}},
 		}, true
 	}
 	return equation.OutputClosure{}, false
@@ -17958,7 +18004,16 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			values = append(values, equation.Fact{Key: "member-closure/" + string(result) + "/" + operation.Target.Name + "/" + strings.TrimPrefix(fact.Key, memberPrefix), Value: append([]byte(nil), fact.Value...)})
 		}
 	}
-	if target, found := currentCallTypePredicateTarget(application, partition); found && len(resultTerms) == 2 {
+	// A `T:is(value)` call owns the paired `(value, error)` witness. When the
+	// call is evaluated as a lexical child the target rides the projected
+	// call-type-predicate fact; a direct builtin invocation carries the same
+	// resolved target on its own front operand. Both are the identical closed
+	// type T, so either source seals the pair.
+	target, found := currentCallTypePredicateTarget(application, partition)
+	if !found && typePredicateErrorTarget != nil {
+		target, found = typePredicateErrorTarget, true
+	}
+	if found && len(resultTerms) == 2 {
 		if value, okValue := resultTerms["00000000"]; okValue {
 			if errValue, okErr := resultTerms["00000001"]; okErr {
 				values = append(values, equation.Fact{Key: typePredicatePairPrefix + base64.RawURLEncoding.EncodeToString(value) + "/" + base64.RawURLEncoding.EncodeToString(errValue), Value: target})

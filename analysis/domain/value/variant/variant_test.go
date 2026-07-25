@@ -31,6 +31,34 @@ func TestNarrowByPathLiteralKeepsMatchingVariant(t *testing.T) {
 	}
 }
 
+func TestNarrowByPathTypeRefutesDisjointArm(t *testing.T) {
+	chanInt := typetable.NewRecord().Field("tag", typ.LiteralString("int")).Build()
+	chanStr := typetable.NewRecord().Field("tag", typ.LiteralString("str")).Build()
+	intArm := typetable.NewRecord().Field("channel", chanInt).Field("value", typ.Number).Build()
+	strArm := typetable.NewRecord().Field("channel", chanStr).Field("value", typ.String).Build()
+
+	suffix := []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}
+	got, ok := NarrowByPathType(typeexpr.Union(intArm, strArm), suffix, chanInt)
+	if !ok {
+		t.Fatal("expected strict narrowing against a disjoint peer")
+	}
+	if !typ.TypeEquals(got, intArm) {
+		t.Fatalf("narrowed type = %s, want int arm %s", got, intArm)
+	}
+}
+
+func TestNarrowByPathTypeKeepsBothWhenPeerOverlapsAll(t *testing.T) {
+	chanInt := typetable.NewRecord().Field("tag", typ.LiteralString("int")).Build()
+	chanStr := typetable.NewRecord().Field("tag", typ.LiteralString("str")).Build()
+	intArm := typetable.NewRecord().Field("channel", chanInt).Field("value", typ.Number).Build()
+	strArm := typetable.NewRecord().Field("channel", chanStr).Field("value", typ.String).Build()
+
+	suffix := []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}
+	if _, ok := NarrowByPathType(typeexpr.Union(intArm, strArm), suffix, typeexpr.Union(chanInt, chanStr)); ok {
+		t.Fatal("peer overlapping every arm must not narrow")
+	}
+}
+
 func TestFieldAtPathUsesProductiveRecursiveMustProof(t *testing.T) {
 	path := []segment.Segment{{Kind: segment.SegmentField, Name: "value"}}
 	node := typ.NewRecursivePlaceholder("Node")

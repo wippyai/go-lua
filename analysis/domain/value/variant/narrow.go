@@ -23,6 +23,77 @@ func NarrowByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type) 
 	return narrowByPathLiteralEntry(t, suffix, lit, narrowByPathLiteralNotSeen)
 }
 
+// NarrowByPathType keeps the variants of t whose static member path can still
+// equal a value of peer. It is the type-level companion of NarrowByPathLiteral:
+// an equality whose other side is a typed path or local selects the arms whose
+// member overlaps peer and refutes the arms proven disjoint from it. The
+// returned bool reports whether a strict narrowing was possible.
+func NarrowByPathType(t typ.Type, suffix []segment.Segment, peer typ.Type) (typ.Type, bool) {
+	if t == nil || len(suffix) == 0 || peer == nil {
+		return nil, false
+	}
+	narrowed, ok := narrowByPathTypeSeen(t, suffix, peer, &typegraph.Path{})
+	if !ok || narrowed == nil || typ.SameNodeOrAcyclicEqual(narrowed, t) {
+		return narrowed, false
+	}
+	return narrowed, true
+}
+
+func narrowByPathTypeSeen(t typ.Type, suffix []segment.Segment, peer typ.Type, active *typegraph.Path) (typ.Type, bool) {
+	if t == nil {
+		return nil, false
+	}
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, len(suffix)) {
+		return t, false
+	}
+	defer active.Leave(t, len(suffix))
+	switch v := t.(type) {
+	case *typ.Alias:
+		return narrowByPathTypeSeen(v.UnaliasedTarget(), suffix, peer, active)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return nil, false
+		}
+		return narrowByPathTypeSeen(v.Body, suffix, peer, active)
+	case *typ.Optional:
+		return narrowByPathTypeSeen(v.Inner, suffix, peer, active)
+	case *typ.Instantiated:
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
+		if !ok {
+			return t, false
+		}
+		return narrowByPathTypeSeen(expanded, suffix, peer, active)
+	case *typ.Union:
+		out := make([]typ.Type, 0, len(v.Members))
+		for _, member := range v.Members {
+			if pathOverlapsType(member, suffix, peer) {
+				out = append(out, member)
+			}
+		}
+		if len(out) == 0 || len(out) == len(v.Members) {
+			return t, false
+		}
+		return normalize.UnionForEvidence(out...), true
+	default:
+		if pathOverlapsType(t, suffix, peer) {
+			return t, false
+		}
+		return typ.Never, true
+	}
+}
+
+// pathOverlapsType reports whether the member at suffix of t can equal a value
+// of peer. An unresolved member cannot be proven disjoint, so it keeps its arm:
+// narrowing only drops an arm whose member is decisively incompatible.
+func pathOverlapsType(t typ.Type, suffix []segment.Segment, peer typ.Type) bool {
+	field, ok := fieldAtPath(t, suffix)
+	if !ok {
+		return true
+	}
+	return typesOverlap(field, peer)
+}
+
 // narrowByPathLiteralEntry guards the public path-literal narrowers: it rejects
 // empty inputs, seeds an exact query-local cycle proof, and reports no change
 // when the result is acyclically equal to t.
