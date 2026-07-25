@@ -12443,12 +12443,26 @@ func methodReturnOptionalClaimValue(term []byte, partition equation.Partition) (
 	return shapefact.EncodeTarget(projected)
 }
 
+// valueIsProvablyNil reports whether an engine value denotes exactly the nil
+// type: the literal nil scalar or a sealed witness whose only inhabitant is nil.
+// A non-nil assertion on such a value always fails at runtime, so it is refuted
+// rather than trusted. An optional or unknown value is not provably nil.
+func valueIsProvablyNil(value []byte) bool {
+	if string(value) == "scalar/nil" {
+		return true
+	}
+	if witness, ok := shapefact.DecodeTarget(value); ok && witness != nil {
+		return unwrap.Alias(witness).Kind() == kind.Nil
+	}
+	return false
+}
+
 func claimProven(value []byte, kind, targetType string) bool {
 	if strings.HasPrefix(string(value), "scalar/claim/") || string(value) == "scalar/top" {
 		return false
 	}
 	if kind == "claim-kind/2" {
-		return string(value) != "scalar/nil"
+		return !valueIsProvablyNil(value)
 	}
 	typeName, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
 	if err != nil {

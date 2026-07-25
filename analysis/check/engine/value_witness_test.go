@@ -166,3 +166,58 @@ func TestScalarWitnessTypeDecodesTheClosedValueVocabulary(t *testing.T) {
 		}
 	}
 }
+
+func TestValueIsProvablyNilRecognizesTheNilTypeWitness(t *testing.T) {
+	nilTarget, ok := shapefact.EncodeTarget(typ.Nil)
+	if !ok {
+		t.Fatal("encode nil target")
+	}
+	optionalTarget, ok := shapefact.EncodeTarget(typ.MaterializeOptional(typ.String))
+	if !ok {
+		t.Fatal("encode optional target")
+	}
+	stringTarget, ok := shapefact.EncodeTarget(typ.String)
+	if !ok {
+		t.Fatal("encode string target")
+	}
+	for _, testcase := range []struct {
+		name  string
+		value []byte
+		want  bool
+	}{
+		{"literal nil scalar", []byte("scalar/nil"), true},
+		{"nil type witness", nilTarget, true},
+		{"optional string is not provably nil", optionalTarget, false},
+		{"string is not nil", stringTarget, false},
+		{"unknown scalar is not provably nil", []byte("scalar/top"), false},
+	} {
+		t.Run(testcase.name, func(t *testing.T) {
+			if got := valueIsProvablyNil(testcase.value); got != testcase.want {
+				t.Fatalf("valueIsProvablyNil = %v, want %v", got, testcase.want)
+			}
+		})
+	}
+}
+
+// TestNonNilAssertionRefutesAProvablyNilWitness pins the soundness rule that a
+// non-nil assertion (claim-kind/2) on a value narrowed to the nil type witness
+// is refuted, not trusted, exactly as it already is for the literal nil scalar.
+func TestNonNilAssertionRefutesAProvablyNilWitness(t *testing.T) {
+	nilTarget, ok := shapefact.EncodeTarget(typ.Nil)
+	if !ok {
+		t.Fatal("encode nil target")
+	}
+	if claimProven(nilTarget, "claim-kind/2", "claim-type/non-nil") {
+		t.Fatal("non-nil assertion on the nil type witness must be refuted")
+	}
+	if claimProven([]byte("scalar/nil"), "claim-kind/2", "claim-type/non-nil") {
+		t.Fatal("non-nil assertion on the literal nil scalar must be refuted")
+	}
+	optionalTarget, ok := shapefact.EncodeTarget(typ.MaterializeOptional(typ.String))
+	if !ok {
+		t.Fatal("encode optional target")
+	}
+	if !claimProven(optionalTarget, "claim-kind/2", "claim-type/non-nil") {
+		t.Fatal("non-nil assertion on an optional value stays a trusted runtime claim")
+	}
+}
