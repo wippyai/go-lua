@@ -104,6 +104,7 @@ const (
 	heapIndexRevokePrefix      = "heap/index-revoke/"
 	heapIndexLowerPrefix       = "heap/index-lower/"
 	heapIndexUpperPrefix       = "heap/index-upper/"
+	heapLengthFloorPrefix      = "heap/length-floor/"
 	indexReadDisplayPrefix     = "index-read-display/"
 	indexReadScalarPrefix      = "index-read-scalar/"
 	typedOptionalReadPrefix    = "typed-optional-read/"
@@ -430,7 +431,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		}
 		placement.HoistableLoads = append(placement.HoistableLoads, PlacementHoistableLoad{Target: item.Fact.Key})
 	}
-	outcomes, valueFacts := publishedOutcomes(closure.Outcomes), cloneFacts(closure.Values)
+	outcomes, valueFacts := publishedOutcomes(closure.Outcomes, closure.Values), cloneFacts(closure.Values)
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: outcomes, Diagnostics: closure.Diagnostics,
@@ -7921,7 +7922,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if gradualLogicalBoundary {
 				entry, entryErr = encodeChildEntryWithCapabilities(uncalledSeeds, nil, nil, nil, nil, gradualLogicalTerms)
 			} else {
-				entry, entryErr = encodeChildEntry(uncalledSeeds)
+				seeds, closureSeeds := lexical.closedBodyCalleeSeeds(child, uncalledSeeds, partition)
+				entry, entryErr = encodeChildEntry(seeds, closureSeeds...)
 			}
 		} else {
 			entry, admitted, entryErr = lexical.uncalledChildEntry(child, uncalledSeeds, partition, gradualLogicalBoundary || staticAssignmentBoundary || staticCapturedReturnBoundary || arithmeticBoundary, arithmeticBoundary, arithmeticBoundary, staticAssignmentBoundary, gradualLogicalTerms)
@@ -7983,7 +7985,10 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
 				continue
 			}
-			if localUnionReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") {
+			// The union this boundary admits is the declaration itself, so a
+			// member absent from one of its arms is refuted by that declaration
+			// alone, exactly as it is for a declared-parameter boundary.
+			if localUnionReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
 			}
 			key := "child/" + body + "/" + diagnostic.Key
@@ -8026,7 +8031,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if indexedReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
 				continue
 			}
-			if localUnionReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") {
+			if localUnionReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
 				continue
 			}
 			key := "child/" + body + "/" + item.Fact.Key
@@ -8270,6 +8275,65 @@ func closedImportEntrySeeds(partition equation.Partition) []entrySeed {
 	return seeds
 }
 
+// closedBodyCalleeSeeds carries the module-lexical callables a body invokes but
+// does not bind. A parameter-free, capture-free body is closed only once those
+// bindings travel with it: without them its own calls resolve to nothing, and
+// every contract they carry is lost. Only a currently published callable value
+// and its admitted prototype cross; mutable state and unavailable bindings stay
+// out of the private entry.
+func (l *lexicalEvaluator) closedBodyCalleeSeeds(child front.Compilation, seeds []entrySeed, partition equation.Partition) ([]entrySeed, []entryClosureSeed) {
+	bound := make(map[string]bool, len(seeds))
+	for _, seed := range seeds {
+		bound[seed.Term] = true
+	}
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		if target, found := artifactOperand(operation.Operands, "target"); found {
+			bound[string(target)] = true
+		}
+	}
+	callees := make([]string, 0, len(child.Artifact.Equations))
+	seen := make(map[string]bool, len(child.Artifact.Equations))
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		callee, found := artifactOperand(operation.Operands, "callee")
+		if !found || bound[string(callee)] || seen[string(callee)] || !strings.HasPrefix(string(callee), "path/") {
+			continue
+		}
+		seen[string(callee)] = true
+		callees = append(callees, string(callee))
+	}
+	sort.Strings(callees)
+	closureSeeds := make([]entryClosureSeed, 0, len(callees))
+	for _, callee := range callees {
+		term := []byte(callee)
+		value, known := resolveKnownCurrentValue(term, partition)
+		if !known || !isCallableValue(value) {
+			continue
+		}
+		seed := entrySeed{Term: callee, Value: value}
+		if !validEntrySeed(seed) {
+			continue
+		}
+		handle, hasHandle := closureHandleFor(term, partition)
+		if hasHandle {
+			if _, admitted := l.byPrototype[handle.Prototype]; !admitted {
+				continue
+			}
+		}
+		seeds = append(seeds, seed)
+		if hasHandle {
+			closureSeeds = append(closureSeeds, entryClosureSeed{Term: callee, Handle: handle})
+		}
+	}
+	sort.Slice(seeds, func(i, j int) bool { return seeds[i].Term < seeds[j].Term })
+	return seeds, closureSeeds
+}
+
 // selectChildEntry seeds the complete private environment of the optional
 // select-publication evaluation.  This evaluator is deliberately independent
 // of whichever unrelated fact families happened to publish in its parent:
@@ -8466,7 +8530,12 @@ func resourceUnreleasedDiagnostics(child front.Compilation, closure equation.Out
 	if childHasPCall(child) && childHasNestedResourceClose(child) {
 		return nil
 	}
-	latest := make(map[string]equation.Fact)
+	// A transition published under a branch guard happened on one edge only, so
+	// it is not the state the function exits in. The unguarded transitions are
+	// the ones every path performs; a guarded one counts only for a resource
+	// whose whole lifetime is inside that same arm, which is exactly the case
+	// with no unguarded transition to read.
+	latest, guarded := make(map[string]equation.Fact), make(map[string]equation.Fact)
 	for _, fact := range closure.Values {
 		if !strings.HasPrefix(fact.Key, resourceLifecyclePrefix) {
 			continue
@@ -8477,7 +8546,16 @@ func resourceUnreleasedDiagnostics(child front.Compilation, closure equation.Out
 			continue
 		}
 		identity = identity[:slash]
-		if previous, found := latest[identity]; !found || fact.Key > previous.Key {
+		target := latest
+		if len(fact.Guards) != 0 {
+			target = guarded
+		}
+		if previous, found := target[identity]; !found || fact.Key > previous.Key {
+			target[identity] = fact
+		}
+	}
+	for identity, fact := range guarded {
+		if _, found := latest[identity]; !found {
 			latest[identity] = fact
 		}
 	}
@@ -9091,10 +9169,22 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		// member count for records, holes, or non-sequence shapes.
 		if wir.Op(kind) == wir.OpUnOp && wir.Operator(op) == wir.UnLen {
 			if operand, found := by["value"]; found {
-				if table, resolved := resolvedSealedTable(operand, partition); resolved && table.Closed {
-					result := typ.Type(typ.Number)
-					if length, sequence := sealedSequenceLength(table); sequence {
-						result = typ.LiteralInt(length)
+				table, resolved := resolvedSealedTable(operand, partition)
+				sealedReceiver := resolved && table.Closed
+				// Lua's type predicate certifies the runtime kind, and that is
+				// the whole receiver contract the length operator needs: a
+				// validated table or string receiver has a length whatever its
+				// members turn out to be.
+				lengthReceiver := sealedReceiver ||
+					runtimeTypeProven(operand, "table", partition) ||
+					runtimeTypeProven(operand, "string", partition)
+				if lengthReceiver {
+					result := typ.Type(typ.Integer)
+					if sealedReceiver {
+						result = typ.Number
+						if length, sequence := sealedSequenceLength(table); sequence {
+							result = typ.LiteralInt(length)
+						}
 					}
 					if encoded, encodedOK := shapefact.EncodeTarget(result); encodedOK {
 						value = encoded
@@ -10052,9 +10142,17 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			boundaryShape = sealed
 		}
 	}
-	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !runtimeTypeValidationProves(source, targetType, shapeTarget, partition)
+	// A runtime type test is the boundary's own validator. Its proof certifies
+	// exactly one runtime kind, and runtimeTypeProofAdmitsTarget already keeps
+	// a structural target (which shares the "table" kind without satisfying its
+	// member contract) out of that proof. What remains is a target the test
+	// decides outright, so the validated boundary proves the annotation instead
+	// of merely being exempt from demanding a proof.
+	boundaryValidated := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) &&
+		runtimeTypeValidationProves(source, targetType, shapeTarget, partition)
+	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !boundaryValidated
 	castFromAnyBoundary := kind == "claim-kind/1" && sourceHasAnyBoundary(source, partition.Values())
-	if available && !boundaryRequiresProof && !castFromAnyBoundary && (claimProven(value, kind, targetType) || shapeRelation == shapeProven || channelCastFromNil) {
+	if available && !boundaryRequiresProof && !castFromAnyBoundary && (claimProven(value, kind, targetType) || shapeRelation == shapeProven || channelCastFromNil || boundaryValidated) {
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
 		if throwTemplate.Key != "" {
 			closure.Values = append(closure.Values, throwTemplate)
@@ -12325,7 +12423,7 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		} else if recognized {
 			return equation.TransactionResult{Complete: true, Closure: closure}, nil
 		}
-		return equation.TransactionResult{Complete: true}, nil
+		return equation.TransactionResult{Complete: true, Closure: undecidedBranchOutcome(operation, partition)}, nil
 	}
 	truth, frozenGuard := true, false
 	var err error
@@ -12333,7 +12431,7 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		truth, frozenGuard, err = branchTruth(operation.Operands, partition)
 	}
 	if errors.Is(err, errUnknownScalar) {
-		return equation.TransactionResult{Complete: true}, nil
+		return equation.TransactionResult{Complete: true, Closure: undecidedBranchOutcome(operation, partition)}, nil
 	}
 	if err != nil {
 		return equation.TransactionResult{}, err
@@ -12459,6 +12557,199 @@ func compoundBranchOutcome(operation equation.BoundEquation, truth bool) equatio
 	}
 }
 
+// undecidedBranchOutcome selects both edges of a branch whose selector the
+// engine cannot decide. A predicate it does not understand refutes neither arm,
+// so both remain reachable and every obligation they carry is still owed: an
+// arm left unselected is an arm never checked, which turns an un-understood
+// guard into a proof of nothing at all.
+//
+// It publishes no branch proof and no narrowing marker beyond the undecided
+// edge itself. The two arms stay mutually exclusive guard partitions and
+// nothing either writes becomes visible past the join.
+//
+// The refinement it does carry is the branch's own true-edge evidence: a
+// front-published check tagged as holding on the true edge holds wherever that
+// edge is taken, whatever decides the selector as a whole. Both the runtime
+// type proof and the projected path value are guarded to the true edge, so
+// they refine only the arm they belong to and the false edge stays unrefined:
+// a conjunct that fails proves nothing about any individual conjunct.
+func undecidedBranchOutcome(operation equation.BoundEquation, partition equation.Partition) equation.OutputClosure {
+	closure := equation.OutputClosure{}
+	trueGuard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
+	for _, edge := range [2]string{"true", "false"} {
+		guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/" + edge)}
+		closure.Outcomes = append(closure.Outcomes,
+			equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge), Guards: []equation.Guard{guard}},
+			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("undecided/" + edge), Guards: []equation.Guard{guard}},
+		)
+	}
+	for _, item := range runtimeTypeBranchProofs(operation) {
+		closure.Values = append(closure.Values, equation.Fact{
+			Key: runtimeTypeProofKey(item.path, item.typeName), Value: []byte("proven"), Guards: []equation.Guard{trueGuard},
+		})
+	}
+	for _, item := range lengthFloorBranchProofs(operation) {
+		closure.Values = append(closure.Values, equation.Fact{
+			Key:   heapLengthFloorPrefix + heapIndexSubject([]byte("path/"+item.path), partition) + "/" + operation.Target.Name,
+			Value: []byte(strconv.FormatInt(item.floor, 10)), Guards: []equation.Guard{trueGuard},
+		})
+	}
+	for _, item := range impliedTrueEdgeNarrowings(operation, partition) {
+		encoded, ok := shapefact.EncodeTarget(item.narrowed)
+		if !ok {
+			continue
+		}
+		closure.Values = append(closure.Values, equation.Fact{
+			Key: "value/" + item.term + "/" + operation.Target.Name, Value: encoded, Guards: []equation.Guard{trueGuard},
+		})
+	}
+	return closure
+}
+
+type impliedNarrowing struct {
+	term     string
+	narrowed typ.Type
+}
+
+// impliedTrueEdgeNarrowings folds every true-edge check into the type its path
+// carries on that edge. The checks are applied in publication order and each
+// one reads the result of the ones before it, so a conjunction narrows exactly
+// as its arms compose: `p and p.kind == "x"` first removes nil from p, then
+// selects p's "x" arm.
+//
+// Only an already-published type witness is refined. An un-understood selector
+// must not invent a value for a path nothing was proven about, and an empty
+// projection means the check refutes its own edge rather than narrowing it.
+func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equation.Partition) []impliedNarrowing {
+	narrowed := make(map[string]typ.Type)
+	order := make([]string, 0, len(operation.Operands))
+	record := func(term string, value typ.Type) {
+		if _, seen := narrowed[term]; !seen {
+			order = append(order, term)
+		}
+		narrowed[term] = value
+	}
+	current := func(term []byte) (typ.Type, bool) {
+		if value, seen := narrowed[string(term)]; seen {
+			return value, true
+		}
+		value, err := resolveCurrentValue(term, partition)
+		if err != nil {
+			return nil, false
+		}
+		return shapefact.DecodeTarget(value)
+	}
+	for _, operand := range operation.Operands {
+		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		if !recognized || !trueEdge || predicate.Path == "" {
+			continue
+		}
+		switch predicate.Kind {
+		case "truthy", "falsy", "not-nil", "nil":
+			term := "path/" + predicate.Path
+			// A truthiness check on a member path is a discriminant over the
+			// root's arms: an arm whose member cannot hold that truthiness -
+			// including one that does not declare the member at all, because a
+			// missing member reads nil - is refuted on this edge.
+			if predicate.Kind == "truthy" || predicate.Kind == "falsy" {
+				if root, suffix, source, found := typedAncestor([]byte(term), partition); found && len(suffix) != 0 {
+					if value, seen := narrowed[string(root)]; seen {
+						source = value
+					}
+					if selected, ok := memberTruthinessNarrowing(source, suffix, (predicate.Kind == "truthy") != predicate.Negated); ok {
+						record(string(root), selected)
+					}
+				}
+			}
+			witness, known := current([]byte(term))
+			if !known {
+				continue
+			}
+			selected, ok := nilabilityProjection(predicate, witness)
+			if !ok {
+				continue
+			}
+			record(term, selected)
+		case "literal-equal", "literal-not":
+			literal, ok := literalType(predicate.Literal)
+			if !ok {
+				continue
+			}
+			root, suffix, source, found := typedAncestor([]byte("path/"+predicate.Path), partition)
+			if !found || len(suffix) == 0 {
+				continue
+			}
+			if value, seen := narrowed[string(root)]; seen {
+				source = value
+			}
+			selected := typ.Type(nil)
+			if (predicate.Kind == "literal-equal") != predicate.Negated {
+				selected, ok = variant.NarrowByPathLiteral(source, suffix, literal)
+			} else {
+				selected, ok = variant.NarrowByPathLiteralNot(source, suffix, literal)
+			}
+			if !ok || selected == nil || typ.IsNever(selected) {
+				continue
+			}
+			record(string(root), selected)
+		}
+	}
+	out := make([]impliedNarrowing, 0, len(order))
+	for _, term := range order {
+		out = append(out, impliedNarrowing{term: term, narrowed: narrowed[term]})
+	}
+	return out
+}
+
+// nilabilityProjection selects the side of witness that a truthiness or nil
+// check keeps on the edge where it holds.
+func nilabilityProjection(predicate branchPredicateWire, witness typ.Type) (typ.Type, bool) {
+	holds := !predicate.Negated
+	var selected typ.Type
+	switch predicate.Kind {
+	case "truthy", "falsy":
+		truthy, falsy, split := proof.TruthinessSplit(witness)
+		if !split {
+			return nil, false
+		}
+		selected = truthy
+		if (predicate.Kind == "falsy") == holds {
+			selected = falsy
+		}
+	case "not-nil", "nil":
+		selected = proof.ProjectionWithoutNil(witness)
+		if (predicate.Kind == "nil") == holds {
+			selected = typ.Nil
+		}
+	default:
+		return nil, false
+	}
+	if selected == nil || typ.IsNever(selected) {
+		return nil, false
+	}
+	return selected, true
+}
+
+// memberTruthinessNarrowing selects the arms of a receiver that can hold the
+// requested truthiness at a member path. A missing member reads nil, so an arm
+// that does not declare the member is refuted on the truthy edge and retained
+// on the falsy one; this is the ordinary tagged-union discriminant.
+func memberTruthinessNarrowing(source typ.Type, suffix []segment.Segment, wantTruthy bool) (typ.Type, bool) {
+	if source == nil || len(suffix) == 0 {
+		return nil, false
+	}
+	selected, ok := typ.Type(nil), false
+	if wantTruthy {
+		selected, ok = variant.NarrowByPathTruthy(source, suffix)
+	} else {
+		selected, ok = variant.NarrowByPathFalsy(source, suffix)
+	}
+	if !ok || selected == nil || typ.IsNever(selected) {
+		return nil, false
+	}
+	return selected, true
+}
+
 // typeWitnessBranchClosure refines a falsiness branch whose selector resolves to
 // a published type witness instead of a decided value. A type is not a value: it
 // cannot select an arm, so both arms stay reachable and each publishes the
@@ -12494,11 +12785,25 @@ func typeWitnessBranchClosure(operation equation.BoundEquation, partition equati
 	if predicate.Negated {
 		selected, rejected = rejected, selected
 	}
+	// The same check is a discriminant over the receiver of a member path: the
+	// arms that cannot hold this truthiness at that member are refuted on the
+	// edge where it holds. Both edges keep their own projection, so neither
+	// selection escapes its guard.
+	rootTerm, rootSelected, rootRejected := []byte(nil), typ.Type(nil), typ.Type(nil)
+	if root, suffix, source, found := typedAncestor(term, partition); found && len(suffix) != 0 {
+		wantTruthy := (predicate.Kind == "truthy") != predicate.Negated
+		trueSide, trueOK := memberTruthinessNarrowing(source, suffix, wantTruthy)
+		falseSide, falseOK := memberTruthinessNarrowing(source, suffix, !wantTruthy)
+		if trueOK || falseOK {
+			rootTerm, rootSelected, rootRejected = root, trueSide, falseSide
+		}
+	}
 	closure := equation.OutputClosure{}
 	for _, edge := range [2]struct {
 		name  string
 		type_ typ.Type
-	}{{"true", selected}, {"false", rejected}} {
+		root  typ.Type
+	}{{"true", selected, rootSelected}, {"false", rejected, rootRejected}} {
 		encoded, ok := shapefact.EncodeTarget(edge.type_)
 		if !ok {
 			return equation.OutputClosure{}, false, nil
@@ -12509,6 +12814,14 @@ func typeWitnessBranchClosure(operation equation.BoundEquation, partition equati
 			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("type-witness/" + edge.name), Guards: []equation.Guard{guard}},
 		)
 		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(term) + "/" + operation.Target.Name, Value: encoded, Guards: []equation.Guard{guard}})
+		if len(rootTerm) == 0 || edge.root == nil {
+			continue
+		}
+		rootEncoded, rootOK := shapefact.EncodeTarget(edge.root)
+		if !rootOK {
+			continue
+		}
+		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(rootTerm) + "/" + operation.Target.Name, Value: rootEncoded, Guards: []equation.Guard{guard}})
 	}
 	return closure, true, nil
 }
@@ -12958,6 +13271,111 @@ func runtimeTypeProofKey(path, typeName string) string {
 	return "runtime-type-proof/" + base64.RawURLEncoding.EncodeToString([]byte("path/"+path)) + "/" + typeName
 }
 
+type lengthFloorBranchProof struct {
+	path  string
+	floor int64
+}
+
+// lengthFloorBranchProofs returns the sequence length lower bounds a branch's
+// true edge establishes. A normalized `#xs >= k` check is the only source: it
+// is already the front's canonical form for every non-empty guard spelling, so
+// no comparison is re-read here.
+func lengthFloorBranchProofs(operation equation.BoundEquation) []lengthFloorBranchProof {
+	proofs := make([]lengthFloorBranchProof, 0)
+	for _, operand := range operation.Operands {
+		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		if !recognized || !trueEdge || predicate.Negated || predicate.Kind != "len-ge" || predicate.Path == "" || predicate.LenFloor < 1 {
+			continue
+		}
+		index := -1
+		for position, existing := range proofs {
+			if existing.path == predicate.Path {
+				index = position
+				break
+			}
+		}
+		if index < 0 {
+			proofs = append(proofs, lengthFloorBranchProof{path: predicate.Path, floor: predicate.LenFloor})
+			continue
+		}
+		if predicate.LenFloor > proofs[index].floor {
+			proofs[index].floor = predicate.LenFloor
+		}
+	}
+	return proofs
+}
+
+// lengthFloorProven returns the largest currently proven length lower bound for
+// container. A dynamic write through the same heap identity revokes the bound
+// exactly as it revokes an index presence proof: a write can move the sequence
+// border, so a bound established before it proves nothing after it.
+func lengthFloorProven(container []byte, partition equation.Partition) int64 {
+	subject := heapIndexSubject(container, partition)
+	prefix := heapLengthFloorPrefix + subject + "/"
+	floor, proofPoint := int64(0), ""
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		bound, err := strconv.ParseInt(string(fact.Value), 10, 64)
+		if err != nil || bound <= floor {
+			continue
+		}
+		floor, proofPoint = bound, fact.Key
+	}
+	if floor == 0 {
+		return 0
+	}
+	revokePrefix := heapIndexRevokePrefix + subject + "/"
+	revocation := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, revokePrefix) && string(fact.Value) == "revoked" && fact.Key > revocation {
+			revocation = fact.Key
+		}
+	}
+	if revocation != "" && factOperation(proofPoint) <= factOperation(revocation) {
+		return 0
+	}
+	return floor
+}
+
+// provenSequenceIndexValue reads a constant sequence index that a proven length
+// lower bound puts in range. The declared element type is the value of such a
+// read: the optional the ordinary projection returns describes the slot's
+// possible absence, and the bound is exactly the proof that it is present. An
+// element type that is itself optional keeps its own nil.
+func provenSequenceIndexValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	root, suffix, valid := tableAddress(term)
+	if !valid || suffix == "" {
+		return nil, false
+	}
+	segments, parsed := segment.ParseFormattedSegments(suffix)
+	if !parsed || len(segments) == 0 {
+		return nil, false
+	}
+	last := segments[len(segments)-1]
+	if last.Kind != segment.SegmentIndexInt || last.Index < 1 {
+		return nil, false
+	}
+	container := append(append([]byte(nil), root...), []byte(segment.FormatSegments(segments[:len(segments)-1]))...)
+	if int64(last.Index) > lengthFloorProven(container, partition) {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(container, partition)
+	if err != nil {
+		return nil, false
+	}
+	witness, decoded := shapefact.DecodeTarget(value)
+	if !decoded {
+		return nil, false
+	}
+	array, ok := unwrap.Alias(subst.ExpandInstantiated(witness)).(*typ.Array)
+	if !ok || array == nil || array.Element == nil {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(array.Element)
+}
+
 // runtimeTypeValidationProves consumes only the fact emitted by a true edge
 // of `type(path) == name`. It never treats a literal value carried through an
 // any boundary as proof: sibling paths remain unvalidated.
@@ -12973,7 +13391,18 @@ func runtimeTypeValidationProves(source []byte, targetType string, shapeTarget [
 	if target, decoded := shapefact.DecodeTarget(shapeTarget); decoded && target != nil && !runtimeTypeProofAdmitsTarget(name, target) {
 		return false
 	}
-	prefix := runtimeTypeProofKey(strings.TrimPrefix(string(source), "path/"), name)
+	return runtimeTypeProven(source, name, partition)
+}
+
+// runtimeTypeProven reports whether a true edge of `type(term) == name` is
+// currently visible to this consumer. It is the single reader of the proof
+// fact family: a guard partition that does not include the proving edge never
+// sees the fact at all.
+func runtimeTypeProven(term []byte, name string, partition equation.Partition) bool {
+	if !strings.HasPrefix(string(term), "path/") {
+		return false
+	}
+	prefix := runtimeTypeProofKey(strings.TrimPrefix(string(term), "path/"), name)
 	for _, fact := range partition.Values() {
 		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "proven" {
 			return true
@@ -13083,6 +13512,19 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 		closure.Values = append(closure.Values, equation.Fact{
 			Key:   heapIndexPresencePrefix + heapIndexSubject(pair.container, partition) + "/" + encodedIndex + "/" + operation.Target.Name,
 			Value: []byte("proven"), Guards: []equation.Guard{guard},
+		})
+	}
+	// Index evidence can be one conjunct of a broader condition such as
+	// `entry and entry.next_id`. This specialized branch owns the index proof,
+	// but the true edge still owns the ordinary non-nil refinements emitted by
+	// the same front evidence.
+	for _, item := range impliedTrueEdgeNarrowings(operation, partition) {
+		encoded, ok := shapefact.EncodeTarget(item.narrowed)
+		if !ok {
+			continue
+		}
+		closure.Values = append(closure.Values, equation.Fact{
+			Key: "value/" + item.term + "/" + operation.Target.Name, Value: encoded, Guards: []equation.Guard{guard},
 		})
 	}
 	return closure, true, nil
@@ -15173,7 +15615,7 @@ func declaredOptionalMapReadValue(term []byte, partition equation.Partition) ([]
 		return nil, false
 	}
 	value, found, missingSlot := declaredOptionalMapReadWitness(term, partition)
-	if !found || !missingSlot || !mapReadNeedsNilWitness(value) {
+	if !found || !missingSlot {
 		return nil, false
 	}
 	return shapefact.EncodeTarget(value)
@@ -15242,10 +15684,9 @@ func declaredOptionalMapReadWitness(term []byte, partition equation.Partition) (
 	if !ok || source == nil || len(segments) == 0 {
 		return nil, false, false
 	}
-	last := segments[len(segments)-1]
-	if last.Kind != segment.SegmentIndexString && last.Kind != segment.SegmentIndexInt {
-		return nil, false, false
-	}
+	// Lua's `t.k` is `t["k"]`, so the syntax of the final selector decides
+	// nothing here. The container projection below is the authority: only a
+	// declared map reaches the optional element witness.
 	container, ok := luatypeprojection.ApplySegments(source, segments[:len(segments)-1])
 	if !ok || container == nil {
 		return nil, false, false
@@ -16571,7 +17012,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				values = append(values, heapIdentityFact(string(result), operation.Target.Name, identity))
 			}
 		}
-		if importedSummary != nil && !requiresLocalUnionProof(importedSummary) {
+		// A discriminated-record union is published as a summary, never as a
+		// value: the summary is the contract the caller's own guard narrows,
+		// while the value lattice keeps no unselected arm. Withholding it
+		// entirely would leave the local guard nothing to select from.
+		if importedSummary != nil {
 			encoded, encodeErr := typ.EncodeCanonical(context.Background(), importedSummary)
 			if encodeErr != nil {
 				return equation.TransactionResult{}, fmt.Errorf("engine: encode imported result summary: %w", encodeErr)
@@ -17347,7 +17792,18 @@ func callableParameterRejectsNil(parameter string) bool {
 // evidence, preserving the engine's ordinary fail-closed gradual boundary.
 func optionalArgumentMayBeNil(argument []byte, partition equation.Partition) bool {
 	actual, available := typedPathType(argument, partition)
-	return available && actual != nil && proof.OptionalTypeHasConcreteValue(actual)
+	if !available || actual == nil || !proof.OptionalTypeHasConcreteValue(actual) {
+		return false
+	}
+	// An unselected discriminated union has no member surface of its own: a
+	// member declared on some arms only reads nil on the others, and that nil
+	// describes the unselected arm rather than a proven nilability of this
+	// argument. The branch machinery publishes the selected arm before such a
+	// read, so this boundary waits for it instead of refuting the call.
+	if _, suffix, source, ok := typedAncestor(argument, partition); ok && len(suffix) != 0 && requiresLocalUnionProof(source) {
+		return false
+	}
+	return true
 }
 
 func declaredEntryBoundaryKey(body equation.BodyID) string {
@@ -18475,9 +18931,6 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 			return false, false, err
 		}
 		truth, err := luaTruthy(value)
-		if errors.Is(err, errUnknownScalar) && optionalConcreteWitness(value) {
-			return true, false, nil
-		}
 		return truth, false, err
 	}
 	if predicate == nil {
@@ -18806,6 +19259,9 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	if value, found := assertionNarrowedValue(term, cutoff, partition); found {
 		return value, nil
 	}
+	if value, found := provenSequenceIndexValue(term, partition); found {
+		return value, nil
+	}
 	if value, found := typedPathValue(term, partition); found {
 		return value, nil
 	}
@@ -18894,6 +19350,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 		return value, nil
 	}
 	if value, found := assertionNarrowedValue(term, "", partition); found {
+		return value, nil
+	}
+	if value, found := provenSequenceIndexValue(term, partition); found {
 		return value, nil
 	}
 	prefix := "value/" + string(term) + "/"
@@ -19136,6 +19595,18 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		return nil, false
 	}
 	field, found := variant.FieldAtPath(source, suffix)
+	// An optional receiver reached inside the path is named by no term, so no
+	// publication can carry its presence: the member surface walk looks through
+	// it while the segment walk keeps its nilability, and the nilable answer is
+	// the one this static projection may publish. The ancestor root is excluded
+	// because its own current value is the authority every guard, assertion, and
+	// correlation publishes against, and this whole projection is consulted only
+	// when no such current publication exists.
+	if found && !optionalConcreteWitnessType(source) && !optionalConcreteWitnessType(field) {
+		if projected, ok := typedPathSegments(source, suffix); ok && optionalConcreteWitnessType(projected) {
+			field = projected
+		}
+	}
 	if !found && methodReturnSummaryAncestor(root, partition) {
 		// A closed union can omit a field on some arms. The projection helper
 		// retains that absence as nil, whereas FieldAtPath intentionally refuses
@@ -19368,6 +19839,14 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 				return rootTerm, segs, typeValue, true
 			}
 		}
+		// `assert` publishes the exact non-nil postcondition under the current
+		// partition. It is a presence proof for this root just like a guarded
+		// branch value, and is revoked by a later write in assertionNarrowedValue.
+		if value, found := assertionNarrowedValue(rootTerm, "", partition); found {
+			if typeValue, decoded := shapefact.DecodeTarget(value); decoded {
+				return rootTerm, segs, typeValue, true
+			}
+		}
 		if encoded, found := currentEpochFact(summaryTypePrefix, rootTerm, partition); found {
 			typeValue, decodeErr := typ.DecodeCanonical(context.Background(), encoded)
 			if decodeErr == nil && typeValue != nil {
@@ -19375,7 +19854,12 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 			}
 		}
 		if typeValue, declared := declaredTypeForTerm(rootTerm, partition); declared && optionalConcreteWitnessType(typeValue) {
-			return rootTerm, segs, typeValue, true
+			// A sealed table publication is this root's current runtime value and
+			// proves its presence, so the declaration's nilability is not what a
+			// member read descends through.
+			if value, found := latestValue(rootTerm, partition); !found || !shapefact.IsTable(value) {
+				return rootTerm, segs, typeValue, true
+			}
 		}
 		value, found := latestValue(rootTerm, partition)
 		if !found {
@@ -19580,7 +20064,20 @@ func derivedPathTerm(term []byte) bool {
 	return strings.Contains(path, ".") || strings.Contains(path, "[")
 }
 
+// joinVisibleFacts presents the module surface the way any other consumer sees
+// it: a publication guarded by a branch edge belongs to that arm, and only a
+// published branch proof makes it visible past the join. The partition owns
+// that visibility rule, so this projection reuses it rather than repeating it.
+func joinVisibleFacts(stored []equation.Fact) []equation.Fact {
+	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: stored})
+	if err != nil {
+		return stored
+	}
+	return partition.Values()
+}
+
 func publishedValues(artifact equation.Artifact, stored []equation.Fact) []equation.Fact {
+	stored = joinVisibleFacts(stored)
 	storedByKey := make(map[string][]byte, len(stored))
 	for _, fact := range stored {
 		storedByKey[fact.Key] = fact.Value
@@ -19670,7 +20167,20 @@ func publishedValues(artifact equation.Artifact, stored []equation.Fact) []equat
 	return values
 }
 
-func publishedOutcomes(stored []equation.Fact) []equation.Fact {
+// joinVisibleOutcomes applies the same join rule to the outcome lane: an edge
+// published under a branch guard belongs to that arm, so only a published
+// branch proof carries it past the join. The value lane is the evidence that
+// resolves such a proof, exactly as it is for any other consumer.
+func joinVisibleOutcomes(stored, evidence []equation.Fact) []equation.Fact {
+	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: evidence, Outcomes: stored})
+	if err != nil {
+		return stored
+	}
+	return partition.Outcomes()
+}
+
+func publishedOutcomes(stored, evidence []equation.Fact) []equation.Fact {
+	stored = joinVisibleOutcomes(stored, evidence)
 	// Candidate tuples are operation-scoped inside the equation closure.  Join
 	// alternatives only at publication: identical alternatives retain their
 	// scalar result, while any disagreement becomes Top/unknown.
