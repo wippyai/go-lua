@@ -3488,12 +3488,17 @@ func parameterMemberWriteTerms(compilation front.Compilation) map[string]bool {
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
 	written := memberWriteRoots(compilation, formals)
-	if len(written) == 0 {
-		return nil
+	formalMemberWrites := len(written) != 0
+	captures := make(map[string]bool, len(compilation.Boundary.Captures))
+	for _, capture := range compilation.Boundary.Captures {
+		captures[boundaryTerm(capture.Symbol)] = true
 	}
-	// A formal stored into another formal's member becomes reachable from the
-	// caller through that member, so its own identity is part of the same
-	// caller-observable effect and must cross the boundary with it.
+	// A formal stored into a member address escapes with that container: the
+	// caller reaches the argument through it, so the argument's own identity is
+	// part of the same caller-observable effect and must cross the boundary with
+	// it. A formal or a captured root is caller-reachable by construction; once
+	// the body already writes a formal's member the whole body is under that
+	// lens, so every stored formal joins it.
 	for _, item := range compilation.Artifact.Equations {
 		if item.Occurrence.Kind != "path-replacement" && item.Occurrence.Kind != "environment-write" {
 			continue
@@ -3503,9 +3508,17 @@ func parameterMemberWriteTerms(compilation front.Compilation) map[string]bool {
 		if !hasTarget || !hasValue || !formals[string(value)] {
 			continue
 		}
-		if _, suffix, ok := heapTableAddress(target); ok && suffix != "" {
-			written[string(value)] = true
+		root, suffix, ok := heapTableAddress(target)
+		if !ok || suffix == "" || (!formalMemberWrites && !formals[string(root)] && !captures[string(root)]) {
+			continue
 		}
+		if written == nil {
+			written = make(map[string]bool, len(formals))
+		}
+		written[string(value)] = true
+	}
+	if len(written) == 0 {
+		return nil
 	}
 	return written
 }
@@ -4796,6 +4809,7 @@ type declaredBoundaryAdmission struct {
 	ArithmeticReturn     bool
 	Concat               map[string]bool
 	Comparison           map[string]bool
+	Assertions           map[string]bool
 }
 
 // uncalledDeclaredBoundary materializes only the checker-owned type witnesses
@@ -4846,6 +4860,7 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 	}
 	hasBranch, hasDeclaredMemberRead, hasDeclaredMemberCall, hasDeclaredAssignment, hasDeclaredMemberWrite := false, false, false, false, false
 	hasDeclaredArithmeticAssignment, hasArithmeticReturnCandidate := false, false
+	assertionOperations := make(map[string]bool)
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "apply":
@@ -4868,6 +4883,9 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 			hasDeclaredMemberRead = hasDeclaredMemberRead || uncalledDeclaredFormalMemberRead(child, operation, formals)
 			hasDeclaredAssignment = hasDeclaredAssignment || uncalledDeclaredFormalAssignment(child, operation, formals)
 			hasDeclaredArithmeticAssignment = hasDeclaredArithmeticAssignment || uncalledDeclaredFormalArithmeticAssignment(operation, arithmeticTerms)
+			if uncalledDeclaredFormalAssertion(child, operation, formals) {
+				assertionOperations[operation.Target.Name] = true
+			}
 		case "publication":
 			hasArithmeticReturnCandidate = hasArithmeticReturnCandidate || uncalledDeclaredFormalArithmeticReturn(operation, arithmeticTerms)
 		}
@@ -4886,14 +4904,14 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 	comparisonOperations := uncalledDeclaredFormalOrderedComparisonOperations(child, formals)
 	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment && !hasDeclaredMemberWrite &&
 		!hasDeclaredArithmeticAssignment && !hasDeclaredArithmeticReturn &&
-		len(concatOperations) == 0 && len(comparisonOperations) == 0 {
+		len(assertionOperations) == 0 && len(concatOperations) == 0 && len(comparisonOperations) == 0 {
 		return declaredBoundaryAdmission{}
 	}
 	seeds, ok := declaredFormalSeeds(child)
 	if !ok {
 		return declaredBoundaryAdmission{}
 	}
-	return declaredBoundaryAdmission{Seeds: seeds, Admitted: true, Method: hasDirectMethod, MemberWrite: hasDeclaredMemberWrite, ArithmeticAssignment: hasDeclaredArithmeticAssignment, ArithmeticReturn: hasDeclaredArithmeticReturn, Concat: concatOperations, Comparison: comparisonOperations}
+	return declaredBoundaryAdmission{Seeds: seeds, Admitted: true, Method: hasDirectMethod, MemberWrite: hasDeclaredMemberWrite, ArithmeticAssignment: hasDeclaredArithmeticAssignment, ArithmeticReturn: hasDeclaredArithmeticReturn, Concat: concatOperations, Comparison: comparisonOperations, Assertions: assertionOperations}
 }
 
 // functionFormalType resolves the underlying function contract of a declared
@@ -6265,6 +6283,33 @@ func uncalledDeclaredFormalAssignment(child front.Compilation, operation equatio
 		return uncalledDeclaredFormalValue(child, value)
 	}
 	return uncalledDeclaredFormalMemberRead(child, operation, formals)
+}
+
+// uncalledDeclaredFormalAssertion identifies a non-nil assertion on an exact
+// declared formal that sits on an edge this body's own branch proved about that
+// same formal. The edge states the formal's value there, so the assertion's
+// outcome is the declaration's, not a caller's: every argument the declaration
+// admits reaches that edge with the value the branch selected. An unguarded
+// assertion, or one on an edge about another path, stays demand-driven because a
+// concrete caller value can still discharge it.
+func uncalledDeclaredFormalAssertion(child front.Compilation, operation equation.Equation, formals map[string]bool) bool {
+	if operation.Occurrence.Kind != "claim" || len(operation.Guards) == 0 {
+		return false
+	}
+	var value []byte
+	assertion := false
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "value":
+			value = operand.Term.Encoding
+		case "kind":
+			assertion = string(operand.Term.Encoding) == "claim-kind/2"
+		}
+	}
+	if !assertion || len(value) == 0 || !formals[string(value)] {
+		return false
+	}
+	return declaredFormalNarrowingEdges(child, operation, value) && uncalledDeclaredFormalValue(child, value)
 }
 
 // declaredFormalNarrowingEdges reports whether every guard on operation is the
@@ -7952,6 +7997,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	}
 	projected := projectCallResults(operation, returns, closure)
 	projected.Values = append(projected.Values, projectExternalCallbackReturnFacts(operation, child, closure)...)
+	projected.Values = append(projected.Values, projectReturnMemberIdentities(operation, child, arguments, closure, partition)...)
 	// The child snapshot is only needed to read a capture or transported heap
 	// cell back, so it is built once on demand rather than for every
 	// application.
@@ -8812,6 +8858,47 @@ func projectExternalCallbackReturnFacts(operation equation.BoundEquation, child 
 	return facts
 }
 
+// projectReturnMemberIdentities binds a returned container's member slots to
+// the caller's own tables. A callee that stores one of its formals into the
+// container it returns hands the caller a second route to that argument, so a
+// later write through the returned member reaches the argument's heap cell.
+// Only a slot whose current occupant is an exact formal participates: the
+// caller resolves the identity from the argument it supplied, so nothing about
+// the callee's own allocations crosses the boundary.
+func projectReturnMemberIdentities(operation equation.BoundEquation, child front.Compilation, arguments [][]byte, closure equation.OutputClosure, partition equation.Partition) []equation.Fact {
+	formals := make(map[string]int, len(child.Boundary.Parameters))
+	for index, parameter := range child.Boundary.Parameters {
+		formals[boundaryTerm(parameter.Symbol)] = index
+	}
+	if len(formals) == 0 {
+		return nil
+	}
+	const prefix = "return-member-origin/"
+	var facts []equation.Fact
+	for _, fact := range closure.Values {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		parts := strings.Split(strings.TrimPrefix(fact.Key, prefix), "/")
+		if len(parts) != 3 {
+			continue
+		}
+		index, found := formals[string(fact.Value)]
+		if !found || index >= len(arguments) {
+			continue
+		}
+		identity, resolved := tableIdentityForTerm(arguments[index], partition)
+		if !resolved {
+			continue
+		}
+		facts = append(facts, equation.Fact{
+			Key:   "call-member-identity/" + strings.TrimPrefix(operation.Target.Name, "call/") + "/" + parts[1] + "/" + parts[2],
+			Value: identity,
+		})
+	}
+	return facts
+}
+
 func closureTableIdentity(term []byte, values []equation.Fact) ([]byte, bool) {
 	prefix := heapTableIdentityPrefix + string(term) + "/"
 	var identity []byte
@@ -9372,6 +9459,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	declaredArithmeticReturnBoundary := false
 	declaredConcatOperations := map[string]bool(nil)
 	declaredComparisonOperations := map[string]bool(nil)
+	declaredAssertionOperations := map[string]bool(nil)
 	if admission := uncalledDeclaredBoundary(child); admission.Admitted {
 		uncalledSeeds = admission.Seeds
 		explicitAnyBoundary = false
@@ -9383,6 +9471,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		declaredConcatBoundary = len(admission.Concat) != 0
 		declaredComparisonOperations = admission.Comparison
 		declaredComparisonBoundary = len(admission.Comparison) != 0
+		declaredAssertionOperations = admission.Assertions
 		declaredAssignmentBoundary = declaredAssignmentBoundary || admission.ArithmeticAssignment
 		formals := make(map[string]bool, len(child.Boundary.Parameters))
 		for _, parameter := range child.Boundary.Parameters {
@@ -9589,6 +9678,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				(!declaredMemberWriteBoundary || !strings.HasPrefix(family, "type.assignment.optional_target/")) &&
 				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) &&
 				(!declaredComparisonBoundary || !declaredOrderedComparisonDiagnostic(declaredComparisonOperations, diagnostic.Key)) &&
+				!declaredAssertionDiagnostic(declaredAssertionOperations, diagnostic.Key) &&
 				!uncalledDeclaredProviderResultDiagnostic(child, diagnostic.Key) {
 				return true
 			}
@@ -9847,6 +9937,15 @@ func selectChildDiagnostic(key string) bool {
 func declaredConcatDiagnostic(allowed map[string]bool, key string) bool {
 	_, operation, subject, ok := concatOperandDiagnosticParts(key)
 	return ok && allowed[operation+"/"+subject]
+}
+
+// declaredAssertionDiagnostic recognizes the unproven-claim diagnostic of an
+// assertion this boundary admitted. The operation name is the exact one whose
+// narrowing edge made the assertion declaration-owned, so no other claim in the
+// same body borrows this surface.
+func declaredAssertionDiagnostic(allowed map[string]bool, key string) bool {
+	name, unproven := strings.CutPrefix(key, "claim/unproven/")
+	return unproven && allowed[name]
 }
 
 func declaredOrderedComparisonDiagnostic(allowed map[string]bool, key string) bool {
@@ -11808,6 +11907,15 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 			// the replacement local to its original source path.
 			if nestedIdentity, nestedSuffix, nested := nestedHeapMemberAddress(identity, suffix, partition); nested {
 				result.Closure.Values = append(result.Closure.Values, heapMemberFact(nestedIdentity, nestedSuffix, operation.Target.Name, value))
+				// The nested cell is the authored slot of that inner table. A call
+				// boundary reads exactly this cell family when it projects a callee's
+				// writes back onto the caller's transported identities, so the mirror
+				// must publish the cell and not only its member value.
+				if cell, published, cellErr := memberCellFactWithIdentity(nestedIdentity, nestedSuffix, operation.Target.Name, value, memberIdentity, partition); cellErr != nil {
+					return equation.TransactionResult{}, cellErr
+				} else if published {
+					result.Closure.Values = append(result.Closure.Values, cell)
+				}
 				if len(memberIdentity) != 0 {
 					result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(nestedIdentity, nestedSuffix, operation.Target.Name, memberIdentity))
 					result.Closure.Values = append(result.Closure.Values, heapStaticReplacementFact(memberIdentity, operation.Target.Name))
@@ -12157,6 +12265,19 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		runtimeTypeValidationProves(source, targetType, shapeTarget, partition)
 	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !boundaryValidated
 	castFromAnyBoundary := kind == "claim-kind/1" && sourceHasAnyBoundary(source, partition.Values())
+	// A cast is a view of its operand, never a copy: the result denotes the same
+	// runtime table. Carrying the operand's heap identity onto the result keeps a
+	// later write through the cast addressed to that same cell, so a wider cast
+	// view cannot launder a write past the operand's own narrower contract. An
+	// operand crossing an any boundary carries no such relation: its cell is
+	// unvalidated, and the cast is the boundary's own runtime check rather than a
+	// view of an already-proven table.
+	castIdentity, castIdentified := []byte(nil), false
+	if kind == "claim-kind/1" && !castFromAnyBoundary && target != string(source) {
+		if _, bound := currentEpoch([]byte(target), partition); !bound {
+			castIdentity, castIdentified = tableIdentityForTerm(source, partition)
+		}
+	}
 	if available && !boundaryRequiresProof && !castFromAnyBoundary && (claimProven(value, kind, targetType) || shapeRelation == shapeProven || channelCastFromNil || boundaryValidated) {
 		// A validated boundary keeps no residual any in its published value: the
 		// runtime test proved this binding holds the annotated type, so consumers
@@ -12168,6 +12289,10 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
 		if throwTemplate.Key != "" {
 			closure.Values = append(closure.Values, throwTemplate)
+		}
+		if castIdentified {
+			closure.Values = append(closure.Values, heapIdentityFact(target, operation.Target.Name, castIdentity))
+			closure.Values = append(closure.Values, equation.Fact{Key: epochFactPrefix + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)})
 		}
 		// A successfully checked annotation is a closed type publication for
 		// this exact binding. Later aggregate literals may consume that
@@ -12206,6 +12331,10 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}}}
 	if throwTemplate.Key != "" {
 		closure.Values = append(closure.Values, throwTemplate)
+	}
+	if castIdentified {
+		closure.Values = append(closure.Values, heapIdentityFact(target, operation.Target.Name, castIdentity))
+		closure.Values = append(closure.Values, equation.Fact{Key: epochFactPrefix + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)})
 	}
 	if kind == "claim-kind/1" {
 		for _, operand := range operation.Operands {
@@ -18195,6 +18324,51 @@ func materializedMemberOrigin(value []byte) (string, []byte, bool) {
 	return "", nil, false
 }
 
+// memberOrigin names one member slot of an aggregate and the term whose value
+// currently occupies it.
+type memberOrigin struct {
+	Suffix string
+	Source []byte
+}
+
+// liveMemberOrigins lists the member slots of term whose current occupant is a
+// named term rather than a literal. The origin family is epoch-current, so a
+// slot the body later overwrote reports its newest source, never the one the
+// materialization first recorded.
+func liveMemberOrigins(term []byte, partition equation.Partition) []memberOrigin {
+	if len(term) == 0 {
+		return nil
+	}
+	prefix := heapMemberOriginPrefix + string(term) + "/"
+	suffixes := make(map[string]bool)
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		rest := strings.TrimPrefix(fact.Key, prefix)
+		cut := strings.LastIndexByte(rest, '/')
+		if cut <= 0 || cut == len(rest)-1 {
+			continue
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(rest[:cut])
+		if err != nil || !segment.ValidFormattedSegments(string(decoded)) {
+			continue
+		}
+		suffixes[string(decoded)] = true
+	}
+	ordered := make([]string, 0, len(suffixes))
+	for suffix := range suffixes {
+		ordered = append(ordered, suffix)
+	}
+	sort.Strings(ordered)
+	origins := make([]memberOrigin, 0, len(ordered))
+	for _, suffix := range ordered {
+		source, found := heapMemberOriginCurrent(term, suffix, partition)
+		if !found || len(source) == 0 {
+			continue
+		}
+		origins = append(origins, memberOrigin{Suffix: suffix, Source: source})
+	}
+	return origins
+}
+
 func heapMemberOriginFact(term, suffix, operation string, source []byte) equation.Fact {
 	return equation.Fact{Key: heapMemberOriginPrefix + term + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/" + operation, Value: append([]byte(nil), source...)}
 }
@@ -20152,10 +20326,30 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			}
 		}
 		heapKey := "call-heap-identity/" + strings.TrimPrefix(string(application), "call/") + "/" + key
+		resultIdentity, hasResultIdentity := []byte(nil), false
 		for _, fact := range partition.Values() {
 			if fact.Key == heapKey {
+				resultIdentity, hasResultIdentity = append([]byte(nil), fact.Value...), true
 				values = append(values, heapIdentityFact(string(result), operation.Target.Name, fact.Value))
 				break
+			}
+		}
+		// A container the callee returned carrying one of the caller's own tables
+		// needs an identity of its own before that member link can be stated. The
+		// minted identity names this exact call and result slot, so two
+		// invocations never address one cell.
+		memberIdentityPrefix := "call-member-identity/" + strings.TrimPrefix(string(application), "call/") + "/" + key + "/"
+		if memberIdentities := partition.ValuesPrefix(memberIdentityPrefix); len(memberIdentities) != 0 {
+			if !hasResultIdentity {
+				resultIdentity = []byte("call-result-table/" + strings.TrimPrefix(string(application), "call/") + "/" + key)
+				values = append(values, heapIdentityFact(string(result), operation.Target.Name, resultIdentity))
+			}
+			for _, fact := range memberIdentities {
+				suffix, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(fact.Key, memberIdentityPrefix))
+				if decodeErr != nil || !segment.ValidFormattedSegments(string(suffix)) || len(fact.Value) == 0 {
+					continue
+				}
+				values = append(values, heapMemberIdentityFact(resultIdentity, string(suffix), operation.Target.Name, fact.Value))
 			}
 		}
 		closureKey := "call-closure/" + strings.TrimPrefix(string(application), "call/") + "/" + key
@@ -22565,6 +22759,12 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 	for index, value := range values {
 		outcomes = append(outcomes, equation.Fact{Key: prefix + strconv.Itoa(index), Value: value})
 		source := boundOperandValue(operation.Operands, fmt.Sprintf("return-value-%08d", index))
+		for _, origin := range liveMemberOrigins(source, partition) {
+			projected = append(projected, equation.Fact{
+				Key:   fmt.Sprintf("return-member-origin/%s/%08d/%s", operation.Target.Name, index, base64.RawURLEncoding.EncodeToString([]byte(origin.Suffix))),
+				Value: append([]byte(nil), origin.Source...),
+			})
+		}
 		for memberIndex, wire := range returnMemberClosures(source, partition) {
 			encoded, err := json.Marshal(wire)
 			if err != nil {
