@@ -37,6 +37,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/refinement"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -3324,6 +3325,11 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		// caller-provided channel identity unchanged; only the absent-identity
 		// case can use this already-published boundary contract.
 		if seen[string(root)] {
+			// A concrete caller seed owns the runtime value, but the boundary
+			// declaration still owns the channel payload relation below that
+			// root.  In particular, a Top seed is an honest unknown value, not a
+			// reason to erase the declared Channel<T> witnesses that select reads.
+			values = append(values, channelPayloadSummaryFacts(string(root), "entry", declared)...)
 			if _, channel := ambient.ChannelPayloadType(declared); channel {
 				if !isChannelIdentity(seedValues[string(root)]) {
 					identity := []byte("scalar/channel-entry/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + base64.RawURLEncoding.EncodeToString(root))
@@ -7899,7 +7905,11 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		uncalledSeeds = staticSeeds
 		explicitAnyBoundary = false
 	}
-	if child.Cyclic == nil && ((len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 && len(child.Artifact.Equations) <= 4) || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary) {
+	// A parameter-free, capture-free body is closed by its own entry: nothing
+	// a caller can supply refines it. Admission must therefore not depend on
+	// an arbitrary body-size cap.
+	closedBoundary := len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0
+	if child.Cyclic == nil && (closedBoundary || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary) {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
@@ -8136,44 +8146,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	}
 	if child.Cyclic == nil && childHasSelect(child) {
 		body := fmt.Sprintf("%x", child.Body)
-		// The select-only publication pass may inspect a closure before an
-		// ordinary call supplies its parameters. Its declared channel entries
-		// are sufficient for those formals, but captured module tables are not
-		// declarations: they must retain the exact require-seeded value already
-		// closed by the parent partition. Transport only complete capture facts;
-		// an unavailable capture leaves this optional diagnostic pass silent
-		// rather than manufacturing a module value.
-		seeds := closedImportEntrySeeds(partition)
-		closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
-		complete := len(captures) == len(child.Boundary.Captures)
-		for index, capture := range child.Boundary.Captures {
-			if !complete {
-				break
-			}
-			value, known := resolveKnownCurrentValue([]byte(captures[index]), partition)
-			if !known || isUnknownScalar(value) {
-				complete = false
-				break
-			}
-			term := boundaryTerm(capture.Symbol)
-			seeds = append(seeds, entrySeed{Term: term, Value: value})
-			// A captured local function is a published capability of this
-			// partition, not a value shape. Transporting its handle is what lets
-			// a call inside the select body reach the callee's own completed
-			// summary; without it the callee stays opaque and every obligation
-			// it owns is lost. An unadmitted prototype keeps the pass silent.
-			if handle, found := closureHandleFor([]byte(captures[index]), partition); found {
-				if _, admitted := lexical.byPrototype[handle.Prototype]; !admitted {
-					complete = false
-					break
-				}
-				closureSeeds = append(closureSeeds, entryClosureSeed{Term: term, Handle: handle})
-			}
-		}
-		if !complete {
-			return equation.TransactionResult{Complete: true, Closure: closure}, nil
-		}
-		entry, entryErr := encodeChildEntry(seeds, closureSeeds...)
+		entry, entryErr := lexical.selectChildEntry(child, captures, partition)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -8293,6 +8266,113 @@ func closedImportEntrySeeds(partition equation.Partition) []entrySeed {
 		seeds = append(seeds, entrySeed{Term: term, Value: byTerm[term]})
 	}
 	return seeds
+}
+
+// selectChildEntry seeds the complete private environment of the optional
+// select-publication evaluation.  This evaluator is deliberately independent
+// of whichever unrelated fact families happened to publish in its parent:
+// every root the child can read has either its exact captured value/capability
+// or an explicit Top seed.  Absence is reserved for a malformed entry packet,
+// never used to represent an unknown lexical value.
+func (l *lexicalEvaluator) selectChildEntry(child front.Compilation, captures []string, partition equation.Partition) ([]byte, error) {
+	byTerm := make(map[string]entrySeed)
+	sources := make(map[string][]byte)
+	for _, seed := range closedImportEntrySeeds(partition) {
+		byTerm[seed.Term] = seed
+	}
+	closureByTerm := make(map[string]closureHandle)
+	for index, capture := range child.Boundary.Captures {
+		term := boundaryTerm(capture.Symbol)
+		value := []byte("scalar/top")
+		if index < len(captures) {
+			source := []byte(captures[index])
+			sources[term] = append([]byte(nil), source...)
+			if current, known := resolveKnownCurrentValue(source, partition); known {
+				value = current
+			}
+			if handle, found := closureHandleFor(source, partition); found {
+				if _, admitted := l.byPrototype[handle.Prototype]; admitted {
+					closureByTerm[term] = handle
+				}
+			}
+		}
+		byTerm[term] = entrySeed{Term: term, Value: value}
+	}
+	// Terms occur in the compiled artifact rather than in a source scan, so
+	// this covers every evaluator-visible root (including local roots created
+	// by select lowering) without coupling entry construction to publication
+	// order. Descendants inherit their root's entry state and are evaluated only
+	// after their own body write, as usual.
+	for _, operation := range child.Artifact.Equations {
+		for _, operand := range operation.Operands {
+			term := selectChildRootTerm(string(operand.Term.Encoding))
+			if term == "" {
+				continue
+			}
+			if _, seeded := byTerm[term]; !seeded {
+				byTerm[term] = entrySeed{Term: term, Value: []byte("scalar/top")}
+			}
+		}
+	}
+	terms := make([]string, 0, len(byTerm))
+	for term := range byTerm {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	seeds := make([]entrySeed, 0, len(terms))
+	for _, term := range terms {
+		seed := byTerm[term]
+		if !validEntrySeed(seed) {
+			return nil, fmt.Errorf("engine: malformed select child entry seed %q", term)
+		}
+		seeds = append(seeds, seed)
+	}
+	seeds = append(seeds, childEntryDescendantSeeds(seeds, partition)...)
+	// Descendant transport can overlap a root only on malformed input; retain
+	// the root's explicit entry seed as the canonical value in that case.
+	byTerm = make(map[string]entrySeed, len(seeds))
+	for _, seed := range seeds {
+		if _, exists := byTerm[seed.Term]; !exists {
+			byTerm[seed.Term] = seed
+		}
+	}
+	terms = terms[:0]
+	for term := range byTerm {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	seeds = seeds[:0]
+	for _, term := range terms {
+		seeds = append(seeds, byTerm[term])
+	}
+	closureSeeds := make([]entryClosureSeed, 0, len(closureByTerm))
+	for _, term := range terms {
+		if handle, found := closureByTerm[term]; found {
+			closureSeeds = append(closureSeeds, entryClosureSeed{Term: term, Handle: handle})
+		}
+	}
+	memberClosureSeeds := childEntryMemberClosureSeeds(seeds, sources, partition)
+	tableIdentitySeeds := tableIdentitySeedsForEntry(seeds, partition)
+	memberCellSeeds := memberCellSeedsForEntry(seeds, partition)
+	placementSeeds := placementSeedsForEntry(seeds, partition)
+	return encodeChildEntryWithPlacementCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, placementSeeds)
+}
+
+func selectChildRootTerm(term string) string {
+	if !strings.HasPrefix(term, "path/") {
+		return ""
+	}
+	path := strings.TrimPrefix(term, "path/")
+	if path == "" {
+		return ""
+	}
+	if cut := strings.IndexAny(path, ".["); cut >= 0 {
+		path = path[:cut]
+	}
+	if path == "" {
+		return ""
+	}
+	return "path/" + path
 }
 
 func enrichChildSelectDiagnostic(item PublishedDiagnostic, child front.Compilation, targets map[string]wir.Span) PublishedDiagnostic {
@@ -9004,15 +9084,17 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	// keeps provider results such as integer(any) useful through arithmetic and
 	// concatenation without inventing a concrete runtime value.
 	if string(value) == "scalar/top" && len(diagnostics) == 0 {
-		// A sealed table is an existing runtime-kind publication, even though
-		// its cardinality is deliberately not a scalar fact. Lua's length
-		// operator therefore has the ordinary broad number result; retain that
-		// fact rather than turning a proven table receiver into an unproven
-		// numeric annotation. This admits no value for an unknown receiver.
+		// A sealed contiguous literal has a proven sequence cardinality. Other
+		// sealed tables retain the broad number result: Lua length is not a
+		// member count for records, holes, or non-sequence shapes.
 		if wir.Op(kind) == wir.OpUnOp && wir.Operator(op) == wir.UnLen {
 			if operand, found := by["value"]; found {
 				if table, resolved := resolvedSealedTable(operand, partition); resolved && table.Closed {
-					if encoded, encodedOK := shapefact.EncodeTarget(typ.Number); encodedOK {
+					result := typ.Type(typ.Number)
+					if length, sequence := sealedSequenceLength(table); sequence {
+						result = typ.LiteralInt(length)
+					}
+					if encoded, encodedOK := shapefact.EncodeTarget(result); encodedOK {
 						value = encoded
 					}
 				}
@@ -9106,6 +9188,32 @@ func resolvedSealedTable(term []byte, partition equation.Partition) (shapefact.T
 	}
 	table, ok := shapefact.DecodeTable(value)
 	return table, ok && table.Closed
+}
+
+// sealedSequenceLength proves an exact Lua length only for a closed, present,
+// contiguous top-level integer sequence. A named key, nested member, hole, or
+// zero index keeps the result broad because it has no border-free sequence
+// proof.
+func sealedSequenceLength(table shapefact.Table) (int64, bool) {
+	if !table.Closed || len(table.Members) == 0 {
+		return 0, false
+	}
+	seen := make(map[int]bool, len(table.Members))
+	for _, member := range table.Members {
+		if !member.Present {
+			return 0, false
+		}
+		segments, parsed := segment.ParseFormattedSegments(member.Suffix)
+		if !parsed || len(segments) != 1 || segments[0].Kind != segment.SegmentIndexInt {
+			return 0, false
+		}
+		index := segments[0].Index
+		if index < 1 || index > len(table.Members) || seen[index] {
+			return 0, false
+		}
+		seen[index] = true
+	}
+	return int64(len(table.Members)), true
 }
 
 func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[string][]byte, partition equation.Partition) ([]byte, bool) {
@@ -13485,6 +13593,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			}
 		}
 	}
+	parameterOffset := 0
 	if !hasCallee {
 		receiver, receiverKnown := resolveKnownCurrentValue(operands.receiver, partition)
 		if !receiverKnown {
@@ -13568,6 +13677,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// the exact explicit-argument contract at this call site.
 		if len(signature.Params) > 0 {
 			signature.Params = signature.Params[1:]
+			parameterOffset = 1
 		}
 		if signature.Required > 0 {
 			signature.Required--
@@ -13605,7 +13715,14 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if known && genericConstraintRefuted(argument, expected) {
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), strings.TrimSpace(strings.SplitN(expected, ":", 2)[1]))), nil
 		}
-		if !known || numericForInductionSatisfies(term, argument, expected, partition) || !provenValueNotSubtype(argument, expected) {
+		if !known || numericForInductionSatisfies(term, argument, expected, partition) {
+			continue
+		}
+		if !provenValueNotSubtype(argument, expected) {
+			if contract, published := callableParameterContract(signature, index+parameterOffset); published && !genericCallableSignature(signature) &&
+				!refinement.ContainsFreeTypeParam(contract) && structuralArgumentWitness(argument) && valueAgainstType(argument, contract) == shapeRefuted {
+				return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), typeformat.Short(contract))), nil
+			}
 			continue
 		}
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), expected)), nil
@@ -15748,6 +15865,40 @@ type callableShape struct {
 	Required     int                 `json:"required"`
 	Variadic     bool                `json:"variadic"`
 	VariadicType string              `json:"variadic_type,omitempty"`
+	// Canonical is the front-published function type. The spelling fields
+	// remain responsible for arity and display; Canonical carries structural
+	// parameter contracts for sealed argument witnesses.
+	Canonical string `json:"canonical,omitempty"`
+}
+
+func structuralArgumentWitness(value []byte) bool {
+	if isCallableValue(value) {
+		return false
+	}
+	if shapefact.IsTable(value) {
+		return true
+	}
+	_, complete := scalarWitnessType(value)
+	return complete
+}
+
+func callableParameterContract(signature callableShape, index int) (typ.Type, bool) {
+	if signature.Canonical == "" || index < 0 {
+		return nil, false
+	}
+	wire, err := base64.RawURLEncoding.DecodeString(signature.Canonical)
+	if err != nil || len(wire) == 0 {
+		return nil, false
+	}
+	decoded, err := typ.DecodeCanonical(context.Background(), wire)
+	if err != nil || decoded == nil {
+		return nil, false
+	}
+	function, ok := unwrap.Alias(decoded).(*typ.Function)
+	if !ok || function == nil || index >= len(function.Params) || function.Params[index].Type == nil {
+		return nil, false
+	}
+	return function.Params[index].Type, true
 }
 
 type callableTypeParam struct {

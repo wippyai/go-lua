@@ -241,3 +241,60 @@ return consume
 		t.Fatalf("captured callee stayed opaque inside the select body: %#v", summarizeDiagnostics(result.PublishedDiagnostics))
 	}
 }
+
+// TestSelectChildEntryIsIndependentOfUnrelatedPublication is a regression
+// guard for the select-only publication pass. The extra closed literal/length
+// expression publishes a separate fact family in the enclosing partition; it
+// must neither change the select child's result nor leave a root path absent
+// from that child's private entry.
+func TestSelectChildEntryIsIndependentOfUnrelatedPublication(t *testing.T) {
+	base := `
+type Event = { kind: "event", id: string }
+
+local function consume(ch: Channel<Event>): string
+    local selected = channel.select { ch:case_receive() }
+    local event = selected.value
+    local wrong: number = event.id
+    return event.id
+end
+
+return consume
+`
+	perturbed := `
+type Event = { kind: "event", id: string }
+
+local function consume(ch: Channel<Event>): string
+    local selected = channel.select { ch:case_receive() }
+    local event = selected.value
+    local wrong: number = event.id
+    return event.id
+end
+
+local unrelated = {"entry", "seed"}
+local exact: 2 = #unrelated
+
+return consume
+`
+	baseline, err := engine.Check(base)
+	if err != nil {
+		t.Fatalf("base Check: %v", err)
+	}
+	withUnrelatedFact, err := engine.Check(perturbed)
+	if err != nil {
+		t.Fatalf("perturbed Check: %v", err)
+	}
+	baselineMessages := make([]string, 0, len(baseline.PublishedDiagnostics))
+	for _, item := range baseline.PublishedDiagnostics {
+		baselineMessages = append(baselineMessages, string(item.Code)+"/"+item.Message)
+	}
+	perturbedMessages := make([]string, 0, len(withUnrelatedFact.PublishedDiagnostics))
+	for _, item := range withUnrelatedFact.PublishedDiagnostics {
+		perturbedMessages = append(perturbedMessages, string(item.Code)+"/"+item.Message)
+	}
+	if strings.Join(baselineMessages, "\n") != strings.Join(perturbedMessages, "\n") {
+		t.Fatalf("unrelated publication changed select diagnostics:\nbase: %#v\nperturbed: %#v", baselineMessages, perturbedMessages)
+	}
+	if !hasAssignmentRefutation(baseline.PublishedDiagnostics, "event.id") {
+		t.Fatalf("base select payload was not checked: %#v", baselineMessages)
+	}
+}
