@@ -1,0 +1,4 @@
+{
+  "description": "Lua's # is a border, not a count: for a table with slots 1 and 3 written the borders are 1 and 3, so a #t >= 3 guard proves nothing about the hole at slot 2 and that read must stay optional. The border obligations run both ways: an explicitly written slot survives the guard, the border slot itself is occupied by definition so t[#t] on this table cannot be nil, and an opaque array whose border may be 0 keeps t[#t] optional.",
+  "files": ["main.lua"]
+}

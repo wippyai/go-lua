@@ -1,0 +1,4 @@
+{
+  "description": "A #s >= k guard is a length floor on a string, and the declared contract it discharges is positional optionality: string.byte returns integer? because the position may be past the end, so under #s >= 3 position 1 is present while position 4 still is not, and without the floor the string may be empty so even position 1 stays optional. The obligation belongs to the contract rather than to the position that consumes the result, so an annotated local and a nested argument carry it exactly as a bound argument does. string.sub is declared total and returns string with or without the guard; the guard adds nothing to it, and the length of the sub result is not expressible in the type language so nothing here claims it.",
+  "files": ["main.lua"]
+}

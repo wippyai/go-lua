@@ -1,0 +1,4 @@
+{
+  "description": "A counter incremented once per iteration alongside an unconditional buf[n] write establishes that the written prefix 1..n is dense, so a post-loop n >= 1 guard admits buf[1]. The invariant stops at the last written slot (buf[n+1] stays optional) and a conditional write inside the loop dissolves it (buf[1] stays optional when the count and the writes can disagree).",
+  "files": ["main.lua"]
+}

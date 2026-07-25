@@ -1,0 +1,4 @@
+{
+  "description": "An index term of the form i + k is proven in range from bounds on the term itself: i + 1 <= #xs with i >= 1 admits xs[i+1], and a negative offset takes its floor from the base, so i >= 2 with i <= #xs admits xs[i-1] and one guard covers a whole window. The offsets are exact: i + 1 <= #xs does not reach i + 2, and i >= 1 does not floor i - 1, so those reads stay optional.",
+  "files": ["main.lua"]
+}

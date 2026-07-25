@@ -1,0 +1,7 @@
+{
+  "description": "A closure that clears a captured field escapes through the table it is stored in: once an opaque sink receives the container the closure is reachable and may run at or after that call, so a later string-typed read of the captured field must be diagnosed. soundness/opaque-callback-capture pins the direct-argument form; this pins the transitive form and its contrast arm, where the container never leaves the function and the flow narrowing on the field survives.",
+  "files": ["main.lua"],
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "description": "A user-defined append writing t[#t + 1] carries a length effect across the call boundary: after one call on an empty array xs[1] is proven present, after two calls xs[2] is, and the effect is counted exactly, so reading one slot past the calls stays optional. The inline form of the same write is already proven by semantic/array-length-floor-index-read; this pins the interprocedural form.",
+  "files": ["main.lua"]
+}

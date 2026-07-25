@@ -1,0 +1,7 @@
+{
+  "description": "An unbounded increment loop preserves a counter's integer representation because integer addition is closed and overflow wraps inside the integer range, so a downstream integer annotation holds. What the loop never establishes is the counter's value: wraparound at the maximum integer destroys the initial floor, so neither an upper-bound guard nor a floor guard puts the counter in range afterwards. Representation drifts only through an arm that produces a float, and then the joined carrier is number, which is not an integer.",
+  "files": ["main.lua"],
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

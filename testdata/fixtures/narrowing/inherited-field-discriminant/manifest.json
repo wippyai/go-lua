@@ -1,0 +1,4 @@
+{
+  "description": "A field that lives only on a sealed __index prototype is still the instance's field: the inherited read is typed by the prototype, and a prototype-supplied literal tag discriminates the union the instance belongs to, so the arm's payload is readable after the tag test. Resolving through the chain is typing, not laundering: the inherited tag is a string and not a number, a field no link of the chain defines is absent, and a metatable supplies the tag but never the payload, so an instance missing its payload belongs to no arm. Sealing is what carries the proof: when __index is repointed after the instance is built, the base that supplied the payload is no longer the one a read resolves through and the read is optional again.",
+  "files": ["main.lua"]
+}
