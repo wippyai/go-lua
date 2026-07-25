@@ -1,0 +1,60 @@
+{
+  "description": "An integer dividend and a positive constant modulus bound the residue to [0, modulus-1], so (i % k) + 1 is a proven index into an array whose length floor is at least k: the element read publishes presence and reads T rather than T?. The bound is the whole proof, so it withdraws when the modulus exceeds the floor, when an offset moves the residue window past the floor, when the modulus is negative, or when the dividend can be a float.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "native": {
+      "facts": [
+        {
+          "name": "the residue-bounded read is proven present",
+          "lane": "values",
+          "family": "table_element",
+          "subject": "xs",
+          "value_contains": [
+            "presence=proven",
+            "result_nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "a modulus above the floor proves nothing",
+          "family": "table_element",
+          "subject": "zs",
+          "value_contains": [
+            "presence=proven"
+          ],
+          "max": 0
+        },
+        {
+          "name": "an offset past the floor proves nothing",
+          "family": "table_element",
+          "subject": "ws",
+          "value_contains": [
+            "presence=proven"
+          ],
+          "max": 0
+        },
+        {
+          "name": "a negative modulus proves nothing",
+          "family": "table_element",
+          "subject": "ns",
+          "value_contains": [
+            "presence=proven"
+          ],
+          "max": 0
+        },
+        {
+          "name": "a float dividend proves nothing",
+          "family": "table_element",
+          "subject": "fs",
+          "value_contains": [
+            "presence=proven"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  }
+}

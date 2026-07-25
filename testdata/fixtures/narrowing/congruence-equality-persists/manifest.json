@@ -1,0 +1,6 @@
+{
+  "description": "Proven path equality survives the condition that established it: p == q taken in an outer arm, or left standing by an early return out of the p ~= q path, carries a member narrowing exactly as the single-condition form does, and the transitive chain composes across arms. Soundness holds where equality does not: a reassigned target, a path the equality was never proven on, and the inequality arm all keep the read optional.",
+  "files": [
+    "main.lua"
+  ]
+}

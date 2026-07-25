@@ -1,0 +1,42 @@
+{
+  "description": "A residue guard is index information: intersecting i % 2 == 1 with 1 <= i <= 2 leaves the single value 1, which a length floor of one already covers, so the element read publishes presence. The intersection is the whole proof, so a residue class that still leaves a value above the floor, or a range with no residue guard at all, leaves the read optional.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "native": {
+      "facts": [
+        {
+          "name": "the residue-pinned read is proven present",
+          "lane": "values",
+          "family": "table_element",
+          "subject": "xs",
+          "value_contains": [
+            "presence=proven",
+            "result_nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "a residue class above the floor proves nothing",
+          "family": "table_element",
+          "subject": "zs",
+          "value_contains": [
+            "presence=proven"
+          ],
+          "max": 0
+        },
+        {
+          "name": "a range without a residue guard proves nothing",
+          "family": "table_element",
+          "subject": "ws",
+          "value_contains": [
+            "presence=proven"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  }
+}

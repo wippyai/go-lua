@@ -1,0 +1,25 @@
+{
+  "description": "A residue guard is a fact about the guarded path: inside x % 2 == 0 the value is in one residue class of the modulus, so the nested x % 2 == 1 test is decided false and its then arm is named dead. Naming the dead arm is strictly more information than partitioning the nested test as dynamic.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "native": {
+      "facts": [
+        {
+          "name": "the exclusive residue test partitions as always_not_taken",
+          "lane": "values",
+          "family": "branch_partition",
+          "value_contains": [
+            "dead_arm=then",
+            "dead_arm_reachable=false",
+            "partition=always_not_taken"
+          ],
+          "trust": "proven",
+          "min": 1
+        }
+      ]
+    }
+  }
+}

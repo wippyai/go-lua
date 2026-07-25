@@ -1,0 +1,42 @@
+{
+  "description": "An integer index wrapped by the array's own proven-positive length is in range by construction: (i % #xs) + 1 lands in [1, #xs], so the element read publishes presence and reads T rather than T?. The proof is tied to that array's length, so wrapping by another array's length or wrapping a float dividend leaves the read optional.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "native": {
+      "facts": [
+        {
+          "name": "the self-wrapped read is proven present",
+          "lane": "values",
+          "family": "table_element",
+          "subject": "xs",
+          "value_contains": [
+            "presence=proven",
+            "result_nilability=non_nil"
+          ],
+          "trust": "proven",
+          "min": 1
+        },
+        {
+          "name": "wrapping by another array's length proves nothing",
+          "family": "table_element",
+          "subject": "zs",
+          "value_contains": [
+            "presence=proven"
+          ],
+          "max": 0
+        },
+        {
+          "name": "a float dividend proves nothing",
+          "family": "table_element",
+          "subject": "fs",
+          "value_contains": [
+            "presence=proven"
+          ],
+          "max": 0
+        }
+      ]
+    }
+  }
+}

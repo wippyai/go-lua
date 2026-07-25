@@ -1,0 +1,6 @@
+{
+  "description": "Congruence over proven equality carries every narrowing, not only nil removal: p == q makes a discriminant test on either side select the same union arm on both, in both directions. The transfer is exactly as strong as the equality, so it withdraws where no equality is proven and where the read target is reassigned after it.",
+  "files": [
+    "main.lua"
+  ]
+}
