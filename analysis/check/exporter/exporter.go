@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -41,22 +42,22 @@ func Derive(result engine.Result) typ.Type {
 // DeriveSummary publishes only direct, unconditional return templates.
 func DeriveSummary(result engine.Result, source string) exportrelation.Summary {
 	export := Derive(result)
-	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, nil, nil)}
+	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, nil, nil)}
 }
 
 // DeriveSummaryWithImports forwards only an already-published import relation.
 func DeriveSummaryWithImports(result engine.Result, source string, imports map[string]exportrelation.Summary, aliases map[string]string) exportrelation.Summary {
 	export := Derive(result)
-	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, imports, aliases)}
+	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, imports, aliases)}
 }
 
-func deriveFunctions(source string, export typ.Type, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
+func deriveFunctions(source string, export typ.Type, escapes map[string][]signature.ParamRelation, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
 	stmts, ok := parseFunctionStatements(source)
 	if !ok {
 		return nil
 	}
 	scope := trackFunctionScope(stmts)
-	return functionRelations(scope, returnedModuleRoots(stmts), export, imports, aliases)
+	return functionRelations(scope, returnedModuleRoots(stmts), export, escapes, imports, aliases)
 }
 
 func parseFunctionStatements(source string) ([]ast.Stmt, bool) {
@@ -158,7 +159,7 @@ func trackFunctionScope(stmts []ast.Stmt) functionScope {
 	return scope
 }
 
-func functionRelations(scope functionScope, roots map[string]bool, export typ.Type, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
+func functionRelations(scope functionScope, roots map[string]bool, export typ.Type, escapes map[string][]signature.ParamRelation, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
 	paths := make([]string, 0, len(scope.functions)+len(scope.stores))
 	for path := range scope.functions {
 		paths = append(paths, path)
@@ -181,7 +182,7 @@ func functionRelations(scope functionScope, roots map[string]bool, export typ.Ty
 			})
 			continue
 		}
-		if relation, ok := functionRelation(relative, scope.functions[path], imports, aliases); ok && publishedFunction(export, relative, relation.Arity) {
+		if relation, ok := functionRelation(relative, scope.functions[path], escapes[relative], imports, aliases); ok && publishedFunction(export, relative, relation.Arity) {
 			out = append(out, relation)
 		}
 	}
@@ -281,7 +282,7 @@ func memberPath(expr ast.Expr) (string, bool) {
 	}
 }
 
-func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Function, bool) {
+func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.ParamRelation, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Function, bool) {
 	if fn == nil || fn.ParList == nil || fn.ParList.HasVargs {
 		return exportrelation.Function{}, false
 	}
@@ -294,7 +295,7 @@ func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]expo
 		relation.Store = store
 		return relation, relation.Valid()
 	}
-	if store, ok := moduleCaptureStoreRelation(fn, params); ok {
+	if store, ok := escapeStoreRelation(escapes, relation.Arity); ok {
 		relation.Store = store
 		return relation, relation.Valid()
 	}
@@ -330,7 +331,46 @@ func functionRelation(path string, fn *ast.FunctionExpr, imports map[string]expo
 		relation.Conditional = conditional
 		return relation, relation.Valid()
 	}
+	if borrow, ok := escapeBorrowParameters(escapes, relation.Arity); ok {
+		relation.Borrow = borrow
+		return relation, relation.Valid()
+	}
 	return exportrelation.Function{}, false
+}
+
+// escapeStoreRelation reads the engine's per-parameter escape summary for one
+// exported body. A parameter classified EscapeStore (or EscapeRetain) escaped
+// into module state, so the whole parameter graph is retained past the caller
+// frame exactly like an escaping-root ownership.store. The disposition is the
+// abstract interpretation's own conclusion, not a source spelling.
+func escapeStoreRelation(escapes []signature.ParamRelation, arity int) (*exportrelation.OwnershipStore, bool) {
+	for _, relation := range escapes {
+		if relation.Param < 0 || relation.Param >= arity {
+			continue
+		}
+		switch relation.EscapeClass {
+		case signature.EscapeStore, signature.EscapeRetain:
+			return &exportrelation.OwnershipStore{Value: relation.Param, EscapingRoot: true}, true
+		}
+	}
+	return nil, false
+}
+
+// escapeBorrowParameters reads the engine's per-parameter escape summary and
+// returns the formal positions classified EscapeBorrow. A borrow is proven only
+// when the evaluated body published no owned, shared, opaque-call, or return
+// escape for that parameter, so each borrowed argument stays frame-local at the
+// caller.
+func escapeBorrowParameters(escapes []signature.ParamRelation, arity int) ([]int, bool) {
+	var borrow []int
+	for _, relation := range escapes {
+		if relation.Param < 0 || relation.Param >= arity || relation.EscapeClass != signature.EscapeBorrow {
+			continue
+		}
+		borrow = append(borrow, relation.Param)
+	}
+	sort.Ints(borrow)
+	return borrow, len(borrow) != 0
 }
 
 func multiReturnTuples(tuples []exportrelation.ReturnTuple) bool {
@@ -478,44 +518,6 @@ func ownershipStoreRelation(fn *ast.FunctionExpr, params map[string]int) (*expor
 		return nil, false
 	}
 	return &exportrelation.OwnershipStore{Value: valueIndex, Owner: ownerIndex}, true
-}
-
-// moduleCaptureStoreRelation admits a single-statement wrapper whose sole
-// effect writes a whole parameter into a container that has no allocation in
-// its own frame. Because the wrapper is one assignment, the container base is
-// necessarily a free identifier -- a module-captured local or a global -- so
-// the stored graph escapes into module state and is retained past the caller
-// frame exactly like a positional ownership.store. Writing a projection rather
-// than the whole parameter, or writing into a parameter, is not this escape and
-// is rejected.
-func moduleCaptureStoreRelation(fn *ast.FunctionExpr, params map[string]int) (*exportrelation.OwnershipStore, bool) {
-	if fn == nil || len(fn.Stmts) != 1 {
-		return nil, false
-	}
-	assign, ok := fn.Stmts[0].(*ast.AssignStmt)
-	if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
-		return nil, false
-	}
-	target, ok := assign.Lhs[0].(*ast.AttrGetExpr)
-	if !ok {
-		return nil, false
-	}
-	container, ok := target.Object.(*ast.IdentExpr)
-	if !ok {
-		return nil, false
-	}
-	if _, isParam := params[container.Value]; isParam {
-		return nil, false
-	}
-	value, ok := assign.Rhs[0].(*ast.IdentExpr)
-	if !ok {
-		return nil, false
-	}
-	index, ok := params[value.Value]
-	if !ok {
-		return nil, false
-	}
-	return &exportrelation.OwnershipStore{Value: index, EscapingRoot: true}, true
 }
 
 func forwardedImportedReturn(expr ast.Expr, params map[string]int, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Value, bool) {
