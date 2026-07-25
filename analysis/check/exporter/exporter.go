@@ -642,10 +642,63 @@ func deriveValue(value []byte, candidate string, result engine.Result, order map
 				return typ.Unknown
 			}
 		}
+		enrichInferredMemberReturns(fields, result.ValueFacts)
 		return buildRecord(fields)
 	}
 	return scalarType(value)
 }
+
+// enrichInferredMemberReturns attaches an exported member closure's engine
+// inferred return to a function field that declared none. The engine published
+// exactly one summary per returned member suffix; a declared return keeps the
+// closure's own canonical signature and is left untouched here.
+func enrichInferredMemberReturns(fields map[fieldKey]typ.Type, valueFacts []equation.Fact) {
+	var summaries map[string][]byte
+	for _, fact := range valueFacts {
+		if !strings.HasPrefix(fact.Key, returnMemberSummaryFieldPrefix) {
+			continue
+		}
+		name := strings.TrimPrefix(fact.Key, returnMemberSummaryFieldPrefix)
+		if name == "" || strings.ContainsAny(name, ".[]") {
+			continue
+		}
+		if summaries == nil {
+			summaries = make(map[string][]byte)
+		}
+		summaries[name] = fact.Value
+	}
+	if summaries == nil {
+		return
+	}
+	for key, current := range fields {
+		if key.kind != segment.SegmentField {
+			continue
+		}
+		encoded, ok := summaries[key.name]
+		if !ok {
+			continue
+		}
+		function, ok := unwrap.Alias(current).(*typ.Function)
+		if !ok || function == nil || len(function.Returns) != 0 || function.Variadic != nil {
+			continue
+		}
+		returnType, err := typ.DecodeCanonicalStructural(context.Background(), encoded)
+		if err != nil || returnType == nil {
+			continue
+		}
+		fields[key] = typ.RebuildFunction(typ.FunctionParts{
+			TypeParams: function.TypeParams,
+			Params:     function.Params,
+			Variadic:   function.Variadic,
+			Returns:    []typ.Type{returnType},
+		})
+	}
+}
+
+// returnMemberSummaryFieldPrefix selects only named-field member summaries. The
+// engine publishes each summary under the member's formatted suffix, so a
+// record field name follows the leading dot.
+const returnMemberSummaryFieldPrefix = "return-member-summary/."
 
 func hasDynamicMutation(artifact equation.Artifact, root, candidate string, order map[string]int) bool {
 	returnOrder, exists := order[candidate]

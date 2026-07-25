@@ -72,6 +72,7 @@ const epochFactPrefix = "epoch/"
 
 const summaryTypePrefix = "summary-type/"
 const methodReturnSummaryPrefix = "method-return-summary/"
+const returnMemberSummaryPrefix = "return-member-summary/"
 const assignmentMapReadMissingPrefix = "assignment-map-read-missing/v1/"
 const channelPayloadPrefix = "channel-payload/"
 const iteratorElementPrefix = "iterator-element/"
@@ -451,6 +452,11 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		}
 		placement.HoistableLoads = append(placement.HoistableLoads, PlacementHoistableLoad{Target: item.Fact.Key})
 	}
+	// A returned member closure with an undeclared but statically finite return
+	// carries that inferred summary to importers through the module export. The
+	// producer owns this projection: the child body it infers from is available
+	// only here, never at a downstream consumer.
+	closure.Values = append(closure.Values, inferredReturnMemberSummaries(lexical, closure.Values)...)
 	outcomes, valueFacts := publishedOutcomes(closure.Outcomes, closure.Values), cloneFacts(closure.Values)
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
@@ -18251,7 +18257,19 @@ func inferredLocalCallableResultType(lexical *lexicalEvaluator, callee []byte, i
 		return nil, false
 	}
 	handle, local := closureHandleFor(callee, partition)
-	if !local || len(handle.Captures) != 0 {
+	if !local {
+		return nil, false
+	}
+	return inferredClosureResultAtIndex(lexical, handle, index)
+}
+
+// inferredClosureResultAtIndex retains a finite union only when every return
+// candidate at this slot is already a sealed literal shape in the callee's
+// child artifact. It is the handle-keyed core shared by the direct-call result
+// owner and the module export projection; both hold an already-resolved local
+// closure handle rather than a call-site callee spelling.
+func inferredClosureResultAtIndex(lexical *lexicalEvaluator, handle closureHandle, index int) (typ.Type, bool) {
+	if lexical == nil || index < 0 || len(handle.Captures) != 0 {
 		return nil, false
 	}
 	child, found := lexical.byPrototype[handle.Prototype]
@@ -18295,6 +18313,92 @@ func inferredLocalCallableResultType(lexical *lexicalEvaluator, callee []byte, i
 		return nil, false
 	}
 	return typ.MaterializeUnion(returns), true
+}
+
+// inferredClosureSingleReturn publishes a module-exported local closure's
+// inferred first return only when the closure returns a single value at every
+// return site. A multi-value return is fail-closed here: the export function
+// slot vocabulary this feeds carries one summary per member, so a partial
+// arity would misstate the exported signature. Declared returns never reach
+// this path; they already ride the closure's canonical signature.
+func inferredClosureSingleReturn(lexical *lexicalEvaluator, handle closureHandle) (typ.Type, bool) {
+	child, found := lexical.byPrototype[handle.Prototype]
+	if lexical == nil || len(handle.Captures) != 0 || !found || child.Cyclic != nil {
+		return nil, false
+	}
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "publication" {
+			continue
+		}
+		if _, multi := artifactOperand(operation.Operands, "return-value-00000001"); multi {
+			return nil, false
+		}
+	}
+	return inferredClosureResultAtIndex(lexical, handle, 0)
+}
+
+// inferredReturnMemberSummaries projects the inferred first-return type of each
+// returned member closure. The return kernel already published the member
+// suffix and its resolved local closure handle; this reuses the direct-call
+// inference so a module export can carry an undeclared but statically finite
+// return union to its importers. It is fail-closed: a member without an
+// inferable single return publishes nothing.
+func inferredReturnMemberSummaries(lexical *lexicalEvaluator, values []equation.Fact) []equation.Fact {
+	if lexical == nil {
+		return nil
+	}
+	type summaryEntry struct {
+		encoded  []byte
+		conflict bool
+	}
+	bySuffix := make(map[string]*summaryEntry)
+	order := make([]string, 0)
+	poison := func(suffix string) {
+		if entry, seen := bySuffix[suffix]; seen {
+			entry.conflict = true
+			return
+		}
+		bySuffix[suffix] = &summaryEntry{conflict: true}
+		order = append(order, suffix)
+	}
+	for _, fact := range values {
+		if !strings.HasPrefix(fact.Key, "return-member-closure/") {
+			continue
+		}
+		var wire memberClosureWire
+		if json.Unmarshal(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
+			continue
+		}
+		returnType, ok := inferredClosureSingleReturn(lexical, wire.Handle)
+		if !ok || returnType == nil {
+			// A member that cannot be inferred at one return site must never be
+			// asserted from another site's arm.
+			poison(wire.Suffix)
+			continue
+		}
+		encoded, err := typ.EncodeCanonical(context.Background(), returnType)
+		if err != nil {
+			poison(wire.Suffix)
+			continue
+		}
+		if entry, seen := bySuffix[wire.Suffix]; seen {
+			if entry.conflict || !bytes.Equal(entry.encoded, encoded) {
+				entry.conflict = true
+			}
+			continue
+		}
+		bySuffix[wire.Suffix] = &summaryEntry{encoded: encoded}
+		order = append(order, wire.Suffix)
+	}
+	var out []equation.Fact
+	for _, suffix := range order {
+		entry := bySuffix[suffix]
+		if entry.conflict || len(entry.encoded) == 0 {
+			continue
+		}
+		out = append(out, equation.Fact{Key: returnMemberSummaryPrefix + suffix, Value: entry.encoded})
+	}
+	return out
 }
 
 // typedCallableResultValue consumes a direct callee's exact canonical
@@ -20861,6 +20965,20 @@ func closedMethodSurface(value typ.Type) bool {
 	}
 }
 
+// decodeSummaryType reconstructs a published summary type. A summary is a
+// closed structural narrowing hint, not a declaration-identity authority, so a
+// recursive graph (for example an imported recursive union alias) is restored
+// through the structural decoder. The strict decoder is tried first: it keeps
+// the exact-representative round-trip guarantee for every non-recursive
+// summary, and only its explicit recursive-identity signal falls through.
+func decodeSummaryType(encoded []byte) (typ.Type, error) {
+	decoded, err := typ.DecodeCanonical(context.Background(), encoded)
+	if err != nil && errors.Is(err, typ.ErrCanonicalRecursiveIdentityUnavailable) {
+		return typ.DecodeCanonicalStructural(context.Background(), encoded)
+	}
+	return decoded, err
+}
+
 func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment.Segment, typ.Type, bool) {
 	path := strings.TrimPrefix(string(term), "path/")
 	if path == string(term) {
@@ -20895,7 +21013,7 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 			}
 		}
 		if encoded, found := currentEpochFact(summaryTypePrefix, rootTerm, partition); found {
-			typeValue, decodeErr := typ.DecodeCanonical(context.Background(), encoded)
+			typeValue, decodeErr := decodeSummaryType(encoded)
 			if decodeErr == nil && typeValue != nil {
 				return rootTerm, segs, typeValue, true
 			}
