@@ -107,6 +107,7 @@ const (
 	heapIndexLowerPrefix       = "heap/index-lower/"
 	heapIndexUpperPrefix       = "heap/index-upper/"
 	heapLengthFloorPrefix      = "heap/length-floor/"
+	heapTableEscapePrefix      = "heap/table-escape/"
 	indexReadDisplayPrefix     = "index-read-display/"
 	indexReadScalarPrefix      = "index-read-scalar/"
 	typedOptionalReadPrefix    = "typed-optional-read/"
@@ -7340,12 +7341,19 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	}
 	returns, err := childReturnValues(closure, !childHasSelect(child))
 	if err != nil {
-		// A select evaluates every feasible arm, so its branch-local return
-		// tuples cannot be collapsed into one caller result slot here. Its
-		// completed allocation facts are independent of that tuple transport and
-		// may still cross this exact invocation boundary.
-		if errors.Is(err, errMultipleChildReturnAlternatives) && childHasSelect(child) {
-			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: placementFactsFromChild(closure.Values)}}, nil
+		// The return tuples cannot be collapsed into one caller result slot: a
+		// select evaluates every feasible arm, and an ordinary body can return
+		// divergent values on different edges. The completed allocation facts and
+		// the child's own diagnostics are independent of that tuple transport, so
+		// both still cross this invocation boundary while the caller result stays
+		// Top. A select carries its diagnostics through its own uncalled pass.
+		if errors.Is(err, errMultipleChildReturnAlternatives) {
+			result := equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: placementFactsFromChild(closure.Values)}}
+			if !childHasSelect(child) {
+				result.Closure.Values = append(result.Closure.Values, l.capturedMemberWriteInvalidations(handle, operation.Target.Name, partition)...)
+				l.projectChildDiagnostics(&result.Closure, operation, operands, child, handle, closure, partition)
+			}
+			return result, nil
 		}
 		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
 	}
@@ -14566,11 +14574,90 @@ func lengthFloorProven(container []byte, partition equation.Partition) int64 {
 	return floor
 }
 
-// provenSequenceIndexValue reads a constant sequence index that a proven length
-// lower bound puts in range. The declared element type is the value of such a
-// read: the optional the ordinary projection returns describes the slot's
-// possible absence, and the bound is exactly the proof that it is present. An
-// element type that is itself optional keeps its own nil.
+// opaqueCalleeEffect reports that the callee's effect on its arguments is not
+// proven read-only: an any/unknown-typed callee has no body or contract this
+// analysis can read, so a table it receives may be mutated or shrunk. A callee
+// with a concrete declared type keeps its argument proofs; only the top-like
+// contract admits an unmodeled effect.
+func opaqueCalleeEffect(callee []byte, partition equation.Partition) bool {
+	declared, found := declaredTypeForTerm(callee, partition)
+	return found && typ.IsTopLike(declared)
+}
+
+// opaqueEscapeRevocations invalidates the length-floor and in-bounds element
+// proofs each table argument still carries when it escapes into an opaque
+// callee. The index revocation reuses the identity a dynamic write publishes,
+// so both the length-floor and the presence proof drop and aliases observe the
+// same transition. The distinct escape marker records that the sequence border
+// may have moved rather than merely been overwritten: a constant read past the
+// now-stale floor reflects the array's optional element, where a plain write
+// only leaves the border unproven. It emits nothing for an argument that holds
+// no such proof to revoke.
+func opaqueEscapeRevocations(operation equation.BoundEquation, arguments [][]byte, partition equation.Partition) []equation.Fact {
+	var facts []equation.Fact
+	for _, argument := range arguments {
+		if !strings.HasPrefix(string(argument), "path/") {
+			continue
+		}
+		if !heapContainerHasIndexProof(argument, partition) {
+			continue
+		}
+		subject := heapIndexSubject(argument, partition)
+		facts = append(facts,
+			equation.Fact{Key: heapIndexRevokePrefix + subject + "/" + operation.Target.Name, Value: []byte("revoked")},
+			equation.Fact{Key: heapTableEscapePrefix + subject + "/" + operation.Target.Name, Value: []byte("escaped")},
+		)
+	}
+	return facts
+}
+
+// containerTableEscaped reports that an opaque callee received this container,
+// so a length-floor proof no longer bounds its live sequence. It is the single
+// reader of the escape marker; a plain dynamic write publishes no such marker.
+func containerTableEscaped(container []byte, partition equation.Partition) bool {
+	prefix := heapTableEscapePrefix + heapIndexSubject(container, partition) + "/"
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "escaped" {
+			return true
+		}
+	}
+	return false
+}
+
+// heapContainerHasIndexProof reports whether the container currently holds a
+// length-floor or in-bounds element presence proof that a later escape would
+// leave stale. Both proof families share the same revocation subject.
+func heapContainerHasIndexProof(container []byte, partition equation.Partition) bool {
+	if lengthFloorProven(container, partition) > 0 {
+		return true
+	}
+	subject := heapIndexSubject(container, partition)
+	presencePrefix := heapIndexPresencePrefix + subject + "/"
+	revokePrefix := heapIndexRevokePrefix + subject + "/"
+	revocation := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, revokePrefix) && string(fact.Value) == "revoked" && fact.Key > revocation {
+			revocation = fact.Key
+		}
+	}
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, presencePrefix) && string(fact.Value) == "proven" &&
+			(revocation == "" || factOperation(fact.Key) > factOperation(revocation)) {
+			return true
+		}
+	}
+	return false
+}
+
+// provenSequenceIndexValue reads a constant sequence index against a known
+// array element type. A proven length lower bound puts the index in range and
+// the element present, so the current array value's element type is the read.
+// Once an opaque callee has received the container, that bound is stale: the
+// sequence border may have moved and the concrete slot the callee could have
+// cleared no longer proves presence, so the read reflects the array's optional
+// element instead, taken from the declared contract when the live value no
+// longer decodes to an array. An element type that is itself optional keeps its
+// own nil.
 func provenSequenceIndexValue(term []byte, partition equation.Partition) ([]byte, bool) {
 	root, suffix, valid := tableAddress(term)
 	if !valid || suffix == "" {
@@ -14585,22 +14672,47 @@ func provenSequenceIndexValue(term []byte, partition equation.Partition) ([]byte
 		return nil, false
 	}
 	container := append(append([]byte(nil), root...), []byte(segment.FormatSegments(segments[:len(segments)-1]))...)
-	if int64(last.Index) > lengthFloorProven(container, partition) {
-		return nil, false
+	if int64(last.Index) <= lengthFloorProven(container, partition) {
+		value, err := resolveCurrentValue(container, partition)
+		if err != nil {
+			return nil, false
+		}
+		witness, decoded := shapefact.DecodeTarget(value)
+		if !decoded {
+			return nil, false
+		}
+		array, ok := unwrap.Alias(subst.ExpandInstantiated(witness)).(*typ.Array)
+		if !ok || array == nil || array.Element == nil {
+			return nil, false
+		}
+		return shapefact.EncodeTarget(array.Element)
 	}
-	value, err := resolveCurrentValue(container, partition)
-	if err != nil {
-		return nil, false
+	if containerTableEscaped(container, partition) {
+		if element, ok := containerArrayElement(container, partition); ok {
+			return shapefact.EncodeTarget(typ.MaterializeOptional(element))
+		}
 	}
-	witness, decoded := shapefact.DecodeTarget(value)
-	if !decoded {
-		return nil, false
+	return nil, false
+}
+
+// containerArrayElement resolves the array element type of a container from its
+// current value when that value still decodes to an array, or from its declared
+// contract otherwise. A container an opaque callee has cleared keeps its
+// declared element type as the remaining authority.
+func containerArrayElement(container []byte, partition equation.Partition) (typ.Type, bool) {
+	if value, err := resolveCurrentValue(container, partition); err == nil {
+		if witness, decoded := shapefact.DecodeTarget(value); decoded {
+			if array, ok := unwrap.Alias(subst.ExpandInstantiated(witness)).(*typ.Array); ok && array != nil && array.Element != nil {
+				return array.Element, true
+			}
+		}
 	}
-	array, ok := unwrap.Alias(subst.ExpandInstantiated(witness)).(*typ.Array)
-	if !ok || array == nil || array.Element == nil {
-		return nil, false
+	if declared, ok := declaredTypeForTerm(container, partition); ok {
+		if array, ok := unwrap.Alias(subst.ExpandInstantiated(declared)).(*typ.Array); ok && array != nil && array.Element != nil {
+			return array.Element, true
+		}
 	}
-	return shapefact.EncodeTarget(array.Element)
+	return nil, false
 }
 
 // runtimeTypeValidationProves consumes only the fact emitted by a true edge
@@ -15062,6 +15174,11 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// application does not evaluate would otherwise keep refuting. They publish
 	// with the call's other completed outputs so the revocation shares its epoch.
 	var captureInvalidations []equation.Fact
+	// escapeRevocations invalidate the length-floor and in-bounds element proofs
+	// a table argument still carries when an any/unknown-typed callee receives it:
+	// the callee's effect is not proven read-only, so it may shrink or mutate the
+	// sequence and any bound established before the call proves nothing after it.
+	var escapeRevocations []equation.Fact
 	defer func() {
 		if err == nil && result.Complete {
 			result.Closure.Values = append(result.Closure.Values, placementFacts...)
@@ -15069,6 +15186,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			result.Closure.Values = append(result.Closure.Values, argumentFacts...)
 			result.Closure.Values = append(result.Closure.Values, assertionFacts...)
 			result.Closure.Values = append(result.Closure.Values, captureInvalidations...)
+			result.Closure.Values = append(result.Closure.Values, escapeRevocations...)
 		}
 	}()
 	if closure, recognized, freezeErr := freezeCallEpoch(operation, partition); freezeErr != nil {
@@ -15263,6 +15381,9 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 				typedMethodSignature, typedMethodContract = signature, true
 			}
 		}
+	}
+	if hasCallee && !localCallable && opaqueCalleeEffect(operands.callee, partition) {
+		escapeRevocations = opaqueEscapeRevocations(operation, operands.arguments, partition)
 	}
 	parameterOffset := 0
 	if !hasCallee {
