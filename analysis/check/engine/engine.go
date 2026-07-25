@@ -21512,7 +21512,20 @@ func uniformLiteralBase(values []typ.Type) (typ.Type, bool) {
 	}
 }
 
+// typeArgPair names one expected/actual pairing the unifier is deciding. A
+// declared type graph is cyclic for recursive declarations, so the walk keeps
+// the pairs on its current path and reads a repeat coinductively, exactly as
+// structural equality does.
+type typeArgPair struct {
+	expected typ.Type
+	actual   typ.Type
+}
+
 func inferImportedTypeArgs(expected, actual typ.Type, params map[string]bool, bindings map[string]typ.Type) bool {
+	return inferTypeArgsDeciding(expected, actual, params, bindings, map[typeArgPair]bool{})
+}
+
+func inferTypeArgsDeciding(expected, actual typ.Type, params map[string]bool, bindings map[string]typ.Type, deciding map[typeArgPair]bool) bool {
 	expected = unwrap.Alias(subst.ExpandInstantiated(expected))
 	actual = unwrap.Alias(subst.ExpandInstantiated(actual))
 	if expected == nil || actual == nil {
@@ -21531,6 +21544,12 @@ func inferImportedTypeArgs(expected, actual typ.Type, params map[string]bool, bi
 		bindings[parameter.Name] = actual
 		return true
 	}
+	pair := typeArgPair{expected: expected, actual: actual}
+	if deciding[pair] {
+		return true
+	}
+	deciding[pair] = true
+	defer delete(deciding, pair)
 	switch want := expected.(type) {
 	case *typ.Record:
 		got, ok := actual.(*typ.Record)
@@ -21539,7 +21558,7 @@ func inferImportedTypeArgs(expected, actual typ.Type, params map[string]bool, bi
 		}
 		for _, field := range want.Fields {
 			actualField := got.GetField(field.Name)
-			if actualField == nil || field.Type == nil || !inferImportedTypeArgs(field.Type, actualField.Type, params, bindings) {
+			if actualField == nil || field.Type == nil || !inferTypeArgsDeciding(field.Type, actualField.Type, params, bindings, deciding) {
 				return false
 			}
 		}
@@ -21561,25 +21580,82 @@ func inferImportedTypeArgs(expected, actual typ.Type, params map[string]bool, bi
 					continue
 				}
 			}
-			if !inferImportedTypeArgs(want.Params[i].Type, got.Params[i].Type, params, bindings) {
+			if !inferTypeArgsDeciding(want.Params[i].Type, got.Params[i].Type, params, bindings, deciding) {
 				return false
 			}
 		}
 		for i := range want.Returns {
-			if !inferImportedTypeArgs(want.Returns[i], got.Returns[i], params, bindings) {
+			if !inferTypeArgsDeciding(want.Returns[i], got.Returns[i], params, bindings, deciding) {
 				return false
 			}
 		}
 		return true
 	case *typ.Array:
 		got, ok := actual.(*typ.Array)
-		return ok && inferImportedTypeArgs(want.Element, got.Element, params, bindings)
+		return ok && inferTypeArgsDeciding(want.Element, got.Element, params, bindings, deciding)
 	case *typ.Optional:
 		got, ok := actual.(*typ.Optional)
-		return ok && inferImportedTypeArgs(want.Inner, got.Inner, params, bindings)
+		return ok && inferTypeArgsDeciding(want.Inner, got.Inner, params, bindings, deciding)
+	case *typ.Union:
+		got, ok := actual.(*typ.Union)
+		return ok && inferUnionTypeArgs(want, got, params, bindings, deciding)
 	default:
 		return typ.TypeEquals(expected, actual)
 	}
+}
+
+// inferUnionTypeArgs pairs the arms of a generic union parameter with the arms
+// of the argument union it is unified against. Union members are unordered, so
+// a positional walk would bind a type parameter from whichever arm happened to
+// be declared first. Instead an arm is committed only while exactly one
+// unmatched actual arm unifies with it; an ambiguous or unmatched arm leaves
+// every binding untouched and the instantiation fail-closed.
+func inferUnionTypeArgs(want, got *typ.Union, params map[string]bool, bindings map[string]typ.Type, deciding map[typeArgPair]bool) bool {
+	if len(want.Members) != len(got.Members) {
+		return false
+	}
+	pending := append(make([]typ.Type, 0, len(want.Members)), want.Members...)
+	matched := make([]bool, len(got.Members))
+	for len(pending) > 0 {
+		committed := false
+		for index, member := range pending {
+			selected := -1
+			var proven map[string]typ.Type
+			for position, arm := range got.Members {
+				if matched[position] {
+					continue
+				}
+				trial := make(map[string]typ.Type, len(bindings))
+				for name, bound := range bindings {
+					trial[name] = bound
+				}
+				if !inferTypeArgsDeciding(member, arm, params, trial, deciding) {
+					continue
+				}
+				if selected >= 0 {
+					// Two arms accept this member. A later member may still
+					// claim one of them, so defer rather than guess.
+					selected = -1
+					break
+				}
+				selected, proven = position, trial
+			}
+			if selected < 0 {
+				continue
+			}
+			matched[selected] = true
+			for name, bound := range proven {
+				bindings[name] = bound
+			}
+			pending = append(pending[:index], pending[index+1:]...)
+			committed = true
+			break
+		}
+		if !committed {
+			return false
+		}
+	}
+	return true
 }
 
 type moduleProviderWire struct {
