@@ -1,0 +1,5 @@
+{
+  "description": "A concat result inherits the any boundary of its operands, so it cannot satisfy a concrete string contract; proven operands, tostring, and a concrete cast remain clean.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

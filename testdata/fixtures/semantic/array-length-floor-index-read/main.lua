@@ -46,7 +46,9 @@ end
 local function escaped_after_unknown_writer(arr: {string}): string
     if #arr >= 1 then
         local unknown_writer = (function(_) end) :: any
-        unknown_writer(arr)
+        -- The writer is declared any, so the application itself is unproven:
+        -- callability is a concrete requirement the boundary never discharged.
+        unknown_writer(arr) -- expect-error
         local stale: string = arr[1] -- expect-error
         return stale
     end

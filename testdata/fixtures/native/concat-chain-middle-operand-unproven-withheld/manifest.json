@@ -1,7 +1,7 @@
 {
-  "description": "One unproven interior operand withholds the whole concat site row: a flattened site is one aggregate judgment, never a partial grant over the provable operands.",
+  "description": "One unproven interior operand withholds the whole concat site row: a flattened site is one aggregate judgment, never a partial grant over the provable operands. The result carries that operand's any boundary, so the declared string return is refuted.",
   "check": {
-    "errors": 0,
+    "errors": 1,
     "native": {
       "facts": [
         {

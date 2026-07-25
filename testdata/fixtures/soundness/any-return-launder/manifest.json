@@ -1,0 +1,5 @@
+{
+  "description": "An any-sourced return value cannot satisfy a concrete declared return type; a top return, a runtime type test, and a concrete cast remain clean.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

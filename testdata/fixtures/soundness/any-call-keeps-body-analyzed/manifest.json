@@ -1,0 +1,5 @@
+{
+  "description": "A call through an any value is refuted as not proven callable, and the body stays analyzed so its other obligations still publish; a runtime type test and a declared callable formal remain clean.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

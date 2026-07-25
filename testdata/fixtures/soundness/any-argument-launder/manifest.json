@@ -1,0 +1,5 @@
+{
+  "description": "An any-sourced argument cannot discharge a concrete declared parameter type; a top parameter, a runtime type test, and a concrete cast remain clean.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

@@ -1,0 +1,5 @@
+{
+  "description": "An any-sourced record field cannot discharge a concrete declared field type; a top-typed field, a runtime type test, and a concrete cast remain clean.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

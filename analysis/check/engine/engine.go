@@ -1319,6 +1319,23 @@ func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation
 	if !declaredSpan.Valid() {
 		declaredSpan = item.Span
 	}
+	// A boundary refutation states a missing proof, not an observed value. Its
+	// evidence names the unvalidated source rather than a literal the body
+	// never established.
+	if strings.Contains(item.Message, "comes from any/unknown") {
+		item.Evidence = []DiagnosticEvidence{
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type any", subject)},
+			{Span: declaredSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("returned value %d must satisfy declared return type %s", index+1, declared)},
+			{Span: item.Span, Kind: "unvalidated value", Trust: "unknown", Reason: "explicit boundary validation", Message: fmt.Sprintf("%s comes from any/unknown", subject)},
+			{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s is %s", subject, declared)},
+		}
+		item.Labels = []DiagnosticLabel{
+			{Span: item.Span, Message: "returned value any"},
+			{Span: declaredSpan, Message: "declared return type " + declared},
+		}
+		item.Help = fmt.Sprintf("Validate or narrow the returned value before returning it; any/unknown values do not prove the declared return type %s.", declared)
+		return item
+	}
 	valueEvidence := fmt.Sprintf("%s has literal value %s", subject, returnContractObservedValue(item.Message, subject))
 	if strings.Contains(item.Message, " may be nil, not ") {
 		valueEvidence = fmt.Sprintf("%s can be nil here", subject)
@@ -7441,6 +7458,17 @@ func uncalledSealedTableCapture(term, value []byte, partition equation.Partition
 	return identified
 }
 
+// closedAnyFormalObligation names the contract families a body decides from an
+// entirely explicit-any formal boundary. Every formal already holds the widest
+// value the declaration permits, so an assignment, argument, callability, or
+// return contract refuted against it cannot be discharged by any caller.
+func closedAnyFormalObligation(key string) bool {
+	return strings.HasPrefix(key, "type.call.direct.argument_type/") ||
+		strings.HasPrefix(key, "type.call.direct.not_callable/") ||
+		strings.HasPrefix(key, "type.return.contract/") ||
+		strings.HasPrefix(key, "type.assignment/")
+}
+
 // uncalledExplicitAnyDiagnostic retains only strict assignment contracts. A
 // runtime claim may validate an any value only along an invoked path, but an
 // annotation assignment is a source-owned obligation at the closed boundary.
@@ -9247,22 +9275,34 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		body := fmt.Sprintf("%x", child.Body)
 		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
 		claimOwnedReads := claimConsumedStaticReads(child.Artifact)
-		for _, diagnostic := range outcome.Diagnostics {
+		// A body whose entire formal boundary is declared explicit any is decided
+		// at allocation time whichever lane admitted it: no caller value can be
+		// more precise than the declared any. Its argument and return contract
+		// refutations are therefore source-owned obligations, exactly like the
+		// assignment contract, rather than demand-driven ones.
+		_, closedAnyFormalBoundary := uncalledExplicitAnyBoundary(child)
+		// laneWithholds states the admission lane's own diagnostic surface. Each
+		// lane names the exact families its entry can discharge; a family with no
+		// admission reason stays dormant until a concrete call path supplies one.
+		laneWithholds := func(diagnostic equation.Fact) bool {
 			if claimOwnedReads[strings.TrimPrefix(diagnostic.Key, "type.member.missing/")] && strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
-				continue
+				return true
+			}
+			if closedAnyFormalBoundary && closedAnyFormalObligation(diagnostic.Key) {
+				return false
 			}
 			// An allocation-time any boundary can prove only a strict assignment
 			// contract lacks validation. Other child diagnostics still require a
 			// concrete call path, since a cast or operation may establish their
 			// proof before that path reaches publication.
 			if explicitAnyBoundary && !uncalledExplicitAnyDiagnostic(child.Artifact, diagnostic) {
-				continue
+				return true
 			}
 			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(diagnostic) {
-				continue
+				return true
 			}
 			if gradualLogicalBoundary && !strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/") {
-				continue
+				return true
 			}
 			// A declaration-only entry is sufficient for a member that is absent
 			// from a reachable declared union arm. Other obligations may depend on
@@ -9275,33 +9315,39 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) &&
 				(!declaredComparisonBoundary || !declaredOrderedComparisonDiagnostic(declaredComparisonOperations, diagnostic.Key)) &&
 				!uncalledDeclaredProviderResultDiagnostic(child, diagnostic.Key) {
-				continue
+				return true
 			}
 			if staticMemberReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
-				continue
+				return true
 			}
 			if staticAssignmentBoundary && !lexical.uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key, partition) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, diagnostic) && !uncalledStaticResultCallDiagnostic(child.Artifact, diagnostic.Key) {
-				continue
+				return true
 			}
 			if arithmeticBoundary && !strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/") {
-				continue
+				return true
 			}
 			if staticCapturedReturnBoundary && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
-				continue
+				return true
 			}
 			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
-				continue
+				return true
 			}
 			// The union this boundary admits is the declaration itself, so a
 			// member absent from one of its arms is refuted by that declaration
 			// alone, exactly as it is for a declared-parameter boundary.
 			if localUnionReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
-				continue
+				return true
 			}
 			if declaredFormalCallBoundary && !declaredFormalCallDiagnostic(diagnostic.Key) {
-				continue
+				return true
 			}
 			if importedCaptureBoundary && !importedCaptureBoundaryDiagnostic(diagnostic.Key) {
+				return true
+			}
+			return false
+		}
+		for _, diagnostic := range outcome.Diagnostics {
+			if laneWithholds(diagnostic) {
 				continue
 			}
 			key := "child/" + body + "/" + diagnostic.Key
@@ -9315,47 +9361,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// allocation-time diagnostics retain the evidence published by their
 		// owning claim rather than falling back to an unadorned parent fact.
 		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
-			if claimOwnedReads[strings.TrimPrefix(item.Fact.Key, "type.member.missing/")] && strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
-				continue
-			}
-			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(item.Fact) {
-				continue
-			}
-			if gradualLogicalBoundary && !strings.HasPrefix(item.Fact.Key, "type.call.direct.argument_type/") {
-				continue
-			}
-			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") &&
-				(!declaredMethodBoundary || !strings.HasPrefix(item.Fact.Key, "type.return.contract/")) &&
-				(!declaredArithmeticReturnBoundary || !strings.HasPrefix(item.Fact.Key, "type.return.contract/")) &&
-				(!declaredAssignmentBoundary || !strings.HasPrefix(item.Fact.Key, "type.assignment/")) &&
-				(!declaredMemberWriteBoundary || !strings.HasPrefix(item.Fact.Key, "type.assignment.optional_target/")) &&
-				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, item.Fact.Key)) &&
-				(!declaredComparisonBoundary || !declaredOrderedComparisonDiagnostic(declaredComparisonOperations, item.Fact.Key)) &&
-				!uncalledDeclaredProviderResultDiagnostic(child, item.Fact.Key) {
-				continue
-			}
-			if staticMemberReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
-				continue
-			}
-			if staticAssignmentBoundary && !lexical.uncalledStaticAssignmentDiagnostic(child.Artifact, item.Fact.Key, partition) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, item.Fact) && !uncalledStaticResultCallDiagnostic(child.Artifact, item.Fact.Key) {
-				continue
-			}
-			if arithmeticBoundary && !strings.HasPrefix(item.Fact.Key, "type.call.direct.argument_type/") {
-				continue
-			}
-			if staticCapturedReturnBoundary && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
-				continue
-			}
-			if indexedReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.return.contract/") {
-				continue
-			}
-			if localUnionReadBoundary && !strings.HasPrefix(item.Fact.Key, "type.assignment/") && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
-				continue
-			}
-			if declaredFormalCallBoundary && !declaredFormalCallDiagnostic(item.Fact.Key) {
-				continue
-			}
-			if importedCaptureBoundary && !importedCaptureBoundaryDiagnostic(item.Fact.Key) {
+			if laneWithholds(item.Fact) {
 				continue
 			}
 			key := "child/" + body + "/" + item.Fact.Key
@@ -10088,6 +10094,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	value = validatedBoundaryValue(operands["value"], value, partition)
 	values := []equation.Fact{
 		{Key: "value/" + target + "/" + operation.Target.Name, Value: value},
 		{Key: epochFactPrefix + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
@@ -10347,6 +10354,10 @@ func sealShapeValue(value []byte, partition equation.Partition) ([]byte, error) 
 			member.Value = "scalar/top"
 			continue
 		}
+		// A member sourced from a validated boundary seals the proof, not the
+		// boundary: the literal's member value is the type the runtime test
+		// already certified for that term.
+		resolved = validatedBoundaryValue([]byte(member.Value), resolved, partition)
 		resolved, err = sealShapeValue(resolved, partition)
 		if err != nil {
 			return nil, err
@@ -10810,6 +10821,24 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	if wir.Op(kind) == wir.OpUnOp && wir.Operator(op) == wir.UnNot {
 		if boundary, ok := gradualAnyBoundaryFact(string(result), by["value"], operation.Target.Name, partition.Values()); ok {
 			values = append(values, boundary)
+		}
+	}
+	// Concatenation with an any/unknown operand produces a string at runtime,
+	// but the precision boundary the operand crossed is not discharged by the
+	// operator: the result still depends on an unvalidated value. Carry the
+	// boundary onto the result so downstream contracts read the same gradual
+	// provenance an ordinary assignment would relay. Operands that are already
+	// proven leave the result clean.
+	if wir.Op(kind) == wir.OpConcat {
+		for i := 0; ; i++ {
+			term, found := by[fmt.Sprintf("value-%08d", i)]
+			if !found {
+				break
+			}
+			if root, _, explicit := explicitAnySourceFact(term, partition.Values()); explicit {
+				values = append(values, equation.Fact{Key: "gradual-any/" + string(result) + "/" + operation.Target.Name, Value: root})
+				break
+			}
 		}
 	}
 	if wir.Op(kind) == wir.OpBinOp && (wir.Operator(op) == wir.BinEq || wir.Operator(op) == wir.BinNe) {
@@ -11800,6 +11829,13 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !boundaryValidated
 	castFromAnyBoundary := kind == "claim-kind/1" && sourceHasAnyBoundary(source, partition.Values())
 	if available && !boundaryRequiresProof && !castFromAnyBoundary && (claimProven(value, kind, targetType) || shapeRelation == shapeProven || channelCastFromNil || boundaryValidated) {
+		// A validated boundary keeps no residual any in its published value: the
+		// runtime test proved this binding holds the annotated type, so consumers
+		// that read only the value observe the proof rather than the boundary it
+		// replaced.
+		if boundaryValidated && len(shapeTarget) != 0 {
+			value = append([]byte(nil), shapeTarget...)
+		}
 		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
 		if throwTemplate.Key != "" {
 			closure.Values = append(closure.Values, throwTemplate)
@@ -12683,6 +12719,12 @@ func tableAgainstRecord(value []byte, target typ.Type, comparison *shapeComparis
 			continue
 		}
 		memberValue := tableDescendantEvidence(table, member.Suffix, []byte(member.Value))
+		// An any/unknown member is the opaque top. The shape it carries crossed a
+		// precision boundary without validation, so it discharges no concrete
+		// declared field type; only a top-like field accepts it.
+		if isUnvalidatedAnyValue(memberValue) && typeRequiresBoundaryProof(field.Type) {
+			return shapeRefuted
+		}
 		relation := valueAgainstTypeSeen(memberValue, field.Type, comparison)
 		if relation == shapeRefuted {
 			return shapeRefuted
@@ -16173,6 +16215,13 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if !typedMethodContract && !isUnknownScalar(callee) && !isCallableValue(callee) {
 		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("%s is %s, not callable", operands.display, callDisplayValue(callee))), nil
 	}
+	// A callee reached through an any/unknown boundary carries no proof that it
+	// is applicable. The value may happen to hold a function, but that shape
+	// crossed the boundary unvalidated, so the application is refuted until a
+	// runtime type test proves the callable kind.
+	if hasCallee && !typedMethodContract && anyBoundaryCallee(operands.callee, callee, known, partition) {
+		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("cannot call %s because it comes from any/unknown; no proof shows it is callable", operands.display)), nil
+	}
 	if hasCallee && !typedMethodContract && !localCallable {
 		// A callee whose current value is a sealed function witness carries its
 		// declared parameter contract directly. callableSignature owns the
@@ -16386,10 +16435,18 @@ func (l *lexicalEvaluator) boundaryArgumentRefutation(operation equation.BoundEq
 			continue
 		}
 		argument, known := resolveKnownCurrentValue(arguments[index], partition)
+		expected := child.WIR.Type(parameter.Type)
+		// An any/unknown value is the opaque top. Its shape may look concrete,
+		// but that shape crossed a precision boundary without validation, so it
+		// discharges no concrete parameter contract. A top-like parameter
+		// accepts it; a concrete one is refuted until a runtime validation
+		// republishes a proof for this exact argument.
+		if typeRequiresBoundaryProof(expected) && anyBoundaryValue(arguments[index], argument, known, expected, partition) {
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, typeformat.Short(expected))), true
+		}
 		if !known || isUnknownScalar(argument) || (!declaredExplicitAny(arguments[index], partition) && !l.memberRelayEntry(operation, operands, partition)) {
 			continue
 		}
-		expected := child.WIR.Type(parameter.Type)
 		if valueAgainstType(argument, expected) != shapeRefuted {
 			continue
 		}
@@ -16544,6 +16601,85 @@ func declaredExplicitAny(term []byte, partition equation.Partition) bool {
 		}
 	}
 	return false
+}
+
+// anyBoundaryValue reports whether the value currently bound at a term carries
+// unvalidated any/unknown provenance against a concrete required type. It reads
+// the same published boundary the assignment kernel consumes: the value itself,
+// the gradual boundary relayed along the source path, and an imported provider's
+// any result. A runtime type test is that boundary's own validator, so a proven
+// edge that decides the required type outright clears it.
+func anyBoundaryValue(term []byte, value []byte, known bool, expected typ.Type, partition equation.Partition) bool {
+	return anyBoundarySource(term, value, known, partition) && !anyBoundaryRuntimeValidated(term, expected, partition)
+}
+
+// anyBoundarySource states the published any/unknown provenance of a term
+// without deciding which required type it fails. It is the same evidence the
+// assignment kernel consumes.
+func anyBoundarySource(term []byte, value []byte, known bool, partition equation.Partition) bool {
+	return (known && isUnvalidatedAnyValue(value)) ||
+		sourceHasAnyBoundary(term, partition.Values()) ||
+		providerAnyResultBoundary(term, partition)
+}
+
+// anyBoundaryCallee reports whether a call is dispatched through an any/unknown
+// boundary. Callability is a runtime kind, so Lua's own type test is the
+// boundary's validator here: a proven "function" edge certifies the value can
+// be applied.
+func anyBoundaryCallee(term []byte, value []byte, known bool, partition equation.Partition) bool {
+	return anyBoundarySource(term, value, known, partition) && !runtimeTypeProven(term, "function", partition)
+}
+
+// anyBoundaryRuntimeValidated reports whether a runtime type test already
+// certified this exact term as the required type. runtimeTypeProofAdmitsTarget
+// stays the single authority for which targets a type() proof can decide, so a
+// structural target keeps its boundary until a structural validator proves it.
+func anyBoundaryRuntimeValidated(term []byte, expected typ.Type, partition equation.Partition) bool {
+	if expected == nil {
+		return false
+	}
+	for _, proof := range luaRuntimeTypeProofs {
+		if runtimeTypeProofAdmitsTarget(proof.name, expected) && runtimeTypeProven(term, proof.name, partition) {
+			return true
+		}
+	}
+	return false
+}
+
+// luaRuntimeTypeProofs are the runtime kinds Lua's type() reports that a proof
+// fact can certify, paired with the type the proven edge establishes for the
+// tested value. runtimeTypeProofAdmitsTarget maps each name to the declared
+// types it decides; a callable proof certifies the kind without a signature, so
+// it carries no type. The "table" kind is absent by the same rule that keeps it
+// out of runtimeTypeProofAdmitsTarget: it never proves a member contract.
+var luaRuntimeTypeProofs = []struct {
+	name  string
+	value typ.Type
+}{
+	{"nil", typ.Nil},
+	{"boolean", typ.Boolean},
+	{"number", typ.Number},
+	{"string", typ.String},
+	{"function", nil},
+}
+
+// validatedBoundaryValue replaces an unvalidated any value with the runtime type
+// a visible type test already certified for the same term. The proof is the
+// boundary's own validator, so consumers that read only the value observe the
+// same validation an annotation would.
+func validatedBoundaryValue(term []byte, value []byte, partition equation.Partition) []byte {
+	if !isUnvalidatedAnyValue(value) {
+		return value
+	}
+	for _, proof := range luaRuntimeTypeProofs {
+		if proof.value == nil || !runtimeTypeProven(term, proof.name, partition) {
+			continue
+		}
+		if encoded, ok := shapefact.EncodeTarget(proof.value); ok {
+			return encoded
+		}
+	}
+	return value
 }
 
 func explicitAnyBoundaryFact(term, operation string) equation.Fact {
@@ -21541,6 +21677,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 	values := make([][]byte, 0, len(operation.Operands))
 	declared := make(map[int]typ.Type)
 	displays := make(map[int]string)
+	sources := make(map[int][]byte)
 	for _, operand := range operation.Operands {
 		const prefix = "return-value-"
 		if index, display, ok := indexedRoleValue(operand.Role, "return-display-", operand.Value); ok {
@@ -21587,6 +21724,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		// the returned value consumes the heap member authority here rather than
 		// handing the caller the allocation-time template.
 		values[index] = heapMemberSurface(operand.Value, value, partition)
+		sources[index] = operand.Value
 	}
 	for index, value := range values {
 		if value == nil {
@@ -21596,6 +21734,18 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 	diagnostics := make([]equation.Fact, 0)
 	for index, expected := range declared {
 		if index >= len(values) {
+			continue
+		}
+		// A returned any/unknown is the opaque top: the declared return type is
+		// a concrete contract this body has not discharged. The boundary itself
+		// is the refutation, so the slot never satisfies a concrete declaration
+		// until a runtime validation republishes a proof for the same term.
+		if typeRequiresBoundaryProof(expected) && anyBoundaryValue(sources[index], values[index], true, expected, partition) {
+			subject := returnValueSubject(index, displays[index])
+			diagnostics = append(diagnostics, equation.Fact{
+				Key:   fmt.Sprintf("type.return.contract/%s/%08d", operation.Target.Name, index),
+				Value: []byte(fmt.Sprintf("%s comes from any/unknown; no proof shows it is %s", subject, typeformat.Short(expected))),
+			})
 			continue
 		}
 		if valueAgainstType(values[index], expected) != shapeRefuted {
