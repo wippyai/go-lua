@@ -1,0 +1,5 @@
+{
+  "description": "A closure write invalidates an assignment fact keyed by a prior branch guard.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

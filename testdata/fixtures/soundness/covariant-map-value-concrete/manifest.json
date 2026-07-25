@@ -1,0 +1,5 @@
+{
+  "description": "A map parameter with concrete values cannot be widened to a map whose value type admits string writes.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

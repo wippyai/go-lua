@@ -1,0 +1,11 @@
+{
+  "description": "A metatable-backed field read invokes __index and therefore cannot be issued a loop-hoisting license.",
+  "files": ["main.lua"],
+  "check": {
+    "errors": 0,
+    "placement": {
+      "max_hoistable_loads": 0
+    }
+  },
+  "run": { "skip": "checker-only placement fixture" }
+}

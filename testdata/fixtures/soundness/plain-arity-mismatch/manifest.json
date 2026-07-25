@@ -1,0 +1,5 @@
+{
+  "description": "A direct call must supply every required parameter rather than passing runtime nil for an omitted argument.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

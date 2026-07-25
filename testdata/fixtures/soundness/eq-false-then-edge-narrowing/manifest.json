@@ -1,0 +1,5 @@
+{
+  "description": "The true edge of x == false narrows x to false, never to the other union arm.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

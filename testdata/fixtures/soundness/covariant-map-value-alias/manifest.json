@@ -1,0 +1,5 @@
+{
+  "description": "A populated map's value type is invariant under aliasing, because a wider view can corrupt a typed key's value.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

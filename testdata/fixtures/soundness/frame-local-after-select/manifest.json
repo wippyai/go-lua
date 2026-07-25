@@ -1,0 +1,16 @@
+{
+  "description": "A scratch table that remains live after channel.select's suspension point must not receive a FrameLocal placement license.",
+  "files": ["main.lua"],
+  "packages": ["channel"],
+  "check": {
+    "errors": 0,
+    "placement": {
+      "require_complete": true,
+      "min_allocation_sites": 1,
+      "max_frame_local": 0,
+      "max_no_fact": 0,
+      "max_unknown": 0
+    }
+  },
+  "run": { "skip": "checker-only placement fixture" }
+}

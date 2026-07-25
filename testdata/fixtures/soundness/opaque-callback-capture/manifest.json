@@ -1,0 +1,5 @@
+{
+  "description": "An opaque callback may invoke a closure that clears a captured field, so a later string-typed read of that field must be diagnosed.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}
