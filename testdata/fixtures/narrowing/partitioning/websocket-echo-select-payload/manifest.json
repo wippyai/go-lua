@@ -1,6 +1,9 @@
 {
   "description": "The real websocket echo select pattern preserves the payload shape through an intermediate local and a nested result.value.data read.",
-  "packages": ["channel"],
+  "packages": [
+    "channel",
+    "assert2"
+  ],
   "check": {
     "errors": 0
   },

@@ -1,84 +1,74 @@
 {
-  "description": "A narrowing established inside a loop body does not survive the backedge: the carrier is reassigned from an optional source before the edge, so the loop header must publish maybe_nil and must not carry the body's non_nil row.",
-  "files": [
-    "main.lua"
-  ],
-  "check": {
-    "errors": 0,
-    "native": {
-      "facts": [
-        {
-          "name": "at least 2 proven nilability row(s)",
-          "lane": "values",
-          "family": "nilability",
-          "trust": "proven",
-          "min": 2
-        },
-        {
-          "name": "at most 1 nilability.non_nil row(s)",
-          "family": "nilability",
-          "value_contains": [
-            "non_nil"
-          ],
-          "max": 1
-        },
-        {
-          "name": "nilability row",
-          "lane": "values",
-          "family": "nilability",
-          "subject": "cur",
-          "value_contains": [
-            "nilability=maybe_nil"
-          ],
-          "trust": "proven",
-          "min": 1,
-          "revoked_by": [
-            {
-              "event": "write.local"
-            }
-          ],
-          "revoked_by_exhaustive": true
-        },
-        {
-          "name": "nilability must not carry non_nil",
-          "lane": "values",
-          "family": "nilability",
-          "subject": "cur",
-          "value_contains": [
-            "non_nil"
-          ],
-          "max": 0
-        },
-        {
-          "name": "nilability row",
-          "lane": "values",
-          "family": "nilability",
-          "subject": "cur",
-          "value_contains": [
-            "nilability=non_nil"
-          ],
-          "trust": "proven",
-          "min": 1,
-          "revoked_by": [
-            {
-              "event": "write.local"
-            }
-          ],
-          "revoked_by_exhaustive": true
-        }
-      ],
-      "invalidation": [
-        {
-          "name": "nilability is revoked by write.local",
-          "lane": "values",
-          "family": "nilability",
-          "event": "write.local",
-          "min": 1
-        }
-      ]
+ "description": "A narrowing established inside a loop body does not survive the backedge: the carrier is reassigned from an optional source before the edge, so the loop header must publish maybe_nil and must not carry the body's non_nil row.",
+ "files": [
+  "main.lua"
+ ],
+ "check": {
+  "errors": 0,
+  "native": {
+   "facts": [
+    {
+     "name": "at least 2 proven nilability row(s)",
+     "lane": "values",
+     "family": "nilability",
+     "trust": "proven",
+     "min": 2
+    },
+    {
+     "name": "at most 1 nilability.non_nil row(s)",
+     "family": "nilability",
+     "value_contains": [
+      "non_nil"
+     ],
+     "max": 1
+    },
+    {
+     "name": "nilability row",
+     "lane": "values",
+     "family": "nilability",
+     "subject": "cur",
+     "value_contains": [
+      "nilability=maybe_nil"
+     ],
+     "trust": "proven",
+     "min": 1,
+     "revoked_by": [
+      {
+       "event": "write.local"
+      }
+     ],
+     "revoked_by_exhaustive": true
+    },
+    {
+     "name": "nilability row",
+     "lane": "values",
+     "family": "nilability",
+     "subject": "cur",
+     "value_contains": [
+      "nilability=non_nil"
+     ],
+     "trust": "proven",
+     "min": 1,
+     "revoked_by": [
+      {
+       "event": "write.local"
+      }
+     ],
+     "revoked_by_exhaustive": true
     }
-  },
-  "run": {
-    "skip": "checker-only native fact fixture"
+   ],
+   "invalidation": [
+    {
+     "name": "nilability is revoked by write.local",
+     "lane": "values",
+     "family": "nilability",
+     "event": "write.local",
+     "min": 1
+    }
+   ]
   }
+ },
+ "run": {
+  "skip": "checker-only native fact fixture"
+ }
 }
