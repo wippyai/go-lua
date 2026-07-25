@@ -9259,7 +9259,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
 		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil)
 		for _, diagnostic := range outcome.Diagnostics {
-			if !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
+			if !selectChildDiagnostic(diagnostic.Key) {
 				continue
 			}
 			key := "child/" + body + "/" + diagnostic.Key
@@ -9286,6 +9286,18 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+// selectChildDiagnostic is the published surface of a select-seeded child body.
+// The entry is the exact select composition, so a refutation the child proves
+// against it is owned by that seed: an assignment or operand contract a seeded
+// value violates, and a member no seeded arm declares. Body-local advice has no
+// such seeded consumer and stays private.
+func selectChildDiagnostic(key string) bool {
+	return strings.HasPrefix(key, "type.assignment/") ||
+		strings.HasPrefix(key, "type.member.missing/") ||
+		strings.HasPrefix(key, "type.operator.concat_operand/") ||
+		strings.HasPrefix(key, "type.operator.comparison_operand/")
 }
 
 func declaredConcatDiagnostic(allowed map[string]bool, key string) bool {
@@ -21820,13 +21832,32 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 				return []byte("scalar/top"), true
 			}
 		}
-		if !closedMemberSurface(source) {
+		// The refutation belongs to the receiver that lacks the next member, not
+		// to the root the path started from: a path may descend through several
+		// declared members before reaching one the surface refuses.
+		receiver, refutable := refutingMemberReceiver(source, suffix)
+		if !refutable || !closedMemberSurface(receiver) {
 			return []byte("scalar/top"), true
 		}
-		return memberMissingValue(source)
+		return memberMissingValue(receiver)
 	}
 	value, ok := shapefact.EncodeTarget(field)
 	return value, ok
+}
+
+// refutingMemberReceiver walks the longest prefix of suffix the declared surface
+// resolves and returns the receiver whose next segment it refuses. A path that
+// resolves end to end refutes nothing.
+func refutingMemberReceiver(source typ.Type, suffix []segment.Segment) (typ.Type, bool) {
+	receiver := source
+	for index := range suffix {
+		member, resolved := variant.FieldAtPath(receiver, suffix[index:index+1])
+		if !resolved {
+			return receiver, true
+		}
+		receiver = member
+	}
+	return nil, false
 }
 
 func currentCallResultSummary(term []byte, partition equation.Partition) bool {
@@ -21925,7 +21956,16 @@ func derivedIndexedPath(term []byte) bool {
 	return strings.HasPrefix(string(term), "path/") && strings.Contains(string(term), "[")
 }
 
+// closedMemberSurface reports whether a declared value refutes every member its
+// surface does not name. A recursive binder is transparent to that question: it
+// names exactly the record or union its body publishes, which is the same graph
+// the member walk descends. Revisiting a binder already on the current path
+// contributes no new surface, so it neither opens nor closes the answer.
 func closedMemberSurface(value typ.Type) bool {
+	return closedMemberSurfaceSeen(value, nil)
+}
+
+func closedMemberSurfaceSeen(value typ.Type, active map[typ.Type]bool) bool {
 	value = unwrap.Alias(subst.ExpandInstantiated(value))
 	switch item := value.(type) {
 	case *typ.Record:
@@ -21938,11 +21978,24 @@ func closedMemberSurface(value typ.Type) bool {
 			return false
 		}
 		for _, member := range item.Members {
-			if !closedMemberSurface(member) {
+			if !closedMemberSurfaceSeen(member, active) {
 				return false
 			}
 		}
 		return true
+	case *typ.Recursive:
+		if item == nil || item.Body == nil || item.Body == value {
+			return false
+		}
+		if active[value] {
+			return true
+		}
+		if active == nil {
+			active = make(map[typ.Type]bool, 1)
+		}
+		active[value] = true
+		defer delete(active, value)
+		return closedMemberSurfaceSeen(item.Body, active)
 	default:
 		return false
 	}

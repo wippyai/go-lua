@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/dominance"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -3475,6 +3476,14 @@ func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.
 		if trueReach == falseReach {
 			continue
 		}
+		// A single reaching edge makes the branch a candidate, but only a branch
+		// every execution of the point has already evaluated can require an
+		// outcome. When the point is also reachable without the branch, those
+		// paths publish no outcome for it, so requiring one would leave the
+		// point permanently unevaluated instead of merely unrefined.
+		if !reachability.dominates(branch, point) {
+			continue
+		}
 		edge := "false"
 		if trueReach {
 			edge = "true"
@@ -3794,9 +3803,10 @@ func cyclicReachableOperationCells(graph cfg.Graph, start cfg.Point, points map[
 // that needs branch guards. Large straight-line fixtures otherwise repeat the
 // same O(branches*points) traversal for every draft.
 type reachabilityCache struct {
-	graph   cfg.Graph
-	from    map[cfg.Point]map[cfg.Point]bool
-	without map[reachabilityExclusion]bool
+	graph      cfg.Graph
+	from       map[cfg.Point]map[cfg.Point]bool
+	without    map[reachabilityExclusion]bool
+	dominators *dominance.ImmediateDominators
 }
 
 type reachabilityExclusion struct {
@@ -3809,6 +3819,16 @@ func newReachabilityCache(graph cfg.Graph) *reachabilityCache {
 		from:    make(map[cfg.Point]map[cfg.Point]bool),
 		without: make(map[reachabilityExclusion]bool),
 	}
+}
+
+// dominates reports whether every path from the entry to target passes through
+// from. The immediate-dominator tree is built once per body and answers each
+// query in constant time.
+func (cache *reachabilityCache) dominates(from, target cfg.Point) bool {
+	if cache.dominators == nil {
+		cache.dominators = dominance.ComputeImmediateDominatorInfo(cache.graph)
+	}
+	return cache.dominators.Dominates(from, target)
 }
 
 func (cache *reachabilityCache) reaches(from, target cfg.Point) bool {

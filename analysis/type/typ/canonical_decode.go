@@ -318,45 +318,6 @@ func materializeCanonicalStructuralGraph(ctx context.Context, nodes []decodedCan
 			if ready[index] {
 				continue
 			}
-			tag, ok := canonicalNodeTag(node.scalar)
-			if !ok {
-				return nil, fmt.Errorf("%w: empty scalar", ErrInvalidCanonicalType)
-			}
-			if tag == canonicalGeneric {
-				name, paramCount, hasBody, err := canonicalGenericHeader(node.scalar)
-				if err != nil {
-					return nil, err
-				}
-				childCount := paramCount
-				if hasBody {
-					childCount++
-				}
-				if len(node.edges) != childCount {
-					return nil, fmt.Errorf("%w: generic child shape", ErrInvalidCanonicalType)
-				}
-				params := make([]*TypeParam, paramCount)
-				for position := range params {
-					child := node.edges[position]
-					if child < 0 || child >= len(nodes) || !ready[child] {
-						params = nil
-						break
-					}
-					param, valid := built[child].(*TypeParam)
-					if !valid || param == nil {
-						return nil, fmt.Errorf("%w: generic type parameter", ErrInvalidCanonicalType)
-					}
-					params[position] = param
-				}
-				if params == nil {
-					continue
-				}
-				built[index] = NewGeneric(name, params, nil)
-				ready[index], generic[index], progress = true, true, true
-				if hasBody {
-					genericBodies[index] = node.edges[paramCount]
-				}
-				continue
-			}
 			children := make([]Type, len(node.edges))
 			allReady := true
 			for position, child := range node.edges {
@@ -375,7 +336,21 @@ func materializeCanonicalStructuralGraph(ctx context.Context, nodes []decodedCan
 			}
 			built[index], ready[index], progress = value, true, true
 		}
-		if !progress {
+		if progress {
+			continue
+		}
+		// Every node whose children already exist is materialized, so what
+		// remains is a cycle. A generic declaration whose body reaches the
+		// declaration itself is the only such cycle a canonical graph can carry
+		// besides a recursive binder, so open exactly those binders and resume.
+		// A generic opened this way carries a provisional hash until its body is
+		// back-patched, which is why it is opened only when the ordinary
+		// dependency order cannot complete it.
+		opened, err := openStalledCanonicalGenerics(nodes, built, ready, generic, genericBodies)
+		if err != nil {
+			return nil, err
+		}
+		if !opened {
 			break
 		}
 	}
@@ -401,6 +376,59 @@ func materializeCanonicalStructuralGraph(ctx context.Context, nodes []decodedCan
 		built[index].(*Recursive).SetBody(body)
 	}
 	return built[root], nil
+}
+
+// openStalledCanonicalGenerics allocates body-less generic declarations for the
+// generic nodes a stalled dependency walk cannot complete, recording each body
+// edge for the later back-patch. It reports whether any binder was opened, so a
+// stall with no remaining generic ends the walk instead of looping.
+func openStalledCanonicalGenerics(nodes []decodedCanonicalNode, built []Type, ready, generic []bool, genericBodies []int) (bool, error) {
+	opened := false
+	for index, node := range nodes {
+		if ready[index] {
+			continue
+		}
+		tag, ok := canonicalNodeTag(node.scalar)
+		if !ok {
+			return false, fmt.Errorf("%w: empty scalar", ErrInvalidCanonicalType)
+		}
+		if tag != canonicalGeneric {
+			continue
+		}
+		name, paramCount, hasBody, err := canonicalGenericHeader(node.scalar)
+		if err != nil {
+			return false, err
+		}
+		childCount := paramCount
+		if hasBody {
+			childCount++
+		}
+		if len(node.edges) != childCount {
+			return false, fmt.Errorf("%w: generic child shape", ErrInvalidCanonicalType)
+		}
+		params := make([]*TypeParam, paramCount)
+		for position := range params {
+			child := node.edges[position]
+			if child < 0 || child >= len(nodes) || !ready[child] {
+				params = nil
+				break
+			}
+			param, valid := built[child].(*TypeParam)
+			if !valid || param == nil {
+				return false, fmt.Errorf("%w: generic type parameter", ErrInvalidCanonicalType)
+			}
+			params[position] = param
+		}
+		if params == nil {
+			continue
+		}
+		built[index] = NewGeneric(name, params, nil)
+		ready[index], generic[index], opened = true, true, true
+		if hasBody {
+			genericBodies[index] = node.edges[paramCount]
+		}
+	}
+	return opened, nil
 }
 
 func canonicalNodeTag(scalar []byte) (byte, bool) {
