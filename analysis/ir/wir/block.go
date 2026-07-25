@@ -31,6 +31,9 @@ type Body struct {
 	protos []FuncProto
 
 	declaredReturns []TypeRef
+	// declaredReturnSpans anchors each declared return slot to its authored
+	// annotation. It is source metadata only and never participates in typing.
+	declaredReturnSpans []Span
 
 	operandPool          []Operand
 	typeRefPool          []TypeRef
@@ -837,6 +840,24 @@ func (b *Body) SetDeclaredReturnTypes(types []typ.Type) {
 	for i, t := range types {
 		b.declaredReturns[i] = b.InternType(t)
 	}
+}
+
+// SetDeclaredReturnSpans records the authored anchor of each declared return
+// slot. Slots without a source anchor keep an invalid span so arity stays
+// aligned with the declared contract.
+func (b *Body) SetDeclaredReturnSpans(spans []Span) {
+	if b == nil || len(spans) == 0 {
+		return
+	}
+	b.declaredReturnSpans = append(b.declaredReturnSpans[:0], spans...)
+}
+
+// DeclaredReturnSpans returns the authored anchors of the declared returns.
+func (b *Body) DeclaredReturnSpans() []Span {
+	if b == nil {
+		return nil
+	}
+	return append([]Span(nil), b.declaredReturnSpans...)
 }
 
 // DeclaredReturnRefs returns the body-local declared contract slots.

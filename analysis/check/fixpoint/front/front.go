@@ -372,9 +372,9 @@ func validateControl(stmts []ast.Stmt) []ControlDiagnostic {
 				case *ast.RepeatStmt:
 					visit(stmt.Stmts, loops+1)
 				case *ast.NumberForStmt:
-					for _, bound := range []ast.Expr{stmt.Init, stmt.Limit, stmt.Step} {
-						if numericForBoundIsRefuted(bound) {
-							diagnostics = append(diagnostics, controlDiagnostic("numeric_for_bound_type", "numeric for loop bound must be a number", ast.SpanOf(bound)))
+					for index, bound := range []ast.Expr{stmt.Init, stmt.Limit, stmt.Step} {
+						if literal, refuted := numericForBoundLiteral(bound); refuted {
+							diagnostics = append(diagnostics, numericForOperandDiagnostic(numericForOperandRoles[index], literal, ast.SpanOf(bound)))
 						}
 					}
 					visit(stmt.Stmts, loops+1)
@@ -404,22 +404,40 @@ func validateControl(stmts []ast.Stmt) []ControlDiagnostic {
 	return diagnostics
 }
 
-// numericForBoundIsRefuted recognizes only source-literal bounds whose Lua
-// runtime class cannot be numeric. Non-literals remain a normal equation
-// obligation, so this lexical check never substitutes a guessed type for a
-// variable, call result, or computed expression.
-func numericForBoundIsRefuted(expr ast.Expr) bool {
-	if expr == nil {
-		return false
-	}
-	switch expr.(type) {
-	case *ast.NumberExpr:
-		return false
-	case *ast.StringExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr:
-		return true
+// numericForOperandRoles names the three numeric-for control slots in source
+// order. The role is the diagnostic subject: it is what the reader has to
+// change, and it anchors both the message and the operand label.
+var numericForOperandRoles = [3]string{"initial value", "limit", "step"}
+
+// numericForBoundLiteral recognizes only source-literal bounds whose Lua
+// runtime class cannot be numeric, and returns the literal spelling that the
+// diagnostic reports. Non-literals remain a normal equation obligation, so this
+// lexical check never substitutes a guessed type for a variable, call result,
+// or computed expression.
+func numericForBoundLiteral(expr ast.Expr) (string, bool) {
+	switch value := expr.(type) {
+	case *ast.StringExpr:
+		return strconv.Quote(value.Value), true
+	case *ast.TrueExpr:
+		return "true", true
+	case *ast.FalseExpr:
+		return "false", true
+	case *ast.NilExpr:
+		return "nil", true
 	default:
-		return false
+		return "", false
 	}
+}
+
+// numericForOperandDiagnostic publishes the refuted numeric-for operand under
+// its canonical code with the literal that refutes it as proven evidence.
+func numericForOperandDiagnostic(role, literal string, span ast.Span) ControlDiagnostic {
+	item := controlDiagnostic("numeric_for_bound_type", fmt.Sprintf("numeric for %s must be number, got %s", role, literal), span)
+	item.Code = "type.for.numeric_operand"
+	item.Evidence = []ControlDiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", role, literal)}}
+	item.Labels = []ControlDiagnosticLabel{{Span: item.Span, Message: role}}
+	item.Help = fmt.Sprintf("Use a number for the numeric for %s, or convert it before the loop.", role)
+	return item
 }
 
 func controlDiagnostic(kind, message string, span ast.Span) ControlDiagnostic {
@@ -1039,14 +1057,27 @@ func returnSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 			returns = append(returns, instruction)
 		}
 	}
+	declared := body.DeclaredReturnSpans()
 	out := make(map[string]wir.Span, len(returns))
 	returnIndex := 0
 	for _, operation := range artifact.Equations {
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
-		if returnIndex < len(returns) && returns[returnIndex].ExprSpan.Valid() {
-			out[operation.Target.Name] = returns[returnIndex].ExprSpan
+		if returnIndex < len(returns) {
+			if returns[returnIndex].ExprSpan.Valid() {
+				out[operation.Target.Name] = returns[returnIndex].ExprSpan
+			}
+			for index, meta := range body.ReturnValueMeta(returns[returnIndex].ReturnValues) {
+				if meta.Span.Valid() {
+					out[operation.Target.Name+"/"+indexedRole("return-value", index)] = meta.Span
+				}
+			}
+		}
+		for index, span := range declared {
+			if span.Valid() {
+				out[operation.Target.Name+"/"+indexedRole("declared-return", index)] = span
+			}
 		}
 		returnIndex++
 	}
@@ -1527,10 +1558,10 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				if instruction.DynamicValueDisplay != "" {
 					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(instruction.DynamicValueDisplay))})
 				}
-				if subject, display, ok := frozenTableSubject(body, instruction.Dst, true); ok {
+				if subject, display, ok := writeContainerSubject(body, instruction.Dst, true); ok {
 					draft.Operands = append(draft.Operands,
-						equation.Operand{Role: "freeze-subject", Term: subject},
-						equation.Operand{Role: "freeze-display", Term: equation.ClosedTerm([]byte(display))},
+						equation.Operand{Role: "write-container", Term: subject},
+						equation.Operand{Role: "write-container-display", Term: equation.ClosedTerm([]byte(display))},
 					)
 				}
 			}
@@ -1615,10 +1646,10 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			}
 			// table.freeze is deliberately shallow. A direct member write can
 			// mutate the frozen table itself; deeper writes affect a child table.
-			if subject, rootDisplay, ok := frozenTableSubject(body, instruction.Dst, false); ok {
+			if subject, rootDisplay, ok := writeContainerSubject(body, instruction.Dst, false); ok {
 				draft.Operands = append(draft.Operands,
-					equation.Operand{Role: "freeze-subject", Term: subject},
-					equation.Operand{Role: "freeze-display", Term: equation.ClosedTerm([]byte(rootDisplay))},
+					equation.Operand{Role: "write-container", Term: subject},
+					equation.Operand{Role: "write-container-display", Term: equation.ClosedTerm([]byte(rootDisplay))},
 				)
 			}
 		case instruction.Op == wir.OpDynamicIndexRead:
@@ -2321,10 +2352,12 @@ func memberPathTerm(body *wir.Body, operand wir.Operand) (equation.Term, string,
 	return term, display, nil
 }
 
-// frozenTableSubject returns the root table identity carried by a mutation.
+// writeContainerSubject returns the root table identity carried by a mutation.
 // Static member writes are shallow: only root.field mutates root itself. A
 // dynamic index always mutates its container, even when the suffix is unknown.
-func frozenTableSubject(body *wir.Body, operand wir.Operand, dynamic bool) (equation.Term, string, bool) {
+// It is the subject of every obligation the container itself owns: the
+// frozen-table proof and the non-nil requirement of writing through it.
+func writeContainerSubject(body *wir.Body, operand wir.Operand, dynamic bool) (equation.Term, string, bool) {
 	if body == nil || operand.Kind != wir.OperandPath {
 		return equation.Term{}, "", false
 	}
@@ -2818,12 +2851,16 @@ func publicationOperands(body *wir.Body, instruction wir.Instruction) ([]equatio
 	values := body.Operands(instruction.List)
 	declared := body.DeclaredReturnTypes()
 	operands := make([]equation.Operand, 0, len(values)+len(declared))
+	meta := body.ReturnValueMeta(instruction.ReturnValues)
 	for index, value := range values {
 		term, err := scalarTerm(body, value)
 		if err != nil {
 			return nil, fmt.Errorf("value %d: %w", index, err)
 		}
 		operands = append(operands, equation.Operand{Role: indexedRole("return-value", index), Term: term})
+		if index < len(meta) && meta[index].Label != "" {
+			operands = append(operands, equation.Operand{Role: indexedRole("return-display", index), Term: equation.ClosedTerm([]byte(meta[index].Label))})
+		}
 	}
 	for index, declaredType := range declared {
 		encoded, ok := shapefact.EncodeTarget(declaredType)

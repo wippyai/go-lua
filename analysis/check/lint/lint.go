@@ -617,27 +617,24 @@ func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.
 				}
 			}
 		}
-		code := diagnostic.Code("lint." + strings.ReplaceAll(fact.Key, "/", "."))
-		message := string(fact.Value)
 		if enriched {
-			code = diagnostic.Code(projection.Code)
-			message = projection.Message
+			// The engine publishes the canonical code alongside its evidence.
+			// A key-derived code is only the fallback for a fact that reached
+			// publication without one.
+			out = append(out, newEnrichedDiagnostic(entry, span, diagnostic.Code(projection.Code), projection.Message, projection))
+			continue
 		}
+		code := diagnostic.Code("lint." + strings.ReplaceAll(fact.Key, "/", "."))
 		if strings.HasPrefix(fact.Key, "claim/unproven/") {
 			code = "lint.claim.unproven"
 		} else if strings.HasPrefix(fact.Key, "type.call.direct.") {
 			// The trailing operation name is equation identity only. The fact's
 			// stable prefix is the public call-rule code.
 			code = diagnostic.Code(fact.Key[:strings.IndexByte(fact.Key, '/')])
-		}
-		if strings.HasPrefix(fact.Key, "type.assignment/") {
+		} else if strings.HasPrefix(fact.Key, "type.assignment/") {
 			code = "type.assignment"
 		}
-		if enriched {
-			out = append(out, newEnrichedDiagnostic(entry, span, code, message, projection))
-			continue
-		}
-		out = append(out, newDiagnostic(entry, span, code, message))
+		out = append(out, newDiagnostic(entry, span, code, string(fact.Value)))
 	}
 	for _, projection := range result.PolicyDiagnostics {
 		if projection.Code == "" || !projection.Span.Valid() {

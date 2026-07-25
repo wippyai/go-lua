@@ -148,6 +148,7 @@ func recordFunctionBodyMetadata(body *wir.Body, fn *ast.FunctionExpr, bindings *
 		return
 	}
 	body.SetDeclaredReturnTypes(resolveDeclaredReturns(fn, resolver))
+	body.SetDeclaredReturnSpans(declaredReturnSpans(fn))
 	recordFunctionParamRootTypes(body, fn, bindings, resolver, options)
 	recordExternalFunctionRootTypes(body, fn, bindings, resolver)
 	recordFunctionBoundary(body, fn, bindings, resolver)
@@ -351,6 +352,27 @@ func resolveDeclaredReturns(fn *ast.FunctionExpr, resolver *typeresolve.Resolver
 		if t, ok := resolver.Type(expr); ok {
 			out[i] = t
 		}
+	}
+	return out
+}
+
+// declaredReturnSpans anchors each declared return slot to the type expression
+// the author wrote. It mirrors resolveDeclaredReturns slot for slot so a return
+// contract diagnostic can point at the annotation it failed.
+func declaredReturnSpans(fn *ast.FunctionExpr) []wir.Span {
+	if fn == nil {
+		return nil
+	}
+	declared := functiontype.ReturnTypeExprs(fn.ReturnTypes)
+	if len(declared) == 0 {
+		return nil
+	}
+	out := make([]wir.Span, len(declared))
+	for i, expr := range declared {
+		if expr == nil {
+			continue
+		}
+		out[i] = wirSpanFromSource(ast.SpanOf(expr))
 	}
 	return out
 }
@@ -670,16 +692,27 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 	}
 }
 
-// authoredTypeDisplay retains an exact type-reference spelling that the
-// resolver may intentionally expand while checking. Other type forms keep the
-// resolved display, so this metadata can never become a source-text fallback
-// for type authority.
+// authoredTypeDisplay retains the exact name a reader wrote for a type the
+// resolver may intentionally expand while checking. Structural and refined
+// forms keep the resolved display, so this metadata can never become a
+// source-text fallback for type authority.
 func authoredTypeDisplay(value ast.TypeExpr) string {
-	reference, ok := value.(*ast.TypeRefExpr)
-	if !ok || len(reference.Path) == 0 {
-		return ""
+	switch node := value.(type) {
+	case *ast.TypeRefExpr:
+		if len(node.Path) == 0 {
+			return ""
+		}
+		return strings.Join(node.Path, ".")
+	case *ast.PrimitiveTypeExpr:
+		// A bare name is either a builtin, whose spelling already matches the
+		// resolved display, or a declared alias the reader wrote. An annotated
+		// name resolves to a refined type with its own display and keeps it.
+		if len(node.Annotations) != 0 {
+			return ""
+		}
+		return node.Name
 	}
-	return strings.Join(reference.Path, ".")
+	return ""
 }
 
 func bindingMethodResultSelector(value binding) bool {
@@ -2416,10 +2449,32 @@ func returnValueMeta(exprs []ast.Expr) []wir.ReturnValueMeta {
 	for i, expr := range exprs {
 		out[i] = wir.ReturnValueMeta{
 			Span:  tableEntryValueSpan(expr),
-			Label: tableEntryValueLabel(expr),
+			Label: returnValueLabel(expr),
 		}
 	}
 	return out
+}
+
+// returnValueLabel names a returned expression the way the author wrote it. A
+// path keeps its spelling; a literal is its own spelling. Computed expressions
+// have no stable name and stay unlabelled.
+func returnValueLabel(expr ast.Expr) string {
+	if label := tableEntryValueLabel(expr); label != "" {
+		return label
+	}
+	switch value := expr.(type) {
+	case *ast.StringExpr:
+		return strconv.Quote(value.Value)
+	case *ast.NumberExpr:
+		return value.Value
+	case *ast.TrueExpr:
+		return "true"
+	case *ast.FalseExpr:
+		return "false"
+	case *ast.NilExpr:
+		return "nil"
+	}
+	return ""
 }
 
 func tableEntryValueLabel(expr ast.Expr) string {
@@ -2513,12 +2568,32 @@ func (b *builder) flattenConcat(e *ast.StringConcatOpExpr) ([]wir.Operand, []wir
 		label := ""
 		if path, ok := pathexpr.Resolve(x, b.bindings); ok {
 			label = path.String()
+		} else if call, ok := x.(*ast.FuncCallExpr); ok {
+			label = b.concatCallOperandLabel(call)
 		}
 		meta = append(meta, wir.ConcatOperandMeta{Span: wirSpanFromSource(ast.SpanOf(x)), Label: label})
 	}
 	walk(e.Lhs)
 	walk(e.Rhs)
 	return ops, meta
+}
+
+// concatCallOperandLabel names a call operand by its callee path. Argument
+// spellings are intentionally omitted: they can be arbitrary expressions and
+// carry no diagnostic authority for the operand that consumed the result.
+func (b *builder) concatCallOperandLabel(call *ast.FuncCallExpr) string {
+	if call == nil || call.Method != "" || call.Receiver != nil {
+		return ""
+	}
+	path, ok := pathexpr.Resolve(call.Func, b.bindings)
+	if !ok {
+		return ""
+	}
+	callee := path.String()
+	if callee == "" {
+		return ""
+	}
+	return callee + "(...)"
 }
 
 // ---- operand encoding ---------------------------------------------------

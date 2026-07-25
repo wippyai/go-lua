@@ -112,6 +112,24 @@ const (
 	typePredicatePairPrefix    = "type-predicate-pair/"
 	typePredicateValuePrefix   = "type-predicate-value/"
 	callTypePredicatePrefix    = "call-type-predicate/"
+	// optionalResultOriginPrefix names the callee slot whose declared optional
+	// result established a value's nil possibility. It is presentation
+	// provenance for that same published witness, never a second proof.
+	optionalResultOriginPrefix = "optional-provider-origin/"
+	// concatOperandOriginPrefix classifies why one concat operand can be nil.
+	// The classification is produced by the transaction that already refuted
+	// the operand, so publication renders it without re-deriving the cause.
+	concatOperandOriginPrefix = "concat-operand-origin/"
+	// concatOriginOptionalField and concatOriginOptionalResult are the two
+	// closed origins the engine can prove for a nilable concat operand.
+	concatOriginOptionalField  = "optional-field"
+	concatOriginOptionalResult = "optional-result/"
+	// optionalWriteContainerPrefix carries the container witness that refuted a
+	// member write, so publication renders the same proof the kernel used.
+	optionalWriteContainerPrefix = "optional-write-container/"
+	// inlineEvidenceTypeLimit bounds how much rendered type text one evidence
+	// line may carry before it reports the relation without the shape.
+	inlineEvidenceTypeLimit = 96
 )
 
 // branchPredicateWire mirrors the front's closed predicate wire vocabulary.
@@ -401,7 +419,8 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		}
 		diagnosticSpans[key] = span
 	}
-	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, compilation.BranchSpans, compilation.ExpressionSpans, lexical.lifecycleEvidence, lexical.selectEvidence)
+	diagnosticSpans = lexical.calleeReturnContractSpans(artifact, closure, diagnosticSpans)
+	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, compilation.BranchSpans, compilation.ReturnSpans, lexical.lifecycleEvidence, lexical.selectEvidence)
 	published = mergeChildPublishedDiagnostics(published, lexical.childPublished)
 	for _, diagnostic := range compilation.ControlDiagnostics {
 		fact := equation.Fact{Key: diagnostic.Key, Value: []byte(diagnostic.Message)}
@@ -654,8 +673,26 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expression
 				}
 			}
 			continue
+		case strings.HasPrefix(item.Key, "type.call.optional_receiver/"):
+			if span, ok := callSpans[strings.TrimPrefix(item.Key, "type.call.optional_receiver/")+"/call"]; ok {
+				out[item.Key] = span
+			}
+			continue
+		case strings.HasPrefix(item.Key, "type.assignment.optional_target/"):
+			if span, ok := effectSpans[strings.TrimPrefix(item.Key, "type.assignment.optional_target/")]; ok {
+				out[item.Key] = span
+			}
+			continue
 		case strings.HasPrefix(item.Key, "type.return.contract/"):
 			name = strings.TrimPrefix(item.Key, "type.return.contract/")
+			operation, slot, indexed := strings.Cut(name, "/")
+			if indexed {
+				if span, ok := returnSpans[operation+"/return-value-"+slot]; ok {
+					out[item.Key] = span
+					continue
+				}
+				name = operation
+			}
 			if span, ok := returnSpans[name]; ok {
 				out[item.Key] = span
 			}
@@ -754,8 +791,7 @@ func tableOperandTerm(body *wir.Body, operand wir.Operand) (string, bool) {
 // claim operation that produced it and to the abstract value already closed by
 // the VM.  In particular, it neither evaluates source nor manufactures a
 // diagnostic that is absent from closure.Diagnostics.
-func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans, branchSpans, expressionSpans map[string]wir.Span, lifecycleEvidence, selectEvidence map[string][]DiagnosticEvidence) []PublishedDiagnostic {
-	_ = expressionSpans // spans are resolved before this source-facing projection.
+func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClosure, spans, claimTargetSpans, callSpans, branchSpans, returnSpans map[string]wir.Span, lifecycleEvidence, selectEvidence map[string][]DiagnosticEvidence) []PublishedDiagnostic {
 	if len(closure.Diagnostics) == 0 {
 		return nil
 	}
@@ -765,7 +801,11 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 	writes := make(map[string]equation.Equation)
 	indexMutations := make(map[string]equation.Equation)
 	pathReplacements := make(map[string]equation.Equation)
+	publications := make(map[string]equation.Equation)
 	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind == "publication" {
+			publications[operation.Target.Name] = operation
+		}
 		if operation.Occurrence.Kind == "claim" {
 			claims[operation.Target.Name] = operation
 		}
@@ -805,6 +845,23 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			out = append(out, projected)
 			continue
 		}
+		if contract, ok := strings.CutPrefix(key, "type.return.contract/"); ok {
+			operationName, slot, indexed := strings.Cut(contract, "/")
+			if operation, found := publications[operationName]; found && indexed {
+				out = append(out, enrichReturnContractDiagnostic(item, operation, operationName, slot, returnSpans))
+				continue
+			}
+			out = append(out, item)
+			continue
+		}
+		if optionalTarget, ok := strings.CutPrefix(fact.Key, "type.assignment.optional_target/"); ok {
+			if operation, found := pathReplacements[optionalTarget]; found {
+				out = append(out, enrichOptionalWriteTargetDiagnostic(item, operation, optionalTarget, closure.Values))
+				continue
+			}
+			out = append(out, item)
+			continue
+		}
 		name, assignment := strings.CutPrefix(fact.Key, "type.assignment/")
 		if !assignment {
 			name, missing := strings.CutPrefix(fact.Key, "type.member.missing/")
@@ -815,6 +872,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				}
 				if operation, found := writes[name]; found {
 					out = append(out, enrichMissingStaticPathDiagnostic(item, operation))
+					continue
+				}
+				if operation, found := applies[name]; found {
+					out = append(out, enrichMissingMemberCallDiagnostic(item, operation))
 					continue
 				}
 			}
@@ -945,6 +1006,8 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		}
 		structuralMismatch := assignmentMismatch{}
 		hasStructuralMismatch := false
+		missingField, missingFieldType := "", typ.Type(nil)
+		hasMissingField := false
 		// An explicit-any boundary is the authoritative source fact. Its earlier
 		// initializer can be a sealed table, but that table is not a validation
 		// proof and must not replace the boundary diagnostic with a member error.
@@ -955,9 +1018,52 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				}
 				if target, ok := shapefact.DecodeTarget(operand.Term.Encoding); ok {
 					structuralMismatch, hasStructuralMismatch = firstAssignmentMismatch(value, target)
+					if !hasStructuralMismatch {
+						missingField, missingFieldType, hasMissingField = missingRequiredField(value, target)
+					}
 				}
 				break
 			}
+		}
+		if returnSpan, ok := spans[fact.Key+declaredReturnSpanSuffix]; ok && returnSpan.Valid() && !anySource {
+			shapeTarget, _ := artifactOperand(operation.Operands, "shape-target")
+			if projected, published := directCallResultAssignment(artifact, closure.Values, operands["value"], shapeTarget); published {
+				targetSpan := claimTargetSpans[name]
+				if !targetSpan.Valid() {
+					targetSpan = item.Span
+				}
+				subject := fmt.Sprintf("call result %d", projected.index+1)
+				item.Code = "type.call.direct.result_assignment"
+				item.Message = fmt.Sprintf("%s is %s, not %s", subject, projected.result, declared)
+				item.Evidence = []DiagnosticEvidence{
+					{Span: returnSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s declares %s as %s", projected.callee, subject, projected.result)},
+					{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("assignment target %s requires %s", display, declared)},
+				}
+				item.Labels = []DiagnosticLabel{
+					{Span: item.Span, Message: "call result"},
+					{Span: targetSpan, Message: "declared type " + declared},
+					{Span: returnSpan, Message: "declared return type " + projected.result},
+				}
+				item.Help = "Assign the call result to a compatible target type, or change the callee return type if this result is valid."
+				out = append(out, item)
+				continue
+			}
+		}
+		if hasMissingField {
+			targetSpan := claimTargetSpans[name]
+			if !targetSpan.Valid() {
+				targetSpan = item.Span
+			}
+			fieldPath := display + "." + missingField
+			item.Evidence = []DiagnosticEvidence{
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "object literal has type " + boundaryShapeEvidenceValue(value)},
+				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("required field %s has type %s, but the object literal does not provide it", fieldPath, typeformat.Short(missingFieldType))},
+			}
+			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "object literal"}, {Span: targetSpan, Message: "declared type " + declared}}
+			item.Help = fmt.Sprintf("Add field `%s`, or make it optional in the declared type if it may be absent.", missingField)
+			out = append(out, item)
+			continue
 		}
 		if hasStructuralMismatch {
 			sourceDisplay += structuralMismatch.Suffix
@@ -1148,6 +1254,122 @@ func functionContractDiagnostic(operation string, facts []equation.Fact) bool {
 	return false
 }
 
+// enrichReturnContractDiagnostic narrates the refuted return slot against the
+// annotation it must satisfy. Both anchors are already-published source
+// metadata: the returned expression's own span and the authored return type's
+// span. The declared contract is a user assertion, never a proven fact.
+func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation.Equation, operationName, slot string, returnSpans map[string]wir.Span) PublishedDiagnostic {
+	index, err := strconv.Atoi(slot)
+	if err != nil || index < 0 {
+		return item
+	}
+	display := ""
+	for _, operand := range operation.Operands {
+		if operand.Role == fmt.Sprintf("return-display-%08d", index) {
+			display = string(operand.Term.Encoding)
+			break
+		}
+	}
+	declared := ""
+	for _, operand := range operation.Operands {
+		if operand.Role != fmt.Sprintf("declared-return-%08d", index) {
+			continue
+		}
+		if target, ok := shapefact.DecodeTarget(operand.Term.Encoding); ok && target != nil {
+			declared = typeformat.Short(target)
+		}
+		break
+	}
+	if declared == "" {
+		return item
+	}
+	subject := returnValueSubject(index, display)
+	declaredSpan := returnSpans[fmt.Sprintf("%s/declared-return-%08d", operationName, index)]
+	if !declaredSpan.Valid() {
+		declaredSpan = item.Span
+	}
+	valueEvidence := fmt.Sprintf("%s has literal value %s", subject, returnContractObservedValue(item.Message, subject))
+	if strings.Contains(item.Message, " may be nil, not ") {
+		valueEvidence = fmt.Sprintf("%s can be nil here", subject)
+	}
+	item.Evidence = []DiagnosticEvidence{
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: valueEvidence},
+		{Span: declaredSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("returned value %d must satisfy declared return type %s", index+1, declared)},
+	}
+	item.Labels = []DiagnosticLabel{
+		{Span: item.Span, Message: "returned value"},
+		{Span: declaredSpan, Message: "declared return type " + declared},
+	}
+	item.Help = "Return a value compatible with the declared return type, or change the return annotation if this value is valid."
+	return item
+}
+
+// returnContractObservedValue recovers the observed value the publication
+// transaction already reported. The message is that transaction's own closed
+// rendering, so no value is re-derived here.
+func returnContractObservedValue(message, subject string) string {
+	rest, ok := strings.CutPrefix(message, subject+" is ")
+	if !ok {
+		return ""
+	}
+	cut := strings.LastIndex(rest, ", not ")
+	if cut < 0 {
+		return rest
+	}
+	return rest[:cut]
+}
+
+// enrichOptionalWriteTargetDiagnostic narrates the container proof that
+// refuted this member write. The container witness is the fact the write
+// transaction published; the target and container spellings come from the same
+// operation's source operands.
+func enrichOptionalWriteTargetDiagnostic(item PublishedDiagnostic, operation equation.Equation, name string, values []equation.Fact) PublishedDiagnostic {
+	target, container := "", ""
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "display":
+			target = string(operand.Term.Encoding)
+		case "write-container-display":
+			container = string(operand.Term.Encoding)
+		}
+	}
+	if target == "" || container == "" {
+		return item
+	}
+	witness := []byte(nil)
+	for _, fact := range values {
+		if fact.Key == optionalWriteContainerPrefix+name {
+			witness = fact.Value
+			break
+		}
+	}
+	item.Evidence = []DiagnosticEvidence{
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: optionalContainerEvidence(container, witness)},
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("writing %s requires its container to be non-nil", target)},
+	}
+	item.Labels = []DiagnosticLabel{
+		{Span: item.Span, Message: "possibly nil container"},
+		{Span: item.Span, Message: "assignment target"},
+	}
+	item.Help = fmt.Sprintf("Guard `%s` with a nil check before assigning through it, or write to a non-optional container.", container)
+	return item
+}
+
+// optionalContainerEvidence renders the container's proven nilability. The
+// present projection is inlined only while it stays readable; a large shape
+// reports the nil possibility alone rather than a wall of type text.
+func optionalContainerEvidence(container string, witness []byte) string {
+	decoded, ok := shapefact.DecodeTarget(witness)
+	if ok && decoded != nil {
+		if present := proof.ProjectionWithoutNil(decoded); present != nil && !typ.IsNever(present) {
+			if rendered := typeformat.Short(present); rendered != "" && len(rendered) <= inlineEvidenceTypeLimit {
+				return fmt.Sprintf("%s can be %s or nil here", container, rendered)
+			}
+		}
+	}
+	return fmt.Sprintf("%s can be nil here", container)
+}
+
 func enrichFunctionContractWriteDiagnostic(item PublishedDiagnostic, operation equation.Equation, targetSpan wir.Span, closure equation.OutputClosure) PublishedDiagnostic {
 	operands, err := artifactOperandsByRole(operation.Operands, "display", "value")
 	if err != nil {
@@ -1217,6 +1439,191 @@ func callResultDisplay(artifact equation.Artifact, result []byte) (string, strin
 		}
 	}
 	return "", "", false
+}
+
+// directCallResultProjection is the callee-owned contract an assignment
+// diagnostic reports when its source is a local call result.
+type directCallResultProjection struct {
+	callee string
+	result string
+	index  int
+}
+
+// directCallResultAssignment reports the callee contract that the assignment
+// target refutes. The declared result is the callee's own published return
+// slot, so the diagnostic names the contract the reader has to change rather
+// than whichever value this call happened to produce.
+func directCallResultAssignment(artifact equation.Artifact, values []equation.Fact, source, targetType []byte) (directCallResultProjection, bool) {
+	application, index, resolved := directCallResultSlot(artifact, source)
+	if !resolved {
+		return directCallResultProjection{}, false
+	}
+	apply, found := artifactEquation(artifact, application, "apply")
+	if !found {
+		return directCallResultProjection{}, false
+	}
+	callee, hasCallee := artifactOperand(apply.Operands, "callee")
+	display, hasDisplay := artifactOperand(apply.Operands, "callee-display")
+	if !hasCallee || !hasDisplay || len(display) == 0 {
+		return directCallResultProjection{}, false
+	}
+	result, declared := calleeDeclaredResult(values, callee, index)
+	if !declared {
+		return directCallResultProjection{}, false
+	}
+	encoded, ok := shapefact.EncodeTarget(result)
+	target, decoded := shapefact.DecodeTarget(targetType)
+	if !ok || !decoded || target == nil || valueAgainstType(encoded, target) != shapeRefuted {
+		return directCallResultProjection{}, false
+	}
+	return directCallResultProjection{callee: string(display), result: typeformat.Short(result), index: index}, true
+}
+
+// declaredReturnSpanSuffix names the secondary anchor an assignment diagnostic
+// carries when its source is a call result: the callee's own authored return
+// annotation, which lives in a different body.
+const declaredReturnSpanSuffix = "/declared-return"
+
+// calleeReturnContractSpans anchors every assignment whose source is a local
+// call result to the callee's authored return annotation. The callee body is
+// already admitted by this evaluator, so the anchor is existing metadata rather
+// than a second source read. A callee without an authored annotation, or one
+// this evaluator never admitted, contributes no anchor and the assignment keeps
+// its ordinary presentation.
+func (l *lexicalEvaluator) calleeReturnContractSpans(artifact equation.Artifact, closure equation.OutputClosure, spans map[string]wir.Span) map[string]wir.Span {
+	if l == nil {
+		return spans
+	}
+	for _, fact := range closure.Diagnostics {
+		name, assignment := strings.CutPrefix(fact.Key, "type.assignment/")
+		if !assignment {
+			continue
+		}
+		claim, found := artifactEquation(artifact, name, "claim")
+		if !found {
+			continue
+		}
+		source, hasSource := artifactOperand(claim.Operands, "value")
+		if !hasSource {
+			continue
+		}
+		application, index, resolved := directCallResultSlot(artifact, source)
+		if !resolved {
+			continue
+		}
+		apply, found := artifactEquation(artifact, application, "apply")
+		if !found {
+			continue
+		}
+		callee, hasCallee := artifactOperand(apply.Operands, "callee")
+		if !hasCallee {
+			continue
+		}
+		span, ok := l.declaredReturnSpan(closure.Values, callee, index)
+		if !ok {
+			continue
+		}
+		if spans == nil {
+			spans = make(map[string]wir.Span)
+		}
+		spans[fact.Key+declaredReturnSpanSuffix] = span
+	}
+	return spans
+}
+
+// declaredReturnSpan reads the authored return annotation of the body a callee
+// term currently holds. The closure capability is the identity proof: an opaque
+// or reassigned callable has no admitted body and therefore no anchor.
+func (l *lexicalEvaluator) declaredReturnSpan(values []equation.Fact, callee []byte, index int) (wir.Span, bool) {
+	handle, found := closureHandleFromValues(values, callee)
+	if !found {
+		return wir.Span{}, false
+	}
+	compilation, admitted := l.byPrototype[handle.Prototype]
+	if !admitted || compilation.WIR == nil {
+		return wir.Span{}, false
+	}
+	declared := compilation.WIR.DeclaredReturnSpans()
+	if index < 0 || index >= len(declared) || !declared[index].Valid() {
+		return wir.Span{}, false
+	}
+	return declared[index], true
+}
+
+// closureHandleFromValues resolves a term's current closure capability from an
+// already-published fact list, using the same latest-epoch ordering as the
+// partition lookup.
+func closureHandleFromValues(values []equation.Fact, term []byte) (closureHandle, bool) {
+	prefix := "closure/" + string(term) + "/"
+	latest, encoded := "", []byte(nil)
+	for _, fact := range values {
+		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
+			latest, encoded = fact.Key, fact.Value
+		}
+	}
+	if encoded == nil {
+		return closureHandle{}, false
+	}
+	var handle closureHandle
+	return handle, json.Unmarshal(encoded, &handle) == nil && validClosureHandle(handle)
+}
+
+// artifactEquation finds one operation by name and occurrence kind.
+func artifactEquation(artifact equation.Artifact, name, kind string) (equation.Equation, bool) {
+	for _, operation := range artifact.Equations {
+		if operation.Target.Name == name && operation.Occurrence.Kind == kind {
+			return operation, true
+		}
+	}
+	return equation.Equation{}, false
+}
+
+// directCallResultSlot resolves the call-results operation that owns a term and
+// the result slot that term fills.
+func directCallResultSlot(artifact equation.Artifact, result []byte) (string, int, bool) {
+	if len(result) == 0 {
+		return "", 0, false
+	}
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "call-results" {
+			continue
+		}
+		application, index, matched := "", 0, false
+		for _, operand := range operation.Operands {
+			if operand.Role == "application" {
+				application = strings.TrimPrefix(string(operand.Term.Encoding), "call/")
+				continue
+			}
+			if slot, value, indexed := indexedRoleValue(operand.Role, "result-", operand.Term.Encoding); indexed && value == string(result) {
+				index, matched = slot, true
+			}
+		}
+		if matched && application != "" {
+			return application, index, true
+		}
+	}
+	return "", 0, false
+}
+
+// calleeDeclaredResult reads the declared result slot of the sealed function
+// value a callee term currently holds.
+func calleeDeclaredResult(values []equation.Fact, callee []byte, index int) (typ.Type, bool) {
+	prefix := "value/" + string(callee) + "/"
+	latest, encoded := "", []byte(nil)
+	for _, fact := range values {
+		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
+			latest, encoded = fact.Key, fact.Value
+		}
+	}
+	functionType, ok := sealedFunctionType(encoded)
+	if !ok {
+		return nil, false
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function)
+	if !ok || function == nil || len(function.TypeParams) != 0 || index < 0 || index >= len(function.Returns) {
+		return nil, false
+	}
+	return function.Returns[index], function.Returns[index] != nil
 }
 
 func hasImportedRelationResult(values []equation.Fact, result []byte) bool {
@@ -1320,8 +1727,13 @@ func projectOperationDiagnostic(item PublishedDiagnostic, fact equation.Fact, ke
 	if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.") {
 		return enrichDirectCallDiagnostic(item, operation, values), true
 	}
+	if name, ok := strings.CutPrefix(key, "type.call.optional_receiver/"); ok {
+		if operation, found := applies[name]; found {
+			return enrichOptionalReceiverDiagnostic(item, operation), true
+		}
+	}
 	if operation, ok := expressions[diagnosticOperationName(key)]; ok && strings.HasPrefix(key, "type.operator.concat_operand/") {
-		return enrichConcatOperandDiagnostic(item, operation), true
+		return enrichConcatOperandDiagnostic(item, operation, values), true
 	}
 	if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
 		return enrichRedundantCastDiagnostic(item, operation, callSpans), true
@@ -1357,7 +1769,7 @@ func enrichFrozenMutationDiagnostic(item PublishedDiagnostic, artifact equation.
 	}
 	display, callMutation := "", operation.Occurrence.Kind == "apply"
 	for _, operand := range operation.Operands {
-		if operand.Role == "freeze-display" || (callMutation && operand.Role == "argument-display-00000000") {
+		if operand.Role == "write-container-display" || (callMutation && operand.Role == "argument-display-00000000") {
 			display = string(operand.Term.Encoding)
 		}
 	}
@@ -1435,6 +1847,57 @@ func enrichMissingMemberDiagnostic(item PublishedDiagnostic, operation equation.
 	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s reads member %q from receiver type %s", source, member, receiverText)}}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "member read"}}
 	item.Help = fmt.Sprintf("Narrow the receiver before reading `%s`, or add `%s` to every reachable receiver shape.", member, member)
+	return item
+}
+
+// enrichOptionalReceiverDiagnostic names the receiver and the member the call
+// selects. Both come from the call operation's own source operands, so the
+// explanation identifies the guard the reader has to add.
+func enrichOptionalReceiverDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
+	receiver, method := "", ""
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "receiver-display":
+			receiver = string(operand.Term.Encoding)
+		case "method":
+			method, _ = callMethodName(operand.Term.Encoding)
+		}
+	}
+	if receiver == "" || method == "" {
+		return item
+	}
+	selector := receiver + "." + method
+	item.Evidence = []DiagnosticEvidence{
+		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("receiver %s is optional at call to %s", receiver, selector)},
+		{Span: item.Span, Kind: "missing proof", Trust: "unknown", Message: fmt.Sprintf("no nil check proves receiver %s is present before calling %s", receiver, selector)},
+	}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "method call"}}
+	item.Help = fmt.Sprintf("check %s ~= nil before calling %s.", receiver, selector)
+	return item
+}
+
+// enrichMissingMemberCallDiagnostic narrates a method call whose receiver
+// contract has no such member. The receiver spelling and selector come from
+// the call operation; the receiver type is the closed publication the kernel
+// already reported.
+func enrichMissingMemberCallDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
+	receiver, method := "", ""
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "receiver-display":
+			receiver = string(operand.Term.Encoding)
+		case "method":
+			method, _ = callMethodName(operand.Term.Encoding)
+		}
+	}
+	const marker = " has no member "
+	cut := strings.Index(item.Message, marker)
+	if receiver == "" || method == "" || cut <= 0 {
+		return item
+	}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s.%s has receiver type %s", receiver, method, item.Message[:cut])}}
+	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "member call"}}
+	item.Help = fmt.Sprintf("Narrow the receiver before reading `%s`, or add `%s` to every reachable receiver shape.", method, method)
 	return item
 }
 
@@ -1626,7 +2089,7 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 }
 
 func diagnosticOperationName(key string) string {
-	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/", "effect.lifecycle.unreleased/", "channel.send.closed/", "channel.close.closed/", "typestate.invalid_requirement/", "typestate.invalid_transition/", "type.operator.concat_operand/", "type.operator.comparison_operand/"} {
+	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/", "effect.lifecycle.unreleased/", "channel.send.closed/", "channel.close.closed/", "typestate.invalid_requirement/", "typestate.invalid_transition/", "type.operator.concat_operand/", "type.operator.comparison_operand/", "type.call.optional_receiver/"} {
 		if name, ok := strings.CutPrefix(key, prefix); ok {
 			if prefix == "type.operator.concat_operand/" {
 				name, _, _ = strings.Cut(name, "/")
@@ -1713,8 +2176,8 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 // enrichConcatOperandDiagnostic renders a nilability warning from the closed
 // operand fact and its WIR-provided source anchor. It does not inspect source
 // or guess a value type after equation evaluation.
-func enrichConcatOperandDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
-	_, _, subject, ok := concatOperandDiagnosticParts(item.Fact.Key)
+func enrichConcatOperandDiagnostic(item PublishedDiagnostic, operation equation.Equation, values []equation.Fact) PublishedDiagnostic {
+	_, operationName, subject, ok := concatOperandDiagnosticParts(item.Fact.Key)
 	if !ok {
 		return item
 	}
@@ -1734,13 +2197,37 @@ func enrichConcatOperandDiagnostic(item PublishedDiagnostic, operation equation.
 		side = "right"
 	}
 	item.Message = fmt.Sprintf("%s operand `%s` of `..` may be nil", side, display)
-	item.Evidence = []DiagnosticEvidence{
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s operand `%s` has type nil", side, display)},
-		{Span: item.Span, Kind: "missing proof", Trust: "unknown", Message: fmt.Sprintf("no guard on this path proves %s is non-nil", display)},
+	item.Evidence = nil
+	if origin, found := concatOperandOriginEvidence(operationName, index, display, values); found {
+		item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: origin})
 	}
+	item.Evidence = append(item.Evidence,
+		DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s operand `%s` has type nil", side, display)},
+		DiagnosticEvidence{Span: item.Span, Kind: "missing proof", Trust: "unknown", Message: fmt.Sprintf("no guard on this path proves %s is non-nil", display)},
+	)
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "value may be nil"}}
 	item.Help = fmt.Sprintf("Guard `%s` or provide a default string before using `..`.", display)
 	return item
+}
+
+// concatOperandOriginEvidence renders the closed origin classification that the
+// refuting transaction published for this operand. Absent that fact the operand
+// has no proven provenance beyond its own nil possibility.
+func concatOperandOriginEvidence(operation string, index int, display string, values []equation.Fact) (string, bool) {
+	key := fmt.Sprintf("%s%s/value-%08d", concatOperandOriginPrefix, operation, index)
+	for _, fact := range values {
+		if fact.Key != key {
+			continue
+		}
+		classification := string(fact.Value)
+		if classification == concatOriginOptionalField {
+			return fmt.Sprintf("%s is an optional field and may be nil", display), true
+		}
+		if subject, isResult := strings.CutPrefix(classification, concatOriginOptionalResult); isResult && subject != "" {
+			return fmt.Sprintf("%s has type nil and may be nil", subject), true
+		}
+	}
+	return "", false
 }
 
 func concatOperandDiagnosticParts(key string) (code, operation, subject string, ok bool) {
@@ -1955,6 +2442,12 @@ func diagnosticCode(key string) string {
 		return "type.nil.unsafe_use"
 	case strings.HasPrefix(key, "type.assignment/"):
 		return "type.assignment"
+	case strings.HasPrefix(key, "type.assignment.optional_target/"):
+		return "type.assignment.optional_target"
+	case strings.HasPrefix(key, "type.return.contract/"):
+		return "type.return.contract"
+	case strings.HasPrefix(key, "type.call.optional_receiver/"):
+		return "type.call.optional_receiver"
 	case strings.HasPrefix(key, "type.member.missing/"):
 		return "type.member.missing"
 	case strings.HasPrefix(key, "type.operator.concat_operand/"):
@@ -4041,15 +4534,27 @@ func (l *lexicalEvaluator) publishesClosureReturn(body equation.BodyID, result s
 	return false
 }
 
+// declaredBoundaryAdmission records which obligations a declaration-only entry
+// was admitted for. Each flag names the exact diagnostic family the boundary
+// can discharge; a family with no admission reason stays demand-driven.
+type declaredBoundaryAdmission struct {
+	Seeds       []entrySeed
+	Admitted    bool
+	Method      bool
+	MemberWrite bool
+	Concat      map[string]bool
+	Comparison  map[string]bool
+}
+
 // uncalledDeclaredBoundary materializes only the checker-owned type witnesses
 // already present on a capture-free function boundary. These are not runtime
 // values and carry no invented member facts: the shape encoder preserves the
 // declared union/optional relation for the child's ordinary claim and branch
 // consumers. A missing, variadic, recursive, or captured boundary stays
 // dormant.
-func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool, map[string]bool, map[string]bool) {
+func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission {
 	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
-		return nil, false, false, nil, nil
+		return declaredBoundaryAdmission{}
 	}
 	// The declaration-only entry supports a closed discriminant proof, not an
 	// arbitrary body execution. A direct static member call is also admissible
@@ -4061,7 +4566,7 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool,
 	formals := make(map[string]bool, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
-			return nil, false, false, nil, nil
+			return declaredBoundaryAdmission{}
 		}
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
@@ -4086,23 +4591,25 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool,
 			memberCalls["call/"+operation.Target.Name] = true
 		}
 	}
-	hasBranch, hasDeclaredMemberRead, hasDeclaredMemberCall, hasDeclaredAssignment := false, false, false, false
+	hasBranch, hasDeclaredMemberRead, hasDeclaredMemberCall, hasDeclaredAssignment, hasDeclaredMemberWrite := false, false, false, false, false
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "apply":
 			if !memberCalls["call/"+operation.Target.Name] {
-				return nil, false, false, nil, nil
+				return declaredBoundaryAdmission{}
 			}
 			hasDeclaredMemberCall = true
 		case "external-call":
 			application, found := artifactOperand(operation.Operands, "application")
 			if !found || !memberCalls[string(application)] {
-				return nil, false, false, nil, nil
+				return declaredBoundaryAdmission{}
 			}
 		case "dynamic-index-read", "channel-select":
-			return nil, false, false, nil, nil
+			return declaredBoundaryAdmission{}
 		case "branch-relations":
 			hasBranch = true
+		case "path-replacement":
+			hasDeclaredMemberWrite = hasDeclaredMemberWrite || uncalledDeclaredFormalMemberWrite(operation, formals)
 		case "claim":
 			hasDeclaredMemberRead = hasDeclaredMemberRead || uncalledDeclaredFormalMemberRead(child, operation, formals)
 			hasDeclaredAssignment = hasDeclaredAssignment || uncalledDeclaredFormalAssignment(child, operation, formals)
@@ -4112,26 +4619,26 @@ func uncalledDeclaredBoundary(child front.Compilation) ([]entrySeed, bool, bool,
 	// allocation-time boundary is therefore limited to straight-line bodies;
 	// declared missing-member reads retain their independent diagnostic path.
 	if hasDirectMethod && hasBranch {
-		return nil, false, false, nil, nil
+		return declaredBoundaryAdmission{}
 	}
 	concatOperations := uncalledDeclaredFormalConcatOperations(child.Artifact.Equations, memberCalls)
 	comparisonOperations := uncalledDeclaredFormalOrderedComparisonOperations(child, formals)
-	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment && len(concatOperations) == 0 && len(comparisonOperations) == 0 {
-		return nil, false, false, nil, nil
+	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment && !hasDeclaredMemberWrite && len(concatOperations) == 0 && len(comparisonOperations) == 0 {
+		return declaredBoundaryAdmission{}
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
-			return nil, false, false, nil, nil
+			return declaredBoundaryAdmission{}
 		}
 		declared := child.WIR.Type(parameter.Type)
 		value, ok := shapefact.EncodeTarget(declared)
 		if !ok || declared == nil {
-			return nil, false, false, nil, nil
+			return declaredBoundaryAdmission{}
 		}
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
-	return seeds, true, hasDirectMethod, concatOperations, comparisonOperations
+	return declaredBoundaryAdmission{Seeds: seeds, Admitted: true, Method: hasDirectMethod, MemberWrite: hasDeclaredMemberWrite, Concat: concatOperations, Comparison: comparisonOperations}
 }
 
 // uncalledDeclaredLocalUnionReadBoundary admits one allocation-time relay:
@@ -4469,7 +4976,7 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))),
 			}
 			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, []equation.Fact{fact})
-			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + published.Fact.Key
 				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), published.Fact.Value...)})
 				if published.Span.Valid() {
@@ -4607,7 +5114,7 @@ func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *
 				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(function.Params[index].Type.String()))),
 			}
 			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, []equation.Fact{fact})
-			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + published.Fact.Key
 				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), published.Fact.Value...)})
 				if published.Span.Valid() {
@@ -4938,6 +5445,19 @@ func declaredOrderedComparisonExpression(operation equation.Equation) bool {
 	}
 	_, ordered := orderedComparisonOperator(wir.Operator(operatorID))
 	return ordered
+}
+
+// uncalledDeclaredFormalMemberWrite identifies a static member write whose
+// container is an exact declared formal. The declaration alone establishes
+// whether that container admits nil, so the write's non-nil requirement is
+// decidable at the allocation boundary.
+func uncalledDeclaredFormalMemberWrite(operation equation.Equation, formals map[string]bool) bool {
+	for _, operand := range operation.Operands {
+		if operand.Role == "write-container" && formals[string(operand.Term.Encoding)] {
+			return true
+		}
+	}
+	return false
 }
 
 // uncalledDeclaredFormalAssignment identifies an annotation claim from an
@@ -5318,7 +5838,7 @@ func uncalledPublishedStdlibCalls(operations []equation.Equation) map[string]boo
 // consume a captured call result. It cannot publish a result, a refinement, or
 // a diagnostic from an unrelated method call.
 func uncalledStaticOptionalMethodDiagnostic(artifact equation.Artifact, diagnostic equation.Fact) bool {
-	if !strings.HasPrefix(diagnostic.Key, "type.call.direct.not_callable/") {
+	if !strings.HasPrefix(diagnostic.Key, "type.call.direct.not_callable/") && !strings.HasPrefix(diagnostic.Key, "type.call.optional_receiver/") {
 		return false
 	}
 	name := diagnosticOperationName(diagnostic.Key)
@@ -6202,9 +6722,10 @@ func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equati
 					break
 				}
 			}
-			fact := equation.Fact{Key: "type.assignment/" + claim.Target.Name, Value: []byte(assignmentAnyMismatchMessage(display, string(targetType)))}
+			shapeTarget, _ := artifactOperand(claim.Operands, "shape-target")
+			fact := equation.Fact{Key: "type.assignment/" + claim.Target.Name, Value: []byte(assignmentAnyMismatchMessage(display, string(targetType), shapeTarget))}
 			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, []equation.Fact{fact})
-			for _, item := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+			for _, item := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + item.Fact.Key
 				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)})
 				if item.Span.Valid() {
@@ -6691,7 +7212,7 @@ func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.Compi
 	spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
 	projected := equation.OutputClosure{}
 	body := fmt.Sprintf("%x", child.Body)
-	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 		if _, found := claims[item.Fact.Key]; !found {
 			continue
 		}
@@ -7369,7 +7890,7 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 	body := fmt.Sprintf("%x", child.Body)
 	spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
 	transported := make(map[string]bool)
-	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 		if !childCallDiagnostic(item.Fact) {
 			continue
 		}
@@ -7873,17 +8394,19 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	gradualLogicalTerms := []string(nil)
 	gradualLogicalBoundary := false
 	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, declaredConcatBoundary, declaredComparisonBoundary, staticAssignmentBoundary, indexedReadBoundary, localUnionReadBoundary := false, false, false, false, false, false, false, false
+	declaredMemberWriteBoundary := false
 	declaredConcatOperations := map[string]bool(nil)
 	declaredComparisonOperations := map[string]bool(nil)
-	if declaredSeeds, admitted, methodBoundary, concatOperations, comparisonOperations := uncalledDeclaredBoundary(child); admitted {
-		uncalledSeeds = declaredSeeds
+	if admission := uncalledDeclaredBoundary(child); admission.Admitted {
+		uncalledSeeds = admission.Seeds
 		explicitAnyBoundary = false
 		declaredBoundary = true
-		declaredMethodBoundary = methodBoundary
-		declaredConcatOperations = concatOperations
-		declaredConcatBoundary = len(concatOperations) != 0
-		declaredComparisonOperations = comparisonOperations
-		declaredComparisonBoundary = len(comparisonOperations) != 0
+		declaredMethodBoundary = admission.Method
+		declaredMemberWriteBoundary = admission.MemberWrite
+		declaredConcatOperations = admission.Concat
+		declaredConcatBoundary = len(admission.Concat) != 0
+		declaredComparisonOperations = admission.Comparison
+		declaredComparisonBoundary = len(admission.Comparison) != 0
 		formals := make(map[string]bool, len(child.Boundary.Parameters))
 		for _, parameter := range child.Boundary.Parameters {
 			formals[boundaryTerm(parameter.Symbol)] = true
@@ -7988,6 +8511,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if declaredBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") &&
 				(!declaredMethodBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) &&
 				(!declaredAssignmentBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment/")) &&
+				(!declaredMemberWriteBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment.optional_target/")) &&
 				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) &&
 				(!declaredComparisonBoundary || !declaredOrderedComparisonDiagnostic(declaredComparisonOperations, diagnostic.Key)) &&
 				!uncalledDeclaredProviderResultDiagnostic(child, diagnostic.Key) {
@@ -8024,7 +8548,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// corresponding source-facing projection alongside the qualified fact so
 		// allocation-time diagnostics retain the evidence published by their
 		// owning claim rather than falling back to an unadorned parent fact.
-		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil) {
+		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 			if claimOwnedReads[strings.TrimPrefix(item.Fact.Key, "type.member.missing/")] && strings.HasPrefix(item.Fact.Key, "type.member.missing/") {
 				continue
 			}
@@ -8037,6 +8561,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") &&
 				(!declaredMethodBoundary || !strings.HasPrefix(item.Fact.Key, "type.return.contract/")) &&
 				(!declaredAssignmentBoundary || !strings.HasPrefix(item.Fact.Key, "type.assignment/")) &&
+				(!declaredMemberWriteBoundary || !strings.HasPrefix(item.Fact.Key, "type.assignment.optional_target/")) &&
 				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, item.Fact.Key)) &&
 				(!declaredComparisonBoundary || !declaredOrderedComparisonDiagnostic(declaredComparisonOperations, item.Fact.Key)) &&
 				!uncalledDeclaredProviderResultDiagnostic(child, item.Fact.Key) {
@@ -8188,7 +8713,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			return equation.TransactionResult{}, fmt.Errorf("engine: select child %q: %w", prototype, evaluateErr)
 		}
 		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
-		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ExpressionSpans, nil, nil)
+		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil)
 		for _, diagnostic := range outcome.Diagnostics {
 			if !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
 				continue
@@ -9042,6 +9567,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	}
 	var value []byte
 	var diagnostics []equation.Fact
+	var originFacts []equation.Fact
 	var boundarySources [][]byte
 	var err error
 	switch wir.Op(kind) {
@@ -9148,6 +9674,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 						Key:   fmt.Sprintf("type.operator.concat_operand/%s/value-%08d", operation.Target.Name, i),
 						Value: []byte("concat operand may be nil"),
 					})
+					originFacts = append(originFacts, concatOperandOriginFacts(operation.Target.Name, i, term, partition)...)
 				}
 				value = v
 				break
@@ -9157,6 +9684,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 					Key:   fmt.Sprintf("type.operator.concat_operand/%s/value-%08d", operation.Target.Name, i),
 					Value: []byte("concat operand may be nil"),
 				})
+				originFacts = append(originFacts, concatOperandOriginFacts(operation.Target.Name, i, term, partition)...)
 				value = []byte("scalar/top")
 				break
 			}
@@ -9261,6 +9789,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	values := []equation.Fact{{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value}}
+	values = append(values, originFacts...)
 	if wir.Op(kind) == wir.OpLogical {
 		for _, source := range boundarySources {
 			if boundary, ok := gradualAnyBoundaryFact(string(result), source, operation.Target.Name, partition.Values()); ok {
@@ -9657,6 +10186,49 @@ func concatOperandMayBeNil(value []byte) bool {
 	return err == nil && strings.HasSuffix(declared, "?")
 }
 
+// concatOperandOriginFacts classifies why the operand this transaction just
+// refuted can be nil. The classification reads only facts already closed in
+// this partition: the operand's own declared optional field, or the optional
+// result contract published by the call that produced it. Publication renders
+// the classification; it never re-derives the cause from source.
+func concatOperandOriginFacts(operation string, index int, term []byte, partition equation.Partition) []equation.Fact {
+	key := fmt.Sprintf("%s%s/value-%08d", concatOperandOriginPrefix, operation, index)
+	if subject, found := currentEpochFact(optionalResultOriginPrefix, term, partition); found && len(subject) != 0 {
+		return []equation.Fact{{Key: key, Value: []byte(concatOriginOptionalResult + string(subject))}}
+	}
+	if concatOperandOptionalField(term, partition) {
+		return []equation.Fact{{Key: key, Value: []byte(concatOriginOptionalField)}}
+	}
+	return nil
+}
+
+// concatOperandOptionalField accepts only a member read whose ancestor's
+// current published type projects an optional field at that exact suffix. A
+// root path or an unprojectable ancestor has no field origin to report.
+func concatOperandOptionalField(term []byte, partition equation.Partition) bool {
+	path := strings.TrimPrefix(string(term), "path/")
+	if path == string(term) {
+		return false
+	}
+	for cut := len(path); cut > 0; {
+		cut = strings.LastIndexAny(path[:cut], ".[")
+		if cut < 0 {
+			return false
+		}
+		segments, valid := segment.ParseFormattedSegments(path[cut:])
+		if !valid {
+			return false
+		}
+		declared, found := declaredTypeForTerm([]byte("path/"+path[:cut]), partition)
+		if !found || declared == nil {
+			continue
+		}
+		projected, ok := luatypeprojection.ApplySegments(declared, segments)
+		return ok && projected != nil && proof.OptionalTypeHasConcreteValue(projected)
+	}
+	return false
+}
+
 // optionalProviderConcatWitness reads a provider's optional result only from
 // the same call-results operation that owns the current value term. The value
 // itself remains Top: this fact is limited to the concat consumer's nilability
@@ -9774,6 +10346,10 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	result, err := frozenMutationDiagnostic(operation, partition, "assignment")
 	if err != nil {
 		return equation.TransactionResult{}, err
+	}
+	if diagnostic, witness, refuted := optionalWriteContainerDiagnostic(operation, string(operands["display"]), partition); refuted {
+		result.Closure.Diagnostics = append(result.Closure.Diagnostics, diagnostic)
+		result.Closure.Values = append(result.Closure.Values, witness)
 	}
 	// A typed dotted function definition has already published an exact
 	// callable contract at this path. A later static write may refute that
@@ -10320,12 +10896,14 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			if declared, ok := shapefact.DecodeTarget(operand.Value); ok {
 				if mismatch, found := firstAssignmentMismatch(value, declared); found {
 					message = "cannot assign " + sourceDisplay + mismatch.Suffix + " because it is " + assignmentEvidenceValue(mismatch.Value) + ", not " + typeformat.Short(mismatch.Expected)
+				} else if field, _, found := missingRequiredField(value, declared); found {
+					message = fmt.Sprintf("object literal is missing required field %q", field)
 				}
 			}
 			break
 		}
 		if anySource {
-			message = assignmentAnyMismatchMessage(sourceDisplay, targetType)
+			message = assignmentAnyMismatchMessage(sourceDisplay, targetType, shapeTarget)
 			if len(boundaryShape) != 0 {
 				if declared, decoded := shapefact.DecodeTarget(shapeTarget); decoded && declared != nil && valueAgainstType(boundaryShape, declared) == shapeRefuted {
 					message = "cannot assign " + sourceDisplay + " because it is " + boundaryShapeEvidenceValue(boundaryShape) + ", not " + typeformat.Short(declared)
@@ -11206,14 +11784,58 @@ func uniqueNamedArm(union *typ.Union, value []byte) (typ.Type, bool) {
 	return selected, selected != nil
 }
 
-func firstAssignmentMismatch(value []byte, target typ.Type) (assignmentMismatch, bool) {
+// missingRequiredField reports the first declared field that a sealed object
+// literal does not provide. Only a closed constructor can prove absence, and
+// only a field that excludes nil carries the obligation: an optional or
+// nil-admitting field is satisfied by its own absence.
+func missingRequiredField(value []byte, target typ.Type) (string, typ.Type, bool) {
+	record, ok := assignmentRecordTarget(target)
+	if !ok {
+		return "", nil, false
+	}
+	table, ok := shapefact.DecodeTable(value)
+	if !ok || !table.Closed {
+		return "", nil, false
+	}
+	for _, field := range record.Fields {
+		if field.Name == "" || field.Type == nil || field.Optional || subtype.IsSubtype(typ.Nil, field.Type) {
+			continue
+		}
+		if member, found := table.Lookup("." + field.Name); found && member.Present {
+			continue
+		}
+		return field.Name, field.Type, true
+	}
+	return "", nil, false
+}
+
+// resolvedAssignmentTarget expands a declared assignment target to the shape
+// that carries its obligations, following aliases, instantiations, and one
+// recursive unrolling. It is the single entry every assignment projection uses
+// so they all read the same contract.
+func resolvedAssignmentTarget(target typ.Type) typ.Type {
 	if target == nil {
-		return assignmentMismatch{}, false
+		return nil
 	}
 	resolved := unwrap.Alias(subst.ExpandInstantiated(target))
 	if recursive, ok := resolved.(*typ.Recursive); ok && recursive.Body != nil && recursive.Body != recursive {
 		resolved = unwrap.Alias(subst.ExpandInstantiated(recursive.Body))
 	}
+	return resolved
+}
+
+// assignmentRecordTarget resolves a declared assignment target to the record
+// contract it imposes. Any other target shape has no field obligations.
+func assignmentRecordTarget(target typ.Type) (*typ.Record, bool) {
+	record, ok := resolvedAssignmentTarget(target).(*typ.Record)
+	return record, ok && record != nil
+}
+
+func firstAssignmentMismatch(value []byte, target typ.Type) (assignmentMismatch, bool) {
+	if target == nil {
+		return assignmentMismatch{}, false
+	}
+	resolved := resolvedAssignmentTarget(target)
 	if union, ok := resolved.(*typ.Union); ok {
 		arm, selected := uniqueNamedArm(union, value)
 		if !selected {
@@ -11593,15 +12215,29 @@ func assignmentTargetRequiresProof(targetType string) bool {
 	return err == nil && target != ""
 }
 
-func assignmentAnyMismatchMessage(source string, targetType string) string {
+func assignmentAnyMismatchMessage(source string, targetType string, shapeTarget []byte) string {
 	declared, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
 	if err != nil {
 		declared = strings.TrimPrefix(targetType, "claim-type/")
 	}
-	if strings.HasPrefix(declared, "{") {
+	if declared == "" || structuralAssignmentTarget(shapeTarget) {
 		return "cannot assign " + source + " because " + source + " comes from any/unknown; no proof shows it satisfies the declared type"
 	}
 	return "cannot assign " + source + " because it is any, not " + declared
+}
+
+// structuralAssignmentTarget recognizes a declared target whose contract is a
+// field structure rather than a single named contract. Such a target is
+// satisfied member by member, so an unvalidated any source is reported as a
+// missing boundary proof instead of a scalar type mismatch. The decision reads
+// the resolved target type, never its rendered spelling.
+func structuralAssignmentTarget(shapeTarget []byte) bool {
+	target, ok := shapefact.DecodeTarget(shapeTarget)
+	if !ok {
+		return false
+	}
+	_, record := assignmentRecordTarget(target)
+	return record
 }
 
 func assignmentMismatchMessage(target string, value []byte, targetType string) string {
@@ -11779,9 +12415,9 @@ func frozenMutationDiagnostic(operation equation.BoundEquation, partition equati
 	var subject, display []byte
 	for _, operand := range operation.Operands {
 		switch operand.Role {
-		case "freeze-subject":
+		case "write-container":
 			subject = operand.Value
-		case "freeze-display":
+		case "write-container-display":
 			display = operand.Value
 		}
 	}
@@ -11800,6 +12436,37 @@ func frozenMutationDiagnostic(operation equation.BoundEquation, partition equati
 		Key:   "effect.freeze.mutation/" + operation.Target.Name + "/" + proof,
 		Value: []byte(fmt.Sprintf("cannot mutate frozen table %q", display)),
 	}}}}, nil
+}
+
+// optionalWriteContainerDiagnostic refutes a member write whose container is
+// still proven to admit nil at this point. The container's current value is the
+// whole proof: a guard that narrows it publishes a later non-optional value at
+// the same path, so a narrowed container reaches this write with nothing to
+// report. An unknown container remains unreported.
+func optionalWriteContainerDiagnostic(operation equation.BoundEquation, display string, partition equation.Partition) (equation.Fact, equation.Fact, bool) {
+	var container, containerDisplay []byte
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "write-container":
+			container = operand.Value
+		case "write-container-display":
+			containerDisplay = operand.Value
+		}
+	}
+	if !strings.HasPrefix(string(container), "path/") || len(containerDisplay) == 0 || display == "" {
+		return equation.Fact{}, equation.Fact{}, false
+	}
+	value, err := resolveCurrentValue(container, partition)
+	if err != nil || !optionalConcreteWitness(value) {
+		return equation.Fact{}, equation.Fact{}, false
+	}
+	return equation.Fact{
+			Key:   "type.assignment.optional_target/" + operation.Target.Name,
+			Value: []byte(fmt.Sprintf("cannot assign through optional %s without nil check", containerDisplay)),
+		}, equation.Fact{
+			Key:   optionalWriteContainerPrefix + operation.Target.Name,
+			Value: append([]byte(nil), value...),
+		}, true
 }
 
 // frozenProof observes only facts already published into the partition. A
@@ -14164,8 +14831,11 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if !receiverKnown {
 			return equation.TransactionResult{Complete: true}, nil
 		}
-		if (strings.HasPrefix(string(operands.receiver), "temp/") || len(operation.Guards) == 0) && optionalMethodReceiver(operands.receiver, receiver, operands.method) {
-			return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("cannot call method on an optional value without a nil check: %s may be nil", operands.display)), nil
+		if (strings.HasPrefix(string(operands.receiver), "temp/") || len(operation.Guards) == 0) && optionalMethodReceiverAtCall(operands.receiver, receiver, operands.method, partition) {
+			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
+				Key:   "type.call.optional_receiver/" + operation.Target.Name,
+				Value: []byte(fmt.Sprintf("cannot call method on an optional value without a nil check: %s may be nil", operands.display)),
+			}}}}, nil
 		}
 		if payload, channel := typedChannelPayload(operands.receiver, partition); channel && operands.method == "send" && !operands.spread && len(operands.arguments) == 1 {
 			if argument, available := resolveKnownCurrentValue(operands.arguments[0], partition); available {
@@ -16316,6 +16986,26 @@ func currentMethodCallable(receiverTerm, receiver []byte, method string, partiti
 	return methodCallable(receiver, method)
 }
 
+// optionalMethodReceiverAtCall admits the receiver's own declared contract as
+// the optional witness when the current value is the nil member of that same
+// declaration. A proven-nil receiver satisfies the optional obligation even
+// more strongly than an unnarrowed one, and the declaration is what names the
+// callable member the call selects.
+func optionalMethodReceiverAtCall(receiverTerm, receiver []byte, method string, partition equation.Partition) bool {
+	if optionalMethodReceiver(receiverTerm, receiver, method) {
+		return true
+	}
+	if string(receiver) != "scalar/nil" {
+		return false
+	}
+	declared, found := declaredTypeForTerm(receiverTerm, partition)
+	if !found || declared == nil {
+		return false
+	}
+	encoded, ok := shapefact.EncodeTarget(declared)
+	return ok && optionalMethodReceiver(receiverTerm, encoded, method)
+}
+
 // optionalMethodReceiver proves only the failure that follows from an
 // already-published optional receiver type: a method exists on its non-nil
 // projection, but this call has not established that projection.
@@ -17190,11 +17880,21 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					Value: []byte("unvalidated"),
 				})
 			}
-			if optional, ok := optionalProviderResultValue(optionalProvider, resultIndex); ok {
+			optional, hasOptional := optionalProviderResultValue(optionalProvider, resultIndex)
+			if !hasOptional {
+				optional, hasOptional = optionalCallableResultValue(callee, resultIndex, partition)
+			}
+			if hasOptional {
 				values = append(values, equation.Fact{
 					Key:   "optional-provider-result/" + string(result) + "/" + operation.Target.Name,
 					Value: optional,
 				})
+				if origin, named := optionalResultOrigin(operation, resultIndex); named {
+					values = append(values, equation.Fact{
+						Key:   optionalResultOriginPrefix + string(result) + "/" + operation.Target.Name,
+						Value: []byte(origin),
+					})
+				}
 			}
 		}
 		if key, element, ok := iteratorElementWitness(provider, argumentTerms, partition); ok {
@@ -18855,6 +19555,53 @@ func providerReturnTypeValue(result typ.Type) ([]byte, bool) {
 	return shapefact.EncodeTarget(result)
 }
 
+// optionalCallableResultValue reads a declared optional result slot from the
+// callee's own current sealed function value. The call result itself remains
+// Top: this witness records only that the callee's published contract admits
+// nil at that slot, which is exactly what a consumer's nil obligation needs.
+// A captured callable carries this contract into a child body even where the
+// closure capability that would materialize its body was not transported.
+func optionalCallableResultValue(callee []byte, index int, partition equation.Partition) ([]byte, bool) {
+	if callee == nil || index < 0 {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(callee, partition)
+	if err != nil {
+		return nil, false
+	}
+	functionType, ok := sealedFunctionType(value)
+	if !ok {
+		return nil, false
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function)
+	if !ok || function == nil || len(function.TypeParams) != 0 || index >= len(function.Returns) {
+		return nil, false
+	}
+	result := function.Returns[index]
+	if !finiteReturnWitness(result, make(map[typ.Type]bool)) || !unwrap.IsOptionalLike(result) {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(result)
+}
+
+// optionalResultOrigin names the callee slot that published an optional
+// result. The name comes from the call-result operation's own source display,
+// so a temporary result term can still be explained by the call that produced
+// it. A call with no authored display has no origin to report.
+func optionalResultOrigin(operation equation.BoundEquation, index int) (string, bool) {
+	for _, operand := range operation.Operands {
+		if operand.Role != "result-display" || len(operand.Value) == 0 {
+			continue
+		}
+		callee := strings.TrimSuffix(string(operand.Value), "(...)")
+		if callee == "" || callee == string(operand.Value) {
+			return "", false
+		}
+		return fmt.Sprintf("%s return %d", callee, index+1), true
+	}
+	return "", false
+}
+
 func optionalProviderResultValue(provider string, index int) ([]byte, bool) {
 	if provider == "" || index < 0 {
 		return nil, false
@@ -18938,6 +19685,29 @@ func finiteReturnWitness(result typ.Type, seen map[typ.Type]bool) bool {
 	}
 }
 
+// returnValueSubject names one return slot. The authored spelling is added
+// when the returned expression has one, so the reader sees both the slot and
+// the expression that filled it.
+func returnValueSubject(index int, display string) string {
+	if display == "" {
+		return fmt.Sprintf("returned value %d", index+1)
+	}
+	return fmt.Sprintf("returned value %d (%s)", index+1, display)
+}
+
+// indexedRoleValue decodes an operand whose role carries a slot index.
+func indexedRoleValue(role, prefix string, value []byte) (int, string, bool) {
+	suffix, ok := strings.CutPrefix(role, prefix)
+	if !ok {
+		return 0, "", false
+	}
+	index, err := strconv.Atoi(suffix)
+	if err != nil || index < 0 {
+		return 0, "", false
+	}
+	return index, string(value), true
+}
+
 func hasValue(partition equation.Partition, key string) bool {
 	for _, item := range partition.Values() {
 		if item.Key == key && string(item.Value) == "scalar/boolean" {
@@ -18956,8 +19726,13 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 	}
 	values := make([][]byte, 0, len(operation.Operands))
 	declared := make(map[int]typ.Type)
+	displays := make(map[int]string)
 	for _, operand := range operation.Operands {
 		const prefix = "return-value-"
+		if index, display, ok := indexedRoleValue(operand.Role, "return-display-", operand.Value); ok {
+			displays[index] = display
+			continue
+		}
 		if strings.HasPrefix(operand.Role, "declared-return-") {
 			indexText := strings.TrimPrefix(operand.Role, "declared-return-")
 			index, err := strconv.Atoi(indexText)
@@ -19012,12 +19787,13 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		if valueAgainstType(values[index], expected) != shapeRefuted {
 			continue
 		}
-		message := fmt.Sprintf("returned value is %s, not %s", assignmentValueType(values[index]), typeformat.Short(expected))
+		subject := returnValueSubject(index, displays[index])
+		message := fmt.Sprintf("%s is %s, not %s", subject, assignmentEvidenceValue(values[index]), typeformat.Short(expected))
 		if optionalConcreteWitness(values[index]) && valueAgainstType([]byte("scalar/nil"), expected) == shapeRefuted {
-			message = fmt.Sprintf("returned value may be nil, not %s", typeformat.Short(expected))
+			message = fmt.Sprintf("%s may be nil, not %s", subject, typeformat.Short(expected))
 		}
 		diagnostics = append(diagnostics, equation.Fact{
-			Key:   "type.return.contract/" + operation.Target.Name,
+			Key:   fmt.Sprintf("type.return.contract/%s/%08d", operation.Target.Name, index),
 			Value: []byte(message),
 		})
 	}
@@ -19031,7 +19807,8 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 	outcomes = append(outcomes, equation.Fact{Key: prefix + "arity", Value: []byte(strconv.Itoa(len(values)))})
 	for index, value := range values {
 		outcomes = append(outcomes, equation.Fact{Key: prefix + strconv.Itoa(index), Value: value})
-		for memberIndex, wire := range returnMemberClosures(operation.Operands[index].Value, partition) {
+		source := boundOperandValue(operation.Operands, fmt.Sprintf("return-value-%08d", index))
+		for memberIndex, wire := range returnMemberClosures(source, partition) {
 			encoded, err := json.Marshal(wire)
 			if err != nil {
 				return equation.TransactionResult{}, err
@@ -19336,6 +20113,17 @@ func operandsByRole(operands []equation.BoundOperand, roles ...string) (map[stri
 		}
 	}
 	return result, nil
+}
+
+// boundOperandValue selects one bound operand by role. Operand order is
+// presentation-dependent, so every slot lookup goes through its role.
+func boundOperandValue(operands []equation.BoundOperand, role string) []byte {
+	for _, operand := range operands {
+		if operand.Role == role {
+			return operand.Value
+		}
+	}
+	return nil
 }
 
 // requiredOperandsByRole is the structural counterpart to operandsByRole: it

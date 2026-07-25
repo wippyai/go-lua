@@ -284,7 +284,7 @@ local function use(ok: boolean)
   db:release()
 end`)
 	for _, diagnostic := range r.PublishedDiagnostics {
-		if diagnostic.Code == "type.call.direct.not_callable" && strings.Contains(diagnostic.Message, "db.release may be nil") {
+		if diagnostic.Code == "type.call.optional_receiver" && strings.Contains(diagnostic.Message, "db.release may be nil") {
 			return
 		}
 	}

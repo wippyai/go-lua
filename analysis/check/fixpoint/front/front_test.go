@@ -415,7 +415,7 @@ func TestCompileBodyLowersExactPublicationSlots(t *testing.T) {
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
-		roles := operands(operation)
+		roles := valueOperands(operation)
 		if len(roles) != 3 || roles["return-value-00000000"] != "scalar/number/7" || roles["return-value-00000001"] != "scalar/nil" || roles["return-value-00000002"] != "scalar/bool/false" {
 			t.Fatalf("publication slots = %#v", roles)
 		}
@@ -465,7 +465,7 @@ func TestCompileBodyLowersAdjustedOpenReturnTailSlots(t *testing.T) {
 				if operation.Occurrence.Kind != "publication" {
 					continue
 				}
-				if got := operands(operation); !mapsEqual(got, test.want) {
+				if got := valueOperands(operation); !mapsEqual(got, test.want) {
 					t.Fatalf("publication slots = %#v, want %#v", got, test.want)
 				}
 				return
@@ -862,6 +862,20 @@ func TestCompileBodyAdmitsUnknownDynamicIndexWriteContainers(t *testing.T) {
 func operands(equation equation.Equation) map[string]string {
 	result := make(map[string]string, len(equation.Operands))
 	for _, operand := range equation.Operands {
+		result[operand.Role] = string(operand.Term.Encoding)
+	}
+	return result
+}
+
+// valueOperands drops the source-presentation operands that travel beside a
+// value slot. Slot ownership assertions are about the value lattice; the
+// authored spelling of a slot is diagnostic metadata and never a slot itself.
+func valueOperands(equation equation.Equation) map[string]string {
+	result := make(map[string]string, len(equation.Operands))
+	for _, operand := range equation.Operands {
+		if strings.Contains(operand.Role, "-display-") || strings.HasSuffix(operand.Role, "-display") {
+			continue
+		}
 		result[operand.Role] = string(operand.Term.Encoding)
 	}
 	return result
