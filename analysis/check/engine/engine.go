@@ -201,8 +201,12 @@ type Result struct {
 	// returns a graph that same body allocated. It comes from the identical
 	// evaluation as FunctionEscapes and is likewise pure data here.
 	FunctionAllocatedReturns map[string]bool
-	Transactions             int
-	Timings                  Timings
+	// FunctionReturnTuples retains every complete return alternative from an
+	// exported body evaluation.  The values remain engine-owned closed facts;
+	// the exporter may project only the nil/presence relation they prove.
+	FunctionReturnTuples map[string][][][]byte
+	Transactions         int
+	Timings              Timings
 }
 
 // PublishedDiagnostic enriches one equation diagnostic fact at the public
@@ -486,7 +490,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	// The escape summary is computed last and reads only its own evaluated
 	// outcomes, so it observes the finalized module closure without altering any
 	// field already projected above.
-	functionEscapes, allocatedReturns := lexical.escapeSummaryForExport(compilation.Body, closure)
+	functionEscapes, allocatedReturns, functionReturnTuples := lexical.escapeSummaryForExport(compilation.Body, closure)
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: outcomes, Diagnostics: closure.Diagnostics,
@@ -500,6 +504,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		TypeDefinitions:          cloneTypeDefinitions(compilation.TypeDefinitions),
 		FunctionEscapes:          functionEscapes,
 		FunctionAllocatedReturns: allocatedReturns,
+		FunctionReturnTuples:     functionReturnTuples,
 		Transactions:             transactions,
 		Timings:                  Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
 	}
@@ -10681,7 +10686,7 @@ func projectReturnTupleWriteRelation(target string, source []byte, operation str
 	encodedTarget := base64.RawURLEncoding.EncodeToString([]byte(target))
 	var facts []equation.Fact
 	for _, fact := range partition.Values() {
-		if !strings.HasPrefix(fact.Key, returnTupleTruePrefix) || string(fact.Value) != "proven" {
+		if !strings.HasPrefix(fact.Key, returnTupleTruePrefix) || (string(fact.Value) != "scalar/nil" && string(fact.Value) != "proven") {
 			continue
 		}
 		parts := strings.Split(strings.TrimPrefix(fact.Key, returnTupleTruePrefix), "/")
@@ -10698,7 +10703,7 @@ func projectReturnTupleWriteRelation(target string, source []byte, operation str
 		if left == parts[0] && right == parts[1] {
 			continue
 		}
-		facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + left + "/" + right, Value: []byte("proven")})
+		facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + left + "/" + right, Value: append([]byte(nil), fact.Value...)})
 	}
 	return facts
 }
@@ -15657,21 +15662,36 @@ func correlationBranchClosure(operation equation.BoundEquation, partition equati
 }
 
 // returnTupleTrueBranchClosure applies the one directional fact carried by an
-// imported finite return catalog: when its exact boolean result slot is true,
-// the paired result slot is present. Both branch outcomes remain guarded; a
-// catalog with no true tuple, a nil true companion, or a stale/untyped target
-// is deliberately unavailable.
+// imported finite return catalog: when its exact result slot is nil, the paired
+// result slot is present. Both branch outcomes remain guarded; a catalog with
+// an unproven path, nil companion, or stale/untyped target is unavailable.
 func returnTupleTrueBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
 	predicate, found, err := soleBranchPredicate(operation)
-	if err != nil || !found || predicate.Kind != "truthy" || predicate.Negated || predicate.Path == "" {
+	if err != nil || !found || predicate.Path == "" {
 		return equation.OutputClosure{}, false, err
+	}
+	literal, equality := "", false
+	switch {
+	case predicate.Kind == "nil" && !predicate.Negated:
+		literal, equality = "scalar/nil", true
+	case predicate.Kind == "literal-equal" && predicate.Literal == "scalar/nil":
+		literal, equality = "scalar/nil", true
+	case predicate.Kind == "truthy" && !predicate.Negated:
+		literal, equality = "proven", true
+	}
+	if !equality {
+		return equation.OutputClosure{}, false, nil
 	}
 	trigger := []byte("path/" + predicate.Path)
 	prefix := returnTupleTruePrefix + base64.RawURLEncoding.EncodeToString(trigger) + "/"
-	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
+	edge := "true"
+	if predicate.Negated {
+		edge = "false"
+	}
+	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/" + edge)}
 	closure := equation.OutputClosure{}
 	for _, fact := range partition.Values() {
-		if !strings.HasPrefix(fact.Key, prefix) || string(fact.Value) != "proven" {
+		if !strings.HasPrefix(fact.Key, prefix) || string(fact.Value) != literal {
 			continue
 		}
 		encoded := strings.TrimPrefix(fact.Key, prefix)
@@ -15693,12 +15713,16 @@ func returnTupleTrueBranchClosure(operation equation.BoundEquation, partition eq
 	if len(closure.Values) == 0 {
 		return equation.OutputClosure{}, false, nil
 	}
-	falseGuard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/false")}
+	otherEdge := "false"
+	if edge == "false" {
+		otherEdge = "true"
+	}
+	falseGuard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/" + otherEdge)}
 	closure.Outcomes = append(closure.Outcomes,
-		equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/true"), Guards: []equation.Guard{guard}},
-		equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/false"), Guards: []equation.Guard{falseGuard}},
-		equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("return-tuple/true"), Guards: []equation.Guard{guard}},
-		equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("return-tuple/false"), Guards: []equation.Guard{falseGuard}},
+		equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge), Guards: []equation.Guard{guard}},
+		equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + otherEdge), Guards: []equation.Guard{falseGuard}},
+		equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("return-tuple/" + edge), Guards: []equation.Guard{guard}},
+		equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("return-tuple/" + otherEdge), Guards: []equation.Guard{falseGuard}},
 	)
 	return closure, true, nil
 }
@@ -20431,27 +20455,41 @@ func importedReturnTupleFacts(lexical *lexicalEvaluator, provider []byte, target
 			if err != nil || triggerSlot == targetSlot || !strings.HasPrefix(string(target), "temp/") {
 				continue
 			}
-			valid, witnessed := true, false
-			for _, tuple := range function.ReturnTuples {
-				if triggerSlot >= len(tuple.Values) || targetSlot >= len(tuple.Values) {
-					valid = false
-					break
+			for _, literal := range []string{"scalar/nil", "scalar/bool/true"} {
+				valid, witnessed := true, false
+				for _, tuple := range function.ReturnTuples {
+					if triggerSlot >= len(tuple.Values) || targetSlot >= len(tuple.Values) {
+						valid = false
+						break
+					}
+					if tuple.Values[triggerSlot].Scalar != literal {
+						continue
+					}
+					witnessed = true
+					if !returnTupleValuePresent(tuple, targetSlot) {
+						valid = false
+						break
+					}
 				}
-				if tuple.Values[triggerSlot].Scalar != "scalar/bool/true" {
-					continue
+				if valid && witnessed {
+					value := literal
+					if literal == "scalar/bool/true" {
+						value = "proven"
+					}
+					facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + base64.RawURLEncoding.EncodeToString(trigger) + "/" + base64.RawURLEncoding.EncodeToString(target), Value: []byte(value)})
 				}
-				witnessed = true
-				if tuple.Values[targetSlot].Scalar == "scalar/nil" || tuple.Values[targetSlot].Scalar == "" {
-					valid = false
-					break
-				}
-			}
-			if valid && witnessed {
-				facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + base64.RawURLEncoding.EncodeToString(trigger) + "/" + base64.RawURLEncoding.EncodeToString(target), Value: []byte("proven")})
 			}
 		}
 	}
 	return facts
+}
+
+func returnTupleValuePresent(tuple exportrelation.ReturnTuple, slot int) bool {
+	if len(tuple.Present) == len(tuple.Values) && tuple.Present[slot] {
+		return true
+	}
+	value := tuple.Values[slot]
+	return (value.Scalar != "" && value.Scalar != "scalar/nil") || len(value.Table) != 0
 }
 
 func mustCallResultIndex(key string) int {

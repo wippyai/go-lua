@@ -45,10 +45,14 @@ type Function struct {
 	AllocatedReturn bool
 }
 
-// ReturnTuple is one complete positional return alternative. Every value is a
-// normal export-relation value, so malformed or partial tuples cannot become a
-// cross-module fact.
-type ReturnTuple struct{ Values []Value }
+// ReturnTuple is one complete positional return alternative. Present is an
+// optional same-length bitmap for tuple-only non-nil witnesses. It deliberately
+// lives outside Value: Value is also the placement-template language, whose
+// meaning must not change for a value/error correlation.
+type ReturnTuple struct {
+	Values  []Value
+	Present []bool
+}
 
 // ConditionalReturn is a closed, producer-evaluated two-way return relation.
 // It records the one literal test that selects Match; Otherwise is selected
@@ -123,7 +127,16 @@ func validReturnTuples(tuples []ReturnTuple, arity int) bool {
 		if len(tuple.Values) == 0 {
 			return false
 		}
-		for _, value := range tuple.Values {
+		if len(tuple.Present) != 0 && len(tuple.Present) != len(tuple.Values) {
+			return false
+		}
+		for index, value := range tuple.Values {
+			if len(tuple.Present) != 0 && tuple.Present[index] {
+				if value.Parameter != nil || value.Scalar != "" || len(value.Table) != 0 {
+					return false
+				}
+				continue
+			}
 			if !value.Valid(arity) {
 				return false
 			}

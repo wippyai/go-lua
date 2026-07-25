@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -24,22 +25,22 @@ import (
 // The pass is fail-open on data only: any body that cannot be seeded or
 // evaluated contributes no entry, and a panic in a downstream kernel is absorbed
 // so the summary can never disturb the module verdict.
-func (l *lexicalEvaluator) escapeSummaryForExport(body equation.BodyID, closure equation.OutputClosure) (summary map[string][]signature.ParamRelation, allocatedReturns map[string]bool) {
+func (l *lexicalEvaluator) escapeSummaryForExport(body equation.BodyID, closure equation.OutputClosure) (summary map[string][]signature.ParamRelation, allocatedReturns map[string]bool, returnTuples map[string][][][]byte) {
 	defer func() {
 		if recover() != nil {
-			summary, allocatedReturns = nil, nil
+			summary, allocatedReturns, returnTuples = nil, nil, nil
 		}
 	}()
 	if l == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, closure)
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	exports := exportedFunctionHandles(closure.Values)
 	if len(exports) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	names := make([]string, 0, len(exports))
 	for name := range exports {
@@ -51,22 +52,54 @@ func (l *lexicalEvaluator) escapeSummaryForExport(body equation.BodyID, closure 
 		if !found {
 			continue
 		}
-		relations, allocatedReturn, ok := l.escapeRelationsForPrototype(body, child, partition)
-		if !ok {
-			continue
-		}
-		if summary == nil {
-			summary = make(map[string][]signature.ParamRelation)
-		}
-		summary[name] = relations
-		if allocatedReturn {
-			if allocatedReturns == nil {
-				allocatedReturns = make(map[string]bool)
+		relations, allocatedReturn, tuples, ok := l.escapeRelationsForPrototype(body, child, partition)
+		if ok {
+			if summary == nil {
+				summary = make(map[string][]signature.ParamRelation)
 			}
-			allocatedReturns[name] = true
+			summary[name] = relations
+			if allocatedReturn {
+				if allocatedReturns == nil {
+					allocatedReturns = make(map[string]bool)
+				}
+				allocatedReturns[name] = true
+			}
+		}
+		if len(tuples) == 0 {
+			tuples = l.returnTuplesForPrototype(body, child, partition)
+		}
+		if len(tuples) != 0 {
+			if returnTuples == nil {
+				returnTuples = make(map[string][][][]byte)
+			}
+			returnTuples[name] = tuples
 		}
 	}
-	return summary, allocatedReturns
+	return summary, allocatedReturns, returnTuples
+}
+
+// returnTuplesForPrototype uses the same closed declared-entry lane as the
+// uncalled evaluator.  It is independent of escape classification: scalar
+// formals need no placement identity, but their body can still establish a
+// complete value/error return relation.
+func (l *lexicalEvaluator) returnTuplesForPrototype(body equation.BodyID, child front.Compilation, partition equation.Partition) [][][]byte {
+	seeds, ok := declaredFormalSeeds(child)
+	if !ok {
+		return nil
+	}
+	entry, admitted, err := l.uncalledChildEntry(body, child, seeds, partition, false, true, true, true)
+	if err != nil || !admitted {
+		return nil
+	}
+	outcome, _, err := l.evaluate(child, entry)
+	if err != nil {
+		return nil
+	}
+	tuples, complete := completeReturnCandidates(outcome.Outcomes)
+	if !complete {
+		return nil
+	}
+	return tuples
 }
 
 // exportedFunctionHandles reads the returned-table member closure capabilities
@@ -102,16 +135,93 @@ func exportedFunctionHandles(values []equation.Fact) map[string]closureHandle {
 // placement facts. The same evaluation also decides whether the body returns a
 // graph of its own. It returns ok=false when the body cannot be seeded (a
 // vararg or `any` formal, an unreconstructable capture) or its evaluation fails.
-func (l *lexicalEvaluator) escapeRelationsForPrototype(body equation.BodyID, child front.Compilation, partition equation.Partition) ([]signature.ParamRelation, bool, bool) {
+func (l *lexicalEvaluator) escapeRelationsForPrototype(body equation.BodyID, child front.Compilation, partition equation.Partition) ([]signature.ParamRelation, bool, [][][]byte, bool) {
 	entry, identities, ok := l.escapeChildEntry(body, child, partition)
 	if !ok {
-		return nil, false, false
+		return nil, false, nil, false
 	}
 	outcome, _, err := l.evaluate(child, entry)
 	if err != nil {
-		return nil, false, false
+		return nil, false, nil, false
 	}
-	return classifyEscapeParameters(child, outcome.Values, identities), allocatedReturnGraph(outcome.Values, identities), true
+	tuples, complete := completeReturnCandidates(outcome.Outcomes)
+	if !complete {
+		tuples = nil
+	}
+	// Tuple publication is optional.  An opaque or partial return catalog must
+	// never suppress the independent placement escape summary.
+	return classifyEscapeParameters(child, outcome.Values, identities), allocatedReturnGraph(outcome.Values, identities), tuples, true
+}
+
+// completeReturnCandidates preserves the engine's path-correlated return
+// facts. A missing arity or slot rejects the entire catalog: downstream
+// consumers must never infer a tuple from an opaque return path.
+type returnCandidateValues struct {
+	arity  int
+	seen   bool
+	values map[int][]byte
+}
+
+func completeReturnCandidates(outcomes []equation.Fact) ([][][]byte, bool) {
+	candidates := make(map[string]*returnCandidateValues)
+	for _, fact := range outcomes {
+		parts := strings.Split(fact.Key, "/")
+		if len(parts) != 3 || parts[0] != "return-candidate" || parts[1] == "" {
+			continue
+		}
+		item := candidates[parts[1]]
+		if item == nil {
+			item = &returnCandidateValues{arity: -1, values: make(map[int][]byte)}
+			candidates[parts[1]] = item
+		}
+		if parts[2] == "arity" {
+			arity, err := strconv.Atoi(string(fact.Value))
+			if err != nil || arity < 0 || item.seen {
+				return nil, false
+			}
+			item.arity, item.seen = arity, true
+			continue
+		}
+		index, err := strconv.Atoi(parts[2])
+		if err != nil || index < 0 {
+			return nil, false
+		}
+		if _, duplicate := item.values[index]; duplicate {
+			return nil, false
+		}
+		item.values[index] = append([]byte(nil), fact.Value...)
+	}
+	if len(candidates) == 0 {
+		return nil, false
+	}
+	names := make([]string, 0, len(candidates))
+	for name := range candidates {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	tuples := make([][][]byte, 0, len(names))
+	for _, name := range names {
+		item := candidates[name]
+		if !item.seen || item.arity < 2 || len(item.values) != item.arity {
+			return nil, false
+		}
+		values := make([][]byte, item.arity)
+		for index := range values {
+			value, found := item.values[index]
+			if !found {
+				return nil, false
+			}
+			values[index] = value
+		}
+		tuples = append(tuples, values)
+	}
+	arity := candidates[names[0]].arity
+	for _, name := range names {
+		if candidates[name].arity != arity {
+			return nil, false
+		}
+	}
+	return tuples, true
 }
 
 // allocatedReturnGraph reports whether the evaluated body returns a graph that

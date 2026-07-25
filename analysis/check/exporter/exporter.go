@@ -13,8 +13,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -42,22 +44,22 @@ func Derive(result engine.Result) typ.Type {
 // DeriveSummary publishes only direct, unconditional return templates.
 func DeriveSummary(result engine.Result, source string) exportrelation.Summary {
 	export := Derive(result)
-	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, result.FunctionAllocatedReturns, nil, nil)}
+	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, result.FunctionAllocatedReturns, result.FunctionReturnTuples, nil, nil)}
 }
 
 // DeriveSummaryWithImports forwards only an already-published import relation.
 func DeriveSummaryWithImports(result engine.Result, source string, imports map[string]exportrelation.Summary, aliases map[string]string) exportrelation.Summary {
 	export := Derive(result)
-	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, result.FunctionAllocatedReturns, imports, aliases)}
+	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, result.FunctionAllocatedReturns, result.FunctionReturnTuples, imports, aliases)}
 }
 
-func deriveFunctions(source string, export typ.Type, escapes map[string][]signature.ParamRelation, allocatedReturns map[string]bool, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
+func deriveFunctions(source string, export typ.Type, escapes map[string][]signature.ParamRelation, allocatedReturns map[string]bool, returnTuples map[string][][][]byte, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
 	stmts, ok := parseFunctionStatements(source)
 	if !ok {
 		return nil
 	}
 	scope := trackFunctionScope(stmts)
-	return functionRelations(scope, returnedModuleRoots(stmts), export, escapes, allocatedReturns, imports, aliases)
+	return functionRelations(scope, returnedModuleRoots(stmts), export, escapes, allocatedReturns, returnTuples, imports, aliases)
 }
 
 func parseFunctionStatements(source string) ([]ast.Stmt, bool) {
@@ -158,7 +160,7 @@ func trackFunctionScope(stmts []ast.Stmt) functionScope {
 	return scope
 }
 
-func functionRelations(scope functionScope, roots map[string]bool, export typ.Type, escapes map[string][]signature.ParamRelation, allocatedReturns map[string]bool, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
+func functionRelations(scope functionScope, roots map[string]bool, export typ.Type, escapes map[string][]signature.ParamRelation, allocatedReturns map[string]bool, returnTuples map[string][][][]byte, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
 	paths := make([]string, 0, len(scope.functions)+len(scope.stores))
 	for path := range scope.functions {
 		paths = append(paths, path)
@@ -186,7 +188,7 @@ func functionRelations(scope functionScope, roots map[string]bool, export typ.Ty
 			})
 			continue
 		}
-		if relation, ok := functionRelation(relative, scope.functions[path], escapes[relative], allocatedReturns[relative], imports, aliases); ok && publishedFunction(export, relative, relation.Arity) {
+		if relation, ok := functionRelation(relative, scope.functions[path], escapes[relative], allocatedReturns[relative], returnTuples[relative], imports, aliases); ok && publishedFunction(export, relative, relation.Arity) {
 			out = append(out, relation)
 		}
 	}
@@ -280,7 +282,7 @@ func memberPath(expr ast.Expr) (string, bool) {
 	}
 }
 
-func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.ParamRelation, allocatedReturn bool, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Function, bool) {
+func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.ParamRelation, allocatedReturn bool, evaluatedTuples [][][]byte, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Function, bool) {
 	if fn == nil || fn.ParList == nil || fn.ParList.HasVargs {
 		return exportrelation.Function{}, false
 	}
@@ -294,6 +296,10 @@ func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.Par
 		return relation, relation.Valid()
 	}
 	if tuples, ok := completeLiteralReturnTuples(fn.Stmts, params); ok && multiReturnTuples(tuples) {
+		relation.ReturnTuples = tuples
+		return relation, relation.Valid()
+	}
+	if tuples, ok := completeEvaluatedReturnTuples(evaluatedTuples); ok {
 		relation.ReturnTuples = tuples
 		return relation, relation.Valid()
 	}
@@ -384,6 +390,61 @@ func multiReturnTuples(tuples []exportrelation.ReturnTuple) bool {
 		}
 	}
 	return true
+}
+
+// completeEvaluatedReturnTuples converts only the engine's complete candidate
+// catalog into the small cross-module relation language.  A value is useful
+// here solely when it is exact nil or a concrete fact known to exclude nil;
+// opaque, any, and optional facts reject the entire catalog.
+func completeEvaluatedReturnTuples(candidates [][][]byte) ([]exportrelation.ReturnTuple, bool) {
+	if len(candidates) == 0 {
+		return nil, false
+	}
+	tuples := make([]exportrelation.ReturnTuple, 0, len(candidates))
+	arity := -1
+	for _, candidate := range candidates {
+		if len(candidate) != 2 || (arity >= 0 && len(candidate) != arity) {
+			return nil, false
+		}
+		arity = len(candidate)
+		tuple := exportrelation.ReturnTuple{Values: make([]exportrelation.Value, len(candidate)), Present: make([]bool, len(candidate))}
+		for index, value := range candidate {
+			item, present, ok := evaluatedReturnValue(value)
+			if !ok {
+				return nil, false
+			}
+			tuple.Values[index] = item
+			tuple.Present[index] = present
+		}
+		// The fact-derived lane is deliberately just an option/error relation:
+		// each complete alternative must contain one exact nil and one proven
+		// present value.  Richer catalogs retain no relation rather than risking
+		// a projection beyond the body facts this compact wire can express.
+		if (tuple.Values[0].Scalar == "scalar/nil") == (tuple.Values[1].Scalar == "scalar/nil") {
+			return nil, false
+		}
+		tuples = append(tuples, tuple)
+	}
+	return tuples, true
+}
+
+func evaluatedReturnValue(value []byte) (exportrelation.Value, bool, bool) {
+	if string(value) == "scalar/nil" {
+		return exportrelation.Value{Scalar: "scalar/nil"}, false, true
+	}
+	if strings.HasPrefix(string(value), "scalar/") && string(value) != "scalar/top" && string(value) != "scalar/any" {
+		return exportrelation.Value{}, true, true
+	}
+	target, ok := shapefact.DecodeTarget(value)
+	if !ok || target == nil || typevalue.ProjectionHasNil(target) {
+		return exportrelation.Value{}, false, false
+	}
+	switch unwrap.Alias(target).Kind() {
+	case kind.Any, kind.Unknown, kind.Nil:
+		return exportrelation.Value{}, false, false
+	default:
+		return exportrelation.Value{}, true, true
+	}
 }
 
 // completeLiteralReturnTuples accepts only a complete finite control tree made
