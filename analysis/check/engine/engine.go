@@ -30,6 +30,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
+	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -177,6 +178,10 @@ type Result struct {
 	Native *NativeFactIndex
 	// TypeDefinitions preserve provider-owned declaration identity at consumers.
 	TypeDefinitions map[string]typ.Type
+	// FunctionEscapes is the per-exported-function per-parameter escape summary
+	// derived from placement facts. It is keyed by exported member name and is
+	// pure data: it changes no diagnostic, placement plan, or module allocation.
+	FunctionEscapes map[string][]signature.ParamRelation
 	Transactions    int
 	Timings         Timings
 }
@@ -459,6 +464,10 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	// only here, never at a downstream consumer.
 	closure.Values = append(closure.Values, inferredReturnMemberSummaries(lexical, closure.Values)...)
 	outcomes, valueFacts := publishedOutcomes(closure.Outcomes, closure.Values), cloneFacts(closure.Values)
+	// The escape summary is computed last and reads only its own evaluated
+	// outcomes, so it observes the finalized module closure without altering any
+	// field already projected above.
+	functionEscapes := lexical.escapeSummaryForExport(closure)
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: outcomes, Diagnostics: closure.Diagnostics,
@@ -470,6 +479,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		DiagnosticSpans:      diagnosticSpans,
 		Placement:            placement,
 		TypeDefinitions:      cloneTypeDefinitions(compilation.TypeDefinitions),
+		FunctionEscapes:      functionEscapes,
 		Transactions:         transactions,
 		Timings:              Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
 	}
@@ -6807,18 +6817,43 @@ func hasDeclaredFormalMethodCall(child front.Compilation, operation equation.Equ
 // only its already-published call capability. Unknown or non-callable captures
 // therefore leave the child dormant rather than receiving a synthetic entry.
 func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies, declaredProviderBoundary bool, gradualBoundaryTerms ...[]string) ([]byte, bool, error) {
+	seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, admitted := l.childEntrySeedSet(child, formalSeeds, partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies)
+	if !admitted {
+		return nil, false, nil
+	}
+	var entry []byte
+	var err error
+	if declaredProviderBoundary {
+		entry, err = encodeDeclaredChildEntryWithCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds)
+	} else {
+		entry, err = encodeChildEntryWithCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, gradualBoundaryTerms...)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return entry, true, nil
+}
+
+// childEntrySeedSet builds the private-entry seed lanes shared by every uncalled
+// body admission: the formal value seeds, the capture value and closure seeds
+// resolved from the allocating partition, and the descendant/member/identity/cell
+// capabilities each seed carries. It returns admitted=false whenever a capture
+// cannot be reconstructed from an already-published capability, keeping the
+// caller fail-closed. The encode step (declared or placement-bearing) belongs to
+// the caller so a summary lane can add its own capabilities to the same seeds.
+func (l *lexicalEvaluator) childEntrySeedSet(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies bool) ([]entrySeed, []entryClosureSeed, []entryMemberClosureSeed, []entryTableIdentitySeed, []entryMemberCellSeed, bool) {
 	seeds := append([]entrySeed(nil), formalSeeds...)
 	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
 	for _, capture := range child.Boundary.Captures {
 		term := boundaryTerm(capture.Symbol)
 		value, known := resolveKnownCurrentValue([]byte(term), partition)
 		if !known || isUnknownScalar(value) {
-			return nil, false, nil
+			return nil, nil, nil, nil, nil, false
 		}
 		handle, found := closureHandleFor([]byte(term), partition)
 		if !found {
 			if isUnknownScalar(value) {
-				return nil, false, nil
+				return nil, nil, nil, nil, nil, false
 			}
 			// A require binding can carry its project-selected export type as
 			// entry metadata. This is not a reconstructed module value: the
@@ -6828,7 +6863,7 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 			if imported, found := l.importedAuthority(term); allowImportedCaptures {
 				encoded, encodedOK := shapefact.EncodeTarget(imported)
 				if !found || !encodedOK {
-					return nil, false, nil
+					return nil, nil, nil, nil, nil, false
 				}
 				seeds = append(seeds, entrySeed{Term: term, Value: encoded})
 				continue
@@ -6838,24 +6873,24 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 			// member cells are existing parent publications added below; an open
 			// table or a table without an identity cannot become a capability.
 			if !allowTypedCaptures || !uncalledSealedTableCapture([]byte(term), value, partition) {
-				return nil, false, nil
+				return nil, nil, nil, nil, nil, false
 			}
 			seeds = append(seeds, entrySeed{Term: term, Value: value})
 			continue
 		}
 		captured, found := l.byPrototype[handle.Prototype]
 		if !found {
-			return nil, false, nil
+			return nil, nil, nil, nil, nil, false
 		}
 		// A closure handle is an existing capability publication. The static
 		// declaration boundary may carry that handle even when its ordinary
 		// scalar lane remains Top; no table shape or callable is reconstructed.
 		if isUnknownScalar(value) && !allowTypedCaptures {
-			return nil, false, nil
+			return nil, nil, nil, nil, nil, false
 		}
 		if _, explicitAny := uncalledExplicitAnyBoundary(captured); !explicitAny && !allowTypedCaptures {
 			if !l.uncalledTypePredicateCaptureBoundary(child, term, handle) {
-				return nil, false, nil
+				return nil, nil, nil, nil, nil, false
 			}
 		}
 		seeds = append(seeds, entrySeed{Term: term, Value: value})
@@ -6873,13 +6908,13 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 				}
 				value, known := resolveKnownCurrentValue([]byte(capture), partition)
 				if !known || isUnknownScalar(value) {
-					return nil, false, nil
+					return nil, nil, nil, nil, nil, false
 				}
 				seen[capture] = true
 				seeds = append(seeds, entrySeed{Term: capture, Value: value})
 				if handle, found := closureHandleFor([]byte(capture), partition); found {
 					if _, admitted := l.byPrototype[handle.Prototype]; !admitted {
-						return nil, false, nil
+						return nil, nil, nil, nil, nil, false
 					}
 					closureSeeds = append(closureSeeds, entryClosureSeed{Term: capture, Handle: handle})
 				}
@@ -6891,17 +6926,7 @@ func (l *lexicalEvaluator) uncalledChildEntry(child front.Compilation, formalSee
 	memberClosureSeeds := childEntryMemberClosureSeeds(seeds, nil, partition)
 	tableIdentitySeeds := tableIdentitySeedsForEntry(seeds, partition)
 	memberCellSeeds := memberCellSeedsForEntry(seeds, partition)
-	var entry []byte
-	var err error
-	if declaredProviderBoundary {
-		entry, err = encodeDeclaredChildEntryWithCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds)
-	} else {
-		entry, err = encodeChildEntryWithCapabilities(seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, gradualBoundaryTerms...)
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	return entry, true, nil
+	return seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, true
 }
 
 // uncalledTypePredicateCaptureBoundary recognizes the closed two-result path
