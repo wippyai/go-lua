@@ -3,6 +3,7 @@ package variant
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
@@ -220,6 +221,32 @@ func pathForcesLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type) bool 
 // member from an explicit true|false union, so rootUnion treats it as one.
 var booleanRootUnion = &typ.Union{Members: []typ.Type{typ.True, typ.False}}
 
+// NarrowByLiteral keeps the members of a union t that lit inhabits: the
+// `x == lit` guard's true edge for a root value, and the exact complement of
+// NarrowByLiteralNot. A non-union type reports no narrowing, so an open scalar
+// is never collapsed onto one literal; typ.Boolean is the one exception, since
+// it is a closed two-valued type and decomposes into true|false. The returned
+// bool reports whether a strict narrowing was possible.
+func NarrowByLiteral(t typ.Type, lit typ.Type) (typ.Type, bool) {
+	if t == nil || lit == nil {
+		return nil, false
+	}
+	union, ok := rootUnion(t)
+	if !ok {
+		return t, false
+	}
+	out := make([]typ.Type, 0, len(union.Members))
+	for _, member := range union.Members {
+		if subtype.IsSubtype(lit, member) {
+			out = append(out, member)
+		}
+	}
+	if len(out) == 0 || len(out) == len(union.Members) {
+		return t, false
+	}
+	return normalize.UnionForEvidence(out...), true
+}
+
 // NarrowByLiteralNot keeps the members of a union t that lit does not inhabit:
 // the complement of an `x == lit` guard's true edge for a root value. A
 // non-union type (an open scalar) cannot have a single literal subtracted, so it
@@ -282,5 +309,91 @@ func rootUnionSeen(t typ.Type, active *typegraph.Path) (*typ.Union, bool) {
 			return booleanRootUnion, true
 		}
 		return nil, false
+	}
+}
+
+// NarrowByRuntimeType keeps the members of a union t whose Lua `type()` result
+// is name when holds is true, and drops exactly those members when holds is
+// false. It is the value-set companion of a `type(x) == "string"` guard for a
+// root value: the guard states a runtime tag, and a union arm whose tag is
+// decidable either matches it or is refuted by it. An arm whose tag cannot be
+// decided - a gradual top, an unresolved parameter - is kept on both edges, so
+// narrowing never removes an inhabitant the guard has not ruled out. A
+// non-union type reports no narrowing. The returned bool reports whether a
+// strict narrowing was possible.
+func NarrowByRuntimeType(t typ.Type, name string, holds bool) (typ.Type, bool) {
+	if t == nil || name == "" {
+		return nil, false
+	}
+	union, ok := rootUnion(t)
+	if !ok {
+		return t, false
+	}
+	out := make([]typ.Type, 0, len(union.Members))
+	for _, member := range union.Members {
+		tag, decided := runtimeTypeNameOf(member)
+		if !decided || (tag == name) == holds {
+			out = append(out, member)
+		}
+	}
+	if len(out) == 0 || len(out) == len(union.Members) {
+		return t, false
+	}
+	return normalize.UnionForEvidence(out...), true
+}
+
+// runtimeTypeNameOf reports the single Lua `type()` result every inhabitant of
+// t produces. A type whose inhabitants span more than one runtime tag - a
+// union, an optional, a gradual top - has no single result and is undecided.
+func runtimeTypeNameOf(t typ.Type) (string, bool) {
+	return runtimeTypeNameOfSeen(t, &typegraph.Path{})
+}
+
+func runtimeTypeNameOfSeen(t typ.Type, active *typegraph.Path) (string, bool) {
+	if t == nil {
+		return "", false
+	}
+	t = unwrap.Annotated(t)
+	if !active.Enter(t, 0) {
+		return "", false
+	}
+	defer active.Leave(t, 0)
+	switch v := t.(type) {
+	case *typ.Alias:
+		return runtimeTypeNameOfSeen(v.UnaliasedTarget(), active)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return "", false
+		}
+		return runtimeTypeNameOfSeen(v.Body, active)
+	case *typ.Instantiated:
+		expanded, ok := subst.ExpandInstantiatedChanged(v)
+		if !ok {
+			return "", false
+		}
+		return runtimeTypeNameOfSeen(expanded, active)
+	case *typ.Literal:
+		return runtimeTypeNameOfKind(v.Base)
+	default:
+		return runtimeTypeNameOfKind(t.Kind())
+	}
+}
+
+func runtimeTypeNameOfKind(k kind.Kind) (string, bool) {
+	switch k {
+	case kind.Nil:
+		return "nil", true
+	case kind.Boolean:
+		return "boolean", true
+	case kind.Number, kind.Integer:
+		return "number", true
+	case kind.String:
+		return "string", true
+	case kind.Function:
+		return "function", true
+	case kind.Array, kind.Map, kind.ReadonlyMap, kind.Record:
+		return "table", true
+	default:
+		return "", false
 	}
 }

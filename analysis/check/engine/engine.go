@@ -6098,14 +6098,61 @@ func uncalledDeclaredFormalAssignment(child front.Compilation, operation equatio
 	}
 	if formals[string(value)] {
 		// A direct boundary assignment is publication-safe only before control
-		// flow can refine that formal. Guarded direct assignments retain the
-		// ordinary demand-driven path, where the branch proof is caller-owned.
-		if len(operation.Guards) != 0 {
+		// flow can refine that formal, or on an edge that states the refinement
+		// itself. Every other guarded assignment retains the ordinary
+		// demand-driven path, where the branch proof is caller-owned.
+		if len(operation.Guards) != 0 && !declaredFormalNarrowingEdges(child, operation, value) {
 			return false
 		}
 		return uncalledDeclaredFormalValue(child, value)
 	}
 	return uncalledDeclaredFormalMemberRead(child, operation, formals)
+}
+
+// declaredFormalNarrowingEdges reports whether every guard on operation is the
+// true edge of a branch in this body that checks term itself. Such an edge
+// publishes its implied narrowing of term alongside the guard, so the claim
+// reads the value the branch proves rather than the unrefined declaration. A
+// false edge carries no published refinement, and a check on another path
+// leaves term unrefined on an arm the branch may already have excluded; both
+// stay demand-driven.
+func declaredFormalNarrowingEdges(child front.Compilation, operation equation.Equation, term []byte) bool {
+	path, rooted := strings.CutPrefix(string(term), "path/")
+	if !rooted || path == "" {
+		return false
+	}
+	for _, guard := range operation.Guards {
+		parts := strings.Split(string(guard.Encoding), "/")
+		if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || parts[3] != "true" {
+			return false
+		}
+		if !branchChecksPath(child.Artifact.Equations, parts[2], path) {
+			return false
+		}
+	}
+	return true
+}
+
+// branchChecksPath reports whether the named branch carries a true-edge check
+// whose subject is path and whose kind the narrowing lane refines.
+func branchChecksPath(operations []equation.Equation, branch, path string) bool {
+	for _, operation := range operations {
+		if operation.Target.Name != branch {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			predicate, trueEdge, recognized := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
+			if !recognized || !trueEdge || predicate.Path != path {
+				continue
+			}
+			switch predicate.Kind {
+			case "truthy", "falsy", "not-nil", "nil", "literal-equal", "literal-not", "type-equal", "type-not":
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 // uncalledDeclaredFormalMemberRead identifies an annotation claim whose value
@@ -6302,6 +6349,24 @@ func (l *lexicalEvaluator) uncalledStaticCapturedReturnBoundary(child front.Comp
 		}
 	}
 	return called
+}
+
+// uncalledStaticCapturedReturnDiagnostic states the obligations this lane's
+// entry already decides. The declared return contract is one of them. Call
+// arity is another: the body has no parameters, its only capability is the
+// transported closure handle, and the number of arguments a call site writes
+// is fixed by that body. Neither a caller value nor a branch proof can supply
+// a missing required argument, so the callee's declared arity is refuted here
+// exactly as it is on a called path. Argument types remain demand-driven,
+// because a later refinement can still establish them.
+func uncalledStaticCapturedReturnDiagnostic(key string) bool {
+	switch {
+	case strings.HasPrefix(key, "type.return.contract/"),
+		strings.HasPrefix(key, "type.call.direct.too_few_args/"),
+		strings.HasPrefix(key, "type.call.direct.too_many_args/"):
+		return true
+	}
+	return false
 }
 
 // uncalledStaticArithmeticBoundary admits a parameter-free closure only when
@@ -9326,7 +9391,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if arithmeticBoundary && !strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/") {
 				return true
 			}
-			if staticCapturedReturnBoundary && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
+			if staticCapturedReturnBoundary && !uncalledStaticCapturedReturnDiagnostic(diagnostic.Key) {
 				return true
 			}
 			if indexedReadBoundary && !strings.HasPrefix(diagnostic.Key, "type.assignment/") && !strings.HasPrefix(diagnostic.Key, "type.return.contract/") {
@@ -11929,6 +11994,15 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		optionalSource := optionalAssignmentSource(value, targetType) || closedLiteralDeclaredOptionalMemberSource(source, value, shapeTarget, partition) || publishedOptionalAssignmentWitness(source, shapeTarget, partition)
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
 			actual := assignmentValueType(value)
+			// A table snapshot has no spelling of its own. When the source path
+			// carries a declared type, that declaration is what the assignment
+			// publishes and what the refutation was decided against, so it is
+			// the type the message must name.
+			if shapefact.IsTable(value) {
+				if declaredSource, found := declaredTypeForTerm(source, partition); found && declaredSource != nil {
+					actual = typeformat.Short(declaredSource)
+				}
+			}
 			if literal, found := literalDiagnosticValue(source, partition); found {
 				actual = assignmentEvidenceValue(literal)
 			}
@@ -12208,6 +12282,9 @@ func assignmentShapeRelation(lexical *lexicalEvaluator, body equation.BodyID, so
 		}
 		return shapeRefuted
 	}
+	if relation := declaredAliasRelation(source, value, target, partition); relation == shapeRefuted {
+		return relation
+	}
 	if relation := valueAgainstType(value, target); relation == shapeProven {
 		return relation
 	} else if relation == shapeUnknown {
@@ -12220,6 +12297,26 @@ func assignmentShapeRelation(lexical *lexicalEvaluator, body equation.BodyID, so
 		return relation
 	}
 	return lexicalMemberCallableRelation(lexical, source, target, partition)
+}
+
+// declaredAliasRelation decides an assignment whose value is a table snapshot
+// against the source path's own declared type. The snapshot states what that
+// table holds now; the declaration states what the path may hold for the rest
+// of its life, and the assignment publishes an alias that inherits the
+// declaration rather than the snapshot. A mutable map's value invariance is
+// therefore decided here: no content snapshot discharges the writes the
+// declaration still admits, while every relation the subtype checker already
+// allows -- record width and field widening, array covariance, an identical
+// container -- stays proven through the existing path.
+func declaredAliasRelation(source, value []byte, target typ.Type, partition equation.Partition) shapeRelation {
+	if !strings.HasPrefix(string(source), "path/") || !shapefact.IsTable(value) {
+		return shapeUnknown
+	}
+	declared, found := declaredTypeForTerm(source, partition)
+	if !found || declared == nil || subtype.IsSubtype(declared, target) {
+		return shapeUnknown
+	}
+	return shapeRefuted
 }
 
 // publishedContainerOriginRelation transports an element relation only from
@@ -14610,6 +14707,26 @@ func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equat
 			}
 			root, suffix, source, found := typedAncestor([]byte("path/"+predicate.Path), partition)
 			if !found || len(suffix) == 0 {
+				// The compared path is the value itself, not a discriminant
+				// member of a union receiver. Its own arms are what the
+				// comparison selects: the edge where the equality holds keeps
+				// exactly the arms the literal inhabits, and the edge where it
+				// fails drops the arms the literal exhausts.
+				term := "path/" + predicate.Path
+				witness, known := current([]byte(term))
+				if !known {
+					continue
+				}
+				selected := typ.Type(nil)
+				if (predicate.Kind == "literal-equal") != predicate.Negated {
+					selected, ok = variant.NarrowByLiteral(witness, literal)
+				} else {
+					selected, ok = variant.NarrowByLiteralNot(witness, literal)
+				}
+				if !ok || selected == nil || typ.IsNever(selected) {
+					continue
+				}
+				record(term, selected)
 				continue
 			}
 			if value, seen := narrowed[string(root)]; seen {
@@ -14625,6 +14742,26 @@ func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equat
 				continue
 			}
 			record(string(root), selected)
+		case "type-equal", "type-not":
+			// A runtime-type guard states the Lua tag its path carries on this
+			// edge. The union arms whose own tag is decidable either match that
+			// statement or are refuted by it; an arm with no decidable tag is
+			// kept, so the guard never removes an inhabitant it has not ruled
+			// out. Only the compared path itself is refined here; the separate
+			// runtime-type proof family still owns explicit-any validation.
+			if predicate.Path == "" || predicate.TypeName == "" {
+				continue
+			}
+			term := "path/" + predicate.Path
+			witness, known := current([]byte(term))
+			if !known {
+				continue
+			}
+			selected, ok := variant.NarrowByRuntimeType(witness, predicate.TypeName, (predicate.Kind == "type-equal") != predicate.Negated)
+			if !ok || selected == nil || typ.IsNever(selected) {
+				continue
+			}
+			record(term, selected)
 		case "path-equal":
 			// An equality relates two typed paths on its true edge: each side's
 			// value set is the intersection of the two. When a side is a member of

@@ -1338,3 +1338,78 @@ func recursiveTreeNodeFixture() (typ.Type, typ.Type, typ.Type) {
 	})
 	return tree, textCase, groupCase
 }
+
+func TestNarrowByLiteralKeepsOnlyInhabitedArm(t *testing.T) {
+	got, ok := NarrowByLiteral(typeexpr.Union(typ.String, typ.False), typ.False)
+	if !ok {
+		t.Fatal("expected a strict narrowing of string | false by false")
+	}
+	if !typ.TypeEquals(got, typ.False) {
+		t.Fatalf("got %v, want false", got)
+	}
+}
+
+func TestNarrowByLiteralDecomposesBoolean(t *testing.T) {
+	got, ok := NarrowByLiteral(typ.Boolean, typ.True)
+	if !ok {
+		t.Fatal("expected a strict narrowing of boolean by true")
+	}
+	if !typ.TypeEquals(got, typ.True) {
+		t.Fatalf("got %v, want true", got)
+	}
+}
+
+func TestNarrowByLiteralLeavesOpenScalarWhole(t *testing.T) {
+	got, ok := NarrowByLiteral(typ.String, typ.LiteralString("a"))
+	if ok {
+		t.Fatal("an open scalar must not collapse onto a single literal")
+	}
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("got %v, want string", got)
+	}
+}
+
+func TestNarrowByLiteralAndNotPartitionTheSameUnion(t *testing.T) {
+	union := typeexpr.Union(typ.String, typ.False)
+	positive, positiveOK := NarrowByLiteral(union, typ.False)
+	negative, negativeOK := NarrowByLiteralNot(union, typ.False)
+	if !positiveOK || !negativeOK {
+		t.Fatal("both edges of x == false must narrow string | false")
+	}
+	if !typ.TypeEquals(positive, typ.False) || !typ.TypeEquals(negative, typ.String) {
+		t.Fatalf("got %v / %v, want false / string", positive, negative)
+	}
+}
+
+func TestNarrowByRuntimeTypeSelectsTaggedArm(t *testing.T) {
+	union := typeexpr.Union(typ.String, typ.Number)
+	holds, holdsOK := NarrowByRuntimeType(union, "string", true)
+	fails, failsOK := NarrowByRuntimeType(union, "string", false)
+	if !holdsOK || !failsOK {
+		t.Fatal("both edges of type(x) == \"string\" must narrow string | number")
+	}
+	if !typ.TypeEquals(holds, typ.String) || !typ.TypeEquals(fails, typ.Number) {
+		t.Fatalf("got %v / %v, want string / number", holds, fails)
+	}
+}
+
+func TestNarrowByRuntimeTypeKeepsUndecidableArm(t *testing.T) {
+	got, ok := NarrowByRuntimeType(typeexpr.Union(typ.String, typ.Any), "string", true)
+	if ok {
+		t.Fatal("an arm whose runtime tag is undecidable must survive the guard")
+	}
+	if got == nil {
+		t.Fatal("expected the original union back")
+	}
+}
+
+func TestNarrowByRuntimeTypeGroupsEveryTableSpelling(t *testing.T) {
+	record := typetable.NewRecord().Field("a", typ.Number).Build()
+	got, ok := NarrowByRuntimeType(typeexpr.Union(record, typ.String), "table", true)
+	if !ok {
+		t.Fatal("expected a record arm to answer the table tag")
+	}
+	if !typ.TypeEquals(got, record) {
+		t.Fatalf("got %v, want the record arm", got)
+	}
+}
