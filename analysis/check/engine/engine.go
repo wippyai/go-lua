@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
+	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
@@ -19903,15 +19904,16 @@ func evaluateBranchPredicateWire(predicate branchPredicateWire, partition equati
 	case "falsy":
 		result, err = luaTruthy(value)
 		result = !result
-	case "nil":
-		result = string(value) == "scalar/nil"
-	case "not-nil":
-		result = string(value) != "scalar/nil"
+	case "nil", "not-nil":
+		result, err = scalarIsNil(value)
+		if predicate.Kind == "not-nil" {
+			result = !result
+		}
 	case "literal-equal", "literal-not":
 		if predicate.Literal == "" {
 			return false, fmt.Errorf("engine: literal predicate has no literal")
 		}
-		result = string(value) == predicate.Literal
+		result, err = scalarEqualsEncoding(value, []byte(predicate.Literal))
 		if predicate.Kind == "literal-not" {
 			result = !result
 		}
@@ -19920,7 +19922,7 @@ func evaluateBranchPredicateWire(predicate branchPredicateWire, partition equati
 		if valueErr != nil {
 			return false, valueErr
 		}
-		result = string(value) == string(other)
+		result, err = scalarEqualsEncoding(value, other)
 		if predicate.Kind == "path-not" {
 			result = !result
 		}
@@ -19980,6 +19982,89 @@ func evaluateBranchPredicateWire(predicate branchPredicateWire, partition equati
 		result = !result
 	}
 	return result, nil
+}
+
+// scalarIsNil answers a nil/not-nil predicate from a current value. A published
+// type witness is not a runtime value: it answers the predicate only when its
+// whole value set is nil or its whole value set excludes nil. A type that
+// admits both leaves the predicate unavailable, so the branch keeps both edges
+// and the narrowing lane owns the refinement.
+func scalarIsNil(value []byte) (bool, error) {
+	if isUnknownScalar(value) {
+		return false, errUnknownScalar
+	}
+	if target, ok := shapefact.DecodeTarget(value); ok {
+		if target == nil || typ.IsTopLike(target) || typ.IsNever(target) {
+			return false, errUnknownScalar
+		}
+		present := proof.ProjectionWithoutNil(target)
+		hasValue := present != nil && !typ.IsNever(present)
+		switch {
+		case !typevalue.ProjectionHasNil(target) && hasValue:
+			return false, nil
+		case typevalue.ProjectionHasNil(target) && !hasValue:
+			return true, nil
+		default:
+			return false, errUnknownScalar
+		}
+	}
+	return string(value) == "scalar/nil", nil
+}
+
+// scalarEqualsEncoding compares two current values for runtime equality. Two
+// scalar encodings denote single values, so byte equality is value equality. A
+// type witness denotes a set: it proves equality only when both sides are the
+// same single-value literal, and proves nothing otherwise.
+func scalarEqualsEncoding(value, other []byte) (bool, error) {
+	if isUnknownScalar(value) || isUnknownScalar(other) {
+		return false, errUnknownScalar
+	}
+	valueTarget, valueIsTarget := shapefact.DecodeTarget(value)
+	otherTarget, otherIsTarget := shapefact.DecodeTarget(other)
+	if !valueIsTarget && !otherIsTarget {
+		return string(value) == string(other), nil
+	}
+	left, leftOK := singleValueWitness(value, valueTarget, valueIsTarget)
+	right, rightOK := singleValueWitness(other, otherTarget, otherIsTarget)
+	if !leftOK || !rightOK {
+		return false, errUnknownScalar
+	}
+	return left == right, nil
+}
+
+// singleValueWitness reduces a current value to the one runtime value it
+// denotes. A scalar literal encoding and a literal type both denote exactly one
+// value; every wider type denotes more than one and has no single witness.
+func singleValueWitness(value []byte, target typ.Type, isTarget bool) (string, bool) {
+	if !isTarget {
+		if strings.HasPrefix(string(value), "scalar/") && !isUnknownScalar(value) {
+			return string(value), true
+		}
+		return "", false
+	}
+	resolved := unwrap.Alias(target)
+	if resolved == nil {
+		return "", false
+	}
+	if resolved.Kind() == kind.Nil {
+		return "scalar/nil", true
+	}
+	literal, ok := resolved.(*typ.Literal)
+	if !ok {
+		return "", false
+	}
+	switch text := literal.Value.(type) {
+	case string:
+		return "scalar/string/" + strconv.Quote(text), true
+	case bool:
+		return "scalar/bool/" + strconv.FormatBool(text), true
+	case int64:
+		return "scalar/number/" + strconv.FormatInt(text, 10), true
+	case float64:
+		return "scalar/number/" + strconv.FormatFloat(text, 'g', -1, 64), true
+	default:
+		return "", false
+	}
 }
 
 func branchPathValue(key string, partition equation.Partition) ([]byte, error) {
