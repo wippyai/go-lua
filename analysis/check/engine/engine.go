@@ -4622,12 +4622,14 @@ func (l *lexicalEvaluator) publishesClosureReturn(body equation.BodyID, result s
 // was admitted for. Each flag names the exact diagnostic family the boundary
 // can discharge; a family with no admission reason stays demand-driven.
 type declaredBoundaryAdmission struct {
-	Seeds       []entrySeed
-	Admitted    bool
-	Method      bool
-	MemberWrite bool
-	Concat      map[string]bool
-	Comparison  map[string]bool
+	Seeds                []entrySeed
+	Admitted             bool
+	Method               bool
+	MemberWrite          bool
+	ArithmeticAssignment bool
+	ArithmeticReturn     bool
+	Concat               map[string]bool
+	Comparison           map[string]bool
 }
 
 // uncalledDeclaredBoundary materializes only the checker-owned type witnesses
@@ -4654,6 +4656,7 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 		}
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
+	arithmeticTerms := uncalledDeclaredFormalArithmeticTerms(child, formals)
 	memberCalls := make(map[string]bool)
 	hasDirectMethod := false
 	for _, operation := range child.Artifact.Equations {
@@ -4676,6 +4679,7 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 		}
 	}
 	hasBranch, hasDeclaredMemberRead, hasDeclaredMemberCall, hasDeclaredAssignment, hasDeclaredMemberWrite := false, false, false, false, false
+	hasDeclaredArithmeticAssignment, hasArithmeticReturnCandidate := false, false
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "apply":
@@ -4697,6 +4701,9 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 		case "claim":
 			hasDeclaredMemberRead = hasDeclaredMemberRead || uncalledDeclaredFormalMemberRead(child, operation, formals)
 			hasDeclaredAssignment = hasDeclaredAssignment || uncalledDeclaredFormalAssignment(child, operation, formals)
+			hasDeclaredArithmeticAssignment = hasDeclaredArithmeticAssignment || uncalledDeclaredFormalArithmeticAssignment(operation, arithmeticTerms)
+		case "publication":
+			hasArithmeticReturnCandidate = hasArithmeticReturnCandidate || uncalledDeclaredFormalArithmeticReturn(operation, arithmeticTerms)
 		}
 	}
 	// A declared method return can depend on a branch-local refinement. Its
@@ -4705,9 +4712,15 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 	if hasDirectMethod && hasBranch {
 		return declaredBoundaryAdmission{}
 	}
+	// An arithmetic-return contract is likewise limited to straight-line bodies:
+	// a branch can select a different, caller-refined return value the whole-body
+	// contract projection would not see.
+	hasDeclaredArithmeticReturn := hasArithmeticReturnCandidate && !hasBranch
 	concatOperations := uncalledDeclaredFormalConcatOperations(child.Artifact.Equations, memberCalls)
 	comparisonOperations := uncalledDeclaredFormalOrderedComparisonOperations(child, formals)
-	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment && !hasDeclaredMemberWrite && len(concatOperations) == 0 && len(comparisonOperations) == 0 {
+	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment && !hasDeclaredMemberWrite &&
+		!hasDeclaredArithmeticAssignment && !hasDeclaredArithmeticReturn &&
+		len(concatOperations) == 0 && len(comparisonOperations) == 0 {
 		return declaredBoundaryAdmission{}
 	}
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
@@ -4722,7 +4735,7 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 		}
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
-	return declaredBoundaryAdmission{Seeds: seeds, Admitted: true, Method: hasDirectMethod, MemberWrite: hasDeclaredMemberWrite, Concat: concatOperations, Comparison: comparisonOperations}
+	return declaredBoundaryAdmission{Seeds: seeds, Admitted: true, Method: hasDirectMethod, MemberWrite: hasDeclaredMemberWrite, ArithmeticAssignment: hasDeclaredArithmeticAssignment, ArithmeticReturn: hasDeclaredArithmeticReturn, Concat: concatOperations, Comparison: comparisonOperations}
 }
 
 // uncalledDeclaredLocalUnionReadBoundary admits one allocation-time relay:
@@ -5529,6 +5542,109 @@ func declaredOrderedComparisonExpression(operation equation.Equation) bool {
 	}
 	_, ordered := orderedComparisonOperator(wir.Operator(operatorID))
 	return ordered
+}
+
+// isArithmeticBinaryOperator reports the arithmetic and bitwise binary
+// operators whose result type is a pure function of their operand types.
+// Comparison, equality, and logical operators are excluded: their result is a
+// boolean or a value-flow join, not a numeric projection.
+func isArithmeticBinaryOperator(op wir.Operator) bool {
+	switch op {
+	case wir.BinAdd, wir.BinSub, wir.BinMul, wir.BinDiv, wir.BinIDiv, wir.BinMod, wir.BinPow,
+		wir.BinBAnd, wir.BinBOr, wir.BinBXor, wir.BinShl, wir.BinShr:
+		return true
+	default:
+		return false
+	}
+}
+
+// uncalledDeclaredFormalArithmeticTerms computes the temp terms whose value is
+// a straight-line arithmetic expression over declared formals and closed
+// numeric literals. The result type of every such term is a pure function of
+// the declared parameter types, so an assignment or return contract that
+// consumes it is decidable at the declaration boundary without a caller-owned
+// value. Arithmetic may nest, so the set is the least fixpoint of expressions
+// whose operands are already known.
+func uncalledDeclaredFormalArithmeticTerms(child front.Compilation, formals map[string]bool) map[string]bool {
+	derived := make(map[string]bool)
+	known := func(term []byte) bool {
+		if derived[string(term)] {
+			return true
+		}
+		if formals[string(term)] {
+			return uncalledDeclaredFormalValue(child, term)
+		}
+		return strings.HasPrefix(string(term), "scalar/number/")
+	}
+	for {
+		added := false
+		for _, operation := range child.Artifact.Equations {
+			if operation.Occurrence.Kind != "expression" {
+				continue
+			}
+			result, hasResult := artifactOperand(operation.Operands, "result")
+			if !hasResult || derived[string(result)] {
+				continue
+			}
+			kindValue, hasKind := artifactOperand(operation.Operands, "kind")
+			operatorValue, hasOperator := artifactOperand(operation.Operands, "operator")
+			if !hasKind || !hasOperator || string(kindValue) != strconv.Itoa(int(wir.OpBinOp)) {
+				continue
+			}
+			operatorID, err := strconv.Atoi(string(operatorValue))
+			if err != nil || !isArithmeticBinaryOperator(wir.Operator(operatorID)) {
+				continue
+			}
+			left, hasLeft := artifactOperand(operation.Operands, "left")
+			right, hasRight := artifactOperand(operation.Operands, "right")
+			if !hasLeft || !hasRight || !known(left) || !known(right) {
+				continue
+			}
+			derived[string(result)] = true
+			added = true
+		}
+		if !added {
+			return derived
+		}
+	}
+}
+
+// uncalledDeclaredFormalArithmeticAssignment identifies an unguarded annotation
+// assignment whose value is a declared-formal arithmetic term. The mismatch
+// between the projected numeric result and the annotated target is a pure
+// declaration fact; a guarded assignment retains the demand-driven path where
+// the branch proof is caller-owned.
+func uncalledDeclaredFormalArithmeticAssignment(operation equation.Equation, arithmeticTerms map[string]bool) bool {
+	if operation.Occurrence.Kind != "claim" || len(operation.Guards) != 0 {
+		return false
+	}
+	var value []byte
+	assignment := false
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "value":
+			value = operand.Term.Encoding
+		case "kind":
+			assignment = string(operand.Term.Encoding) == "claim-kind/3"
+		}
+	}
+	return assignment && len(value) != 0 && arithmeticTerms[string(value)]
+}
+
+// uncalledDeclaredFormalArithmeticReturn identifies a publication whose return
+// value is a declared-formal arithmetic term. The return contract compares that
+// projected numeric result against the declared return type, both known at the
+// declaration boundary.
+func uncalledDeclaredFormalArithmeticReturn(operation equation.Equation, arithmeticTerms map[string]bool) bool {
+	if operation.Occurrence.Kind != "publication" {
+		return false
+	}
+	for _, operand := range operation.Operands {
+		if strings.HasPrefix(operand.Role, "return-value-") && arithmeticTerms[string(operand.Term.Encoding)] {
+			return true
+		}
+	}
+	return false
 }
 
 // uncalledDeclaredFormalMemberWrite identifies a static member write whose
@@ -8479,6 +8595,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	gradualLogicalBoundary := false
 	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, declaredConcatBoundary, declaredComparisonBoundary, staticAssignmentBoundary, indexedReadBoundary, localUnionReadBoundary := false, false, false, false, false, false, false, false
 	declaredMemberWriteBoundary := false
+	declaredArithmeticReturnBoundary := false
 	declaredConcatOperations := map[string]bool(nil)
 	declaredComparisonOperations := map[string]bool(nil)
 	if admission := uncalledDeclaredBoundary(child); admission.Admitted {
@@ -8487,10 +8604,12 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		declaredBoundary = true
 		declaredMethodBoundary = admission.Method
 		declaredMemberWriteBoundary = admission.MemberWrite
+		declaredArithmeticReturnBoundary = admission.ArithmeticReturn
 		declaredConcatOperations = admission.Concat
 		declaredConcatBoundary = len(admission.Concat) != 0
 		declaredComparisonOperations = admission.Comparison
 		declaredComparisonBoundary = len(admission.Comparison) != 0
+		declaredAssignmentBoundary = declaredAssignmentBoundary || admission.ArithmeticAssignment
 		formals := make(map[string]bool, len(child.Boundary.Parameters))
 		for _, parameter := range child.Boundary.Parameters {
 			formals[boundaryTerm(parameter.Symbol)] = true
@@ -8594,6 +8713,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			// a call-specific refinement and therefore remain demand-driven.
 			if declaredBoundary && !strings.HasPrefix(diagnostic.Key, "type.member.missing/") &&
 				(!declaredMethodBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) &&
+				(!declaredArithmeticReturnBoundary || !strings.HasPrefix(diagnostic.Key, "type.return.contract/")) &&
 				(!declaredAssignmentBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment/")) &&
 				(!declaredMemberWriteBoundary || !strings.HasPrefix(diagnostic.Key, "type.assignment.optional_target/")) &&
 				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) &&
@@ -8644,6 +8764,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 			if declaredBoundary && !strings.HasPrefix(item.Fact.Key, "type.member.missing/") &&
 				(!declaredMethodBoundary || !strings.HasPrefix(item.Fact.Key, "type.return.contract/")) &&
+				(!declaredArithmeticReturnBoundary || !strings.HasPrefix(item.Fact.Key, "type.return.contract/")) &&
 				(!declaredAssignmentBoundary || !strings.HasPrefix(item.Fact.Key, "type.assignment/")) &&
 				(!declaredMemberWriteBoundary || !strings.HasPrefix(item.Fact.Key, "type.assignment.optional_target/")) &&
 				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, item.Fact.Key)) &&
