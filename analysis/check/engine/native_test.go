@@ -153,7 +153,7 @@ func TestNativeFactIndexAnchorsTermsAndOccurrencesFromTheArtifact(t *testing.T) 
 		{Lane: NativeLaneOutcomes, Family: "return", Key: "return/arity", Value: "1"},
 		{Lane: NativeLaneDiagnostics, Family: "claim", Key: "claim/unproven/op-00000004", Value: "no witness", Occurrence: "op-00000004"},
 	} {
-		if got := byKey[want.Key]; got != want {
+		if got := byKey[want.Key]; !reflect.DeepEqual(got, want) {
 			t.Fatalf("row %s = %#v, want %#v", want.Key, got, want)
 		}
 	}
@@ -242,7 +242,7 @@ func TestNativeFactIndexOrdersRowsDeterministically(t *testing.T) {
 		t.Fatalf("row counts %d and %d differ", len(first), len(second))
 	}
 	for index := range first {
-		if first[index] != second[index] {
+		if !reflect.DeepEqual(first[index], second[index]) {
 			t.Fatalf("row %d = %#v and %#v differ under a permuted input", index, first[index], second[index])
 		}
 	}

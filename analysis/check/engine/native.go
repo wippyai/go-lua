@@ -52,6 +52,7 @@ const (
 // checking run that never consumes native facts pays only one pointer.
 type NativeFactIndex struct {
 	artifact    equation.Artifact
+	compilation *front.Compilation
 	values      []equation.Fact
 	outcomes    []equation.Fact
 	diagnostics []equation.Fact
@@ -102,6 +103,33 @@ type NativeFact struct {
 	// Revoked. Contract validity can name a comma-separated set of deopt event
 	// classes when no one concrete source operation supplies the interval.
 	Event string
+	// Revocations records every independently published deopt class for a
+	// contract row. Ordinary epoch-gated rows retain the single interval above;
+	// a contract can have several possible invalidators without duplicating the
+	// fact it invalidates.
+	Revocations []NativeRevocation
+}
+
+// NativeRevocation is one validity interval or contract deopt class attached
+// to a native fact. Contract rows use Established="contract" and name their
+// event explicitly; no observed source operation is fabricated for them.
+type NativeRevocation struct {
+	Established string
+	Revoked     string
+	Event       string
+}
+
+// HasRevocation reports whether this fact publishes the requested deopt event.
+func (fact NativeFact) HasRevocation(event string) bool {
+	if fact.Event == event {
+		return true
+	}
+	for _, revocation := range fact.Revocations {
+		if revocation.Event == event {
+			return true
+		}
+	}
+	return false
 }
 
 // NativeValuePrefixBase64 marks a value rendering that carries the fact's raw
@@ -118,7 +146,11 @@ func publishedNativeFacts(artifact equation.Artifact, values, outcomes, diagnost
 // operand representation leaves the row absent.
 func publishedNativeFactsForCompilation(compilation front.Compilation, values, outcomes, diagnostics []equation.Fact) *NativeFactIndex {
 	index := publishedNativeFacts(compilation.Artifact, values, outcomes, diagnostics)
+	index.compilation = &compilation
 	index.derived = append(numericNativeFacts(compilation), tableNativeFacts(compilation)...)
+	index.derived = append(index.derived, nilabilityNativeFacts(compilation)...)
+	index.derived = append(index.derived, aliasNativeFacts(compilation)...)
+	index.derived = append(index.derived, publicationIdentityFacts(compilation)...)
 	return index
 }
 
@@ -149,6 +181,9 @@ func (index *NativeFactIndex) build() {
 		}
 	}
 	facts = append(facts, index.derived...)
+	if index.compilation != nil {
+		facts = append(facts, structuralNativeFacts(*index.compilation, facts)...)
+	}
 	sort.Slice(facts, func(i, j int) bool {
 		if facts[i].Lane != facts[j].Lane {
 			return facts[i].Lane < facts[j].Lane
@@ -158,6 +193,7 @@ func (index *NativeFactIndex) build() {
 		}
 		return facts[i].Value < facts[j].Value
 	})
+	facts = coalesceNativeContractRevocations(facts)
 	anchors.bindValidity(facts)
 	// Contract rows are deliberately a publication projection, not another
 	// analysis. The substrate rows above remain available verbatim; the rows
@@ -173,6 +209,46 @@ func (index *NativeFactIndex) build() {
 		return facts[i].Value < facts[j].Value
 	})
 	index.facts = facts
+}
+
+// A contract with several invalidators is one grant with a set of deopt
+// points, not several grants. Normalize the value-closure representation
+// before ordinary epoch binding so the comma-separated transport spelling is
+// never mistaken for one synthetic deopt event.
+func coalesceNativeContractRevocations(facts []NativeFact) []NativeFact {
+	const marker = "/contract-revocation/"
+	out := make([]NativeFact, 0, len(facts))
+	for _, fact := range facts {
+		index := strings.LastIndex(fact.Key, marker)
+		if index < 0 {
+			out = append(out, fact)
+			continue
+		}
+		events := strings.Split(fact.Key[index+len(marker):], ",")
+		if len(events) == 0 {
+			out = append(out, fact)
+			continue
+		}
+		row := fact
+		row.Key, row.Established, row.Revoked, row.Event = fact.Key[:index], "contract", "", ""
+		row.Revocations = make([]NativeRevocation, 0, len(events))
+		valid := true
+		for _, event := range events {
+			if event == "" || strings.Contains(event, "/") {
+				valid = false
+				break
+			}
+			row.Revocations = append(row.Revocations, NativeRevocation{
+				Established: "contract", Revoked: "contract/" + event, Event: event,
+			})
+		}
+		if !valid {
+			out = append(out, fact)
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // projectNativeContracts translates only contract vocabulary already witnessed

@@ -357,7 +357,7 @@ func numericBodyFacts(compilation front.Compilation) []NativeFact {
 				continue
 			}
 			set(instruction.Dst, result)
-			content := "dispatch=primitive left=" + nativeCarrier(left) + " overflow=" + overflow + " result=" + nativeCarrier(result) + " right=" + nativeCarrier(right)
+			content := "class=" + nativeCarrier(result) + " dispatch=primitive left=" + nativeCarrier(left) + " overflow=" + overflow + " result=" + nativeCarrier(result) + " right=" + nativeCarrier(right)
 			if instruction.Operator == wir.BinDiv {
 				content += " divisor=not_applicable representation=float"
 				if right.nonzero {

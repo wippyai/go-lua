@@ -418,32 +418,28 @@ func nativeTokenByte(value byte) bool {
 // row. A row the closure never revoked matches no revocation selector, so a
 // revocation assertion can never be satisfied by an unrevoked row.
 func (exp fixtureNativeRevocation) selectsRevocation(fact engine.NativeFact) bool {
-	if fact.Revoked == "" {
-		return false
-	}
-	if exp.Established != "" && fact.Established != exp.Established {
-		return false
-	}
-	if exp.Revoked != "" && fact.Revoked != exp.Revoked {
-		return false
-	}
-	return exp.Event == "" || nativeEventSetContains(fact.Event, exp.Event)
-}
-
-func nativeEventSetContains(events, want string) bool {
-	for _, event := range strings.Split(events, ",") {
-		if event == want {
+	for _, revocation := range nativeFactRevocations(fact) {
+		if exp.Established != "" && revocation.Established != exp.Established {
+			continue
+		}
+		if exp.Revoked != "" && revocation.Revoked != exp.Revoked {
+			continue
+		}
+		if exp.Event == "" || revocation.Event == exp.Event {
 			return true
 		}
 	}
 	return false
 }
 
-func nativeEventSet(events string) []string {
-	if events == "" {
+func nativeFactRevocations(fact engine.NativeFact) []engine.NativeRevocation {
+	if len(fact.Revocations) != 0 {
+		return fact.Revocations
+	}
+	if fact.Revoked == "" {
 		return nil
 	}
-	return strings.Split(events, ",")
+	return []engine.NativeRevocation{{Established: fact.Established, Revoked: fact.Revoked, Event: fact.Event}}
 }
 
 func (exp fixtureNativeSelector) describe() []string {
@@ -611,7 +607,7 @@ func nativeRevocationSetMisses(exp fixtureNativeFact, matched []nativeFactRow) [
 	}
 	var misses []string
 	for _, row := range matched {
-		if row.Fact.Established == "" {
+		if row.Fact.Established == "" && len(row.Fact.Revocations) == 0 {
 			misses = append(misses, fmt.Sprintf("%s matched a row with no published epoch interval; %s",
 				describeFixtureNativeFact(exp), row))
 		}
@@ -630,13 +626,12 @@ func nativeRevocationSetMisses(exp fixtureNativeFact, matched []nativeFactRow) [
 		return misses
 	}
 	for _, row := range matched {
-		if row.Fact.Revoked == "" {
-			continue
-		}
-		for _, event := range nativeEventSet(row.Fact.Event) {
+		for _, actual := range nativeFactRevocations(row.Fact) {
 			listed := false
 			for _, revocation := range exp.RevokedBy {
-				listed = listed || revocation.selectsRevocation(engine.NativeFact{Established: row.Fact.Established, Revoked: row.Fact.Revoked, Event: event})
+				listed = listed || (revocation.Established == "" || revocation.Established == actual.Established) &&
+					(revocation.Revoked == "" || revocation.Revoked == actual.Revoked) &&
+					(revocation.Event == "" || revocation.Event == actual.Event)
 			}
 			if !listed {
 				misses = append(misses, fmt.Sprintf("%s is revoked by an unlisted event; %s", describeFixtureNativeFact(exp), row))

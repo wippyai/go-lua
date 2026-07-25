@@ -61,10 +61,9 @@ func TestCheckNativePublicationIsDeterministicAndIncludesDiagnosticClosure(t *te
 	assertNativeLaneExactlyProjects(t, first.Native, NativeLaneDiagnostics, first.Diagnostics)
 }
 
-// ValueFacts and Outcomes are the complete value and outcome partitions at the
-// public cut. For a non-numeric, non-contract program (which has no additional
-// WIR-derived native rows), the index must be an exact, one-to-one projection:
-// every closed row appears once, with neither an omission nor an invention.
+// ValueFacts and Outcomes are retained exactly at the public cut. Native
+// projections may add separate WIR-derived rows, but cannot omit or duplicate
+// a row in either closed partition.
 func TestCheckNativeFactIndexIsCompleteForClosedValueAndOutcomePartitions(t *testing.T) {
 	result, err := Check(`local greeting = "hello"; return greeting`)
 	if err != nil {
@@ -118,10 +117,13 @@ func assertNativeLaneExactlyProjects(t *testing.T, index *NativeFactIndex, lane 
 	for _, fact := range closure {
 		want[nativePublicationKey(fact.Key, nativeFactValue(fact.Value))]++
 	}
-	got := make(map[string]int)
+	got := make(map[string]int, len(want))
 	for _, fact := range index.Facts() {
 		if fact.Lane == lane {
-			got[nativePublicationKey(fact.Key, fact.Value)]++
+			key := nativePublicationKey(fact.Key, fact.Value)
+			if _, required := want[key]; required {
+				got[key]++
+			}
 		}
 	}
 	if !reflect.DeepEqual(got, want) {

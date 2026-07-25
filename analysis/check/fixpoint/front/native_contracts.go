@@ -312,6 +312,9 @@ func nativeContracts(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
 	// exact record row.  In particular, this never treats an annotation as a
 	// proof of a physical layout.
 	out = append(out, recordNativeContracts(stmts)...)
+	// Operation rows are derived from the same admitted, binder-owned syntax
+	// tree as topology contracts and remain absent when a boundary is unknown.
+	out = append(out, nativeOperationContracts(stmts)...)
 	return out
 }
 

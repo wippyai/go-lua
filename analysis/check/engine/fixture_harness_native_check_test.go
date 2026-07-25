@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -284,7 +285,7 @@ func TestFixtureNativeRowsAreStableAcrossRuns(t *testing.T) {
 		t.Fatalf("row counts %d and %d, want an equal non-empty projection", len(first.Native), len(second.Native))
 	}
 	for index := range first.Native {
-		if first.Native[index] != second.Native[index] {
+		if !reflect.DeepEqual(first.Native[index], second.Native[index]) {
 			t.Fatalf("row %d = %s and %s differ between runs", index, first.Native[index], second.Native[index])
 		}
 	}
