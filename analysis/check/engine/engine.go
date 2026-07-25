@@ -15328,6 +15328,16 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if !typedMethodContract && !isUnknownScalar(callee) && !isCallableValue(callee) {
 		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("%s is %s, not callable", operands.display, callDisplayValue(callee))), nil
 	}
+	if hasCallee && !typedMethodContract && !localCallable {
+		// A callee whose current value is a sealed function witness carries its
+		// declared parameter contract directly. callableSignature owns the
+		// scalar/function literal encoding; this arm extends the same argument
+		// check to a shape-target function value (a function-typed formal or
+		// field), whose result already flows through the call-results kernel.
+		if result, refuted := typedCalleeArgumentRefutation(operation, operands, callee, partition); refuted {
+			return result, nil
+		}
+	}
 	signature, signatureKnown := callableSignature(callee)
 	if typedMethodContract {
 		signature, signatureKnown = typedMethodSignature, true
@@ -15453,6 +15463,60 @@ func typeRequiresBoundaryProof(value typ.Type) bool {
 	default:
 		return true
 	}
+}
+
+// typedCalleeArgumentRefutation checks a direct call whose callee currently
+// holds a sealed function witness that is not a locally admitted closure. The
+// function type is the checked contract, so a known argument proven not to be a
+// subtype of its declared parameter is refuted contravariantly. It fires only
+// on a directly known shape-target function value: an imported provider (whose
+// callee value is not directly known) and every non-function value are left to
+// their existing machinery, and a generic parameter position stays silent until
+// its type parameter is bound. The result slot is owned by the call-results
+// kernel, so no return is derived here.
+func typedCalleeArgumentRefutation(operation equation.BoundEquation, operands directCallOperands, callee []byte, partition equation.Partition) (equation.TransactionResult, bool) {
+	if operands.spread {
+		return equation.TransactionResult{}, false
+	}
+	functionType, ok := shapefact.DecodeTarget(callee)
+	if !ok {
+		return equation.TransactionResult{}, false
+	}
+	function, ok := unwrap.Alias(subst.ExpandInstantiated(functionType)).(*typ.Function)
+	if !ok || function == nil {
+		return equation.TransactionResult{}, false
+	}
+	for index, term := range operands.arguments {
+		expected, accepts := typedCalleeParameterAt(function, index)
+		if !accepts || expected == nil || refinement.ContainsFreeTypeParam(expected) {
+			continue
+		}
+		argument, argumentKnown := resolveKnownCurrentValue(term, partition)
+		if !argumentKnown || isUnknownScalar(argument) {
+			continue
+		}
+		if valueAgainstType(argument, expected) != shapeRefuted {
+			continue
+		}
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), typeformat.Short(expected))), true
+	}
+	return equation.TransactionResult{}, false
+}
+
+// typedCalleeParameterAt returns the declared parameter type accepted at one
+// source argument position of a sealed function witness. A variadic tail uses
+// its element type for every position past the fixed parameters.
+func typedCalleeParameterAt(function *typ.Function, index int) (typ.Type, bool) {
+	if index < 0 {
+		return nil, false
+	}
+	if index < len(function.Params) {
+		return function.Params[index].Type, true
+	}
+	if function.Variadic != nil {
+		return function.Variadic, true
+	}
+	return nil, false
 }
 
 // boundaryArgumentRefutation compares a known caller value with the closed

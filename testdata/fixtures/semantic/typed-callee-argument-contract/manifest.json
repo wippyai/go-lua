@@ -1,0 +1,6 @@
+{
+  "description": "A call through a function-typed parameter checks each argument against the declared parameter contract; a value that is not a subtype is rejected while a conforming value is accepted.",
+  "files": [
+    "main.lua"
+  ]
+}
