@@ -3235,10 +3235,18 @@ func (l *lexicalEvaluator) hasTableAllocation(prototype string) bool {
 // return has no declared tuple contract, but applyKnown still projects only
 // the child body's actual returned slots; it is therefore no less closed than
 // a one-slot declaration. Declared multi-return tuples retain Lua expansion
-// semantics of their own, and recursive return graphs need the cyclic summary
+// semantics of their own, and a recursive return type needs the cyclic summary
 // path; neither can reuse this finite allocation projection.
+//
+// A source recurrence inside the child body is a different property: its loop
+// fixpoint is planned and closed by the child's own evaluation, which is the
+// same evaluation a capture-carrying body already runs. It leaves the returned
+// slot exactly as closed as a straight-line body's, so the body-derived fact
+// keeps its authority here rather than degrading to a Top caller result. A
+// recursive call graph remains separately gated by the caller's recursive
+// demand.
 func hasProjectableTableResult(child front.Compilation) bool {
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.DeclaredReturns) > 1 {
+	if child.WIR == nil || len(child.Boundary.DeclaredReturns) > 1 {
 		return false
 	}
 	if len(child.Boundary.DeclaredReturns) == 0 {

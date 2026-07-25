@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -41,6 +42,51 @@ local count: number = #values
 		if strings.HasPrefix(diagnostic.Key, "claim/unproven/") || strings.HasPrefix(diagnostic.Key, "type.assignment/") {
 			t.Fatalf("sealed table length emitted diagnostic = %#v", result.Diagnostics)
 		}
+	}
+}
+
+// TestCheckLoopBuiltLocalReturnKeepsBodyFactAtCaller pins the authority of a
+// local function's body-derived return over the weaker caller-side result the
+// declared surface alone can offer. The child fills its returned table inside a
+// source recurrence, so its element fact exists only in the loop fixpoint the
+// child body itself closes; the caller's declared local must still read it.
+func TestCheckLoopBuiltLocalReturnKeepsBodyFactAtCaller(t *testing.T) {
+	const source = `
+type Entry = {id: string, meta: {type: string, suite: string?, order: number?}?}
+local function collect(entries: {Entry})
+    local out = {}
+    for _, entry in ipairs(entries) do
+        table.insert(out, entry)
+    end
+    return out
+end
+local entries: {Entry} = {}
+local got = collect(entries)
+local kept: %s = got
+`
+	result, err := engine.Check(fmt.Sprintf(source, "{Entry}"))
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "lint.claim.unproven" || diagnostic.Code == "type.assignment" {
+			t.Fatalf("loop-built local return lost its body element fact: %#v", result.PublishedDiagnostics)
+		}
+	}
+	// The transported fact is the child's actual element type, not a permissive
+	// stand-in: a mismatched element claim on the same result is still refuted.
+	refuted, err := engine.Check(fmt.Sprintf(source, "{string}"))
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	mismatch := false
+	for _, diagnostic := range refuted.PublishedDiagnostics {
+		if diagnostic.Code == "type.assignment" && diagnostic.Span.StartLine == 12 {
+			mismatch = true
+		}
+	}
+	if !mismatch {
+		t.Fatalf("mismatched element claim was admitted: %#v", refuted.PublishedDiagnostics)
 	}
 }
 
