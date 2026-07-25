@@ -14,14 +14,9 @@ import (
 // branch or call are deliberately withheld rather than approximated.
 func aliasNativeFacts(root front.Compilation) []NativeFact {
 	var rows []NativeFact
-	var visit func(front.Compilation)
-	visit = func(compilation front.Compilation) {
+	forEachNativeBody(root, func(compilation front.Compilation) {
 		rows = append(rows, aliasBodyFacts(compilation)...)
-		for _, child := range compilation.Nested {
-			visit(child)
-		}
-	}
-	visit(root)
+	})
 	return rows
 }
 

@@ -2356,11 +2356,6 @@ func directCallDiagnosticParts(key string) (code, operation, subject string, ok 
 	return code, operation, subject, ok && code != "" && operation != "" && subject != ""
 }
 
-func callArgumentSubjectIndex(subject string) (int, bool) {
-	index, _, ok := callArgumentSubject(subject)
-	return index, ok
-}
-
 func callArgumentSubject(subject string) (int, string, bool) {
 	encoded, suffix, found := strings.Cut(subject, ".")
 	if !found {
@@ -4258,15 +4253,35 @@ func uncalledGradualLogicalCallBoundary(child front.Compilation) ([]entrySeed, [
 	return nil, nil, false
 }
 
-// cyclicPlacementWitnessEntry supplies only declaration-owned parameter facts
-// to a cyclic lexical body. Captures are added exclusively by
-// uncalledChildEntry from the allocating partition's published values. The
-// result is filtered to boundary-free stack witnesses, so no uncalled body can
-// claim a retain, share, or caller-visible graph.
-func cyclicPlacementWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
-	if child.WIR == nil || child.Cyclic == nil || len(child.Boundary.Parameters) == 0 {
-		return nil, false
+// capturelessFormalBody is the shared entry condition of the declaration-only
+// boundaries: a lowered, non-recursive body that closes over nothing and takes
+// at least one formal. A caller supplies its own withholding value.
+func capturelessFormalBody(child front.Compilation) bool {
+	return child.WIR != nil && child.Cyclic == nil && len(child.Boundary.Captures) == 0 && len(child.Boundary.Parameters) != 0
+}
+
+// declaredFormalSeeds encodes every declared, non-variadic formal of a body as
+// an entry seed. A variadic or unannotated formal, or a declared type with no
+// encodable target, withholds the whole set.
+func declaredFormalSeeds(child front.Compilation) ([]entrySeed, bool) {
+	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Type == 0 {
+			return nil, false
+		}
+		declared := child.WIR.Type(parameter.Type)
+		value, ok := shapefact.EncodeTarget(declared)
+		if !ok || declared == nil {
+			return nil, false
+		}
+		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
+	return seeds, true
+}
+
+// declaredFormalWitnessSeeds encodes the declared formals of a witness entry,
+// rejecting an `any` formal so a witness carries only a concrete declared shape.
+func declaredFormalWitnessSeeds(child front.Compilation) ([]entrySeed, bool) {
 	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
@@ -4283,6 +4298,18 @@ func cyclicPlacementWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
 	}
 	return seeds, true
+}
+
+// cyclicPlacementWitnessEntry supplies only declaration-owned parameter facts
+// to a cyclic lexical body. Captures are added exclusively by
+// uncalledChildEntry from the allocating partition's published values. The
+// result is filtered to boundary-free stack witnesses, so no uncalled body can
+// claim a retain, share, or caller-visible graph.
+func cyclicPlacementWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
+	if child.WIR == nil || child.Cyclic == nil || len(child.Boundary.Parameters) == 0 {
+		return nil, false
+	}
+	return declaredFormalWitnessSeeds(child)
 }
 
 // placementReturnWitnessEntry admits a prospective table-returning closure
@@ -4303,28 +4330,25 @@ func placementReturnWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
 	default:
 		return nil, false
 	}
-	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
-		if parameter.Vararg || parameter.Type == 0 {
-			return nil, false
-		}
-		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
-		if declared == nil || declared.Kind() == kind.Any {
-			return nil, false
-		}
-		value, ok := shapefact.EncodeTarget(declared)
-		if !ok {
-			return nil, false
-		}
-		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
-	}
-	return seeds, true
+	return declaredFormalWitnessSeeds(child)
 }
 
 // placementDeclaredScalarResultWitnesses exposes an immutable scalar result
 // only when both its exact provider and result slot are already published by
 // an evaluated declaration entry.  It does not turn a broad local Top into a
 // scalar: the provider's closed return contract is the independent authority.
+// scalarPlacementFact encodes the frame-local scalar allocation an identity
+// names into its published placement fact, withholding it if encoding fails.
+func scalarPlacementFact(identity string) (equation.Fact, bool) {
+	encoded, err := encodePlacementAllocation(placementAllocationFact{
+		Identity: identity, Result: "placement/scalar/" + base64.RawURLEncoding.EncodeToString([]byte(identity)), Kind: "lua.scalar", Complete: true,
+	})
+	if err != nil {
+		return equation.Fact{}, false
+	}
+	return equation.Fact{Key: placementAllocationFactKey(identity), Value: encoded}, true
+}
+
 func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equation.OutputClosure) []equation.Fact {
 	values := make(map[string]bool)
 	for _, fact := range outcome.Values {
@@ -4371,11 +4395,8 @@ func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equ
 				continue
 			}
 			identity := "scalar/provider/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s/%d", child.Body, operation.Target.Name, index)))
-			encoded, err := encodePlacementAllocation(placementAllocationFact{
-				Identity: identity, Result: "placement/scalar/" + base64.RawURLEncoding.EncodeToString([]byte(identity)), Kind: "lua.scalar", Complete: true,
-			})
-			if err == nil {
-				facts = append(facts, equation.Fact{Key: placementAllocationFactKey(identity), Value: encoded})
+			if fact, ok := scalarPlacementFact(identity); ok {
+				facts = append(facts, fact)
 			}
 		}
 	}
@@ -4410,13 +4431,11 @@ func placementDeclaredScalarLocalWitnesses(child front.Compilation) []equation.F
 			continue
 		}
 		seen[identity] = true
-		encoded, err := encodePlacementAllocation(placementAllocationFact{
-			Identity: identity, Result: "placement/scalar/" + base64.RawURLEncoding.EncodeToString([]byte(identity)), Kind: "lua.scalar", Complete: true,
-		})
-		if err != nil {
+		fact, ok := scalarPlacementFact(identity)
+		if !ok {
 			continue
 		}
-		facts = append(facts, equation.Fact{Key: placementAllocationFactKey(identity), Value: encoded})
+		facts = append(facts, fact)
 	}
 	return facts
 }
@@ -4639,7 +4658,7 @@ type declaredBoundaryAdmission struct {
 // consumers. A missing, variadic, recursive, or captured boundary stays
 // dormant.
 func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission {
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
+	if !capturelessFormalBody(child) {
 		return declaredBoundaryAdmission{}
 	}
 	// The declaration-only entry supports a closed discriminant proof, not an
@@ -4723,17 +4742,9 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 		len(concatOperations) == 0 && len(comparisonOperations) == 0 {
 		return declaredBoundaryAdmission{}
 	}
-	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
-		if parameter.Vararg || parameter.Type == 0 {
-			return declaredBoundaryAdmission{}
-		}
-		declared := child.WIR.Type(parameter.Type)
-		value, ok := shapefact.EncodeTarget(declared)
-		if !ok || declared == nil {
-			return declaredBoundaryAdmission{}
-		}
-		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
+	seeds, ok := declaredFormalSeeds(child)
+	if !ok {
+		return declaredBoundaryAdmission{}
 	}
 	return declaredBoundaryAdmission{Seeds: seeds, Admitted: true, Method: hasDirectMethod, MemberWrite: hasDeclaredMemberWrite, ArithmeticAssignment: hasDeclaredArithmeticAssignment, ArithmeticReturn: hasDeclaredArithmeticReturn, Concat: concatOperations, Comparison: comparisonOperations}
 }
@@ -4781,7 +4792,7 @@ func uncalledDeclaredFormalFunctionCall(operation equation.Equation, formalFunct
 // facts. A capture, a dynamic read or select from any root, or a call through a
 // value with no declared function contract keeps the body dormant.
 func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, bool) {
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
+	if !capturelessFormalBody(child) {
 		return nil, false
 	}
 	formals := make(map[string]bool, len(child.Boundary.Parameters))
@@ -5981,19 +5992,7 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 	if (!hasAssignment && !hasOptionalMethod && !hasResultCall) || (!hasResultCall && !hasCapturedNoResultCall(child.Artifact.Equations, captures)) {
 		return nil, false
 	}
-	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
-		if parameter.Vararg || parameter.Type == 0 {
-			return nil, false
-		}
-		declared := child.WIR.Type(parameter.Type)
-		value, ok := shapefact.EncodeTarget(declared)
-		if !ok || declared == nil {
-			return nil, false
-		}
-		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: value})
-	}
-	return seeds, true
+	return declaredFormalSeeds(child)
 }
 
 // uncalledStaticCapturedReturnBoundary admits one parameter-free return
@@ -6500,7 +6499,7 @@ func uncalledPublishedResultPaths(operations []equation.Equation, applications m
 // same witness. Calls, channel operations, and generic iteration still require
 // a caller-owned entry.
 func uncalledDeclaredIndexedReadBoundary(child front.Compilation) ([]entrySeed, bool) {
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
+	if !capturelessFormalBody(child) {
 		return nil, false
 	}
 	formals := make(map[string]entrySeed, len(child.Boundary.Parameters))
@@ -8039,7 +8038,7 @@ type declaredNilAssignmentWitness struct {
 // publication, which keeps imported, captured, and arbitrary branch bodies
 // outside this declaration-only check.
 func declaredFalseEdgeNilAssignmentClaims(child front.Compilation) map[string]declaredNilAssignmentWitness {
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) == 0 {
+	if !capturelessFormalBody(child) {
 		return nil
 	}
 	formals := make(map[string]bool, len(child.Boundary.Parameters))
@@ -11320,6 +11319,13 @@ const (
 	claimAssertThrowTemplateValue = "allocates=false;false_arm=passes;kind=claim_assert;nil_arm=throws;preserves_word_on_success=true"
 )
 
+// projectedEvalNodeOperation reports whether an eval-node names a structural WIR
+// operation the value closure projects. The list is the internal WIR op names,
+// not source spelling.
+func projectedEvalNodeOperation(name string) bool {
+	return name == "closure" || name == "length"
+}
+
 // evalNodeKernel publishes only the structural operation named by a NodeEval
 // coordinate. It deliberately carries no type, dispatch, lifetime, or
 // reachability conclusion.
@@ -11332,7 +11338,7 @@ func evalNodeKernel(operation equation.BoundEquation, partition equation.Partiti
 		return equation.TransactionResult{}, err
 	}
 	name := string(operands["operation"])
-	if name != "closure" && name != "length" {
+	if !projectedEvalNodeOperation(name) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed evaluation node")
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
@@ -16339,10 +16345,6 @@ func memberCellFactKey(identity []byte, suffix, operation string) string {
 	return heapFactKey(memberCellPrefix, identity, suffix, operation)
 }
 
-func memberCellFact(identity []byte, suffix, operation string, value []byte, partition equation.Partition) (equation.Fact, bool, error) {
-	return memberCellFactWithSource(identity, suffix, operation, value, value, nil, partition)
-}
-
 func memberCellFactWithIdentity(identity []byte, suffix, operation string, value, memberIdentity []byte, partition equation.Partition) (equation.Fact, bool, error) {
 	return memberCellFactWithSource(identity, suffix, operation, value, value, memberIdentity, partition)
 }
@@ -17220,12 +17222,6 @@ func isolationStatePresent(partition equation.Partition, prefix string, term []b
 		}
 	}
 	return false
-}
-
-func sendIsolationDiagnostic(operation equation.BoundEquation, message string) equation.TransactionResult {
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-		Key: "send.isolation/" + operation.Target.Name, Value: []byte(message),
-	}}}}
 }
 
 // isIsolatedLiteral recognizes only a sealed table whose complete graph is
@@ -18520,15 +18516,6 @@ func iteratorSourceTerm(provider []byte, arguments map[int][]byte) ([]byte, bool
 	}
 	source, found := arguments[iterator.Source.Index]
 	return source, found
-}
-
-func placementArgumentsPresent(operands directCallOperands, partition equation.Partition) bool {
-	for _, argument := range operands.arguments {
-		if allocation, found := placementAllocationForTerm(argument, partition); found && placementClosedAllocation(allocation, partition) {
-			return true
-		}
-	}
-	return false
 }
 
 // placementVerifiedLocalCallFacts closes the provisional opaque-call blocker

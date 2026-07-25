@@ -41,7 +41,7 @@ func frozenBodyOccurrenceFacts(compilation front.Compilation) []NativeFact {
 				continue
 			}
 			name := string(operands["operation"])
-			if name != "closure" && name != "length" {
+			if !projectedEvalNodeOperation(name) {
 				continue
 			}
 			out = append(out, frozenBodyRow(compilation, "eval_node", operation.Target.Name, "operation="+name))

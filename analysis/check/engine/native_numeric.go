@@ -19,15 +19,10 @@ import (
 // absent fact, never a guessed numeric licence.
 func numericNativeFacts(root front.Compilation) []NativeFact {
 	var rows []NativeFact
-	var visit func(front.Compilation)
-	visit = func(compilation front.Compilation) {
+	forEachNativeBody(root, func(compilation front.Compilation) {
 		rows = append(rows, numericBodyFacts(compilation)...)
 		rows = append(rows, concatBuiltinBodyFacts(compilation)...)
-		for _, child := range compilation.Nested {
-			visit(child)
-		}
-	}
-	visit(root)
+	})
 	return rows
 }
 
@@ -753,17 +748,6 @@ func nativeConstantRepresentation(body *wir.Body, instruction wir.Instruction, a
 		return "", false
 	}
 	return word.representation, true
-}
-
-func nativeAssignmentCounts(body *wir.Body) map[string]int {
-	assignments := make(map[string]int)
-	for index := 0; index < body.Len(); index++ {
-		instruction := body.Instr(index)
-		if instruction.Op == wir.OpAssign {
-			assignments[nativeOperandKey(body, instruction.Dst)]++
-		}
-	}
-	return assignments
 }
 
 func numericType(value typ.Type) (numericValue, bool) {

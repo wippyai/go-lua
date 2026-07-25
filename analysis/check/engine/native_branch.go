@@ -32,14 +32,9 @@ const (
 // Those coordinates keep the closure's row and publish no second verdict here.
 func branchNativeFacts(root front.Compilation, decided map[string]bool) []NativeFact {
 	var rows []NativeFact
-	var visit func(front.Compilation)
-	visit = func(compilation front.Compilation) {
+	forEachNativeBody(root, func(compilation front.Compilation) {
 		rows = append(rows, branchBodyFacts(compilation, decided)...)
-		for _, child := range compilation.Nested {
-			visit(child)
-		}
-	}
-	visit(root)
+	})
 	return rows
 }
 

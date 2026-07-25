@@ -18,14 +18,9 @@ import (
 // they are visited exactly as the numeric native projection visits them.
 func tableNativeFacts(root front.Compilation) []NativeFact {
 	var rows []NativeFact
-	var visit func(front.Compilation)
-	visit = func(compilation front.Compilation) {
+	forEachNativeBody(root, func(compilation front.Compilation) {
 		rows = append(rows, tableBodyFacts(compilation)...)
-		for _, child := range compilation.Nested {
-			visit(child)
-		}
-	}
-	visit(root)
+	})
 	return rows
 }
 
