@@ -4307,7 +4307,7 @@ func declaredFormalWitnessSeeds(child front.Compilation) ([]entrySeed, bool) {
 // result is filtered to boundary-free stack witnesses, so no uncalled body can
 // claim a retain, share, or caller-visible graph.
 func cyclicPlacementWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
-	if child.WIR == nil || child.Cyclic == nil || len(child.Boundary.Parameters) == 0 {
+	if child.WIR == nil || child.Cyclic == nil || len(child.Boundary.Parameters) == 0 || childCallsFormalFunction(child) {
 		return nil, false
 	}
 	return declaredFormalWitnessSeeds(child)
@@ -4319,7 +4319,7 @@ func cyclicPlacementWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
 // summary rather than a caller-specific reconstruction.
 func placementReturnWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
 	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 ||
-		len(child.Boundary.DeclaredReturns) != 1 || !hasProjectableTableResult(child) {
+		len(child.Boundary.DeclaredReturns) != 1 || !hasProjectableTableResult(child) || childCallsFormalFunction(child) {
 		return nil, false
 	}
 	returned := unwrap.Alias(child.WIR.Type(child.Boundary.DeclaredReturns[0]))
@@ -4780,6 +4780,70 @@ func uncalledDeclaredFormalFunctionCall(operation equation.Equation, formalFunct
 			continue
 		}
 		return formalFunctions[string(operand.Term.Encoding)]
+	}
+	return false
+}
+
+// childCallsFormalFunction reports whether a body applies one of its own formals
+// that is seeded as a function type. Such a call resolves against the formal's
+// abstract declared contract, so an uncalled placement witness would seed the
+// formal as its declared shape and stamp an opaque-call blocker on the argument
+// it forwards. The witness is therefore suppressed for these bodies: an actually
+// invoked call-site supplies the concrete closure and evaluates the body soundly.
+func childCallsFormalFunction(child front.Compilation) bool {
+	if child.WIR == nil {
+		return false
+	}
+	formalFunctions := make(map[string]bool)
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Type == 0 {
+			continue
+		}
+		if _, isFunction := functionFormalType(unwrap.Alias(child.WIR.Type(parameter.Type))); isFunction {
+			formalFunctions[boundaryTerm(parameter.Symbol)] = true
+		}
+	}
+	if len(formalFunctions) == 0 {
+		return false
+	}
+	for _, operation := range child.Artifact.Equations {
+		if uncalledDeclaredFormalFunctionCall(operation, formalFunctions) {
+			return true
+		}
+	}
+	return false
+}
+
+// callbackCompositionCall recognizes the exact shape A1 evaluates for placement:
+// a local declared-return call that forwards a concrete local closure into a
+// function-typed formal the body then invokes. Only then does evaluating the body
+// with the concrete closure seeded reveal placement conclusions the fast
+// declared-return value path never observes. A plain declared-return local call
+// with no closure argument fails this gate and stays untouched.
+func (l *lexicalEvaluator) callbackCompositionCall(operands directCallOperands, handle closureHandle, partition equation.Partition) bool {
+	child, arguments, err := l.knownLexicalBoundary(operands, handle)
+	if err != nil || child.WIR == nil {
+		return false
+	}
+	concreteFormals := make(map[string]bool)
+	for index, parameter := range child.Boundary.Parameters {
+		if parameter.Type == 0 || index >= len(arguments) {
+			continue
+		}
+		if _, isFunction := functionFormalType(unwrap.Alias(child.WIR.Type(parameter.Type))); !isFunction {
+			continue
+		}
+		if _, found := closureHandleFor(arguments[index], partition); found {
+			concreteFormals[boundaryTerm(parameter.Symbol)] = true
+		}
+	}
+	if len(concreteFormals) == 0 {
+		return false
+	}
+	for _, operation := range child.Artifact.Equations {
+		if uncalledDeclaredFormalFunctionCall(operation, concreteFormals) {
+			return true
+		}
 	}
 	return false
 }
@@ -15291,6 +15355,24 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			if localCallable {
 				captureInvalidations = lexical.capturedMemberWriteInvalidations(handle, operation.Target.Name, partition)
 			}
+			// A1: the fast declared-return path above never observes the body's
+			// placement graph. When the call forwards a concrete closure into a
+			// function-typed formal the body invokes, evaluate the body privately
+			// with that closure seeded and lift only its placement conclusions.
+			// Value typing is untouched: no result value, summary, or diagnostic
+			// from this evaluation crosses the boundary.
+			if localCallable && lexical.callbackCompositionCall(operands, handle, partition) {
+				if outcome, applyErr := lexical.applyKnown(operation, operands, handle, partition); applyErr == nil {
+					projected := placementFactsFromChild(outcome.Closure.Values)
+					placementFacts = append(placementFacts, projected...)
+					placementFacts = append(placementFacts, lexical.placementContainedArgumentFacts(operation, operands, partition, projected)...)
+					// B: publish the returned root so the call-results owner binds the
+					// caller result to the transported graph.
+					if root, ok := placementReturnedRoot(projected); ok {
+						placementFacts = append(placementFacts, equation.Fact{Key: placementLocalReturnRootPrefix + operation.Target.Name, Value: []byte(root)})
+					}
+				}
+			}
 			if lexical != nil && childKnown {
 				if declared, published, declaredErr := lexical.declaredBranchAssignmentDiagnostics(child); declaredErr != nil {
 					return equation.TransactionResult{}, false, declaredErr
@@ -16364,6 +16446,35 @@ func typedPathType(term []byte, partition equation.Partition) (typ.Type, bool) {
 	}
 	projected, ok := luatypeprojection.ApplySegments(source, suffix)
 	return projected, ok && projected != nil
+}
+
+// placementDescentTargetsTable gates the placement member descent to a path
+// whose own value or projected type is a table. A scalar member (for example
+// batch.count) never descends into a sibling table child; only a genuine table
+// member reaches an allocation.
+func placementDescentTargetsTable(term []byte, partition equation.Partition) bool {
+	if value, err := resolveCurrentValue(term, partition); err == nil && shapefact.IsTable(value) {
+		return true
+	}
+	if projected, ok := typedPathType(term, partition); ok {
+		return isTableTypeForPlacement(projected)
+	}
+	return false
+}
+
+func isTableTypeForPlacement(t typ.Type) bool {
+	resolved := unwrap.Alias(subst.ExpandInstantiated(t))
+	if optional, ok := resolved.(*typ.Optional); ok && optional != nil && optional.Inner != nil {
+		resolved = unwrap.Alias(subst.ExpandInstantiated(optional.Inner))
+	}
+	if resolved == nil {
+		return false
+	}
+	switch resolved.Kind() {
+	case kind.Array, kind.Map, kind.Record, kind.ReadonlyMap:
+		return true
+	}
+	return false
 }
 
 func declaredTypeForTerm(term []byte, partition equation.Partition) (typ.Type, bool) {
@@ -18429,6 +18540,22 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
 			equation.Fact{Key: epochFactPrefix + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		)
+		// B: a locally evaluated body published its returned root allocation under
+		// this application. Bind the caller result and its assignment target to that
+		// root so a later member read or send traverses the transported graph.
+		if key == "00000000" {
+			marker := placementLocalReturnRootPrefix + strings.TrimPrefix(string(application), "call/")
+			for _, fact := range partition.Values() {
+				if fact.Key != marker || len(fact.Value) == 0 {
+					continue
+				}
+				values = append(values, placementBindingFact(string(result), operation.Target.Name, string(fact.Value)))
+				if targetTerm, ok := targetTerms[key]; ok && len(targetTerm) != 0 {
+					values = append(values, placementBindingFact(string(targetTerm), operation.Target.Name, string(fact.Value)))
+				}
+				break
+			}
+		}
 		if typePredicateErrorTarget != nil && key == "00000000" {
 			values = append(values, equation.Fact{Key: typePredicateTargetPrefix + base64.RawURLEncoding.EncodeToString(result) + "/" + operation.Target.Name, Value: append([]byte(nil), typePredicateErrorTarget...)})
 		}
@@ -18721,12 +18848,117 @@ func placementVerifiedLocalCallFacts(operation equation.BoundEquation, operands 
 	return facts
 }
 
-func placementClosedLocalSummaryFacts(lexical *lexicalEvaluator, operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) []equation.Fact {
-	child, found := lexical.byPrototype[handle.Prototype]
-	if !found || child.Cyclic != nil || len(handle.Captures) != 0 || len(child.Boundary.Captures) != 0 || !closedLocalParameterSummary(child) {
+// placementArgumentEscapes reports whether a concretely-evaluated callee body
+// published an escape for the allocation identity a caller forwarded to it: an
+// owned or shared ownership event (a store past the frame, a send, or a return),
+// or an opaque-call blocker (a re-pass into another unverified callee). A body
+// that only reads or writes scalars into the argument's own subgraph publishes
+// none of these, so the argument remains contained.
+func placementArgumentEscapes(identity string, facts []equation.Fact) bool {
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(identity))
+	ownedPrefix := placementEventPrefix + encoded + "/" + placementEventOwned + "/"
+	sharedPrefix := placementEventPrefix + encoded + "/" + placementEventShared + "/"
+	blockerPrefix := placementBlockerPrefix + encoded + "/"
+	for _, fact := range facts {
+		if strings.HasPrefix(fact.Key, ownedPrefix) || strings.HasPrefix(fact.Key, sharedPrefix) || strings.HasPrefix(fact.Key, blockerPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// placementContainedArgumentFacts is A2: the containment generalization of the
+// opaque-call discharge. Given the placement facts a concretely-evaluated callee
+// body published, it discharges the opaque-call fallback for each forwarded
+// allocation argument the body did not escape. The contract is keyed to the same
+// application operation the opaque-call blocker carries, so projectPlacementAllocation
+// clears exactly this call's blocker and no other.
+func (l *lexicalEvaluator) placementContainedArgumentFacts(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition, facts []equation.Fact) []equation.Fact {
+	if operands.spread {
 		return nil
 	}
-	return placementVerifiedLocalCallFacts(operation, operands, partition)
+	var contracts []equation.Fact
+	for _, argument := range operands.arguments {
+		allocation, found := placementAllocationForTerm(argument, partition)
+		if !found {
+			continue
+		}
+		if placementArgumentEscapes(allocation.Identity, facts) {
+			continue
+		}
+		contracts = append(contracts, placementContractFact(allocation.Identity, "contains", operation.Target.Name))
+	}
+	return contracts
+}
+
+func placementClosedLocalSummaryFacts(lexical *lexicalEvaluator, operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) []equation.Fact {
+	child, found := lexical.byPrototype[handle.Prototype]
+	if !found || child.Cyclic != nil || len(handle.Captures) != 0 || len(child.Boundary.Captures) != 0 {
+		return nil
+	}
+	if closedLocalParameterSummary(child) {
+		return placementVerifiedLocalCallFacts(operation, operands, partition)
+	}
+	// A2: a callee that only writes into its formals' own subgraphs cannot be
+	// certified statically, but evaluating its body with the concrete arguments
+	// seeded reveals whether any formal escapes. When none does, discharge the
+	// opaque-call fallback for each contained argument. The callbackCompositionCall
+	// shape is already evaluated at the declared-return shortcut, so it is left to
+	// that path rather than evaluated a second time here.
+	if containedFormalWriteBody(child) && !lexical.callbackCompositionCall(operands, handle, partition) {
+		outcome, err := lexical.applyKnown(operation, operands, handle, partition)
+		if err != nil {
+			return nil
+		}
+		return lexical.placementContainedArgumentFacts(operation, operands, partition, placementFactsFromChild(outcome.Closure.Values))
+	}
+	return nil
+}
+
+// containedFormalWriteBody admits a callee whose only formal-affecting operations
+// write into a formal's own subgraph: path-replacements and index-mutations
+// rooted at a formal. A call, external call, publication of a formal, or a
+// global/upvalue write can carry a formal past the frame, so those keep the
+// opaque boundary. The static shape only selects which bodies are worth
+// evaluating; the evaluated escape check remains the containment authority.
+func containedFormalWriteBody(child front.Compilation) bool {
+	if child.WIR == nil || child.Cyclic != nil {
+		return false
+	}
+	formals := make(map[string]bool, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		formals[boundaryTerm(parameter.Symbol)] = true
+	}
+	wroteFormal := false
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "apply", "external-call", "call-results", "environment-write", "path-invalidation":
+			return false
+		case "path-replacement", "index-mutation":
+			target, ok := artifactOperand(operation.Operands, "target")
+			if !ok || !writeRootedAtFormal(string(target), formals) {
+				return false
+			}
+			wroteFormal = true
+		case "publication":
+			for _, operand := range operation.Operands {
+				if strings.HasPrefix(operand.Role, "return-value-") && formals[string(operand.Term.Encoding)] {
+					return false
+				}
+			}
+		}
+	}
+	return wroteFormal
+}
+
+// writeRootedAtFormal reports whether a write target names a nested member of a
+// formal (its own subgraph), never the formal binding itself.
+func writeRootedAtFormal(target string, formals map[string]bool) bool {
+	root, suffix, ok := tableAddress([]byte(target))
+	if !ok || suffix == "" {
+		return false
+	}
+	return formals[string(root)]
 }
 
 // closedLocalParameterSummary admits only a child that has no operation able

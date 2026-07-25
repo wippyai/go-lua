@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -57,6 +58,11 @@ const (
 	placementBlockerPrefix     = "placement/blocker/"
 	placementContainmentPrefix = "placement/contains/"
 	placementContractPrefix    = "placement/contract/"
+
+	// placementLocalReturnRootPrefix carries the returned-root allocation identity
+	// of a locally evaluated body from its apply boundary to the call-results
+	// owner, which binds the caller result to it.
+	placementLocalReturnRootPrefix = "placement/local-return-root/"
 
 	placementEventOwned  = "owned"
 	placementEventShared = "shared"
@@ -326,6 +332,98 @@ func placementImportedReturnFacts(template exportrelation.Value, result, applica
 	return facts
 }
 
+// placementReturnedRoot names the root a locally evaluated body returns: the
+// single allocation for which the body published an owned return-escape event.
+// A body returns one root table, so a unique owned event identifies it; zero or
+// several owned events leave the root ambiguous and the caller binding withheld.
+func placementReturnedRoot(facts []equation.Fact) (string, bool) {
+	allocations := make(map[string]bool)
+	for _, fact := range facts {
+		if allocation, ok := decodePlacementAllocation(fact); ok && allocation.Result != "" && allocation.Kind != "" {
+			allocations[allocation.Identity] = true
+		}
+	}
+	root, count := "", 0
+	seen := make(map[string]bool)
+	for _, fact := range facts {
+		if !strings.HasPrefix(fact.Key, placementEventPrefix) {
+			continue
+		}
+		parts, ok := placementProvenFactParts(fact)
+		if !ok || parts[3] != placementEventOwned {
+			continue
+		}
+		identity, ok := placementFactIdentity(parts)
+		if !ok || !allocations[identity] || seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		root, count = identity, count+1
+	}
+	if count != 1 {
+		return "", false
+	}
+	return root, true
+}
+
+// placementMemberDescent resolves a member path over the published placement
+// containment graph when the term has no direct binding of its own. A returned
+// graph crosses its call boundary keyed by allocation identity, not by the
+// caller's member spelling, so a read or send of a member reaches its allocation
+// only by descent from the bound root. Each field or exact-index segment
+// descends to the unique table child of the current allocation; a step with zero
+// or several table children is ambiguous and fails closed, so no member acquires
+// a placement it cannot uniquely justify.
+func placementMemberDescent(term []byte, partition equation.Partition) (placementAllocationFact, bool) {
+	root, suffix, ok := tableAddress(term)
+	if !ok || suffix == "" || !placementDescentTargetsTable(term, partition) {
+		return placementAllocationFact{}, false
+	}
+	current, found := placementAllocationForTerm(root, partition)
+	if !found {
+		return placementAllocationFact{}, false
+	}
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid || len(segments) == 0 {
+		return placementAllocationFact{}, false
+	}
+	parsed := parsePublishedPlacement(partition.Values())
+	children := propagatePublishedPlacement(parsed)
+	for range segments {
+		next, ok := placementSingleTableChild(current.Identity, parsed, children)
+		if !ok {
+			return placementAllocationFact{}, false
+		}
+		current = next
+	}
+	return current, true
+}
+
+// placementSingleTableChild returns the unique table-shaped child of an
+// allocation. A representative map value and a single named table field both
+// resolve here; a scalar-only container, or one with several table children,
+// stays ambiguous.
+func placementSingleTableChild(identity string, parsed publishedPlacementFacts, children map[string][]string) (placementAllocationFact, bool) {
+	var found placementAllocationFact
+	count := 0
+	seen := make(map[string]bool)
+	for _, child := range children[identity] {
+		if seen[child] {
+			continue
+		}
+		seen[child] = true
+		allocation, ok := parsed.allocations[child]
+		if !ok || (allocation.Kind != "lua.table" && allocation.Kind != "manifest.allocation") {
+			continue
+		}
+		found, count = allocation, count+1
+	}
+	if count != 1 {
+		return placementAllocationFact{}, false
+	}
+	return found, true
+}
+
 func placementBindingForTerm(term string, partition equation.Partition) (string, bool) {
 	prefix := placementBindingPrefix + base64.RawURLEncoding.EncodeToString([]byte(term)) + "/"
 	latest, identity := "", ""
@@ -347,6 +445,11 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 	var facts []equation.Fact
 	for index, argument := range operands.arguments {
 		allocation, found := placementAllocationForTerm(argument, partition)
+		if !found {
+			// A member of a locally returned graph has no binding of its own; it
+			// reaches its allocation only by descent from the bound root.
+			allocation, found = placementMemberDescent(argument, partition)
+		}
 		if !found {
 			continue
 		}
