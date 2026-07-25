@@ -58,6 +58,10 @@ func nativeShapeContracts(compilation Compilation) []NativeContract {
 		return nil
 	}
 	var contracts []NativeContract
+	epochShapes := make(map[ShapeID]bool)
+	for _, receiver := range ShapeEpochReceivers(compilation) {
+		epochShapes[receiver.Shape] = true
+	}
 	declared := make(map[ShapeID]bool)
 	addShape := func(value typ.Type) {
 		shape, ok := nativePhysicalRecordShape(value)
@@ -69,6 +73,12 @@ func nativeShapeContracts(compilation Compilation) []NativeContract {
 			return
 		}
 		declared[id] = true
+		// A receiver that is field-read and then value-stored owns an epoch-gated
+		// shape_identity bound to the receiver term, not the module-wide layout
+		// contract. Publishing both would double-count one physical layout.
+		if epochShapes[id] {
+			return
+		}
 		contracts = append(contracts, NativeContract{
 			Family:      "shape_identity",
 			Value:       fmt.Sprintf("distinct_identities=1 field_offsets=identical field_order=canonical interned=true shape_id=%016x stable_across_modules=true stable_across_sites=true", uint64(id)),
@@ -110,6 +120,115 @@ func nativeShapeContracts(compilation Compilation) []NativeContract {
 	}
 	contracts = append(contracts, nativeRecordConstructionContracts(body)...)
 	return append(contracts, nativeShapeTransitionContracts(body)...)
+}
+
+// ShapeEpochReceiver is a formal receiver whose proven physical layout a field
+// read observes and a store to one of its fields then invalidates. Its
+// shape_identity is bound to the receiver term and re-established at each read,
+// so one row is published per observing read rather than one module-wide layout
+// contract. Display is the receiver's source name, Shape its interned layout
+// identity, and Reads the number of establishing field reads. The engine
+// publishes the subject-bound rows; the shape contract walk here suppresses the
+// module-wide layout row for the same layout so it is never counted twice.
+type ShapeEpochReceiver struct {
+	Display string
+	Shape   ShapeID
+	Reads   int
+}
+
+// ShapeEpochReceivers reports every formal parameter of a physical record type
+// that a field read observes and a store to an existing field then invalidates.
+// Only such a receiver carries write.field in its revocation set: a receiver
+// that is only read keeps the module-wide layout contract, and a store that
+// adds a field is a shape transition owned by the transition walk.
+func ShapeEpochReceivers(compilation Compilation) []ShapeEpochReceiver {
+	body := compilation.WIR
+	if body == nil {
+		return nil
+	}
+	type receiverShape struct {
+		id      ShapeID
+		display string
+		fields  map[string]bool
+	}
+	shapes := make(map[wir.SymbolID]receiverShape)
+	for _, parameter := range compilation.Boundary.Parameters {
+		shape, ok := nativePhysicalRecordShape(body.Type(parameter.Type))
+		if !ok {
+			continue
+		}
+		id, ok := nativeShapeID(shape)
+		if !ok {
+			continue
+		}
+		record, ok := shape.(*typ.Record)
+		if !ok || parameter.Name == "" {
+			continue
+		}
+		fields := make(map[string]bool, len(record.Fields))
+		for _, field := range record.Fields {
+			if field.Name != "" {
+				fields[field.Name] = true
+			}
+		}
+		shapes[parameter.Symbol] = receiverShape{id: id, display: parameter.Name, fields: fields}
+	}
+	if len(shapes) == 0 {
+		return nil
+	}
+	written := make(map[wir.SymbolID]bool)
+	reads := make(map[wir.SymbolID]int)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpStaticMemberWrite && instruction.Dst.Kind == wir.OperandPath {
+			target := body.Path(wir.PathRef(instruction.Dst.Ref))
+			if len(target.Segments) == 1 && target.Segments[0].Kind == segment.SegmentField {
+				if shape, ok := shapes[target.Symbol]; ok && shape.fields[target.Segments[0].Name] {
+					written[target.Symbol] = true
+				}
+			}
+		}
+		for _, operand := range nativeReadOperands(body, instruction) {
+			if operand.Kind != wir.OperandPath {
+				continue
+			}
+			member := body.Path(wir.PathRef(operand.Ref))
+			if member.Symbol == 0 || len(member.Segments) == 0 || member.Segments[0].Kind != segment.SegmentField {
+				continue
+			}
+			if _, ok := shapes[member.Symbol]; ok {
+				reads[member.Symbol]++
+			}
+		}
+	}
+	var out []ShapeEpochReceiver
+	for symbol, shape := range shapes {
+		if !written[symbol] || reads[symbol] == 0 {
+			continue
+		}
+		out = append(out, ShapeEpochReceiver{Display: shape.display, Shape: shape.id, Reads: reads[symbol]})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Display < out[j].Display })
+	return out
+}
+
+// nativeReadOperands yields every value operand an instruction reads. A member
+// write target is excluded: a store to a receiver field is a revocation of its
+// layout epoch, never one of the reads that establishes it.
+func nativeReadOperands(body *wir.Body, instruction wir.Instruction) []wir.Operand {
+	operands := make([]wir.Operand, 0, 4)
+	if instruction.Op != wir.OpStaticMemberWrite && instruction.Op != wir.OpDynamicIndexWrite {
+		operands = append(operands, instruction.Dst)
+	}
+	operands = append(operands, instruction.A, instruction.B)
+	operands = append(operands, body.Operands(instruction.List)...)
+	if instruction.Call.Callee.Kind != wir.OperandNone {
+		operands = append(operands, instruction.Call.Callee)
+	}
+	if instruction.Call.Receiver.Kind != wir.OperandNone {
+		operands = append(operands, instruction.Call.Receiver)
+	}
+	return operands
 }
 
 // nativeOwnershipRevocations is the closed deopt class set of a fresh record

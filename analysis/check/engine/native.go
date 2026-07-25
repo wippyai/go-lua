@@ -154,6 +154,7 @@ func publishedNativeFactsForCompilation(compilation front.Compilation, values, o
 	index.derived = append(index.derived, branchNativeFacts(compilation, closedBranchCoordinates(values))...)
 	index.derived = append(index.derived, frozenBodyNativeFacts(compilation)...)
 	index.derived = append(index.derived, metatableNativeFacts(compilation)...)
+	index.derived = append(index.derived, shapeEpochNativeFacts(compilation)...)
 	index.derived = append(index.derived, summaryNativeFacts(compilation)...)
 	return index
 }
