@@ -196,7 +196,7 @@ func (p Partition) Reconverged(prefix string, lattice Reconvergence) (Fact, bool
 		return Fact{}, false
 	}
 	budget := reconvergenceBudget
-	active := resolvedBranchGuards(p.closure.Values, p.guards)
+	active := p.view().activeGuards()
 	active = activePastRecurrence(p.closure.Values, candidates, active, lattice)
 	return reconverge(candidates, active, lattice, &budget, false)
 }
@@ -310,12 +310,12 @@ func (p Partition) WithoutOwnDecision(name string) Partition {
 		return false
 	}
 	filtered := OutputClosure{
-		Values:           copyFacts(p.closure.Values, func(fact Fact) bool { return !owned(fact.Guards) }),
-		Outcomes:         copyFacts(p.closure.Outcomes, func(fact Fact) bool { return !owned(fact.Guards) }),
+		Values:           selectFacts(p.closure.Values, func(fact Fact) bool { return !owned(fact.Guards) }),
+		Outcomes:         selectFacts(p.closure.Outcomes, func(fact Fact) bool { return !owned(fact.Guards) }),
 		Diagnostics:      p.closure.Diagnostics,
 		AllocationRekeys: p.closure.AllocationRekeys,
 	}
-	return Partition{closure: filtered, guards: cloneGuards(p.guards)}
+	return newPartition(filtered, p.guards)
 }
 
 // Edge is this partition restricted to one alternative of a single decision.
@@ -344,7 +344,7 @@ func (p Partition) DecisionEdges(prefix string) ([2]Edge, bool) {
 	if prefix == "" {
 		return [2]Edge{}, false
 	}
-	active := resolvedBranchGuards(p.closure.Values, p.guards)
+	active := p.view().activeGuards()
 	var chosen Fact
 	found := false
 	for _, fact := range p.closure.Values {
@@ -369,7 +369,7 @@ func (p Partition) DecisionEdges(prefix string) ([2]Edge, bool) {
 	var out [2]Edge
 	for index, taken := range [2]bool{true, false} {
 		guard := decision.edge(taken)
-		out[index] = Edge{Guard: guard, Partition: Partition{closure: p.closure, guards: canonicalGuards(append(cloneGuards(p.guards), guard))}}
+		out[index] = Edge{Guard: guard, Partition: newPartition(p.closure, canonicalGuards(appendGuard(p.guards, guard)))}
 	}
 	return out, true
 }
@@ -421,7 +421,7 @@ func reconverge(candidates []Fact, active []Guard, lattice Reconvergence, budget
 	var joined []byte
 	merged := false
 	for _, taken := range [2]bool{true, false} {
-		edge := canonicalGuards(append(cloneGuards(active), decision.edge(taken)))
+		edge := canonicalGuards(appendGuard(active, decision.edge(taken)))
 		side, ok := reconverge(candidates, edge, lattice, budget, true)
 		if !ok || len(side.Value) == 0 {
 			return Fact{}, false

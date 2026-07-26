@@ -1,31 +1,35 @@
 package engine_test
 
 // This file pins the allocation pathology quantified by the edge-matrix
-// profile (analysis/check/fixpoint/equation.copyFacts at 68.7% of
-// alloc_space, joinClosure, cloneGuards/guardsKey/canonicalGuards,
-// strings.genSplit key parsing, engine.declaredTypeForTerm scans) at the
-// whole-program entry point: engine.Check and lint.CheckProject.
+// profile (the Stage-3 partition read copy at 68.7% of alloc_space,
+// joinClosure, guard-cube canonicalization, strings.genSplit key parsing,
+// engine.declaredTypeForTerm scans) at the whole-program entry point:
+// engine.Check and lint.CheckProject.
 //
 // Run (compare with benchstat; allocs/op is the primary regression gate —
 // sec/op swings tens of percent under machine load with zero code change,
-// while B/op and allocs/op reproduce byte-identically):
+// while B/op and allocs/op reproduce byte-identically). Two trees are only
+// comparable in sec/op when their runs are interleaved, because the machine
+// drifts by more than 20% over the span of one full sweep:
 //
 //	go test ./analysis/check/engine/... ./analysis/check/fixpoint/equation/... \
 //	  -run '^$' -bench . -benchmem -count=10 | tee new.txt
 //	benchstat old.txt new.txt
 //
-// Baseline (median of 5 reps, loaded machine — sec/op indicative only):
+// Baseline (minimum of 10 reps, the least load-contaminated sample):
 //
-//	CheckSmall                    17.65ms   9.844Mi   51.76k allocs
-//	CheckBranchy                  97.40ms   50.95Mi   364.4k allocs
-//	CheckLoopy                    60.24ms   36.36Mi   128.7k allocs
-//	CheckTableHeavy               1.476ms   769.1Ki   5.230k allocs
-//	FullFixture_EdgeMatrix        5.557s    4.581Gi   14.47M allocs
-//	FullFixture_PluginSupervisor  2.062s    3.683Gi   4.667M allocs
+//	CheckSmall                    6.658ms   5.477Mi   51.54k allocs
+//	CheckBranchy                  61.84ms   55.03Mi   611.4k allocs
+//	CheckLoopy                    25.30ms   22.88Mi   140.5k allocs
+//	CheckTableHeavy               841.3µs   807.8Ki   6.418k allocs
+//	FullFixture_EdgeMatrix        3.013s    3.824Gi   46.61M allocs
+//	FullFixture_PluginSupervisor  899.8ms   1.436Gi   5.000M allocs
 //
-// EdgeMatrix allocating 4.58GiB / 14.47M allocs to check one 48KB source
-// file is the whole-program face of the copyFacts cost isolated by the
-// partition benchmarks in fixpoint/equation/partition_bench_test.go.
+// EdgeMatrix still allocates 3.82GiB / 46.6M allocs to check one 48KB source
+// file. The persistent partition view took the per-read fact copy out of that
+// figure, which is what the halved B/op measures; the remaining allocation
+// count is dominated by engine-side fact construction, not by the partition
+// reads isolated in fixpoint/equation/partition_bench_test.go.
 
 import (
 	"context"

@@ -1,30 +1,36 @@
 package equation_test
 
 // This file micro-benchmarks the Stage-3 partition read path identified by
-// the edge-matrix allocation profile as the dominant cost: copyFacts (68.7%
-// of alloc_space), joinClosure, cloneGuards/guardsKey/canonicalGuards. Those
-// helpers are unexported; every path below reaches them only through the
-// exported surface (PartitionFromClosuresWithGuards, Partition.Values,
-// Partition.AllValues), exactly as a Stage-3 kernel does.
+// the edge-matrix allocation profile as the dominant cost: the per-read fact
+// copy (68.7% of alloc_space before the persistent view landed), joinClosure,
+// and the guard-cube canonicalization behind every join. Those helpers are
+// unexported; every path below reaches them only through the exported surface
+// (PartitionFromClosuresWithGuards, Partition.Values, Partition.AllValues),
+// exactly as a Stage-3 kernel does.
 //
-// Baseline (median of 5 reps; allocs/op is the primary regression gate,
-// sec/op is load-noisy — run instructions in engine/perf_bench_test.go):
+// Baseline (minimum of 10 reps, which is the least load-contaminated sample;
+// allocs/op and B/op are the regression gates and reproduce exactly, while
+// sec/op is only comparable when two trees are measured interleaved — run
+// instructions in engine/perf_bench_test.go):
 //
-//	PartitionFromClosuresWithGuards_1k    179.2µs   314.6Ki   2.013k allocs
-//	PartitionFromClosuresWithGuards_10k   3.272ms   3.725Mi   20.02k allocs
-//	JoinManyClosures_1k (64 closures)     201.2µs   256.2Ki   2.015k allocs
-//	JoinManyClosures_10k (64 closures)    3.761ms   3.817Mi   20.02k allocs
-//	PartitionValues_1k                    55.25µs   34.96Ki   11 allocs
-//	PartitionValues_10k                   651.6µs   344.5Ki   11 allocs
-//	PartitionAllValues_1k                 84.36µs   160.0Ki   4 allocs
-//	PartitionAllValues_10k                1.220ms   1.500Mi   4 allocs
+//	PartitionFromClosuresWithGuards_1k    77.36µs   242.0Ki   20 allocs
+//	PartitionFromClosuresWithGuards_10k   1.504ms   3.011Mi   22 allocs
+//	JoinManyClosures_1k (64 closures)     74.89µs   183.6Ki   22 allocs
+//	JoinManyClosures_10k (64 closures)    1.640ms   3.103Mi   27 allocs
+//	PartitionValues_1k                    5.2ns     0 B       0 allocs
+//	PartitionValues_10k                   5.1ns     0 B       0 allocs
+//	PartitionAllValues_1k                 2.1ns     0 B       0 allocs
+//	PartitionAllValues_10k                2.1ns     0 B       0 allocs
 //
-// Campaign tracking: persistent partition views (copyFacts elimination) move
-// PartitionValues_*/PartitionAllValues_* from O(n)-copy reads to shared
-// lookups; interned fact keys remove the strings.Split in
-// resolvedBranchGuards (PartitionValues_* path); interned guard sets remove
-// the re-sort/re-alloc in canonicalGuards/guardsKey on every join
-// (PartitionFromClosuresWithGuards_*, JoinManyClosures_*).
+// The read benchmarks measure repeated reads of one closed partition, which is
+// what a kernel performs. The persistent view answers them from the index it
+// built for that snapshot, so a read allocates nothing at all and its cost no
+// longer scales with the fact count. The join benchmarks keep their per-fact
+// payload cut; what left them is the per-fact guard-cube clone and sort, now
+// interned once per closure.
+//
+// Campaign tracking: interned fact keys remove the strings.Split key parsing
+// that branch-proof recovery still reaches (partition construction path).
 
 import (
 	"fmt"

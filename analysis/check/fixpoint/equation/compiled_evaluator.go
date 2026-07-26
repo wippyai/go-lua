@@ -29,6 +29,10 @@ type compiledEvaluatorFrame struct {
 	operands     []BoundOperand
 	guards       []Guard
 	dependencies []Coordinate
+	// view is the partition read index this frame lends to each transaction.
+	// It is bound to one snapshot at a time, exactly like the operand and guard
+	// rows above, and is released with them.
+	view partitionView
 }
 
 // NewEvaluatorScratch provisions four re-entrant frames for artifact.  The
@@ -91,6 +95,7 @@ func (s *EvaluatorScratch) release(frame *compiledEvaluatorFrame) {
 	for index := range frame.cells {
 		frame.cells[index] = 0
 	}
+	frame.view.clear()
 	s.depth--
 }
 
@@ -138,7 +143,8 @@ func (e *FastEvaluator) Evaluate(artifact CompiledArtifact, entry EntryBinding, 
 			if !found {
 				return Evaluation{}, fmt.Errorf("equation: no contract-bound kernel for %s", equation.Target.Name)
 			}
-			result, executeErr := binding.Kernel.Execute(equation, Partition{closure: closure, guards: equation.Guards})
+			frame.view.reset(closure, equation.Guards)
+			result, executeErr := binding.Kernel.Execute(equation, Partition{closure: closure, guards: equation.Guards, shared: &frame.view})
 			if executeErr != nil {
 				return Evaluation{}, fmt.Errorf("equation: transaction %s: %w", equation.Target.Name, executeErr)
 			}

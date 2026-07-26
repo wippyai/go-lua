@@ -141,23 +141,65 @@ func TestPartitionPointLookupsKeepGuardedFactsPrivate(t *testing.T) {
 	body := testBody(52)
 	visible := Guard{Body: body, Encoding: []byte("visible")}
 	hidden := Guard{Body: body, Encoding: []byte("hidden")}
-	partition := Partition{closure: OutputClosure{Values: []Fact{
+	partition := newPartition(OutputClosure{Values: []Fact{
 		{Key: "epoch/path/item/0001", Value: []byte("old"), Guards: []Guard{visible}},
 		{Key: "epoch/path/item/0002", Value: []byte("current"), Guards: []Guard{visible}},
 		{Key: "epoch/path/item/9999", Value: []byte("hidden"), Guards: []Guard{hidden}},
-	}}, guards: []Guard{visible}}
+	}}, []Guard{visible})
 
 	latest, ok := partition.LatestValuePrefix("epoch/path/item/")
 	if !ok || latest.Key != "epoch/path/item/0002" || string(latest.Value) != "current" {
 		t.Fatalf("latest visible point lookup = %#v, %v", latest, ok)
 	}
-	latest.Value[0] = 'X'
 	value, ok := partition.Value("epoch/path/item/0002")
 	if !ok || string(value.Value) != "current" {
-		t.Fatalf("point lookup leaked mutable snapshot storage: %#v, %v", value, ok)
+		t.Fatalf("point lookup = %#v, %v, want the current publication", value, ok)
 	}
 	if _, ok := partition.Value("epoch/path/item/9999"); ok {
 		t.Fatal("point lookup exposed a fact outside the active guards")
+	}
+	if _, ok := partition.LatestValuePrefix("epoch/path/missing/"); ok {
+		t.Fatal("latest point lookup answered a prefix that publishes nothing")
+	}
+}
+
+// TestPartitionReadsShareSealedSnapshotRows pins the read contract: a partition
+// presents its published rows rather than restating them, and what it presents
+// is sealed.  A consumer that appends to a returned lane, or to a payload it
+// holds, allocates instead of writing into the snapshot the next consumer reads.
+func TestPartitionReadsShareSealedSnapshotRows(t *testing.T) {
+	body := testBody(54)
+	visible := Guard{Body: body, Encoding: []byte("visible")}
+	hidden := Guard{Body: body, Encoding: []byte("hidden")}
+	closure, err := joinClosure(OutputClosure{Values: []Fact{
+		{Key: "value/a/0001", Value: []byte("first"), Guards: []Guard{visible}},
+		{Key: "value/a/0002", Value: []byte("second"), Guards: []Guard{visible}},
+		{Key: "value/a/9999", Value: []byte("guarded"), Guards: []Guard{hidden}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition := newPartition(closure, []Guard{visible})
+
+	values := partition.Values()
+	if len(values) != 2 {
+		t.Fatalf("visible values = %#v, want the two rows the active cube admits", values)
+	}
+	if &values[0] != &partition.Values()[0] {
+		t.Fatal("two reads of one partition built two lanes")
+	}
+	for _, lane := range [][]Fact{values, partition.AllValues(), partition.ValuesPrefix("value/a/000")} {
+		if cap(lane) != len(lane) {
+			t.Fatalf("returned lane capacity %d exceeds its length %d, so an append could write into the snapshot", cap(lane), len(lane))
+		}
+	}
+	extended := append(partition.ValuesPrefix("value/a/0001"), Fact{Key: "value/a/0003", Value: []byte("appended")})
+	if len(extended) != 2 || len(partition.Values()) != 2 || partition.Values()[1].Key != "value/a/0002" {
+		t.Fatalf("appending to a prefix read disturbed the snapshot: %#v", partition.Values())
+	}
+	payload := append(values[0].Value, '!')
+	if string(payload) != "first!" || string(partition.Values()[0].Value) != "first" {
+		t.Fatalf("appending to a published payload disturbed the snapshot: %q", partition.Values()[0].Value)
 	}
 }
 
@@ -165,31 +207,43 @@ func TestPartitionValuesPrefixMatchesFilteredVisibleValues(t *testing.T) {
 	body := testBody(53)
 	visible := Guard{Body: body, Encoding: []byte("visible")}
 	hidden := Guard{Body: body, Encoding: []byte("hidden")}
-	partition := Partition{closure: OutputClosure{Values: []Fact{
+	values := []Fact{
 		{Key: "heap/member/a/0001", Value: []byte("first"), Guards: []Guard{visible}},
 		{Key: "heap/member/a/0002", Value: []byte("second"), Guards: []Guard{visible}},
 		{Key: "heap/member/a/9999", Value: []byte("guarded"), Guards: []Guard{hidden}},
 		{Key: "heap/member/b/0001", Value: []byte("other"), Guards: []Guard{visible}},
-	}}, guards: []Guard{visible}}
-
-	got := partition.ValuesPrefix("heap/member/a/")
-	want := make([]Fact, 0, 2)
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, "heap/member/a/") {
-			want = append(want, fact)
+	}
+	// The same lane is read in published order and in an order no canonical
+	// merge produces: an ordered lane answers a prefix by its bounds, an
+	// arbitrary one by scanning, and the two must agree fact for fact.
+	shuffled := []Fact{values[3], values[1], values[2], values[0]}
+	for name, lane := range map[string][]Fact{"ordered": values, "unordered": shuffled} {
+		partition := newPartition(OutputClosure{Values: lane}, []Guard{visible})
+		got := partition.ValuesPrefix("heap/member/a/")
+		want := make([]Fact, 0, 2)
+		for _, fact := range partition.Values() {
+			if strings.HasPrefix(fact.Key, "heap/member/a/") {
+				want = append(want, fact)
+			}
 		}
-	}
-	if len(got) != len(want) {
-		t.Fatalf("prefix scan = %#v, want the same facts as a filtered full scan %#v", got, want)
-	}
-	for index := range got {
-		if got[index].Key != want[index].Key || string(got[index].Value) != string(want[index].Value) {
-			t.Fatalf("prefix scan item %d = %#v, want %#v", index, got[index], want[index])
+		if len(got) != len(want) {
+			t.Fatalf("%s prefix scan = %#v, want the same facts as a filtered full scan %#v", name, got, want)
 		}
-	}
-	got[0].Value[0] = 'X'
-	if fact, ok := partition.Value("heap/member/a/0001"); !ok || string(fact.Value) != "first" {
-		t.Fatalf("prefix scan leaked mutable snapshot storage: %#v, %v", fact, ok)
+		for index := range got {
+			if got[index].Key != want[index].Key || string(got[index].Value) != string(want[index].Value) {
+				t.Fatalf("%s prefix scan item %d = %#v, want %#v", name, index, got[index], want[index])
+			}
+		}
+		latest, ok := partition.LatestValuePrefix("heap/member/a/")
+		if !ok || latest.Key != "heap/member/a/0002" {
+			t.Fatalf("%s latest under prefix = %#v, %v", name, latest, ok)
+		}
+		if fact, ok := partition.Value("heap/member/a/0001"); !ok || string(fact.Value) != "first" {
+			t.Fatalf("%s point lookup = %#v, %v", name, fact, ok)
+		}
+		if _, ok := partition.Value("heap/member/a/9999"); ok {
+			t.Fatalf("%s point lookup exposed a fact outside the active guards", name)
+		}
 	}
 }
 
@@ -307,5 +361,117 @@ func TestAcyclicBoundEvaluatorShadowRejectsPublishedDifference(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("shadow accepted unequal published output")
+	}
+}
+
+// guardOrderCases spells the cube shapes a canonical sort has to separate:
+// differing bodies, one encoding extending another, encodings carrying the zero
+// byte that terminates them in a key, and cubes of different length.
+func guardOrderCases() [][]Guard {
+	first, second := testBody(11), testBody(12)
+	encodings := [][]byte{
+		[]byte("front/branch/op-1/true"),
+		[]byte("front/branch/op-1/false"),
+		[]byte("front/branch/op-1"),
+		[]byte("front/branch/op-10/true"),
+		{'a'},
+		{'a', 0},
+		{'a', 0, 'b'},
+		{'a', 'b'},
+		{0},
+	}
+	sets := [][]Guard{nil}
+	for _, body := range []BodyID{first, second} {
+		for _, encoding := range encodings {
+			single := []Guard{{Body: body, Encoding: encoding}}
+			sets = append(sets, single)
+			for _, tail := range encodings {
+				sets = append(sets, []Guard{{Body: body, Encoding: encoding}, {Body: second, Encoding: tail}})
+			}
+		}
+	}
+	return sets
+}
+
+func TestGuardsCompareMatchesGuardsKeyOrder(t *testing.T) {
+	sets := guardOrderCases()
+	for _, left := range sets {
+		for _, right := range sets {
+			want := strings.Compare(guardsKey(left), guardsKey(right))
+			if got := guardsCompare(left, right); got != want {
+				t.Fatalf("guardsCompare(%q, %q) = %d, want %d", guardsKey(left), guardsKey(right), got, want)
+			}
+		}
+	}
+}
+
+// TestCanonicalGuardsOwnsItsResult pins the ownership rule a compiled
+// evaluation depends on: an operation binds its guards in worker scratch that
+// the next operation rebinds and release zeroes, so a canonical cube must never
+// point back at the storage it was read from -- including when that storage
+// already held the canonical form.
+func TestCanonicalGuardsOwnsItsResult(t *testing.T) {
+	body := testBody(13)
+	high := Guard{Body: body, Encoding: []byte("z")}
+	low := Guard{Body: body, Encoding: []byte("a")}
+	canonical := canonicalGuards([]Guard{high, low, high})
+	if len(canonical) != 2 || string(canonical[0].Encoding) != "a" || string(canonical[1].Encoding) != "z" {
+		t.Fatalf("canonicalGuards = %v, want the sorted duplicate-free cube", canonical)
+	}
+	scratch := []Guard{low, high}
+	var sets guardSets
+	cubes := [][]Guard{canonical, canonicalGuards(scratch), sets.canonical(scratch)}
+	for index := range scratch {
+		scratch[index] = Guard{}
+	}
+	for _, cube := range cubes {
+		if len(cube) != 2 || string(cube[0].Encoding) != "a" || string(cube[1].Encoding) != "z" {
+			t.Fatalf("cube %v aliases the scratch it was canonicalized from", cube)
+		}
+		if cap(cube) != len(cube) {
+			t.Fatalf("cube capacity %d exceeds its length %d, so an append could write into shared state", cap(cube), len(cube))
+		}
+	}
+}
+
+func TestGuardSetsInternSharesEqualCubes(t *testing.T) {
+	body := testBody(14)
+	first := []Guard{{Body: body, Encoding: []byte("a")}, {Body: body, Encoding: []byte("b")}}
+	second := []Guard{{Body: body, Encoding: []byte("b")}, {Body: body, Encoding: []byte("a")}}
+	other := []Guard{{Body: body, Encoding: []byte("a")}}
+	var sets guardSets
+	left, right := sets.canonical(first), sets.canonical(second)
+	if !sameGuards(left, right) {
+		t.Fatalf("interned cubes %v and %v differ", left, right)
+	}
+	if &left[0] != &right[0] {
+		t.Fatal("equal cubes were interned as separate sets")
+	}
+	if single := sets.canonical(other); len(single) != 1 || &single[0] == &left[0] {
+		t.Fatalf("a shorter cube was interned as the longer one: %v", single)
+	}
+	if sets.canonical(nil) != nil {
+		t.Fatal("the empty cube is not interned")
+	}
+}
+
+func TestGuardSetsUnionMatchesCanonicalAppend(t *testing.T) {
+	body := testBody(15)
+	stamp := []Guard{{Body: body, Encoding: []byte("outer/true")}}
+	cases := [][]Guard{
+		nil,
+		{{Body: body, Encoding: []byte("inner/true")}},
+		{{Body: body, Encoding: []byte("outer/true")}},
+		{{Body: body, Encoding: []byte("outer/true")}, {Body: body, Encoding: []byte("inner/false")}},
+	}
+	var sets guardSets
+	for _, existing := range cases {
+		want := canonicalGuards(append(append([]Guard(nil), existing...), stamp...))
+		if got := sets.union(existing, stamp); !sameGuards(got, want) {
+			t.Fatalf("union(%v, %v) = %v, want %v", existing, stamp, got, want)
+		}
+		if got := sets.union(existing, nil); !sameGuards(got, canonicalGuards(existing)) {
+			t.Fatalf("union with the empty cube changed %v", existing)
+		}
 	}
 }

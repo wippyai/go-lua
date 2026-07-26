@@ -180,6 +180,10 @@ func mergeClosures(merge FactMerge, closures ...OutputClosure) (OutputClosure, e
 		out.Diagnostics = append(out.Diagnostics, closure.Diagnostics...)
 		out.AllocationRekeys = append(out.AllocationRekeys, closure.AllocationRekeys...)
 	}
+	// One universe of interned cubes serves all three lanes of this merge: the
+	// facts a join brings together repeat a handful of guard cubes thousands of
+	// times, and every fact carrying a cube can share the one canonical set.
+	var cubes guardSets
 	canonicalFacts := func(lane FactLane, facts []Fact) ([]Fact, error) {
 		payload := 0
 		for index := range facts {
@@ -191,7 +195,7 @@ func mergeClosures(merge FactMerge, closures ...OutputClosure) (OutputClosure, e
 				return nil, fmt.Errorf("equation: output fact has no key")
 			}
 			facts[index].Value = cutBytes(&values, facts[index].Value)
-			facts[index].Guards = canonicalGuards(facts[index].Guards)
+			facts[index].Guards = cubes.canonical(facts[index].Guards)
 			for _, guard := range facts[index].Guards {
 				if !guard.valid() {
 					return nil, fmt.Errorf("equation: malformed output fact guard")
@@ -205,7 +209,7 @@ func mergeClosures(merge FactMerge, closures ...OutputClosure) (OutputClosure, e
 			if len(facts[i].Guards) == 0 || len(facts[j].Guards) == 0 {
 				return len(facts[i].Guards) < len(facts[j].Guards)
 			}
-			return guardsKey(facts[i].Guards) < guardsKey(facts[j].Guards)
+			return guardsCompare(facts[i].Guards, facts[j].Guards) < 0
 		})
 		unique := facts[:0]
 		// A withdrawn row stays in place until the group is finished so that a
@@ -281,9 +285,19 @@ func mergeClosures(merge FactMerge, closures ...OutputClosure) (OutputClosure, e
 // Partition is the read-only, fully closed result of completed prior
 // transactions.  It is the Stage-3 partition-kernel input; callers cannot
 // mutate a partially-built output closure through it.
+//
+// Its reads are served from a view built once for the snapshot rather than
+// recomputed per call: nothing a read depends on -- the closure, the active
+// cube, the branch proofs that promote it -- can change while a kernel holds
+// the partition, so one answer stands for every read of it.
 type Partition struct {
 	closure OutputClosure
 	guards  []Guard
+	shared  *partitionView
+}
+
+func newPartition(closure OutputClosure, guards []Guard) Partition {
+	return Partition{closure: closure, guards: guards, shared: &partitionView{closure: closure, guards: guards}}
 }
 
 // PartitionFromClosuresWithGuards constructs a closed predecessor snapshot for
@@ -299,25 +313,32 @@ func PartitionFromClosuresWithGuards(guards []Guard, closures ...OutputClosure) 
 	if err != nil {
 		return Partition{}, err
 	}
-	return Partition{closure: canonical, guards: canonicalGuards(guards)}, nil
+	return newPartition(canonical, canonicalGuards(guards)), nil
+}
+
+// view returns this partition's read index.  A partition that carries none --
+// only the zero value, which publishes nothing -- answers from a view of its
+// own, so a read is never wrong for want of an index.
+func (p Partition) view() *partitionView {
+	if p.shared != nil {
+		return p.shared
+	}
+	return &partitionView{closure: p.closure, guards: p.guards}
 }
 
 // FactCount reports how many closed facts this partition presents to a
 // kernel. It is a work measure rather than a semantic query: no fact key,
 // value, or guard is exposed, so it cannot participate in any type decision.
-// A kernel's cost is at least linear in this count -- every partition read
-// filters and clones the whole fact lane -- which makes it the unit an
+// A kernel's cost is at least linear in this count, which makes it the unit an
 // evaluation budget charges.
 func (p Partition) FactCount() int {
 	return len(p.closure.Values) + len(p.closure.Outcomes) + len(p.closure.Diagnostics)
 }
 
-func (p Partition) Values() []Fact { return visibleFacts(p.closure.Values, p.closure.Values, p.guards) }
-func (p Partition) Outcomes() []Fact {
-	return visibleFacts(p.closure.Outcomes, p.closure.Values, p.guards)
-}
+func (p Partition) Values() []Fact   { return p.view().visibleValues() }
+func (p Partition) Outcomes() []Fact { return p.view().visibleOutcomes() }
 func (p Partition) Diagnostics() []Fact {
-	return visibleFacts(p.closure.Diagnostics, p.closure.Values, p.guards)
+	return p.view().visibleDiagnostics()
 }
 
 // AllValues is the unfiltered publication history.  Joining mutually exclusive
@@ -326,20 +347,31 @@ func (p Partition) Diagnostics() []Fact {
 // remains for the one consumer that reads a guard inventory recorded inside the
 // payloads rather than in the fact guards.  Ordinary reads use Values and
 // therefore cannot accidentally observe an incompatible guard.
-func (p Partition) AllValues() []Fact { return copyFacts(p.closure.Values, nil) }
+func (p Partition) AllValues() []Fact { return sealFacts(p.closure.Values) }
 func (p Partition) AllocationRekeys() []AllocationRekey {
 	return append([]AllocationRekey(nil), p.closure.AllocationRekeys...)
 }
 
-// Value returns one visible value fact by its already-published key.  Like
-// Values, it returns a detached copy: a kernel must not be able to mutate the
-// closed predecessor snapshot it was given.  Point lookups keep consumers
-// that need one current publication from copying every visible fact first.
+// Value returns one visible value fact by its already-published key.  Point
+// lookups keep consumers that need one current publication from reading every
+// visible fact first.
 func (p Partition) Value(key string) (Fact, bool) {
-	active := resolvedBranchGuards(p.closure.Values, p.guards)
-	for _, fact := range p.closure.Values {
-		if fact.Key == key && guardsIncluded(fact.Guards, active) {
-			return cloneFact(fact), true
+	view := p.view()
+	active := view.activeGuards()
+	lane := p.closure.Values
+	if !view.orderedValues() {
+		for _, fact := range lane {
+			if fact.Key == key && guardsIncluded(fact.Guards, active) {
+				return fact, true
+			}
+		}
+		return Fact{}, false
+	}
+	// The lane is ordered by key, so one key's publications form a run and the
+	// first visible row of that run is the one an ordered scan reaches first.
+	for index := sort.Search(len(lane), func(i int) bool { return lane[i].Key >= key }); index < len(lane) && lane[index].Key == key; index++ {
+		if guardsIncluded(lane[index].Guards, active) {
+			return lane[index], true
 		}
 	}
 	return Fact{}, false
@@ -347,13 +379,19 @@ func (p Partition) Value(key string) (Fact, bool) {
 
 // ValuesPrefix returns the visible value publications whose keys start with
 // prefix. It is the prefix-scoped form of Values: a consumer that reads one
-// fact family must not have to copy the whole partition in order to filter it.
+// fact family must not have to read the whole partition in order to filter it.
 func (p Partition) ValuesPrefix(prefix string) []Fact {
-	active := resolvedBranchGuards(p.closure.Values, p.guards)
+	view := p.view()
+	active := view.activeGuards()
+	lane := p.closure.Values
+	if view.orderedValues() {
+		start, end := prefixRange(lane, prefix)
+		return selectFacts(lane[start:end:end], func(fact Fact) bool { return guardsIncluded(fact.Guards, active) })
+	}
 	var out []Fact
-	for _, fact := range p.closure.Values {
+	for _, fact := range lane {
 		if strings.HasPrefix(fact.Key, prefix) && guardsIncluded(fact.Guards, active) {
-			out = append(out, cloneFact(fact))
+			out = append(out, fact)
 		}
 	}
 	return out
@@ -361,61 +399,209 @@ func (p Partition) ValuesPrefix(prefix string) []Fact {
 
 // LatestValuePrefix returns the lexically latest visible publication under
 // prefix.  Versioned engine facts encode their current epoch in the key, so
-// this preserves the same selection as a Values scan without materializing
+// this preserves the same selection as a Values scan without visiting
 // unrelated guarded facts.
 func (p Partition) LatestValuePrefix(prefix string) (Fact, bool) {
-	active := resolvedBranchGuards(p.closure.Values, p.guards)
-	var latest Fact
-	found := false
-	for _, fact := range p.closure.Values {
-		if strings.HasPrefix(fact.Key, prefix) && guardsIncluded(fact.Guards, active) && (!found || fact.Key > latest.Key) {
-			latest, found = fact, true
+	view := p.view()
+	active := view.activeGuards()
+	lane := p.closure.Values
+	if !view.orderedValues() {
+		var latest Fact
+		found := false
+		for _, fact := range lane {
+			if strings.HasPrefix(fact.Key, prefix) && guardsIncluded(fact.Guards, active) && (!found || fact.Key > latest.Key) {
+				latest, found = fact, true
+			}
 		}
+		return latest, found
 	}
-	if !found {
-		return Fact{}, false
+	// The greatest key under the prefix is the last run of the range.  A run
+	// whose every row is guarded away publishes nothing here, so the search
+	// continues into the run before it, and within the run that does publish the
+	// first visible row wins -- a later row only replaces a strictly greater key.
+	start, end := prefixRange(lane, prefix)
+	for last := end - 1; last >= start; {
+		first := last
+		for first > start && lane[first-1].Key == lane[last].Key {
+			first--
+		}
+		for candidate := first; candidate <= last; candidate++ {
+			if guardsIncluded(lane[candidate].Guards, active) {
+				return lane[candidate], true
+			}
+		}
+		last = first - 1
 	}
-	return cloneFact(latest), true
+	return Fact{}, false
 }
 
-func visibleFacts(facts, evidence []Fact, active []Guard) []Fact {
-	active = resolvedBranchGuards(evidence, active)
-	return copyFacts(facts, func(fact Fact) bool { return guardsIncluded(fact.Guards, active) })
+// prefixRange returns the bounds of the run of facts whose keys start with
+// prefix.  It requires a key-ordered lane, where such a run is contiguous and
+// begins at the first key that is not below the prefix itself.
+func prefixRange(facts []Fact, prefix string) (int, int) {
+	start := sort.Search(len(facts), func(i int) bool { return facts[i].Key >= prefix })
+	end := start
+	for end < len(facts) && strings.HasPrefix(facts[end].Key, prefix) {
+		end++
+	}
+	return start, end
 }
 
-// copyFacts detaches the selected facts from the closed snapshot. The payloads
-// are cut from one backing array per copy instead of one allocation per fact:
-// a partition read is the hottest operation in the solver, and per-fact
-// payload allocation dominated both its cost and the collector's scan set.
+// partitionView is the read index of one closed partition.  Every read of a
+// partition asks about the same immutable snapshot under the same active cube,
+// so each question is answered once here and shared by every later read.
 //
-// Each returned payload keeps the same guarantee as an individual copy. The
-// ranges are disjoint and cut with full slice bounds, so a kernel can reach
-// neither the snapshot nor another fact's payload through the one it was
-// given, and an append on it always reallocates.
-func copyFacts(facts []Fact, include func(Fact) bool) []Fact {
-	selected, valueBytes, guardCount, guardBytes := 0, 0, 0, 0
-	for _, fact := range facts {
-		if include != nil && !include(fact) {
+// What it hands back is that shared state, not a copy of it.  A consumer may
+// read, range over, and retain a result; it may not write through one.  The
+// capacities are clamped so that appending to a returned lane allocates instead
+// of writing into the snapshot, and every payload it exposes was already sealed
+// by the canonical merge that published it.
+//
+// A view belongs to exactly one transaction, like the operand and guard rows a
+// compiled evaluation binds beside it: the VM that hands a partition to a
+// kernel owns the storage and rebinds it for the next transaction, which is
+// what keeps the normal execution path free of per-transaction allocation.  A
+// view is therefore not safe for concurrent use, and no consumer may retain a
+// partition past the kernel call that received it.
+type partitionView struct {
+	closure OutputClosure
+	guards  []Guard
+
+	indexed bool
+	// proofs are the value rows that can promote a branch guard.  Resolution
+	// iterates them instead of the whole lane: a row that states no proof cannot
+	// contribute to the fixed point at any step of it.
+	proofs  []branchProof
+	ordered bool
+	active  []Guard
+
+	valuesReady bool
+	values      []Fact
+
+	outcomesReady bool
+	outcomes      []Fact
+
+	diagnosticsReady bool
+	diagnostics      []Fact
+}
+
+// branchProof is one published proof and the guard it certifies, recovered from
+// its key once per partition rather than on every read.
+type branchProof struct {
+	required []Guard
+	guard    Guard
+}
+
+// reset rebinds this view to the next transaction's snapshot.  The proof list
+// keeps its capacity: consecutive transactions of one body index closures of
+// the same shape, so the row storage is provisioned once and refilled.
+func (v *partitionView) reset(closure OutputClosure, guards []Guard) {
+	proofs := v.proofs[:0]
+	*v = partitionView{closure: closure, guards: guards, proofs: proofs}
+}
+
+// clear releases everything this view holds.  A view that lives in worker
+// scratch outlives the evaluation that filled it, so its rows are dropped for
+// the same reason the operand and guard rows beside it are.
+func (v *partitionView) clear() { v.reset(OutputClosure{}, nil) }
+
+func (v *partitionView) index() {
+	if v.indexed {
+		return
+	}
+	v.indexed, v.ordered = true, true
+	for position, fact := range v.closure.Values {
+		if position != 0 && v.closure.Values[position-1].Key > fact.Key {
+			v.ordered = false
+		}
+		if string(fact.Value) != "proven" {
 			continue
 		}
-		selected++
-		valueBytes += len(fact.Value)
-		guardCount += len(fact.Guards)
-		for _, guard := range fact.Guards {
-			guardBytes += len(guard.Encoding)
+		guard, ok := branchProofGuard(fact.Key)
+		if !ok {
+			continue
 		}
+		v.proofs = append(v.proofs, branchProof{required: fact.Guards, guard: guard})
+	}
+	v.active = resolvedBranchGuards(v.proofs, v.guards)
+}
+
+// orderedValues reports whether the value lane is ordered by key, which is the
+// state a canonical merge leaves it in.  A lane assembled some other way is
+// still read correctly, by scanning rather than searching.
+func (v *partitionView) orderedValues() bool {
+	v.index()
+	return v.ordered
+}
+
+func (v *partitionView) activeGuards() []Guard {
+	v.index()
+	return v.active
+}
+
+func (v *partitionView) visibleValues() []Fact {
+	if !v.valuesReady {
+		v.values, v.valuesReady = v.visible(v.closure.Values), true
+	}
+	return v.values
+}
+
+func (v *partitionView) visibleOutcomes() []Fact {
+	if !v.outcomesReady {
+		v.outcomes, v.outcomesReady = v.visible(v.closure.Outcomes), true
+	}
+	return v.outcomes
+}
+
+func (v *partitionView) visibleDiagnostics() []Fact {
+	if !v.diagnosticsReady {
+		v.diagnostics, v.diagnosticsReady = v.visible(v.closure.Diagnostics), true
+	}
+	return v.diagnostics
+}
+
+// visible selects the rows this partition's active cube admits.  A lane every
+// row of which is admitted is presented as it stands: the common partition has
+// no guard to exclude anything, and restating the lane would be the copy this
+// view exists to remove.
+func (v *partitionView) visible(lane []Fact) []Fact {
+	active := v.activeGuards()
+	return selectFacts(lane, func(fact Fact) bool { return guardsIncluded(fact.Guards, active) })
+}
+
+// selectFacts returns the rows include admits, sharing the published rows
+// rather than restating them.  The result is capacity-clamped: a consumer that
+// appends to it allocates instead of writing past the selection.
+func selectFacts(facts []Fact, include func(Fact) bool) []Fact {
+	selected := 0
+	for _, fact := range facts {
+		if include(fact) {
+			selected++
+		}
+	}
+	if selected == len(facts) {
+		return sealFacts(facts)
+	}
+	if selected == 0 {
+		return nil
 	}
 	out := make([]Fact, 0, selected)
-	values := make([]byte, 0, valueBytes)
-	guards := make([]Guard, 0, guardCount)
-	encodings := make([]byte, 0, guardBytes)
 	for _, fact := range facts {
-		if include != nil && !include(fact) {
-			continue
+		if include(fact) {
+			out = append(out, fact)
 		}
-		out = append(out, Fact{Key: fact.Key, Value: cutBytes(&values, fact.Value), Guards: cutGuards(&guards, &encodings, fact.Guards)})
 	}
-	return out
+	return sealFacts(out)
+}
+
+// sealFacts presents a published lane for reading.  Clamping the capacity is
+// what makes sharing safe: the rows stay the snapshot's, and an append by a
+// consumer reallocates instead of writing into it.
+func sealFacts(facts []Fact) []Fact {
+	if len(facts) == 0 {
+		return nil
+	}
+	return facts[:len(facts):len(facts)]
 }
 
 // cutBytes appends src to batch and returns exactly the range that holds it.
@@ -429,14 +615,10 @@ func cutBytes(batch *[]byte, src []byte) []byte {
 	return (*batch)[start:len(*batch):len(*batch)]
 }
 
-func cutGuards(batch *[]Guard, encodings *[]byte, in []Guard) []Guard {
-	start := len(*batch)
-	for _, guard := range in {
-		*batch = append(*batch, Guard{Body: guard.Body, Encoding: cutBytes(encodings, guard.Encoding)})
-	}
-	return (*batch)[start:len(*batch):len(*batch)]
-}
-
+// cloneFact detaches one fact from the snapshot it was selected from.  A
+// reconvergence result is the one row a partition does not present as published
+// -- it is a value the join derived, stamped with the residual cube -- so it is
+// built as storage of its own rather than shared.
 func cloneFact(fact Fact) Fact {
 	return Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...), Guards: cloneGuards(fact.Guards)}
 }
@@ -446,23 +628,45 @@ func cloneFact(fact Fact) Fact {
 // bridge for a branch proven constant by the kernel: facts from its sole live
 // arm become visible after the branch, while unknown or alternate edges remain
 // guarded and therefore unavailable.
-func resolvedBranchGuards(evidence []Fact, active []Guard) []Guard {
-	resolved := cloneGuards(active)
+func resolvedBranchGuards(proofs []branchProof, active []Guard) []Guard {
+	resolved, owned := active, false
 	for changed := true; changed; {
 		changed = false
-		for _, fact := range evidence {
-			if !guardsIncluded(fact.Guards, resolved) || string(fact.Value) != "proven" {
+		for _, proof := range proofs {
+			guard := proof.guard
+			if !guardsIncluded(proof.required, resolved) || guardsContain(resolved, guard) {
 				continue
 			}
-			guard, ok := branchProofGuard(fact.Key)
-			if !ok || guardsIncluded([]Guard{guard}, resolved) {
-				continue
+			if !owned {
+				// The active cube belongs to the partition; a promotion writes only
+				// into a set this resolution owns.
+				resolved, owned = append(make([]Guard, 0, len(resolved)+4), resolved...), true
 			}
 			resolved = append(resolved, guard)
 			changed = true
 		}
 	}
+	if !owned {
+		// No branch proof promoted anything, so the answer is the cube the
+		// partition already holds.  Every consumer of a resolved cube reads it,
+		// which is what lets the read borrow it instead of restating it.
+		if guardsCanonical(active) {
+			return active
+		}
+	}
 	return canonicalGuards(resolved)
+}
+
+// guardsContain reports whether active already fixes one guard.  It is the
+// single-guard form of guardsIncluded, spelled without the one-element slice
+// that shape would otherwise allocate on every branch-proof candidate.
+func guardsContain(active []Guard, guard Guard) bool {
+	for _, candidate := range active {
+		if candidate.Body == guard.Body && bytes.Equal(candidate.Encoding, guard.Encoding) {
+			return true
+		}
+	}
+	return false
 }
 
 // branchProofGuard recovers the guard one published branch proof states. The
@@ -494,11 +698,50 @@ func cloneGuards(in []Guard) []Guard {
 	return out
 }
 
+// shareGuards copies the guard list without copying the encodings.  A guard
+// encoding is sealed syntax owned by the body that published it, so a set built
+// for comparison shares the bytes; only a set handed to a consumer as part of a
+// detached fact clones them.  The result is capacity-clamped, which is what
+// keeps a later append off the source array.
+func shareGuards(in []Guard) []Guard {
+	out := make([]Guard, len(in))
+	copy(out, in)
+	return out
+}
+
+// appendGuard returns a set holding every guard of in plus one more, without
+// writing into in.  A cube is shared by the partitions and facts that carry it,
+// so extending one always builds a set of its own.
+func appendGuard(in []Guard, guard Guard) []Guard {
+	out := make([]Guard, 0, len(in)+1)
+	out = append(out, in...)
+	return append(out, guard)
+}
+
+// guardsCanonical reports whether in is already sorted and duplicate-free,
+// which is the state every canonical producer leaves a cube in.
+func guardsCanonical(in []Guard) bool {
+	for i := 1; i < len(in); i++ {
+		if !in[i-1].less(in[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// canonicalGuards returns the sorted, duplicate-free form of in as a set this
+// package owns.  The input is always borrowed: a compiled evaluation binds an
+// operation's guards in worker scratch that the next operation rebinds, so a
+// cube that outlives one transaction can never alias what it was built from.
+// The result is capacity-clamped, which keeps a later append off it too.
 func canonicalGuards(in []Guard) []Guard {
 	if len(in) == 0 {
 		return nil
 	}
-	out := cloneGuards(in)
+	if guardsCanonical(in) {
+		return shareGuards(in)
+	}
+	out := shareGuards(in)
 	sort.Slice(out, func(i, j int) bool { return out[i].less(out[j]) })
 	unique := out[:0]
 	for _, guard := range out {
@@ -507,7 +750,117 @@ func canonicalGuards(in []Guard) []Guard {
 		}
 		unique = append(unique, guard)
 	}
-	return unique
+	return unique[:len(unique):len(unique)]
+}
+
+// guardSets interns the canonical guard cubes of one closure construction.  Its
+// lifetime is the call that declares it -- a merge, a stamp -- so a cube lives
+// exactly as long as the facts that carry it and nothing accumulates between
+// evaluations.  Its size is bounded by the number of distinct cubes among the
+// facts being canonicalized, which is why it needs no eviction rule.
+//
+// Interning is what makes a cube shareable: every fact under one cube points at
+// the same immutable set instead of holding a private clone of it, which removes
+// both the per-fact sort and the per-fact allocation from every join.
+type guardSets struct {
+	// A closure states a handful of distinct cubes, so the first few are held
+	// inline and matched by content directly.  The hashed spill exists for the
+	// bodies that genuinely nest more decisions than that.
+	inline [8][]Guard
+	count  int
+	byHash map[uint64][][]Guard
+}
+
+// canonical returns the interned canonical form of in.  Two calls with the same
+// cube content return the identical slice, so a caller may compare, sort, and
+// store the result but never write through it.  The set is always one this
+// table owns: a repeat of a cube already seen costs nothing, and the first
+// sighting of a cube copies it away from the borrowed storage it arrived in.
+func (s *guardSets) canonical(in []Guard) []Guard {
+	if len(in) == 0 {
+		return nil
+	}
+	if guardsCanonical(in) {
+		if interned, found := s.lookup(in); found {
+			return interned
+		}
+		return s.intern(shareGuards(in))
+	}
+	out := canonicalGuards(in)
+	if interned, found := s.lookup(out); found {
+		return interned
+	}
+	return s.intern(out)
+}
+
+func (s *guardSets) lookup(cube []Guard) ([]Guard, bool) {
+	for _, existing := range s.inline[:s.count] {
+		if sameGuards(existing, cube) {
+			return existing, true
+		}
+	}
+	if s.byHash == nil {
+		return nil, false
+	}
+	for _, existing := range s.byHash[guardsHash(cube)] {
+		if sameGuards(existing, cube) {
+			return existing, true
+		}
+	}
+	return nil, false
+}
+
+func (s *guardSets) intern(cube []Guard) []Guard {
+	if s.count < len(s.inline) {
+		s.inline[s.count] = cube
+		s.count++
+		return cube
+	}
+	if s.byHash == nil {
+		s.byHash = make(map[uint64][][]Guard, 8)
+	}
+	hash := guardsHash(cube)
+	s.byHash[hash] = append(s.byHash[hash], cube)
+	return cube
+}
+
+// union returns the interned canonical cube holding every guard of both sets.
+// The stamp path applies one cube to a whole closure, so the two sides that
+// matter -- an unguarded fact and a fact already carrying the stamp -- resolve
+// without building an intermediate set at all.
+func (s *guardSets) union(left, right []Guard) []Guard {
+	switch {
+	case len(right) == 0:
+		return s.canonical(left)
+	case len(left) == 0:
+		return s.canonical(right)
+	case guardsIncluded(right, left):
+		return s.canonical(left)
+	}
+	joined := make([]Guard, 0, len(left)+len(right))
+	joined = append(joined, left...)
+	joined = append(joined, right...)
+	return s.canonical(joined)
+}
+
+const guardHashOffset, guardHashPrime = uint64(14695981039346656037), uint64(1099511628211)
+
+// guardsHash is an FNV-1a digest of the same byte sequence guardsKey spells,
+// used only to bucket interned cubes.  Equality is always decided by content.
+func guardsHash(guards []Guard) uint64 {
+	hash := guardHashOffset
+	mix := func(b byte) { hash = (hash ^ uint64(b)) * guardHashPrime }
+	for _, guard := range guards {
+		for _, b := range guard.Body {
+			mix(b)
+		}
+		mix(0)
+		for _, b := range guard.Encoding {
+			mix(b)
+		}
+		mix(0)
+	}
+	return hash
 }
 
 func guardsKey(guards []Guard) string {
@@ -519,6 +872,52 @@ func guardsKey(guards []Guard) string {
 		out = append(out, 0)
 	}
 	return string(out)
+}
+
+// guardsCompare orders two cubes exactly as comparing their guardsKey strings
+// does, without materializing either key.  The keys are the dominant allocation
+// of a canonical sort otherwise: the comparator runs O(n log n) times per join
+// and each call would spell out both sides in full.
+//
+// Body identities are fixed width, so a difference there decides immediately.
+// Encodings are variable width and terminated by a zero byte in the key, so a
+// shorter encoding loses to a longer one that extends it -- unless the extending
+// byte is itself zero, the one shape a stream comparison cannot settle locally.
+func guardsCompare(left, right []Guard) int {
+	for index := 0; index < len(left) && index < len(right); index++ {
+		if left[index].Body != right[index].Body {
+			return bytes.Compare(left[index].Body[:], right[index].Body[:])
+		}
+		leftEncoding, rightEncoding := left[index].Encoding, right[index].Encoding
+		shared := len(leftEncoding)
+		if len(rightEncoding) < shared {
+			shared = len(rightEncoding)
+		}
+		if order := bytes.Compare(leftEncoding[:shared], rightEncoding[:shared]); order != 0 {
+			return order
+		}
+		if len(leftEncoding) == len(rightEncoding) {
+			continue
+		}
+		longer := rightEncoding
+		if len(leftEncoding) > len(rightEncoding) {
+			longer = leftEncoding
+		}
+		if longer[shared] == 0 {
+			return strings.Compare(guardsKey(left), guardsKey(right))
+		}
+		if len(leftEncoding) < len(rightEncoding) {
+			return -1
+		}
+		return 1
+	}
+	switch {
+	case len(left) < len(right):
+		return -1
+	case len(left) > len(right):
+		return 1
+	}
+	return 0
 }
 
 // sameGuards compares two canonical guard sets element-wise. Both sides come
@@ -553,9 +952,13 @@ func guardsIncluded(required, active []Guard) bool {
 }
 
 func stampClosure(closure OutputClosure, guards []Guard) OutputClosure {
+	// Every fact of this closure receives the same cube, so the distinct results
+	// number at most one per distinct fact cube.  Interning them here is what
+	// keeps a stamp linear in the closure rather than in its guard payload.
+	var cubes guardSets
 	stamp := func(facts []Fact) {
 		for index := range facts {
-			facts[index].Guards = canonicalGuards(append(facts[index].Guards, guards...))
+			facts[index].Guards = cubes.union(facts[index].Guards, guards)
 		}
 	}
 	stamp(closure.Values)
@@ -652,6 +1055,10 @@ func (vm *AcyclicVM) Evaluate(bound BoundArtifact) (Evaluation, error) {
 		return Evaluation{}, err
 	}
 	closure := OutputClosure{}
+	// One read index serves the whole evaluation, rebound to each transaction's
+	// snapshot: the partition a kernel receives lives exactly as long as its
+	// transaction, so the storage behind it is provisioned once.
+	var view partitionView
 	for _, equation := range ordered {
 		if equation.Target.Body != bound.Body || !equation.Occurrence.valid() || equation.KernelID == "" {
 			return Evaluation{}, fmt.Errorf("equation: malformed bound equation")
@@ -660,7 +1067,8 @@ func (vm *AcyclicVM) Evaluate(bound BoundArtifact) (Evaluation, error) {
 		if !found {
 			return Evaluation{}, fmt.Errorf("equation: no contract-bound kernel for %s", equation.Target.Name)
 		}
-		result, err := binding.Kernel.Execute(equation, Partition{closure: closure, guards: equation.Guards})
+		view.reset(closure, equation.Guards)
+		result, err := binding.Kernel.Execute(equation, Partition{closure: closure, guards: equation.Guards, shared: &view})
 		if err != nil {
 			return Evaluation{}, fmt.Errorf("equation: transaction %s: %w", equation.Target.Name, err)
 		}

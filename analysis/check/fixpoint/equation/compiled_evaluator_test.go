@@ -54,6 +54,9 @@ func TestFastEvaluatorMatchesAcyclicVMAndClearsScratch(t *testing.T) {
 				t.Fatalf("scratch retained dependency %#v", dependency)
 			}
 		}
+		if frame.view.indexed || len(frame.view.closure.Values) != 0 || len(frame.view.guards) != 0 || len(frame.view.values) != 0 {
+			t.Fatalf("scratch retained a partition view over %#v", frame.view.closure)
+		}
 	}
 }
 
