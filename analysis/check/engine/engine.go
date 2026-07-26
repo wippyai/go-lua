@@ -130,16 +130,20 @@ const (
 	heapIndexRelationPrefix = "heap/index-relation/"
 	// affineIndexPrefix names the affine identity of a computed index term:
 	// the term equals a base path plus a constant offset.
-	affineIndexPrefix         = "affine-index/"
-	heapLengthFloorPrefix     = "heap/length-floor/"
-	heapTableEscapePrefix     = "heap/table-escape/"
-	indexReadDisplayPrefix    = "index-read-display/"
-	indexReadScalarPrefix     = "index-read-scalar/"
-	typedOptionalReadPrefix   = "typed-optional-read/"
-	typePredicateTargetPrefix = "type-predicate-target/"
-	typePredicatePairPrefix   = "type-predicate-pair/"
-	typePredicateValuePrefix  = "type-predicate-value/"
-	callTypePredicatePrefix   = "call-type-predicate/"
+	affineIndexPrefix     = "affine-index/"
+	heapLengthFloorPrefix = "heap/length-floor/"
+	heapTableEscapePrefix = "heap/table-escape/"
+	// heapOpaqueMemberWritePrefix marks an identity whose member publication is
+	// no longer a complete slot inventory: a store addressed a key that never
+	// resolved to a member suffix.
+	heapOpaqueMemberWritePrefix = "heap/opaque-member-write/"
+	indexReadDisplayPrefix      = "index-read-display/"
+	indexReadScalarPrefix       = "index-read-scalar/"
+	typedOptionalReadPrefix     = "typed-optional-read/"
+	typePredicateTargetPrefix   = "type-predicate-target/"
+	typePredicatePairPrefix     = "type-predicate-pair/"
+	typePredicateValuePrefix    = "type-predicate-value/"
+	callTypePredicatePrefix     = "call-type-predicate/"
 	// optionalResultOriginPrefix names the callee slot whose declared optional
 	// result established a value's nil possibility. It is presentation
 	// provenance for that same published witness, never a second proof.
@@ -3422,10 +3426,10 @@ func forwardedStaticMemberContractBoundary(compilation front.Compilation) bool {
 // cannot preserve. Those bodies stay on the established root path unless they
 // also rebind a boundary cell, which is the one effect this bridge transports.
 // capturedMemberWriteTerms lists the captured boundary cells whose members a
-// body statically writes. The caller holds an allocation-time closed shape for
-// those cells; once this body runs, that shape can no longer prove any member
-// absent. Detection is keyed to the exact captured boundary term, so writes
-// through parameters, temporaries, and dynamic keys are not part of the relation.
+// body writes. The caller holds an allocation-time closed shape for those
+// cells; once this body runs, that shape can no longer prove any member
+// absent. Detection is keyed to the exact captured boundary term, so a write
+// through a parameter or a temporary is not part of the relation.
 func capturedMemberWriteTerms(compilation front.Compilation) map[string]bool {
 	if len(compilation.Boundary.Captures) == 0 {
 		return nil
@@ -3545,24 +3549,42 @@ func parameterMemberWriteTerms(compilation front.Compilation) map[string]bool {
 	return written
 }
 
+// memberWriteRoots names the roots in roots whose members this body writes. A
+// static member address states its root in the write target; a dynamic-key
+// store states it as the container it addresses. Both reach the same table
+// through the same reference, so both are the same caller-observable effect
+// and the key's spelling does not decide whether the effect crosses.
 func memberWriteRoots(compilation front.Compilation, roots map[string]bool) map[string]bool {
 	var written map[string]bool
-	for _, item := range compilation.Artifact.Equations {
-		if item.Occurrence.Kind != "path-replacement" && item.Occurrence.Kind != "environment-write" {
-			continue
-		}
-		target, found := artifactOperand(item.Operands, "target")
-		if !found {
-			continue
-		}
-		root, suffix, ok := heapTableAddress(target)
-		if !ok || suffix == "" || !roots[string(root)] {
-			continue
+	record := func(root []byte) {
+		if !roots[string(root)] {
+			return
 		}
 		if written == nil {
 			written = make(map[string]bool, len(roots))
 		}
 		written[string(root)] = true
+	}
+	for _, item := range compilation.Artifact.Equations {
+		switch item.Occurrence.Kind {
+		case "path-replacement", "environment-write":
+			target, found := artifactOperand(item.Operands, "target")
+			if !found {
+				continue
+			}
+			if root, suffix, ok := heapTableAddress(target); ok && suffix != "" {
+				record(root)
+			}
+		case "index-mutation":
+			container, found := artifactOperand(item.Operands, "container")
+			if !found {
+				continue
+			}
+			record(container)
+			if root, suffix, ok := heapTableAddress(container); ok && suffix != "" {
+				record(root)
+			}
+		}
 	}
 	return written
 }
@@ -11299,9 +11321,15 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				if lengthReceiver {
 					result := typ.Type(typ.Integer)
 					if sealedReceiver {
+						// The sealed value is table-kind evidence on its own. The
+						// exact cardinality needs the complete slot inventory, so
+						// it is read from the constructor refreshed by the writes
+						// published through this container's heap identity.
 						result = typ.Number
-						if length, sequence := sealedSequenceLength(table); sequence {
-							result = typ.LiteralInt(length)
+						if shape, complete := heapSequenceShape(operand, partition); complete {
+							if length, sequence := sealedSequenceLength(shape); sequence {
+								result = typ.LiteralInt(length)
+							}
 						}
 					}
 					if encoded, encodedOK := shapefact.EncodeTarget(result); encodedOK {
@@ -11450,12 +11478,78 @@ func resolvedSealedTable(term []byte, partition equation.Partition) (shapefact.T
 	return table, ok && table.Closed
 }
 
+// heapSequenceShape is the slot inventory the length operator reads: the
+// container's closed constructor shape brought up to date with every member
+// write published through its heap identity. Closure proves an omitted field
+// absent, so the constructor together with the current inventory names every
+// live slot. The constructor alone does not: a member write publishes at the
+// identity and leaves the allocating value fact untouched.
+//
+// The refresh withholds the whole shape wherever that inventory stops being
+// complete -- a write whose key never resolved to a member suffix, an attached
+// metatable that can route a store elsewhere, an external callback that may
+// mutate the table, or a member whose current value does not reconverge at
+// this point. Without a heap identity there is no inventory to consult and the
+// constructor remains the only published authority.
+func heapSequenceShape(term []byte, partition equation.Partition) (shapefact.Table, bool) {
+	table, sealed := resolvedSealedTable(term, partition)
+	if !sealed {
+		return shapefact.Table{}, false
+	}
+	identity, found := tableIdentityForTerm(term, partition)
+	if !found {
+		return table, true
+	}
+	if heapMetaAttached(identity, partition) || heapHasExternalCallback(identity, partition) || heapOpaqueMemberWrite(identity, partition) {
+		return shapefact.Table{}, false
+	}
+	members := make(map[string]shapefact.Member, len(table.Members))
+	for _, member := range table.Members {
+		members[member.Suffix] = member
+	}
+	for suffix := range heapMemberInventory(identity, partition) {
+		value, current := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition)
+		if !current || len(value) == 0 {
+			return shapefact.Table{}, false
+		}
+		if string(value) == "scalar/nil" {
+			members[suffix] = shapefact.Member{Suffix: suffix}
+			continue
+		}
+		members[suffix] = shapefact.Member{Suffix: suffix, Present: true, Value: string(value)}
+	}
+	refreshed := shapefact.Table{Closed: true, Members: make([]shapefact.Member, 0, len(members))}
+	for _, member := range members {
+		refreshed.Members = append(refreshed.Members, member)
+	}
+	sort.Slice(refreshed.Members, func(i, j int) bool { return refreshed.Members[i].Suffix < refreshed.Members[j].Suffix })
+	return refreshed, true
+}
+
+// heapOpaqueMemberWrite reports that a store through this identity addressed a
+// slot the analysis could not name. The written slot is unknown, so the
+// identity's member publication no longer accounts for every live slot.
+func heapOpaqueMemberWrite(identity []byte, partition equation.Partition) bool {
+	prefix := heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		if string(fact.Value) == "unresolved-key" {
+			return true
+		}
+	}
+	return false
+}
+
+func heapOpaqueMemberWriteFact(identity []byte, operation string) equation.Fact {
+	return equation.Fact{Key: heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("unresolved-key")}
+}
+
 // sealedSequenceLength proves an exact Lua length only for a closed, present,
 // contiguous top-level integer sequence. A named key, nested member, hole, or
 // zero index keeps the result broad because it has no border-free sequence
-// proof.
+// proof. A closed constructor with no members is the empty sequence: closure
+// already proves every omitted field absent, so its length is exactly zero.
 func sealedSequenceLength(table shapefact.Table) (int64, bool) {
-	if !table.Closed || len(table.Members) == 0 {
+	if !table.Closed {
 		return 0, false
 	}
 	seen := make(map[int]bool, len(table.Members))
@@ -14397,13 +14491,29 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 	}
 	if identity, found := tableIdentityForTerm(operands["container"], partition); found {
 		key, keyErr := resolveCurrentValue(operands["key"], partition)
-		if suffix, exact := tableMemberSuffix(key, operands["suffix"]); keyErr == nil && exact {
+		suffix, exact := tableMemberSuffix(key, operands["suffix"])
+		if keyErr != nil || !exact {
+			// The store landed on a slot this analysis cannot name, so the
+			// identity's member publication stops being a complete inventory.
+			// A reader that needs the whole slot set consults this marker.
+			result.Closure.Values = append(result.Closure.Values, heapOpaqueMemberWriteFact(identity, operation.Target.Name))
+		} else {
 			value, valueErr := resolveCurrentValue(operands["value"], partition)
 			if valueErr == nil {
 				result.Closure.Values = append(result.Closure.Values, heapMemberFact(identity, suffix, operation.Target.Name, value))
 				memberIdentity, hasMemberIdentity := tableIdentityForTerm(operands["value"], partition)
 				if hasMemberIdentity {
 					result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
+				}
+				// The member cell is the record of who authored a slot. A store
+				// through an exact dynamic key authors the slot exactly as a
+				// static member address does, so it publishes the same cell and
+				// its effect reaches every reader of that lane -- including the
+				// caller, when this body holds a table the caller transported.
+				if cell, published, cellErr := memberCellFactWithIdentity(identity, suffix, operation.Target.Name, value, memberIdentity, partition); cellErr != nil {
+					return equation.TransactionResult{}, cellErr
+				} else if published {
+					result.Closure.Values = append(result.Closure.Values, cell)
 				}
 				// An exact dynamic key can address a nested member whose enclosing
 				// table is already reachable by an alias. Publish the same write at
@@ -18514,7 +18624,9 @@ func entrySeedSource(seed entrySeed, sources map[string][]byte) []byte {
 // cell the callee authored on one of the transported identities. The callee
 // holds the caller's own table there, so its static member write is a write the
 // caller must observe; a cell still authored by the entry carries the caller's
-// pre-call value and is left alone.
+// pre-call value and is left alone. A callee store the child could not name
+// crosses the same way: the caller's slot inventory is incomplete after it,
+// exactly as it would be after the caller performed that store itself.
 func childMemberWritebacks(identities [][]byte, childPartition equation.Partition, operation string) []equation.Fact {
 	var facts []equation.Fact
 	type authoredCell struct {
@@ -18523,6 +18635,9 @@ func childMemberWritebacks(identities [][]byte, childPartition equation.Partitio
 	}
 	latest := make(map[string]authoredCell)
 	for _, identity := range identities {
+		if heapOpaqueMemberWrite(identity, childPartition) {
+			facts = append(facts, heapOpaqueMemberWriteFact(identity, operation))
+		}
 		prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 		clear(latest)
 		for _, fact := range childPartition.ValuesPrefix(prefix) {
