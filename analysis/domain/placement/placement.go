@@ -2,7 +2,7 @@ package placement
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	internal "github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/domain/placement/vocab"
 )
 
 func Lattice() lattice.Lattice[Value] {
@@ -17,7 +17,8 @@ func Lattice() lattice.Lattice[Value] {
 	}
 }
 
-// Value is the allocation-placement abstraction.
+// Value is a compatibility alias for the canonical allocation-placement
+// vocabulary. New in-memory code should name vocab.Placement directly.
 //
 // The chain is:
 //
@@ -25,36 +26,30 @@ func Lattice() lattice.Lattice[Value] {
 //
 // Higher points are less precise and more conservative. Joining any path that
 // requires a more shared placement moves the result upward; Unknown is Top.
-type Value uint8
+type Value = vocab.Placement
 
 const (
 	// Bottom is the unreachable placement state.
-	Bottom Value = iota
+	Bottom = vocab.Bottom
 	// Stack is stack/local placement confined to the current activation.
-	Stack
+	Stack = vocab.Stack
 	// OwnedHeap is heap placement owned by one actor or analysis owner.
-	OwnedHeap
+	OwnedHeap = vocab.OwnedHeap
 	// SharedHeap is heap placement that may be shared, escaped, or observed
 	// outside the owning actor.
-	SharedHeap
+	SharedHeap = vocab.SharedHeap
 	// Unknown is the conservative top placement.
-	Unknown
+	Unknown = vocab.Unknown
 )
-
-// IsBottom reports whether the value is unreachable.
-func (v Value) IsBottom() bool { return v == Bottom }
-
-// IsTop reports whether the value is the conservative unknown placement.
-func (v Value) IsTop() bool { return v == Unknown }
 
 // LessOrEq reports whether b conservatively covers a.
 func LessOrEq(a, b Value) bool {
-	return a <= b
+	return placementRank(a) <= placementRank(b)
 }
 
 // Join is the least upper bound of the placement chain.
 func Join(a, b Value) Value {
-	if a > b {
+	if placementRank(a) > placementRank(b) {
 		return a
 	}
 	return b
@@ -62,7 +57,7 @@ func Join(a, b Value) Value {
 
 // Meet is the greatest lower bound of the placement chain.
 func Meet(a, b Value) Value {
-	if a < b {
+	if placementRank(a) < placementRank(b) {
 		return a
 	}
 	return b
@@ -78,29 +73,21 @@ func Equal(a, b Value) bool {
 	return a == b
 }
 
-// Hash is stable and consistent with Equal.
-func (v Value) Hash() uint64 {
-	return internal.MixHash(internal.FnvString("placement"), uint64(v))
-}
-
-// Covers reports whether the receiver is at least as high as other in the chain.
-func (v Value) Covers(other Value) bool {
-	return Join(v, other) == v
-}
-
-func (v Value) String() string {
+func placementRank(v Value) int {
 	switch v {
 	case Bottom:
-		return "bottom"
+		return 0
 	case Stack:
-		return "stack"
+		return 1
 	case OwnedHeap:
-		return "owned-heap"
+		return 2
 	case SharedHeap:
-		return "shared-heap"
+		return 3
 	case Unknown:
-		return "unknown"
+		return 4
 	default:
-		return "placement(invalid)"
+		// JIT-only and invalid placements are outside this lattice. Keep them
+		// conservative if one crosses the analysis boundary.
+		return 4
 	}
 }

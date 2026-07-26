@@ -1,39 +1,18 @@
 package placement
 
-// EscapeTransition is a placement-policy transition that moves a fresh graph
-// beyond stack lifetime. Call-boundary events are translated into this neutral
-// vocabulary by fact application.
-type EscapeTransition uint8
+import "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
+
+// EscapeTransition is a compatibility alias for the canonical escape
+// vocabulary. Call-boundary events are translated into this neutral vocabulary
+// by fact application.
+type EscapeTransition = vocab.Escape
 
 const (
-	EscapeTransitionNone EscapeTransition = iota
-	EscapeTransitionReturn
-	EscapeTransitionRetain
-	EscapeTransitionStore
-	EscapeTransitionSend
-	EscapeTransitionExport
-	EscapeTransitionOpaque
+	EscapeTransitionNone   = vocab.None
+	EscapeTransitionReturn = vocab.Return
+	EscapeTransitionRetain = vocab.Retain
+	EscapeTransitionStore  = vocab.Store
+	EscapeTransitionSend   = vocab.Send
+	EscapeTransitionExport = vocab.Export
+	EscapeTransitionOpaque = vocab.Opaque
 )
-
-type escapePlacementPolicy struct {
-	placement Value
-	applies   bool
-}
-
-var escapeTransitionPolicy = [...]escapePlacementPolicy{
-	EscapeTransitionReturn: {placement: OwnedHeap, applies: true},
-	EscapeTransitionRetain: {placement: OwnedHeap, applies: true},
-	EscapeTransitionStore:  {placement: OwnedHeap, applies: true},
-	EscapeTransitionSend:   {placement: SharedHeap, applies: true},
-	EscapeTransitionExport: {placement: SharedHeap, applies: true},
-	EscapeTransitionOpaque: {placement: SharedHeap, applies: true},
-}
-
-// Placement returns the placement required by transition.
-func (t EscapeTransition) Placement() (Value, bool) {
-	if int(t) >= len(escapeTransitionPolicy) {
-		return Bottom, false
-	}
-	policy := escapeTransitionPolicy[t]
-	return policy.placement, policy.applies
-}

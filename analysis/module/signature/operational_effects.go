@@ -3,6 +3,7 @@ package signature
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	placementvocab "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -135,16 +136,18 @@ type FrozenTable struct {
 	Target pathdom.Path
 }
 
-type EscapeKind uint8
+// EscapeKind is the manifest-facing compatibility name for the canonical
+// placement/escape vocabulary.
+type EscapeKind = placementvocab.Escape
 
 const (
-	EscapeNone EscapeKind = iota
-	EscapeBorrow
-	EscapeRetain
-	EscapeStore
-	EscapeSend
-	EscapeExport
-	EscapeOpaque
+	EscapeNone   EscapeKind = placementvocab.None
+	EscapeBorrow EscapeKind = placementvocab.Borrow
+	EscapeRetain EscapeKind = placementvocab.Retain
+	EscapeStore  EscapeKind = placementvocab.Store
+	EscapeSend   EscapeKind = placementvocab.Send
+	EscapeExport EscapeKind = placementvocab.Export
+	EscapeOpaque EscapeKind = placementvocab.Opaque
 )
 
 type EscapeEvent struct {
@@ -158,12 +161,14 @@ type StoreRelation struct {
 	Into   pathdom.Path
 }
 
-type PlacementConsequence string
+// PlacementConsequence is the manifest-facing compatibility name for the
+// canonical escape consequence vocabulary.
+type PlacementConsequence = placementvocab.Consequence
 
 const (
-	PlacementConsequenceKeep       PlacementConsequence = "keep"
-	PlacementConsequenceOwnedHeap  PlacementConsequence = "owned-heap"
-	PlacementConsequenceSharedHeap PlacementConsequence = "shared-heap"
+	PlacementConsequenceKeep       PlacementConsequence = placementvocab.Keep
+	PlacementConsequenceOwnedHeap  PlacementConsequence = placementvocab.ConsequenceOwned
+	PlacementConsequenceSharedHeap PlacementConsequence = placementvocab.ConsequenceShared
 )
 
 type ParamRelation struct {

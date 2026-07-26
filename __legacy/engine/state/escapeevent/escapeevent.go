@@ -7,19 +7,21 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
+	placementvocab "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
 )
 
-// Kind orders cross-boundary escape/seal strength for state-keyed targets.
-type Kind uint8
+// Kind is the legacy state-lane compatibility name for the canonical
+// cross-boundary escape vocabulary.
+type Kind = placementvocab.Escape
 
 const (
-	KindNone Kind = iota
-	KindBorrow
-	KindRetain
-	KindStore
-	KindSend
-	KindExport
-	KindOpaque
+	KindNone   Kind = placementvocab.None
+	KindBorrow Kind = placementvocab.Borrow
+	KindRetain Kind = placementvocab.Retain
+	KindStore  Kind = placementvocab.Store
+	KindSend   Kind = placementvocab.Send
+	KindExport Kind = placementvocab.Export
+	KindOpaque Kind = placementvocab.Opaque
 )
 
 // Fact records a must escape/seal event for a state target. Recursive means the

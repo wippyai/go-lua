@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	placementvocab "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -671,7 +672,7 @@ func storeContainerFormal(param int, ownedOps []string, values []equation.Fact, 
 		if other == param || len(placementProvenOperations(values, placementEventPrefix, identity, placementEventOwned)) != 0 {
 			continue
 		}
-		for _, operation := range placementProvenOperations(values, placementContractPrefix, identity, "retain") {
+		for _, operation := range placementProvenOperations(values, placementContractPrefix, identity, placementvocab.BoundaryRetain) {
 			if boundaries[operation] {
 				container, candidates = other, candidates+1
 				break
@@ -720,8 +721,8 @@ func classifyEscapeIdentity(index int, identity string, parsed publishedPlacemen
 // placement fact for identity under one boundary of the named fact family. The
 // operation kind distinguishes a store from a return escape without inspecting
 // source.
-func placementProvenOperations(values []equation.Fact, family, identity, boundary string) []string {
-	prefix := family + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + boundary + "/"
+func placementProvenOperations[T ~string](values []equation.Fact, family, identity string, boundary T) []string {
+	prefix := family + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(boundary) + "/"
 	var operations []string
 	for _, fact := range values {
 		if string(fact.Value) == "proven" && strings.HasPrefix(fact.Key, prefix) {

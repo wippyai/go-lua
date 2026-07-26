@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+
+	placementvocab "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
 )
 
 // FactStatus says whether a runtime fact is backed by the admitted artifact.
@@ -120,14 +122,16 @@ type RuntimeEffectSummary struct {
 	SystemYield  RuntimeBoolFact
 }
 
-type RuntimeEscape uint8
+// RuntimeEscape is the JIT-facing compatibility name for the canonical escape
+// vocabulary. Artifact bytes use the frozen converters below, not enum values.
+type RuntimeEscape = placementvocab.Escape
 
 const (
-	RuntimeEscapeUnknown RuntimeEscape = iota
-	RuntimeEscapeNone
-	RuntimeEscapeReturn
-	RuntimeEscapeStore
-	RuntimeEscapeShare
+	RuntimeEscapeUnknown RuntimeEscape = placementvocab.Opaque
+	RuntimeEscapeNone    RuntimeEscape = placementvocab.None
+	RuntimeEscapeReturn  RuntimeEscape = placementvocab.Return
+	RuntimeEscapeStore   RuntimeEscape = placementvocab.Store
+	RuntimeEscapeShare   RuntimeEscape = placementvocab.Send
 )
 
 type RuntimeOwnership uint8
@@ -149,15 +153,17 @@ const (
 	RuntimeResidenceSharedHeap
 )
 
-type RuntimePlacement uint8
+// RuntimePlacement is the JIT-facing compatibility name for the canonical
+// placement vocabulary. Artifact bytes use the frozen converters below.
+type RuntimePlacement = placementvocab.Placement
 
 const (
-	RuntimePlacementUnknown RuntimePlacement = iota
-	RuntimePlacementInterpreter
-	RuntimePlacementStack
-	RuntimePlacementRegister
-	RuntimePlacementOwnedHeap
-	RuntimePlacementSharedHeap
+	RuntimePlacementUnknown     RuntimePlacement = placementvocab.Unknown
+	RuntimePlacementInterpreter RuntimePlacement = placementvocab.Interpreter
+	RuntimePlacementStack       RuntimePlacement = placementvocab.Stack
+	RuntimePlacementRegister    RuntimePlacement = placementvocab.Register
+	RuntimePlacementOwnedHeap   RuntimePlacement = placementvocab.OwnedHeap
+	RuntimePlacementSharedHeap  RuntimePlacement = placementvocab.SharedHeap
 )
 
 // RuntimePlacementVerdicts records the independent escape/ownership/residence
@@ -466,7 +472,9 @@ func appendOperationFacts(out []byte, op RuntimeOperationProjection) []byte {
 	out = append(out, byte(op.AllocationTemplate.Status))
 	out = append(out, op.AllocationTemplate.TemplateID[:]...)
 	out = appendProvenance(out, op.AllocationTemplate.Provenance)
-	out = append(out, byte(op.Placement.Escape), byte(op.Placement.Ownership), byte(op.Placement.Residence), byte(op.Placement.Placement), byte(op.Placement.Status))
+	escape, _ := runtimeEscapeWire(op.Placement.Escape)
+	placement, _ := runtimePlacementWire(op.Placement.Placement)
+	out = append(out, escape, byte(op.Placement.Ownership), byte(op.Placement.Residence), placement, byte(op.Placement.Status))
 	return appendProvenance(out, op.Placement.Provenance)
 }
 func appendBoolFact(out []byte, fact RuntimeBoolFact) []byte {
@@ -672,10 +680,15 @@ func (r *projectionReader) operation() (RuntimeOperationProjection, error) {
 		return op, err
 	}
 	values, err := r.take(5)
-	if err != nil || values[0] > byte(RuntimeEscapeShare) || values[1] > byte(RuntimeOwnershipShared) || values[2] > byte(RuntimeResidenceSharedHeap) || values[3] > byte(RuntimePlacementSharedHeap) || !FactStatus(values[4]).valid() {
+	if err != nil {
 		return op, fmt.Errorf("equation: invalid runtime projection placement")
 	}
-	op.Placement = RuntimePlacementVerdicts{Escape: RuntimeEscape(values[0]), Ownership: RuntimeOwnership(values[1]), Residence: RuntimeResidence(values[2]), Placement: RuntimePlacement(values[3]), Status: FactStatus(values[4])}
+	escape, escapeOK := runtimeEscapeFromWire(values[0])
+	placement, placementOK := runtimePlacementFromWire(values[3])
+	if !escapeOK || values[1] > byte(RuntimeOwnershipShared) || values[2] > byte(RuntimeResidenceSharedHeap) || !placementOK || !FactStatus(values[4]).valid() {
+		return op, fmt.Errorf("equation: invalid runtime projection placement")
+	}
+	op.Placement = RuntimePlacementVerdicts{Escape: escape, Ownership: RuntimeOwnership(values[1]), Residence: RuntimeResidence(values[2]), Placement: placement, Status: FactStatus(values[4])}
 	op.Placement.Provenance, err = r.provenance()
 	return op, err
 }
@@ -778,5 +791,83 @@ func validTemplateFact(f RuntimeAllocationTemplateFact, artifact ContentID) bool
 	return f.Status.valid() && f.Provenance.validFor(artifact) && (f.Status != FactProven || f.TemplateID.Valid())
 }
 func validPlacementVerdict(f RuntimePlacementVerdicts, artifact ContentID) bool {
-	return f.Escape <= RuntimeEscapeShare && f.Ownership <= RuntimeOwnershipShared && f.Residence <= RuntimeResidenceSharedHeap && f.Placement <= RuntimePlacementSharedHeap && f.Status.valid() && f.Provenance.validFor(artifact)
+	_, escapeOK := runtimeEscapeWire(f.Escape)
+	_, placementOK := runtimePlacementWire(f.Placement)
+	return escapeOK && f.Ownership <= RuntimeOwnershipShared && f.Residence <= RuntimeResidenceSharedHeap && placementOK && f.Status.valid() && f.Provenance.validFor(artifact)
+}
+
+// runtimeEscapeWire preserves the compiled-artifact v1 byte contract:
+// Unknown/None/Return/Store/Share = 0/1/2/3/4.
+func runtimeEscapeWire(value RuntimeEscape) (byte, bool) {
+	switch value {
+	case RuntimeEscapeUnknown:
+		return 0, true
+	case RuntimeEscapeNone:
+		return 1, true
+	case RuntimeEscapeReturn:
+		return 2, true
+	case RuntimeEscapeStore:
+		return 3, true
+	case RuntimeEscapeShare:
+		return 4, true
+	default:
+		return 0, false
+	}
+}
+
+func runtimeEscapeFromWire(wire byte) (RuntimeEscape, bool) {
+	switch wire {
+	case 0:
+		return RuntimeEscapeUnknown, true
+	case 1:
+		return RuntimeEscapeNone, true
+	case 2:
+		return RuntimeEscapeReturn, true
+	case 3:
+		return RuntimeEscapeStore, true
+	case 4:
+		return RuntimeEscapeShare, true
+	default:
+		return RuntimeEscapeUnknown, false
+	}
+}
+
+// runtimePlacementWire preserves the compiled-artifact v1 byte contract:
+// Unknown/Interpreter/Stack/Register/OwnedHeap/SharedHeap = 0/1/2/3/4/5.
+func runtimePlacementWire(value RuntimePlacement) (byte, bool) {
+	switch value {
+	case RuntimePlacementUnknown:
+		return 0, true
+	case RuntimePlacementInterpreter:
+		return 1, true
+	case RuntimePlacementStack:
+		return 2, true
+	case RuntimePlacementRegister:
+		return 3, true
+	case RuntimePlacementOwnedHeap:
+		return 4, true
+	case RuntimePlacementSharedHeap:
+		return 5, true
+	default:
+		return 0, false
+	}
+}
+
+func runtimePlacementFromWire(wire byte) (RuntimePlacement, bool) {
+	switch wire {
+	case 0:
+		return RuntimePlacementUnknown, true
+	case 1:
+		return RuntimePlacementInterpreter, true
+	case 2:
+		return RuntimePlacementStack, true
+	case 3:
+		return RuntimePlacementRegister, true
+	case 4:
+		return RuntimePlacementOwnedHeap, true
+	case 5:
+		return RuntimePlacementSharedHeap, true
+	default:
+		return RuntimePlacementUnknown, false
+	}
 }

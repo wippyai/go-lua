@@ -26,6 +26,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	placementvocab "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -12975,7 +12976,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				if !closedComparison {
 					values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "identity-compare"))
 				} else {
-					values = append(values, placementContractFact(allocation.Identity, "identity", operation.Target.Name))
+					values = append(values, placementContractFact(allocation.Identity, placementvocab.BoundaryIdentity, operation.Target.Name))
 				}
 			}
 		}
@@ -14592,7 +14593,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 		if keyErr != nil || !exactKey || !placementClosedAllocation(allocation, partition) {
 			values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "dynamic-index"))
 		} else {
-			values = append(values, placementContractFact(allocation.Identity, "dynamic-index", operation.Target.Name))
+			values = append(values, placementContractFact(allocation.Identity, placementvocab.BoundaryDynamicIndex, operation.Target.Name))
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
@@ -25524,7 +25525,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if allocation, found := placementAllocationForTerm(source, partition); found && placementClosedAllocation(allocation, partition) {
 				applicationID := strings.TrimPrefix(string(application), "call/")
 				if applicationID != "" {
-					values = append(values, placementContractFact(allocation.Identity, "iterator", applicationID))
+					values = append(values, placementContractFact(allocation.Identity, placementvocab.BoundaryIterator, applicationID))
 				}
 			}
 		}
@@ -25875,7 +25876,7 @@ func placementVerifiedLocalCallFacts(operation equation.BoundEquation, operands 
 		if !found || !placementClosedAllocation(allocation, partition) {
 			continue
 		}
-		facts = append(facts, placementContractFact(allocation.Identity, "local", operation.Target.Name))
+		facts = append(facts, placementContractFact(allocation.Identity, placementvocab.BoundaryLocal, operation.Target.Name))
 	}
 	return facts
 }
@@ -25888,8 +25889,8 @@ func placementVerifiedLocalCallFacts(operation equation.BoundEquation, operands 
 // none of these, so the argument remains contained.
 func placementArgumentEscapes(identity string, facts []equation.Fact) bool {
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(identity))
-	ownedPrefix := placementEventPrefix + encoded + "/" + placementEventOwned + "/"
-	sharedPrefix := placementEventPrefix + encoded + "/" + placementEventShared + "/"
+	ownedPrefix := placementEventPrefix + encoded + "/" + string(placementEventOwned) + "/"
+	sharedPrefix := placementEventPrefix + encoded + "/" + string(placementEventShared) + "/"
 	blockerPrefix := placementBlockerPrefix + encoded + "/"
 	for _, fact := range facts {
 		if strings.HasPrefix(fact.Key, ownedPrefix) || strings.HasPrefix(fact.Key, sharedPrefix) || strings.HasPrefix(fact.Key, blockerPrefix) {
@@ -25918,7 +25919,7 @@ func (l *lexicalEvaluator) placementContainedArgumentFacts(operation equation.Bo
 		if placementArgumentEscapes(allocation.Identity, facts) {
 			continue
 		}
-		contracts = append(contracts, placementContractFact(allocation.Identity, "contains", operation.Target.Name))
+		contracts = append(contracts, placementContractFact(allocation.Identity, placementvocab.BoundaryContains, operation.Target.Name))
 	}
 	return contracts
 }

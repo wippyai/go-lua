@@ -75,6 +75,45 @@ func TestRuntimeProjectionCodecRoundTripAndRejectsMutation(t *testing.T) {
 	}
 }
 
+func TestRuntimePlacementWireOrdinalsFrozen(t *testing.T) {
+	escapes := []RuntimeEscape{
+		RuntimeEscapeUnknown,
+		RuntimeEscapeNone,
+		RuntimeEscapeReturn,
+		RuntimeEscapeStore,
+		RuntimeEscapeShare,
+	}
+	for wire, value := range escapes {
+		gotWire, ok := runtimeEscapeWire(value)
+		if !ok || gotWire != byte(wire) {
+			t.Fatalf("runtime escape %s wire = %d/%t, want %d", value.Name(), gotWire, ok, wire)
+		}
+		gotValue, ok := runtimeEscapeFromWire(byte(wire))
+		if !ok || gotValue != value {
+			t.Fatalf("runtime escape wire %d = %s/%t, want %s", wire, gotValue.Name(), ok, value.Name())
+		}
+	}
+
+	placements := []RuntimePlacement{
+		RuntimePlacementUnknown,
+		RuntimePlacementInterpreter,
+		RuntimePlacementStack,
+		RuntimePlacementRegister,
+		RuntimePlacementOwnedHeap,
+		RuntimePlacementSharedHeap,
+	}
+	for wire, value := range placements {
+		gotWire, ok := runtimePlacementWire(value)
+		if !ok || gotWire != byte(wire) {
+			t.Fatalf("runtime placement %s wire = %d/%t, want %d", value, gotWire, ok, wire)
+		}
+		gotValue, ok := runtimePlacementFromWire(byte(wire))
+		if !ok || gotValue != value {
+			t.Fatalf("runtime placement wire %d = %s/%t, want %s", wire, gotValue, ok, value)
+		}
+	}
+}
+
 func TestCyclicRuntimeProjectionClearsAcyclicLoopFacts(t *testing.T) {
 	artifact, _, _ := cyclicVMFixture(t)
 	compiled, err := CompileCyclicArtifact(artifact)
