@@ -3739,8 +3739,19 @@ func encodeChildEntryWire(wire childEntryWire) ([]byte, error) {
 }
 
 func validateChildEntryWire(wire *childEntryWire) error {
+	if wire == nil {
+		return fmt.Errorf("engine: malformed child entry wire")
+	}
 	if wire.Version < 1 || wire.Version > 6 || (wire.DeclaredBoundary && wire.Version != 5) {
 		return fmt.Errorf("engine: malformed child entry version")
+	}
+	// Capability fields were introduced as one closed packet in v4; placement
+	// is v6-only.  Rejecting fields from another schema is essential: accepting
+	// a future lane under an older prefix would let a decoder reinterpret it.
+	if wire.Version < 4 && (len(wire.ClosureSeeds) != 0 || len(wire.MemberClosureSeeds) != 0 || len(wire.TableIdentitySeeds) != 0 || len(wire.MemberCellSeeds) != 0 || len(wire.GradualAnyTerms) != 0) ||
+		wire.Version != 6 && len(wire.PlacementSeeds) != 0 ||
+		wire.Version == 5 && len(wire.GradualAnyTerms) != 0 {
+		return fmt.Errorf("engine: malformed child entry version schema")
 	}
 	sort.Slice(wire.Seeds, func(i, j int) bool { return wire.Seeds[i].Term < wire.Seeds[j].Term })
 	for index := range wire.Seeds {
@@ -3748,9 +3759,13 @@ func validateChildEntryWire(wire *childEntryWire) error {
 			return fmt.Errorf("engine: malformed child entry seed")
 		}
 	}
+	seedTerms := make(map[string]bool, len(wire.Seeds))
+	for _, seed := range wire.Seeds {
+		seedTerms[seed.Term] = true
+	}
 	sort.Slice(wire.ClosureSeeds, func(i, j int) bool { return wire.ClosureSeeds[i].Term < wire.ClosureSeeds[j].Term })
 	for index, seed := range wire.ClosureSeeds {
-		if seed.Term == "" || !validClosureHandle(seed.Handle) || (index > 0 && wire.ClosureSeeds[index-1].Term == seed.Term) {
+		if !seedTerms[seed.Term] || !validClosureHandle(seed.Handle) || (index > 0 && wire.ClosureSeeds[index-1].Term == seed.Term) {
 			return fmt.Errorf("engine: malformed child entry closure seed")
 		}
 	}
@@ -3761,20 +3776,20 @@ func validateChildEntryWire(wire *childEntryWire) error {
 		return wire.MemberClosureSeeds[i].Wire.Suffix < wire.MemberClosureSeeds[j].Wire.Suffix
 	})
 	for index, seed := range wire.MemberClosureSeeds {
-		if seed.Term == "" || seed.Wire.Suffix == "" || !validClosureHandle(seed.Wire.Handle) ||
+		if !seedTerms[seed.Term] || seed.Wire.Suffix == "" || !segment.ValidFormattedSegments(seed.Wire.Suffix) || !validClosureHandle(seed.Wire.Handle) ||
 			(index > 0 && wire.MemberClosureSeeds[index-1].Term == seed.Term && wire.MemberClosureSeeds[index-1].Wire.Suffix == seed.Wire.Suffix) {
 			return fmt.Errorf("engine: malformed child entry member closure seed")
 		}
 	}
 	sort.Slice(wire.TableIdentitySeeds, func(i, j int) bool { return wire.TableIdentitySeeds[i].Term < wire.TableIdentitySeeds[j].Term })
 	for index, seed := range wire.TableIdentitySeeds {
-		if seed.Term == "" || len(seed.Identity) == 0 || (index > 0 && wire.TableIdentitySeeds[index-1].Term == seed.Term) {
+		if !seedTerms[seed.Term] || len(seed.Identity) == 0 || (index > 0 && wire.TableIdentitySeeds[index-1].Term == seed.Term) {
 			return fmt.Errorf("engine: malformed child entry table identity seed")
 		}
 	}
 	sort.Slice(wire.PlacementSeeds, func(i, j int) bool { return wire.PlacementSeeds[i].Term < wire.PlacementSeeds[j].Term })
 	for index, seed := range wire.PlacementSeeds {
-		if seed.Term == "" || seed.Allocation.Identity == "" || seed.Allocation.Result == "" || seed.Allocation.Kind == "" ||
+		if !seedTerms[seed.Term] || seed.Allocation.Identity == "" || seed.Allocation.Result == "" || seed.Allocation.Kind == "" ||
 			(index > 0 && wire.PlacementSeeds[index-1].Term == seed.Term) {
 			return fmt.Errorf("engine: malformed child entry placement seed")
 		}
@@ -3785,6 +3800,10 @@ func validateChildEntryWire(wire *childEntryWire) error {
 		}
 		return wire.MemberCellSeeds[i].Suffix < wire.MemberCellSeeds[j].Suffix
 	})
+	reachableIdentities := make(map[string]bool, len(wire.TableIdentitySeeds)+len(wire.MemberCellSeeds))
+	for _, seed := range wire.TableIdentitySeeds {
+		reachableIdentities[string(seed.Identity)] = true
+	}
 	for index, seed := range wire.MemberCellSeeds {
 		if len(seed.Identity) == 0 || seed.Suffix == "" || !segment.ValidFormattedSegments(seed.Suffix) || len(seed.Wire.Value) == 0 ||
 			(seed.Wire.Handle != nil && !validClosureHandle(*seed.Wire.Handle)) ||
@@ -3792,9 +3811,28 @@ func validateChildEntryWire(wire *childEntryWire) error {
 			return fmt.Errorf("engine: malformed child entry member cell seed")
 		}
 	}
+	// A member cell is valid only for an identity the packet can name from a
+	// seeded table. MemberIdentity edges may extend that closed heap snapshot,
+	// so compute their transitive closure rather than requiring every nested
+	// table to be repeated as a root table-identity seed.
+	for changed := true; changed; {
+		changed = false
+		for _, seed := range wire.MemberCellSeeds {
+			if !reachableIdentities[string(seed.Identity)] || len(seed.Wire.MemberIdentity) == 0 || reachableIdentities[string(seed.Wire.MemberIdentity)] {
+				continue
+			}
+			reachableIdentities[string(seed.Wire.MemberIdentity)] = true
+			changed = true
+		}
+	}
+	for _, seed := range wire.MemberCellSeeds {
+		if !reachableIdentities[string(seed.Identity)] {
+			return fmt.Errorf("engine: malformed child entry member cell identity")
+		}
+	}
 	sort.Strings(wire.GradualAnyTerms)
 	for index, term := range wire.GradualAnyTerms {
-		if !strings.HasPrefix(term, "path/") || (index > 0 && wire.GradualAnyTerms[index-1] == term) {
+		if !seedTerms[term] || (index > 0 && wire.GradualAnyTerms[index-1] == term) {
 			return fmt.Errorf("engine: malformed child gradual-any boundary")
 		}
 	}
@@ -3810,6 +3848,9 @@ func decodeChildEntryWire(value []byte) (childEntryWire, error) {
 		var wire childEntryWire
 		if err := json.Unmarshal(value[len(prefix):], &wire); err != nil || wire.Version != version {
 			return childEntryWire{}, fmt.Errorf("engine: malformed child entry wire")
+		}
+		if err := validateChildEntryWire(&wire); err != nil {
+			return childEntryWire{}, err
 		}
 		return wire, nil
 	}

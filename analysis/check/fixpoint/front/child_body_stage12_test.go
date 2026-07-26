@@ -87,6 +87,59 @@ end
 	}
 }
 
+// TestCaptureMutabilityTracksEveryLexicalRebindForm keeps the front-owned T1
+// theorem explicit.  The engine may trust Mutable only because the binder
+// resolves these writes to their declaration symbols (rather than names).
+func TestCaptureMutabilityTracksEveryLexicalRebindForm(t *testing.T) {
+	cases := []struct {
+		name    string
+		source  string
+		mutable bool
+	}{
+		{"plain-assignment", `local x = 0; local function f() x = 1 end`, true},
+		{"multi-assignment", `local x, y = 0, 0; local function f() x, y = 1, 2 end`, true},
+		{"repeat-until", `local x = 0; local function f() repeat x = 1 until true end`, true},
+		{"function-name-definition", `local x; local function f() function x() end end`, true},
+		{"nested-closure-write", `local x = 0; local function f() local function g() x = 1 end; return g end`, true},
+		// Loop declarations are new bindings. They must not turn an outer cell
+		// mutable merely because their spelling is the same.
+		{"numeric-for-shadow", `local x = 0; local function f() for x = 1, 2 do local y = x end; return x end`, false},
+		{"generic-for-shadow", `local x = 0; local function f() for x in pairs({}) do local y = x end; return x end`, false},
+		// Member and colon definitions mutate a table, not the lexical cell.
+		{"member-definition", `local x = {}; local function f() function x.m() end; function x:m2() end end`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			compilation, err := front.Compile(tc.source)
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			var found *front.Compilation
+			var visit func(front.Compilation)
+			visit = func(body front.Compilation) {
+				for i := range body.Boundary.Captures {
+					if body.Boundary.Captures[i].Name == "x" {
+						copy := body
+						found = &copy
+					}
+				}
+				for _, nested := range body.Nested {
+					visit(nested)
+				}
+			}
+			visit(compilation)
+			if found == nil {
+				t.Fatal("no child captured x")
+			}
+			for _, capture := range found.Boundary.Captures {
+				if capture.Name == "x" && capture.Mutable != tc.mutable {
+					t.Fatalf("capture Mutable = %v, want %v", capture.Mutable, tc.mutable)
+				}
+			}
+		})
+	}
+}
+
 func onlyChild(t *testing.T, compilation front.Compilation) front.Compilation {
 	t.Helper()
 	if len(compilation.Nested) != 1 {
