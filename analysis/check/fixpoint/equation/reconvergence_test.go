@@ -227,3 +227,64 @@ func TestDeepDecisionNestTerminatesWithinBudget(t *testing.T) {
 	}()
 	<-done
 }
+
+// TestDecisionEdgesRestrictsToBothAlternatives is the peel Reconverged performs,
+// exposed for a reader whose conclusion is not a lattice payload.  Each returned
+// partition must answer the family exactly as its own edge answers it.
+func TestDecisionEdgesRestrictsToBothAlternatives(t *testing.T) {
+	partition := reconvergencePartition(t, nil,
+		Fact{Key: "callee/f/op-00000001", Value: []byte("first")},
+		Fact{Key: "callee/f/op-00000003", Value: []byte("second"), Guards: []Guard{edgeGuard("op-00000002", "true")}},
+	)
+	edges, split := partition.DecisionEdges("callee/f/")
+	if !split {
+		t.Fatal("an edge-guarded current row owes a split")
+	}
+	if string(edges[0].Guard.Encoding) != "front/branch/op-00000002/true" || string(edges[1].Guard.Encoding) != "front/branch/op-00000002/false" {
+		t.Fatalf("edges name %q and %q, want the two alternatives of op-00000002", edges[0].Guard.Encoding, edges[1].Guard.Encoding)
+	}
+	taken, found := edges[0].Partition.LatestValuePrefix("callee/f/")
+	if !found || string(taken.Value) != "second" {
+		t.Fatalf("taken edge holds %q / %v, want the arm write", taken.Value, found)
+	}
+	untaken, found := edges[1].Partition.LatestValuePrefix("callee/f/")
+	if !found || string(untaken.Value) != "first" {
+		t.Fatalf("untaken edge holds %q / %v, want the pre-branch write", untaken.Value, found)
+	}
+}
+
+// TestDecisionEdgesWithholdsWhenTheCubeAlreadyDecides keeps the split from
+// firing where there is nothing to peel: inside the arm, and where the family's
+// current row carries no guard at all.  A consumer must keep its ordinary
+// single-partition evaluation in both cases.
+func TestDecisionEdgesWithholdsWhenTheCubeAlreadyDecides(t *testing.T) {
+	facts := []Fact{
+		{Key: "callee/f/op-00000001", Value: []byte("first")},
+		{Key: "callee/f/op-00000003", Value: []byte("second"), Guards: []Guard{edgeGuard("op-00000002", "true")}},
+	}
+	inside := reconvergencePartition(t, []Guard{edgeGuard("op-00000002", "true")}, facts...)
+	if _, split := inside.DecisionEdges("callee/f/"); split {
+		t.Fatal("a cube that already fixes the decision owes no split")
+	}
+	unguarded := reconvergencePartition(t, nil, facts[0])
+	if _, split := unguarded.DecisionEdges("callee/f/"); split {
+		t.Fatal("a fully decided current row owes no split")
+	}
+	if _, split := unguarded.DecisionEdges("callee/absent/"); split {
+		t.Fatal("a family that publishes nothing owes no split")
+	}
+}
+
+// TestDecisionEdgesRefusesAnUnpeelableGuard fails closed on a guard family that
+// names no decision: two rows under unrelated guards are not alternatives, and
+// splitting on them would invent a control-flow relation the front never
+// certified.
+func TestDecisionEdgesRefusesAnUnpeelableGuard(t *testing.T) {
+	partition := reconvergencePartition(t, nil,
+		Fact{Key: "callee/f/op-00000001", Value: []byte("first")},
+		Fact{Key: "callee/f/op-00000003", Value: []byte("second"), Guards: []Guard{{Body: BodyID{1}, Encoding: []byte("front/select/op-00000002/arm")}}},
+	)
+	if _, split := partition.DecisionEdges("callee/f/"); split {
+		t.Fatal("a guard naming no decision owes no split")
+	}
+}

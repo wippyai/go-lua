@@ -1046,13 +1046,13 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				}
 				missing = fmt.Sprintf("%s is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here", sourceDisplay)
 				reason = "index read validation missing"
-			} else if dot := strings.LastIndex(sourceDisplay, "."); dot > 0 && methodSelector {
+			} else if dot := strings.LastIndex(sourceDisplay, "."); dot > 0 && (methodSelector || receiverMayBeNil(operands["value"], operation, closure)) {
 				parent := sourceDisplay[:dot]
 				item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s may be nil before reading %s", parent, sourceDisplay[dot:])})
 			}
 			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: reason, Message: missing})
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value may be nil"}, {Span: targetSpan, Message: "declared type " + declared}}
-			item.Help = fmt.Sprintf("Guard `%s` with a nil check before assigning it, or change the target type to accept nil.", sourceDisplay)
+			item.Help = optionalAssignmentHelp(sourceDisplay)
 			out = append(out, item)
 			continue
 		}
@@ -1217,6 +1217,35 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 func diagnosticValueMayBeNil(value []byte) bool {
 	witness, ok := shapefact.DecodeTarget(value)
 	return ok && witness != nil && unwrap.IsOptionalLike(witness)
+}
+
+// receiverMayBeNil reports whether the container a static member read descends
+// through is itself proven nilable at this claim. The read then carries two
+// separate obligations -- the container may be absent, and the member it would
+// have supplied may be nil -- and the explanation states both. The container's
+// own already-published value is the sole authority: a member read whose
+// receiver was never proven nilable adds no such step.
+func receiverMayBeNil(term []byte, operation equation.Equation, closure equation.OutputClosure) bool {
+	root, suffix, member := tableAddress(term)
+	if !member || suffix == "" {
+		return false
+	}
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid || len(segments) == 0 {
+		return false
+	}
+	parent := append([]byte(nil), root...)
+	if len(segments) > 1 {
+		parent = append(parent, []byte(segment.FormatSegments(segments[:len(segments)-1]))...)
+	}
+	value, available := claimDiagnosticValue(parent, operation, closure)
+	return available && diagnosticValueMayBeNil(value)
+}
+
+// optionalAssignmentHelp is the single remediation for assigning a value that
+// may be nil to a target that does not accept it.
+func optionalAssignmentHelp(source string) string {
+	return fmt.Sprintf("Guard `%s` with a nil check, provide a default value, or change the target type to accept nil.", source)
 }
 
 // optionalEvidenceDisplay preserves a concrete spelling only for scalar
@@ -5099,19 +5128,109 @@ func uncalledDeclaredFormalFunctionCall(operation equation.Equation, formalFunct
 // closures into. The materialization operand list is the sole authority: a term
 // a body did not allocate a closure into is not one of its own callables.
 func bodyLocalClosureTerms(child front.Compilation) map[string]bool {
+	return bodyLocalObjectTerms(child, "object-kind/closure")
+}
+
+// bodyLocalTableTerms names the terms this body materializes its own tables
+// into, under the same authority.
+func bodyLocalTableTerms(child front.Compilation) map[string]bool {
+	return bodyLocalObjectTerms(child, "object-kind/table")
+}
+
+func bodyLocalObjectTerms(child front.Compilation, kind string) map[string]bool {
 	terms := make(map[string]bool)
 	for _, operation := range child.Artifact.Equations {
 		if operation.Occurrence.Kind != "object-materialization" {
 			continue
 		}
-		kind, hasKind := artifactOperand(operation.Operands, "kind")
+		operandKind, hasKind := artifactOperand(operation.Operands, "kind")
 		result, hasResult := artifactOperand(operation.Operands, "result")
-		if !hasKind || !hasResult || string(kind) != "object-kind/closure" {
+		if !hasKind || !hasResult || string(operandKind) != kind {
 			continue
 		}
 		terms[string(result)] = true
 	}
 	return terms
+}
+
+// pathPrefixOf reports whether candidate names this path or one of its
+// containers at a segment boundary. A write to `M.dep` rebinds `M.dep.get`; a
+// write to `M.depth` does not.
+func pathPrefixOf(candidate, path string) bool {
+	if candidate == path {
+		return true
+	}
+	if !strings.HasPrefix(path, candidate) {
+		return false
+	}
+	next := path[len(candidate)]
+	return next == '.' || next == '['
+}
+
+// uncalledLocalMemberClosureCall recognizes a direct call through a static
+// member of a table this same body materialized. The closedness argument is the
+// one uncalled body-local closure calls already rest on: this body allocated the
+// container, and every write that can rebind the called path installs another
+// object this same body allocated, so the callee and its whole environment are
+// already inside this evaluation and no caller-owned value is missing.
+//
+// A write that installs anything else -- a formal, an opaque result, a value
+// with no allocation of this body behind it -- leaves the path open and the
+// body dormant. Which of the installed capabilities the call actually dispatches
+// through is not decided here: that is the application's own per-edge
+// resolution.
+func uncalledLocalMemberClosureCall(child front.Compilation, operation equation.Equation, localClosures, localTables map[string]bool) bool {
+	if operation.Occurrence.Kind != "apply" || len(localClosures) == 0 || len(localTables) == 0 {
+		return false
+	}
+	callee, hasCallee := artifactOperand(operation.Operands, "callee")
+	if !hasCallee {
+		return false
+	}
+	root, suffix, member := tableAddress(callee)
+	if !member || suffix == "" || !localTables[string(root)] {
+		return false
+	}
+	bound := false
+	for _, item := range child.Artifact.Equations {
+		switch item.Occurrence.Kind {
+		case "environment-write", "path-replacement":
+		case "index-mutation", "path-invalidation":
+			// A dynamic store addresses a slot no static path names. It can land
+			// on the called member, so the container it writes leaves this path
+			// open regardless of what it stores.
+			if container, found := artifactOperand(item.Operands, "container"); found && pathPrefixOf(string(container), string(callee)) {
+				return false
+			}
+			continue
+		default:
+			continue
+		}
+		target, hasTarget := artifactOperand(item.Operands, "target")
+		if !hasTarget || !pathPrefixOf(string(target), string(callee)) {
+			continue
+		}
+		// An allocation's own completion write names the object it published
+		// rather than a source term; the materialization above is its authority.
+		if allocation, found := artifactOperand(item.Operands, "allocation-result"); found {
+			if localTables[string(allocation)] || localClosures[string(allocation)] {
+				continue
+			}
+			return false
+		}
+		value, hasValue := artifactOperand(item.Operands, "value")
+		if !hasValue {
+			return false
+		}
+		if localClosures[string(value)] {
+			bound = true
+			continue
+		}
+		if !localTables[string(value)] {
+			return false
+		}
+	}
+	return bound
 }
 
 // uncalledLocalClosureCall recognizes a direct call whose callee is a closure
@@ -5245,6 +5364,7 @@ func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, b
 		}
 	}
 	localClosures := bodyLocalClosureTerms(child)
+	localTables := bodyLocalTableTerms(child)
 	memberCalls := make(map[string]bool)
 	hasClosedCall := false
 	for _, operation := range child.Artifact.Equations {
@@ -5252,7 +5372,8 @@ func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, b
 			continue
 		}
 		application := "call/" + operation.Target.Name
-		if uncalledDeclaredFormalFunctionCall(operation, formalFunctions) || uncalledLocalClosureCall(operation, localClosures) {
+		if uncalledDeclaredFormalFunctionCall(operation, formalFunctions) || uncalledLocalClosureCall(operation, localClosures) ||
+			uncalledLocalMemberClosureCall(child, operation, localClosures, localTables) {
 			memberCalls[application] = true
 			hasClosedCall = true
 			continue
@@ -8373,7 +8494,7 @@ func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.Compi
 		for index := range item.Evidence {
 			item.Evidence[index].CausalOrder = uint32(index + 1)
 		}
-		item.Help = "Guard `" + claims[item.Fact.Key].display + "` with a nil check, provide a default value, or change the target type to accept nil."
+		item.Help = optionalAssignmentHelp(claims[item.Fact.Key].display)
 		key := "child/" + body + "/" + item.Fact.Key
 		fact := equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)}
 		projected.Diagnostics = append(projected.Diagnostics, fact)
@@ -17037,6 +17158,172 @@ func exactFact(key string, partition equation.Partition) ([]byte, bool) {
 	return nil, false
 }
 
+// resolveLocalCallable resolves the body-local capability this application
+// dispatches through. It is the sole callee resolution for an apply, so a point
+// that holds two alternatives resolves each of them through exactly this
+// lookup rather than through a second, weaker rule.
+func resolveLocalCallable(operands directCallOperands, hasCallee bool, partition equation.Partition) (closureHandle, bool) {
+	if !hasCallee {
+		return methodClosureHandleFor(operands.receiver, operands.method, partition)
+	}
+	if handle, found := closureHandleFor(operands.callee, partition); found {
+		return handle, true
+	}
+	// The normalized front represents a static member call as a direct callee
+	// path. Its sealed member capability has the same local-body authority as
+	// explicit receiver/method syntax.
+	if cut := strings.LastIndex(string(operands.callee), "."); cut > len("path/") {
+		return methodClosureHandleFor(operands.callee[:cut], string(operands.callee[cut+1:]), partition)
+	}
+	return closureHandle{}, false
+}
+
+func sameClosureHandle(left, right closureHandle) bool {
+	if left.Prototype != right.Prototype || len(left.Captures) != len(right.Captures) {
+		return false
+	}
+	for index := range left.Captures {
+		if left.Captures[index] != right.Captures[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// callDecisionEdges reports the decision whose two alternatives give this
+// application different meanings. A member written on one branch edge is that
+// edge's current member, so the point after the branch carries both bindings;
+// neither a callee identity nor a captured heap cell has a lattice of its own,
+// and picking either binding there would state one edge's call on a path where
+// the other's runs.
+//
+// Two publications carry the signal. The callee path's own epoch family records
+// the writes that rebound the dispatch target. The member cells of a captured
+// table record the writes that rebound the environment the callee reads through
+// its capture -- the same call, with a different body state behind it. A family
+// already decided by this cube, one naming no decision, and two edges that hold
+// the same binding all report no split, so a single-valued application keeps its
+// ordinary evaluation.
+func callDecisionEdges(operands directCallOperands, hasCallee bool, partition equation.Partition) ([2]equation.Edge, bool) {
+	term := operands.receiver
+	if hasCallee {
+		term = operands.callee
+	}
+	if !strings.HasPrefix(string(term), "path/") {
+		return [2]equation.Edge{}, false
+	}
+	if edges, split := partition.DecisionEdges(epochFactPrefix + string(term) + "/"); split {
+		first, firstFound := resolveLocalCallable(operands, hasCallee, edges[0].Partition)
+		second, secondFound := resolveLocalCallable(operands, hasCallee, edges[1].Partition)
+		if firstFound != secondFound || (firstFound && !sameClosureHandle(first, second)) {
+			return edges, true
+		}
+	}
+	handle, callable := resolveLocalCallable(operands, hasCallee, partition)
+	if !callable {
+		return [2]equation.Edge{}, false
+	}
+	for _, capture := range handle.Captures {
+		identity, found := tableIdentityForTerm([]byte(capture), partition)
+		if !found {
+			continue
+		}
+		prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+		for _, family := range factFamilies(prefix, partition) {
+			edges, split := partition.DecisionEdges(family)
+			if split && familyBindingDiffers(family, edges) {
+				return edges, true
+			}
+		}
+	}
+	return [2]equation.Edge{}, false
+}
+
+// factFamilies names the distinct per-cell families published under prefix, in
+// canonical order. A family is one cell's publication history; the rows inside
+// it are that cell's successive writes.
+func factFamilies(prefix string, partition equation.Partition) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		rest := fact.Key[len(prefix):]
+		cut := strings.LastIndexByte(rest, '/')
+		if cut <= 0 {
+			continue
+		}
+		family := prefix + rest[:cut+1]
+		if seen[family] {
+			continue
+		}
+		seen[family] = true
+		out = append(out, family)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// familyBindingDiffers reports whether one cell holds a different binding on
+// each edge. Two edges that rewrote the same payload are not two meanings, so
+// they are not a reason to split an application.
+func familyBindingDiffers(family string, edges [2]equation.Edge) bool {
+	left, leftFound := edges[0].Partition.LatestValuePrefix(family)
+	right, rightFound := edges[1].Partition.LatestValuePrefix(family)
+	if leftFound != rightFound {
+		return true
+	}
+	return leftFound && !bytes.Equal(left.Value, right.Value)
+}
+
+// mergeEdgeClosures assembles one application's publication from the two edge
+// evaluations that produced it. A fact both edges derived identically holds on
+// every completion of the decision and is published plainly; a fact they derived
+// differently, or that only one of them derived, is stamped with the edge it was
+// derived under, which is exactly what lets the ordinary value lane reconverge
+// the two into the union the point after the decision holds.
+func mergeEdgeClosures(outcomes [2]equation.OutputClosure, edges [2]equation.Edge) equation.OutputClosure {
+	merge := func(lanes [2][]equation.Fact) []equation.Fact {
+		published := make(map[string]bool, len(lanes[0]))
+		for _, fact := range lanes[0] {
+			if len(fact.Guards) == 0 {
+				published[edgeFactIdentity(fact)] = true
+			}
+		}
+		shared := make(map[string]bool, len(published))
+		for _, fact := range lanes[1] {
+			if len(fact.Guards) == 0 && published[edgeFactIdentity(fact)] {
+				shared[edgeFactIdentity(fact)] = true
+			}
+		}
+		out := make([]equation.Fact, 0, len(lanes[0])+len(lanes[1]))
+		emitted := make(map[string]bool, len(shared))
+		for index, lane := range lanes {
+			for _, fact := range lane {
+				identity := edgeFactIdentity(fact)
+				if len(fact.Guards) == 0 && shared[identity] {
+					if !emitted[identity] {
+						emitted[identity] = true
+						out = append(out, fact)
+					}
+					continue
+				}
+				fact.Guards = append(append([]equation.Guard(nil), fact.Guards...), edges[index].Guard)
+				out = append(out, fact)
+			}
+		}
+		return out
+	}
+	return equation.OutputClosure{
+		Values:           merge([2][]equation.Fact{outcomes[0].Values, outcomes[1].Values}),
+		Outcomes:         merge([2][]equation.Fact{outcomes[0].Outcomes, outcomes[1].Outcomes}),
+		Diagnostics:      merge([2][]equation.Fact{outcomes[0].Diagnostics, outcomes[1].Diagnostics}),
+		AllocationRekeys: append(append([]equation.AllocationRekey(nil), outcomes[0].AllocationRekeys...), outcomes[1].AllocationRekeys...),
+	}
+}
+
+// edgeFactIdentity names one exact publication: a key together with the payload
+// published under it. Two edges agree only when both halves match.
+func edgeFactIdentity(fact equation.Fact) string { return fact.Key + "\x00" + string(fact.Value) }
+
 // applyKernel validates the sealed direct or method-call shape and publishes
 // proven call-contract failures at this equation point. Unknown values are not
 // violations: diagnostics are proof outputs, never speculative findings.
@@ -17100,6 +17387,28 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	// A callee bound to a different capability on each edge of one decision is
+	// two applications, not one. Evaluate this same application inside each
+	// edge -- every read it performs then answers as that edge answers it -- and
+	// publish both conclusions under their own edges. Nothing here decides what
+	// the point after the decision holds: the value lane joins the two guarded
+	// results exactly as it joins two arm writes.
+	if lexical != nil {
+		if edges, split := callDecisionEdges(operands, hasCallee, partition); split {
+			var outcomes [2]equation.OutputClosure
+			for index, edge := range edges {
+				outcome, edgeErr := applyKernel(lexical, operation, edge.Partition)
+				if edgeErr != nil {
+					return equation.TransactionResult{}, edgeErr
+				}
+				if !outcome.Complete {
+					return equation.TransactionResult{}, nil
+				}
+				outcomes[index] = outcome.Closure
+			}
+			return equation.TransactionResult{Complete: true, Closure: mergeEdgeClosures(outcomes, edges)}, nil
+		}
+	}
 	assertionFacts = assertedPathNarrowingFacts(operation, operands, partition)
 	argumentFacts = callArgumentFacts(operation.Target.Name, operands.arguments)
 	placementFacts = placementApplyFacts(operation, operands, partition)
@@ -17126,19 +17435,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	handle, localCallable := closureHandle{}, false
 	if lexical != nil {
-		if hasCallee {
-			handle, localCallable = closureHandleFor(operands.callee, partition)
-			if !localCallable {
-				// The normalized front represents a static member call as a direct
-				// callee path. Its sealed member capability has the same local-body
-				// authority as explicit receiver/method syntax.
-				if cut := strings.LastIndex(string(operands.callee), "."); cut > len("path/") {
-					handle, localCallable = methodClosureHandleFor(operands.callee[:cut], string(operands.callee[cut+1:]), partition)
-				}
-			}
-		} else {
-			handle, localCallable = methodClosureHandleFor(operands.receiver, operands.method, partition)
-		}
+		handle, localCallable = resolveLocalCallable(operands, hasCallee, partition)
 	}
 	if lexical != nil && localCallable {
 		placementFacts = append(placementFacts, placementInvokedClosureCaptureFacts(operation, operands, handle, partition)...)
@@ -20879,6 +21176,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		value := []byte("scalar/top")
 		localCallableResult := false
 		projectedLocalResult := false
+		joinedLocalResult := false
 		importedRelation := false
 		placementReturnGraphPublished := false
 		receiverResult := false
@@ -20903,12 +21201,18 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		// falling through to Top.
 		projectedKey := "call-result/" + strings.TrimPrefix(string(application), "call/") + "/" + key
 		if !retainLocalUnion {
-			for _, fact := range partition.Values() {
-				if fact.Key == projectedKey {
-					value = append([]byte(nil), fact.Value...)
-					projectedLocalResult = true
-					break
-				}
+			// An application whose callee differs per edge sealed one outcome per
+			// edge under this same coordinate. Reading them through the value
+			// lattice is what makes the result term hold both, so a caller never
+			// receives one edge's return on a path the other edge's callee runs.
+			if fact, found := partition.Reconverged(projectedKey, equation.Reconvergence{Current: latestPublication, Join: joinPublishedValues}); found {
+				value = append([]byte(nil), fact.Value...)
+				projectedLocalResult = true
+				// A result this point reads only as a join was sealed on each edge
+				// separately. No single edge row is visible here, which is exactly
+				// what distinguishes it from an ordinary sealed outcome.
+				_, direct := partition.Value(projectedKey)
+				joinedLocalResult = !direct
 			}
 		}
 		if key == "00000000" && hasValue(partition, "effect.call-bool/"+strings.TrimPrefix(string(application), "call/")) {
@@ -21076,10 +21380,12 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		if typePredicateErrorTarget != nil && key == "00000000" {
 			values = append(values, equation.Fact{Key: typePredicateTargetPrefix + base64.RawURLEncoding.EncodeToString(result) + "/" + operation.Target.Name, Value: append([]byte(nil), typePredicateErrorTarget...)})
 		}
-		if localCallableResult {
-			// The value came from this exact local callable's sealed contract.
-			// Later static reads may preserve only its explicit nilability after
-			// the owning environment write transports this marker.
+		if localCallableResult || joinedLocalResult {
+			// The value came from this exact local callable: its sealed contract,
+			// or the join of the outcomes its own body published on each edge of
+			// a decision this application resolved separately. Later static reads
+			// may preserve only that nilability after the owning environment
+			// write transports this marker.
 			values = append(values, equation.Fact{Key: "local-call-result/" + string(result) + "/" + operation.Target.Name, Value: []byte("sealed")})
 		}
 		if importedRelation {

@@ -144,6 +144,62 @@ func (p Partition) Reconverged(prefix string, lattice Reconvergence) (Fact, bool
 	return reconverge(candidates, resolvedBranchGuards(p.closure.Values, p.guards), lattice, &budget)
 }
 
+// Edge is this partition restricted to one alternative of a single decision.
+// Its Partition answers every read as that edge answers it, so a consumer whose
+// conclusion is not a lattice payload -- a callee identity, a whole evaluation --
+// can be resolved per edge instead of being forced through a value join it has
+// no lattice for.  Guard is the alternative itself, which is what a publication
+// derived inside the edge must carry in order to reconverge later.
+type Edge struct {
+	Guard     Guard
+	Partition Partition
+}
+
+// DecisionEdges restricts this partition to both alternatives of exactly one
+// decision that the current publication under prefix still depends on.  It is
+// the same peel Reconverged performs, exposed for the readers whose result is
+// not a value: those consumers resolve themselves inside each edge and publish
+// their own guarded conclusions, which the ordinary value lane then joins at the
+// point both edges reach.
+//
+// Reporting false means no split is owed: the family publishes nothing here, its
+// current row is already fully decided by this cube, or the guard it still needs
+// names no decision.  Callers therefore keep their existing single-partition
+// behaviour unless the point genuinely holds two alternatives.
+func (p Partition) DecisionEdges(prefix string) ([2]Edge, bool) {
+	if prefix == "" {
+		return [2]Edge{}, false
+	}
+	active := resolvedBranchGuards(p.closure.Values, p.guards)
+	var chosen Fact
+	found := false
+	for _, fact := range p.closure.Values {
+		if !strings.HasPrefix(fact.Key, prefix) || guardsConflict(fact.Guards, active) {
+			continue
+		}
+		if !found || fact.Key > chosen.Key {
+			chosen, found = fact, true
+		}
+	}
+	if !found {
+		return [2]Edge{}, false
+	}
+	extra := guardsBeyond(chosen.Guards, active)
+	if len(extra) == 0 {
+		return [2]Edge{}, false
+	}
+	decision, _, peelable := decisionOf(extra[0])
+	if !peelable {
+		return [2]Edge{}, false
+	}
+	var out [2]Edge
+	for index, taken := range [2]bool{true, false} {
+		guard := decision.edge(taken)
+		out[index] = Edge{Guard: guard, Partition: Partition{closure: p.closure, guards: canonicalGuards(append(cloneGuards(p.guards), guard))}}
+	}
+	return out, true
+}
+
 // reconvergenceFamily reports whether a key belongs to the read's primary
 // family or to one of its support families.
 func reconvergenceFamily(key, prefix string, support []string) bool {
