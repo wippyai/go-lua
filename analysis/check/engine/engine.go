@@ -4476,7 +4476,11 @@ func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
 		if parameter.Vararg || parameter.Type == 0 {
 			return nil, false
 		}
-		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
+		// An optional any is the same boundary as a bare any: nil is one of the
+		// values any already admits, so unwrapping the optional loses no
+		// possibility a caller could supply. Any other declaration names a
+		// contract a caller can still refine and leaves the body dormant.
+		declared := unwrap.Optional(unwrap.Alias(child.WIR.Type(parameter.Type)))
 		if declared == nil || declared.Kind() != kind.Any {
 			return nil, false
 		}
@@ -8283,9 +8287,16 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		// declared formal contract and the published boundary fact are both
 		// available.  The child is not entered with a forged typed seed.
 		declared := unwrap.Alias(subst.ExpandInstantiated(child.WIR.Type(parameter.Type)))
-		if (isExplicitAnyValue(value) || sourceHasAnyBoundary(arguments[index], partition.Values()) || declaredExplicitAny(arguments[index], partition)) && typeRequiresBoundaryProof(declared) {
+		// A runtime type test is that boundary's own validator, so a proven
+		// edge that decides the declared parameter outright clears it. This is
+		// the same clearance anyBoundaryValue applies to an assignment and a
+		// return; the argument position must not refuse a proof the rest of the
+		// engine accepts.
+		if (isExplicitAnyValue(value) || sourceHasAnyBoundary(arguments[index], partition.Values()) || declaredExplicitAny(arguments[index], partition)) && typeRequiresBoundaryProof(declared) &&
+			!anyBoundaryRuntimeValidated(arguments[index], declared, partition) {
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, typeformat.Short(declared))), nil
 		}
+		value = validatedBoundaryValue(arguments[index], value, partition)
 		term := boundaryTerm(parameter.Symbol)
 		seeds = append(seeds, entrySeed{Term: term, Value: value})
 		if (declared != nil && declared.Kind() == kind.Any) || sourceHasAnyBoundary(arguments[index], partition.Values()) {
@@ -17028,9 +17039,16 @@ func runtimeTypeProofAdmitsTarget(name string, target typ.Type) bool {
 	if target == nil {
 		return false
 	}
-	switch name {
-	case "nil":
+	if name == "nil" {
 		return target.Kind() == kind.Nil
+	}
+	// An optional target accepts its base plus nil, so a proof that decides the
+	// base decides the optional. The nil proof above keeps the exact target: it
+	// says nothing about the base an optional wraps.
+	if base := unwrap.Optional(target); base != nil {
+		target = base
+	}
+	switch name {
 	case "boolean":
 		return target.Kind() == kind.Boolean
 	case "number":
@@ -18039,7 +18057,8 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// typed parameter contract.  The argument may retain a concrete shape
 		// from its allocation, but that shape crossed the boundary without
 		// validation and cannot discharge this call's declared requirement.
-		if known && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && callableParameterRequiresProof(expected) {
+		if known && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && callableParameterRequiresProof(expected) &&
+			!callableParameterRuntimeValidated(term, signature, index+parameterOffset, expected, partition) {
 			expectedType := callableParameterType(expected)
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, expectedType)), nil
 		}
@@ -18107,11 +18126,19 @@ func callArgumentsNeedPublishedContract(arguments [][]byte, partition equation.P
 	return false
 }
 
+// typeRequiresBoundaryProof states whether a declaration is a concrete contract
+// an unvalidated value has to discharge. An optional wrapper adds nil to the
+// values a slot accepts; it narrows nothing, so an optional any/unknown states
+// the same gradual boundary the bare form does and imposes no obligation.
 func typeRequiresBoundaryProof(value typ.Type) bool {
 	if value == nil {
 		return false
 	}
-	switch unwrap.Alias(subst.ExpandInstantiated(value)).Kind() {
+	expanded := unwrap.Optional(unwrap.Alias(subst.ExpandInstantiated(value)))
+	if expanded == nil {
+		return false
+	}
+	switch expanded.Kind() {
 	case kind.Any, kind.Unknown:
 		return false
 	default:
@@ -18461,6 +18488,29 @@ func genericCallableSignature(signature callableShape) bool {
 func callableParameterRequiresProof(parameter string) bool {
 	expected := callableParameterType(parameter)
 	return expected != "" && expected != "any" && expected != "unknown"
+}
+
+// callableParameterRuntimeValidated reports whether a runtime type test already
+// certified this argument as the parameter's declared type. It consults the
+// same validator anyBoundaryValue consults for an assignment or a return: Lua's
+// type() proof decides exactly the kinds runtimeTypeProofAdmitsTarget names,
+// and the published canonical contract is the authority whenever the signature
+// carries one. The parameter spelling is the fallback for a signature that
+// publishes no canonical wire.
+func callableParameterRuntimeValidated(term []byte, signature callableShape, index int, parameter string, partition equation.Partition) bool {
+	if contract, published := callableParameterContract(signature, index); published {
+		return anyBoundaryRuntimeValidated(term, contract, partition)
+	}
+	expected := callableParameterType(parameter)
+	for _, proof := range luaRuntimeTypeProofs {
+		if proof.value == nil || typeformat.Short(proof.value) != expected {
+			continue
+		}
+		if runtimeTypeProven(term, proof.name, partition) {
+			return true
+		}
+	}
+	return false
 }
 
 func callableParameterType(parameter string) string {
