@@ -389,3 +389,105 @@ func TestJoinedSurfaceStaysPrivateInsideAnEdge(t *testing.T) {
 		t.Fatalf("inside the true edge surface = %v / %v, want the arm literal alone", source, resolved)
 	}
 }
+
+// TestInheritedSummaryJoinsBothEdges is the rule a copy made past a branch
+// depends on. A short-circuit chain writes its left operand before its own
+// guard and its right operand on the taken edge, so the binding it feeds is
+// reached through both edges. Reading a single visible row there returns the
+// row the guard consumed -- the arm's overwrite is guarded and invisible -- and
+// would state that the copy holds the left operand on a path where it holds the
+// right one.
+func TestInheritedSummaryJoinsBothEdges(t *testing.T) {
+	left, right := typ.MaterializeOptional(typ.String), typ.MaterializeOptional(typ.Number)
+	partition := joinTestPartition(t, nil,
+		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: summaryTypePrefix + "temp/1/op-00000001", Value: mustCanonicalType(left)},
+		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: summaryTypePrefix + "temp/1/op-00000003", Value: mustCanonicalType(right), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+	)
+	encoded, found := reconvergedEpochFact(summaryTypePrefix, []byte("temp/1"), partition, joinSummaryTypes)
+	if !found {
+		t.Fatal("the joined point inherited no summary")
+	}
+	joined, err := decodeSummaryType(encoded)
+	if err != nil {
+		t.Fatalf("decode joined summary: %v", err)
+	}
+	if !typ.TypeEquals(joined, normalize.UnionForEvidence(left, right)) {
+		t.Fatalf("joined summary = %v, want the union of both edges", joined)
+	}
+	// Inside the taken edge the copy still holds that edge's own summary: the
+	// join belongs to the point both edges reach, not to either of them.
+	inside := joinTestPartition(t, []equation.Guard{joinTestGuard("op-00000002", "true")},
+		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: summaryTypePrefix + "temp/1/op-00000001", Value: mustCanonicalType(left)},
+		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: summaryTypePrefix + "temp/1/op-00000003", Value: mustCanonicalType(right), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+	)
+	armEncoded, armFound := reconvergedEpochFact(summaryTypePrefix, []byte("temp/1"), inside, joinSummaryTypes)
+	if !armFound {
+		t.Fatal("the taken edge inherited no summary")
+	}
+	arm, err := decodeSummaryType(armEncoded)
+	if err != nil {
+		t.Fatalf("decode edge summary: %v", err)
+	}
+	if !typ.TypeEquals(arm, right) {
+		t.Fatalf("edge summary = %v, want the edge's own publication", arm)
+	}
+}
+
+// TestInheritedSummaryWithholdsWhenAnEdgeProvedNothing is the falsifiable half.
+// An edge whose current version publishes no summary states nothing about the
+// joined point, so the other edge must not speak for it and the copy inherits
+// no summary at all.
+func TestInheritedSummaryWithholdsWhenAnEdgeProvedNothing(t *testing.T) {
+	partition := joinTestPartition(t, nil,
+		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: summaryTypePrefix + "temp/1/op-00000003", Value: mustCanonicalType(typ.String), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+	)
+	if encoded, found := reconvergedEpochFact(summaryTypePrefix, []byte("temp/1"), partition, joinSummaryTypes); found {
+		t.Fatalf("an edge that published no summary still inherited %q", encoded)
+	}
+}
+
+// TestInheritedSummaryKeepsEpochAuthority holds the version rule the join is
+// built on. A later write that publishes no summary retires the earlier one:
+// the row the copy could still find describes a value the write replaced.
+func TestInheritedSummaryKeepsEpochAuthority(t *testing.T) {
+	partition := joinTestPartition(t, nil,
+		equation.Fact{Key: epochFactPrefix + "path/x/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: summaryTypePrefix + "path/x/op-00000001", Value: mustCanonicalType(typ.String)},
+		equation.Fact{Key: epochFactPrefix + "path/x/op-00000002", Value: []byte("op-00000002")},
+	)
+	if encoded, found := reconvergedEpochFact(summaryTypePrefix, []byte("path/x"), partition, joinSummaryTypes); found {
+		t.Fatalf("a retired summary was inherited as %q", encoded)
+	}
+}
+
+// TestInheritedNameJoinsOnlyByAgreement separates the two lattices. A payload
+// that names something -- a heap identity, a select origin -- has no widened
+// form, so two edges that name different things state nothing joint and the
+// copy inherits nothing.
+func TestInheritedNameJoinsOnlyByAgreement(t *testing.T) {
+	agreeing := joinTestPartition(t, nil,
+		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: heapTableIdentityPrefix + "temp/1/op-00000001", Value: []byte("sealed-table/01/op-00000000")},
+		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: heapTableIdentityPrefix + "temp/1/op-00000003", Value: []byte("sealed-table/01/op-00000000"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+	)
+	identity, found := reconvergedEpochFact(heapTableIdentityPrefix, []byte("temp/1"), agreeing, joinAgreedValues)
+	if !found || string(identity) != "sealed-table/01/op-00000000" {
+		t.Fatalf("agreeing edges inherited %q / %v, want the common identity", identity, found)
+	}
+	disagreeing := joinTestPartition(t, nil,
+		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: heapTableIdentityPrefix + "temp/1/op-00000001", Value: []byte("sealed-table/01/op-00000000")},
+		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: heapTableIdentityPrefix + "temp/1/op-00000003", Value: []byte("sealed-table/01/op-00000004"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+	)
+	if identity, found := reconvergedEpochFact(heapTableIdentityPrefix, []byte("temp/1"), disagreeing, joinAgreedValues); found {
+		t.Fatalf("edges naming different identities inherited %q", identity)
+	}
+}

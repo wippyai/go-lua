@@ -11869,21 +11869,42 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// applied to the same heap cell. Without this fact, alias[key] loses the
 	// authority needed by indexMutationKernel and a subsequent static read can
 	// only fall back to an optional shape.
-	for _, prefix := range []string{"identity/", "type/", summaryTypePrefix, methodReturnSummaryPrefix, "select/origin/", heapTableIdentityPrefix, "local-call-result/", indexReadDisplayPrefix, indexReadScalarPrefix} {
-		if inherited, ok := currentEpochFact(prefix, operands["value"], partition); ok {
-			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: inherited})
-		} else if prefix == "select/origin/" {
-			if _, stale := currentEpochFact(prefix, []byte(target), partition); !stale {
+	//
+	// The source term states each family at the copy's own point, and past a
+	// branch that point is reached through both edges.  Every family is therefore
+	// read as the join of what the edges carry, under the lattice its payload
+	// has: a summary describes a value and joins as a union, while a payload that
+	// names something joins only by agreement.
+	summaryInherited := false
+	for _, family := range []struct {
+		prefix string
+		join   func(left, right []byte) ([]byte, bool)
+	}{
+		{"identity/", joinAgreedValues},
+		{"type/", joinAgreedValues},
+		{summaryTypePrefix, joinSummaryTypes},
+		{methodReturnSummaryPrefix, joinSummaryTypes},
+		{"select/origin/", joinAgreedValues},
+		{heapTableIdentityPrefix, joinAgreedValues},
+		{"local-call-result/", joinAgreedValues},
+		{indexReadDisplayPrefix, joinAgreedValues},
+		{indexReadScalarPrefix, joinAgreedValues},
+	} {
+		if inherited, ok := reconvergedEpochFact(family.prefix, operands["value"], partition, family.join); ok {
+			values = append(values, equation.Fact{Key: family.prefix + target + "/" + operation.Target.Name, Value: inherited})
+			summaryInherited = summaryInherited || family.prefix == summaryTypePrefix
+		} else if family.prefix == "select/origin/" {
+			if _, stale := currentEpochFact(family.prefix, []byte(target), partition); !stale {
 				continue
 			}
 			// A select correlation belongs to the value currently bound at this
 			// path.  A later ordinary write must publish its revocation, otherwise
 			// currentEpochFact can resurrect the former select's arm constraint
 			// after the result record has been replaced.
-			values = append(values, equation.Fact{Key: prefix + target + "/" + operation.Target.Name, Value: nil})
+			values = append(values, equation.Fact{Key: family.prefix + target + "/" + operation.Target.Name, Value: nil})
 		}
 	}
-	if _, inherited := currentEpochFact(summaryTypePrefix, operands["value"], partition); !inherited {
+	if !summaryInherited {
 		if summary, known := typedPathType(operands["value"], partition); known {
 			encoded, encodeErr := typ.EncodeCanonical(context.Background(), summary)
 			if encodeErr != nil {
@@ -21395,6 +21416,77 @@ func currentEpochFact(prefix string, term []byte, partition equation.Partition) 
 		return fact.Value, true
 	}
 	return nil, false
+}
+
+// reconvergedEpochFact is the version-current read of one fact family at a
+// control-flow join.  currentEpochFact answers what a single visible row
+// states, and past a branch the visible row is the one the decision consumed:
+// an arm's overwrite is guarded and therefore invisible there, so a reader
+// standing past the branch would carry the state the arm replaced.  The point
+// is reached through every edge of that decision, so what holds there is the
+// join of the row each edge currently carries.
+//
+// The epoch family remains the version authority inside every edge, which is
+// what keeps a later write that publishes nothing under prefix from resurrecting
+// an older row of it.  The join fails closed: an edge whose current version
+// publishes nothing under prefix, an unpeelable guard, and a lattice that
+// cannot merge two payloads all withhold the read.  Absence is the reading a
+// consumer already treats conservatively, so a withheld row widens the consumer
+// instead of narrowing it to one edge's claim.
+func reconvergedEpochFact(prefix string, term []byte, partition equation.Partition, join func(left, right []byte) ([]byte, bool)) ([]byte, bool) {
+	epochPrefix := epochFactPrefix + string(term) + "/"
+	familyPrefix := prefix + string(term) + "/"
+	fact, found := partition.Reconverged(epochPrefix, equation.Reconvergence{
+		Support: []string{familyPrefix},
+		Current: func(candidates []equation.Fact) (equation.Fact, bool) {
+			epochs := make([]equation.Fact, 0, len(candidates))
+			published := make(map[string][]byte, len(candidates))
+			for _, candidate := range candidates {
+				if strings.HasPrefix(candidate.Key, epochPrefix) {
+					epochs = append(epochs, candidate)
+					continue
+				}
+				published[strings.TrimPrefix(candidate.Key, familyPrefix)] = candidate.Value
+			}
+			current, selected := latestPublication(epochs)
+			if !selected {
+				return equation.Fact{}, false
+			}
+			value, states := published[strings.TrimPrefix(current.Key, epochPrefix)]
+			if !states {
+				return equation.Fact{}, false
+			}
+			current.Value = value
+			return current, true
+		},
+		Join: join,
+	})
+	if !found {
+		return nil, false
+	}
+	return fact.Value, true
+}
+
+// joinSummaryTypes is the lattice for a published summary type at a
+// reconvergence point.  Edges that proved the same summary keep it exactly.
+// Otherwise the point holds the union of the two proofs, so a summary carrying
+// an unchecked source keeps carrying it once joined with a checked one.  A
+// payload that does not decode states no type at all, and the join withholds
+// rather than letting the edge that decoded speak for the point.
+func joinSummaryTypes(left, right []byte) ([]byte, bool) {
+	if bytes.Equal(left, right) {
+		return append([]byte(nil), left...), true
+	}
+	leftType, leftErr := decodeSummaryType(left)
+	rightType, rightErr := decodeSummaryType(right)
+	if leftErr != nil || rightErr != nil || leftType == nil || rightType == nil {
+		return nil, false
+	}
+	encoded, encodeErr := typ.EncodeCanonical(context.Background(), normalize.UnionForEvidence(leftType, rightType))
+	if encodeErr != nil {
+		return nil, false
+	}
+	return encoded, true
 }
 
 // currentEpoch is the sole current-version lookup for a path.  Consumers that

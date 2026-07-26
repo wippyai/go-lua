@@ -66,4 +66,50 @@ for _, z in ipairs(xs) do
     end
 end
 
+-- A short-circuit chain writes its result on one edge of its own guard and
+-- leaves the other edge holding the left operand, so the binding it feeds is
+-- reached through both edges and carries what each of them proved. The loop
+-- form states the same union as the straight-line form: neither operand alone
+-- describes the point both reach.
+type Entry = {id: string, meta: {type: string, suite: string?}?}
+local entries: {Entry} = {}
+for _, entry in ipairs(entries) do
+    local suite = entry.meta and entry.meta.suite
+    if suite then
+        local record: {type: string, suite: string?} = suite -- expect-error
+        local text: string = suite -- expect-error
+    end
+end
+
+-- The straight-line control: the same chain outside every cycle.
+local single: Entry = {id = "x"}
+local one = single.meta and single.meta.suite
+if one then
+    local record: {type: string, suite: string?} = one -- expect-error
+    local text: string = one -- expect-error
+end
+
+-- Operands that state the same type join to that type exactly, so the guard
+-- still narrows: a join is a union of what the edges proved, not a withdrawal
+-- of both.
+type Pair = {left: string?, right: string?}
+local pairs_of: {Pair} = {}
+for _, pair in ipairs(pairs_of) do
+    local either = pair.left and pair.right
+    if either then
+        local text: string = either
+    end
+end
+
+-- The same agreement over a record surface, which is the surface a root
+-- truthiness guard narrows through.
+type Tag = {tag: string}
+local boxes: {{a: Tag?, b: Tag?}} = {}
+for _, box in ipairs(boxes) do
+    local one_tag = box.a and box.b
+    if one_tag then
+        local tag: Tag = one_tag
+    end
+end
+
 return xs, ys
