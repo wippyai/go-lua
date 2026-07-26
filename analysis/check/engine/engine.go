@@ -7984,7 +7984,7 @@ func uncalledDeclaredIndexedReadBoundary(child front.Compilation) ([]entrySeed, 
 			}
 			hasIndexedRead = true
 		case "branch-relations":
-			if !uncalledDeclaredIndexedBranch(operation, formals) {
+			if !uncalledDeclaredIndexedBranch(child, operation) {
 				return nil, false
 			}
 		case "apply", "external-call", "channel-select", "generic-for":
@@ -8004,28 +8004,51 @@ func uncalledDeclaredIndexedReadBoundary(child front.Compilation) ([]entrySeed, 
 // uncalledDeclaredIndexedBranch reports whether a branch of this body is decided
 // by the declaration alone. The entry seeds every formal with its declared type,
 // which is the join of every argument the declaration admits, so a branch whose
-// published evidence names only formal-rooted paths partitions exactly that
+// published evidence names only entry-established paths partitions exactly that
 // admitted space: each arm it selects is reached by some admissible call, and a
 // claim left unproven inside the arm is the declaration's own obligation
 // whatever the predicate's family. A branch naming any other root, or carrying
 // no path evidence at all, rests on an authority this entry does not establish
 // and leaves the body dormant.
-func uncalledDeclaredIndexedBranch(operation equation.Equation, formals map[string]entrySeed) bool {
+func uncalledDeclaredIndexedBranch(child front.Compilation, operation equation.Equation) bool {
 	rooted := false
 	for _, operand := range operation.Operands {
 		paths, evidence := branchEvidencePaths(operand.Role, operand.Term.Encoding)
 		if !evidence {
 			continue
 		}
-		for _, path := range paths {
-			root, _, _ := strings.Cut(path, "/")
-			if _, formal := formals["path/"+root]; !formal {
+		for _, item := range paths {
+			if !entryEstablishedSymbolPath(child, item) {
 				return false
 			}
 			rooted = true
 		}
 	}
 	return rooted
+}
+
+// entryEstablishedSymbolPath reports that a path is rooted at a symbol this
+// entry establishes. A parameter carries its declaration as the seed itself. A
+// local carries only what this body's own operations derived from those seeds
+// and its literals, because the lane admitting this body refuses every
+// occurrence that could import a caller-owned value. WIR's binder classification
+// is the authority: a global, an upvalue, or a symbol the binder left unresolved
+// names something the entry does not supply.
+func entryEstablishedSymbolPath(child front.Compilation, item string) bool {
+	if child.WIR == nil {
+		return false
+	}
+	root, _, _ := strings.Cut(item, "/")
+	digits, symbolic := strings.CutPrefix(root, "sym")
+	if !symbolic {
+		return false
+	}
+	id, err := strconv.ParseUint(digits, 10, 32)
+	if err != nil {
+		return false
+	}
+	symbol, classified := child.WIR.SymbolKind(wir.SymbolID(id))
+	return classified && (symbol == wir.SymbolParam || symbol == wir.SymbolLocal)
 }
 
 // branchEvidencePaths names every path one branch operand's published evidence
