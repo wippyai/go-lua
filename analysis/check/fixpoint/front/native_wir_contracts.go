@@ -27,7 +27,7 @@ import (
 type ShapeID uint64
 
 func nativeWIRContracts(root Compilation) []NativeContract {
-	var contracts []NativeContract
+	contracts := nativeCallSCCContracts(root)
 	var visit func(Compilation)
 	visit = func(compilation Compilation) {
 		contracts = append(contracts, nativeConstantPublications(compilation)...)
@@ -56,6 +56,92 @@ func nativeWIRContracts(root Compilation) []NativeContract {
 		return contracts[i].Key.String() < contracts[j].Key.String()
 	})
 	return contracts
+}
+
+// nativeCallSCCContracts closes only direct lexical call edges whose closure
+// allocation and callee path resolve to the same WIR function inventory.
+// Member calls and unresolved paths never enter the graph, so absence remains
+// the fail-closed result for dynamic recursion.
+func nativeCallSCCContracts(root Compilation) []NativeContract {
+	byName := make(map[string]Compilation)
+	var inventory func(Compilation)
+	inventory = func(compilation Compilation) {
+		body := compilation.WIR
+		if body != nil {
+			for index := 0; index < body.Len(); index++ {
+				instruction := body.Instr(index)
+				if instruction.Op != wir.OpClosure || instruction.Func == 0 || instruction.Dst.Kind != wir.OperandPath {
+					continue
+				}
+				proto := body.Proto(instruction.Func)
+				name := body.Path(wir.PathRef(instruction.Dst.Ref)).String()
+				for _, child := range compilation.Nested {
+					if child.Prototype == proto.Symbol && name != "" {
+						byName[name] = child
+						break
+					}
+				}
+			}
+		}
+		for _, child := range compilation.Nested {
+			inventory(child)
+		}
+	}
+	inventory(root)
+	adj := make(map[string]map[string]bool)
+	for from, compilation := range byName {
+		body := compilation.WIR
+		for index := 0; body != nil && index < body.Len(); index++ {
+			instruction := body.Instr(index)
+			if instruction.Op != wir.OpCall || instruction.Call.Method != 0 || instruction.Call.Callee.Kind != wir.OperandPath {
+				continue
+			}
+			callee := body.Path(wir.PathRef(instruction.Call.Callee.Ref))
+			to := callee.String()
+			if len(callee.Segments) != 0 {
+				continue
+			}
+			if _, closed := byName[to]; !closed {
+				continue
+			}
+			if adj[from] == nil {
+				adj[from] = make(map[string]bool)
+			}
+			adj[from][to] = true
+		}
+	}
+	var rows []NativeContract
+	for _, component := range nativeSCCs(adj) {
+		if len(component) == 1 && !adj[component[0]][component[0]] {
+			continue
+		}
+		edges := make([]string, 0)
+		for _, from := range component {
+			for to := range adj[from] {
+				if containsName(component, to) {
+					edges = append(edges, from+"->"+to)
+				}
+			}
+		}
+		sort.Strings(edges)
+		args := "[]"
+		owner := byName[component[0]]
+		if len(owner.Boundary.Parameters) != 0 {
+			if parameter := owner.WIR.Type(owner.Boundary.Parameters[0].Type); parameter != nil {
+				args = "[" + parameter.String() + "]"
+			}
+		}
+		value := fmt.Sprintf(
+			"arguments=%s completions={'known': ['normal', 'throw', 'user_suspend', 'system_suspend'], 'present': ['normal', 'throw']} edges_closed=[%s] members=[%s] results={'exact': True, 'count': 1}",
+			args, strings.Join(edges, ","), strings.Join(component, ","),
+		)
+		var revocations []string
+		if len(component) > 1 {
+			revocations = []string{"write.local"}
+		}
+		rows = append(rows, NativeContract{Family: "call_scc", Value: value, Revocations: revocations})
+	}
+	return rows
 }
 
 // nativeConstantPublications lowers only constant provenance and write

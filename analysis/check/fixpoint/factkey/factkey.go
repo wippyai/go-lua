@@ -126,6 +126,7 @@ const (
 	FamilyNativeAliasDisjoint
 	FamilyNativeCaptureEpochRoot
 	FamilyNativeCaptureTransport
+	FamilyNativeProjection
 )
 
 // RevocationSet names the fact families whose publications can invalidate a
@@ -372,6 +373,15 @@ var (
 		Qualifiers:  []Kind{Opaque},
 		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{},
 	}
+	// NativeProjection is the typed transport for a native row whose public
+	// key does not itself carry enough information to recover its subject,
+	// occurrence, and validity interval. The payload is the authority; this
+	// key only gives the guarded equation publication a stable coordinate.
+	NativeProjection = Family{
+		ID: FamilyNativeProjection, Prefix: "native-projection/", Subject: Opaque,
+		Qualifiers:  []Kind{Opaque},
+		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{},
+	}
 )
 
 // families declares every family whose keys are built or read structurally.
@@ -424,6 +434,7 @@ var families = []Family{
 	NativeAliasDisjoint,
 	NativeCaptureEpochRoot,
 	NativeCaptureTransport,
+	NativeProjection,
 }
 
 // byPrefix indexes the declarations so a key is matched without scanning them.

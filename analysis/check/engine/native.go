@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/base64"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Publication lanes of one engine evaluation. They are named after the output
@@ -53,11 +55,9 @@ const (
 // checking run that never consumes native facts pays only one pointer.
 type NativeFactIndex struct {
 	artifact    equation.Artifact
-	compilation *front.Compilation
 	values      []equation.Fact
 	outcomes    []equation.Fact
 	diagnostics []equation.Fact
-	derived     []NativeFact
 	once        sync.Once
 	facts       []NativeFact
 }
@@ -141,23 +141,6 @@ func publishedNativeFacts(artifact equation.Artifact, values, outcomes, diagnost
 	return &NativeFactIndex{artifact: artifact, values: values, outcomes: outcomes, diagnostics: diagnostics}
 }
 
-// publishedNativeFactsForCompilation adds native rows which are a direct
-// projection of the resolved WIR carried by every admitted lexical body.  It
-// deliberately consumes no source spelling and no inferred fallback: absent
-// operand representation leaves the row absent.
-func publishedNativeFactsForCompilation(compilation front.Compilation, values, outcomes, diagnostics []equation.Fact) *NativeFactIndex {
-	index := publishedNativeFacts(compilation.Artifact, values, outcomes, diagnostics)
-	index.compilation = &compilation
-	index.derived = append(numericNativeFacts(compilation), tableNativeFacts(compilation)...)
-	index.derived = append(index.derived, elementNativeFacts(compilation)...)
-	index.derived = append(index.derived, nilabilityNativeFacts(compilation)...)
-	index.derived = append(index.derived, frozenBodyNativeFacts(compilation)...)
-	index.derived = append(index.derived, metatableNativeFacts(compilation)...)
-	index.derived = append(index.derived, shapeEpochNativeFacts(compilation)...)
-	index.derived = append(index.derived, summaryNativeFacts(compilation)...)
-	return index
-}
-
 // Facts returns every published row in a deterministic order: lane, then key,
 // then value. Two evaluations of the same program yield the same slice.
 func (index *NativeFactIndex) Facts() []NativeFact {
@@ -170,7 +153,7 @@ func (index *NativeFactIndex) Facts() []NativeFact {
 
 func (index *NativeFactIndex) build() {
 	anchors := newNativeAnchors(index.artifact)
-	total := len(index.values) + len(index.outcomes) + len(index.diagnostics) + len(index.derived)
+	total := len(index.values) + len(index.outcomes) + len(index.diagnostics)
 	facts := make([]NativeFact, 0, total)
 	for _, lane := range []struct {
 		name  string
@@ -181,6 +164,12 @@ func (index *NativeFactIndex) build() {
 		{NativeLaneDiagnostics, index.diagnostics},
 	} {
 		for _, fact := range lane.facts {
+			if family, declared := factkey.Lookup(fact.Key); declared && family.ID == factkey.FamilyNativeProjection {
+				if projection, valid := front.DecodeNativeProjection(fact.Value); valid {
+					facts = append(facts, nativeFactFromProjection(projection))
+				}
+				continue
+			}
 			if family, declared := factkey.Lookup(fact.Key); declared && family.ID == factkey.FamilyHeapAllocationDisplay {
 				// Allocation displays are typed kernel input, not a native
 				// contract family. Their consumer publishes the source-facing
@@ -189,10 +178,6 @@ func (index *NativeFactIndex) build() {
 			}
 			facts = append(facts, anchors.project(lane.name, fact))
 		}
-	}
-	facts = append(facts, index.derived...)
-	if index.compilation != nil {
-		facts = append(facts, structuralNativeFacts(*index.compilation, facts)...)
 	}
 	sort.Slice(facts, func(i, j int) bool {
 		if facts[i].Lane != facts[j].Lane {
@@ -203,6 +188,7 @@ func (index *NativeFactIndex) build() {
 		}
 		return facts[i].Value < facts[j].Value
 	})
+	facts = deduplicateNativeFacts(facts)
 	facts = coalesceNativeContractRevocations(facts)
 	anchors.bindValidity(facts)
 	// Contract rows are deliberately a publication projection, not another
@@ -219,6 +205,110 @@ func (index *NativeFactIndex) build() {
 		return facts[i].Value < facts[j].Value
 	})
 	index.facts = facts
+}
+
+func nativeFactFromProjection(projection front.NativeProjection) NativeFact {
+	family, _, _ := strings.Cut(projection.Key, "/")
+	row := NativeFact{
+		Lane: NativeLaneValues, Family: family,
+		Key: projection.Key, Value: projection.Value,
+		Term: projection.Term, Subject: projection.Subject,
+		Occurrence: projection.Occurrence, Trust: NativeTrustProven,
+		Established: projection.Established, Revoked: projection.Revoked, Event: projection.Event,
+		Revocations: make([]NativeRevocation, 0, len(projection.Revocations)),
+	}
+	for _, revocation := range projection.Revocations {
+		row.Revocations = append(row.Revocations, NativeRevocation{
+			Established: revocation.Established,
+			Revoked:     revocation.Revoked,
+			Event:       revocation.Event,
+		})
+	}
+	return row
+}
+
+func deduplicateNativeFacts(facts []NativeFact) []NativeFact {
+	if len(facts) < 2 {
+		return facts
+	}
+	out := facts[:1]
+	for _, fact := range facts[1:] {
+		previous := out[len(out)-1]
+		if fact.Lane == previous.Lane && fact.Key == previous.Key && fact.Value == previous.Value {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func nativeKernelProjectionRows(root front.Compilation, facts []equation.Fact) []front.NativeProjection {
+	anchors := make(map[string]*nativeAnchors)
+	var visit func(front.Compilation)
+	visit = func(compilation front.Compilation) {
+		anchors[fmt.Sprintf("%x", compilation.Body)] = newNativeAnchors(compilation.Artifact)
+		for _, child := range compilation.Nested {
+			visit(child)
+		}
+	}
+	visit(root)
+	out := make([]front.NativeProjection, 0, len(facts))
+	for _, fact := range facts {
+		var owner *nativeAnchors
+		for body, candidate := range anchors {
+			if strings.Contains(fact.Key, "/"+body+"/") {
+				owner = candidate
+				break
+			}
+		}
+		if owner == nil {
+			owner = newNativeAnchors(root.Artifact)
+		}
+		out = append(out, nativeProjectionFromFact(owner.project(NativeLaneValues, fact)))
+	}
+	return out
+}
+
+func loweringNativeProjectionRows(root front.Compilation, globals map[string]typ.Type) []front.NativeProjection {
+	rows := append(numericNativeFacts(root), tableNativeFacts(root)...)
+	rows = append(rows, elementNativeFacts(root)...)
+	rows = append(rows, nilabilityNativeFacts(root)...)
+	rows = append(rows, frozenBodyNativeFacts(root)...)
+	rows = append(rows, metatableNativeFacts(root)...)
+	rows = append(rows, shapeEpochNativeFacts(root)...)
+	rows = append(rows, summaryNativeFacts(root)...)
+	var visit func(front.Compilation)
+	visit = func(compilation front.Compilation) {
+		rows = append(rows, typedProducerNativeFacts(compilation)...)
+		rows = append(rows, tableConstructionBoundFacts(compilation)...)
+		rows = append(rows, hostGlobalBindingFactsFromGlobals(compilation, globals)...)
+		for _, child := range compilation.Nested {
+			visit(child)
+		}
+	}
+	visit(root)
+	out := make([]front.NativeProjection, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, nativeProjectionFromFact(row))
+	}
+	return out
+}
+
+func nativeProjectionFromFact(row NativeFact) front.NativeProjection {
+	projection := front.NativeProjection{
+		Key: row.Key, Value: row.Value, Term: row.Term, Subject: row.Subject,
+		Occurrence: row.Occurrence, Established: row.Established,
+		Revoked: row.Revoked, Event: row.Event,
+		Revocations: make([]front.NativeProjectionRevocation, 0, len(row.Revocations)),
+	}
+	for _, revocation := range row.Revocations {
+		projection.Revocations = append(projection.Revocations, front.NativeProjectionRevocation{
+			Established: revocation.Established,
+			Revoked:     revocation.Revoked,
+			Event:       revocation.Event,
+		})
+	}
+	return projection
 }
 
 // A contract with several invalidators is one grant with a set of deopt

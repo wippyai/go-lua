@@ -316,9 +316,12 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 	if err != nil || compileResult.Diagnostics != nil {
 		return compileResult, err
 	}
-	artifact := compilation.Artifact
 	evaluateStarted := time.Now()
-	binding, err := bindCheckEntry(artifact, imports)
+	projectionRows := loweringNativeProjectionRows(compilation, globals)
+	projectionRows = append(projectionRows,
+		nativeKernelProjectionRows(compilation, publishedNestedConstantValues(compilation))...,
+	)
+	compilation, err = front.AppendNativeProjections(compilation, projectionRows)
 	if err != nil {
 		return Result{}, err
 	}
@@ -332,6 +335,18 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 		lexical.sourcePath = sourcePath[0]
 	}
 	lexical.ctx = fileContext
+	nestedFacts := publishedNestedNativeKernelFacts(compilation, lexical)
+	compilation, err = front.AppendNativeProjections(
+		compilation,
+		nativeKernelProjectionRows(compilation, nestedFacts),
+	)
+	if err != nil {
+		return Result{}, err
+	}
+	binding, err := bindCheckEntry(compilation.Artifact, imports)
+	if err != nil {
+		return Result{}, err
+	}
 	closure, transactions, err := evaluateCheck(compilation, binding, lexical, fileContext)
 	if err != nil {
 		var failed conservativeEvaluationError
@@ -413,8 +428,6 @@ func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding,
 func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, closure equation.OutputClosure, transactions int, parseElapsed, evaluateElapsed time.Duration) Result {
 	artifact := semanticArtifact(compilation.Artifact)
 	transactions -= len(compilation.Artifact.Equations) - len(artifact.Equations)
-	closure.Values = append(closure.Values, publishedNestedConstantValues(compilation)...)
-	closure.Values = append(closure.Values, publishedNestedNativeKernelFacts(compilation, lexical)...)
 	// An unbound annotation has a direct lexical diagnostic. Its unresolved
 	// reference must not also be presented as an ordinary failed type claim:
 	// no declared type witness exists to validate in the first place.
@@ -507,7 +520,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		Outcomes: outcomes, Diagnostics: publicDiagnostics,
 		ReturnCandidates:           cloneFacts(closure.Outcomes),
 		ValueFacts:                 valueFacts,
-		Native:                     publishedNativeFactsForCompilation(compilation, valueFacts, outcomes, publicDiagnostics),
+		Native:                     publishedNativeFacts(compilation.Artifact, valueFacts, outcomes, publicDiagnostics),
 		PublishedDiagnostics:       published,
 		PolicyDiagnostics:          publishedPolicyDiagnostics(compilation.PolicyDiagnostics),
 		DiagnosticSpans:            diagnosticSpans,
@@ -2990,6 +3003,41 @@ func (l *lexicalEvaluator) recordNativeKernelFacts(values []equation.Fact) {
 		}
 		l.nativeKernelFacts[fact.Key+"\x00"+string(fact.Value)] = fact
 	}
+}
+
+// A called child contributes its guarded native descriptor rows to the caller
+// closure at the call transaction, just as its return and placement rows do.
+// The declared family set keeps arbitrary child-local values private.
+func nativeKernelProjectionFacts(child front.Compilation, occurrence string, values []equation.Fact) []equation.Fact {
+	var out []equation.Fact
+	anchors := newNativeAnchors(child.Artifact)
+	for index, fact := range values {
+		family, declared := factkey.Lookup(fact.Key)
+		if !declared {
+			continue
+		}
+		switch family.ID {
+		case factkey.FamilyNativeBranchPartition, factkey.FamilyNativeTruthinessClass,
+			factkey.FamilyNativeConcatSite, factkey.FamilyNativeBuiltinCall,
+			factkey.FamilyNativeAliasDisjoint, factkey.FamilyNativeCaptureEpochRoot,
+			factkey.FamilyNativeCaptureTransport:
+			projection := nativeProjectionFromFact(anchors.project(NativeLaneValues, fact))
+			encoded, err := front.EncodeNativeProjection(projection)
+			if err != nil {
+				continue
+			}
+			key := factkey.BuildKey(
+				factkey.NativeProjection,
+				[]factkey.Part{
+					factkey.OpaquePart(fmt.Sprintf("%x", child.Body)),
+					factkey.OpaquePart(fmt.Sprintf("%08d", index)),
+				},
+				occurrence,
+			)
+			out = append(out, equation.Fact{Key: key.String(), Value: encoded, Guards: fact.Guards})
+		}
+	}
+	return out
 }
 
 func encodeChildEntry(seeds []entrySeed, closureSeeds ...entryClosureSeed) ([]byte, error) {
@@ -8555,6 +8603,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
 	}
 	projected := projectCallResults(operation, returns, closure)
+	projected.Values = append(projected.Values, nativeKernelProjectionFacts(child, operation.Target.Name, closure.Values)...)
 	projected.Values = append(projected.Values, projectExternalCallbackReturnFacts(operation, child, closure)...)
 	projected.Values = append(projected.Values, projectReturnMemberIdentities(operation, child, arguments, closure, partition)...)
 	// The child snapshot is only needed to read a capture or transported heap

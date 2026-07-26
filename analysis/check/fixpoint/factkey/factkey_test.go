@@ -146,6 +146,7 @@ func TestBuildKeyOwnsDeclaredFamilySpellings(t *testing.T) {
 		{NativeAliasDisjoint, []Part{TermPart("path/sym2"), IdentityPart(identity)}, "alias_disjoint/path/sym2/" + encode(string(identity)) + "/op-1"},
 		{NativeCaptureEpochRoot, []Part{OpaquePart("2f2f"), OpaquePart("op-7")}, "capture_epoch_root/2f2f/op-7/op-1"},
 		{NativeCaptureTransport, []Part{OpaquePart("2f2f"), OpaquePart("op-7")}, "capture_transport/2f2f/op-7/op-1"},
+		{NativeProjection, []Part{OpaquePart("2f2f"), OpaquePart("00000007")}, "native-projection/2f2f/00000007/op-1"},
 	} {
 		key := BuildKey(test.family, test.parts, "op-1")
 		if key.String() != test.want {
@@ -194,8 +195,8 @@ func TestTerminalTermSubjectOwnsNestedTermSyntax(t *testing.T) {
 }
 
 func TestFamiliesAreCompleteRecords(t *testing.T) {
-	if len(families) != 46 {
-		t.Fatalf("declared families = %d, want 46", len(families))
+	if len(families) != 47 {
+		t.Fatalf("declared families = %d, want 47", len(families))
 	}
 	for _, family := range families {
 		if family.ID == 0 || family.Prefix == "" || family.RevocationSet == nil ||

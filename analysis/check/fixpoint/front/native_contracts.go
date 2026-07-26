@@ -7,6 +7,7 @@ package front
 // its ordinary value closure after it has completed evaluation.
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -38,11 +39,49 @@ type NativeContract struct {
 	Revocations []string
 }
 
+// NativeProjection is the typed publication form for a native descriptor whose
+// public key does not carry all of its source display and validity metadata.
+// Producers fill this record before evaluation; Result.Native only decodes the
+// guarded fact and never re-walks WIR or CFG to recover those fields.
+type NativeProjection struct {
+	Version     uint8                        `json:"version"`
+	Key         string                       `json:"key"`
+	Value       string                       `json:"value"`
+	Term        string                       `json:"term,omitempty"`
+	Subject     string                       `json:"subject,omitempty"`
+	Occurrence  string                       `json:"occurrence,omitempty"`
+	Established string                       `json:"established,omitempty"`
+	Revoked     string                       `json:"revoked,omitempty"`
+	Event       string                       `json:"event,omitempty"`
+	Revocations []NativeProjectionRevocation `json:"revocations,omitempty"`
+}
+
+type NativeProjectionRevocation struct {
+	Established string `json:"established,omitempty"`
+	Revoked     string `json:"revoked,omitempty"`
+	Event       string `json:"event,omitempty"`
+}
+
+func EncodeNativeProjection(row NativeProjection) ([]byte, error) {
+	row.Version = 1
+	if row.Key == "" || row.Value == "" {
+		return nil, fmt.Errorf("front: incomplete native projection")
+	}
+	return json.Marshal(row)
+}
+
+func DecodeNativeProjection(encoded []byte) (NativeProjection, bool) {
+	var row NativeProjection
+	if json.Unmarshal(encoded, &row) != nil || row.Version != 1 || row.Key == "" || row.Value == "" {
+		return NativeProjection{}, false
+	}
+	return row, true
+}
+
 func nativeContracts(stmts []ast.Stmt, bindings *bind.Result, captureTransports map[wir.FunctionSymbolID]int) []NativeContract {
 	if bindings == nil {
 		return nil
 	}
-	names := map[*ast.FunctionExpr]string{}
 	byName := map[string]*ast.FunctionExpr{}
 	functionNames := map[*ast.FunctionExpr]string{}
 	var labelFunctions func([]ast.Stmt)
@@ -134,7 +173,7 @@ func nativeContracts(stmts []ast.Stmt, bindings *bind.Result, captureTransports 
 		if name == "" {
 			continue
 		}
-		names[origin.Func], byName[name] = name, origin.Func
+		byName[name] = origin.Func
 	}
 
 	var out []NativeContract
@@ -285,44 +324,6 @@ func nativeContracts(stmts []ast.Stmt, bindings *bind.Result, captureTransports 
 		out = append(out, NativeContract{Family: "callee_set", Value: value, Revocations: revocations})
 	}
 
-	// Closed recursion is a graph property of the binder call edges.  A dynamic
-	// member target intentionally does not enter this graph.
-	adj := make(map[string]map[string]bool)
-	for _, edge := range calls {
-		from := names[edge.owner]
-		if from != "" && byName[edge.target] != nil {
-			if adj[from] == nil {
-				adj[from] = map[string]bool{}
-			}
-			adj[from][edge.target] = true
-		}
-	}
-	for _, component := range nativeSCCs(adj) {
-		if len(component) == 1 && !adj[component[0]][component[0]] {
-			continue
-		}
-		edges := make([]string, 0)
-		for _, from := range component {
-			for to := range adj[from] {
-				if containsName(component, to) {
-					edges = append(edges, from+"->"+to)
-				}
-			}
-		}
-		sort.Strings(edges)
-		fn := byName[component[0]]
-		args := "[]"
-		result := "{'exact': True, 'count': 1}"
-		if fn != nil && fn.ParList != nil && len(fn.ParList.Types) > 0 {
-			args = "[" + typeName(fn.ParList.Types[0]) + "]"
-		}
-		value := fmt.Sprintf("arguments=%s completions={'known': ['normal', 'throw', 'user_suspend', 'system_suspend'], 'present': ['normal', 'throw']} edges_closed=[%s] members=[%s] results=%s", args, strings.Join(edges, ","), strings.Join(component, ","), result)
-		revocations := []string(nil)
-		if len(component) > 1 {
-			revocations = []string{"write.local"}
-		}
-		out = append(out, NativeContract{Family: "call_scc", Value: value, Revocations: revocations})
-	}
 	// Static member writes, entry ownership and repeated layouts are binder-owned
 	// lexical topology.  The record_construction row itself is WIR-owned: only
 	// the resolved lowering carries the constructor's destination, which its

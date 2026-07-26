@@ -6,29 +6,11 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
-
-// structuralNativeFacts projects only lowering-owned topology and already
-// published value evidence.  It does not run a second dataflow analysis: an
-// absent capture, constructor, resolved annotation, or proven host result
-// simply leaves the corresponding contract unpublished.
-func structuralNativeFacts(root front.Compilation, published []NativeFact) []NativeFact {
-	var rows []NativeFact
-	var visit func(front.Compilation)
-	visit = func(compilation front.Compilation) {
-		rows = append(rows, typedProducerNativeFacts(compilation)...)
-		rows = append(rows, tableConstructionBoundFacts(compilation)...)
-		rows = append(rows, hostGlobalBindingFacts(compilation, published)...)
-		for _, child := range compilation.Nested {
-			visit(child)
-		}
-	}
-	visit(root)
-	return rows
-}
 
 func structuralRow(compilation front.Compilation, family, occurrence, subject, value string) NativeFact {
 	return NativeFact{
@@ -150,9 +132,13 @@ func integerConst(body *wir.Body, operand wir.Operand) (int64, bool) {
 	return value, err == nil
 }
 
-func hostGlobalBindingFacts(compilation front.Compilation, published []NativeFact) []NativeFact {
+// A resolved host call has a native binding exactly when the project supplied
+// the root global and lowering resolved a non-top result contract. This is the
+// same authority the call-results kernel consumes; publishing it before solve
+// removes the former Result.Native join against already-rendered value rows.
+func hostGlobalBindingFactsFromGlobals(compilation front.Compilation, globals map[string]typ.Type) []NativeFact {
 	body := compilation.WIR
-	if body == nil {
+	if body == nil || len(globals) == 0 {
 		return nil
 	}
 	var rows []NativeFact
@@ -162,44 +148,39 @@ func hostGlobalBindingFacts(compilation front.Compilation, published []NativeFac
 			continue
 		}
 		callee := body.Path(wir.PathRef(instruction.Call.Callee.Ref))
-		if callee.Symbol == 0 || !body.IsImplicitGlobalSymbol(callee.Symbol) {
+		root := callee.RootOnly()
+		if callee.Symbol == 0 || !body.IsImplicitGlobalSymbol(callee.Symbol) || globals[root.String()] == nil {
 			continue
 		}
-		results := body.Operands(instruction.Results)
-		if !publishedProvenValue(compilation, published, results[0]) {
+		calleeType := globals[root.String()]
+		var resolved bool
+		for _, part := range callee.Segments {
+			if part.Name == "" {
+				resolved = false
+				break
+			}
+			calleeType, resolved = access.Field(calleeType, part.Name)
+			if !resolved {
+				break
+			}
+		}
+		function, callable := unwrap.Alias(calleeType).(*typ.Function)
+		if !resolved || !callable || len(function.Returns) == 0 {
+			continue
+		}
+		resultType := unwrap.Alias(function.Returns[0])
+		if resultType == nil || typ.AbsentOrTopLike(resultType) || resultType.Kind() == kind.Any || resultType.Kind() == kind.Unknown {
 			continue
 		}
 		occurrence := fmt.Sprintf("op-%08d", index)
-		value := "identity=published managed=true ownership=published release=published rooting=published type=published used_order=published value_carrier=published"
-		row := structuralRow(compilation, "host_global_binding", occurrence, callee.String(), value)
-		row.Established = occurrence
-		// The global identity remains a capability boundary: a rebinding or
-		// dynamic load invalidates the native binding contract.
-		row.Revoked = "write.global"
-		row.Event = "write.global"
+		row := structuralRow(compilation, "host_global_binding", occurrence, callee.String(),
+			"identity=published managed=true ownership=published release=published rooting=published type=published used_order=published value_carrier=published")
+		row.Established, row.Revoked, row.Event = occurrence, "write.global", "write.global"
 		row.Revocations = []NativeRevocation{
-			{Established: row.Established, Revoked: row.Revoked, Event: "write.global"},
+			{Established: occurrence, Revoked: "write.global", Event: "write.global"},
 			{Established: "contract", Revoked: "contract/load.dynamic", Event: "load.dynamic"},
 		}
 		rows = append(rows, row)
 	}
 	return rows
-}
-
-func publishedProvenValue(compilation front.Compilation, published []NativeFact, operand wir.Operand) bool {
-	if operand.Kind != wir.OperandTemp && operand.Kind != wir.OperandPath {
-		return false
-	}
-	var key string
-	if operand.Kind == wir.OperandTemp {
-		key = "temp/" + strconv.FormatUint(uint64(operand.Ref), 10)
-	} else {
-		key = string(compilation.WIR.Path(wir.PathRef(operand.Ref)).Key())
-	}
-	for _, fact := range published {
-		if fact.Lane == NativeLaneValues && fact.Family == "value" && fact.Trust == NativeTrustProven && fact.Term == key {
-			return true
-		}
-	}
-	return false
 }

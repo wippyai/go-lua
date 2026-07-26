@@ -330,7 +330,8 @@ func appendNativeContractPublications(artifact equation.Artifact, contracts []Na
 	publicationCount := uint32(0)
 	ordinal := 0
 	for _, contract := range contracts {
-		if contract.Family == "" || contract.Value == "" && contract.Source == "" {
+		if contract.Family == "" && contract.Key.String() == "" ||
+			contract.Value == "" && contract.Source == "" {
 			continue
 		}
 		recordStart := len(encodedPublications)
@@ -378,6 +379,29 @@ func appendNativeContractPublications(artifact equation.Artifact, contracts []Na
 		return artifact, nil
 	}
 	binary.BigEndian.PutUint32(encodedPublications, publicationCount)
+	if tail := len(artifact.Equations) - 1; tail >= 0 {
+		existing := artifact.Equations[tail]
+		if existing.Occurrence.Kind == "publication" && len(existing.Operands) == 1 &&
+			existing.Operands[0].Role == "native-publications" && !existing.Operands[0].Term.Entry {
+			current := existing.Operands[0].Term.Encoding
+			if len(current) < 4 {
+				return equation.Artifact{}, fmt.Errorf("front: truncated native publication tail")
+			}
+			merged := make([]byte, len(current), len(current)+len(encodedPublications)-4)
+			copy(merged, current)
+			count := binary.BigEndian.Uint32(merged)
+			if uint64(count)+uint64(publicationCount) > uint64(^uint32(0)) {
+				return equation.Artifact{}, fmt.Errorf("front: native publication count overflow")
+			}
+			binary.BigEndian.PutUint32(merged, count+publicationCount)
+			merged = append(merged, encodedPublications[4:]...)
+			artifact.Equations = append([]equation.Equation(nil), artifact.Equations...)
+			existing.Operands = append([]equation.Operand(nil), existing.Operands...)
+			existing.Operands[0].Term.Encoding = merged
+			artifact.Equations[tail] = existing
+			return artifact, nil
+		}
+	}
 	publication := equation.Equation{
 		Target:       equation.Coordinate{Body: body, Name: operationName(len(artifact.Equations))},
 		Entry:        entry,
@@ -391,6 +415,50 @@ func appendNativeContractPublications(artifact equation.Artifact, contracts []Na
 	}
 	artifact.Equations = append(artifact.Equations, publication)
 	return artifact, nil
+}
+
+// AppendNativeProjections closes lowering-owned native descriptors and already
+// evaluated child-kernel facts through an ordinary publication equation before
+// the root body is evaluated. The returned compilation owns the rebuilt frozen
+// schedule; callers must discard the pre-publication copy.
+func AppendNativeProjections(compilation Compilation, rows []NativeProjection) (Compilation, error) {
+	contracts := make([]NativeContract, 0, len(rows))
+	for _, row := range rows {
+		encoded, err := EncodeNativeProjection(row)
+		if err != nil {
+			return Compilation{}, err
+		}
+		identity := sha256.Sum256(encoded)
+		key := factkey.BuildKey(
+			factkey.NativeProjection,
+			[]factkey.Part{
+				factkey.OpaquePart(fmt.Sprintf("%x", compilation.Body)),
+				factkey.OpaquePart(fmt.Sprintf("%x", identity)),
+			},
+			"published",
+		)
+		contracts = append(contracts, NativeContract{Key: key, Value: string(encoded)})
+	}
+	artifact, err := appendNativeContractPublications(compilation.Artifact, contracts)
+	if err != nil {
+		return Compilation{}, err
+	}
+	compilation.Artifact = artifact
+	frozen, err := freezeCyclicArtifact(artifact, compilation.WIR, compilation.Graph)
+	if err != nil {
+		return Compilation{}, err
+	}
+	compilation.Frozen = frozen
+	compilation.Cyclic = nil
+	if graphHasCycle(compilation.Graph) {
+		compilation.Cyclic = &compilation.Frozen
+	}
+	catalog, err := catalogBodies(compilation)
+	if err != nil {
+		return Compilation{}, err
+	}
+	compilation.Catalog = catalog
+	return compilation, nil
 }
 
 func appendNativePublicationOrdinal(out []byte, ordinal int) []byte {
