@@ -1702,8 +1702,10 @@ func enrichFunctionContractWriteDiagnostic(item PublishedDiagnostic, operation e
 }
 
 // callResultDisplay returns display metadata only from the call-results
-// operation that owns this exact result term. The metadata is presentation
-// evidence; missing, ambiguous, or malformed displays remain unavailable.
+// operation that owns this exact result term. The display is the spelling the
+// front lowered from the call itself; a provider identity names the boundary
+// the call resolved to and is never a source spelling. Missing, ambiguous, or
+// malformed displays remain unavailable.
 func callResultDisplay(artifact equation.Artifact, result []byte) (string, string, bool) {
 	if len(result) == 0 {
 		return "", "", false
@@ -1715,8 +1717,6 @@ func callResultDisplay(artifact equation.Artifact, result []byte) (string, strin
 		matched := false
 		display := ""
 		application := ""
-		provider := []byte(nil)
-		method := ""
 		for _, operand := range operation.Operands {
 			switch {
 			case strings.HasPrefix(operand.Role, "result-") && string(operand.Term.Encoding) == string(result):
@@ -1725,14 +1725,7 @@ func callResultDisplay(artifact equation.Artifact, result []byte) (string, strin
 				display = string(operand.Term.Encoding)
 			case operand.Role == "application":
 				application = strings.TrimPrefix(string(operand.Term.Encoding), "call/")
-			case operand.Role == "provider":
-				provider = operand.Term.Encoding
-			case operand.Role == "method":
-				method, _ = callMethodName(operand.Term.Encoding)
 			}
-		}
-		if display == "" && method != "" && providerName(provider) != "" {
-			display = providerName(provider) + ":" + method + "(...)"
 		}
 		if matched && display != "" {
 			return display, application, true
@@ -8743,6 +8736,164 @@ func uncalledTypedChannelSendDiagnostic(diagnostic equation.Fact) bool {
 	return strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/")
 }
 
+type nestedCaptureSeed struct {
+	Term   string
+	Value  []byte
+	Handle closureHandle
+}
+
+// appendNestedCaptureCapabilities adds the transported terms to the entry as
+// plain value/capability rows. They join after the boundary lanes are built:
+// the descendant, member, identity and placement surfaces belong to this call's
+// own arguments and captures, and a transitively captured callable contributes
+// only the binding its descendant reads.
+func appendNestedCaptureCapabilities(seeds []entrySeed, closureSeeds []entryClosureSeed, nested []nestedCaptureSeed) ([]entrySeed, []entryClosureSeed) {
+	if len(nested) == 0 {
+		return seeds, closureSeeds
+	}
+	present := make(map[string]bool, len(seeds))
+	for _, seed := range seeds {
+		present[seed.Term] = true
+	}
+	for _, seed := range nested {
+		if present[seed.Term] {
+			continue
+		}
+		present[seed.Term] = true
+		seeds = append(seeds, entrySeed{Term: seed.Term, Value: seed.Value})
+		closureSeeds = append(closureSeeds, entryClosureSeed{Term: seed.Term, Handle: seed.Handle})
+	}
+	return seeds, closureSeeds
+}
+
+// transitiveCaptureCapabilities names the lexical-callable bindings a body's own
+// descendants read through it without the body itself binding them. WIR records
+// a capture where the symbol is read, so an intermediate body that only
+// constructs such a closure -- or that receives one whose environment reaches
+// past its own boundary -- holds no binding for those symbols, and the
+// descendant entry built from this body's partition cannot reconstruct one.
+//
+// Two artifact families name the demand: the capture operands of the closures
+// this body materializes, and the capture list of every capability already
+// crossing into it. Both are followed to a fixed point, so a capability carries
+// the environment its own body reads. A term crosses only while it already
+// holds a published closure capability over an admitted prototype and no body
+// this call can run rebinds it; anything else leaves the descendant's dispatch
+// exactly as opaque as it is without this transport.
+func (l *lexicalEvaluator) transitiveCaptureCapabilities(child front.Compilation, seeds []entrySeed, closureSeeds []entryClosureSeed, partition equation.Partition) []nestedCaptureSeed {
+	if l == nil {
+		return nil
+	}
+	bound := make(map[string]bool, len(seeds))
+	for _, seed := range seeds {
+		bound[seed.Term] = true
+	}
+	for _, operation := range child.Artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "environment-write", "path-replacement":
+			if target, found := artifactOperand(operation.Operands, "target"); found {
+				bound[string(target)] = true
+			}
+		}
+	}
+	materialized := make([]string, 0, len(child.Artifact.Equations))
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "object-materialization" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if strings.HasPrefix(operand.Role, "capture-") {
+				materialized = append(materialized, string(operand.Term.Encoding))
+			}
+		}
+	}
+	sort.Strings(materialized)
+	prototypes := make([]string, 0, len(closureSeeds))
+	pending := materialized
+	for _, seed := range closureSeeds {
+		pending = append(pending, seed.Handle.Captures...)
+		prototypes = append(prototypes, seed.Handle.Prototype)
+	}
+	demanded := make([]nestedCaptureSeed, 0, len(pending))
+	seen := make(map[string]bool, len(pending))
+	for index := 0; index < len(pending); index++ {
+		term := pending[index]
+		if bound[term] || seen[term] || !strings.HasPrefix(term, "path/") {
+			continue
+		}
+		seen[term] = true
+		handle, found := closureHandleFor([]byte(term), partition)
+		if !found {
+			continue
+		}
+		if _, admitted := l.byPrototype[handle.Prototype]; !admitted {
+			continue
+		}
+		value, known := resolveKnownCurrentValue([]byte(term), partition)
+		if !known || isUnknownScalar(value) {
+			continue
+		}
+		seed := entrySeed{Term: term, Value: value}
+		if !validEntrySeed(seed) {
+			continue
+		}
+		demanded = append(demanded, nestedCaptureSeed{Term: term, Value: value, Handle: handle})
+		prototypes = append(prototypes, handle.Prototype)
+		pending = append(pending, handle.Captures...)
+	}
+	if len(demanded) == 0 {
+		return nil
+	}
+	rebound := l.reboundTerms(child, prototypes)
+	out := demanded[:0]
+	for _, seed := range demanded {
+		if rebound[seed.Term] {
+			continue
+		}
+		out = append(out, seed)
+	}
+	return out
+}
+
+// reboundTerms names every term written by a body this application can run:
+// the given prototypes and, transitively, the closures they materialize. A
+// capture one of those bodies rebinds is a cell rather than a stable
+// capability, so the value read at this entry would be the one held before that
+// write.
+func (l *lexicalEvaluator) reboundTerms(child front.Compilation, prototypes []string) map[string]bool {
+	rebound := make(map[string]bool)
+	visited := make(map[string]bool, len(prototypes)+1)
+	visited[child.PrototypeName] = true
+	pending := []front.Compilation{child}
+	admit := func(name string) {
+		if name == "" || visited[name] {
+			return
+		}
+		visited[name] = true
+		if body, admitted := l.byPrototype[name]; admitted {
+			pending = append(pending, body)
+		}
+	}
+	for _, name := range prototypes {
+		admit(name)
+	}
+	for index := 0; index < len(pending); index++ {
+		for _, operation := range pending[index].Artifact.Equations {
+			switch operation.Occurrence.Kind {
+			case "environment-write", "path-replacement":
+				if target, found := artifactOperand(operation.Operands, "target"); found {
+					rebound[string(target)] = true
+				}
+			case "object-materialization":
+				if prototype, found := artifactOperand(operation.Operands, "prototype"); found && strings.HasPrefix(string(prototype), "prototype/") {
+					admit(strings.TrimPrefix(string(prototype), "prototype/"))
+				}
+			}
+		}
+	}
+	return rebound
+}
+
 // applyKnown evaluates a complete lexical child privately, then projects only
 // caller-owned results, capture effects, and residual diagnostics. A malformed
 // entry or child failure returns an error, so the surrounding VM publishes no
@@ -8816,14 +8967,13 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: value})
 	}
 	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
-	if l.closureDemandRecurses(handle, partition) {
-		for index, capture := range child.Boundary.Captures {
-			// A local capability is admitted only from the same closed caller
-			// partition that supplied the capture value. In particular, a plain
-			// scalar/function entry value cannot manufacture a recursive edge.
-			if captured, found := closureHandleFor([]byte(handle.Captures[index]), partition); found {
-				closureSeedByTerm[boundaryTerm(capture.Symbol)] = captured
-			}
+	// A local capability is admitted only from the same closed caller partition
+	// that supplied the capture value: the handle already published for the exact
+	// term this capture binds. A plain scalar/function entry value names no body
+	// and cannot manufacture that edge.
+	for index, capture := range child.Boundary.Captures {
+		if captured, found := closureHandleFor([]byte(handle.Captures[index]), partition); found {
+			closureSeedByTerm[boundaryTerm(capture.Symbol)] = captured
 		}
 	}
 	for term, closure := range closureSeedByTerm {
@@ -8849,6 +8999,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	tableIdentitySeeds := tableIdentitySeedsForEntry(entrySeeds, identitySources, partition)
 	memberCellSeeds := memberCellSeedsForEntry(entrySeeds, identitySources, partition)
 	placementSeeds := placementSeedsForEntry(entrySeeds, partition)
+	entrySeeds, closureSeeds = appendNestedCaptureCapabilities(entrySeeds, closureSeeds, l.transitiveCaptureCapabilities(child, entrySeeds, closureSeeds, partition))
 	entry, err := encodeChildEntryWithPlacementCapabilities(entrySeeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, placementSeeds, gradualAnyTerms)
 	if err != nil {
 		return equation.TransactionResult{}, err
@@ -9887,6 +10038,15 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 		if span, ok := spans[diagnostic.Key]; ok {
 			l.diagnosticSpans[key] = span
 		}
+		// A diagnostic this child itself carried out of a deeper body already has
+		// its complete publication recorded under the spelling it arrived with.
+		// Re-key that record so the next boundary reads the same span, message and
+		// evidence instead of re-deriving them from an artifact that never held it.
+		if item, carried := l.childPublished[diagnostic.Key]; carried {
+			item.Fact = equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)}
+			l.childPublished[key] = item
+			l.diagnosticSpans[key] = item.Span
+		}
 	}
 }
 
@@ -10005,7 +10165,18 @@ func lexicalSpanKey(body equation.BodyID, occurrence string) string {
 // is already owned by an exact child entry. Branch advice and other body-local
 // conclusions have no caller-owned consumer and remain private.
 func childCallDiagnostic(fact equation.Fact) bool {
-	return strings.HasPrefix(fact.Key, "type.assignment/") || strings.HasPrefix(fact.Key, "type.return.contract/") || strings.HasPrefix(fact.Key, "type.call.direct.") || strings.HasPrefix(fact.Key, "type.operator.concat_operand/") || strings.HasPrefix(fact.Key, "type.operator.comparison_operand/")
+	// A diagnostic already carried out of a deeper body keeps its transported
+	// spelling. The subject it reports is that body's, so the boundary it still
+	// has to cross is decided by the same publication rule.
+	key := fact.Key
+	for strings.HasPrefix(key, "child/") {
+		parts := strings.SplitN(key, "/", 3)
+		if len(parts) != 3 {
+			return false
+		}
+		key = parts[2]
+	}
+	return strings.HasPrefix(key, "type.assignment/") || strings.HasPrefix(key, "type.return.contract/") || strings.HasPrefix(key, "type.call.direct.") || strings.HasPrefix(key, "type.operator.concat_operand/") || strings.HasPrefix(key, "type.operator.comparison_operand/")
 }
 
 // childEntryDescendantSeeds preserves exact path facts below a captured entry
@@ -24371,12 +24542,10 @@ func providerName(provider []byte) string {
 }
 
 func externalCallbackReceiverMayMutate(receiver, provider []byte, partition equation.Partition) bool {
-	name := providerName(provider)
-	if name == "" {
-		return false
-	}
-	if _, known := (signaturelookup.Source{IncludeStdlib: true}).LookupView(name); known {
-		return false
+	if name := providerName(provider); name != "" {
+		if _, known := (signaturelookup.Source{IncludeStdlib: true}).LookupView(name); known {
+			return false
+		}
 	}
 	identity, found := tableIdentityForTerm(receiver, partition)
 	return found && heapHasExternalCallback(identity, partition)

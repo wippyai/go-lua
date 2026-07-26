@@ -2712,11 +2712,12 @@ func externalProviderSeen(body *wir.Body, instruction wir.Instruction, seen map[
 	if module, ok := body.SymbolRequireModulePath(root.Symbol); ok {
 		return moduleProvider(module, segment.FormatSegments(path.Segments))
 	}
-	kind, global := body.SymbolKind(root.Symbol)
-	if module, ok := exactRequireModule(body, instruction, root.Symbol, kind, global); ok {
+	kind, known := body.SymbolKind(root.Symbol)
+	global := (known && kind == wir.SymbolGlobal) || body.IsImplicitGlobalSymbol(root.Symbol)
+	if module, ok := exactRequireModule(body, instruction, root.Symbol, global); ok {
 		return equation.ClosedTerm([]byte("provider/module-load/" + strconv.Quote(module))), true
 	}
-	if !global && kind != wir.SymbolGlobal && !body.IsImplicitGlobalSymbol(root.Symbol) {
+	if !global {
 		return equation.Term{}, false
 	}
 	name := path.String()
@@ -2761,9 +2762,9 @@ func moduleProvider(module, suffix string) (equation.Term, bool) {
 // the result is assigned a local alias. Once the alias exists,
 // SymbolRequireModulePath carries the same identity for downstream calls.
 // Dynamic paths and shadowed locals stay outside this provider boundary.
-func exactRequireModule(body *wir.Body, instruction wir.Instruction, symbol wir.SymbolID, symbolKind wir.SymbolKind, global bool) (string, bool) {
+func exactRequireModule(body *wir.Body, instruction wir.Instruction, symbol wir.SymbolID, global bool) (string, bool) {
 	if body == nil || instruction.Op != wir.OpCall || instruction.Call.Method != 0 || instruction.ListSpread ||
-		(!global && symbolKind != wir.SymbolGlobal && !body.IsImplicitGlobalSymbol(symbol)) || body.SymbolName(symbol) != "require" {
+		!global || body.SymbolName(symbol) != "require" {
 		return "", false
 	}
 	arguments := body.Operands(instruction.List)
@@ -3003,7 +3004,25 @@ func typePredicateErrorTarget(body *wir.Body, instruction wir.Instruction) (equa
 }
 
 func directCallDisplay(body *wir.Body, instruction wir.Instruction) (string, bool) {
-	if body == nil || instruction.Call.Method != 0 || instruction.Call.Callee.Kind != wir.OperandPath {
+	if body == nil {
+		return "", false
+	}
+	// A method call spells its callee as the receiver path and the selector
+	// constant this same result publication already carries. Both come from the
+	// lowered call, so the display stays an authored spelling rather than a name
+	// recovered from whichever provider the boundary resolved.
+	if instruction.Call.Method != 0 {
+		if instruction.Call.Receiver.Kind != wir.OperandPath {
+			return "", false
+		}
+		receiver := body.Path(wir.PathRef(instruction.Call.Receiver.Ref)).String()
+		method := body.Const(instruction.Call.Method)
+		if receiver == "" || method.Kind != wir.ConstString || method.Str == "" {
+			return "", false
+		}
+		return receiver + ":" + method.Str + "(...)", true
+	}
+	if instruction.Call.Callee.Kind != wir.OperandPath {
 		return "", false
 	}
 	callee := body.Path(wir.PathRef(instruction.Call.Callee.Ref)).String()

@@ -1,0 +1,7 @@
+{
+  "description": "A chunk-level local function called two entry boundaries away must still dispatch through its own body. The intermediate body binds neither the symbol its nested closure reads nor the environment of a callable it receives, so both capabilities travel with the entry; a call site reached that way applies the callee's declared parameter contract, and correct use through the same boundaries stays clean.",
+  "files": ["main.lua"],
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

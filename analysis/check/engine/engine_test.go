@@ -2993,12 +2993,15 @@ return answer
 	if err != nil {
 		t.Fatalf("Check whole file: %v", err)
 	}
+	// Both calls dispatch through their own bodies: `first` is a module-lexical
+	// callable whose capability crosses into `second`, so the literal the module
+	// returns is proven. The require binding has no such body and stays unknown.
 	wantValues := []equation.Fact{
-		{Key: "answer", Value: []byte("unknown")},
+		{Key: "answer", Value: []byte("42")},
 		{Key: "dependency", Value: []byte("unknown")},
 	}
 	wantOutcomes := []equation.Fact{
-		{Key: "return/0", Value: []byte("unknown")},
+		{Key: "return/0", Value: []byte("42")},
 		{Key: "return/arity", Value: []byte("1")},
 	}
 	if !reflect.DeepEqual(result.Values, wantValues) || !reflect.DeepEqual(result.Outcomes, wantOutcomes) || result.Diagnostics != nil {
