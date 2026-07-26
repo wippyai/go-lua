@@ -1,0 +1,4 @@
+{
+  "description": "The closed-inventory border proof licenses a read at the container's own length, and that length is the border the container had when the term was taken. A store that can empty a slot revokes the proof for every length term taken before it, whichever key spelling addresses the slot and whether the container is named directly or through a member lens. A read with no intervening store, one whose store landed on another container, and one whose length was taken after the store all keep the discharge.",
+  "files": ["main.lua"]
+}

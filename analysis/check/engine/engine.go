@@ -13179,14 +13179,22 @@ func keyedContainerSurface(term, value []byte, partition equation.Partition) []b
 // container with no inventory of its own: the border it returns is positive, so
 // it names a written slot. The floor is revoked by any write that could move
 // that border, so the proof answers only where the guard still holds.
+//
+// Either authority describes the container as it stood when the length was
+// taken. A store that can empty a slot may have retracted the border since, and
+// the term then names a slot the container no longer occupies, so the same
+// revocation the floor lane consumes withdraws the inventory answer as well.
 func borderIndexPresenceProven(container, key []byte, partition equation.Partition) bool {
-	named, ok := publishedLengthTerm(key, partition)
+	named, taken, ok := publishedLengthTermTaken(key, partition)
 	if !ok || named != string(container) {
 		return false
 	}
 	// An escaped container may have had its border moved by the callee, so the
 	// inventory this proof reads is no longer the live one.
 	if containerTableEscaped(container, partition) {
+		return false
+	}
+	if revoked(heapIndexSubject(container, partition), taken, partition) {
 		return false
 	}
 	if lengthFloorProven(container, partition) >= 1 {

@@ -125,15 +125,24 @@ func publishedResidueWindow(term []byte, partition equation.Partition) (residueW
 
 // publishedLengthTerm names the container a term's length was taken from.
 func publishedLengthTerm(term []byte, partition equation.Partition) (string, bool) {
+	container, _, found := publishedLengthTermTaken(term, partition)
+	return container, found
+}
+
+// publishedLengthTermTaken names that container together with the operation the
+// length was read at. A length is a snapshot of a border, so a consumer that
+// measures the container against the remembered value needs the point the
+// snapshot was taken as well as the container it describes.
+func publishedLengthTermTaken(term []byte, partition equation.Partition) (string, string, bool) {
 	prefix := lengthTermPrefix + string(term) + "/"
 	latest, found := partition.LatestValuePrefix(prefix)
 	if !found {
-		return "", false
+		return "", "", false
 	}
 	if epoch, versioned := currentEpoch(term, partition); versioned && epoch > factOperation(latest.Key) {
-		return "", false
+		return "", "", false
 	}
-	return string(latest.Value), true
+	return string(latest.Value), factOperation(latest.Key), true
 }
 
 // scalarIntegerConstant reads the exact integer an operand term denotes.
