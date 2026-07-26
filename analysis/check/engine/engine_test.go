@@ -1792,6 +1792,86 @@ local elapsed = now:sub(activity)`},
 	t.Fatalf("published interface method did not reject any argument")
 }
 
+// A published method contract states its parameter types structurally. A
+// record parameter therefore names the whole record at the argument boundary,
+// including the field separators its rendering contains.
+func TestCheckWithImportsNamesRecordParameterContractAtMethodBoundary(t *testing.T) {
+	endpoint := typetable.NewRecord().Field("host", typ.String).Field("port", typ.Number).Build()
+	client := typ.NewInterface("net.Client", []typ.Method{
+		{Name: "connect", Type: typ.Func().Param("self", typ.Self).Param("opts", endpoint).Returns(typ.Number).Build()},
+	})
+	host := manifest.New("net")
+	host.SetExport(typetable.NewRecord().Field("open", typ.Func().Returns(client).Build()).Build())
+	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{
+		{Path: "opts.lua", ModulePath: "opts", Source: `
+local M = {}
+function M.build(): any end
+return M`},
+		{Path: "main.lua", ModulePath: "main", Source: `
+local net = require("net")
+local opts = require("opts")
+local client = net.open()
+local raw = opts.build()
+local code = client:connect(raw)`},
+	}, Targets: []string{"main"}, Manifests: []*manifest.Manifest{host}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	const expected = "argument 1 (raw) is any, not {host: string, port: number}"
+	for _, entry := range result.Entries {
+		for _, diagnostic := range entry.Engine.PublishedDiagnostics {
+			if diagnostic.Code != "type.call.direct.argument_type" {
+				continue
+			}
+			if diagnostic.Message != expected {
+				t.Fatalf("method argument boundary named %q, want %q", diagnostic.Message, expected)
+			}
+			return
+		}
+	}
+	t.Fatalf("published interface method did not reject any argument against its record parameter")
+}
+
+// A parameter whose declared type is a callable states its own contract
+// however that callable renders: the optional result of the callback is not
+// the parameter's optionality.
+func TestCheckWithImportsNamesCallableParameterContractWithOptionalResult(t *testing.T) {
+	callback := typ.Func().Param("item", typ.String).Returns(typ.MaterializeOptional(typ.String)).Build()
+	client := typ.NewInterface("net.Client", []typ.Method{
+		{Name: "each", Type: typ.Func().Param("self", typ.Self).Param("visit", callback).Returns(typ.Number).Build()},
+	})
+	host := manifest.New("net")
+	host.SetExport(typetable.NewRecord().Field("open", typ.Func().Returns(client).Build()).Build())
+	result, err := lint.CheckProject(context.Background(), lint.ProjectInput{Entries: []lint.Entry{
+		{Path: "opts.lua", ModulePath: "opts", Source: `
+local M = {}
+function M.build(): any end
+return M`},
+		{Path: "main.lua", ModulePath: "main", Source: `
+local net = require("net")
+local opts = require("opts")
+local client = net.open()
+local raw = opts.build()
+local code = client:each(raw)`},
+	}, Targets: []string{"main"}, Manifests: []*manifest.Manifest{host}})
+	if err != nil {
+		t.Fatalf("CheckProject: %v", err)
+	}
+	const expected = "argument 1 (raw) is any, not fun(string) -> string?"
+	for _, entry := range result.Entries {
+		for _, diagnostic := range entry.Engine.PublishedDiagnostics {
+			if diagnostic.Code != "type.call.direct.argument_type" {
+				continue
+			}
+			if diagnostic.Message != expected {
+				t.Fatalf("method argument boundary named %q, want %q", diagnostic.Message, expected)
+			}
+			return
+		}
+	}
+	t.Fatalf("published interface method did not reject any argument against its callable parameter")
+}
+
 func TestCheckWithImportsJoinsInstantiatedGenericSummaryAcrossCalls(t *testing.T) {
 	item := typ.NewTypeParam("T", nil)
 	result := typ.NewTypeParam("U", nil)

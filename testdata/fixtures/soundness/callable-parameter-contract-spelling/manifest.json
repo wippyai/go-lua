@@ -1,0 +1,5 @@
+{
+  "description": "A declared parameter's omittability is decided by the type it states, not by that type's rendering: a required callable parameter whose result is optional renders with a trailing question mark and still demands an argument, while a parameter whose own type admits nil may be omitted.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

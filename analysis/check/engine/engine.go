@@ -6536,17 +6536,17 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 			if err != nil {
 				continue
 			}
-			expected, accepts := callableParameterAt(signature, index)
+			contract, stated := callableParameterContract(signature, index)
 			capturedNil := string(captured[string(operand.Term.Encoding)]) == "scalar/nil"
 			capturedSource := captureSources[string(operand.Term.Encoding)]
 			capturedUnconditionalNil := latestUnconditionalNilWriteBefore(parentOperations, capturedSource, allocationTarget)
 			childNilWrite := latestPriorWriteIsNilOnCallPath(child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, item.Guards)
-			if !accepts || !callableParameterRejectsNil(expected) || (!capturedNil && !capturedUnconditionalNil && !childNilWrite) {
+			if !stated || !callableContractRejectsNil(contract) || (!capturedNil && !capturedUnconditionalNil && !childNilWrite) {
 				continue
 			}
 			fact := equation.Fact{
 				Key:   "type.call.direct.argument_type/" + item.Target.Name + "/" + indexedCallSubject("argument", index),
-				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))),
+				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableContractDisplay(contract))),
 			}
 			spans := diagnosticSpans(child, []equation.Fact{fact})
 			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
@@ -6676,7 +6676,7 @@ func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *
 		}
 		for _, operand := range item.Operands {
 			index, err := callArgumentIndex(operand.Role)
-			if err != nil || index >= len(function.Params) || function.Params[index].Type == nil || !callableParameterRejectsNil(function.Params[index].Type.String()) {
+			if err != nil || index >= len(function.Params) || !callableContractRejectsNil(function.Params[index].Type) {
 				continue
 			}
 			if !capturedCallResultOptionalMember(l, child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, captured, partition) {
@@ -6684,7 +6684,7 @@ func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *
 			}
 			fact := equation.Fact{
 				Key:   "type.call.direct.argument_type/" + item.Target.Name + "/" + indexedCallSubject("argument", index),
-				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(function.Params[index].Type.String()))),
+				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableContractDisplay(function.Params[index].Type))),
 			}
 			spans := diagnosticSpans(child, []equation.Fact{fact})
 			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
@@ -21562,55 +21562,16 @@ func genericCallableSignature(signature callableShape) bool {
 	return false
 }
 
-// callableParameterRequiresProof recognizes only a concrete declared
-// parameter type.  Unconstrained generic and top-like parameters impose no
-// boundary-validation obligation, so they retain the existing call behavior.
-func callableParameterRequiresProof(parameter string) bool {
-	expected := callableParameterType(parameter)
-	return expected != "" && expected != "any" && expected != "unknown"
-}
-
-// callableParameterRuntimeValidated reports whether a runtime type test already
-// certified this argument as the parameter's declared type. It consults the
-// same validator anyBoundaryValue consults for an assignment or a return: Lua's
-// type() proof decides exactly the kinds runtimeTypeProofAdmitsTarget names,
-// and the published canonical contract is the authority whenever the signature
-// carries one. The parameter spelling is the fallback for a signature that
-// publishes no canonical wire.
-func callableParameterRuntimeValidated(term []byte, signature callableShape, index int, parameter string, partition equation.Partition) bool {
-	if contract, published := callableParameterContract(signature, index); published {
-		return anyBoundaryRuntimeValidated(term, contract, partition)
-	}
-	expected := callableParameterType(parameter)
-	for _, proof := range luaRuntimeTypeProofs {
-		if proof.value == nil || typeformat.Short(proof.value) != expected {
-			continue
-		}
-		if runtimeTypeProven(term, proof.name, partition) {
-			return true
-		}
-	}
-	return false
-}
-
-func callableParameterType(parameter string) string {
-	if _, expected, found := strings.Cut(parameter, ":"); found {
-		return strings.TrimSpace(expected)
-	}
-	return strings.TrimSpace(parameter)
-}
-
-func genericConstraintRefuted(value []byte, parameter string) bool {
-	parts := strings.SplitN(parameter, ":", 2)
-	name := ""
-	if len(parts) == 2 {
-		name = strings.TrimSpace(parts[0])
-	}
-	if len(parts) != 2 || len(name) != 1 || name[0] < 'A' || name[0] > 'Z' || isUnknownScalar(value) {
+// genericConstraintRefuted proves that a bounded type parameter's record
+// constraint cannot admit this value. The constraint is read from the declared
+// contract, so its fields are the record's own members rather than a parse of
+// its rendering.
+func genericConstraintRefuted(value []byte, contract typ.Type) bool {
+	bound, generic := unwrap.Annotations(contract).(*typ.TypeParam)
+	if !generic || bound == nil || bound.Constraint == nil || isUnknownScalar(value) {
 		return false
 	}
-	constraint := strings.TrimSpace(parts[1])
-	fields, record := closedRecordConstraintFields(constraint)
+	fields, record := closedRecordConstraintFields(bound.Constraint)
 	if !record {
 		return false
 	}
@@ -21633,30 +21594,22 @@ func genericConstraintRefuted(value []byte, parameter string) bool {
 	return false
 }
 
-// closedRecordConstraintFields accepts the finite record surface emitted in a
-// callable type-parameter constraint.  It returns names only after validating
-// every field declaration, so malformed or open constraint text cannot become
-// a structural rejection authority.
-func closedRecordConstraintFields(constraint string) ([]string, bool) {
-	if len(constraint) < 3 || constraint[0] != '{' || constraint[len(constraint)-1] != '}' {
+// closedRecordConstraintFields accepts the finite record surface a callable
+// type-parameter constraint can state.  Only a closed record whose every
+// member is a required named field names a presence obligation: an open
+// record, a map component, a static-member surface and an optional field each
+// leave a member unproven, so none of them is a rejection authority.
+func closedRecordConstraintFields(constraint typ.Type) ([]string, bool) {
+	record, ok := unwrap.Alias(subst.ExpandInstantiated(constraint)).(*typ.Record)
+	if !ok || record == nil || record.Open || record.MapKey != nil || record.MapValue != nil || len(record.StaticMembers) != 0 {
 		return nil, false
 	}
-	items := strings.Split(strings.TrimSpace(constraint[1:len(constraint)-1]), ",")
-	fields := make([]string, 0, len(items))
-	seen := make(map[string]bool, len(items))
-	for _, item := range items {
-		name, fieldType, found := strings.Cut(strings.TrimSpace(item), ":")
-		name, fieldType = strings.TrimSpace(name), strings.TrimSpace(fieldType)
-		if !found || name == "" || fieldType == "" || seen[name] {
+	fields := make([]string, 0, len(record.Fields))
+	for _, field := range record.Fields {
+		if field.Name == "" || field.Type == nil || field.Optional {
 			return nil, false
 		}
-		for index, runeValue := range name {
-			if !(runeValue == '_' || runeValue >= 'a' && runeValue <= 'z' || runeValue >= 'A' && runeValue <= 'Z' || index != 0 && runeValue >= '0' && runeValue <= '9') {
-				return nil, false
-			}
-		}
-		seen[name] = true
-		fields = append(fields, name)
+		fields = append(fields, field.Name)
 	}
 	return fields, len(fields) != 0
 }
@@ -24164,33 +24117,33 @@ func positionalArgumentContract(operation equation.BoundEquation, signature call
 	if !accepts {
 		return equation.TransactionResult{}, false, true
 	}
+	contract, published := callableParameterContract(signature, index+parameterOffset)
 	// A method contract from a published receiver keeps its canonical
 	// parameter type even when the selected argument's runtime value is
 	// intentionally Top.  Reuse that existing pair of publications to
 	// reject only the proven nilability conflict; neither an annotation nor
 	// an unknown scalar is treated as evidence for this boundary.
-	if callableParameterRejectsNil(expected) && ((!hasCallee && optionalArgumentMayBeNil(term, partition)) ||
+	if published && callableContractRejectsNil(contract) && ((!hasCallee && optionalArgumentMayBeNil(term, partition)) ||
 		(declaredEntryBoundary(operation.Target.Body, partition) && optionalProviderArgumentMayBeNil(term, partition))) {
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))), true, false
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d may be nil, not %s", index+1, callableContractDisplay(contract))), true, false
 	}
 	argument, known := resolveKnownCurrentValue(term, partition)
 	// An explicit any is a published precision boundary, not a proof of a
 	// typed parameter contract.  The argument may retain a concrete shape
 	// from its allocation, but that shape crossed the boundary without
 	// validation and cannot discharge this call's declared requirement.
-	if known && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && callableParameterRequiresProof(expected) &&
-		!callableParameterRuntimeValidated(term, signature, index+parameterOffset, expected, partition) {
-		expectedType := callableParameterType(expected)
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, expectedType)), true, false
+	if known && published && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && typeRequiresBoundaryProof(contract) &&
+		!anyBoundaryRuntimeValidated(term, contract, partition) {
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, callableContractDisplay(contract))), true, false
 	}
-	if known && genericConstraintRefuted(argument, expected) {
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), strings.TrimSpace(strings.SplitN(expected, ":", 2)[1]))), true, false
+	if known && published && genericConstraintRefuted(argument, contract) {
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), callableContractDisplay(contract))), true, false
 	}
 	if !known || numericForInductionSatisfies(term, argument, expected, partition) {
 		return equation.TransactionResult{}, false, false
 	}
 	if !provenValueNotSubtype(argument, expected) {
-		if contract, published := callableParameterContract(signature, index+parameterOffset); published && !genericCallableSignature(signature) &&
+		if published && !genericCallableSignature(signature) &&
 			!refinement.ContainsFreeTypeParam(contract) && structuralArgumentWitness(argument) && valueAgainstType(argument, contract) == shapeRefuted {
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), typeformat.Short(contract))), true, false
 		}
@@ -24295,12 +24248,24 @@ func canonicalCallableFunction(signature callableShape) (*typ.Function, bool) {
 	return function, ok && function != nil
 }
 
+// callableParameterContract returns the canonical type this signature states
+// at one canonical parameter position. A variadic signature states its element
+// contract for every tail slot; the arity marker itself is never a contract.
 func callableParameterContract(signature callableShape, index int) (typ.Type, bool) {
 	function, ok := canonicalCallableFunction(signature)
-	if !ok || index < 0 || index >= len(function.Params) || function.Params[index].Type == nil {
+	if !ok || index < 0 {
 		return nil, false
 	}
-	return function.Params[index].Type, true
+	if index < len(function.Params) {
+		if function.Params[index].Type == nil {
+			return nil, false
+		}
+		return function.Params[index].Type, true
+	}
+	if function.Variadic == nil {
+		return nil, false
+	}
+	return function.Variadic, true
 }
 
 type callableTypeParam struct {
@@ -26637,7 +26602,9 @@ func methodSummaryComposable(value typ.Type, seen map[typ.Type]bool) bool {
 // typedMethodCallableSignature exposes a callable contract only from the
 // receiver's already-published canonical type witness. It is deliberately
 // transient: unlike a sealed table member, an interface member is not a new
-// runtime value that can be published into the partition.
+// runtime value that can be published into the partition. The member's
+// function type travels through the front's single callable encoding, so a
+// method contract and a value contract are the same shape.
 func typedMethodCallableSignature(receiver []byte, method string, partition equation.Partition) (callableShape, bool) {
 	if receiver == nil || method == "" {
 		return callableShape{}, false
@@ -26658,72 +26625,27 @@ func typedMethodCallableSignature(receiver []byte, method string, partition equa
 	if !ok || function == nil {
 		return callableShape{}, false
 	}
-	signature := callableShape{
-		Params:   make([]string, len(function.Params)),
-		Returns:  make([]string, len(function.Returns)),
-		Variadic: function.Variadic != nil,
-	}
-	for index, parameter := range function.Params {
-		if parameter.Type == nil {
-			return callableShape{}, false
-		}
-		signature.Params[index] = parameter.Type.String()
-		if bound, ok := unwrap.Annotations(parameter.Type).(*typ.TypeParam); ok && bound.Name != "" {
-			found := false
-			for _, existing := range signature.TypeParams {
-				found = found || existing.Name == bound.Name
-			}
-			if !found {
-				item := callableTypeParam{Name: bound.Name}
-				if bound.Constraint != nil {
-					item.Constraint = bound.Constraint.String()
-				}
-				signature.TypeParams = append(signature.TypeParams, item)
-			}
-		}
-		if !parameter.Optional && !strings.HasSuffix(signature.Params[index], "?") {
-			signature.Required++
-		}
-	}
-	for index, result := range function.Returns {
-		if result == nil {
-			return callableShape{}, false
-		}
-		signature.Returns[index] = result.String()
-	}
-	if function.Variadic != nil {
-		signature.VariadicType = function.Variadic.String()
-		if signature.VariadicType == "" {
-			return callableShape{}, false
-		}
-	}
-	for _, parameter := range function.TypeParams {
-		if parameter == nil || parameter.Name == "" {
-			return callableShape{}, false
-		}
-		duplicate := false
-		for _, existing := range signature.TypeParams {
-			duplicate = duplicate || existing.Name == parameter.Name
-		}
-		if duplicate {
-			continue
-		}
-		item := callableTypeParam{Name: parameter.Name}
-		if parameter.Constraint != nil {
-			item.Constraint = parameter.Constraint.String()
-		}
-		signature.TypeParams = append(signature.TypeParams, item)
-	}
-	return signature, true
+	return callableSignature([]byte(front.CallableValue(function)))
 }
 
-// callableParameterRejectsNil reads the closed signature spelling already
-// attached to this call. Optional parameters are normalized with a trailing
-// question mark by the type formatter; nil and top-like parameters impose no
-// non-nil proof obligation.
-func callableParameterRejectsNil(parameter string) bool {
-	expected := callableParameterType(parameter)
-	return expected != "" && expected != "any" && expected != "unknown" && expected != "nil" && !strings.HasSuffix(expected, "?")
+// callableContractRejectsNil states the non-nil obligation a declared
+// parameter contract imposes. A contract whose value set contains nil, and a
+// top-like contract, impose none.
+func callableContractRejectsNil(contract typ.Type) bool {
+	if contract == nil || typ.AbsentOrTopLike(unwrap.Alias(subst.ExpandInstantiated(contract))) {
+		return false
+	}
+	return !subtype.IsSubtype(typ.Nil, contract)
+}
+
+// callableContractDisplay renders the type an argument at a parameter position
+// must inhabit. A bounded type parameter states that requirement through its
+// constraint.
+func callableContractDisplay(contract typ.Type) string {
+	if bound, ok := unwrap.Annotations(contract).(*typ.TypeParam); ok && bound.Constraint != nil {
+		return typeformat.Short(bound.Constraint)
+	}
+	return typeformat.Short(contract)
 }
 
 // optionalArgumentMayBeNil accepts only a current published path type whose

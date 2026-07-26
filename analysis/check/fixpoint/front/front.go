@@ -29,6 +29,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -3273,7 +3274,7 @@ func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, curren
 	value := "scalar/table"
 	if instruction.Op == wir.OpClosure {
 		proto := body.Proto(instruction.Func)
-		value = functionValue(proto.Type)
+		value = CallableValue(proto.Type)
 	} else if shape, ok, err := tableShapeTerm(body, instruction); err != nil {
 		return nil, err
 	} else if ok {
@@ -3339,11 +3340,13 @@ func tableShapeTerm(body *wir.Body, instruction wir.Instruction) ([]byte, bool, 
 	return shape, ok, nil
 }
 
-// functionValue seals the callable shape into the constructor's ordinary
+// CallableValue seals the callable shape into the constructor's ordinary
 // value fact.  It is deliberately a closed transport term: apply later reads
 // that fact through the equation partition, rather than consulting WIR or
-// re-analysing source.
-func functionValue(t typ.Type) string {
+// re-analysing source.  It is the single producer of that encoding, so every
+// consumer of a callable value reads one spelling lane and one canonical
+// contract lane.
+func CallableValue(t typ.Type) string {
 	fn, ok := unwrap.Alias(t).(*typ.Function)
 	if !ok || fn == nil {
 		return "scalar/function"
@@ -3399,8 +3402,9 @@ func functionValue(t typ.Type) string {
 		}
 		// Lua's annotated optional parameter surface (T?) is callable with an
 		// omitted trailing argument even when the parser has no default-value
-		// marker on the parameter slot.
-		if !param.Optional && !strings.HasSuffix(wire.Params[index], "?") {
+		// marker on the parameter slot. The contract states that, so the
+		// declared type decides it rather than its rendering.
+		if !param.Optional && !subtype.IsSubtype(typ.Nil, param.Type) {
 			wire.Required++
 		}
 	}
@@ -3416,11 +3420,14 @@ func functionValue(t typ.Type) string {
 			return "scalar/function"
 		}
 	}
-	// Retain the existing callable shape for local apply while attaching the
-	// canonical function type for closed publication/export consumers.
-	if canonical, err := typ.EncodeCanonical(context.Background(), fn); err == nil && len(canonical) != 0 {
-		wire.Canonical = base64.RawURLEncoding.EncodeToString(canonical)
+	// The spelling fields carry display and arity; Canonical carries the
+	// structural contract every parameter decision reads. A shape without it
+	// states no contract, so it is not published as a callable at all.
+	canonical, err := typ.EncodeCanonical(context.Background(), fn)
+	if err != nil || len(canonical) == 0 {
+		return "scalar/function"
 	}
+	wire.Canonical = base64.RawURLEncoding.EncodeToString(canonical)
 	encoded, err := json.Marshal(wire)
 	if err != nil {
 		return "scalar/function"

@@ -92,6 +92,8 @@ var families = []Family{
 	{Prefix: "heap/external-callback/", Subject: Identity},
 	{Prefix: "heap/opaque-member-write/", Subject: Identity},
 	{Prefix: "heap/keys-of/", Subject: Identity},
+	{Prefix: "heap/keyed-read/", Subject: EncodedTerm},
+	{Prefix: "heap/keyed-element/", Subject: Identity},
 	{Prefix: "heap/index-presence/", Subject: Tagged, Qualifiers: []Kind{Opaque}},
 	{Prefix: "heap/key-presence/", Subject: Tagged, Qualifiers: []Kind{Opaque}},
 	{Prefix: "heap/index-revoke/", Subject: Tagged},

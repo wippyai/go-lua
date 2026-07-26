@@ -60,6 +60,33 @@ func TestQualifierNamedTermIsCarried(t *testing.T) {
 	}
 }
 
+// TestEncodedTermSubjectIsCarriedForItsBoundary pins the family whose subject
+// is a term written in encoded form. The origin of a value read at an
+// unresolved key names the term that holds it, so a boundary term read that way
+// owes its origin to the summary; a positional read of the same key sees the
+// encoding rather than the term and reaches nothing.
+func TestEncodedTermSubjectIsCarriedForItsBoundary(t *testing.T) {
+	key := heapKeyedReadPrefix + encodedTerm(2) + "/op-00000001"
+	kept := summaryKeys(lexicalSCCSummary(sccBoundary(2), equation.OutputClosure{
+		Values: []equation.Fact{{Key: key, Value: []byte("alloc-1")}},
+	}))
+	if !kept[key] {
+		t.Errorf("recursive summary dropped %q, the keyed-read origin of its own boundary term", key)
+	}
+}
+
+// TestEncodedTermSubjectKeepsForeignTermsOut pins the exclusion the same
+// declaration owes: a keyed read of a term this boundary does not own stays out.
+func TestEncodedTermSubjectKeepsForeignTermsOut(t *testing.T) {
+	key := heapKeyedReadPrefix + encodedTerm(9) + "/op-00000001"
+	kept := summaryKeys(lexicalSCCSummary(sccBoundary(2), equation.OutputClosure{
+		Values: []equation.Fact{{Key: key, Value: []byte("alloc-1")}},
+	}))
+	if kept[key] {
+		t.Errorf("recursive summary carried %q, which names no term of its boundary", key)
+	}
+}
+
 // TestSchemaKeepsForeignTermsOut pins that resolving more positions did not
 // weaken the exclusion. A term-spelled subject or qualifier naming something
 // this boundary does not own stays out, in every position.

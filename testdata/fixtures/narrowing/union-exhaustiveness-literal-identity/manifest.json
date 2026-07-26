@@ -1,0 +1,49 @@
+{
+  "description": "Union exhaustiveness compares discriminants by value. A float arm written for an integer case renders identically to it and still leaves that case unhandled, so both it and the untested case are reported missing.",
+  "packages": [
+    "channel"
+  ],
+  "check": {
+    "diagnostic_rules": [
+      {
+        "code": "lint.union.exhaustiveness",
+        "enabled": true,
+        "severity": "warning"
+      }
+    ],
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 20,
+        "column": 12,
+        "severity": "warning",
+        "code": "lint.union.exhaustiveness",
+        "message_contains": [
+          "discriminated union handling is not exhaustive",
+          "event.kind == 1",
+          "event.kind == 3"
+        ],
+        "min_evidence": 5,
+        "evidence_contains": [
+          "branch chain checks discriminant `event.kind`",
+          "possible cases: `event.kind == 1`, `event.kind == 2`, `event.kind == 3`",
+          "handled cases: `event.kind == 2`",
+          "missing cases: `event.kind == 1`, `event.kind == 3`",
+          "no default branch handles the remaining union cases"
+        ],
+        "render_contains": [
+          "warning[lint.union.exhaustiveness]",
+          "event.kind == 1",
+          "event.kind == 3",
+          "if event.kind == 1.0 then"
+        ],
+        "help_contains": [
+          "Handle each missing case"
+        ],
+        "label_contains": [
+          "union case check"
+        ]
+      }
+    ]
+  }
+}
