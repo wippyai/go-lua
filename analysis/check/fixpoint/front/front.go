@@ -188,6 +188,7 @@ type ControlDiagnostic struct {
 	Key      string
 	Code     string
 	Message  string
+	Subject  string
 	Span     wir.Span
 	Evidence []ControlDiagnosticEvidence
 	Help     string
@@ -475,7 +476,7 @@ func unresolvedReferenceDiagnostics(stmts []ast.Stmt, bindings *bind.Result, res
 		seen[key] = true
 		wireSpan := wir.Span{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}
 		out = append(out, ControlDiagnostic{
-			Key: key, Code: code, Message: message, Span: wireSpan, Help: help,
+			Key: key, Code: code, Message: message, Subject: name, Span: wireSpan, Help: help,
 			Evidence: []ControlDiagnosticEvidence{{Span: wireSpan, Kind: "abstract fact", Trust: "proven", Message: evidenceMessage(code, name)}},
 			Labels:   []ControlDiagnosticLabel{{Span: wireSpan, Message: message}},
 		})

@@ -30,7 +30,8 @@ func argumentDiagnostic(t *testing.T, result equation.TransactionResult) string 
 	if len(result.Closure.Diagnostics) != 1 {
 		t.Fatalf("expected exactly one diagnostic, got %d", len(result.Closure.Diagnostics))
 	}
-	return string(result.Closure.Diagnostics[0].Value)
+	message, _ := diagnosticMessage(result.Closure.Diagnostics[0].Value)
+	return message
 }
 
 // TestSpreadDecidesThePositionsItsListNames pins the sound half of the spread

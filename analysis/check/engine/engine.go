@@ -94,7 +94,6 @@ const contextualCallablePrefix = "contextual-callable/"
 const summaryTypePrefix = "summary-type/"
 const methodReturnSummaryPrefix = "method-return-summary/"
 const returnMemberSummaryPrefix = "return-member-summary/"
-const assignmentMapReadMissingPrefix = "assignment-map-read-missing/v1/"
 const channelPayloadPrefix = "channel-payload/"
 const iteratorElementPrefix = "iterator-element/"
 const iteratorKeyPrefix = "iterator-key/"
@@ -296,6 +295,7 @@ type PublishedDiagnostic struct {
 	Code     string
 	Span     wir.Span
 	Message  string
+	Payload  DiagnosticPayload
 	Evidence []DiagnosticEvidence
 	Labels   []DiagnosticLabel
 	Help     string
@@ -491,23 +491,18 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 			if diagnostic.Code != "type.reference.unresolved" {
 				continue
 			}
-			if name := strings.TrimPrefix(diagnostic.Message, "unknown type "); name != "" {
-				unresolvedTypes[name] = true
+			if diagnostic.Subject != "" {
+				unresolvedTypes[diagnostic.Subject] = true
 			}
 		}
 		if len(unresolvedTypes) != 0 {
 			kept := closure.Diagnostics[:0]
 			for _, diagnostic := range closure.Diagnostics {
 				if strings.HasPrefix(diagnostic.Key, "claim/unproven/") {
-					suppressed := false
-					for name := range unresolvedTypes {
-						if strings.Contains(string(diagnostic.Value), `"`+name+`"`) {
-							suppressed = true
-							break
+					if payload, ok := decodeDiagnosticPayload(diagnostic.Value); ok && payload.Kind == diagnosticClaimUnproven {
+						if name, err := strconv.Unquote(payload.Required); err == nil && unresolvedTypes[name] {
+							continue
 						}
-					}
-					if suppressed {
-						continue
 					}
 				}
 				kept = append(kept, diagnostic)
@@ -564,16 +559,22 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	// only here, never at a downstream consumer.
 	closure.Values = append(closure.Values, inferredReturnMemberSummaries(lexical, closure.Values)...)
 	outcomes, valueFacts := publishedOutcomes(closure.Outcomes, closure.Values), cloneFacts(closure.Values)
+	publicDiagnostics := publicDiagnosticFacts(closure.Diagnostics)
+	for index := range published {
+		if published[index].Payload.Kind != "" {
+			published[index].Fact.Value = []byte(published[index].Message)
+		}
+	}
 	// The escape summary is computed last and reads only its own evaluated
 	// outcomes, so it observes the finalized module closure without altering any
 	// field already projected above.
 	functionEscapes, allocatedReturns, functionReturnTuples := lexical.escapeSummaryForExport(compilation.Body, closure)
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
-		Outcomes: outcomes, Diagnostics: closure.Diagnostics,
+		Outcomes: outcomes, Diagnostics: publicDiagnostics,
 		ReturnCandidates:         cloneFacts(closure.Outcomes),
 		ValueFacts:               valueFacts,
-		Native:                   publishedNativeFactsForCompilation(compilation, valueFacts, outcomes, closure.Diagnostics),
+		Native:                   publishedNativeFactsForCompilation(compilation, valueFacts, outcomes, publicDiagnostics),
 		PublishedDiagnostics:     published,
 		PolicyDiagnostics:        publishedPolicyDiagnostics(compilation.PolicyDiagnostics),
 		DiagnosticSpans:          diagnosticSpans,
@@ -887,8 +888,9 @@ func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics 
 		// claimKernel has already selected a closed, refuted member for this
 		// fact. Reuse that semantic suffix solely to recover its WIR source
 		// coordinate; a suffix absent from the exact constructor has no span.
+		payload, structured := decodeDiagnosticPayload(diagnostic.Value)
 		for suffix, span := range members {
-			if strings.Contains(string(diagnostic.Value), suffix+" because") {
+			if structured && strings.HasSuffix(payload.Source, suffix) {
 				spans[diagnostic.Key] = span
 				break
 			}
@@ -1006,7 +1008,8 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 	}
 	out := make([]PublishedDiagnostic, 0, len(closure.Diagnostics))
 	for _, fact := range closure.Diagnostics {
-		item := PublishedDiagnostic{Fact: cloneFact(fact), Code: diagnosticCode(fact.Key), Span: spans[fact.Key], Message: string(fact.Value)}
+		message, payload := diagnosticMessage(fact.Value)
+		item := PublishedDiagnostic{Fact: cloneFact(fact), Code: diagnosticCode(fact.Key), Span: spans[fact.Key], Message: message, Payload: payload}
 		key := fact.Key
 		if inner, ok := childDiagnosticKey(fact.Key); ok {
 			item.Code = diagnosticCode(inner)
@@ -1133,11 +1136,8 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		for _, operand := range operation.Operands {
 			methodSelector = methodSelector || operand.Role == "source-method-selector"
 		}
-		mapReadMissing := strings.HasPrefix(item.Message, assignmentMapReadMissingPrefix)
-		if mapReadMissing {
-			item.Message = strings.TrimPrefix(item.Message, assignmentMapReadMissingPrefix)
-		}
-		mayBeNil := strings.HasSuffix(item.Message, " because it may be nil") || (methodSelector && diagnosticValueMayBeNil(value))
+		mapReadMissing := item.Payload.Flags&DiagnosticMapReadMissing != 0
+		mayBeNil := item.Payload.Flags&DiagnosticMayBeNil != 0 || (methodSelector && diagnosticValueMayBeNil(value))
 		if mayBeNil {
 			targetSpan := claimTargetSpans[name]
 			if !targetSpan.Valid() {
@@ -1188,10 +1188,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		valueDescription := assignmentEvidenceValue(value)
 		memberSurface, hasMemberSurface := assignmentMemberSurface(name, closure.Values)
 		if hasMemberSurface {
-			if actual, expected, ok := assignmentDiagnosticFunctionTypes(item.Message); ok {
-				valueDescription, declared = actual, expected
-				if source, ok := assignmentDiagnosticSource(item.Message); ok {
-					sourceDisplay = source
+			if item.Payload.Kind == diagnosticAssignmentMismatch && strings.HasPrefix(item.Payload.Observed, "fun() -> ") && strings.HasPrefix(item.Payload.Required, "fun() -> ") {
+				valueDescription, declared = item.Payload.Observed, item.Payload.Required
+				if item.Payload.Source != "" {
+					sourceDisplay = item.Payload.Source
 				}
 			} else {
 				valueDescription = "fun() -> " + assignmentEvidenceValue(memberSurface)
@@ -1588,7 +1588,7 @@ func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation
 	// A boundary refutation states a missing proof, not an observed value. Its
 	// evidence names the unvalidated source rather than a literal the body
 	// never established.
-	if strings.Contains(item.Message, "comes from any/unknown") {
+	if item.Payload.Flags&DiagnosticAnyBoundary != 0 {
 		item.Evidence = []DiagnosticEvidence{
 			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type any", subject)},
 			{Span: declaredSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s must satisfy declared return type %s", contractSubject, declared)},
@@ -1603,8 +1603,8 @@ func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation
 		item.Help = returnContractHelp
 		return item
 	}
-	valueEvidence := fmt.Sprintf("%s has literal value %s", subject, returnContractObservedValue(item.Message, subject))
-	if strings.Contains(item.Message, " may be nil, not ") {
+	valueEvidence := fmt.Sprintf("%s has literal value %s", subject, item.Payload.Observed)
+	if item.Payload.Flags&DiagnosticMayBeNil != 0 {
 		valueEvidence = fmt.Sprintf("%s can be nil here", subject)
 	}
 	item.Evidence = []DiagnosticEvidence{
@@ -1647,21 +1647,6 @@ func recordFieldType(target typ.Type, suffix string) (typ.Type, bool) {
 		}
 	}
 	return nil, false
-}
-
-// returnContractObservedValue recovers the observed value the publication
-// transaction already reported. The message is that transaction's own closed
-// rendering, so no value is re-derived here.
-func returnContractObservedValue(message, subject string) string {
-	rest, ok := strings.CutPrefix(message, subject+" is ")
-	if !ok {
-		return ""
-	}
-	cut := strings.LastIndex(rest, ", not ")
-	if cut < 0 {
-		return rest
-	}
-	return rest[:cut]
 }
 
 // enrichOptionalWriteTargetDiagnostic narrates the container proof that
@@ -1726,12 +1711,8 @@ func enrichFunctionContractWriteDiagnostic(item PublishedDiagnostic, operation e
 	}
 	actual := assignmentEvidenceValue(value)
 	display := string(operands["display"])
-	_, suffix, found := strings.Cut(item.Message, " because assigned value is ")
-	if !found {
-		return item
-	}
-	_, declared, found := strings.Cut(suffix, ", not ")
-	if !found || declared == "" {
+	declared := item.Payload.Required
+	if item.Payload.Kind != diagnosticFunctionWriteMismatch || declared == "" {
 		return item
 	}
 	if !targetSpan.Valid() {
@@ -1987,24 +1968,6 @@ func assignmentMemberSurface(operation string, facts []equation.Fact) ([]byte, b
 	return nil, false
 }
 
-func assignmentDiagnosticFunctionTypes(message string) (actual, expected string, ok bool) {
-	_, tail, found := strings.Cut(message, " because it is ")
-	if !found {
-		return "", "", false
-	}
-	actual, expected, found = strings.Cut(tail, ", not ")
-	return actual, expected, found && strings.HasPrefix(actual, "fun() -> ") && strings.HasPrefix(expected, "fun() -> ")
-}
-
-func assignmentDiagnosticSource(message string) (string, bool) {
-	prefix := "cannot assign "
-	if !strings.HasPrefix(message, prefix) {
-		return "", false
-	}
-	source, _, found := strings.Cut(strings.TrimPrefix(message, prefix), " because it is ")
-	return source, found && source != ""
-}
-
 func enrichMissingStaticPathDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
 	operands, err := artifactOperandsByRole(operation.Operands, "source-display")
 	if err != nil {
@@ -2018,11 +1981,10 @@ func enrichMissingStaticPathDiagnostic(item PublishedDiagnostic, operation equat
 	if source == "" || member == "" {
 		return item
 	}
-	separator := strings.Index(item.Message, " has no member ")
-	if separator < 0 {
+	receiver := item.Payload.Observed
+	if item.Payload.Kind != diagnosticMemberMissing || receiver == "" {
 		return item
 	}
-	receiver := item.Message[:separator]
 	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s reads member %q from receiver type %s", source, member, receiver)}}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "member read"}}
 	item.Help = fmt.Sprintf("Narrow the receiver before reading `%s`, or add `%s` to every reachable receiver shape.", member, member)
@@ -2174,10 +2136,7 @@ func enrichMissingMemberDiagnostic(item PublishedDiagnostic, operation equation.
 		}
 	}
 	if receiverText == "" {
-		const marker = " has no member "
-		if cut := strings.Index(item.Message, marker); cut > 0 {
-			receiverText = item.Message[:cut]
-		}
+		receiverText = item.Payload.Observed
 	}
 	if receiverText == "" {
 		return item
@@ -2228,12 +2187,11 @@ func enrichMissingMemberCallDiagnostic(item PublishedDiagnostic, operation equat
 			method, _ = callMethodName(operand.Term.Encoding)
 		}
 	}
-	const marker = " has no member "
-	cut := strings.Index(item.Message, marker)
-	if receiver == "" || method == "" || cut <= 0 {
+	receiverType := item.Payload.Observed
+	if item.Payload.Kind != diagnosticMemberMissing || receiver == "" || method == "" || receiverType == "" {
 		return item
 	}
-	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s.%s has receiver type %s", receiver, method, item.Message[:cut])}}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s.%s has receiver type %s", receiver, method, receiverType)}}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "member call"}}
 	item.Help = fmt.Sprintf("Narrow the receiver before reading `%s`, or add `%s` to every reachable receiver shape.", method, method)
 	return item
@@ -2273,11 +2231,9 @@ func isResourceTypestateDiagnostic(key string) bool {
 
 func enrichChannelLifecycleDiagnostic(item PublishedDiagnostic) PublishedDiagnostic {
 	inner, _ := childDiagnosticKey(item.Fact.Key)
-	display := "channel"
-	if start := strings.LastIndex(item.Message, "`"); start >= 0 {
-		if end := strings.LastIndex(item.Message[:start], "`"); end >= 0 && end+1 < start {
-			display = item.Message[end+1 : start]
-		}
+	display := item.Payload.Source
+	if item.Payload.Kind != diagnosticChannelLifecycle || display == "" {
+		return item
 	}
 	if strings.HasPrefix(inner, "channel.send.closed/") {
 		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "this send call runs after `" + display + "` is proven closed"}}
@@ -2295,7 +2251,7 @@ func enrichResourceTypestateDiagnostic(item PublishedDiagnostic) PublishedDiagno
 	inner, _ := childDiagnosticKey(item.Fact.Key)
 	transition := strings.HasPrefix(inner, "typestate.invalid_transition/")
 	unproven := strings.HasPrefix(inner, "typestate.unproven_requirement/")
-	resource, expected, found := typestateDiagnosticParts(item.Message)
+	resource, expected, found := item.Payload.Source, item.Payload.Required, item.Payload.Observed
 	if resource == "" || expected == "" || (!unproven && found == "") {
 		return item
 	}
@@ -2317,44 +2273,10 @@ func enrichResourceTypestateDiagnostic(item PublishedDiagnostic) PublishedDiagno
 	return item
 }
 
-func typestateDiagnosticParts(message string) (resource, expected, found string) {
-	resourceStart := strings.Index(message, "resource `")
-	if resourceStart < 0 {
-		return "", "", ""
-	}
-	rest := message[resourceStart+len("resource `"):]
-	end := strings.IndexByte(rest, '`')
-	if end < 0 {
-		return "", "", ""
-	}
-	resource = rest[:end]
-	for _, part := range []struct {
-		prefix      string
-		destination *string
-	}{{"expected `", &expected}, {"found `", &found}} {
-		start := strings.Index(message, part.prefix)
-		if start < 0 {
-			if part.prefix == "found `" {
-				continue
-			}
-			return "", "", ""
-		}
-		value := message[start+len(part.prefix):]
-		end := strings.IndexByte(value, '`')
-		if end < 0 {
-			return "", "", ""
-		}
-		*part.destination = value[:end]
-	}
-	return resource, expected, found
-}
-
 func enrichUnreleasedLifecycleDiagnostic(item PublishedDiagnostic, transition []DiagnosticEvidence) PublishedDiagnostic {
-	display := "resource"
-	if start := strings.Index(item.Message, "`"); start >= 0 {
-		if end := strings.Index(item.Message[start+1:], "`"); end >= 0 {
-			display = item.Message[start+1 : start+1+end]
-		}
+	display := item.Payload.Source
+	if item.Payload.Kind != diagnosticResourceUnreleased || display == "" {
+		return item
 	}
 	item.Evidence = []DiagnosticEvidence{
 		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "this call acquires `" + display + "` as connection:`open` and requires `closed` before local ownership ends"},
@@ -2482,11 +2404,10 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 	case "argument_type":
 		return enrichCallArgumentDiagnostic(item, callee, subject, operands, values)
 	case "too_few_args", "too_many_args":
-		count, expected, got, ok := callArityMessage(item.Message)
-		if !ok {
+		if item.Payload.Kind != diagnosticCallArity {
 			return item
 		}
-		_ = count
+		expected, got := item.Payload.Expected, item.Payload.Actual
 		item.Evidence = []DiagnosticEvidence{
 			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("call to %s passes %d argument%s", callee, got, plural(got))},
 			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s declares %d parameter%s", callee, expected, plural(expected))},
@@ -2498,7 +2419,10 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 			item.Help = "Remove the extra arguments, or change the callee signature if they are valid."
 		}
 	case "not_callable":
-		if item.Message == fmt.Sprintf("cannot call %s because it may be nil", callee) {
+		if item.Payload.Kind != diagnosticCallNotCallable {
+			return item
+		}
+		if item.Payload.Flags&DiagnosticMayBeNil != 0 {
 			item.Evidence = []DiagnosticEvidence{
 				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has a callable type, but may also be nil", callee)},
 				{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no guard on this path proves %s is non-nil before this call", callee)},
@@ -2507,12 +2431,8 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 			item.Help = fmt.Sprintf("Guard `%s` with a nil check before calling it.", callee)
 			return item
 		}
-		value, found := strings.CutSuffix(item.Message, ", not callable")
-		if !found {
-			return item
-		}
-		_, value, found = strings.Cut(value, " is ")
-		if !found {
+		value := item.Payload.Observed
+		if value == "" {
 			return item
 		}
 		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", callee, value)}}
@@ -2605,28 +2525,24 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 	if !ok {
 		return item
 	}
-	message := item.Message
-	if conflict, refuted := genericBindingConflictMessage(message); refuted {
+	if conflict := item.Payload.Conflict; item.Payload.Kind == diagnosticCallGenericConflict && conflict != nil {
 		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", conflict.demandedAt, conflict.demanded)},
-			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d%s states %s at both members", callee, argumentIndex, suffix, conflict.parameter)},
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s already binds %s to %s", conflict.boundAt, conflict.parameter, conflict.bound)},
-			{Span: item.Span, Kind: "missing proof", Trust: "refuted", Message: fmt.Sprintf("no binding of %s satisfies both members", conflict.parameter)},
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", conflict.DemandedAt, conflict.Demanded)},
+			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d%s states %s at both members", callee, argumentIndex, suffix, conflict.Parameter)},
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s already binds %s to %s", conflict.BoundAt, conflict.Parameter, conflict.Bound)},
+			{Span: item.Span, Kind: "missing proof", Trust: "refuted", Message: fmt.Sprintf("no binding of %s satisfies both members", conflict.Parameter)},
 		}
-		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "conflicting " + conflict.parameter + " binding"}}
-		item.Help = fmt.Sprintf("Pass members that agree on %s, or split the call so each %s binding has its own call site.", conflict.parameter, conflict.parameter)
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "conflicting " + conflict.Parameter + " binding"}}
+		item.Help = fmt.Sprintf("Pass members that agree on %s, or split the call so each %s binding has its own call site.", conflict.Parameter, conflict.Parameter)
 		return item
 	}
-	value, expected, nilable := "", "", false
-	if before, after, found := strings.Cut(message, " may be nil, not "); found && before == fmt.Sprintf("argument %d%s", argumentIndex, suffix) && after != "" {
-		value, expected, nilable = "may be nil", after, true
-	} else {
-		start := strings.Index(message, " is ")
-		end := strings.LastIndex(message, ", not ")
-		if start < 0 || end <= start+4 {
-			return item
-		}
-		value, expected = message[start+4:end], message[end+6:]
+	if item.Payload.Kind != diagnosticCallArgument {
+		return item
+	}
+	value, expected := item.Payload.Observed, item.Payload.Required
+	nilable := item.Payload.Flags&DiagnosticMayBeNil != 0
+	if nilable {
+		value = "may be nil"
 	}
 	argument := fmt.Sprintf("argument %d", argumentIndex) + suffix
 	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
@@ -2700,42 +2616,6 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 	return item
 }
 
-// genericBindingConflictParts names the two demands a refuted instantiation
-// published. The message is the fact, exactly as the arity and argument
-// messages are, so the surface reads the demands back from it rather than
-// carrying them on a second channel.
-type genericBindingConflictParts struct {
-	parameter  string
-	bound      string
-	boundAt    string
-	demanded   string
-	demandedAt string
-}
-
-func genericBindingConflictMessage(message string) (genericBindingConflictParts, bool) {
-	demandedPart, boundPart, split := strings.Cut(message, ", but ")
-	if !split {
-		return genericBindingConflictParts{}, false
-	}
-	demandedAt, demandedRest, stated := strings.Cut(demandedPart, " requires ")
-	if !stated {
-		return genericBindingConflictParts{}, false
-	}
-	parameter, demanded, named := strings.Cut(demandedRest, " to be ")
-	if !named {
-		return genericBindingConflictParts{}, false
-	}
-	boundAt, boundRest, restated := strings.Cut(boundPart, " requires ")
-	if !restated {
-		return genericBindingConflictParts{}, false
-	}
-	boundParameter, bound, rebound := strings.Cut(boundRest, " to be ")
-	if !rebound || boundParameter != parameter || parameter == "" || demanded == "" || bound == "" {
-		return genericBindingConflictParts{}, false
-	}
-	return genericBindingConflictParts{parameter: parameter, bound: bound, boundAt: boundAt, demanded: demanded, demandedAt: demandedAt}, true
-}
-
 func directCallDiagnosticParts(key string) (code, operation, subject string, ok bool) {
 	const prefix = "type.call.direct."
 	if !strings.HasPrefix(key, prefix) {
@@ -2767,17 +2647,6 @@ func callArgumentSubject(subject string) (int, string, bool) {
 		suffix = "." + suffix
 	}
 	return index + 1, suffix, true
-}
-
-func callArityMessage(message string) (callee string, expected, got int, ok bool) {
-	before, after, found := strings.Cut(message, " expects ")
-	if !found {
-		return "", 0, 0, false
-	}
-	if _, err := fmt.Sscanf(after, "%d arguments, got %d", &expected, &got); err != nil {
-		return "", 0, 0, false
-	}
-	return before, expected, got, true
 }
 
 func callDiagnosticValueIsLiteral(value string) bool {
@@ -6544,10 +6413,9 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 			if !stated || !callableContractRejectsNil(contract) || (!capturedNil && !capturedUnconditionalNil && !childNilWrite) {
 				continue
 			}
-			fact := equation.Fact{
-				Key:   "type.call.direct.argument_type/" + item.Target.Name + "/" + indexedCallSubject("argument", index),
-				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableContractDisplay(contract))),
-			}
+			fact := diagnosticFact("type.call.direct.argument_type/"+item.Target.Name+"/"+indexedCallSubject("argument", index), DiagnosticPayload{
+				Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Required: callableContractDisplay(contract), Flags: DiagnosticMayBeNil,
+			})
 			spans := diagnosticSpans(child, []equation.Fact{fact})
 			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + published.Fact.Key
@@ -6682,10 +6550,9 @@ func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *
 			if !capturedCallResultOptionalMember(l, child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, captured, partition) {
 				continue
 			}
-			fact := equation.Fact{
-				Key:   "type.call.direct.argument_type/" + item.Target.Name + "/" + indexedCallSubject("argument", index),
-				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableContractDisplay(function.Params[index].Type))),
-			}
+			fact := diagnosticFact("type.call.direct.argument_type/"+item.Target.Name+"/"+indexedCallSubject("argument", index), DiagnosticPayload{
+				Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Required: callableContractDisplay(function.Params[index].Type), Flags: DiagnosticMayBeNil,
+			})
 			spans := diagnosticSpans(child, []equation.Fact{fact})
 			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + published.Fact.Key
@@ -9105,7 +8972,7 @@ func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equati
 				}
 			}
 			shapeTarget, _ := artifactOperand(claim.Operands, "shape-target")
-			fact := equation.Fact{Key: "type.assignment/" + claim.Target.Name, Value: []byte(assignmentAnyMismatchMessage(display, string(targetType), shapeTarget))}
+			fact := diagnosticFact("type.assignment/"+claim.Target.Name, assignmentAnyMismatchPayload(display, string(targetType), shapeTarget))
 			spans := diagnosticSpans(child, []equation.Fact{fact})
 			for _, item := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + item.Fact.Key
@@ -9497,7 +9364,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		// engine accepts.
 		if (isExplicitAnyValue(value) || sourceHasAnyBoundary(arguments[index], partition.Values()) || declaredExplicitAny(arguments[index], partition)) && typeRequiresBoundaryProof(declared) &&
 			!anyBoundaryRuntimeValidated(arguments[index], declared, partition) {
-			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, typeformat.Short(declared))), nil
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: "any", Required: typeformat.Short(declared)}), nil
 		}
 		value = validatedBoundaryValue(arguments[index], value, partition)
 		term := boundaryTerm(parameter.Symbol)
@@ -9890,7 +9757,9 @@ func restateDeclaredFalseEdgeNil(claims map[string]declaredNilAssignmentWitness,
 		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + witness.source + "/" + witness.predecessor, Value: joined})
 		for index := range closure.Diagnostics {
 			if closure.Diagnostics[index].Key == key {
-				closure.Diagnostics[index].Value = []byte("cannot assign " + witness.display + " because it may be nil")
+				closure.Diagnostics[index] = diagnosticFact(key, DiagnosticPayload{
+					Kind: diagnosticAssignmentMismatch, Source: witness.display, Flags: DiagnosticMayBeNil,
+				})
 			}
 		}
 	}
@@ -10698,7 +10567,7 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 			transported[item.Fact.Key] = true
 			continue
 		}
-		l.childPublished["child/"+body+"/"+item.Fact.Key] = PublishedDiagnostic{Fact: equation.Fact{Key: "child/" + body + "/" + item.Fact.Key, Value: append([]byte(nil), item.Fact.Value...)}, Code: item.Code, Span: item.Span, Message: item.Message, Evidence: append([]DiagnosticEvidence(nil), item.Evidence...), Labels: append([]DiagnosticLabel(nil), item.Labels...), Help: item.Help}
+		l.childPublished["child/"+body+"/"+item.Fact.Key] = PublishedDiagnostic{Fact: equation.Fact{Key: "child/" + body + "/" + item.Fact.Key, Value: append([]byte(nil), item.Fact.Value...)}, Code: item.Code, Span: item.Span, Message: item.Message, Payload: item.Payload, Evidence: append([]DiagnosticEvidence(nil), item.Evidence...), Labels: append([]DiagnosticLabel(nil), item.Labels...), Help: item.Help}
 	}
 	for _, diagnostic := range closure.Diagnostics {
 		if !childCallDiagnostic(diagnostic) {
@@ -10778,12 +10647,10 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 	if !span.Valid() {
 		return PublishedDiagnostic{}, false
 	}
-	start := strings.Index(item.Message, " is ")
-	end := strings.LastIndex(item.Message, ", not ")
-	if start < 0 || end <= start+4 {
+	if item.Payload.Kind != diagnosticCallArgument || item.Payload.Observed == "" || item.Payload.Required == "" {
 		return PublishedDiagnostic{}, false
 	}
-	value, expected := item.Message[start+4:end], item.Message[end+6:]
+	value, expected := item.Payload.Observed, item.Payload.Required
 	innerArgument := fmt.Sprintf("argument %d", childArgument)
 	if formalName := child.Boundary.Parameters[formal].Name; formalName != "" {
 		innerArgument += " (" + formalName + ")"
@@ -10816,11 +10683,13 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 			Help:   fmt.Sprintf("Validate or narrow `%s` before passing it; any/unknown values do not prove parameter contracts.", display),
 		}, true
 	}
+	payload := DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", outerArgument), Observed: value, Required: expected}
 	return PublishedDiagnostic{
-		Fact:    equation.Fact{Key: key, Value: []byte(fmt.Sprintf("argument %d is %s, not %s", outerArgument, value, expected))},
+		Fact:    diagnosticFact(key, payload),
 		Code:    "type.call.direct.argument_type",
 		Span:    span,
-		Message: fmt.Sprintf("argument %d is %s, not %s", outerArgument, value, expected),
+		Message: renderDiagnosticPayload(payload),
+		Payload: payload,
 		Evidence: []DiagnosticEvidence{
 			{Span: span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", innerArgument, value)},
 			{Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("inside %s, %s is passed to %s parameter %d, which requires %s", callerOperands.display, innerArgument, callee, childArgument, expected)},
@@ -11548,6 +11417,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				Code:     item.Code,
 				Span:     item.Span,
 				Message:  item.Message,
+				Payload:  item.Payload,
 				Evidence: append([]DiagnosticEvidence(nil), item.Evidence...),
 				Labels:   append([]DiagnosticLabel(nil), item.Labels...),
 				Help:     item.Help,
@@ -12066,13 +11936,8 @@ func enrichChildSelectDiagnostic(item PublishedDiagnostic, child front.Compilati
 			display = string(operand.Term.Encoding)
 		}
 	}
-	const prefix = " because it is "
-	_, after, ok := strings.Cut(item.Message, prefix)
-	if !ok {
-		return item
-	}
-	valueType, _, ok := strings.Cut(after, ", not ")
-	if !ok {
+	valueType := item.Payload.Observed
+	if item.Payload.Kind != diagnosticAssignmentMismatch || valueType == "" {
 		return item
 	}
 	declared := claimDeclaredDisplay(operation, nil)
@@ -12167,11 +12032,13 @@ func resourceUnreleasedDiagnostics(child front.Compilation, closure equation.Out
 		}
 		acquire := strings.TrimPrefix(string(identity), "scalar/resource/")
 		display := resourceDisplay(child, acquire)
-		message := fmt.Sprintf("resource `%s` remains in connection state `open` at function exit; expected `closed`", display)
+		flags := DiagnosticFlags(0)
 		if childHasResourceClose(child) {
-			message = fmt.Sprintf("resource `%s` remains in a non-final connection state at function exit; expected `closed`", display)
+			flags |= DiagnosticHasTransition
 		}
-		diagnostics = append(diagnostics, equation.Fact{Key: "effect.lifecycle.unreleased/" + acquire, Value: []byte(message)})
+		diagnostics = append(diagnostics, diagnosticFact("effect.lifecycle.unreleased/"+acquire, DiagnosticPayload{
+			Kind: diagnosticResourceUnreleased, Source: display, Flags: flags,
+		}))
 	}
 	return diagnostics
 }
@@ -12329,7 +12196,9 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if _, _, member := tableAddress(operands["value"]); member {
 			for _, operand := range operation.Operands {
 				if operand.Role == "source-display" {
-					diagnostics = append(diagnostics, equation.Fact{Key: "type.member.missing/" + operation.Target.Name, Value: []byte(memberMissingMessage(string(operand.Value), value))})
+					if payload, ok := memberMissingDiagnosticPayload(string(operand.Value), value); ok {
+						diagnostics = append(diagnostics, diagnosticFact("type.member.missing/"+operation.Target.Name, payload))
+					}
 					break
 				}
 			}
@@ -14470,10 +14339,9 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	// contract only with a concrete non-callable value; opaque callables and
 	// unknown values remain unreported rather than being treated as proof.
 	if existing, found := declaredTypeForTerm(operands["target"], partition); found && functionContractWriteRefuted(value, existing) {
-		result.Closure.Diagnostics = append(result.Closure.Diagnostics, equation.Fact{
-			Key:   "type.assignment/" + operation.Target.Name,
-			Value: []byte(fmt.Sprintf("cannot assign %s because assigned value is %s, not %s", operands["display"], assignmentEvidenceValue(value), functionContractDisplay(existing))),
-		})
+		result.Closure.Diagnostics = append(result.Closure.Diagnostics, diagnosticFact("type.assignment/"+operation.Target.Name, DiagnosticPayload{
+			Kind: diagnosticFunctionWriteMismatch, Source: string(operands["display"]), Observed: assignmentEvidenceValue(value), Required: functionContractDisplay(existing),
+		}))
 		result.Closure.Values = append(result.Closure.Values, equation.Fact{Key: "assignment-function-contract/" + operation.Target.Name, Value: []byte("refuted")})
 	}
 	if len(declaredContract) != 0 {
@@ -15673,10 +15541,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	mapReadMissing := declaredOptionalMapReadMissingSlot(source, partition)
 	if kind == "claim-kind/3" && available && memberMissing(value) {
-		closure.Diagnostics = []equation.Fact{{
-			Key:   "type.member.missing/" + operation.Target.Name,
-			Value: []byte(memberMissingMessage(sourceDisplay, value)),
-		}}
+		if payload, ok := memberMissingDiagnosticPayload(sourceDisplay, value); ok {
+			closure.Diagnostics = []equation.Fact{diagnosticFact("type.member.missing/"+operation.Target.Name, payload)}
+		}
 		// A declaration without an initializer reads its own Lua nil slot. That
 		// slot establishes the declared local's downstream contract; it is not an
 		// assignment of nil to the declaration type. An initializer the front
@@ -15688,7 +15555,8 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// reports the fixed point the carrier reaches, so an intermediate
 		// iterate never names itself in a message that describes the loop.
 		reported := reportedRecurrentValue(value, boundOperandRoles(operation.Operands))
-		message := assignmentMismatchMessage(sourceDisplay, reported, targetType)
+		payload := assignmentMismatchPayload(sourceDisplay, reported, targetType)
+		message := renderDiagnosticPayload(payload)
 		optionalSource := optionalAssignmentSource(value, targetType) || closedLiteralDeclaredOptionalMemberSource(source, value, shapeTarget, partition) || publishedOptionalAssignmentWitness(source, shapeTarget, partition)
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
 			actual := assignmentValueType(reported)
@@ -15704,7 +15572,8 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			if literal, found := literalDiagnosticValue(source, partition); found {
 				actual = assignmentEvidenceValue(reportedRecurrentValue(literal, boundOperandRoles(operation.Operands)))
 			}
-			message = "cannot assign " + sourceDisplay + " because it is " + actual + ", not " + declared
+			payload = DiagnosticPayload{Kind: diagnosticAssignmentMismatch, Source: sourceDisplay, Observed: actual, Required: declared}
+			message = renderDiagnosticPayload(payload)
 		}
 		for _, operand := range operation.Operands {
 			if operand.Role != "shape-target" {
@@ -15712,45 +15581,55 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			}
 			if declared, ok := shapefact.DecodeTarget(operand.Value); ok {
 				if mismatch, found := firstAssignmentMismatch(value, declared); found {
-					message = "cannot assign " + sourceDisplay + mismatch.Suffix + " because it is " + assignmentEvidenceValue(mismatch.Value) + ", not " + typeformat.Short(mismatch.Expected)
+					payload = DiagnosticPayload{Kind: diagnosticAssignmentMismatch, Source: sourceDisplay + mismatch.Suffix, Observed: assignmentEvidenceValue(mismatch.Value), Required: typeformat.Short(mismatch.Expected)}
+					message = renderDiagnosticPayload(payload)
 				} else if field, _, found := missingRequiredField(value, declared); found {
+					payload = DiagnosticPayload{}
 					message = fmt.Sprintf("object literal is missing required field %q", field)
 				}
 			}
 			break
 		}
 		if anySource {
-			message = assignmentAnyMismatchMessage(sourceDisplay, targetType, shapeTarget)
+			payload = assignmentAnyMismatchPayload(sourceDisplay, targetType, shapeTarget)
+			message = renderDiagnosticPayload(payload)
 			if len(boundaryShape) != 0 {
 				if declared, decoded := shapefact.DecodeTarget(shapeTarget); decoded && declared != nil && valueAgainstType(boundaryShape, declared) == shapeRefuted {
-					message = "cannot assign " + sourceDisplay + " because it is " + boundaryShapeEvidenceValue(boundaryShape) + ", not " + typeformat.Short(declared)
+					payload = DiagnosticPayload{Kind: diagnosticAssignmentMismatch, Source: sourceDisplay, Observed: boundaryShapeEvidenceValue(boundaryShape), Required: typeformat.Short(declared), Flags: DiagnosticAnyBoundary}
+					message = renderDiagnosticPayload(payload)
 				}
 			}
 		} else if memberSurface != nil {
 			if _, ok := lexicalMemberCallableDisplay(lexical, operation); ok {
-				message = "cannot assign " + sourceDisplay + " because it is fun() -> " + assignmentEvidenceValue(memberSurface) + ", not " + callableClaimDisplay(lexical, operation)
+				payload = DiagnosticPayload{Kind: diagnosticAssignmentMismatch, Source: sourceDisplay, Observed: "fun() -> " + assignmentEvidenceValue(memberSurface), Required: callableClaimDisplay(lexical, operation)}
+				message = renderDiagnosticPayload(payload)
 			}
 		}
 		if optionalSource {
+			payload = DiagnosticPayload{Kind: diagnosticAssignmentMismatch, Source: sourceDisplay, Observed: "nil", Required: payload.Required, Flags: DiagnosticMayBeNil}
 			message = "cannot assign " + sourceDisplay + " because it may be nil"
 		}
 		if !anySource && optionalAssignmentWitness(source, value, shapeTarget, partition) {
+			payload = DiagnosticPayload{Kind: diagnosticAssignmentMismatch, Source: sourceDisplay, Observed: "nil", Required: payload.Required, Flags: DiagnosticMayBeNil}
 			message = "cannot assign " + sourceDisplay + " because it may be nil"
 		}
 		if mapReadMissing {
-			message = assignmentMapReadMissingPrefix + message
+			payload.Flags |= DiagnosticMapReadMissing
 		}
-		closure.Diagnostics = []equation.Fact{{
-			Key:   "type.assignment/" + operation.Target.Name,
-			Value: []byte(message),
-		}}
+		if payload.Kind != "" {
+			closure.Diagnostics = []equation.Fact{diagnosticFact("type.assignment/"+operation.Target.Name, payload)}
+		} else {
+			closure.Diagnostics = []equation.Fact{{Key: "type.assignment/" + operation.Target.Name, Value: []byte(message)}}
+		}
 		if memberSurface != nil {
 			closure.Values = append(closure.Values, equation.Fact{Key: "assignment-member-surface/" + operation.Target.Name, Value: memberSurface})
 		}
 	} else if (!isUnknownScalar(value) || !importedResultPath(string(source), imported) || targetType != "claim-type/\"string\"") && !claimTypeIsAny(targetType) && !callableRecordShape && !declarationSlotDefaultValue(kind, targetType, target, source, value) && !guardedLocalCallResultClaim(lexical, operation, source) {
 		// The closure keys facts by identity, so separate unproven claims must
 		// retain their operation identity.
-		closure.Diagnostics = []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}}
+		closure.Diagnostics = []equation.Fact{diagnosticFact("claim/unproven/"+operation.Target.Name, DiagnosticPayload{
+			Kind: diagnosticClaimUnproven, Required: strings.TrimPrefix(targetType, "claim-type/"),
+		})}
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
 }
@@ -17129,14 +17008,18 @@ func assignmentTargetRequiresProof(targetType string) bool {
 }
 
 func assignmentAnyMismatchMessage(source string, targetType string, shapeTarget []byte) string {
+	return renderDiagnosticPayload(assignmentAnyMismatchPayload(source, targetType, shapeTarget))
+}
+
+func assignmentAnyMismatchPayload(source string, targetType string, shapeTarget []byte) DiagnosticPayload {
 	declared, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
 	if err != nil {
 		declared = strings.TrimPrefix(targetType, "claim-type/")
 	}
 	if declared == "" || structuralAssignmentTarget(shapeTarget) {
-		return "cannot assign " + source + " because " + source + " comes from any/unknown; no proof shows it satisfies the declared type"
+		return DiagnosticPayload{Kind: diagnosticAssignmentBoundary, Source: source, Flags: DiagnosticAnyBoundary}
 	}
-	return "cannot assign " + source + " because it is any, not " + declared
+	return DiagnosticPayload{Kind: diagnosticAssignmentMismatch, Source: source, Observed: "any", Required: declared, Flags: DiagnosticAnyBoundary}
 }
 
 // structuralAssignmentTarget recognizes a declared target whose contract is a
@@ -17154,11 +17037,15 @@ func structuralAssignmentTarget(shapeTarget []byte) bool {
 }
 
 func assignmentMismatchMessage(target string, value []byte, targetType string) string {
+	return renderDiagnosticPayload(assignmentMismatchPayload(target, value, targetType))
+}
+
+func assignmentMismatchPayload(target string, value []byte, targetType string) DiagnosticPayload {
 	declared, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
 	if err != nil {
 		declared = strings.TrimPrefix(targetType, "claim-type/")
 	}
-	return "cannot assign " + target + " because it is " + assignmentValueType(value) + ", not " + declared
+	return DiagnosticPayload{Kind: diagnosticAssignmentMismatch, Source: target, Observed: assignmentValueType(value), Required: declared}
 }
 
 // claimDeclaredDisplay preserves a discriminated record's user-facing alias
@@ -17589,11 +17476,13 @@ func declaredElementWriteDiagnostic(operation equation.BoundEquation, operands m
 		}
 	}
 	expected := typeformat.Short(element)
-	message := "cannot assign " + source + " because it is " + assignmentEvidenceValue(value) + ", not " + expected
+	observed := assignmentEvidenceValue(value)
 	if anySource {
-		message = "cannot assign " + source + " because it is any, not " + expected
+		observed = "any"
 	}
-	return equation.Fact{Key: "type.assignment/" + operation.Target.Name, Value: []byte(message)}, true
+	return diagnosticFact("type.assignment/"+operation.Target.Name, DiagnosticPayload{
+		Kind: diagnosticAssignmentMismatch, Source: source, Observed: observed, Required: expected,
+	}), true
 }
 
 // declaredElementContract returns the type a declared homogeneous container
@@ -17681,10 +17570,9 @@ func closedDynamicWriteDiagnostic(operation equation.BoundEquation, operands map
 			source = string(operand.Value)
 		}
 	}
-	return equation.Fact{
-		Key:   "type.assignment/" + operation.Target.Name,
-		Value: []byte("cannot assign " + source + " because it is " + assignmentValueType(value) + ", not " + strings.Join(contracts, " & ")),
-	}, true
+	return diagnosticFact("type.assignment/"+operation.Target.Name, DiagnosticPayload{
+		Kind: diagnosticAssignmentMismatch, Source: source, Observed: assignmentValueType(value), Required: strings.Join(contracts, " & "),
+	}), true
 }
 
 func uniqueOrderedStrings(items []string) []string {
@@ -17769,8 +17657,8 @@ func enrichClosedDynamicWriteDiagnostic(item PublishedDiagnostic, operation equa
 			target = string(operand.Term.Encoding)
 		}
 	}
-	valueType, contract, found := strings.Cut(strings.TrimPrefix(item.Message, "cannot assign "+source+" because it is "), ", not ")
-	if !found || valueType == "" || contract == "" {
+	valueType, contract := item.Payload.Observed, item.Payload.Required
+	if item.Payload.Kind != diagnosticAssignmentMismatch || valueType == "" || contract == "" {
 		return item
 	}
 	if !targetSpan.Valid() {
@@ -20943,10 +20831,11 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	if hasCallee && known && memberMissing(callee) {
-		return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-			Key:   "type.member.missing/" + operation.Target.Name,
-			Value: []byte(memberMissingMessage(operands.display, callee)),
-		}}}}, nil
+		if payload, ok := memberMissingDiagnosticPayload(operands.display, callee); ok {
+			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{
+				diagnosticFact("type.member.missing/"+operation.Target.Name, payload),
+			}}}, nil
+		}
 	}
 	if hasCallee && (!known || isUnknownScalar(callee)) {
 		if receiver, method, static := staticMemberCall(operands.callee); static {
@@ -20973,7 +20862,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if payload, channel := typedChannelPayload(operands.receiver, partition); channel && operands.method == "send" && !operands.spread && len(operands.arguments) == 1 {
 			if argument, available := resolveKnownCurrentValue(operands.arguments[0], partition); available {
 				if subject, actual, expected, mismatch := firstChannelPayloadMismatch(argument, payload, "argument-00000000"); mismatch {
-					return callDiagnostic(operation, "argument_type", subject, fmt.Sprintf("%s is %s, not %s", callSubjectDisplay(subject), actual, expected)), nil
+					return callDiagnostic(operation, "argument_type", subject, DiagnosticPayload{Kind: diagnosticCallArgument, Subject: callSubjectDisplay(subject), Observed: actual, Required: expected}), nil
 				}
 			}
 			return equation.TransactionResult{Complete: true}, nil
@@ -20998,10 +20887,11 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			} else {
 				if receiverType, declared := declaredTypeForTerm(operands.receiver, partition); declared && declaredMethodMissing(receiverType, operands.method) {
 					if missing, encoded := memberMissingValue(receiverType); encoded {
-						return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-							Key:   "type.member.missing/" + operation.Target.Name,
-							Value: []byte(memberMissingMessage(operands.display, missing)),
-						}}}}, nil
+						if payload, ok := memberMissingDiagnosticPayload(operands.display, missing); ok {
+							return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{
+								diagnosticFact("type.member.missing/"+operation.Target.Name, payload),
+							}}}, nil
+						}
 					}
 				}
 				return equation.TransactionResult{Complete: true}, nil
@@ -21017,17 +20907,17 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		return equation.TransactionResult{Complete: true}, nil
 	}
 	if hasCallee && !typedMethodContract && optionalCallableValue(callee) {
-		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("cannot call %s because it may be nil", operands.display)), nil
+		return callDiagnostic(operation, "not_callable", "callee", DiagnosticPayload{Kind: diagnosticCallNotCallable, Source: operands.display, Flags: DiagnosticMayBeNil}), nil
 	}
 	if !typedMethodContract && !isUnknownScalar(callee) && !isCallableValue(callee) {
-		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("%s is %s, not callable", operands.display, callDisplayValue(callee))), nil
+		return callDiagnostic(operation, "not_callable", "callee", DiagnosticPayload{Kind: diagnosticCallNotCallable, Source: operands.display, Observed: callDisplayValue(callee)}), nil
 	}
 	// A callee reached through an any/unknown boundary carries no proof that it
 	// is applicable. The value may happen to hold a function, but that shape
 	// crossed the boundary unvalidated, so the application is refuted until a
 	// runtime type test proves the callable kind.
 	if hasCallee && !typedMethodContract && anyBoundaryCallee(operands.callee, callee, known, partition) {
-		return callDiagnostic(operation, "not_callable", "callee", fmt.Sprintf("cannot call %s because it comes from any/unknown; no proof shows it is callable", operands.display)), nil
+		return callDiagnostic(operation, "not_callable", "callee", DiagnosticPayload{Kind: diagnosticCallNotCallable, Source: operands.display, Flags: DiagnosticAnyBoundary}), nil
 	}
 	if hasCallee && !typedMethodContract && !localCallable {
 		// A callee whose current value is a sealed function witness carries its
@@ -21074,10 +20964,10 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	if len(operands.arguments) < signature.Required {
-		return callDiagnostic(operation, "too_few_args", "call", fmt.Sprintf("%s expects %d arguments, got %d", operands.display, signature.Required, len(operands.arguments))), nil
+		return callDiagnostic(operation, "too_few_args", "call", DiagnosticPayload{Kind: diagnosticCallArity, Source: operands.display, Expected: signature.Required, Actual: len(operands.arguments)}), nil
 	}
 	if !signature.Variadic && len(operands.arguments) > len(signature.Params) {
-		return callDiagnostic(operation, "too_many_args", "call", fmt.Sprintf("%s expects %d arguments, got %d", operands.display, len(signature.Params), len(operands.arguments))), nil
+		return callDiagnostic(operation, "too_many_args", "call", DiagnosticPayload{Kind: diagnosticCallArity, Source: operands.display, Expected: len(signature.Params), Actual: len(operands.arguments)}), nil
 	}
 	for index, term := range operands.arguments {
 		outcome, refuted, ended := positionalArgumentContract(operation, signature, hasCallee, parameterOffset, index, term, partition)
@@ -21190,7 +21080,7 @@ func typedCalleeArgumentRefutation(operation equation.BoundEquation, operands di
 		if valueAgainstType(argument, expected) != shapeRefuted {
 			continue
 		}
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), typeformat.Short(expected))), true
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: callDisplayValueForTerm(term, argument, partition), Required: typeformat.Short(expected)}), true
 	}
 	return equation.TransactionResult{}, false
 }
@@ -21240,7 +21130,7 @@ func (l *lexicalEvaluator) boundaryArgumentRefutation(operation equation.BoundEq
 		// accepts it; a concrete one is refuted until a runtime validation
 		// republishes a proof for this exact argument.
 		if typeRequiresBoundaryProof(expected) && anyBoundaryValue(arguments[index], argument, known, expected, partition) {
-			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, typeformat.Short(expected))), true
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: "any", Required: typeformat.Short(expected)}), true
 		}
 		if !known || isUnknownScalar(argument) || (!declaredExplicitAny(arguments[index], partition) && !l.memberRelayEntry(operation, operands, partition)) {
 			continue
@@ -21248,7 +21138,7 @@ func (l *lexicalEvaluator) boundaryArgumentRefutation(operation equation.BoundEq
 		if valueAgainstType(argument, expected) != shapeRefuted {
 			continue
 		}
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(arguments[index], argument, partition), typeformat.Short(expected))), true
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: callDisplayValueForTerm(arguments[index], argument, partition), Required: typeformat.Short(expected)}), true
 	}
 	return equation.TransactionResult{}, false
 }
@@ -21324,7 +21214,7 @@ func (l *lexicalEvaluator) boundaryArithmeticOperandRefutation(operation equatio
 			if !numeric || result == nil || (result.Kind() != kind.Number && result.Kind() != kind.Integer) {
 				continue
 			}
-			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not number", index+1, callDisplayValue(argument))), true
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: callDisplayValue(argument), Required: "number"}), true
 		}
 	}
 	return equation.TransactionResult{}, false
@@ -21772,14 +21662,13 @@ func channelLifecycleEpoch(operation equation.BoundEquation, operands directCall
 	}
 	closure := equation.OutputClosure{}
 	if state == "closed" {
-		code, message := "channel.send.closed", "cannot send on closed channel"
+		code, action := "channel.send.closed", "send"
 		if operands.method == "close" {
-			code, message = "channel.close.closed", "cannot close already closed channel"
+			code, action = "channel.close.closed", "close"
 		}
-		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{
-			Key:   code + "/" + operation.Target.Name,
-			Value: []byte(message + " `" + channelDisplay(partition, operands.receiver) + "`"),
-		})
+		closure.Diagnostics = append(closure.Diagnostics, diagnosticFact(code+"/"+operation.Target.Name, DiagnosticPayload{
+			Kind: diagnosticChannelLifecycle, Name: action, Source: channelDisplay(partition, operands.receiver),
+		}))
 	}
 	if operands.method == "close" {
 		closure.Values = append(closure.Values, channelLifecycleStateFact(identity, operation.Target.Name, "closed"))
@@ -21808,10 +21697,9 @@ func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCal
 		if operands.display == "resource.query" {
 			display := callArgumentDisplay(operation.Operands, 0)
 			if display != "" {
-				return equation.OutputClosure{Diagnostics: []equation.Fact{{
-					Key:   "typestate.unproven_requirement/" + operation.Target.Name,
-					Value: []byte(fmt.Sprintf("cannot prove typestate requirement for resource `%s`: expected `open`", display)),
-				}}}, true
+				return equation.OutputClosure{Diagnostics: []equation.Fact{
+					diagnosticFact("typestate.unproven_requirement/"+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateUnproven, Source: display, Required: "open"}),
+				}}, true
 			}
 		}
 		return equation.OutputClosure{}, false
@@ -21831,16 +21719,14 @@ func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCal
 		if state == "open" {
 			return equation.OutputClosure{}, true
 		}
-		return equation.OutputClosure{Diagnostics: []equation.Fact{{
-			Key:   "typestate.invalid_requirement/" + operation.Target.Name,
-			Value: []byte(fmt.Sprintf("invalid typestate requirement for resource `%s` in protocol connection: expected `open`, found `%s`", display, state)),
-		}}}, true
+		return equation.OutputClosure{Diagnostics: []equation.Fact{
+			diagnosticFact("typestate.invalid_requirement/"+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: "open", Observed: state}),
+		}}, true
 	case "resource.begin":
 		if state != "open" {
-			return equation.OutputClosure{Diagnostics: []equation.Fact{{
-				Key:   "typestate.invalid_requirement/" + operation.Target.Name,
-				Value: []byte(fmt.Sprintf("invalid typestate requirement for resource `%s` in protocol connection: expected `open`, found `%s`", display, state)),
-			}}}, true
+			return equation.OutputClosure{Diagnostics: []equation.Fact{
+				diagnosticFact("typestate.invalid_requirement/"+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: "open", Observed: state}),
+			}}, true
 		}
 		transaction := []byte("scalar/resource/" + operation.Target.Name)
 		return equation.OutputClosure{Values: []equation.Fact{
@@ -21851,10 +21737,9 @@ func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCal
 		if state == "active" {
 			return equation.OutputClosure{Values: []equation.Fact{resourceLifecycleStateFact(identity, operation.Target.Name, "committed")}}, true
 		}
-		return equation.OutputClosure{Diagnostics: []equation.Fact{{
-			Key:   "typestate.invalid_transition/" + operation.Target.Name,
-			Value: []byte(fmt.Sprintf("invalid transition for resource `%s` in protocol transaction: expected `active`, found `%s`", display, state)),
-		}}}, true
+		return equation.OutputClosure{Diagnostics: []equation.Fact{
+			diagnosticFact("typestate.invalid_transition/"+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateTransition, Source: display, Required: "active", Observed: state}),
+		}}, true
 	default:
 		return equation.OutputClosure{}, false
 	}
@@ -23702,25 +23587,25 @@ func sendIsolationState(operation equation.BoundEquation, operands directCallOpe
 // performs and the deopt event classes the verdict is bound to, so admission
 // never depends on matching the message text.
 type sendSafetyVerdict struct {
-	message string
+	kind    string
 	content string
 	events  string
 }
 
 var (
 	sendSafetyIsolated = sendSafetyVerdict{
-		message: "send payload is proven isolated for zero-copy transfer",
+		kind:    "isolated",
 		content: "copy_required=false transfer=move verdict=isolated",
 		events:  "escape,write.field",
 	}
 	sendSafetyImmutable = sendSafetyVerdict{
-		message: "send payload is proven immutable for zero-copy sharing",
+		kind:    "immutable",
 		content: "copy_required=false transfer=share verdict=immutable",
 	}
 	// The escape is what ended the payload's isolation, so the refutation names
 	// that class as the point the isolation was lost.
 	sendSafetyEscaped = sendSafetyVerdict{
-		message: "send payload has a proven escaping alias; zero-copy transfer is rejected",
+		kind:    "escaped",
 		content: "basis=owner_store copy_required=true verdict=escaped_refuted",
 		events:  "escape",
 	}
@@ -23728,11 +23613,11 @@ var (
 	// it unproven, so the row is a refutation while the hint stays the copy
 	// fallback the source-facing rule already reports.
 	sendSafetyCaptured = sendSafetyVerdict{
-		message: "send payload is not proven isolated or immutable; runtime will copy",
+		kind:    "fallback",
 		content: "basis=closure_capture copy_required=true verdict=escaped_refuted",
 	}
 	sendSafetyUnproven = sendSafetyVerdict{
-		message: "send payload is not proven isolated or immutable; runtime will copy",
+		kind:    "fallback",
 		content: "copy_required=true verdict=unproven_copy",
 	}
 )
@@ -23744,7 +23629,7 @@ func sendSafetyResult(operation equation.BoundEquation, verdict sendSafetyVerdic
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
 		Values:      []equation.Fact{{Key: key, Value: []byte(verdict.content)}},
-		Diagnostics: []equation.Fact{{Key: "send.isolation/" + operation.Target.Name, Value: []byte(verdict.message)}},
+		Diagnostics: []equation.Fact{diagnosticFact("send.isolation/"+operation.Target.Name, DiagnosticPayload{Kind: diagnosticSendIsolation, Name: verdict.kind})},
 	}}
 }
 
@@ -24125,7 +24010,7 @@ func positionalArgumentContract(operation equation.BoundEquation, signature call
 	// an unknown scalar is treated as evidence for this boundary.
 	if published && callableContractRejectsNil(contract) && ((!hasCallee && optionalArgumentMayBeNil(term, partition)) ||
 		(declaredEntryBoundary(operation.Target.Body, partition) && optionalProviderArgumentMayBeNil(term, partition))) {
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d may be nil, not %s", index+1, callableContractDisplay(contract))), true, false
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Required: callableContractDisplay(contract), Flags: DiagnosticMayBeNil}), true, false
 	}
 	argument, known := resolveKnownCurrentValue(term, partition)
 	// An explicit any is a published precision boundary, not a proof of a
@@ -24134,10 +24019,10 @@ func positionalArgumentContract(operation equation.BoundEquation, signature call
 	// validation and cannot discharge this call's declared requirement.
 	if known && published && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && typeRequiresBoundaryProof(contract) &&
 		!anyBoundaryRuntimeValidated(term, contract, partition) {
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, callableContractDisplay(contract))), true, false
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: "any", Required: callableContractDisplay(contract)}), true, false
 	}
 	if known && published && genericConstraintRefuted(argument, contract) {
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), callableContractDisplay(contract))), true, false
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: callDisplayValueForTerm(term, argument, partition), Required: callableContractDisplay(contract)}), true, false
 	}
 	if !known || numericForInductionSatisfies(term, argument, expected, partition) {
 		return equation.TransactionResult{}, false, false
@@ -24145,38 +24030,38 @@ func positionalArgumentContract(operation equation.BoundEquation, signature call
 	if !provenValueNotSubtype(argument, expected) {
 		if published && !genericCallableSignature(signature) &&
 			!refinement.ContainsFreeTypeParam(contract) && structuralArgumentWitness(argument) && valueAgainstType(argument, contract) == shapeRefuted {
-			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), typeformat.Short(contract))), true, false
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: callDisplayValueForTerm(term, argument, partition), Required: typeformat.Short(contract)}), true, false
 		}
 		return equation.TransactionResult{}, false, false
 	}
-	return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), expected)), true, false
+	return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: callDisplayValueForTerm(term, argument, partition), Required: expected}), true, false
 }
 
-func callDiagnostic(operation equation.BoundEquation, code, subject, message string) equation.TransactionResult {
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-		Key: "type.call.direct." + code + "/" + operation.Target.Name + "/" + subject, Value: []byte(message),
-	}}}}
+func callDiagnostic(operation equation.BoundEquation, code, subject string, payload DiagnosticPayload) equation.TransactionResult {
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{
+		diagnosticFact("type.call.direct."+code+"/"+operation.Target.Name+"/"+subject, payload),
+	}}}
 }
 
 func enrichSendIsolationDiagnostic(item PublishedDiagnostic, operation equation.Equation) PublishedDiagnostic {
 	item.Help = sendIsolationHelp
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "send payload"}}
-	switch item.Message {
-	case "send payload is proven isolated for zero-copy transfer":
+	switch item.Payload.Name {
+	case "isolated":
 		item.Evidence = []DiagnosticEvidence{
 			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "isolation proof: direct fresh object literal has no retained graph identity"},
 			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "direct literal birth site has no retained graph identity"},
 		}
 		item.Labels = append(item.Labels, DiagnosticLabel{Span: item.Span, Message: "send-safety proof"})
-	case "send payload is proven immutable for zero-copy sharing":
+	case "immutable":
 		item.Evidence = []DiagnosticEvidence{
 			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "immutable proof: sent exact identity is frozen"},
 			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "exact identity is frozen before send"},
 		}
 		item.Labels = append(item.Labels, DiagnosticLabel{Span: item.Span, Message: "send-safety proof"})
-	case "send payload has a proven escaping alias; zero-copy transfer is rejected":
+	case "escaped":
 		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "escape proof: payload has already crossed a retaining boundary"}}
-	case "send payload is not proven isolated or immutable; runtime will copy":
+	case "fallback":
 		payload, reason := sendIsolationPayload(operation)
 		_ = payload
 		item.Evidence = []DiagnosticEvidence{
@@ -24437,10 +24322,11 @@ func genericArgumentRefutation(operation equation.BoundEquation, operands direct
 	if !pinned {
 		return equation.TransactionResult{}, false
 	}
-	message := fmt.Sprintf("%s requires %s to be %s, but %s requires %s to be %s",
-		callSubjectDisplay(conflict.demandedAt), conflict.parameter, typeformat.Short(conflict.demanded),
-		callSubjectDisplay(conflict.boundAt), conflict.parameter, typeformat.Short(conflict.bound))
-	return callDiagnostic(operation, "argument_type", conflict.demandedAt, message), true
+	payload := DiagnosticPayload{Kind: diagnosticCallGenericConflict, Conflict: &DiagnosticConflict{
+		Parameter: conflict.parameter, Bound: typeformat.Short(conflict.bound), BoundAt: callSubjectDisplay(conflict.boundAt),
+		Demanded: typeformat.Short(conflict.demanded), DemandedAt: callSubjectDisplay(conflict.demandedAt),
+	}}
+	return callDiagnostic(operation, "argument_type", conflict.demandedAt, payload), true
 }
 
 // callSubjectDisplay renders an argument subject the way a source reader states
@@ -28389,10 +28275,9 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		// until a runtime validation republishes a proof for the same term.
 		if typeRequiresBoundaryProof(expected) && anyBoundaryValue(sources[index], values[index], true, expected, partition) {
 			subject := returnValueSubject(index, displays[index])
-			diagnostics = append(diagnostics, equation.Fact{
-				Key:   fmt.Sprintf("type.return.contract/%s/%08d", operation.Target.Name, index),
-				Value: []byte(fmt.Sprintf("%s comes from any/unknown; no proof shows it is %s", subject, typeformat.Short(expected))),
-			})
+			diagnostics = append(diagnostics, diagnosticFact(fmt.Sprintf("type.return.contract/%s/%08d", operation.Target.Name, index), DiagnosticPayload{
+				Kind: diagnosticReturnContract, Subject: subject, Required: typeformat.Short(expected), Flags: DiagnosticAnyBoundary,
+			}))
 			continue
 		}
 		if valueAgainstType(values[index], expected) != shapeRefuted {
@@ -28403,22 +28288,17 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		// member. The whole-value message stays for every other refutation: it
 		// is the aggregate itself, not one slot, that failed the declaration.
 		if suffix, fieldType, member := anyBoundaryRecordMember(values[index], expected); member {
-			diagnostics = append(diagnostics, equation.Fact{
-				Key: fmt.Sprintf("type.return.contract/%s/%08d/%s", operation.Target.Name, index, suffix),
-				Value: []byte(fmt.Sprintf("%s comes from any/unknown; no proof shows it satisfies declared return type %s",
-					returnMemberSubject(index, suffix), typeformat.Short(fieldType))),
-			})
+			diagnostics = append(diagnostics, diagnosticFact(fmt.Sprintf("type.return.contract/%s/%08d/%s", operation.Target.Name, index, suffix), DiagnosticPayload{
+				Kind: diagnosticReturnContract, Name: "member", Subject: returnMemberSubject(index, suffix), Required: typeformat.Short(fieldType), Flags: DiagnosticAnyBoundary,
+			}))
 			continue
 		}
 		subject := returnValueSubject(index, displays[index])
-		message := fmt.Sprintf("%s is %s, not %s", subject, assignmentEvidenceValue(values[index]), typeformat.Short(expected))
+		payload := DiagnosticPayload{Kind: diagnosticReturnContract, Subject: subject, Observed: assignmentEvidenceValue(values[index]), Required: typeformat.Short(expected)}
 		if optionalConcreteWitness(values[index]) && valueAgainstType([]byte("scalar/nil"), expected) == shapeRefuted {
-			message = fmt.Sprintf("%s may be nil, not %s", subject, typeformat.Short(expected))
+			payload.Flags |= DiagnosticMayBeNil
 		}
-		diagnostics = append(diagnostics, equation.Fact{
-			Key:   fmt.Sprintf("type.return.contract/%s/%08d", operation.Target.Name, index),
-			Value: []byte(message),
-		})
+		diagnostics = append(diagnostics, diagnosticFact(fmt.Sprintf("type.return.contract/%s/%08d", operation.Target.Name, index), payload))
 	}
 	// Every return occurrence owns its internal tuple.  A file can have more
 	// than one reachable return (for example, a loop return plus the fallthrough
@@ -30157,16 +30037,19 @@ func memberMissingReceiver(value []byte) (typ.Type, bool) {
 	return shapefact.DecodeTarget(value[len(memberMissingPrefix):])
 }
 
-func memberMissingMessage(source string, value []byte) string {
+func memberMissingDiagnosticPayload(source string, value []byte) (DiagnosticPayload, bool) {
 	receiver, ok := memberMissingReceiver(value)
 	if !ok {
-		return "member read is not available"
+		return DiagnosticPayload{}, false
 	}
 	member := source[strings.LastIndex(source, ".")+1:]
 	if bracket := strings.LastIndex(member, "["); bracket >= 0 {
 		member = strings.Trim(strings.TrimSuffix(member[bracket+1:], "]"), "\"")
 	}
-	return fmt.Sprintf("%s has no member %q", typeformat.Short(receiver), member)
+	if member == "" {
+		return DiagnosticPayload{}, false
+	}
+	return DiagnosticPayload{Kind: diagnosticMemberMissing, Observed: typeformat.Short(receiver), Name: member}, true
 }
 
 func latestValue(term []byte, partition equation.Partition) ([]byte, bool) {
