@@ -8,6 +8,8 @@ package front
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -21,11 +23,11 @@ type nativeOperationScope struct {
 	types map[string]string
 }
 
-func nativeOperationContracts(stmts []ast.Stmt) []NativeContract {
-	return nativeOperationContractsWithTostring(stmts)
+func nativeOperationContracts(stmts []ast.Stmt, bindings *bind.Result, captureTransports map[wir.FunctionSymbolID]int) []NativeContract {
+	return nativeOperationContractsWithTostring(stmts, bindings, captureTransports)
 }
 
-func nativeOperationContractsWithTostring(stmts []ast.Stmt) []NativeContract {
+func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Result, captureTransports map[wir.FunctionSymbolID]int) []NativeContract {
 	var out []NativeContract
 	var walkStmts func([]ast.Stmt, nativeOperationScope, bool)
 	var walkExpr func(ast.Expr, nativeOperationScope, bool)
@@ -64,7 +66,8 @@ func nativeOperationContractsWithTostring(stmts []ast.Stmt) []NativeContract {
 			}
 		case *ast.FunctionExpr:
 			nativeFunctionEffect(x, add)
-			for range nativeCaptureTransportCount(x) {
+			symbol, _ := bindings.FunctionSymbol(x)
+			for range captureTransports[wir.FunctionSymbolID(symbol)] {
 				add("capture_transport", "carried_through=closure_construction element_class=number initialization=complete presence=dense_prefix", "write.element", "write.length", "grow")
 			}
 			child := nativeFunctionScope(x)
@@ -437,116 +440,6 @@ func nativeScopeCopy(scope nativeOperationScope) nativeOperationScope {
 		out.types[k] = v
 	}
 	return out
-}
-
-func nativeCaptureTransportCount(fn *ast.FunctionExpr) int {
-	if fn == nil {
-		return 0
-	}
-	arrays := make(map[string]bool)
-	closures := make([]*ast.FunctionExpr, 0)
-	for _, stmt := range fn.Stmts {
-		switch item := stmt.(type) {
-		case *ast.LocalAssignStmt:
-			for index, name := range item.Names {
-				if index < len(item.Types) {
-					if array, ok := item.Types[index].(*ast.ArrayTypeExpr); ok && nativeTypeClass(array.Element) == nativeNumber {
-						arrays[name] = true
-					}
-				}
-			}
-			for _, expr := range item.Exprs {
-				if child, ok := expr.(*ast.FunctionExpr); ok {
-					closures = append(closures, child)
-				}
-			}
-		case *ast.AssignStmt:
-			for _, expr := range item.Rhs {
-				if child, ok := expr.(*ast.FunctionExpr); ok {
-					closures = append(closures, child)
-				}
-			}
-		case *ast.ReturnStmt:
-			for _, expr := range item.Exprs {
-				if child, ok := expr.(*ast.FunctionExpr); ok {
-					closures = append(closures, child)
-				}
-			}
-		}
-	}
-	count := 0
-	for name := range arrays {
-		for _, closure := range closures {
-			if nativeFunctionReferences(closure, name) {
-				count++
-				break
-			}
-		}
-	}
-	return count
-}
-
-func nativeFunctionReferences(fn *ast.FunctionExpr, name string) bool {
-	if fn == nil {
-		return false
-	}
-	return nativeDirectFreeReferenceCountNamed(fn, name)
-}
-func nativeDirectFreeReferenceCountNamed(fn *ast.FunctionExpr, name string) bool {
-	if fn == nil {
-		return false
-	}
-	var found bool
-	var expr func(ast.Expr)
-	expr = func(value ast.Expr) {
-		switch x := value.(type) {
-		case *ast.IdentExpr:
-			found = found || x.Value == name
-		case *ast.AttrGetExpr:
-			expr(x.Object)
-			expr(x.Key)
-		case *ast.FuncCallExpr:
-			expr(x.Func)
-			expr(x.Receiver)
-			for _, arg := range x.Args {
-				expr(arg)
-			}
-		case *ast.StringConcatOpExpr:
-			expr(x.Lhs)
-			expr(x.Rhs)
-		case *ast.LogicalOpExpr:
-			expr(x.Lhs)
-			expr(x.Rhs)
-		case *ast.ArithmeticOpExpr:
-			expr(x.Lhs)
-			expr(x.Rhs)
-		case *ast.RelationalOpExpr:
-			expr(x.Lhs)
-			expr(x.Rhs)
-		}
-	}
-	for _, stmt := range fn.Stmts {
-		switch item := stmt.(type) {
-		case *ast.ReturnStmt:
-			for _, value := range item.Exprs {
-				expr(value)
-			}
-		case *ast.AssignStmt:
-			for _, value := range item.Lhs {
-				expr(value)
-			}
-			for _, value := range item.Rhs {
-				expr(value)
-			}
-		case *ast.LocalAssignStmt:
-			for _, value := range item.Exprs {
-				expr(value)
-			}
-		case *ast.FuncCallStmt:
-			expr(item.Expr)
-		}
-	}
-	return found
 }
 
 func nativeWritesGlobal(stmts []ast.Stmt, name string) bool {

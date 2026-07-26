@@ -5,8 +5,6 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
-	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -19,17 +17,16 @@ import (
 // simply leaves the corresponding contract unpublished.
 func structuralNativeFacts(root front.Compilation, published []NativeFact) []NativeFact {
 	var rows []NativeFact
-	var visit func(front.Compilation, int)
-	visit = func(compilation front.Compilation, depth int) {
-		rows = append(rows, captureNativeFacts(compilation, depth)...)
+	var visit func(front.Compilation)
+	visit = func(compilation front.Compilation) {
 		rows = append(rows, typedProducerNativeFacts(compilation)...)
 		rows = append(rows, tableConstructionBoundFacts(compilation)...)
 		rows = append(rows, hostGlobalBindingFacts(compilation, published)...)
 		for _, child := range compilation.Nested {
-			visit(child, depth+1)
+			visit(child)
 		}
 	}
-	visit(root, 0)
+	visit(root)
 	return rows
 }
 
@@ -43,126 +40,6 @@ func structuralRow(compilation front.Compilation, family, occurrence, subject, v
 		Occurrence: occurrence,
 		Trust:      NativeTrustProven,
 	}
-}
-
-func captureNativeFacts(compilation front.Compilation, depth int) []NativeFact {
-	body := compilation.WIR
-	if body == nil || bodyHasNumericLoop(body) {
-		// A closure constructed in a numeric loop can denote a distinct lexical
-		// environment per iteration.  No singleton epoch root is available.
-		return nil
-	}
-	var rows []NativeFact
-	for index := 0; index < body.Len(); index++ {
-		instruction := body.Instr(index)
-		if instruction.Op != wir.OpClosure || instruction.Func == 0 || instruction.List.Len == 0 {
-			continue
-		}
-		child := body.Proto(instruction.Func)
-		if child.Body == nil || len(child.Boundary.Captures) != int(instruction.List.Len) {
-			continue
-		}
-		occurrence := fmt.Sprintf("op-%08d", index)
-		coordinate := "edge_form"
-		if depth == 1 && len(compilation.Boundary.Parameters) == 0 && len(compilation.Boundary.Captures) == 0 {
-			coordinate = "entry"
-		}
-		for captureIndex, operand := range body.Operands(instruction.List) {
-			if operand.Kind != wir.OperandPath {
-				continue
-			}
-			captured := body.Path(wir.PathRef(operand.Ref))
-			if captured.IsEmpty() || captured.Symbol == 0 || child.Boundary.Captures[captureIndex].Symbol != captured.Symbol {
-				continue
-			}
-			value := "active_epoch_root=1 begin_coordinate=" + coordinate + " coverage_proof=complete uniqueness_proof=complete"
-			if coordinate == "edge_form" {
-				value += " coordinate_fields=[from,to,edge_kind,edge_ordinal,begin_ordinal] levels=" + strconv.Itoa(depth+1)
-			}
-			rows = append(rows, structuralRow(compilation, "capture_epoch_root", occurrence+"/"+strconv.Itoa(captureIndex), captured.String(), value))
-		}
-		rows = append(rows, captureTransportFacts(compilation, index, instruction)...)
-	}
-	return rows
-}
-
-func captureTransportFacts(compilation front.Compilation, closureIndex int, closure wir.Instruction) []NativeFact {
-	body := compilation.WIR
-	if body == nil {
-		return nil
-	}
-	var rows []NativeFact
-	for _, operand := range body.Operands(closure.List) {
-		if operand.Kind != wir.OperandPath {
-			continue
-		}
-		root := body.Path(wir.PathRef(operand.Ref))
-		if root.IsEmpty() || !isNumericArrayType(typeAtTableBirth(body, root)) || !captureTableFilledBefore(body, root, closureIndex) {
-			continue
-		}
-		value := "carried_through=closure_construction element_class=number initialization=complete presence=dense_prefix"
-		occurrence := fmt.Sprintf("op-%08d", closureIndex)
-		row := structuralRow(compilation, "capture_transport", occurrence, root.String(), value)
-		row.Established = occurrence
-		// The contract's deopt alternatives are independently materialized so
-		// consumers can retain the exact event that applies at their boundary.
-		for _, event := range []string{"write.element", "write.length", "grow"} {
-			candidate := row
-			candidate.Key += "/" + event
-			candidate.Revoked = event
-			candidate.Event = event
-			rows = append(rows, candidate)
-		}
-	}
-	return rows
-}
-
-func typeAtTableBirth(body *wir.Body, root path.Path) typ.Type {
-	for index := 0; index < body.Len(); index++ {
-		instruction := body.Instr(index)
-		if instruction.Op != wir.OpMakeTable || instruction.Dst.Kind != wir.OperandPath {
-			continue
-		}
-		candidate := body.Path(wir.PathRef(instruction.Dst.Ref))
-		if candidate.Key() == root.Key() {
-			return body.Type(instruction.Type)
-		}
-	}
-	return nil
-}
-
-func isNumericArrayType(value typ.Type) bool {
-	value = unwrap.Alias(value)
-	array, ok := value.(*typ.Array)
-	if !ok || array.Element == nil {
-		return false
-	}
-	element := unwrap.Alias(array.Element)
-	return element != nil && (element.Kind() == kind.Number || element.Kind() == kind.Integer)
-}
-
-func captureTableFilledBefore(body *wir.Body, root path.Path, end int) bool {
-	entries := make(map[int]bool)
-	for index := 0; index < end; index++ {
-		instruction := body.Instr(index)
-		if instruction.Op != wir.OpStaticMemberWrite || instruction.Dst.Kind != wir.OperandPath {
-			continue
-		}
-		member := body.Path(wir.PathRef(instruction.Dst.Ref))
-		if !member.SameRootIgnoringVersion(root) || len(member.Segments) != 1 || member.Segments[0].Kind != segment.SegmentIndexInt {
-			continue
-		}
-		entries[member.Segments[0].Index] = true
-	}
-	if len(entries) == 0 {
-		return false
-	}
-	for index := 1; index <= len(entries); index++ {
-		if !entries[index] {
-			return false
-		}
-	}
-	return true
 }
 
 func typedProducerNativeFacts(compilation front.Compilation) []NativeFact {
@@ -229,15 +106,6 @@ func tableConstructionBoundFacts(compilation front.Compilation) []NativeFact {
 func isRecordType(value typ.Type) bool {
 	value = unwrap.Alias(value)
 	return value != nil && value.Kind() == kind.Record
-}
-
-func bodyHasNumericLoop(body *wir.Body) bool {
-	for index := 0; index < body.Len(); index++ {
-		if instruction := body.Instr(index); instruction.Op == wir.OpIterate && instruction.Iter == wir.IterNumeric {
-			return true
-		}
-	}
-	return false
 }
 
 func constructorOccurrences(body *wir.Body, constructor int) (int64, bool, bool) {

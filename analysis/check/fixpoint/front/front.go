@@ -31,6 +31,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -289,7 +290,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
 	compilation.TypeDefinitions = typeDefinitions
 	compilation.TypeFieldSpans = recordFieldNameSpans(stmts)
-	compilation.NativeContracts = append(nativeContracts(stmts, bindings), nativeWIRContracts(compilation)...)
+	compilation.NativeContracts = append(nativeContracts(stmts, bindings, nativeCaptureTransportCounts(compilation)), nativeWIRContracts(compilation)...)
 	artifact, err = appendNativeContractPublications(compilation.Artifact, compilation.NativeContracts)
 	if err != nil {
 		return Compilation{}, err
@@ -1628,6 +1629,8 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				draft.Operands = terms.template
 			} else {
 				draft.Operands = terms.materialization
+				draft.Operands = append(draft.Operands, nativeCaptureEpochRootOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
+				draft.Operands = append(draft.Operands, nativeCaptureTransportOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence)...)
 				if nativeAliasEligible {
 					draft.Operands = append(draft.Operands, nativeAllocationAliasOperands(body, instruction, operation.sourceOccurrence)...)
 				}
@@ -3474,6 +3477,168 @@ func nativeAllocationAliasOperands(body *wir.Body, instruction wir.Instruction, 
 		{Role: "alias-subject", Term: equation.ClosedTerm(term)},
 		{Role: "alias-subject-display", Term: equation.ClosedTerm([]byte(target.String()))},
 	}
+}
+
+// A closure outside numeric recurrence has one lowering-owned environment
+// instance per enclosing activation. Each capture whose symbol agrees with the
+// child boundary therefore has one complete epoch root at this guarded closure
+// coordinate. A numeric recurrence can construct several environments in one
+// activation and publishes no singleton root.
+func nativeCaptureEpochRootOperands(bodyID equation.BodyID, body *wir.Body, instruction wir.Instruction, occurrence string) []equation.Operand {
+	if body == nil || instruction.Op != wir.OpClosure || instruction.Func == 0 || instruction.List.Len == 0 ||
+		len(numericForBindingPoints(body)) != 0 {
+		return nil
+	}
+	child := body.Proto(instruction.Func)
+	captures := body.Operands(instruction.List)
+	if child.Body == nil || len(child.Boundary.Captures) != len(captures) {
+		return nil
+	}
+	depth := len(body.LexicalPath())
+	coordinate := "edge_form"
+	if depth == 1 {
+		boundary := body.Boundary()
+		if len(boundary.Parameters) == 0 && len(boundary.Captures) == 0 {
+			coordinate = "entry"
+		}
+	}
+	content := "active_epoch_root=1 begin_coordinate=" + coordinate + " coverage_proof=complete uniqueness_proof=complete"
+	if coordinate == "edge_form" {
+		content += " coordinate_fields=[from,to,edge_kind,edge_ordinal,begin_ordinal] levels=" + strconv.Itoa(depth+1)
+	}
+	var operands []equation.Operand
+	for index, operand := range captures {
+		if operand.Kind != wir.OperandPath {
+			continue
+		}
+		captured := body.Path(wir.PathRef(operand.Ref))
+		if captured.IsEmpty() || captured.Symbol == 0 || child.Boundary.Captures[index].Symbol != captured.Symbol || captured.String() == "" {
+			continue
+		}
+		slot := fmt.Sprintf("%08d", len(operands)/4)
+		key := factkey.BuildKey(
+			factkey.NativeCaptureEpochRoot,
+			[]factkey.Part{factkey.OpaquePart(fmt.Sprintf("%x", bodyID)), factkey.OpaquePart(occurrence)},
+			strconv.Itoa(index),
+		)
+		operands = append(operands,
+			equation.Operand{Role: "native-capture-root-key-" + slot, Term: equation.ClosedTerm([]byte(key.String()))},
+			equation.Operand{Role: "native-capture-root-subject-" + slot, Term: equation.ClosedTerm([]byte(captured.String()))},
+			equation.Operand{Role: "native-capture-root-content-" + slot, Term: equation.ClosedTerm([]byte(content))},
+			equation.Operand{Role: "native-capture-root-occurrence-" + slot, Term: equation.ClosedTerm([]byte(occurrence + "/" + strconv.Itoa(index)))},
+		)
+	}
+	return operands
+}
+
+const nativeCaptureTransportContent = "carried_through=closure_construction element_class=number initialization=complete presence=dense_prefix"
+
+// A numeric array whose published member inventory is a dense prefix can carry
+// that exact initialized surface through closure construction. Lowering names
+// the candidate capture and authored coordinate; object materialization still
+// requires the allocation identity and member facts visible under its guards.
+func nativeCaptureTransportOperands(bodyID equation.BodyID, body *wir.Body, instruction wir.Instruction, sourceIndex int, occurrence string) []equation.Operand {
+	if body == nil || instruction.Op != wir.OpClosure || instruction.Func == 0 || instruction.List.Len == 0 ||
+		len(numericForBindingPoints(body)) != 0 {
+		return nil
+	}
+	var operands []equation.Operand
+	for _, operand := range body.Operands(instruction.List) {
+		if operand.Kind != wir.OperandPath {
+			continue
+		}
+		root := body.Path(wir.PathRef(operand.Ref))
+		if root.IsEmpty() || root.String() == "" || !nativeNumericArrayType(nativeTableBirthType(body, root)) ||
+			!nativeCaptureTableFilledBefore(body, root, sourceIndex) {
+			continue
+		}
+		slot := fmt.Sprintf("%08d", len(operands)/5)
+		term := "path/" + root.Key()
+		operands = append(operands,
+			equation.Operand{Role: "native-capture-transport-term-" + slot, Term: equation.ClosedTerm([]byte(term))},
+			equation.Operand{Role: "native-capture-transport-subject-" + slot, Term: equation.ClosedTerm([]byte(root.String()))},
+			equation.Operand{Role: "native-capture-transport-occurrence-" + slot, Term: equation.ClosedTerm([]byte(occurrence))},
+			equation.Operand{Role: "native-capture-transport-content-" + slot, Term: equation.ClosedTerm([]byte(nativeCaptureTransportContent))},
+			equation.Operand{Role: "native-capture-transport-body-" + slot, Term: equation.ClosedTerm([]byte(fmt.Sprintf("%x", bodyID)))},
+		)
+	}
+	return operands
+}
+
+func nativeTableBirthType(body *wir.Body, root path.Path) typ.Type {
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op != wir.OpMakeTable || instruction.Dst.Kind != wir.OperandPath {
+			continue
+		}
+		candidate := body.Path(wir.PathRef(instruction.Dst.Ref))
+		if candidate.Key() == root.Key() {
+			return body.Type(instruction.Type)
+		}
+	}
+	return nil
+}
+
+func nativeNumericArrayType(value typ.Type) bool {
+	value = unwrap.Alias(value)
+	array, ok := value.(*typ.Array)
+	if !ok || array.Element == nil {
+		return false
+	}
+	element := unwrap.Alias(array.Element)
+	return element != nil && (element.Kind() == kind.Number || element.Kind() == kind.Integer)
+}
+
+func nativeCaptureTableFilledBefore(body *wir.Body, root path.Path, end int) bool {
+	entries := make(map[int]bool)
+	for index := 0; index < end; index++ {
+		instruction := body.Instr(index)
+		if instruction.Op != wir.OpStaticMemberWrite || instruction.Dst.Kind != wir.OperandPath {
+			continue
+		}
+		member := body.Path(wir.PathRef(instruction.Dst.Ref))
+		if !member.SameRootIgnoringVersion(root) || len(member.Segments) != 1 || member.Segments[0].Kind != segment.SegmentIndexInt {
+			continue
+		}
+		entries[member.Segments[0].Index] = true
+	}
+	if len(entries) == 0 {
+		return false
+	}
+	for index := 1; index <= len(entries); index++ {
+		if !entries[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// nativeCaptureTransportCounts is the lowering inventory used only to retain
+// the legacy contract-row ordinal while the guarded coordinate publication is
+// consumed directly. Each numeric array contributes once in its owning
+// function, matching the former AST duplicate without re-reading syntax.
+func nativeCaptureTransportCounts(root Compilation) map[wir.FunctionSymbolID]int {
+	counts := make(map[wir.FunctionSymbolID]int)
+	var visit func(Compilation)
+	visit = func(compilation Compilation) {
+		seen := make(map[string]bool)
+		for _, operation := range compilation.Artifact.Equations {
+			for _, operand := range operation.Operands {
+				if !strings.HasPrefix(operand.Role, "native-capture-transport-term-") || operand.Term.Entry {
+					continue
+				}
+				seen[string(operand.Term.Encoding)] = true
+			}
+		}
+		if compilation.Prototype != 0 {
+			counts[compilation.Prototype] = len(seen)
+		}
+		for _, child := range compilation.Nested {
+			visit(child)
+		}
+	}
+	visit(root)
+	return counts
 }
 
 func nativeAssignmentAliasOperands(body *wir.Body, instruction wir.Instruction, occurrence string) []equation.Operand {

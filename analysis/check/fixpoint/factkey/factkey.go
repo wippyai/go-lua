@@ -124,6 +124,8 @@ const (
 	FamilyNativeBuiltinCall
 	FamilyHeapAllocationDisplay
 	FamilyNativeAliasDisjoint
+	FamilyNativeCaptureEpochRoot
+	FamilyNativeCaptureTransport
 )
 
 // RevocationSet names the fact families whose publications can invalidate a
@@ -360,6 +362,16 @@ var (
 		Qualifiers:  []Kind{Identity},
 		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{},
 	}
+	NativeCaptureEpochRoot = Family{
+		ID: FamilyNativeCaptureEpochRoot, Prefix: "capture_epoch_root/", Subject: Opaque,
+		Qualifiers:  []Kind{Opaque},
+		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{},
+	}
+	NativeCaptureTransport = Family{
+		ID: FamilyNativeCaptureTransport, Prefix: "capture_transport/", Subject: Opaque,
+		Qualifiers:  []Kind{Opaque},
+		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{},
+	}
 )
 
 // families declares every family whose keys are built or read structurally.
@@ -410,6 +422,8 @@ var families = []Family{
 	NativeBuiltinCall,
 	HeapAllocationDisplay,
 	NativeAliasDisjoint,
+	NativeCaptureEpochRoot,
+	NativeCaptureTransport,
 }
 
 // byPrefix indexes the declarations so a key is matched without scanning them.

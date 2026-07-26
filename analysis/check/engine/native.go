@@ -705,6 +705,25 @@ func (a *nativeAnchors) project(lane string, fact equation.Fact) NativeFact {
 			}
 		}
 	}
+	if family, declared := factkey.Lookup(fact.Key); declared && family.ID == factkey.FamilyNativeCaptureEpochRoot {
+		if wire, valid := decodeNativeCaptureEpochRoot(fact.Value); valid {
+			row.Value = wire.Content
+			row.Term = ""
+			row.Subject = wire.Subject
+			row.Occurrence = wire.Occurrence
+		}
+	}
+	if family, declared := factkey.Lookup(fact.Key); declared && family.ID == factkey.FamilyNativeCaptureTransport {
+		if wire, valid := decodeNativeCaptureTransport(fact.Value); valid {
+			row.Value = wire.Content
+			row.Term = ""
+			row.Subject = wire.Subject
+			row.Occurrence = wire.Occurrence
+			row.Established = wire.Established
+			row.Revoked = wire.Revoked
+			row.Event = wire.Event
+		}
+	}
 	if lane == NativeLaneValues {
 		if _, claimed := a.claimed[row.Term]; claimed {
 			row.Trust = NativeTrustClaimed

@@ -144,6 +144,8 @@ func TestBuildKeyOwnsDeclaredFamilySpellings(t *testing.T) {
 		{NativeBuiltinCall, []Part{OpaquePart("2f2f"), OpaquePart("op-7"), OpaquePart("contract-revocation")}, "builtin_call/2f2f/op-7/contract-revocation/op-1"},
 		{HeapAllocationDisplay, []Part{IdentityPart(identity)}, "heap/allocation-display/" + encode(string(identity)) + "/op-1"},
 		{NativeAliasDisjoint, []Part{TermPart("path/sym2"), IdentityPart(identity)}, "alias_disjoint/path/sym2/" + encode(string(identity)) + "/op-1"},
+		{NativeCaptureEpochRoot, []Part{OpaquePart("2f2f"), OpaquePart("op-7")}, "capture_epoch_root/2f2f/op-7/op-1"},
+		{NativeCaptureTransport, []Part{OpaquePart("2f2f"), OpaquePart("op-7")}, "capture_transport/2f2f/op-7/op-1"},
 	} {
 		key := BuildKey(test.family, test.parts, "op-1")
 		if key.String() != test.want {
@@ -192,8 +194,8 @@ func TestTerminalTermSubjectOwnsNestedTermSyntax(t *testing.T) {
 }
 
 func TestFamiliesAreCompleteRecords(t *testing.T) {
-	if len(families) != 44 {
-		t.Fatalf("declared families = %d, want 44", len(families))
+	if len(families) != 46 {
+		t.Fatalf("declared families = %d, want 46", len(families))
 	}
 	for _, family := range families {
 		if family.ID == 0 || family.Prefix == "" || family.RevocationSet == nil ||

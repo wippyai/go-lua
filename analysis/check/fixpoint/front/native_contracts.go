@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -37,7 +38,7 @@ type NativeContract struct {
 	Revocations []string
 }
 
-func nativeContracts(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
+func nativeContracts(stmts []ast.Stmt, bindings *bind.Result, captureTransports map[wir.FunctionSymbolID]int) []NativeContract {
 	if bindings == nil {
 		return nil
 	}
@@ -329,7 +330,7 @@ func nativeContracts(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
 	out = append(out, recordNativeContracts(stmts)...)
 	// Operation rows are derived from the same admitted, binder-owned syntax
 	// tree as topology contracts and remain absent when a boundary is unknown.
-	out = append(out, nativeOperationContracts(stmts)...)
+	out = append(out, nativeOperationContracts(stmts, bindings, captureTransports)...)
 	return out
 }
 

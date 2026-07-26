@@ -3644,7 +3644,7 @@ func (l *lexicalEvaluator) recordNativeKernelFacts(values []equation.Fact) {
 			continue
 		}
 		switch family.ID {
-		case factkey.FamilyNativeBranchPartition, factkey.FamilyNativeTruthinessClass, factkey.FamilyNativeConcatSite, factkey.FamilyNativeBuiltinCall, factkey.FamilyNativeAliasDisjoint:
+		case factkey.FamilyNativeBranchPartition, factkey.FamilyNativeTruthinessClass, factkey.FamilyNativeConcatSite, factkey.FamilyNativeBuiltinCall, factkey.FamilyNativeAliasDisjoint, factkey.FamilyNativeCaptureEpochRoot, factkey.FamilyNativeCaptureTransport:
 		default:
 			continue
 		}
@@ -10814,6 +10814,156 @@ type nativeAliasDisjointWire struct {
 	Events  []string `json:"events,omitempty"`
 }
 
+type nativeCaptureEpochRootWire struct {
+	Version    uint8  `json:"version"`
+	Subject    string `json:"subject"`
+	Content    string `json:"content"`
+	Occurrence string `json:"occurrence"`
+}
+
+type nativeCaptureTransportWire struct {
+	Version     uint8  `json:"version"`
+	Subject     string `json:"subject"`
+	Content     string `json:"content"`
+	Occurrence  string `json:"occurrence"`
+	Established string `json:"established"`
+	Revoked     string `json:"revoked"`
+	Event       string `json:"event"`
+}
+
+func decodeNativeCaptureTransport(value []byte) (nativeCaptureTransportWire, bool) {
+	var wire nativeCaptureTransportWire
+	if json.Unmarshal(value, &wire) != nil || wire.Version != 1 || wire.Subject == "" || wire.Content == "" ||
+		wire.Occurrence == "" || wire.Established == "" || wire.Revoked == "" || wire.Event == "" {
+		return nativeCaptureTransportWire{}, false
+	}
+	return wire, true
+}
+
+func decodeNativeCaptureEpochRoot(value []byte) (nativeCaptureEpochRootWire, bool) {
+	var wire nativeCaptureEpochRootWire
+	if json.Unmarshal(value, &wire) != nil || wire.Version != 1 || wire.Subject == "" || wire.Content == "" || wire.Occurrence == "" {
+		return nativeCaptureEpochRootWire{}, false
+	}
+	return wire, true
+}
+
+func nativeCaptureEpochRootFacts(operation equation.BoundEquation) ([]equation.Fact, error) {
+	byRole := make(map[string][]byte, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		if strings.HasPrefix(operand.Role, "native-capture-root-") {
+			byRole[operand.Role] = operand.Value
+		}
+	}
+	var out []equation.Fact
+	for index := 0; ; index++ {
+		slot := fmt.Sprintf("%08d", index)
+		key := byRole["native-capture-root-key-"+slot]
+		if len(key) == 0 {
+			if index == 0 {
+				return nil, nil
+			}
+			break
+		}
+		subject := byRole["native-capture-root-subject-"+slot]
+		content := byRole["native-capture-root-content-"+slot]
+		occurrence := byRole["native-capture-root-occurrence-"+slot]
+		if len(subject) == 0 || len(content) == 0 || len(occurrence) == 0 {
+			return nil, fmt.Errorf("engine: incomplete capture epoch root descriptor %d", index)
+		}
+		wire, err := json.Marshal(nativeCaptureEpochRootWire{
+			Version: 1, Subject: string(subject), Content: string(content), Occurrence: string(occurrence),
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, equation.Fact{Key: string(key), Value: wire})
+	}
+	return out, nil
+}
+
+func nativeCaptureTransportFacts(operation equation.BoundEquation, partition equation.Partition) ([]equation.Fact, error) {
+	byRole := make(map[string][]byte, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		if strings.HasPrefix(operand.Role, "native-capture-transport-") {
+			byRole[operand.Role] = operand.Value
+		}
+	}
+	var out []equation.Fact
+	for index := 0; ; index++ {
+		slot := fmt.Sprintf("%08d", index)
+		term := byRole["native-capture-transport-term-"+slot]
+		if len(term) == 0 {
+			if index == 0 {
+				return nil, nil
+			}
+			break
+		}
+		subject := byRole["native-capture-transport-subject-"+slot]
+		occurrence := byRole["native-capture-transport-occurrence-"+slot]
+		content := byRole["native-capture-transport-content-"+slot]
+		body := byRole["native-capture-transport-body-"+slot]
+		if len(subject) == 0 || len(occurrence) == 0 || len(content) == 0 || len(body) == 0 {
+			return nil, fmt.Errorf("engine: incomplete capture transport descriptor %d", index)
+		}
+		if !nativeDenseCaptureMembers(term, partition) {
+			continue
+		}
+		for _, event := range []string{"write.element", "write.length", "grow"} {
+			wire, err := json.Marshal(nativeCaptureTransportWire{
+				Version: 1, Subject: string(subject), Content: string(content), Occurrence: string(occurrence),
+				Established: string(occurrence), Revoked: event, Event: event,
+			})
+			if err != nil {
+				return nil, err
+			}
+			key := factkey.BuildKey(
+				factkey.NativeCaptureTransport,
+				[]factkey.Part{factkey.OpaquePart(string(body)), factkey.OpaquePart(string(occurrence))},
+				event,
+			)
+			out = append(out, equation.Fact{Key: key.String(), Value: wire})
+		}
+	}
+	return out, nil
+}
+
+func nativeDenseCaptureMembers(term []byte, partition equation.Partition) bool {
+	identity, found := tableIdentityForTerm(term, partition)
+	if !found {
+		return false
+	}
+	entries := make(map[int]bool)
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapMember, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		qualifier, present := fact.Qualifier(0)
+		if !present {
+			continue
+		}
+		suffix, decoded := qualifier.Decode(nil)
+		segments, valid := segment.ParseFormattedSegments(string(suffix))
+		if !decoded || !valid || len(segments) != 1 || segments[0].Kind != segment.SegmentIndexInt {
+			continue
+		}
+		entries[segments[0].Index] = true
+	}
+	if len(entries) == 0 {
+		return false
+	}
+	for index := 1; index <= len(entries); index++ {
+		if !entries[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func nativeAliasDisjointFact(occurrence []byte, term, identity []byte, subject, content string, events ...string) (equation.Fact, bool) {
 	if len(occurrence) == 0 || len(term) == 0 || len(identity) == 0 || subject == "" || content == "" {
 		return equation.Fact{}, false
@@ -10948,6 +11098,16 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		return equation.TransactionResult{}, err
 	}
 	closure := equation.OutputClosure{Values: append(memberOrigins, equation.Fact{Key: "closure/" + result + "/" + operation.Target.Name, Value: handle})}
+	captureRoots, captureRootErr := nativeCaptureEpochRootFacts(operation)
+	if captureRootErr != nil {
+		return equation.TransactionResult{}, captureRootErr
+	}
+	closure.Values = append(closure.Values, captureRoots...)
+	captureTransports, captureTransportErr := nativeCaptureTransportFacts(operation, partition)
+	if captureTransportErr != nil {
+		return equation.TransactionResult{}, captureTransportErr
+	}
+	closure.Values = append(closure.Values, captureTransports...)
 	child := lexical.byPrototype[prototype]
 	// A local nil write is a completed value publication. When an exact
 	// captured callable is subsequently invoked with that same cell, its
