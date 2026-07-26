@@ -166,6 +166,8 @@ type branchPredicateWire struct {
 	NumCeil        int64  `json:"num_ceil,omitempty"`
 	HasNumCeil     bool   `json:"has_num_ceil,omitempty"`
 	NumCeilNegated bool   `json:"num_ceil_negated,omitempty"`
+	Modulus        int64  `json:"modulus,omitempty"`
+	Residue        int64  `json:"residue,omitempty"`
 	Negated        bool   `json:"negated,omitempty"`
 	ProducerPoint  uint32 `json:"producer_point,omitempty"`
 	HasProducer    bool   `json:"has_producer,omitempty"`
@@ -11265,6 +11267,19 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	values := []equation.Fact{{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value}}
+	// Arithmetic that lands in a bounded window carries that window forward as
+	// its own fact. A dynamic read consults it exactly as it consults the
+	// relational bounds a guard proves for a plain index binding.
+	switch wir.Op(kind) {
+	case wir.OpBinOp:
+		values = append(values, residueExpressionFacts(wir.Operator(op), by, string(result), operation.Target.Name, partition)...)
+	case wir.OpUnOp:
+		if wir.Operator(op) == wir.UnLen && strings.HasPrefix(string(by["value"]), "path/") {
+			values = append(values, equation.Fact{
+				Key: lengthTermPrefix + string(result) + "/" + operation.Target.Name, Value: append([]byte(nil), by["value"]...),
+			})
+		}
+	}
 	// An expression whose destination is a binding replaces that binding's
 	// current value exactly as an assignment does. The epoch lane is the
 	// engine's single record of that replacement, so facts derived from the
@@ -11815,7 +11830,7 @@ func basicBinary(op wir.Operator, a, b []byte) ([]byte, error) {
 	case wir.BinIDiv:
 		return numberValue(math.Floor(x / y)), nil
 	case wir.BinMod:
-		return numberValue(x - math.Floor(x/y)*y), nil
+		return numberValue(luaFloorModulo(x, y)), nil
 	case wir.BinPow:
 		return numberValue(math.Pow(x, y)), nil
 	case wir.BinLt:
@@ -12171,7 +12186,7 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	if !ok {
 		return nil, "", false, false, false
 	}
-	if indexPresenceProven(container, key, partition) {
+	if indexPresenceProven(container, key, partition) || residueIndexPresenceProven(container, key, partition) {
 		if present := typetable.PresentReadonlyEntryValue(result); present != nil {
 			result = present
 		}
@@ -14842,10 +14857,29 @@ func mustCanonicalType(value typ.Type) []byte {
 	return encoded
 }
 
+// branchKernel evaluates one branch and then records the relations the branch
+// establishes about its operands rather than about its condition. A proven
+// equality is such a relation: it survives the condition that proved it, so it
+// is published as a guarded fact of its own and read back by every later
+// coordinate the same guard reaches.
 func branchKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
+	result, err := branchSelectionKernel(operation, partition)
+	if err != nil || !result.Complete {
+		return result, err
+	}
+	cone, err := persistentCongruenceConeFacts(operation, partition, result.Closure.Values)
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	result.Closure.Values = append(result.Closure.Values, cone...)
+	result.Closure.Values = append(result.Closure.Values, pathEqualityFacts(operation, partition)...)
+	return result, nil
+}
+
+func branchSelectionKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if closure, recognized := typePredicateBranchClosure(operation, partition); recognized {
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
@@ -15321,6 +15355,13 @@ func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equat
 			}
 		}
 	}
+	// A proven equality relates the whole value, so every narrowing one side
+	// receives is a narrowing of the other. The transfer is not privileged
+	// towards nil removal: a discriminant selection carries exactly as far as
+	// the equality does.
+	for _, transfer := range congruenceTransfers(operation, partition, narrowed, order) {
+		record(transfer.term, transfer.narrowed)
+	}
 	out := make([]impliedNarrowing, 0, len(order))
 	for _, term := range order {
 		out = append(out, impliedNarrowing{term: term, narrowed: narrowed[term]})
@@ -15670,11 +15711,28 @@ func correlationBranchClosure(operation equation.BoundEquation, partition equati
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte("correlation/true"), Guards: []equation.Guard{guard}},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte("correlation/false"), Guards: []equation.Guard{{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/false")}}},
 	}}
+	cone, err := correlationConeFacts(equal, nonNil, operation, partition, guard)
+	if err != nil {
+		return equation.OutputClosure{}, false, err
+	}
+	closure.Values = append(closure.Values, cone...)
+	if len(closure.Values) == 0 {
+		return equation.OutputClosure{}, false, nil
+	}
+	return closure, true, nil
+}
+
+// correlationConeFacts projects a non-nil narrowing across every path an
+// equality relates to the guarded member. It is the single producer of the
+// correlation cone: the branch-local closure and the persistent equality lane
+// both call it, so one relation always yields one epoch-coned fact.
+func correlationConeFacts(equal map[string]map[string]bool, nonNil map[string]bool, operation equation.BoundEquation, partition equation.Partition, guard equation.Guard) ([]equation.Fact, error) {
 	sourcePaths := make([]string, 0, len(nonNil))
 	for sourcePath := range nonNil {
 		sourcePaths = append(sourcePaths, sourcePath)
 	}
 	sort.Strings(sourcePaths)
+	var facts []equation.Fact
 	for _, sourcePath := range sourcePaths {
 		source := []byte("path/" + sourcePath)
 		if !derivedPathTerm(source) {
@@ -15710,18 +15768,15 @@ func correlationBranchClosure(operation equation.BoundEquation, partition equati
 			}
 			wire, marshalErr := json.Marshal(correlationConeValue{Value: value, Epochs: epochs})
 			if marshalErr != nil {
-				return equation.OutputClosure{}, false, marshalErr
+				return nil, marshalErr
 			}
-			closure.Values = append(closure.Values, equation.Fact{
+			facts = append(facts, equation.Fact{
 				Key:   correlationConeValuePrefix + base64.RawURLEncoding.EncodeToString(target) + "/" + operation.Target.Name,
 				Value: wire, Guards: []equation.Guard{guard},
 			})
 		}
 	}
-	if len(closure.Values) == 0 {
-		return equation.OutputClosure{}, false, nil
-	}
-	return closure, true, nil
+	return facts, nil
 }
 
 // returnTupleTrueBranchClosure applies the one directional fact carried by an
@@ -16248,6 +16303,16 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte("index/true"), Guards: []equation.Guard{guard}},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte("index/false"), Guards: []equation.Guard{{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/false")}}},
 	}}
+	// A compound index guard carries its length floors on the same true edge.
+	// They are the container-side half of the same relation the index bounds
+	// state, so this closure publishes them exactly as the undecided branch
+	// outcome does rather than leaving the container unbounded here.
+	for _, item := range lengthFloorBranchProofs(operation) {
+		closure.Values = append(closure.Values, equation.Fact{
+			Key:   heapLengthFloorPrefix + heapIndexSubject([]byte("path/"+item.path), partition) + "/" + operation.Target.Name,
+			Value: []byte(strconv.FormatInt(item.floor, 10)), Guards: []equation.Guard{guard},
+		})
+	}
 	lower, upper := publishedIndexRelations(partition)
 	for _, predicate := range predicates {
 		if predicate.Negated || predicate.Path == "" {
@@ -16357,14 +16422,21 @@ func branchEvidencePredicate(operand equation.BoundOperand) (branchPredicateWire
 	} else if operand.Role != "predicate" {
 		return branchPredicateWire{}, false, false
 	}
+	predicate, ok := decodeBranchPredicateWire(encoded)
+	return predicate, ok, ok
+}
+
+// decodeBranchPredicateWire reads one closed predicate encoding. It is the sole
+// decoder of the front's predicate vocabulary in this package.
+func decodeBranchPredicateWire(encoded []byte) (branchPredicateWire, bool) {
 	if !strings.HasPrefix(string(encoded), branchPredicatePrefix) {
-		return branchPredicateWire{}, false, false
+		return branchPredicateWire{}, false
 	}
 	var predicate branchPredicateWire
 	if json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate) != nil || predicate.Kind == "" {
-		return branchPredicateWire{}, false, false
+		return branchPredicateWire{}, false
 	}
-	return predicate, true, true
+	return predicate, true
 }
 
 // typedLiteralBranchClosure consumes a value type already carried by an
@@ -23300,6 +23372,15 @@ func evaluateBranchPredicateWire(predicate branchPredicateWire, partition equati
 			return false, fmt.Errorf("engine: numeric ceiling predicate has no ceiling")
 		}
 		result = number <= float64(predicate.NumCeil)
+	case "mod-residue":
+		number, valueErr := scalarNumber(value)
+		if valueErr != nil {
+			return false, valueErr
+		}
+		if predicate.Modulus <= 0 {
+			return false, fmt.Errorf("engine: residue predicate has no positive modulus")
+		}
+		result = luaFloorModulo(number, float64(predicate.Modulus)) == float64(predicate.Residue)
 	case "index-in-range", "frozen-table":
 		// Heap/index evidence is outside this scalar evaluator. Treat it as an
 		// unavailable selector: neither branch is selected until a dedicated

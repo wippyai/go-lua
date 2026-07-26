@@ -63,6 +63,65 @@ func (r *Reachability) reachableSet(from Point) []uint64 {
 	return set
 }
 
+// EveryPathTakesEdge reports that control cannot reach to from from without
+// traversing the edge cutFrom -> cutTo. It is the topology question a guarded
+// conclusion asks: a fact proven on one branch edge holds at a later point
+// exactly when no path reaches that point around the edge.
+//
+// It is a single walk over the graph with the one edge removed, so a caller
+// never rebuilds a dominator relation of its own. A point that is not in the
+// graph, or that equals from, is answered false: nothing is proven about a
+// coordinate the walk cannot place.
+func EveryPathTakesEdge(graph Graph, from, to, cutFrom, cutTo Point) bool {
+	if graph == nil || from == to {
+		return false
+	}
+	if !pointInGraph(graph, from) || !pointInGraph(graph, to) ||
+		!pointInGraph(graph, cutFrom) || !pointInGraph(graph, cutTo) {
+		return false
+	}
+	// A target the source also reaches on its other condition is reached
+	// whichever edge is taken, so cutting one of the two parallel edges would
+	// remove a path the graph still has.
+	if parallelEdgeTargets(graph, cutFrom, cutTo) {
+		return false
+	}
+	words := (graph.Size() + 63) / 64
+	visited := make([]uint64, words)
+	bitsetAdd(visited, from)
+	stack := []Point{from}
+	for len(stack) != 0 {
+		point := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if point == to {
+			return false
+		}
+		for _, next := range SuccessorsReadOnly(graph, point) {
+			if point == cutFrom && next == cutTo {
+				continue
+			}
+			if !pointInGraph(graph, next) || bitsetHas(visited, next) {
+				continue
+			}
+			bitsetAdd(visited, next)
+			stack = append(stack, next)
+		}
+	}
+	return true
+}
+
+// parallelEdgeTargets reports that from reaches to on more than one of its
+// outgoing edges.
+func parallelEdgeTargets(graph Graph, from, to Point) bool {
+	count := 0
+	for _, successor := range SuccessorsReadOnly(graph, from) {
+		if successor == to {
+			count++
+		}
+	}
+	return count > 1
+}
+
 func pointInGraph(graph Graph, point Point) bool {
 	return graph != nil && int(point) >= 0 && int(point) < graph.Size()
 }

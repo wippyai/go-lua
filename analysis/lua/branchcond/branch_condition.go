@@ -38,6 +38,7 @@ const (
 	CheckNumGe        = wir.CheckNumGe
 	CheckNumLe        = wir.CheckNumLe
 	CheckFrozenTable  = wir.CheckFrozenTable
+	CheckModResidue   = wir.CheckModResidue
 )
 
 type Check struct {
@@ -52,6 +53,10 @@ type Check struct {
 	NumCeil        int64
 	HasNumCeil     bool
 	NumCeilNegated bool
+	// Modulus and Residue carry `path % Modulus == Residue`. Modulus is
+	// positive and Residue is reduced into [0, Modulus-1].
+	Modulus int64
+	Residue int64
 	// Negated is true when the bound holds on the FALSE edge of the comparison
 	// rather than the true edge: e.g. `i > #xs` proves the in-range bound i <= #xs
 	// on its false edge, the standard `if oob then error end` guard form. Only the
@@ -187,6 +192,9 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 			return Check{}
 		}
 		if check, ok := normalizeTypeComparison(expr, bindings); ok {
+			return check
+		}
+		if check, ok := normalizeModuloResidueComparison(expr, bindings); ok {
 			return check
 		}
 		if check, ok := normalizeLiteralComparison(expr, bindings); ok {
@@ -476,6 +484,60 @@ func normalizePathComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) 
 		kind = CheckPathNot
 	}
 	return Check{Kind: kind, Path: lhs, OtherPath: rhs}, true
+}
+
+// normalizeModuloResidueComparison recognizes a residue guard such as
+// `i % 2 == 1` or the flipped `1 == i % 2`, producing
+// CheckModResidue{Path: i, Modulus: 2, Residue: 1}. Only a positive integer
+// modulus is admitted: Lua's floor modulo then puts `i % k` in [0, k-1] for
+// every sign of i, which is the window every consumer of this check relies on.
+// A residue outside that window is not reachable by the operator at all, so the
+// comparison names an empty residue class and is left unnormalized rather than
+// recorded as a guard nothing can satisfy.
+//
+// `~=` produces the same check with Negated set: the residue equality then
+// holds on the comparison's false edge, exactly as the numeric bound checks
+// already encode a guard-return spelling.
+func normalizeModuloResidueComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
+	subject, residue, ok := moduloResidueOperands(expr.Lhs, expr.Rhs, bindings)
+	if !ok {
+		subject, residue, ok = moduloResidueOperands(expr.Rhs, expr.Lhs, bindings)
+	}
+	if !ok {
+		return Check{}, false
+	}
+	subject.Residue = residue
+	subject.Negated = expr.Operator == "~="
+	return subject, true
+}
+
+// moduloResidueOperands matches `path % const` against an integer literal.
+func moduloResidueOperands(moduloExpr, literalExpr ast.Expr, bindings *bind.Result) (Check, int64, bool) {
+	arithmetic, ok := moduloExpr.(*ast.ArithmeticOpExpr)
+	if !ok || arithmetic.Operator != "%" {
+		return Check{}, 0, false
+	}
+	modulusLiteral, ok := arithmetic.Rhs.(*ast.NumberExpr)
+	if !ok {
+		return Check{}, 0, false
+	}
+	modulus, ok := numparse.ParseIntegerLiteral(modulusLiteral.Value)
+	if !ok || modulus <= 0 {
+		return Check{}, 0, false
+	}
+	residueLiteral, ok := literalExpr.(*ast.NumberExpr)
+	if !ok {
+		return Check{}, 0, false
+	}
+	residue, ok := numparse.ParseIntegerLiteral(residueLiteral.Value)
+	if !ok || residue < 0 || residue >= modulus {
+		return Check{}, 0, false
+	}
+	subject, ok := pathexpr.Resolve(arithmetic.Lhs, bindings)
+	if !ok || subject.IsEmpty() {
+		return Check{}, 0, false
+	}
+	return Check{Kind: CheckModResidue, Path: subject, Modulus: modulus}, residue, true
 }
 
 func normalizeLiteralComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {

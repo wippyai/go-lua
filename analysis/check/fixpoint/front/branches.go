@@ -32,6 +32,8 @@ type branchPredicateWire struct {
 	NumCeil        int64  `json:"num_ceil,omitempty"`
 	HasNumCeil     bool   `json:"has_num_ceil,omitempty"`
 	NumCeilNegated bool   `json:"num_ceil_negated,omitempty"`
+	Modulus        int64  `json:"modulus,omitempty"`
+	Residue        int64  `json:"residue,omitempty"`
 	Negated        bool   `json:"negated,omitempty"`
 	ProducerPoint  uint32 `json:"producer_point,omitempty"`
 	HasProducer    bool   `json:"has_producer,omitempty"`
@@ -134,7 +136,8 @@ func branchPredicateTerm(check wir.Check) (equation.Term, error) {
 	wire := branchPredicateWire{
 		Kind: kind, TypeName: check.TypeName, LenFloor: check.LenFloor,
 		NumFloor: check.NumFloor, NumCeil: check.NumCeil, HasNumCeil: check.HasNumCeil,
-		NumCeilNegated: check.NumCeilNegated, Negated: check.Negated,
+		NumCeilNegated: check.NumCeilNegated, Modulus: check.Modulus, Residue: check.Residue,
+		Negated:       check.Negated,
 		ProducerPoint: uint32(check.ProducerPoint), HasProducer: check.HasProducerPoint,
 	}
 	var err error
@@ -262,6 +265,8 @@ func branchCheckKind(kind wir.CheckKind) (string, bool) {
 		return "num-le", true
 	case wir.CheckFrozenTable:
 		return "frozen-table", true
+	case wir.CheckModResidue:
+		return "mod-residue", true
 	default:
 		return "", false
 	}

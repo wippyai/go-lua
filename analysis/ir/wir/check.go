@@ -36,6 +36,7 @@ const (
 	CheckNumGe
 	CheckNumLe
 	CheckFrozenTable
+	CheckModResidue
 )
 
 // Check is the neutral condition descriptor interned by a Body. Lowering
@@ -55,6 +56,12 @@ type Check struct {
 	NumCeil        int64
 	HasNumCeil     bool
 	NumCeilNegated bool
+	// Modulus and Residue carry the two integers of CheckModResidue: the
+	// comparison `path % Modulus == Residue`. Modulus is always positive and
+	// Residue is already reduced into [0, Modulus-1], which is the range Lua's
+	// floor modulo produces for a positive modulus whatever the dividend's sign.
+	Modulus int64
+	Residue int64
 	// Negated is true when the bound holds on the FALSE edge of the comparison
 	// rather than the true edge. Only the bound checks (CheckIndexInRange,
 	// CheckNumGe, CheckNumLe, CheckLenGe) use it.

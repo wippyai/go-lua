@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/refinement"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -80,6 +81,12 @@ func branchBodyFacts(compilation front.Compilation, decided map[string]bool) []N
 		case wir.CheckNumGe, wir.CheckNumLe:
 			out = append(out, row("branch_partition", occurrence, subject,
 				nativeBranchPartition(nativeNumericEdge(check, constant, known))))
+		case wir.CheckModResidue:
+			edge := nativeResidueEdge(check, constant, known)
+			if edge == nativeEdgeDynamic {
+				edge = nativeResidueConflictEdge(compilation, index, check)
+			}
+			out = append(out, row("branch_partition", occurrence, subject, nativeBranchPartition(edge)))
 		default:
 			out = append(out, row("branch_partition", occurrence, subject, nativeBranchPartition(nativeEdgeDynamic)))
 		}
@@ -185,6 +192,115 @@ func nativeNumericEdge(check wir.Check, constant nativeConstant, known bool) nat
 		return nativeEdgeTrue
 	}
 	return nativeEdgeFalse
+}
+
+// nativeResidueEdge decides a residue guard against the exact integer constant
+// its subject was born with. A float literal is left undecided for the same
+// reason the numeric comparison leaves it: the descriptor carries an integer
+// residue and a float subject would be decided by a rounding rule the
+// descriptor does not state.
+func nativeResidueEdge(check wir.Check, constant nativeConstant, known bool) nativeBranchEdge {
+	if !known || constant.kind != wir.ConstNumber || !numericLiteralIsInteger(constant.number) || check.Modulus <= 0 {
+		return nativeEdgeDynamic
+	}
+	value, err := strconv.ParseInt(constant.number, 10, 64)
+	if err != nil {
+		return nativeEdgeDynamic
+	}
+	residue := value % check.Modulus
+	if residue < 0 {
+		residue += check.Modulus
+	}
+	holds := residue == check.Residue
+	if check.Negated {
+		holds = !holds
+	}
+	if holds {
+		return nativeEdgeTrue
+	}
+	return nativeEdgeFalse
+}
+
+// nativeResidueConflictEdge decides a residue guard against another residue
+// guard of the same modulus that every path to this branch has already taken.
+// Residue classes of one modulus are disjoint, so a subject already known to
+// lie in one class cannot lie in another: the then arm is an instruction stream
+// no execution enters.
+//
+// Only the same modulus is admitted. Two different moduli constrain a value
+// jointly rather than exclusively - `x % 2 == 0` and `x % 3 == 0` both hold at
+// x = 6 - and deciding that would need the Chinese remainder relation this
+// domain deliberately does not carry.
+//
+// The proof is withdrawn wherever it stops being about the same value: the
+// subject must be written nowhere in the body, both guards must name it
+// non-negated, and the CFG must admit no path to this branch that avoids the
+// establishing guard's true edge.
+func nativeResidueConflictEdge(compilation front.Compilation, read int, check wir.Check) nativeBranchEdge {
+	body, graph := compilation.WIR, compilation.Graph
+	if body == nil || graph == nil || check.Negated || check.Modulus <= 0 || check.Path.IsEmpty() {
+		return nativeEdgeDynamic
+	}
+	if nativePathRebound(body, check.Path) {
+		return nativeEdgeDynamic
+	}
+	for index := read - 1; index >= 0; index-- {
+		instruction := body.Instr(index)
+		if instruction.Op != wir.OpBranch {
+			continue
+		}
+		established := body.Check(instruction.Check)
+		if established.Kind != wir.CheckModResidue || established.Negated ||
+			established.Modulus != check.Modulus || established.Residue == check.Residue ||
+			!established.Path.EqualIgnoringVersion(check.Path) {
+			continue
+		}
+		if !nativeGuardedByTrueEdge(graph, instruction.Point, body.Instr(read).Point) {
+			continue
+		}
+		return nativeEdgeFalse
+	}
+	return nativeEdgeDynamic
+}
+
+// nativeGuardedByTrueEdge reports that every path reaching point takes the true
+// edge out of guard. The CFG owns the answer; instruction order never stands in
+// for it, because a later instruction can sit on the guard's other arm.
+func nativeGuardedByTrueEdge(graph cfg.Graph, guard, point cfg.Point) bool {
+	successors := cfg.SuccessorsReadOnly(graph, guard)
+	conditions := cfg.SuccessorConditionsReadOnly(graph, guard)
+	if len(successors) != len(conditions) {
+		return false
+	}
+	for index, successor := range successors {
+		if !conditions[index] {
+			continue
+		}
+		if cfg.EveryPathTakesEdge(graph, graph.Entry(), point, guard, successor) {
+			return true
+		}
+	}
+	return false
+}
+
+// nativePathRebound reports that the body writes the binding at any point. A
+// residue proof is about one value of the subject, so a body that can replace
+// that value keeps no such proof at all.
+func nativePathRebound(body *wir.Body, subject path.Path) bool {
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Dst.Kind == wir.OperandPath &&
+			body.Path(wir.PathRef(instruction.Dst.Ref)).SameRootIgnoringVersion(subject) {
+			return true
+		}
+		for _, result := range body.Operands(instruction.Results) {
+			if result.Kind == wir.OperandPath &&
+				body.Path(wir.PathRef(result.Ref)).SameRootIgnoringVersion(subject) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // nativeConstant is the exact constant a binding was born with, in the

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -305,18 +306,26 @@ func guardedElementFacts(compilation front.Compilation) []NativeFact {
 	var rows []NativeFact
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
-		if instruction.Op != wir.OpDynamicIndexRead || instruction.A.Kind != wir.OperandPath || instruction.B.Kind != wir.OperandPath {
+		if instruction.Op != wir.OpDynamicIndexRead || instruction.A.Kind != wir.OperandPath {
 			continue
 		}
 		container := body.Path(wir.PathRef(instruction.A.Ref))
-		key := body.Path(wir.PathRef(instruction.B.Ref))
-		if len(container.Segments) != 0 || len(key.Segments) != 0 || nativeMadeTable(body, container) {
+		if len(container.Segments) != 0 || nativeMadeTable(body, container) || !nativeDeclaredArray(container, types) {
 			continue
 		}
-		if !nativeDeclaredArray(container, types) {
+		floor, ceiling := false, false
+		switch instruction.B.Kind {
+		case wir.OperandPath:
+			key := body.Path(wir.PathRef(instruction.B.Ref))
+			if len(key.Segments) != 0 {
+				continue
+			}
+			floor, ceiling = nativeElementIndexBounds(body, container, key, index)
+		case wir.OperandTemp:
+			floor, ceiling = nativeResidueIndexBounds(body, types, container, instruction.B, index)
+		default:
 			continue
 		}
-		floor, ceiling := nativeElementIndexBounds(body, container, key, index)
 		if !floor {
 			continue
 		}
@@ -330,12 +339,164 @@ func guardedElementFacts(compilation front.Compilation) []NativeFact {
 	return rows
 }
 
+// nativeResidueIndexBounds reads an index term the body itself computes as a
+// residue window: `(x % k) + c` for an integer x. The window is the whole
+// proof, so the guard supplies only the container's length floor, and the read
+// is in range when the window's own bounds land inside it.
+func nativeResidueIndexBounds(body *wir.Body, types map[string]typ.Type, container path.Path, key wir.Operand, read int) (floor, ceiling bool) {
+	window, ok := nativeResidueIndexWindow(body, types, key, 0)
+	if !ok || window.Low < 1 {
+		return false, false
+	}
+	bounds, found := nativeGuardBoundsFor(body, container, container, read)
+	if !found || bounds.lengthFloor < 1 {
+		return false, false
+	}
+	if window.Container == "" {
+		return true, window.High >= 1 && window.High <= bounds.lengthFloor
+	}
+	// The wrap is by the read container's own length, so the window's upper
+	// bound is `#container + High` and no numeric relation between the two is
+	// needed: an offset of at most zero keeps the term inside the sequence.
+	return true, window.Container == string(container.Key()) && window.High <= 0
+}
+
+// nativeResidueIndexWindow resolves the integer interval an index term
+// occupies. Only the residue fragment is described: a modulo of an integer
+// dividend, optionally shifted by integer constants. A float dividend is
+// refused because its residue is a float, which addresses no array slot.
+func nativeResidueIndexWindow(body *wir.Body, types map[string]typ.Type, operand wir.Operand, depth int) (residueWindow, bool) {
+	if depth > 8 {
+		return residueWindow{}, false
+	}
+	producer, found := nativeElementProducer(body, operand)
+	if !found || producer.Op != wir.OpBinOp {
+		return residueWindow{}, false
+	}
+	switch producer.Operator {
+	case wir.BinAdd, wir.BinSub:
+		offset, ok := nativeIntegerConstantValue(body, producer.B)
+		if !ok {
+			return residueWindow{}, false
+		}
+		if producer.Operator == wir.BinSub {
+			if offset == math.MinInt64 {
+				return residueWindow{}, false
+			}
+			offset = -offset
+		}
+		window, ok := nativeResidueIndexWindow(body, types, producer.A, depth+1)
+		if !ok {
+			return residueWindow{}, false
+		}
+		return window.shift(offset)
+	case wir.BinMod:
+		if !nativeIntegerTypedOperand(body, types, producer.A) {
+			return residueWindow{}, false
+		}
+		if modulus, ok := nativeIntegerConstantValue(body, producer.B); ok {
+			return constantModulusWindow(modulus)
+		}
+		if array, ok := nativeLengthOperandPath(body, producer.B); ok {
+			return selfLengthWindow(string(array.Key())), true
+		}
+		return residueWindow{}, false
+	default:
+		return residueWindow{}, false
+	}
+}
+
+// nativeIntegerTypedOperand reports an operand whose declared type is exactly
+// Lua's integer subtype. Only an integer dividend has an integer residue, and
+// only an integer index addresses an array slot.
+func nativeIntegerTypedOperand(body *wir.Body, types map[string]typ.Type, operand wir.Operand) bool {
+	if operand.Kind == wir.OperandConst {
+		value := body.Const(wir.ConstRef(operand.Ref))
+		return value.Kind == wir.ConstNumber && numericLiteralIsInteger(value.Number)
+	}
+	if operand.Kind != wir.OperandPath {
+		return false
+	}
+	declared, known := types[string(body.Path(wir.PathRef(operand.Ref)).Key())]
+	return known && declared != nil && typ.TypeEquals(unwrap.Alias(declared), typ.Integer)
+}
+
+// nativeIntegerConstantValue reads the exact integer a constant operand holds.
+func nativeIntegerConstantValue(body *wir.Body, operand wir.Operand) (int64, bool) {
+	if operand.Kind != wir.OperandConst {
+		return 0, false
+	}
+	value := body.Const(wir.ConstRef(operand.Ref))
+	if value.Kind != wir.ConstNumber || !numericLiteralIsInteger(value.Number) {
+		return 0, false
+	}
+	parsed, err := strconv.ParseInt(value.Number, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return parsed, true
+}
+
+// nativeLengthOperandPath names the container an operand's producer takes the
+// length of.
+func nativeLengthOperandPath(body *wir.Body, operand wir.Operand) (path.Path, bool) {
+	producer, found := nativeElementProducer(body, operand)
+	if !found || producer.Op != wir.OpUnOp || producer.Operator != wir.UnLen || producer.A.Kind != wir.OperandPath {
+		return path.Path{}, false
+	}
+	return body.Path(wir.PathRef(producer.A.Ref)), true
+}
+
+// nativeGuardBounds collects every bound one guard proves for one index and one
+// container on the edge the guarded read is lowered onto.
+type nativeGuardBounds struct {
+	floor       bool
+	inRange     bool
+	ceiling     int64
+	hasCeiling  bool
+	modulus     int64
+	residue     int64
+	hasResidue  bool
+	lengthFloor int64
+}
+
 // nativeElementIndexBounds reads the bounds the normalized guard descriptor
 // proves for the index on the edge the read is lowered onto. The guard is the
 // branch the read follows, and the run between them must touch neither the
 // index nor the container: a call, a loop, a further branch, or a rebinding
 // leaves the read unguarded here rather than guarded by an older proof.
 func nativeElementIndexBounds(body *wir.Body, container, key path.Path, read int) (floor, ceiling bool) {
+	bounds, found := nativeGuardBoundsFor(body, container, key, read)
+	if !found {
+		return false, false
+	}
+	return bounds.floor, bounds.provesUpperBound()
+}
+
+// provesUpperBound reports that the guard puts the index at or below the
+// container's length. A direct in-range predicate states it; otherwise a
+// numeric ceiling does when the proven length floor already covers it, and a
+// residue guard first tightens that ceiling to the largest member of the
+// residue class the range still admits.
+func (b nativeGuardBounds) provesUpperBound() bool {
+	if b.inRange {
+		return true
+	}
+	if !b.hasCeiling || b.lengthFloor < 1 {
+		return false
+	}
+	ceiling := b.ceiling
+	if b.hasResidue {
+		tightened, ok := residueClassCeiling(ceiling, b.modulus, b.residue)
+		if !ok {
+			return false
+		}
+		ceiling = tightened
+	}
+	return ceiling >= 1 && ceiling <= b.lengthFloor
+}
+
+func nativeGuardBoundsFor(body *wir.Body, container, key path.Path, read int) (nativeGuardBounds, bool) {
 	guard := -1
 	for index := read - 1; index >= 0; index-- {
 		if body.Instr(index).Op == wir.OpBranch {
@@ -344,25 +505,43 @@ func nativeElementIndexBounds(body *wir.Body, container, key path.Path, read int
 		}
 	}
 	if guard < 0 {
-		return false, false
+		return nativeGuardBounds{}, false
 	}
 	for index := guard + 1; index < read; index++ {
 		if !nativeElementGuardTransparent(body, body.Instr(index), container, key) {
-			return false, false
+			return nativeGuardBounds{}, false
 		}
 	}
+	var bounds nativeGuardBounds
 	consider := func(check wir.Check) {
+		// A numeric ceiling has its own edge flag: `i <= 2` proves the floor
+		// `i >= 3` on the false edge while proving the ceiling on the true one,
+		// so the two bounds of one comparison are read independently.
+		if check.HasNumCeil && !check.NumCeilNegated && check.Path.EqualIgnoringVersion(key) &&
+			(check.Kind == wir.CheckNumGe || check.Kind == wir.CheckNumLe) {
+			if !bounds.hasCeiling || check.NumCeil < bounds.ceiling {
+				bounds.ceiling, bounds.hasCeiling = check.NumCeil, true
+			}
+		}
 		if check.Negated {
 			return
 		}
 		switch check.Kind {
 		case wir.CheckNumGe:
 			if check.Path.EqualIgnoringVersion(key) && check.NumFloor >= 1 {
-				floor = true
+				bounds.floor = true
 			}
 		case wir.CheckIndexInRange:
 			if check.Path.EqualIgnoringVersion(key) && check.OtherPath.EqualIgnoringVersion(container) {
-				ceiling = true
+				bounds.inRange = true
+			}
+		case wir.CheckLenGe:
+			if check.Path.EqualIgnoringVersion(container) && check.LenFloor > bounds.lengthFloor {
+				bounds.lengthFloor = check.LenFloor
+			}
+		case wir.CheckModResidue:
+			if check.Path.EqualIgnoringVersion(key) && check.Modulus > 0 && !bounds.hasResidue {
+				bounds.modulus, bounds.residue, bounds.hasResidue = check.Modulus, check.Residue, true
 			}
 		}
 	}
@@ -373,7 +552,7 @@ func nativeElementIndexBounds(body *wir.Body, container, key path.Path, read int
 			consider(implied.Check)
 		}
 	}
-	return floor, ceiling
+	return bounds, true
 }
 
 func nativeElementGuardTransparent(body *wir.Body, instruction wir.Instruction, container, key path.Path) bool {

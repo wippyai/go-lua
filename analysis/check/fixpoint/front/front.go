@@ -3009,8 +3009,8 @@ func callCheckTerm(check wir.Check) (equation.Term, error) {
 	if check.Kind == wir.CheckNone {
 		return equation.Term{}, fmt.Errorf("empty normalized call check")
 	}
-	return equation.ClosedTerm([]byte(fmt.Sprintf("check/%d/path/%s/other/%s/type/%q/literal/%q/string/%q/len/%d/floor/%d/ceil/%d/has-ceil/%t/ceil-negated/%t/negated/%t/producer/%d/has-producer/%t",
-		check.Kind, check.Path.Key(), check.OtherPath.Key(), check.TypeName, fmt.Sprint(check.Literal), check.LiteralString, check.LenFloor, check.NumFloor, check.NumCeil, check.HasNumCeil, check.NumCeilNegated, check.Negated, check.ProducerPoint, check.HasProducerPoint))), nil
+	return equation.ClosedTerm([]byte(fmt.Sprintf("check/%d/path/%s/other/%s/type/%q/literal/%q/string/%q/len/%d/floor/%d/ceil/%d/has-ceil/%t/ceil-negated/%t/modulus/%d/residue/%d/negated/%t/producer/%d/has-producer/%t",
+		check.Kind, check.Path.Key(), check.OtherPath.Key(), check.TypeName, fmt.Sprint(check.Literal), check.LiteralString, check.LenFloor, check.NumFloor, check.NumCeil, check.HasNumCeil, check.NumCeilNegated, check.Modulus, check.Residue, check.Negated, check.ProducerPoint, check.HasProducerPoint))), nil
 }
 
 func callResultTargetTerm(target wir.CallResultTarget) (equation.Term, error) {

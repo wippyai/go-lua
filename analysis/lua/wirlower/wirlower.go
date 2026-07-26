@@ -3008,6 +3008,8 @@ func (b *builder) lowerCheck(c branchcond.Check) wir.Check {
 		NumCeil:          c.NumCeil,
 		HasNumCeil:       c.HasNumCeil,
 		NumCeilNegated:   c.NumCeilNegated,
+		Modulus:          c.Modulus,
+		Residue:          c.Residue,
 		Negated:          c.Negated,
 		ProducerPoint:    c.ProducerPoint,
 		HasProducerPoint: c.HasProducerPoint,
