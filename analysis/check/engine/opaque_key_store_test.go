@@ -343,3 +343,84 @@ local group: {Entry}? = groups["alpha"]
 		})
 	}
 }
+
+// TestGuardedOpaqueKeyStoreRevokesClosureAtTheJoin pins the marker as a
+// may-fact. The arm that stored at an unresolved key is one of the executions
+// arriving past the decision, so the constructor no longer proves an omitted
+// slot absent there.
+func TestGuardedOpaqueKeyStoreRevokesClosureAtTheJoin(t *testing.T) {
+	for name, source := range map[string]string{
+		"acyclic-arm": `local guarded = {}
+local key = tostring(1)
+if key ~= "" then
+    guarded[key] = 1
+end
+local absent: nil = guarded["x"]
+`,
+		"loop-body-arm": `local keys: {string} = {}
+local guarded = {}
+for _, key in ipairs(keys) do
+    if key ~= "" then
+        guarded[key] = 1
+    end
+end
+local absent: nil = guarded["x"]
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if len(checkSource(t, source)) == 0 {
+				t.Fatal("a store on one arm left the constructor proving an omitted slot absent")
+			}
+		})
+	}
+	// A container never stored through at an unresolved key keeps its closure.
+	control := checkSource(t, `local sealed = { present = 1 }
+local missing: nil = sealed.absent
+`)
+	if len(control) != 0 {
+		t.Fatalf("a container with no unresolved-key store lost its closure:\n%s", diagnosticSummaries(control))
+	}
+}
+
+// TestGuardedOpaqueKeyStoreTypesTheReadFromItsArm pins that the arm's own store
+// is what the component types the read with, so the revocation is a proof about
+// the slot rather than a bare unknown.
+func TestGuardedOpaqueKeyStoreTypesTheReadFromItsArm(t *testing.T) {
+	const source = `local guarded = {}
+local key = tostring(1)
+if key ~= "" then
+    guarded[key] = 1
+end
+local read: %s = guarded["x"]
+`
+	if diagnostics := checkSource(t, fmt.Sprintf(source, "integer?")); len(diagnostics) != 0 {
+		t.Fatalf("the arm's store did not type the read:\n%s", diagnosticSummaries(diagnostics))
+	}
+	for _, claim := range []string{"integer", "string?"} {
+		if len(checkSource(t, fmt.Sprintf(source, claim))) == 0 {
+			t.Fatalf("claim %q was admitted against the component the arm established", claim)
+		}
+	}
+}
+
+// TestKeyedStoreClassifiesWriteBackEdgesFromTheRemainingArms pins the store
+// witness a decision's edges produce. An edge that stores back a read of the
+// same container's unresolved keys leaves the slot as it found it, so the value
+// the component takes is the one the other edge writes.
+func TestKeyedStoreClassifiesWriteBackEdgesFromTheRemainingArms(t *testing.T) {
+	const source = `type Entry = {id: string}
+local entries: {Entry} = {}
+local groups = {}
+for _, entry in ipairs(entries) do
+    groups[entry.id] = groups[entry.id] or {}
+    table.insert(groups[entry.id], entry)
+end
+local group: %s = groups["alpha"]
+`
+	if diagnostics := checkSource(t, fmt.Sprintf(source, "{Entry}?")); len(diagnostics) != 0 {
+		t.Fatalf("the write-back idiom lost the component's value:\n%s", diagnosticSummaries(diagnostics))
+	}
+	if len(checkSource(t, fmt.Sprintf(source, "{string}?"))) == 0 {
+		t.Fatal("a mismatched element claim was admitted against the write-back idiom")
+	}
+}

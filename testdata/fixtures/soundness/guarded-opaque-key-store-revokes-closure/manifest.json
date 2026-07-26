@@ -1,0 +1,5 @@
+{
+  "description": "An unresolved-key store on one arm of a decision leaves the container's inventory incomplete at every point past that decision, so the closed constructor stops proving an omitted slot absent and the keyed component the store establishes types the read. A container never stored through that way keeps its closure.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

@@ -11853,6 +11853,12 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			values = append(values, equation.Fact{Key: summaryTypePrefix + target + "/" + operation.Target.Name, Value: encoded})
 		}
 	}
+	// A copy of a value read at an unresolved key is still that value, so the
+	// slot it came from travels with it. Without the row the copy is an ordinary
+	// unknown, and a write through it would be accounted to no container.
+	if container, keyed := keyedReadContainer(operands["value"], partition); keyed {
+		values = append(values, keyedReadFact([]byte(target), operation.Target.Name, container))
+	}
 	values = append(values, rebaseChannelPayloadFacts(operands["value"], target, operation.Target.Name, partition)...)
 	identity, hasIdentity := tableIdentityForTerm(operands["value"], partition)
 	if !hasIdentity && (shapefact.IsTable(value) || string(value) == "scalar/table") {
@@ -12764,13 +12770,7 @@ func decodeOpaqueMemberWrite(value []byte) (opaqueMemberWriteWire, bool) {
 // slot the analysis could not name. The written slot is unknown, so the
 // identity's member publication no longer accounts for every live slot.
 func heapOpaqueMemberWrite(identity []byte, partition equation.Partition) bool {
-	prefix := heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	for _, fact := range partition.ValuesPrefix(prefix) {
-		if _, ok := decodeOpaqueMemberWrite(fact.Value); ok {
-			return true
-		}
-	}
-	return false
+	return len(heapOpaqueMemberWriteRows(identity, partition)) != 0
 }
 
 // heapOpaqueMemberCallables lists the callables this identity received through
@@ -12791,7 +12791,15 @@ func heapOpaqueMemberCallables(identity []byte, partition equation.Partition) []
 func heapOpaqueMemberWriteRows(identity []byte, partition equation.Partition) []opaqueMemberWriteWire {
 	prefix := heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	rows := make([]opaqueMemberWriteWire, 0)
-	for _, fact := range partition.ValuesPrefix(prefix) {
+	// The marker is a may-fact: one arm of a decision storing at an unresolved
+	// key leaves the inventory incomplete at every point past that decision,
+	// because the arm that stored is one of the executions arriving there. It is
+	// therefore read over every published row rather than over the rows one
+	// guard cube admits, which would let a store survive only inside its own arm.
+	for _, fact := range partition.AllValues() {
+		if !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
 		if wire, ok := decodeOpaqueMemberWrite(fact.Value); ok {
 			rows = append(rows, wire)
 		}
@@ -12824,7 +12832,7 @@ func heapOpaqueMemberWriteFact(identity []byte, operation string, handles []clos
 // state: the published types of its own key and value terms. A term carrying
 // no type witness leaves its field empty, which withholds the keyed component
 // the joined stores would otherwise produce.
-func keyedStoreClassification(key, value []byte, partition equation.Partition) keyedStoreTypes {
+func keyedStoreClassification(key, value, identity []byte, partition equation.Partition) keyedStoreTypes {
 	classified := keyedStoreTypes{}
 	if resolved, err := resolveCurrentValue(key, partition); err == nil {
 		if keyType, known := sealedShapeReceiverType(resolved); known {
@@ -12833,14 +12841,55 @@ func keyedStoreClassification(key, value []byte, partition equation.Partition) k
 			}
 		}
 	}
+	if encoded, witnessed := storedValueWitness(value, identity, partition); witnessed {
+		classified.Value = encoded
+	}
+	return classified
+}
+
+// storedValueWitness is the type a store places at an unresolved key. A value
+// the point holds outright is that type. A value the point holds as the join of
+// one decision's edges is read per edge instead: an edge that stores back a read
+// of this same container's unresolved keys leaves the slot exactly as it found
+// it and adds nothing the component does not already state, so the component
+// takes its value from the remaining edges. Every one of those must classify,
+// and edges that all write back leave no witness at all.
+func storedValueWitness(value, identity []byte, partition equation.Partition) (string, bool) {
 	if resolved, err := resolveCurrentValue(value, partition); err == nil {
 		if valueType, known := sealedShapeReceiverType(resolved); known {
 			if encoded, ok := shapefact.EncodeTarget(valueType); ok {
-				classified.Value = string(encoded)
+				return string(encoded), true
 			}
 		}
 	}
-	return classified
+	edges, split := partition.DecisionEdges("value/" + string(value) + "/")
+	if !split {
+		return "", false
+	}
+	witnesses := make([]typ.Type, 0, len(edges))
+	for _, edge := range edges {
+		if container, keyed := keyedReadContainer(value, edge.Partition); keyed && bytes.Equal(container, identity) {
+			continue
+		}
+		resolved, err := resolveCurrentValue(value, edge.Partition)
+		if err != nil {
+			return "", false
+		}
+		valueType, known := sealedShapeReceiverType(resolved)
+		if !known || valueType == nil {
+			return "", false
+		}
+		witnesses = append(witnesses, valueType)
+	}
+	joined, joinable := joinedKeyedComponentType(witnesses)
+	if !joinable {
+		return "", false
+	}
+	encoded, encodable := shapefact.EncodeTarget(joined)
+	if !encodable {
+		return "", false
+	}
+	return string(encoded), true
 }
 
 // joinedKeyedStore merges the classification of several stores into the single
@@ -12880,6 +12929,15 @@ func keyedStoreWitnesses(rows []opaqueMemberWriteWire) ([]typ.Type, []typ.Type, 
 		keys, values = append(keys, keyType), append(values, valueType)
 	}
 	return keys, values, len(rows) != 0
+}
+
+// keyedReadFact records that a term holds a value read from a container at a key
+// this analysis never resolved.
+func keyedReadFact(term []byte, operation string, identity []byte) equation.Fact {
+	return equation.Fact{
+		Key:   heapKeyedReadPrefix + base64.RawURLEncoding.EncodeToString(term) + "/" + operation,
+		Value: append([]byte(nil), identity...),
+	}
 }
 
 // keyedReadContainer names the container a term was read from at a key this
@@ -13989,10 +14047,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 			// The read selects a slot no coordinate names, so its answer is the
 			// container's keyed component and a write through the result reaches
 			// that component alone.
-			values = append(values, equation.Fact{
-				Key:   heapKeyedReadPrefix + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
-				Value: append([]byte(nil), identity...),
-			})
+			values = append(values, keyedReadFact(operands["target"], operation.Target.Name, identity))
 		}
 		if keyErr == nil && exact && !opaque {
 			if member, found := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); found {
@@ -16621,7 +16676,7 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 			if handle, found := closureHandleFor(operands["value"], partition); found {
 				stored = append(stored, handle)
 			}
-			opaqueWrite, opaqueErr := heapOpaqueMemberWriteFact(identity, operation.Target.Name, stored, keyedStoreClassification(operands["key"], operands["value"], partition))
+			opaqueWrite, opaqueErr := heapOpaqueMemberWriteFact(identity, operation.Target.Name, stored, keyedStoreClassification(operands["key"], operands["value"], identity, partition))
 			if opaqueErr != nil {
 				return equation.TransactionResult{}, opaqueErr
 			}
