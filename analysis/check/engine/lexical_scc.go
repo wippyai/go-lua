@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/interproc"
 )
@@ -288,8 +289,11 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 			visited[key] = true
 		}
 		for _, fact := range closure.Values {
-			identity, ownsHeapFact := lexicalSCCHeapFactIdentity(fact.Key)
-			if !ownsHeapFact || pending[string(identity)] == nil {
+			owned := false
+			for _, identity := range lexicalSCCHeapAllocations(fact.Key) {
+				owned = owned || pending[string(identity)] != nil
+			}
+			if !owned {
 				continue
 			}
 			keep(fact)
@@ -319,6 +323,13 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 // every fact about its own boundary, including families written after this walk,
 // and the summary stays bounded because the boundary terms are fixed.
 func lexicalSCCAnchoredAt(key, term string) bool {
+	// A declared family states which of its positions name a term, so a term
+	// named by a discriminator rather than by the subject is found as well —
+	// an index proof states its container that way when it has no identity for
+	// it. An undeclared family keeps the positional reading below.
+	if anchored, declared := factkey.AnchoredAt(key, term); declared {
+		return anchored
+	}
 	body, _, published := lexicalSCCCutLast(key)
 	return published && strings.HasSuffix(body, "/"+term)
 }
@@ -332,35 +343,41 @@ func lexicalSCCCutLast(key string) (string, string, bool) {
 	return key[:index], key[index+1:], true
 }
 
-// lexicalSCCHeapFactIdentity decodes the allocation identity a heap fact is
-// published about. Every family in the heap namespace names its subject in the
-// same position — the family, then the subject — so this reads the position
-// instead of listing the families, and a family added later is carried without
-// this walk having to learn its name. A subject may state its own kind first:
-// the identity spelling names an allocation, while the term spelling names a
-// path whose value occupies one, and only the former is an allocation this walk
-// follows. A segment that is no identity at all decodes to bytes no allocation
+// lexicalSCCHeapAllocations names every allocation one fact is about. A
+// declared family says which of its positions name allocations, so a fact that
+// states its container as a discriminator belongs to that container as much as
+// one that states it as the subject, and a term-spelled subject names a path
+// rather than an allocation and is reached through the boundary instead. An
+// undeclared family under the heap root keeps the positional reading: the
+// segment after the family, which is where every such family writes its
+// subject. A segment that is no identity at all decodes to bytes no allocation
 // matches, which is why reading it costs nothing — the worklist admits a fact
-// only when the decoded identity is one it already follows.
-func lexicalSCCHeapFactIdentity(key string) ([]byte, bool) {
+// only when a decoded identity is one it already follows.
+func lexicalSCCHeapAllocations(key string) [][]byte {
+	if allocations, declared := factkey.Allocations(key); declared {
+		return allocations
+	}
 	rest, heap := strings.CutPrefix(key, heapNamespacePrefix)
 	if !heap {
-		return nil, false
+		return nil
 	}
 	_, rest, named := strings.Cut(rest, "/")
 	if !named {
-		return nil, false
+		return nil
 	}
 	if strings.HasPrefix(rest, heapSubjectTermPrefix) {
-		return nil, false
+		return nil
 	}
 	rest = strings.TrimPrefix(rest, heapSubjectIdentityPrefix)
 	encoded, _, found := strings.Cut(rest, "/")
 	if !found || encoded == "" {
-		return nil, false
+		return nil
 	}
 	identity, err := base64.RawURLEncoding.DecodeString(encoded)
-	return identity, err == nil && len(identity) != 0
+	if err != nil || len(identity) == 0 {
+		return nil
+	}
+	return [][]byte{identity}
 }
 
 // lexicalSCCHeapChildIdentity follows only explicit member-identity and

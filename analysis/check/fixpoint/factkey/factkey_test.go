@@ -1,0 +1,107 @@
+package factkey
+
+import (
+	"encoding/base64"
+	"testing"
+)
+
+func encode(text string) string { return base64.RawURLEncoding.EncodeToString([]byte(text)) }
+
+// TestDeclaredFamiliesResolveTheirSubjects pins that each declared shape names
+// what its family states a fact about, in whichever position states it.
+func TestDeclaredFamiliesResolveTheirSubjects(t *testing.T) {
+	identity := "sealed-table/m/op-00000001"
+	for _, item := range []struct {
+		key          string
+		term         string
+		allocation   string
+		wantTerm     bool
+		wantAllocate bool
+	}{
+		{key: "heap/table-identity/path/sym2/op-00000001", term: "path/sym2", wantTerm: true},
+		{key: "heap/table-closed/" + encode(identity) + "/op-00000001", allocation: identity, wantAllocate: true},
+		{key: "heap/member/" + encode(identity) + "/LmE/op-00000001", allocation: identity, wantAllocate: true},
+		{key: "heap/member-origin/path/sym2/LmE/op-00000001", term: "path/sym2", wantTerm: true},
+		{key: "heap/index-presence/identity/" + encode(identity) + "/" + encode("path/sym7") + "/op-1", allocation: identity, wantAllocate: true},
+		{key: "heap/index-presence/term/" + encode("path/sym2") + "/" + encode("path/sym7") + "/op-1", term: "path/sym2", wantTerm: true},
+		{key: "heap/length-floor/term/" + encode("path/sym2") + "/op-1", term: "path/sym2", wantTerm: true},
+		{key: "heap/index-upper/" + encode("path/sym7") + "/" + encode("path/sym2") + "/op-1", term: "path/sym2", wantTerm: true},
+		{key: "heap/index-lower/" + encode("path/sym7") + "/op-1", term: "path/sym7", wantTerm: true},
+	} {
+		if item.wantTerm {
+			anchored, declared := AnchoredAt(item.key, item.term)
+			if !declared || !anchored {
+				t.Errorf("%q did not resolve term %q (declared=%v)", item.key, item.term, declared)
+			}
+		}
+		if item.wantAllocate {
+			allocations, declared := Allocations(item.key)
+			if !declared || len(allocations) != 1 || string(allocations[0]) != item.allocation {
+				t.Errorf("%q did not resolve allocation %q, got %q (declared=%v)", item.key, item.allocation, allocations, declared)
+			}
+		}
+	}
+}
+
+// TestTermSubjectIsNoAllocation pins the distinction the tagged spelling exists
+// to make: a container named by path is not an allocation identity, so a walk
+// following allocations must not follow it.
+func TestTermSubjectIsNoAllocation(t *testing.T) {
+	key := "heap/length-floor/term/" + encode("path/sym2") + "/op-1"
+	allocations, declared := Allocations(key)
+	if !declared || len(allocations) != 0 {
+		t.Fatalf("a term-spelled subject resolved as an allocation: %q (declared=%v)", allocations, declared)
+	}
+}
+
+// TestUndeclaredAndMalformedKeysReportNothing pins the fail-closed edge. A
+// family this schema does not declare, and a key that does not have its declared
+// family's shape, are both left to the consumer's own rule rather than being
+// read as something they are not.
+func TestUndeclaredAndMalformedKeysReportNothing(t *testing.T) {
+	for _, key := range []string{
+		"value/path/sym2/op-00000001",
+		"heap/table-closed/op-00000001",
+		"heap/member/" + encode("x") + "/op-00000001",
+		"heap/index-presence/other/" + encode("x") + "/" + encode("y") + "/op-1",
+		"heap/table-identity//op-00000001",
+	} {
+		if _, declared := AnchoredAt(key, "path/sym2"); declared {
+			t.Errorf("%q was read as a declared shape", key)
+		}
+		if _, declared := Allocations(key); declared {
+			t.Errorf("%q was read as a declared shape for allocations", key)
+		}
+	}
+}
+
+// TestBranchGuardAndProofShareOneDeclaration pins that the guard a proof states
+// and the guard a decision carries are the same string, built once.
+func TestBranchGuardAndProofShareOneDeclaration(t *testing.T) {
+	proof, ok := ParseBranchProof("branch-proof/2f2f/op-00000003/true")
+	if !ok {
+		t.Fatal("a well-formed branch proof did not parse")
+	}
+	if proof.Body != "2f2f" || proof.Name != "op-00000003" || !proof.TrueEdged() {
+		t.Fatalf("branch proof resolved to %+v", proof)
+	}
+	guard, ok := ParseBranchGuard(proof.Encoding())
+	if !ok || guard != proof.BranchGuard {
+		t.Fatalf("the guard a proof encodes did not read back: %+v (%v)", guard, ok)
+	}
+	for _, bad := range []string{
+		"branch-proof/2f2f/op-00000003/maybe",
+		"branch-proof//op-00000003/true",
+		"branch-proof/2f2f/true",
+		"branch-proof/2f2f/a/b/true",
+	} {
+		if _, ok := ParseBranchProof(bad); ok {
+			t.Errorf("%q parsed as a branch proof", bad)
+		}
+	}
+	for _, bad := range []string{"front/branch/op-1/maybe", "front/branch/true", "other/op-1/true"} {
+		if _, ok := ParseBranchGuard(bad); ok {
+			t.Errorf("%q parsed as a branch guard", bad)
+		}
+	}
+}

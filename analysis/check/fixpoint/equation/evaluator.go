@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 )
 
 // ErrIncompleteTransaction is returned when a canonical kernel cannot produce
@@ -463,12 +465,16 @@ func resolvedBranchGuards(evidence []Fact, active []Guard) []Guard {
 	return canonicalGuards(resolved)
 }
 
+// branchProofGuard recovers the guard one published branch proof states. The
+// key's shape and the guard encoding it maps onto are both declared by factkey,
+// so this and the reconvergence reader cannot drift apart; what stays here is
+// the body identity, which only this package can validate.
 func branchProofGuard(key string) (Guard, bool) {
-	parts := strings.Split(key, "/")
-	if len(parts) != 4 || parts[0] != "branch-proof" || parts[1] == "" || parts[2] == "" || (parts[3] != "true" && parts[3] != "false") {
+	proof, ok := factkey.ParseBranchProof(key)
+	if !ok || proof.Name == "" {
 		return Guard{}, false
 	}
-	body, err := hex.DecodeString(parts[1])
+	body, err := hex.DecodeString(proof.Body)
 	if err != nil || len(body) != len(BodyID{}) {
 		return Guard{}, false
 	}
@@ -477,7 +483,7 @@ func branchProofGuard(key string) (Guard, bool) {
 	if !id.Valid() {
 		return Guard{}, false
 	}
-	return Guard{Body: id, Encoding: []byte("front/branch/" + parts[2] + "/" + parts[3])}, true
+	return Guard{Body: id, Encoding: []byte(proof.Encoding())}, true
 }
 
 func cloneGuards(in []Guard) []Guard {

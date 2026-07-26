@@ -3,6 +3,8 @@ package equation
 import (
 	"bytes"
 	"strings"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 )
 
 // Reconvergence is the evaluator's control-flow join.  Direct visibility --
@@ -43,8 +45,6 @@ type Reconvergence struct {
 // withholds the result rather than returning a partially explored join.
 const reconvergenceBudget = 96
 
-const branchGuardPrefix = "front/branch/"
-
 // branchDecision is one certified CFG branch.  Its two edges are mutually
 // exclusive and jointly exhaustive, which is what makes them joinable
 // alternatives.  Guards outside this family name no decision and are therefore
@@ -55,30 +55,19 @@ type branchDecision struct {
 }
 
 func decisionOf(guard Guard) (branchDecision, bool, bool) {
-	encoding := string(guard.Encoding)
-	if !strings.HasPrefix(encoding, branchGuardPrefix) {
+	parsed, ok := factkey.ParseBranchGuard(string(guard.Encoding))
+	if !ok {
 		return branchDecision{}, false, false
 	}
-	rest := encoding[len(branchGuardPrefix):]
-	cut := strings.LastIndexByte(rest, '/')
-	if cut <= 0 {
-		return branchDecision{}, false, false
-	}
-	switch rest[cut+1:] {
-	case "true":
-		return branchDecision{body: guard.Body, name: rest[:cut]}, true, true
-	case "false":
-		return branchDecision{body: guard.Body, name: rest[:cut]}, false, true
-	}
-	return branchDecision{}, false, false
+	return branchDecision{body: guard.Body, name: parsed.Name}, parsed.TrueEdged(), true
 }
 
 func (d branchDecision) edge(taken bool) Guard {
-	suffix := "/false"
+	edge := factkey.FalseEdge
 	if taken {
-		suffix = "/true"
+		edge = factkey.TrueEdge
 	}
-	return Guard{Body: d.body, Encoding: []byte(branchGuardPrefix + d.name + suffix)}
+	return Guard{Body: d.body, Encoding: []byte(factkey.BranchGuard{Name: d.name, Edge: edge}.Encoding())}
 }
 
 // withdrawContradictoryBranchProofs removes both edge proofs of one decision

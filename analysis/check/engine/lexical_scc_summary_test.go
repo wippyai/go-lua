@@ -83,8 +83,7 @@ func TestRecursiveSummaryFollowsEveryHeapFamily(t *testing.T) {
 		{Key: heapTableEscapePrefix + heapSubjectIdentityPrefix + encoded + "/op-00000001", Value: []byte("escaped")},
 		{Key: heapLengthFloorPrefix + heapSubjectIdentityPrefix + encoded + "/op-00000001", Value: []byte("2")},
 		{Key: heapIndexPresencePrefix + heapSubjectIdentityPrefix + encoded + "/cGF0aC9zeW0z/op-00000001", Value: []byte("proven")},
-		{Key: heapKeyPresencePrefix + encoded + "/LmE/op-00000001", Value: []byte("proven")},
-		{Key: heapIndexUpperPrefix + heapSubjectIdentityPrefix + encoded + "/op-00000001", Value: []byte("4")},
+		{Key: heapKeyPresencePrefix + heapSubjectIdentityPrefix + encoded + "/LmE/op-00000001", Value: []byte("proven")},
 	}}
 	kept := summaryKeys(lexicalSCCSummary(sccBoundary(2), closure))
 	for _, fact := range closure.Values {
