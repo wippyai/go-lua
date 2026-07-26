@@ -458,6 +458,13 @@ end
 	}
 }
 
+// TestCheckLiteralDiscriminantNarrowingStaysOnItsLoopArm proves that a literal
+// discriminant guard keeps each arm's member contract on its own branch. The
+// unguarded read reaches the whole union, where reservation_token is declared
+// by one arm and omitted by the other. A member some arms of a union carry and
+// others omit is an optional read: the omitting arm answers nil. It therefore
+// publishes the may-be-nil family carrying the arm split as its evidence, and
+// type.member.missing states the stronger fact that no arm carries the member.
 func TestCheckLiteralDiscriminantNarrowingStaysOnItsLoopArm(t *testing.T) {
 	result, err := engine.Check(`
 type Release = {kind: "release", reservation_token: string}
@@ -476,22 +483,28 @@ end
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	unguardedMissing := false
+	unguardedOptional := false
 	for _, diagnostic := range result.PublishedDiagnostics {
-		if diagnostic.Code != "type.member.missing" {
-			continue
+		if diagnostic.Span.StartLine != 7 {
+			t.Fatalf("literal branch leaked an arm fact: %#v", result.PublishedDiagnostics)
 		}
-		if diagnostic.Span.StartLine == 7 {
-			unguardedMissing = true
-			continue
+		if diagnostic.Code != "type.assignment" || diagnostic.Message != "cannot assign comp.reservation_token because it may be nil" {
+			t.Fatalf("unguarded discriminated-union read = %#v", diagnostic)
 		}
-		t.Fatalf("literal branch leaked an arm fact: %#v", result.PublishedDiagnostics)
+		if !hasEvidence(diagnostic, `comp.reservation_token is declared by union arm {kind: "release", reservation_token: string} and omitted by arm {kind: "refund", payment_id: string}`) {
+			t.Fatalf("optional union member read lost its arm evidence: %#v", diagnostic.Evidence)
+		}
+		unguardedOptional = true
 	}
-	if !unguardedMissing {
+	if !unguardedOptional {
 		t.Fatalf("unguarded discriminated-union read was accepted: %#v", result.PublishedDiagnostics)
 	}
 }
 
+// TestCheckRejectsUnguardedUnionMemberFromDeclaredCallResult holds a call
+// result's declared union to the same rule as a declared local: the lane that
+// established the receiver does not change what a partial member states, so
+// this read publishes the identical may-be-nil family and arm evidence.
 func TestCheckRejectsUnguardedUnionMemberFromDeclaredCallResult(t *testing.T) {
 	source := `
 type Event = {kind: string}
@@ -513,11 +526,51 @@ end
 		t.Fatalf("Check: %v", err)
 	}
 	for _, diagnostic := range result.PublishedDiagnostics {
-		if diagnostic.Code == "type.assignment" && strings.Contains(diagnostic.Message, "result.kind because it may be nil") {
-			return
+		if diagnostic.Code != "type.assignment" || !strings.Contains(diagnostic.Message, "result.kind because it may be nil") {
+			continue
 		}
+		if !hasEvidence(diagnostic, "result.kind is declared by union arm {kind: string} and omitted by arm {elapsed: number}") {
+			t.Fatalf("optional union member read lost its arm evidence: %#v", diagnostic.Evidence)
+		}
+		return
 	}
 	t.Fatalf("unguarded declared union result member was accepted: %#v", result.PublishedDiagnostics)
+}
+
+// TestCheckRefutesUnionMemberNoArmCarries keeps the refutation encoding
+// falsifiable. A member every arm of a closed union omits is absent from the
+// whole surface rather than nil on one arm, so it stays with type.member.missing.
+func TestCheckRefutesUnionMemberNoArmCarries(t *testing.T) {
+	result, err := engine.Check(`
+type Event = {kind: "event"}
+type Timer = {kind: "timer", elapsed: number}
+type Result = Event | Timer
+local function inspect(result: Result)
+  local absent: number = result.duration
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code != "type.member.missing" || diagnostic.Span.StartLine != 6 {
+			continue
+		}
+		if !strings.Contains(diagnostic.Message, `has no member "duration"`) {
+			t.Fatalf("whole-surface refutation message = %q", diagnostic.Message)
+		}
+		return
+	}
+	t.Fatalf("member carried by no arm was accepted: %#v", result.PublishedDiagnostics)
+}
+
+func hasEvidence(diagnostic engine.PublishedDiagnostic, message string) bool {
+	for _, evidence := range diagnostic.Evidence {
+		if evidence.Message == message {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCheckRejectsConcreteReplacementOfTypedFunctionMember(t *testing.T) {

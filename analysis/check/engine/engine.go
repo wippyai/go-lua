@@ -1117,8 +1117,11 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			item.Message = fmt.Sprintf("cannot assign %s because it may be nil", sourceDisplay)
 			item.Evidence = []DiagnosticEvidence{
 				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: valueEvidence},
-				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
+			if arms, split := unionMemberArmEvidence(operands["value"], sourceDisplay, operation, closure); split {
+				item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: arms})
+			}
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)})
 			missing, reason := fmt.Sprintf("no guard on this path proves %s is non-nil", sourceDisplay), "boundary validation missing"
 			if strings.Contains(sourceDisplay, "[") {
 				if dot := strings.LastIndex(sourceDisplay, "."); dot > 0 && strings.Contains(sourceDisplay[:dot], "[") {
@@ -1307,20 +1310,81 @@ func diagnosticValueMayBeNil(value []byte) bool {
 // own already-published value is the sole authority: a member read whose
 // receiver was never proven nilable adds no such step.
 func receiverMayBeNil(term []byte, operation equation.Equation, closure equation.OutputClosure) bool {
+	parent, _, member := memberReadReceiver(term)
+	if !member {
+		return false
+	}
+	value, available := claimDiagnosticValue(parent, operation, closure)
+	return available && diagnosticValueMayBeNil(value)
+}
+
+// memberReadReceiver splits a static member-read term into the term naming the
+// receiver it descends through and the segment that read selects.
+func memberReadReceiver(term []byte) ([]byte, segment.Segment, bool) {
 	root, suffix, member := tableAddress(term)
 	if !member || suffix == "" {
-		return false
+		return nil, segment.Segment{}, false
 	}
 	segments, valid := segment.ParseFormattedSegments(suffix)
 	if !valid || len(segments) == 0 {
-		return false
+		return nil, segment.Segment{}, false
 	}
 	parent := append([]byte(nil), root...)
 	if len(segments) > 1 {
 		parent = append(parent, []byte(segment.FormatSegments(segments[:len(segments)-1]))...)
 	}
-	value, available := claimDiagnosticValue(parent, operation, closure)
-	return available && diagnosticValueMayBeNil(value)
+	return parent, segments[len(segments)-1], true
+}
+
+// unionMemberArmEvidence explains an optional member read whose receiver is a
+// union: one arm declares the member and another omits it, so the read answers
+// nil wherever the omitting arm is live. The receiver's own already-published
+// value is the sole authority, and the split is the same one the value lane
+// classified, so the explanation and the verdict never diverge.
+func unionMemberArmEvidence(term []byte, display string, operation equation.Equation, closure equation.OutputClosure) (string, bool) {
+	parent, refused, member := memberReadReceiver(term)
+	if !member {
+		return "", false
+	}
+	receiver, published := publishedReceiverType(parent, operation.Target.Name, closure.Values)
+	if !published {
+		return "", false
+	}
+	carried, omitted, split := unionMemberArms(receiver, refused)
+	if !split {
+		return "", false
+	}
+	return fmt.Sprintf("%s is declared by union arm %s and omitted by arm %s", display, typeformat.Short(carried), typeformat.Short(omitted)), true
+}
+
+// publishedReceiverType reconstructs the type a term states at the operation
+// that reads it. The last value fact registered before that operation is the
+// authority, so a later branch publication never re-describes this read; a call
+// result carries its type in the summary fact registered for the same epoch.
+func publishedReceiverType(term []byte, before string, facts []equation.Fact) (typ.Type, bool) {
+	prefix := "value/" + string(term) + "/"
+	value, epoch := []byte(nil), ""
+	for _, fact := range facts {
+		operation := strings.TrimPrefix(fact.Key, prefix)
+		if operation == fact.Key || operation >= before || operation <= epoch {
+			continue
+		}
+		value, epoch = fact.Value, operation
+	}
+	if epoch == "" {
+		return nil, false
+	}
+	if witness, ok := shapefact.DecodeTarget(value); ok && witness != nil {
+		return witness, true
+	}
+	for _, fact := range facts {
+		if fact.Key != summaryTypePrefix+string(term)+"/"+epoch {
+			continue
+		}
+		summary, err := decodeSummaryType(fact.Value)
+		return summary, err == nil && summary != nil
+	}
+	return nil, false
 }
 
 // optionalAssignmentHelp is the single remediation for assigning a value that
@@ -26858,24 +26922,26 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		}
 	}
 	if !found {
-		// A summary union is a contract over several possible method results,
-		// not proof that every member path exists at runtime. Leave an
-		// unselected arm Top so only the established branch machinery can make
-		// it concrete; emitting a missing-member fact here would reject a valid
-		// discriminant-guarded consumer.
-		if _, summary := currentEpochFact(summaryTypePrefix, root, partition); summary {
-			if _, union := unwrap.Alias(subst.ExpandInstantiated(source)).(*typ.Union); union {
-				if projected, projectedFound := luatypeprojection.ApplySegments(source, suffix); projectedFound {
-					return shapefact.EncodeTarget(projected)
-				}
-				return []byte("scalar/top"), true
-			}
-		}
 		// The refutation belongs to the receiver that lacks the next member, not
 		// to the root the path started from: a path may descend through several
 		// declared members before reaching one the surface refuses.
-		receiver, refutable := refutingMemberReceiver(source, suffix)
-		if !refutable || !closedMemberSurface(receiver) {
+		receiver, refused, refutable := refutingMemberReceiver(source, suffix)
+		_, summary := currentEpochFact(summaryTypePrefix, root, partition)
+		_, summaryUnion := unwrap.Alias(subst.ExpandInstantiated(source)).(*typ.Union)
+		summaryUnion = summary && summaryUnion
+		// A member some arms of the refusing receiver carry and others omit is
+		// an optional read: indexing an arm that omits it yields nil. A summary
+		// union is likewise a contract over several possible results rather than
+		// proof that every member path exists. The arm-wise projection retains
+		// that absence as nil, while FieldAtPath refuses a partial member so
+		// branch dispatch decides against the whole surface.
+		_, _, partialUnion := unionMemberArms(receiver, refused)
+		if summaryUnion || refutable && partialUnion {
+			if projected, projectedFound := luatypeprojection.ApplySegments(source, suffix); projectedFound {
+				return shapefact.EncodeTarget(projected)
+			}
+		}
+		if summaryUnion || !refutable || !closedMemberSurface(receiver) {
 			return []byte("scalar/top"), true
 		}
 		return memberMissingValue(receiver)
@@ -26885,18 +26951,47 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 }
 
 // refutingMemberReceiver walks the longest prefix of suffix the declared surface
-// resolves and returns the receiver whose next segment it refuses. A path that
-// resolves end to end refutes nothing.
-func refutingMemberReceiver(source typ.Type, suffix []segment.Segment) (typ.Type, bool) {
+// resolves and returns the receiver whose next segment it refuses together with
+// that segment. A path that resolves end to end refutes nothing.
+func refutingMemberReceiver(source typ.Type, suffix []segment.Segment) (typ.Type, segment.Segment, bool) {
 	receiver := source
 	for index := range suffix {
 		member, resolved := variant.FieldAtPath(receiver, suffix[index:index+1])
 		if !resolved {
-			return receiver, true
+			return receiver, suffix[index], true
 		}
 		receiver = member
 	}
-	return nil, false
+	return nil, segment.Segment{}, false
+}
+
+// unionMemberArms splits the arms of a union receiver by whether each arm's
+// declared surface carries the refused member. An arm that is a closed member
+// surface and omits the member answers nil when it is indexed, so a union
+// holding both kinds of arm makes the read optional rather than refuted. An arm
+// that refuses indexing altogether supplies no such nil answer and leaves the
+// whole classification to the refutation lane. It is the single classification
+// both the value lane and its published explanation consult.
+func unionMemberArms(receiver typ.Type, refused segment.Segment) (carried typ.Type, omitted typ.Type, split bool) {
+	union, ok := unwrap.Alias(subst.ExpandInstantiated(unwrap.Optional(receiver))).(*typ.Union)
+	if !ok || union == nil {
+		return nil, nil, false
+	}
+	for _, arm := range union.Members {
+		if _, present := variant.FieldAtPath(arm, []segment.Segment{refused}); present {
+			if carried == nil {
+				carried = arm
+			}
+			continue
+		}
+		if !closedMemberSurface(arm) {
+			return nil, nil, false
+		}
+		if omitted == nil {
+			omitted = arm
+		}
+	}
+	return carried, omitted, carried != nil && omitted != nil
 }
 
 func currentCallResultSummary(term []byte, partition equation.Partition) bool {
