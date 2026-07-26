@@ -17321,7 +17321,19 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 		} else {
 			value, valueErr := resolveCurrentValue(operands["value"], partition)
 			if valueErr == nil {
-				result.Closure.Values = append(result.Closure.Values, heapMemberFact(identity, suffix, operation.Target.Name, value))
+				// A store the front placed inside a cycle runs once per trip, and
+				// running none of them is an execution too. An exact dynamic key
+				// names its slot exactly as a static member address does, so the
+				// slot it names holds the same join a static member write inside
+				// the cycle publishes: the written value or whatever the slot held
+				// on the way in. The key one trip resolved is that trip's iterate,
+				// so a slot the cycle itself introduces admits nil while a slot
+				// established before the cycle keeps its type.
+				memberValue := value
+				if recurrentOperation(operation.Operands) {
+					memberValue = possibleMemberValue(identity, suffix, value, partition)
+				}
+				result.Closure.Values = append(result.Closure.Values, heapMemberFact(identity, suffix, operation.Target.Name, memberValue))
 				memberIdentity, hasMemberIdentity := tableIdentityForTerm(operands["value"], partition)
 				if hasMemberIdentity {
 					result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
@@ -17332,7 +17344,7 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 				// the same written term and its effect reaches every reader of
 				// that lane -- including the caller, when this body holds a table
 				// the caller transported.
-				if cell, published, cellErr := memberCellFactWithSource(identity, suffix, operation.Target.Name, value, operands["value"], memberIdentity, partition); cellErr != nil {
+				if cell, published, cellErr := memberCellFactWithSource(identity, suffix, operation.Target.Name, memberValue, operands["value"], memberIdentity, partition); cellErr != nil {
 					return equation.TransactionResult{}, cellErr
 				} else if published {
 					result.Closure.Values = append(result.Closure.Values, cell)
@@ -17343,7 +17355,11 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 				// observe the replacement. The identity walk is bounded entirely by
 				// pre-existing heap facts; an unresolved prefix stays fail-closed.
 				if nestedIdentity, nestedSuffix, nested := nestedHeapMemberAddress(identity, suffix, partition); nested {
-					result.Closure.Values = append(result.Closure.Values, heapMemberFact(nestedIdentity, nestedSuffix, operation.Target.Name, value))
+					nestedValue := value
+					if recurrentOperation(operation.Operands) {
+						nestedValue = possibleMemberValue(nestedIdentity, nestedSuffix, value, partition)
+					}
+					result.Closure.Values = append(result.Closure.Values, heapMemberFact(nestedIdentity, nestedSuffix, operation.Target.Name, nestedValue))
 					if hasMemberIdentity {
 						result.Closure.Values = append(result.Closure.Values, heapMemberIdentityFact(nestedIdentity, nestedSuffix, operation.Target.Name, memberIdentity))
 					}

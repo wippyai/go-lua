@@ -100,6 +100,115 @@ print(first)
 	}
 }
 
+// TestLoopBodyExactKeyStoreIsPossibleNotEstablished pins the same publication
+// for the store whose key the body resolves rather than spells. The key one
+// trip resolves is that trip's iterate, so the slot it names is established by
+// that trip alone and the execution that runs no trip reaches the read with the
+// slot the loop introduced still empty. A counter advanced after the append is
+// one ahead of the slot the append filled, so the count witnesses neither the
+// slot below it nor the one it names.
+func TestLoopBodyExactKeyStoreIsPossibleNotEstablished(t *testing.T) {
+	tripOne := checkSource(t, `local function collect(src: {string}): string
+    local n: integer = 0
+    local buf: {string} = {}
+    for _, s in ipairs(src) do
+        buf[n] = s
+        n = n + 1
+    end
+    if n >= 1 then
+        local first: string = buf[1]
+        return first
+    end
+    return ""
+end
+return collect
+`)
+	if !strings.Contains(diagnosticSummaries(tripOne), "buf[1]") {
+		t.Fatalf("a slot only one trip's iterate named was published as an established member:\n%s", diagnosticSummaries(tripOne))
+	}
+	firstSlot := checkSource(t, `local function collect(src: {string}): string
+    local n: integer = 0
+    local buf: {string} = {}
+    for _, s in ipairs(src) do
+        buf[n] = s
+        n = n + 1
+    end
+    if n >= 1 then
+        local first: string = buf[0]
+        return first
+    end
+    return ""
+end
+return collect
+`)
+	if !strings.Contains(diagnosticSummaries(firstSlot), "buf[0]") {
+		t.Fatalf("the slot the first trip fills was established for the execution that runs no trip:\n%s", diagnosticSummaries(firstSlot))
+	}
+	constant := checkSource(t, `local function collect(src: {string}): string
+    local buf: {string} = {}
+    local k: integer = 1
+    for _, s in ipairs(src) do
+        buf[k] = s
+    end
+    local first: string = buf[1]
+    return first
+end
+return collect
+`)
+	if !strings.Contains(diagnosticSummaries(constant), "buf[1]") {
+		t.Fatalf("a resolved constant key established its slot for a cycle that may run no trip:\n%s", diagnosticSummaries(constant))
+	}
+	seeded := checkSource(t, `local function collect(src: {string}, seed: string): string
+    local buf: {string} = {}
+    local k: integer = 1
+    buf[k] = seed
+    local n: integer = 1
+    for _, s in ipairs(src) do
+        buf[n] = s
+        n = n + 1
+    end
+    local first: string = buf[1]
+    return first
+end
+return collect
+`)
+	if summaries := diagnosticSummaries(seeded); summaries != "" {
+		t.Fatalf("a slot a pre-cycle exact-key write established became optional:\n%s", summaries)
+	}
+	// The counter paired with the append is the occupancy proof: the increment
+	// precedes the store, so the density relation still answers this read.
+	paired := checkSource(t, `local function collect(src: {string}): string
+    local n: integer = 0
+    local buf: {string} = {}
+    for _, s in ipairs(src) do
+        n = n + 1
+        buf[n] = s
+    end
+    if n >= 1 then
+        local first: string = buf[1]
+        return first
+    end
+    return ""
+end
+return collect
+`)
+	if summaries := diagnosticSummaries(paired); summaries != "" {
+		t.Fatalf("the density relation stopped witnessing the slot the count reaches:\n%s", summaries)
+	}
+	straight := checkSource(t, `local function collect(seed: string): string
+    local buf: {string} = {}
+    local k: integer = 1
+    buf[k] = seed
+    local first: string = buf[1]
+    return first
+end
+return collect
+`)
+	if summaries := diagnosticSummaries(straight); summaries != "" {
+		t.Fatalf("a straight-line exact-key store stopped establishing its slot:\n%s", summaries)
+	}
+}
+
 // TestWhileExitCarriesWhatTheTripsWrote pins the loop-exit read for the arm-
 // guarded loop forms. A while body publishes under the condition's continuing
 // arm and the statements past the loop stand on the leaving arm, so a read there

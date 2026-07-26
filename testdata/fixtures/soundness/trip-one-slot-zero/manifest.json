@@ -1,0 +1,5 @@
+{
+  "description": "A store inside a cycle runs once per trip and running none of them is an execution too, so an exact key one trip resolved establishes the element contract of the slot it named and not that slot's occupancy. An append placed before the counter's increment fills the slot below the one the count reaches, so n >= 1 witnesses neither buf[1] nor buf[0]; a key the body cannot name and a constant key inside the cycle read the same way. A slot written before the cycle keeps its type, and the counter paired with the append keeps the density relation that witnesses buf[1].",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}
