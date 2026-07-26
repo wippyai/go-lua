@@ -14680,6 +14680,40 @@ func claimIsWriteContract(operation equation.BoundEquation) bool {
 	return false
 }
 
+// declarationSlotIsItsOwnDefault reports that the nil a claim reads from its own
+// target is the cell's Lua default rather than an initializer's result. The
+// front emits the declaration's slot init as a write into that same cell, so the
+// publication this value carries names that write. An initializer is lowered as
+// the operation that evaluates it -- a read, a call result, an expression -- and
+// publishes the cell from there, which is a derived value and not a default. A
+// publication this evaluator cannot attribute leaves the declaration silent, so
+// an unrecognized lowering keeps today's answer.
+func declarationSlotIsItsOwnDefault(lexical *lexicalEvaluator, operation equation.BoundEquation, target string, partition equation.Partition) bool {
+	if lexical == nil {
+		return true
+	}
+	published, found := partition.LatestValuePrefix("value/" + target + "/")
+	if !found {
+		return true
+	}
+	child, known := lexical.byBody[operation.Target.Body]
+	if !known || child.Artifact.Equations == nil {
+		return true
+	}
+	publisher := factOperation(published.Key)
+	for _, candidate := range child.Artifact.Equations {
+		if candidate.Target.Name != publisher {
+			continue
+		}
+		if candidate.Occurrence.Kind != "environment-write" {
+			return false
+		}
+		written, addressed := artifactOperand(candidate.Operands, "target")
+		return !addressed || string(written) == target
+	}
+	return true
+}
+
 func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition, imported map[string]bool) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
@@ -14887,8 +14921,11 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}}
 		// A declaration without an initializer reads its own Lua nil slot. That
 		// slot establishes the declared local's downstream contract; it is not an
-		// assignment of nil to the declaration type.
-	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil") && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted || publishedOptionalAssignmentWitness(source, shapeTarget, partition) || mapReadMissing) {
+		// assignment of nil to the declaration type. An initializer the front
+		// lowered into that same cell shares the shape and is not that case: its
+		// nil is a value the analysis derived, and the declaration is refuted by
+		// it exactly as a separately spelled source refutes one.
+	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil" || !declarationSlotIsItsOwnDefault(lexical, operation, target, partition)) && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted || publishedOptionalAssignmentWitness(source, shapeTarget, partition) || mapReadMissing) {
 		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
 		optionalSource := optionalAssignmentSource(value, targetType) || closedLiteralDeclaredOptionalMemberSource(source, value, shapeTarget, partition) || publishedOptionalAssignmentWitness(source, shapeTarget, partition)
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {

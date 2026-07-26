@@ -1,0 +1,4 @@
+{
+  "description": "A declaration whose initializer the analysis proved nil is refuted by that value, whichever cell the front lowered the read into. The carve-out it shares the shape with covers only a declaration with no initializer at all, whose nil is the cell's own default. A declaration that admits nil, and one whose initializer was never refuted, keep their contracts.",
+  "files": ["main.lua"]
+}
