@@ -3118,7 +3118,11 @@ type lexicalEvaluator struct {
 	// members that body statically writes. It is a compilation property, so it
 	// is computed once with the body catalog rather than at every application.
 	captureWrites map[string]map[string]bool
-	run           *lexicalSCCRun
+	// applying counts the bodies whose private application is on this
+	// evaluator's own stack, so a re-entry of the same body is recognized as a
+	// call cycle even when no published capability spells the edge out.
+	applying map[string]int
+	run      *lexicalSCCRun
 	// Imported authority is selected at the project boundary. It is scoped to
 	// this evaluator and exists only for exact result paths published by those
 	// imports; no structural reconstruction is admitted as an authority.
@@ -4459,6 +4463,38 @@ func (l *lexicalEvaluator) closureDemandRecurses(root closureHandle, partition e
 		}
 	}
 	return false
+}
+
+// applicationRecurses reports that this body is already being applied on the
+// evaluator's own stack. A prototype cannot occur twice in one chain of private
+// applications without a call cycle, whatever route closed it: a captured
+// handle, a member cell the body loads its callee from, or a chain of both. The
+// published capabilities do not have to name that route, so this is the
+// authority the coordinator is entered on when closureDemandRecurses cannot see
+// the edge.
+func (l *lexicalEvaluator) applicationRecurses(prototype string) bool {
+	return l != nil && l.applying[prototype] != 0
+}
+
+// enterApplication marks one body as being applied privately and returns the
+// exit that unmarks it. The counter is per prototype because that is the
+// coordinate a cycle repeats; the entry values a cycle passes are exactly what
+// makes the repetition unbounded, so they cannot be part of it.
+func (l *lexicalEvaluator) enterApplication(prototype string) func() {
+	if l == nil || prototype == "" {
+		return func() {}
+	}
+	if l.applying == nil {
+		l.applying = make(map[string]int)
+	}
+	l.applying[prototype]++
+	return func() {
+		if l.applying[prototype] <= 1 {
+			delete(l.applying, prototype)
+			return
+		}
+		l.applying[prototype]--
+	}
 }
 
 func boundaryTerm(symbol wir.SymbolID) string { return fmt.Sprintf("path/sym%d", symbol) }
@@ -8355,12 +8391,16 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	// lexical invocation.  A non-recursive child retains the established direct
 	// evaluation path; once a coordinator callback is active every lexical
 	// child is nevertheless admitted through it so discovery sees the complete
-	// reachable call graph before any approximation is read.
+	// reachable call graph before any approximation is read. A body already on
+	// this evaluator's application stack closes a cycle by that fact alone, so
+	// its re-entry is the coordinator's as well.
 	var closure equation.OutputClosure
-	if l.run != nil || l.closureDemandRecurses(handle, partition) {
+	if l.run != nil || l.closureDemandRecurses(handle, partition) || l.applicationRecurses(handle.Prototype) {
 		closure, err = l.resolveSCCChild(child, entry, boundarySeeds, arguments, handle, operands, operation.Target.Name)
 	} else {
+		exit := l.enterApplication(handle.Prototype)
 		closure, _, err = l.evaluate(child, entry)
+		exit()
 	}
 	if err != nil {
 		return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q: %w", handle.Prototype, err)
@@ -8412,7 +8452,11 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		if partitionErr := buildChildPartition(); partitionErr != nil {
 			return equation.TransactionResult{}, partitionErr
 		}
-		projected.Values = append(projected.Values, childMemberWritebacks(transported, childPartition, operation.Target.Name)...)
+		writebacks, writebackErr := childMemberWritebacks(transported, childPartition, operation.Target.Name)
+		if writebackErr != nil {
+			return equation.TransactionResult{}, writebackErr
+		}
+		projected.Values = append(projected.Values, writebacks...)
 	}
 	for _, fact := range closure.Values {
 		if !strings.HasPrefix(fact.Key, typePredicateTargetPrefix) {
@@ -11813,21 +11857,91 @@ func heapSequenceShape(term []byte, partition equation.Partition) (shapefact.Tab
 	return refreshed, true
 }
 
+// opaqueMemberWriteWire is what one operation's unresolved-key stores left in a
+// container. The marker is the incomplete-inventory record. The handles name
+// the callables those stores placed in it: no member coordinate can carry them,
+// because the stores never resolved to one, yet the container holds them and
+// whatever reaches the container reaches them too.
+type opaqueMemberWriteWire struct {
+	Marker  string          `json:"marker"`
+	Handles []closureHandle `json:"handles,omitempty"`
+}
+
+const opaqueMemberWriteMarker = "unresolved-key"
+
+func decodeOpaqueMemberWrite(value []byte) (opaqueMemberWriteWire, bool) {
+	var wire opaqueMemberWriteWire
+	if json.Unmarshal(value, &wire) != nil || wire.Marker != opaqueMemberWriteMarker {
+		return opaqueMemberWriteWire{}, false
+	}
+	kept := wire.Handles[:0]
+	for _, handle := range wire.Handles {
+		if validClosureHandle(handle) {
+			kept = append(kept, handle)
+		}
+	}
+	wire.Handles = kept
+	return wire, true
+}
+
 // heapOpaqueMemberWrite reports that a store through this identity addressed a
 // slot the analysis could not name. The written slot is unknown, so the
 // identity's member publication no longer accounts for every live slot.
 func heapOpaqueMemberWrite(identity []byte, partition equation.Partition) bool {
 	prefix := heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	for _, fact := range partition.ValuesPrefix(prefix) {
-		if string(fact.Value) == "unresolved-key" {
+		if _, ok := decodeOpaqueMemberWrite(fact.Value); ok {
 			return true
 		}
 	}
 	return false
 }
 
-func heapOpaqueMemberWriteFact(identity []byte, operation string) equation.Fact {
-	return equation.Fact{Key: heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("unresolved-key")}
+// heapOpaqueMemberCallables lists the callables this identity received through
+// stores whose key never resolved to a member suffix. The container holds them
+// exactly as it holds a published cell's callable; only their slot has no name,
+// so no coordinate reaches them and this inventory is their sole record.
+func heapOpaqueMemberCallables(identity []byte, partition equation.Partition) []closureHandle {
+	handles := make([]closureHandle, 0)
+	for _, wire := range heapOpaqueMemberWriteRows(identity, partition) {
+		handles = append(handles, wire.Handles...)
+	}
+	return handles
+}
+
+// heapOpaqueMemberWriteRows re-reads this identity's unresolved-key stores in
+// their published form, so a boundary that carries the incomplete inventory
+// across also carries what those stores placed in the container.
+func heapOpaqueMemberWriteRows(identity []byte, partition equation.Partition) []opaqueMemberWriteWire {
+	prefix := heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	rows := make([]opaqueMemberWriteWire, 0)
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		if wire, ok := decodeOpaqueMemberWrite(fact.Value); ok {
+			rows = append(rows, wire)
+		}
+	}
+	return rows
+}
+
+func heapOpaqueMemberWriteFact(identity []byte, operation string, handles []closureHandle) (equation.Fact, error) {
+	wire := opaqueMemberWriteWire{Marker: opaqueMemberWriteMarker}
+	seen := make(map[string]bool, len(handles))
+	for _, handle := range handles {
+		if !validClosureHandle(handle) {
+			continue
+		}
+		key := handle.Prototype + "\x00" + strings.Join(handle.Captures, "\x00")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		wire.Handles = append(wire.Handles, handle)
+	}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return equation.Fact{}, err
+	}
+	return equation.Fact{Key: heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: encoded}, nil
 }
 
 // borderIndexPresenceProven reports that a read at a container's own length
@@ -12452,6 +12566,10 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	if root, suffix, ok := heapTableAddress(operands["target"]); ok && suffix != "" {
 		if identity, found := tableIdentityForTerm(root, partition); found {
 			writeIdentity := identity
+			// The written term is the slot's source: a sealed function value
+			// describes a signature and names no body, so only the term carries
+			// the callable capability this write stores.
+			memberSource := operands["value"]
 			// Lua dispatches a write to a missing key through a table-valued
 			// __newindex metamethod. The destination can itself carry another
 			// metatable, so retain only Top at the routed member: proving the
@@ -12461,6 +12579,9 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 				if routed, found := heapMetaNewIndexCurrent(identity, partition); found {
 					writeIdentity = routed
 					value = []byte("scalar/top")
+					// The metamethod decides what the routed slot receives, so the
+					// written term is not that slot's source and confers nothing on it.
+					memberSource = value
 				}
 			}
 			result.Closure.Values = append(result.Closure.Values, heapMemberFact(writeIdentity, suffix, operation.Target.Name, value))
@@ -12468,7 +12589,7 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 			if len(memberIdentity) != 0 {
 				result.Closure.Values = append(result.Closure.Values, heapIdentityFact(string(operands["target"]), operation.Target.Name, memberIdentity))
 			}
-			if cell, published, cellErr := memberCellFactWithIdentity(writeIdentity, suffix, operation.Target.Name, value, memberIdentity, partition); cellErr != nil {
+			if cell, published, cellErr := memberCellFactWithSource(writeIdentity, suffix, operation.Target.Name, value, memberSource, memberIdentity, partition); cellErr != nil {
 				return equation.TransactionResult{}, cellErr
 			} else if published {
 				result.Closure.Values = append(result.Closure.Values, cell)
@@ -12489,7 +12610,7 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 				// boundary reads exactly this cell family when it projects a callee's
 				// writes back onto the caller's transported identities, so the mirror
 				// must publish the cell and not only its member value.
-				if cell, published, cellErr := memberCellFactWithIdentity(nestedIdentity, nestedSuffix, operation.Target.Name, value, memberIdentity, partition); cellErr != nil {
+				if cell, published, cellErr := memberCellFactWithSource(nestedIdentity, nestedSuffix, operation.Target.Name, value, memberSource, memberIdentity, partition); cellErr != nil {
 					return equation.TransactionResult{}, cellErr
 				} else if published {
 					result.Closure.Values = append(result.Closure.Values, cell)
@@ -14987,8 +15108,19 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 		if keyErr != nil || !exact {
 			// The store landed on a slot this analysis cannot name, so the
 			// identity's member publication stops being a complete inventory.
-			// A reader that needs the whole slot set consults this marker.
-			result.Closure.Values = append(result.Closure.Values, heapOpaqueMemberWriteFact(identity, operation.Target.Name))
+			// A reader that needs the whole slot set consults this marker. The
+			// written term still carries its callable capability, and the
+			// container now holds it: the row records it, because the unnamed
+			// slot gives no coordinate that could.
+			var stored []closureHandle
+			if handle, found := closureHandleFor(operands["value"], partition); found {
+				stored = append(stored, handle)
+			}
+			opaqueWrite, opaqueErr := heapOpaqueMemberWriteFact(identity, operation.Target.Name, stored)
+			if opaqueErr != nil {
+				return equation.TransactionResult{}, opaqueErr
+			}
+			result.Closure.Values = append(result.Closure.Values, opaqueWrite)
 		} else {
 			value, valueErr := resolveCurrentValue(operands["value"], partition)
 			if valueErr == nil {
@@ -14999,10 +15131,11 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 				}
 				// The member cell is the record of who authored a slot. A store
 				// through an exact dynamic key authors the slot exactly as a
-				// static member address does, so it publishes the same cell and
-				// its effect reaches every reader of that lane -- including the
-				// caller, when this body holds a table the caller transported.
-				if cell, published, cellErr := memberCellFactWithIdentity(identity, suffix, operation.Target.Name, value, memberIdentity, partition); cellErr != nil {
+				// static member address does, so it publishes the same cell from
+				// the same written term and its effect reaches every reader of
+				// that lane -- including the caller, when this body holds a table
+				// the caller transported.
+				if cell, published, cellErr := memberCellFactWithSource(identity, suffix, operation.Target.Name, value, operands["value"], memberIdentity, partition); cellErr != nil {
 					return equation.TransactionResult{}, cellErr
 				} else if published {
 					result.Closure.Values = append(result.Closure.Values, cell)
@@ -19348,8 +19481,9 @@ func entrySeedSource(seed entrySeed, sources map[string][]byte) []byte {
 // caller must observe; a cell still authored by the entry carries the caller's
 // pre-call value and is left alone. A callee store the child could not name
 // crosses the same way: the caller's slot inventory is incomplete after it,
-// exactly as it would be after the caller performed that store itself.
-func childMemberWritebacks(identities [][]byte, childPartition equation.Partition, operation string) []equation.Fact {
+// exactly as it would be after the caller performed that store itself, and it
+// carries the callables that store placed in the caller's own container.
+func childMemberWritebacks(identities [][]byte, childPartition equation.Partition, operation string) ([]equation.Fact, error) {
 	var facts []equation.Fact
 	type authoredCell struct {
 		author  string
@@ -19357,8 +19491,16 @@ func childMemberWritebacks(identities [][]byte, childPartition equation.Partitio
 	}
 	latest := make(map[string]authoredCell)
 	for _, identity := range identities {
-		if heapOpaqueMemberWrite(identity, childPartition) {
-			facts = append(facts, heapOpaqueMemberWriteFact(identity, operation))
+		if rows := heapOpaqueMemberWriteRows(identity, childPartition); len(rows) != 0 {
+			handles := make([]closureHandle, 0, len(rows))
+			for _, row := range rows {
+				handles = append(handles, row.Handles...)
+			}
+			opaqueWrite, err := heapOpaqueMemberWriteFact(identity, operation, handles)
+			if err != nil {
+				return nil, err
+			}
+			facts = append(facts, opaqueWrite)
 		}
 		prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 		clear(latest)
@@ -19398,7 +19540,7 @@ func childMemberWritebacks(identities [][]byte, childPartition equation.Partitio
 			}
 		}
 	}
-	return facts
+	return facts, nil
 }
 
 // memberCellSeedsForEntry follows only identities already reachable from an
@@ -21443,23 +21585,31 @@ func opaqueCallbackCaptureEffects(lexical *lexicalEvaluator, provider []byte, ar
 }
 
 // opaqueArgumentCallbacks is the callback reach of one argument: the argument
-// itself when it names a callback, plus every callback published in the member
-// cells of the container it names and of the containers those cells reach. The
-// walk consults published cells only -- a slot the partition never published is
-// not invented, and a cell without a callback handle carries no callable proof.
-// An identity whose inventory an unresolved-key store left incomplete is not
-// skipped: every callback it does publish still counts. Termination comes from
-// the visited identity set, so the walk neither repeats an identity nor stops
-// short of one.
+// itself when it names a callback, plus every callback the container it names
+// carries.
 func opaqueArgumentCallbacks(argument []byte, partition equation.Partition) []closureHandle {
 	handles := make([]closureHandle, 0, 1)
 	if handle, known := closureHandleFor(argument, partition); known {
 		handles = append(handles, handle)
 	}
-	root, found := tableIdentityForTerm(argument, partition)
+	return append(handles, containerCellCallbacks(argument, partition)...)
+}
+
+// containerCellCallbacks is the callback reach of the container one term names:
+// every callback published in that container's member cells and in the cells of
+// the containers those reach, plus every callable an unresolved-key store put
+// in it under a slot the analysis cannot name. The walk consults published
+// facts only -- a slot the partition never published is not invented, and a
+// cell without a callback handle carries no callable proof. An identity whose
+// inventory an unresolved-key store left incomplete is not skipped: the store's
+// own inventory row carries what it placed there. Termination comes from the
+// visited identity set, so a container that reaches itself is walked once.
+func containerCellCallbacks(term []byte, partition equation.Partition) []closureHandle {
+	root, found := tableIdentityForTerm(term, partition)
 	if !found {
-		return handles
+		return nil
 	}
+	handles := make([]closureHandle, 0)
 	queue := [][]byte{root}
 	visited := map[string]bool{}
 	for len(queue) != 0 {
@@ -21481,6 +21631,7 @@ func opaqueArgumentCallbacks(argument []byte, partition equation.Partition) []cl
 				queue = append(queue, cell.MemberIdentity)
 			}
 		}
+		handles = append(handles, heapOpaqueMemberCallables(identity, partition)...)
 	}
 	return handles
 }

@@ -1,0 +1,7 @@
+{
+  "description": "A closure stored at an unresolved key escapes through the container it was stored in: the store publishes no member coordinate, so the container's unresolved-key inventory is the only record that the callable is there, and the opaque-callback walk must consume it. Once a sink receives the container the closure may run, so a later string-typed read of its captured field must be diagnosed; the contrast arm keeps the container inside the function and the narrowing on the field survives.",
+  "files": ["main.lua"],
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}
