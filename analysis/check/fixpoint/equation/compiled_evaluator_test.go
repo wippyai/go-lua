@@ -35,8 +35,8 @@ func TestFastEvaluatorMatchesAcyclicVMAndClearsScratch(t *testing.T) {
 	if got.Transactions != want.Transactions || !got.Closure.Equal(want.Closure) {
 		t.Fatalf("compiled evaluation = %#v, want %#v", got, want)
 	}
-	if scratch.depth != 0 || scratch.overflow != 0 {
-		t.Fatalf("scratch state after evaluation = depth %d overflow %d", scratch.depth, scratch.overflow)
+	if scratch.depth.Len() != 0 || scratch.OverflowCount() != 0 {
+		t.Fatalf("scratch state after evaluation = depth %d overflow %d", scratch.depth.Len(), scratch.OverflowCount())
 	}
 	for _, frame := range scratch.frames {
 		for _, operand := range frame.operands {

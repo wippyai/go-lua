@@ -3,6 +3,8 @@ package equation
 import (
 	"errors"
 	"fmt"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/evalscratch"
 )
 
 // ErrEvaluatorScratchOverflow means that a caller attempted a nested
@@ -19,9 +21,8 @@ var ErrEvaluatorScratchOverflow = errors.New("equation: compiled evaluator scrat
 // A scratch instance is intentionally not safe for concurrent use.  Give each
 // worker its own instance.  Nested calls consume another preallocated frame.
 type EvaluatorScratch struct {
-	frames   []compiledEvaluatorFrame
-	depth    uint32
-	overflow uint64
+	frames []compiledEvaluatorFrame
+	depth  evalscratch.Depth
 }
 
 type compiledEvaluatorFrame struct {
@@ -52,7 +53,7 @@ func NewEvaluatorScratch(artifact CompiledArtifact) (*EvaluatorScratch, error) {
 			dependencies: make([]Coordinate, maxDependencies),
 		}
 	}
-	return &EvaluatorScratch{frames: frames}, nil
+	return &EvaluatorScratch{frames: frames, depth: evalscratch.NewDepth(len(frames))}, nil
 }
 
 // OverflowCount reports attempts to exceed the provisioned nesting depth.
@@ -61,22 +62,23 @@ func (s *EvaluatorScratch) OverflowCount() uint64 {
 	if s == nil {
 		return 0
 	}
-	return s.overflow
+	return s.depth.OverflowCount()
 }
 
 func (s *EvaluatorScratch) acquire(artifact CompiledArtifact) (*compiledEvaluatorFrame, error) {
-	if s == nil || len(s.frames) == 0 || s.depth >= uint32(len(s.frames)) {
-		if s != nil {
-			s.overflow++
-		}
+	if s == nil {
 		return nil, ErrEvaluatorScratchOverflow
 	}
-	frame := &s.frames[s.depth]
+	index, ok := s.depth.Push()
+	if !ok || int(index) >= len(s.frames) {
+		return nil, ErrEvaluatorScratchOverflow
+	}
+	frame := &s.frames[index]
 	if uint32(len(frame.cells)) < artifact.layout.OperationCount {
-		s.overflow++
+		s.depth.Pop()
+		s.depth.Reject()
 		return nil, ErrEvaluatorScratchOverflow
 	}
-	s.depth++
 	return frame, nil
 }
 
@@ -96,7 +98,7 @@ func (s *EvaluatorScratch) release(frame *compiledEvaluatorFrame) {
 		frame.cells[index] = 0
 	}
 	frame.view.clear()
-	s.depth--
+	s.depth.Pop()
 }
 
 // FastEvaluator executes an admitted CompiledArtifact directly from its

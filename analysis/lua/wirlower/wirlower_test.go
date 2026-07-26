@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
+	"github.com/wippyai/go-lua/analysis/test/wirprint"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -35,7 +36,7 @@ func lowerSourceG(t *testing.T, src string, globals ...string) string {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
 	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
 	body := wirlower.LowerWithResolverAndOptions("main", stmts, bindings, built, typeresolve.New(bindings), wirlower.Options{SealedLuaTypeChecks: true})
-	return wir.Print(body, built.Graph)
+	return wirprint.Print(body, built.Graph)
 }
 
 func lowerBody(t *testing.T, src string, globals ...string) *wir.Body {
@@ -562,10 +563,10 @@ end
 				}
 			}
 			if typeCalls != 1 {
-				t.Fatalf("builtin type() calls = %d, want 1:\n%s", typeCalls, wir.Print(body, built.Graph))
+				t.Fatalf("builtin type() calls = %d, want 1:\n%s", typeCalls, wirprint.Print(body, built.Graph))
 			}
 			if typePredicateChecks != 1 {
-				t.Fatalf("builtin type() predicate checks = %d, want 1:\n%s", typePredicateChecks, wir.Print(body, built.Graph))
+				t.Fatalf("builtin type() predicate checks = %d, want 1:\n%s", typePredicateChecks, wirprint.Print(body, built.Graph))
 			}
 		})
 	}

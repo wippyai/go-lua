@@ -7,7 +7,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"unsafe"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/evalscratch"
 )
+
+// Roadmap classification: planned, not dead. audit_A3 names RuntimeCache as
+// the actor/memory admission cache for the JIT runtime. It has no production
+// caller yet, so this file must remain self-contained until that named runtime
+// consumer lands; it is not authority for adding a second cache.
 
 // FastInstanceKey is the fixed-width primary index used by RuntimeCache.  It
 // is only an index: every matching slot still confirms the two canonical byte
@@ -98,49 +105,51 @@ func NewFastInstanceKey(artifactCanonical, projectionCanonical []byte) FastInsta
 	}
 }
 
-// EvaluatorScratch is a worker-owned scalar projection arena. Projection
+// ProjectionScratch is a worker-owned scalar projection arena. Projection
 // bytes are valid until the next Reset or Pop. It intentionally stores no
 // entry, artifact, or outcome pointers, so Reset cannot retain a caller graph.
-type EvaluatorScratch struct {
+type ProjectionScratch struct {
 	projection []byte
 	used       uint32
 	frames     []uint32
-	overflows  uint64
+	depth      evalscratch.Depth
 }
 
-// NewEvaluatorScratch reserves normal-path projection and re-entrant frame
+// NewProjectionScratch reserves normal-path projection and re-entrant frame
 // capacity at worker start. Zero capacities are accepted for callers that
 // deliberately exercise the metered overflow path.
-func NewEvaluatorScratch(projectionCapacity, frameCapacity int) *EvaluatorScratch {
+func NewProjectionScratch(projectionCapacity, frameCapacity int) *ProjectionScratch {
 	if projectionCapacity < 0 {
 		projectionCapacity = 0
 	}
 	if frameCapacity < 0 {
 		frameCapacity = 0
 	}
-	return &EvaluatorScratch{
+	return &ProjectionScratch{
 		projection: make([]byte, projectionCapacity),
 		frames:     make([]uint32, 0, frameCapacity),
+		depth:      evalscratch.NewDepth(frameCapacity),
 	}
 }
 
 // Reset rewinds the scalar arena. There are no pointer-bearing temporaries to
 // retain; the byte arena is deliberately reused.
-func (s *EvaluatorScratch) Reset() {
+func (s *ProjectionScratch) Reset() {
 	if s == nil {
 		return
 	}
 	s.used = 0
 	s.frames = s.frames[:0]
+	s.depth.Reset()
 }
 
 // Push starts a nested scratch frame. It returns false rather than growing the
 // frame stack, making re-entrant capacity exhaustion a visible cold-path event.
-func (s *EvaluatorScratch) Push() bool {
-	if s == nil || len(s.frames) == cap(s.frames) {
-		if s != nil {
-			s.overflows++
-		}
+func (s *ProjectionScratch) Push() bool {
+	if s == nil {
+		return false
+	}
+	if _, ok := s.depth.Push(); !ok {
 		return false
 	}
 	s.frames = append(s.frames, s.used)
@@ -148,30 +157,30 @@ func (s *EvaluatorScratch) Push() bool {
 }
 
 // Pop discards the current nested frame.
-func (s *EvaluatorScratch) Pop() bool {
+func (s *ProjectionScratch) Pop() bool {
 	if s == nil || len(s.frames) == 0 {
 		return false
 	}
 	last := len(s.frames) - 1
 	s.used = s.frames[last]
 	s.frames = s.frames[:last]
-	return true
+	return s.depth.Pop()
 }
 
 // OverflowCount reports explicit normal-capacity failures.
-func (s *EvaluatorScratch) OverflowCount() uint64 {
+func (s *ProjectionScratch) OverflowCount() uint64 {
 	if s == nil {
 		return 0
 	}
-	return s.overflows
+	return s.depth.OverflowCount()
 }
 
 var ErrProjectionScratchOverflow = errors.New("interproc: projection scratch capacity exceeded")
 
-func (s *EvaluatorScratch) reserve(length int) ([]byte, error) {
+func (s *ProjectionScratch) reserve(length int) ([]byte, error) {
 	if s == nil || length < 0 || uint64(s.used)+uint64(length) > uint64(len(s.projection)) {
 		if s != nil {
-			s.overflows++
+			s.depth.Reject()
 		}
 		return nil, ErrProjectionScratchOverflow
 	}
@@ -233,7 +242,7 @@ func (e *ScratchProjectionEncoder) ArtifactCanonicalBytes() []byte {
 // Encode writes the canonical projection into scratch and returns its fixed
 // primary key. The returned bytes alias scratch and must be consumed before the
 // next scratch reset/pop. Missing values remain fail-closed.
-func (e *ScratchProjectionEncoder) Encode(scratch *EvaluatorScratch, entry EntryBinding) (FastInstanceKey, []byte, error) {
+func (e *ScratchProjectionEncoder) Encode(scratch *ProjectionScratch, entry EntryBinding) (FastInstanceKey, []byte, error) {
 	if e == nil || !e.artifactID.Valid() {
 		return FastInstanceKey{}, nil, fmt.Errorf("interproc: nil scratch projection encoder")
 	}

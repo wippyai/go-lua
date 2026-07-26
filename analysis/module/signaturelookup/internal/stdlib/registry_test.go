@@ -262,9 +262,6 @@ func TestLookupSeededEffects(t *testing.T) {
 		},
 		{
 			name: "table.freeze",
-			labels: []effect.Label{
-				ownership.Freeze{Param: effect.ParamRef{Index: 0}},
-			},
 		},
 		{
 			name: "table.isfrozen",

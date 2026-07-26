@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/test/wirprint"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -165,23 +166,23 @@ end`)
 		}
 	}
 	if assignPoint == 0 {
-		t.Fatalf("missing label assignment in points %v\nWIR:\n%s", built.StmtPoints.PointsFor(fn.Stmts[0]), wir.Print(body, built.Graph))
+		t.Fatalf("missing label assignment in points %v\nWIR:\n%s", built.StmtPoints.PointsFor(fn.Stmts[0]), wirprint.Print(body, built.Graph))
 	}
 	source := assignment.Source()
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		t.Fatalf("label assignment source = %#v, want expression source\nWIR:\n%s", source, wir.Print(body, built.Graph))
+		t.Fatalf("label assignment source = %#v, want expression source\nWIR:\n%s", source, wirprint.Print(body, built.Graph))
 	}
 	op, ok := facts.ExpressionOperation(source.ExprRef)
 	if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != ".." {
-		t.Fatalf("label assignment operation = %#v/%v, want concat\nWIR:\n%s", op, ok, wir.Print(body, built.Graph))
+		t.Fatalf("label assignment operation = %#v/%v, want concat\nWIR:\n%s", op, ok, wirprint.Print(body, built.Graph))
 	}
 	value, ok := facts.ExpressionValue(source.ExprRef)
 	if !ok {
-		t.Fatalf("missing label assignment expression value for ref %d\nWIR:\n%s", source.ExprRef, wir.Print(body, built.Graph))
+		t.Fatalf("missing label assignment expression value for ref %d\nWIR:\n%s", source.ExprRef, wirprint.Print(body, built.Graph))
 	}
 	got, ok := typevalue.TypeOf(reg, value)
 	if !ok || !typ.TypeEquals(got, typ.String) {
-		t.Fatalf("label assignment expression value type = %v/%v, want string\nWIR:\n%s", got, ok, wir.Print(body, built.Graph))
+		t.Fatalf("label assignment expression value type = %v/%v, want string\nWIR:\n%s", got, ok, wirprint.Print(body, built.Graph))
 	}
 }
 
@@ -208,7 +209,7 @@ end`)
 		source := assignment.Source()
 		outer, ok := facts.ExpressionOperation(source.ExprRef)
 		if !ok || outer.Kind() != factflow.ExpressionOperationBinary || outer.Op() != ".." {
-			t.Fatalf("%s outer operation = %#v/%v, want concat\nWIR:\n%s", wantPrefix, outer, ok, wir.Print(body, built.Graph))
+			t.Fatalf("%s outer operation = %#v/%v, want concat\nWIR:\n%s", wantPrefix, outer, ok, wirprint.Print(body, built.Graph))
 		}
 		innerSource := outer.Left()
 		inner, ok := facts.ExpressionOperation(innerSource.ExprRef)
@@ -1307,10 +1308,10 @@ end`, "ipairs")
 		break
 	}
 	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		t.Fatalf("display_name assignment source = %#v, want logical expression source\nWIR:\n%s", source, wir.Print(body, built.Graph))
+		t.Fatalf("display_name assignment source = %#v, want logical expression source\nWIR:\n%s", source, wirprint.Print(body, built.Graph))
 	}
 	op, ok := facts.ExpressionOperation(source.ExprRef)
 	if !ok || op.Kind() != factflow.ExpressionOperationBinary || op.Op() != "or" {
-		t.Fatalf("display_name operation = %#v/%v, want logical or\nWIR:\n%s", op, ok, wir.Print(body, built.Graph))
+		t.Fatalf("display_name operation = %#v/%v, want logical or\nWIR:\n%s", op, ok, wirprint.Print(body, built.Graph))
 	}
 }

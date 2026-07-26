@@ -3,7 +3,10 @@ package wir
 import "github.com/wippyai/go-lua/analysis/domain/path"
 
 // ForEachValuePath visits every path whose runtime value participates in this
-// body's semantics. A root-only direct-call callee is deliberately excluded:
+// body's semantics. It is live today at
+// __legacy/check/body/run.go:symbolicBoundaryCaptureSymbols and is also the
+// WIR design's planned runtime/JIT boundary-input traversal seam. A root-only
+// direct-call callee is deliberately excluded:
 // the direct-call catalog owns that function identity. Descendant callees and
 // every other carrier are value paths. This is the closed traversal seam for
 // boundary-input discovery; new instruction metadata must be added here.

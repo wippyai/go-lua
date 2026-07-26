@@ -40,9 +40,9 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 		capability.OwnershipStore:     capability.StatusOperational,
 		capability.OwnershipSend:      capability.StatusImportOrStdlib,
 		capability.OwnershipSendParam: capability.StatusOperational,
-		capability.OwnershipExport:    capability.StatusOperational,
-		capability.OwnershipOpaque:    capability.StatusOperational,
-		capability.OwnershipFreeze:    capability.StatusOperational,
+		capability.OwnershipExport:    capability.StatusReserved,
+		capability.OwnershipOpaque:    capability.StatusReservedHighRisk,
+		capability.OwnershipFreeze:    capability.StatusReserved,
 		capability.OwnershipBorrowAll: capability.StatusImportOrStdlib,
 
 		capability.IterationIterator: capability.StatusImportOrStdlib,

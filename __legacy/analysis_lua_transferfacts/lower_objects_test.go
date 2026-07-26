@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/test/wirprint"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -1030,11 +1031,11 @@ suites[suite] = suites[suite] or {}
 		}
 	}
 	if assignPoint == 0 {
-		t.Fatalf("missing WIR dynamic-index write\nWIR:\n%s", wir.Print(body, built.Graph))
+		t.Fatalf("missing WIR dynamic-index write\nWIR:\n%s", wirprint.Print(body, built.Graph))
 	}
 	write, ok := facts.DynamicIndexWrite(assignPoint)
 	if !ok {
-		t.Fatalf("missing dynamic-index write fact at WIR point %d\nWIR:\n%s", assignPoint, wir.Print(body, built.Graph))
+		t.Fatalf("missing dynamic-index write fact at WIR point %d\nWIR:\n%s", assignPoint, wirprint.Print(body, built.Graph))
 	}
 	source := write.Source()
 	if !source.HasExpr {
@@ -1284,7 +1285,7 @@ end`)
 	}
 	expected, ok := literal.Expected()
 	if !ok {
-		t.Fatalf("missing WIR-owned expected contract on returned object literal; return sources=%#v literals=%#v declared=%#v\nWIR:\n%s", sources, objectLiterals(facts), body.DeclaredReturnTypes(), wir.Print(body, built.Graph))
+		t.Fatalf("missing WIR-owned expected contract on returned object literal; return sources=%#v literals=%#v declared=%#v\nWIR:\n%s", sources, objectLiterals(facts), body.DeclaredReturnTypes(), wirprint.Print(body, built.Graph))
 	}
 	got, ok := typevalue.TypeOf(reg, expected)
 	want := typetable.NewRecord().
@@ -1327,7 +1328,7 @@ end`)
 	}
 	expected, ok := literal.Expected()
 	if !ok {
-		t.Fatalf("missing WIR-owned expected contract on returned object literal without semantic result; return sources=%#v literals=%#v declared=%#v\nWIR:\n%s", sources, objectLiterals(facts), body.DeclaredReturnTypes(), wir.Print(body, built.Graph))
+		t.Fatalf("missing WIR-owned expected contract on returned object literal without semantic result; return sources=%#v literals=%#v declared=%#v\nWIR:\n%s", sources, objectLiterals(facts), body.DeclaredReturnTypes(), wirprint.Print(body, built.Graph))
 	}
 	got, ok := typevalue.TypeOf(reg, expected)
 	want := typetable.NewRecord().
@@ -1604,7 +1605,7 @@ state.active_sessions[session_id] = {
 	}
 	expected, ok := lit.Expected()
 	if !ok {
-		t.Fatalf("WIR dynamic-index value literal has no expected type without semantic result\nWIR:\n%s", wir.Print(body, built.Graph))
+		t.Fatalf("WIR dynamic-index value literal has no expected type without semantic result\nWIR:\n%s", wirprint.Print(body, built.Graph))
 	}
 	got, ok := typeValues.TypeOf(reg, expected)
 	want := typetable.NewRecord().

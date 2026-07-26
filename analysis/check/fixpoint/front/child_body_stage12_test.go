@@ -66,9 +66,6 @@ end
 	if got := inner.Boundary.Captures; len(got) != 3 || got[0].Name != "shared" || !got[0].Mutable || got[1].Name != "first" || got[2].Name != "second" {
 		t.Fatalf("inner boundary captures = %#v, want ordered mutable shared cell lens candidates", got)
 	}
-	if got := inner.Boundary.DirectGlobals; len(got) != 1 {
-		t.Fatalf("inner direct globals = %#v, want network", got)
-	}
 	if len(inner.QualifiedClaimSpans) != len(inner.ClaimSpans) || len(inner.QualifiedClaimSpans) == 0 {
 		t.Fatalf("qualified child claim spans = %#v; legacy = %#v", inner.QualifiedClaimSpans, inner.ClaimSpans)
 	}

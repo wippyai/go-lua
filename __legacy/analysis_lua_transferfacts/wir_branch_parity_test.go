@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/semantic/intrinsic"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/test/wirprint"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -402,11 +403,11 @@ end
 		}
 	}
 	if final == 0 {
-		t.Fatalf("fixture did not produce completed logical branch\n%s", wir.Print(body, built.Graph))
+		t.Fatalf("fixture did not produce completed logical branch\n%s", wirprint.Print(body, built.Graph))
 	}
 	source, ok := facts.BranchConditionSource(final)
 	if !ok || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
-		t.Fatalf("nested logical condition source at %d = %#v/%t, want completed expression\n%s", final, source, ok, wir.Print(body, built.Graph))
+		t.Fatalf("nested logical condition source at %d = %#v/%t, want completed expression\n%s", final, source, ok, wirprint.Print(body, built.Graph))
 	}
 }
 
@@ -644,7 +645,7 @@ end
 		}
 	}
 	if branchPoint == 0 {
-		t.Fatalf("missing index-range WIR branch\n%s", wir.Print(body, built.Graph))
+		t.Fatalf("missing index-range WIR branch\n%s", wirprint.Print(body, built.Graph))
 	}
 	source, ok := facts.BranchConditionSource(branchPoint)
 	if !ok || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {
@@ -678,7 +679,7 @@ if type(x) == kind then end
 		}
 	}
 	if branchPoint == 0 {
-		t.Fatalf("missing dynamic lua-type WIR branch\n%s", wir.Print(body, built.Graph))
+		t.Fatalf("missing dynamic lua-type WIR branch\n%s", wirprint.Print(body, built.Graph))
 	}
 	source, ok := facts.BranchConditionSource(branchPoint)
 	if !ok || source.Kind != factflow.ValueSourceExpression || !source.HasExpr {

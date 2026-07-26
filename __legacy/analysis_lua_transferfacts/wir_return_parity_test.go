@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/test/wirprint"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -190,15 +191,15 @@ end
 	}
 	sources := returnFact.Sources()
 	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
-		t.Fatalf("return sources = %#v, want one logical expression source\nWIR:\n%s", sources, wir.Print(body, built.Graph))
+		t.Fatalf("return sources = %#v, want one logical expression source\nWIR:\n%s", sources, wirprint.Print(body, built.Graph))
 	}
 	value, ok := facts.ExpressionValue(sources[0].ExprRef)
 	if !ok {
-		t.Fatalf("missing nested logical return expression value for ref %d\nWIR:\n%s", sources[0].ExprRef, wir.Print(body, built.Graph))
+		t.Fatalf("missing nested logical return expression value for ref %d\nWIR:\n%s", sources[0].ExprRef, wirprint.Print(body, built.Graph))
 	}
 	got, ok := product.Get(reg, value, typewitness.Key).Type()
 	if !ok || !typ.TypeEquals(got, typ.String) {
-		t.Fatalf("nested logical return witness = %v/%v, want string; value=%#v\nWIR:\n%s", got, ok, value, wir.Print(body, built.Graph))
+		t.Fatalf("nested logical return witness = %v/%v, want string; value=%#v\nWIR:\n%s", got, ok, value, wirprint.Print(body, built.Graph))
 	}
 }
 
@@ -223,15 +224,15 @@ end
 	}
 	sources := returnFact.Sources()
 	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
-		t.Fatalf("return sources = %#v, want one logical expression source\nWIR:\n%s", sources, wir.Print(body, built.Graph))
+		t.Fatalf("return sources = %#v, want one logical expression source\nWIR:\n%s", sources, wirprint.Print(body, built.Graph))
 	}
 	value, ok := facts.ExpressionValue(sources[0].ExprRef)
 	if !ok {
-		t.Fatalf("missing negated nil logical return expression value for ref %d\nWIR:\n%s", sources[0].ExprRef, wir.Print(body, built.Graph))
+		t.Fatalf("missing negated nil logical return expression value for ref %d\nWIR:\n%s", sources[0].ExprRef, wirprint.Print(body, built.Graph))
 	}
 	got, ok := product.Get(reg, value, typewitness.Key).Type()
 	if !ok || !typ.TypeEquals(got, typ.String) {
-		t.Fatalf("negated nil logical return witness = %v/%v, want string; value=%#v\nWIR:\n%s", got, ok, value, wir.Print(body, built.Graph))
+		t.Fatalf("negated nil logical return witness = %v/%v, want string; value=%#v\nWIR:\n%s", got, ok, value, wirprint.Print(body, built.Graph))
 	}
 }
 
@@ -625,7 +626,7 @@ end
 	}
 	sources := retFact.Sources()
 	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
-		t.Fatalf("return sources = %#v, want expression source\nWIR:\n%s", sources, wir.Print(body, built.Graph))
+		t.Fatalf("return sources = %#v, want expression source\nWIR:\n%s", sources, wirprint.Print(body, built.Graph))
 	}
 	condition, ok := facts.ExpressionCondition(sources[0].ExprRef)
 	if !ok {
@@ -668,11 +669,11 @@ end
 	}
 	sources := retFact.Sources()
 	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
-		t.Fatalf("return sources = %#v, want expression source\nWIR:\n%s", sources, wir.Print(body, built.Graph))
+		t.Fatalf("return sources = %#v, want expression source\nWIR:\n%s", sources, wirprint.Print(body, built.Graph))
 	}
 	condition, ok := facts.ExpressionCondition(sources[0].ExprRef)
 	if !ok {
-		t.Fatalf("missing expression condition for returned conjunction ref %d\nWIR:\n%s", sources[0].ExprRef, wir.Print(body, built.Graph))
+		t.Fatalf("missing expression condition for returned conjunction ref %d\nWIR:\n%s", sources[0].ExprRef, wirprint.Print(body, built.Graph))
 	}
 	valuePath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "value")
 	trueFacts := condition.FactsForValue(true)
@@ -688,7 +689,7 @@ end
 		})
 		return
 	}
-	t.Fatalf("missing true-value type refinement for %s; got %#v\nWIR:\n%s", valuePath, trueFacts.Refinements(), wir.Print(body, built.Graph))
+	t.Fatalf("missing true-value type refinement for %s; got %#v\nWIR:\n%s", valuePath, trueFacts.Refinements(), wirprint.Print(body, built.Graph))
 }
 
 func TestLowerWithWIRReturnedNestedPathConjunctionCarriesRootPresence(t *testing.T) {
@@ -711,11 +712,11 @@ end
 	}
 	sources := retFact.Sources()
 	if len(sources) != 1 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr {
-		t.Fatalf("return sources = %#v, want expression source\nWIR:\n%s", sources, wir.Print(body, built.Graph))
+		t.Fatalf("return sources = %#v, want expression source\nWIR:\n%s", sources, wirprint.Print(body, built.Graph))
 	}
 	condition, ok := facts.ExpressionCondition(sources[0].ExprRef)
 	if !ok {
-		t.Fatalf("missing expression condition for returned nested path conjunction ref %d\nWIR:\n%s", sources[0].ExprRef, wir.Print(body, built.Graph))
+		t.Fatalf("missing expression condition for returned nested path conjunction ref %d\nWIR:\n%s", sources[0].ExprRef, wirprint.Print(body, built.Graph))
 	}
 	entryPath := path.NewPath(bindings.ParamSlots(fn)[0].Symbol, "entry")
 	trueFacts := condition.FactsForValue(true)
@@ -731,7 +732,7 @@ end
 		})
 		return
 	}
-	t.Fatalf("missing true-value presence refinement for %s; got %#v\nWIR:\n%s", entryPath, trueFacts.Refinements(), wir.Print(body, built.Graph))
+	t.Fatalf("missing true-value presence refinement for %s; got %#v\nWIR:\n%s", entryPath, trueFacts.Refinements(), wirprint.Print(body, built.Graph))
 }
 
 func TestLowerWithWIRReturnPublishesWithoutSourceReturnMetadata(t *testing.T) {

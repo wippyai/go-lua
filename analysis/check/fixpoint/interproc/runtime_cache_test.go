@@ -29,7 +29,7 @@ func TestScratchProjectionEncoderMatchesReferenceProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scratch := NewEvaluatorScratch(len(wantBytes), 2)
+	scratch := NewProjectionScratch(len(wantBytes), 2)
 	key, got, err := encoder.Encode(scratch, entry)
 	if err != nil {
 		t.Fatal(err)
@@ -55,14 +55,14 @@ func TestScratchProjectionEncoderMetersOverflowAndFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := tableEntry(t, "value", "guard", "diagnostic", "unread")
-	if _, _, err := encoder.Encode(NewEvaluatorScratch(1, 0), entry); err != ErrProjectionScratchOverflow {
+	if _, _, err := encoder.Encode(NewProjectionScratch(1, 0), entry); err != ErrProjectionScratchOverflow {
 		t.Fatalf("overflow error = %v, want %v", err, ErrProjectionScratchOverflow)
 	}
 	missing, err := NewEntryBinding([]EntryValue{{Selector: "guard", Encoding: []byte("guard")}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := encoder.Encode(NewEvaluatorScratch(512, 0), missing); err == nil || !IsIncompleteReadCertificateError(err) {
+	if _, _, err := encoder.Encode(NewProjectionScratch(512, 0), missing); err == nil || !IsIncompleteReadCertificateError(err) {
 		t.Fatalf("missing certified value error = %v, want incomplete certificate", err)
 	}
 }
@@ -107,7 +107,7 @@ func TestRuntimeCacheSingleFlightAtOneTenAndOneHundred(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := tableEntry(t, "same", "true", "diagnostic", "unread")
-	seedScratch := NewEvaluatorScratch(512, 1)
+	seedScratch := NewProjectionScratch(512, 1)
 	key, projection, err := encoder.Encode(seedScratch, entry)
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func TestRuntimeCacheParityWithProjectedTableForClosedHit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scratch := NewEvaluatorScratch(512, 1)
+	scratch := NewProjectionScratch(512, 1)
 	key, projection, err := encoder.Encode(scratch, entry)
 	if err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestRuntimeCacheWarmedHitHasNoAllocations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scratch := NewEvaluatorScratch(512, 1)
+	scratch := NewProjectionScratch(512, 1)
 	key, projection, err := encoder.Encode(scratch, entry)
 	if err != nil {
 		t.Fatal(err)
@@ -256,7 +256,7 @@ func BenchmarkCompiledProjectedApplication_Hit(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	scratch := NewEvaluatorScratch(512, 1)
+	scratch := NewProjectionScratch(512, 1)
 	key, projection, err := encoder.Encode(scratch, entry)
 	if err != nil {
 		b.Fatal(err)
@@ -285,7 +285,7 @@ func BenchmarkCompiledProjectedApplication_Hit_Fanout(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			scratch := NewEvaluatorScratch(512, 1)
+			scratch := NewProjectionScratch(512, 1)
 			key, projection, err := encoder.Encode(scratch, entry)
 			if err != nil {
 				b.Fatal(err)
@@ -336,7 +336,7 @@ func BenchmarkCompiledProjectedApplication_Hit_ConcurrentClosedHits(b *testing.B
 	if err != nil {
 		b.Fatal(err)
 	}
-	seed := NewEvaluatorScratch(512, 1)
+	seed := NewProjectionScratch(512, 1)
 	key, projection, err := encoder.Encode(seed, entry)
 	if err != nil {
 		b.Fatal(err)
@@ -349,9 +349,9 @@ func BenchmarkCompiledProjectedApplication_Hit_ConcurrentClosedHits(b *testing.B
 	if err := cache.Store(key, encoder.artifactCanonical, projection, outcome); err != nil {
 		b.Fatal(err)
 	}
-	scratches := make([]*EvaluatorScratch, runtime.GOMAXPROCS(0)*4)
+	scratches := make([]*ProjectionScratch, runtime.GOMAXPROCS(0)*4)
 	for i := range scratches {
-		scratches[i] = NewEvaluatorScratch(512, 1)
+		scratches[i] = NewProjectionScratch(512, 1)
 	}
 	var next atomic.Uint64
 	b.ReportAllocs()
@@ -371,7 +371,7 @@ func BenchmarkCompiledProjectedApplication_Hit_ConcurrentClosedHits(b *testing.B
 	})
 }
 
-func runCompiledProjectedHitBenchmark(b *testing.B, cache *RuntimeCache, encoder *ScratchProjectionEncoder, entry EntryBinding, scratch *EvaluatorScratch, fanout int) {
+func runCompiledProjectedHitBenchmark(b *testing.B, cache *RuntimeCache, encoder *ScratchProjectionEncoder, entry EntryBinding, scratch *ProjectionScratch, fanout int) {
 	b.Helper()
 	b.ReportAllocs()
 	b.ResetTimer()

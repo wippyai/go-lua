@@ -94,9 +94,9 @@ var descriptors = map[string]Descriptor{
 	OwnershipStore:     descriptor(OwnershipStore, "ownership", "Store", StatusOperational, "Ownership label is actively consumed end-to-end."),
 	OwnershipSend:      descriptor(OwnershipSend, "ownership", "Send", StatusImportOrStdlib, "Import/stdlib operational suffix-send vocabulary; analyzed exports use per-param SendParam instead."),
 	OwnershipSendParam: descriptor(OwnershipSendParam, "ownership", "SendParam", StatusOperational, "Ownership label is actively consumed end-to-end."),
-	OwnershipExport:    descriptor(OwnershipExport, "ownership", "Export", StatusOperational, "Ownership label is actively consumed end-to-end."),
-	OwnershipOpaque:    descriptor(OwnershipOpaque, "ownership", "Opaque", StatusOperational, "Ownership label is actively consumed end-to-end."),
-	OwnershipFreeze:    descriptor(OwnershipFreeze, "ownership", "Freeze", StatusOperational, "Ownership label is actively consumed end-to-end."),
+	OwnershipExport:    descriptor(OwnershipExport, "ownership", "Export", StatusReserved, "Reserved manifest vocabulary; no placement decision consumes it."),
+	OwnershipOpaque:    descriptor(OwnershipOpaque, "ownership", "Opaque", StatusReservedHighRisk, "Reserved manifest vocabulary; no placement decision consumes it."),
+	OwnershipFreeze:    descriptor(OwnershipFreeze, "ownership", "Freeze", StatusReserved, "Reserved manifest vocabulary; table.freeze has no effect-row placement consumer."),
 	OwnershipBorrowAll: descriptor(OwnershipBorrowAll, "ownership", "BorrowAll", StatusImportOrStdlib, "Import/stdlib operational vocabulary, but not exported as the same ownership label."),
 
 	IterationIterator: descriptor(IterationIterator, "iteration", "Iterator", StatusImportOrStdlib, "Import/stdlib operational vocabulary, but not exported as the same label."),

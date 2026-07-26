@@ -38,8 +38,6 @@ type branchPredicateWire struct {
 	Modulus        int64  `json:"modulus,omitempty"`
 	Residue        int64  `json:"residue,omitempty"`
 	Negated        bool   `json:"negated,omitempty"`
-	ProducerPoint  uint32 `json:"producer_point,omitempty"`
-	HasProducer    bool   `json:"has_producer,omitempty"`
 }
 
 type branchDiffWire struct {
@@ -196,8 +194,7 @@ func branchPredicateTerm(check wir.Check) (equation.Term, error) {
 		Kind: kind, TypeName: check.TypeName, LenFloor: check.LenFloor,
 		NumFloor: check.NumFloor, NumCeil: check.NumCeil, HasNumCeil: check.HasNumCeil,
 		NumCeilNegated: check.NumCeilNegated, Modulus: check.Modulus, Residue: check.Residue,
-		Negated:       check.Negated,
-		ProducerPoint: uint32(check.ProducerPoint), HasProducer: check.HasProducerPoint,
+		Negated: check.Negated,
 	}
 	var err error
 	if requiresBranchPath(check.Kind) {

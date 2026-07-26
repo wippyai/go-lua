@@ -3,7 +3,6 @@ package branchcond
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
@@ -62,20 +61,6 @@ type Check struct {
 	// on its false edge, the standard `if oob then error end` guard form. Only the
 	// bound checks (CheckIndexInRange, CheckNumGe, CheckNumLe, CheckLenGe) use it.
 	Negated bool
-	// ProducerPoint is filled by WIR after it maps producerCall to the exact CFG
-	// occurrence. Syntax normalization leaves it absent.
-	ProducerPoint    cfg.Point
-	HasProducerPoint bool
-	// producerCall is the exact syntax occurrence for contextual checks whose
-	// proof is not reconstructible from scalar operands. It is projected to a
-	// cfg.Point by WIR lowering and never leaves this syntax-facing package.
-	producerCall *ast.FuncCallExpr
-}
-
-// ProducerCall returns the exact contextual producer occurrence, when this
-// check requires one.
-func (c Check) ProducerCall() (*ast.FuncCallExpr, bool) {
-	return c.producerCall, c.producerCall != nil
 }
 
 // ImpliedCheck is a normalized leaf check proven by taking a particular branch
@@ -170,7 +155,7 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 		}
 	case *ast.FuncCallExpr:
 		if p, ok := normalizeFrozenTableCall(expr, bindings); ok {
-			return Check{Kind: CheckFrozenTable, Path: p, producerCall: expr}
+			return Check{Kind: CheckFrozenTable, Path: p}
 		}
 	case *ast.RelationalOpExpr:
 		if !isSupportedRelop(expr.Operator) {

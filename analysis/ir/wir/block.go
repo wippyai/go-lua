@@ -35,26 +35,23 @@ type Body struct {
 	// annotation. It is source metadata only and never participates in typing.
 	declaredReturnSpans []Span
 
-	operandPool          []Operand
-	typeRefPool          []TypeRef
-	tableEntries         []TableEntry
-	segments             []segment.Segment
-	callArgMeta          []CallArgumentMeta
-	returnMeta           []ReturnValueMeta
-	concatMeta           []ConcatOperandMeta
-	rootTypes            []RootType
-	impliedChecks        []ImpliedCheck
-	armGroups            []ImpliedCheckRange
-	branchDiffs          []BranchDiffConstraint
-	callTargets          map[callResultTargetKey]CallResultTarget
-	evaluations          map[cfg.Point]ExpressionEvaluation
-	ifChains             map[uint32]IfChainDescriptor
-	structuralRegions    map[StructuralExpressionOwner]StructuralExpressionRegion
-	symbols              map[SymbolID]SymbolInfo
-	globalSymbols        map[string]SymbolID
-	debugPointOrdinals   map[cfg.Point]uint32
-	debugPointOrder      []cfg.Point
-	debugLocalVisibility []debugVisibilityAtPoint
+	operandPool       []Operand
+	typeRefPool       []TypeRef
+	tableEntries      []TableEntry
+	segments          []segment.Segment
+	callArgMeta       []CallArgumentMeta
+	returnMeta        []ReturnValueMeta
+	concatMeta        []ConcatOperandMeta
+	rootTypes         []RootType
+	impliedChecks     []ImpliedCheck
+	armGroups         []ImpliedCheckRange
+	branchDiffs       []BranchDiffConstraint
+	callTargets       map[callResultTargetKey]CallResultTarget
+	evaluations       map[cfg.Point]ExpressionEvaluation
+	ifChains          map[uint32]IfChainDescriptor
+	structuralRegions map[StructuralExpressionOwner]StructuralExpressionRegion
+	symbols           map[SymbolID]SymbolInfo
+	globalSymbols     map[string]SymbolID
 
 	// lexicalPath is the source-order path from the containing chunk to this
 	// body.  It is structural metadata only: front derives its content-addressed
@@ -123,7 +120,6 @@ type BoundaryCapture struct {
 type BodyBoundary struct {
 	Parameters      []BoundaryParameter
 	Captures        []BoundaryCapture
-	DirectGlobals   []SymbolID
 	DeclaredReturns []TypeRef
 }
 
@@ -510,12 +506,6 @@ func (b *Body) PointInstructions(p cfg.Point) []Instruction {
 	}
 	r := b.points[idx]
 	return b.instrs[r.start : r.start+r.len]
-}
-
-// HasPoint reports whether point p carries any instruction window.
-func (b *Body) HasPoint(p cfg.Point) bool {
-	idx := int(p)
-	return idx >= 0 && idx < len(b.points) && b.points[idx].valid
 }
 
 // HasInstruction reports whether point p carries at least one instruction with
@@ -925,7 +915,6 @@ func (b *Body) Boundary() BodyBoundary {
 func cloneBodyBoundary(boundary BodyBoundary) BodyBoundary {
 	boundary.Parameters = append([]BoundaryParameter(nil), boundary.Parameters...)
 	boundary.Captures = append([]BoundaryCapture(nil), boundary.Captures...)
-	boundary.DirectGlobals = append([]SymbolID(nil), boundary.DirectGlobals...)
 	boundary.DeclaredReturns = append([]TypeRef(nil), boundary.DeclaredReturns...)
 	return boundary
 }

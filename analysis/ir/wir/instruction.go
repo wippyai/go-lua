@@ -295,7 +295,6 @@ type Instruction struct {
 	ExprID                    ExpressionID
 
 	CallContext  CallContextKind
-	CallExpr     int
 	CallFinal    bool
 	CallExpanded bool
 	CallAdjusted bool

@@ -5,4 +5,7 @@ package signature
 // ownership capability labels currently synced with arena CallArgEscape and
 // Ownership. Bump it only with joint cross-repo signoff per fence #1425 when a
 // label is added, removed, renamed, or changes boundary meaning.
-const EscapeVocabVersion = 1
+//
+// D2: Export, Opaque, and Freeze changed from claimed-operational to reserved
+// because the placement switch has no decision reader for those labels.
+const EscapeVocabVersion = 2

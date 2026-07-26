@@ -2,7 +2,6 @@ package wir
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -66,11 +65,6 @@ type Check struct {
 	// rather than the true edge. Only the bound checks (CheckIndexInRange,
 	// CheckNumGe, CheckNumLe, CheckLenGe) use it.
 	Negated bool
-	// ProducerPoint is the exact contextual operation whose result owns this
-	// check. Scalar checks leave it absent because their operands are complete
-	// provenance; relation checks such as CheckFrozenTable require it.
-	ProducerPoint    cfg.Point
-	HasProducerPoint bool
 }
 
 // ImpliedCheck records one normalized leaf check proven on a particular outer

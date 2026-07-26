@@ -352,7 +352,15 @@ func operationalEffectBoolLaneWithEmptiness(
 	}
 }
 
-var operationalEffectLanes = append([]operationalEffectLane{
+// operationalEffectRoadmapLanes are retained intentionally. The canonical
+// checker does not yet publish them, but audit_A3 names them as the transport
+// inputs for JIT gaps 3-7 and 13. The migration checker currently supplies the
+// producer and consumer pair in
+// __legacy/check/exportmanifest/function_signatures.go and
+// __legacy/engine/effectlowering/provider_operational.go. Keeping this named
+// group prevents "unwired" from being mistaken for deletion authority while
+// that roadmap and migration reader remain live.
+var operationalEffectRoadmapLanes = []operationalEffectLane{
 	operationalEffectCertificationLane("SuspensionKnown",
 		func(e OperationalEffects) bool { return e.SuspensionKnown },
 		func(e *OperationalEffects, value bool) { e.SuspensionKnown = value }),
@@ -383,7 +391,9 @@ var operationalEffectLanes = append([]operationalEffectLane{
 		func(e OperationalEffects) []ReturnAllocationTemplate { return e.ReturnAllocationTemplates },
 		func(e *OperationalEffects, facts []ReturnAllocationTemplate) { e.ReturnAllocationTemplates = facts },
 		cloneReturnAllocationTemplates, equalReturnAllocationTemplates, substituteReturnAllocationTemplateTypes),
-}, operationalEffectColdLanes...)
+}
+
+var operationalEffectLanes = append(operationalEffectRoadmapLanes, operationalEffectColdLanes...)
 
 func cloneReturnPresenceRelations(in []ReturnPresenceRelation) []ReturnPresenceRelation {
 	if len(in) == 0 {

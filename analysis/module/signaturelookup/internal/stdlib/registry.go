@@ -415,7 +415,6 @@ var registry = map[string]signature.Function{
 				Param("t", tp).
 				Returns(tp).
 				Build(),
-			ownership.Freeze{Param: effect.ParamRef{Index: 0}},
 		)
 	}(),
 	"table.isfrozen": sig(

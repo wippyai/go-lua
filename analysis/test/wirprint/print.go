@@ -1,4 +1,5 @@
-package wir
+// Package wirprint contains WIR presentation helpers used only by tests.
+package wirprint
 
 import (
 	"fmt"
@@ -7,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
 
 // Print renders a Body as deterministic text, one instruction per line, in the
@@ -15,7 +17,7 @@ import (
 // or pointer identity. Points are labelled b0, b1, ... in traversal order and
 // branch lines name their successor labels, so control flow is verifiable
 // without inspecting the CFG separately.
-func Print(b *Body, graph cfg.Graph) string {
+func Print(b *wir.Body, graph cfg.Graph) string {
 	order := cfg.RPOReadOnly(graph)
 	label := make(map[cfg.Point]string, len(order))
 	for i, p := range order {
@@ -37,8 +39,8 @@ func Print(b *Body, graph cfg.Graph) string {
 			continue
 		}
 		for i, inst := range insts {
-			text := b.spellInstruction(inst)
-			if inst.Op == OpBranch {
+			text := spellInstruction(b, inst)
+			if inst.Op == wir.OpBranch {
 				text += branchSuccessors(graph, label, p)
 			}
 			if i == 0 {
@@ -96,60 +98,60 @@ func fallback(s, d string) string {
 	return s
 }
 
-func (b *Body) spellInstruction(inst Instruction) string {
+func spellInstruction(b *wir.Body, inst wir.Instruction) string {
 	switch inst.Op {
-	case OpNoop:
+	case wir.OpNoop:
 		return "noop"
-	case OpEntry:
+	case wir.OpEntry:
 		return "entry"
-	case OpExit:
+	case wir.OpExit:
 		return "exit"
-	case OpAssign:
-		return b.spellOperand(inst.Dst) + " = " + b.spellOperand(inst.A)
-	case OpStaticMemberWrite:
-		return "store.field " + b.spellOperand(inst.Dst) + " = " + b.spellOperand(inst.A)
-	case OpDynamicIndexWrite:
-		s := "store.index " + b.spellOperand(inst.Dst) + "[" + b.spellOperand(inst.A) + "]"
+	case wir.OpAssign:
+		return spellOperand(b, inst.Dst) + " = " + spellOperand(b, inst.A)
+	case wir.OpStaticMemberWrite:
+		return "store.field " + spellOperand(b, inst.Dst) + " = " + spellOperand(b, inst.A)
+	case wir.OpDynamicIndexWrite:
+		s := "store.index " + spellOperand(b, inst.Dst) + "[" + spellOperand(b, inst.A) + "]"
 		if suffix := b.Segments(inst.DynamicSuffix); len(suffix) != 0 {
 			s += segment.FormatSegments(suffix)
 		}
-		return s + " = " + b.spellOperand(inst.B)
-	case OpDynamicIndexRead:
-		return b.spellOperand(inst.Dst) + " = index " + b.spellOperand(inst.A) + "[" + b.spellOperand(inst.B) + "]"
-	case OpMakeTable:
-		return b.spellOperand(inst.Dst) + " = table [" + b.spellOperandList(inst.List) + "]"
-	case OpBinOp:
-		s := b.spellOperand(inst.Dst) + " = " + operatorMnemonic(inst.Operator) + " " + b.spellOperand(inst.A) + " " + b.spellOperand(inst.B)
+		return s + " = " + spellOperand(b, inst.B)
+	case wir.OpDynamicIndexRead:
+		return spellOperand(b, inst.Dst) + " = index " + spellOperand(b, inst.A) + "[" + spellOperand(b, inst.B) + "]"
+	case wir.OpMakeTable:
+		return spellOperand(b, inst.Dst) + " = table [" + spellOperandList(b, inst.List) + "]"
+	case wir.OpBinOp:
+		s := spellOperand(b, inst.Dst) + " = " + operatorMnemonic(inst.Operator) + " " + spellOperand(b, inst.A) + " " + spellOperand(b, inst.B)
 		if inst.Check != 0 {
-			s += " check[" + b.spellCheck(inst) + "]"
+			s += " check[" + spellCheck(b, inst) + "]"
 		}
 		return s
-	case OpUnOp:
-		return b.spellOperand(inst.Dst) + " = " + operatorMnemonic(inst.Operator) + " " + b.spellOperand(inst.A)
-	case OpConcat:
-		return b.spellOperand(inst.Dst) + " = concat [" + b.spellOperandList(inst.List) + "]"
-	case OpCall:
-		return b.spellCall(inst)
-	case OpReturn:
-		return b.spellReturn(inst)
-	case OpBranch:
-		return "branch " + b.spellCheck(inst)
-	case OpIterate:
-		return b.spellIterate(inst)
-	case OpClaim:
-		return b.spellClaim(inst)
-	case OpSelect:
-		s := b.spellOperand(inst.Dst) + " = select [" + b.spellOperandList(inst.List) + "]"
+	case wir.OpUnOp:
+		return spellOperand(b, inst.Dst) + " = " + operatorMnemonic(inst.Operator) + " " + spellOperand(b, inst.A)
+	case wir.OpConcat:
+		return spellOperand(b, inst.Dst) + " = concat [" + spellOperandList(b, inst.List) + "]"
+	case wir.OpCall:
+		return spellCall(b, inst)
+	case wir.OpReturn:
+		return spellReturn(b, inst)
+	case wir.OpBranch:
+		return "branch " + spellCheck(b, inst)
+	case wir.OpIterate:
+		return spellIterate(b, inst)
+	case wir.OpClaim:
+		return spellClaim(b, inst)
+	case wir.OpSelect:
+		s := spellOperand(b, inst.Dst) + " = select [" + spellOperandList(b, inst.List) + "]"
 		if inst.SelectDefault {
 			s += " default"
 		}
 		return s
-	case OpLogical:
-		return b.spellOperand(inst.Dst) + " = " + operatorMnemonic(inst.Operator) + " " + b.spellOperand(inst.A) + " " + b.spellOperand(inst.B)
-	case OpClosure:
-		s := b.spellOperand(inst.Dst) + " = closure " + b.Proto(inst.Func).Name
+	case wir.OpLogical:
+		return spellOperand(b, inst.Dst) + " = " + operatorMnemonic(inst.Operator) + " " + spellOperand(b, inst.A) + " " + spellOperand(b, inst.B)
+	case wir.OpClosure:
+		s := spellOperand(b, inst.Dst) + " = closure " + b.Proto(inst.Func).Name
 		if inst.List.Len > 0 {
-			s += " [" + b.spellOperandList(inst.List) + "]"
+			s += " [" + spellOperandList(b, inst.List) + "]"
 		}
 		return s
 	default:
@@ -157,19 +159,19 @@ func (b *Body) spellInstruction(inst Instruction) string {
 	}
 }
 
-func (b *Body) spellCall(inst Instruction) string {
+func spellCall(b *wir.Body, inst wir.Instruction) string {
 	var sb strings.Builder
 	if inst.Results.Len > 0 {
-		sb.WriteString(b.spellOperandList(inst.Results))
+		sb.WriteString(spellOperandList(b, inst.Results))
 		sb.WriteString(" = ")
 	}
 	sb.WriteString("call ")
 	if inst.Call.Method != 0 {
-		sb.WriteString(b.spellOperand(inst.Call.Receiver))
+		sb.WriteString(spellOperand(b, inst.Call.Receiver))
 		sb.WriteByte(':')
 		sb.WriteString(b.Const(inst.Call.Method).Str)
 	} else {
-		sb.WriteString(b.spellOperand(inst.Call.Callee))
+		sb.WriteString(spellOperand(b, inst.Call.Callee))
 	}
 	if inst.CallTypeArgs.Len > 0 {
 		sb.WriteByte('<')
@@ -182,7 +184,7 @@ func (b *Body) spellCall(inst Instruction) string {
 		sb.WriteByte('>')
 	}
 	sb.WriteByte('(')
-	sb.WriteString(b.spellOperandList(inst.List))
+	sb.WriteString(spellOperandList(b, inst.List))
 	if inst.ListSpread {
 		sb.WriteString("...")
 	}
@@ -192,100 +194,100 @@ func (b *Body) spellCall(inst Instruction) string {
 	}
 	if inst.Check != 0 {
 		sb.WriteString(" check[")
-		sb.WriteString(b.spellCheck(inst))
+		sb.WriteString(spellCheck(b, inst))
 		sb.WriteByte(']')
 	}
 	return sb.String()
 }
 
-func (b *Body) spellReturn(inst Instruction) string {
+func spellReturn(b *wir.Body, inst wir.Instruction) string {
 	if inst.List.Len == 0 {
 		return "return"
 	}
-	s := "return " + b.spellOperandList(inst.List)
+	s := "return " + spellOperandList(b, inst.List)
 	if inst.ListSpread {
 		s += "..."
 	}
 	return s
 }
 
-func (b *Body) spellIterate(inst Instruction) string {
+func spellIterate(b *wir.Body, inst wir.Instruction) string {
 	mode := "generic"
-	if inst.Iter == IterNumeric {
+	if inst.Iter == wir.IterNumeric {
 		mode = "numeric"
 	}
 	var sb strings.Builder
 	if inst.Results.Len > 0 {
-		sb.WriteString(b.spellOperandList(inst.Results))
+		sb.WriteString(spellOperandList(b, inst.Results))
 		sb.WriteString(" = ")
 	}
 	sb.WriteString("iterate.")
 	sb.WriteString(mode)
 	sb.WriteString(" [")
-	sb.WriteString(b.spellOperandList(inst.List))
+	sb.WriteString(spellOperandList(b, inst.List))
 	sb.WriteByte(']')
 	return sb.String()
 }
 
-func (b *Body) spellClaim(inst Instruction) string {
+func spellClaim(b *wir.Body, inst wir.Instruction) string {
 	kind := claimMnemonic(inst.Claim)
-	s := b.spellOperand(inst.Dst) + " = claim." + kind + " " + b.spellOperand(inst.A)
+	s := spellOperand(b, inst.Dst) + " = claim." + kind + " " + spellOperand(b, inst.A)
 	if inst.Type != 0 {
 		s += " : " + b.TypeDisplay(inst.Type)
 	}
 	return s
 }
 
-func (b *Body) spellOperandList(r OperandRange) string {
+func spellOperandList(b *wir.Body, r wir.OperandRange) string {
 	ops := b.Operands(r)
 	if len(ops) == 0 {
 		return ""
 	}
 	parts := make([]string, len(ops))
 	for i, op := range ops {
-		parts[i] = b.spellOperand(op)
+		parts[i] = spellOperand(b, op)
 	}
 	return strings.Join(parts, ", ")
 }
 
-func (b *Body) spellOperand(op Operand) string {
+func spellOperand(b *wir.Body, op wir.Operand) string {
 	switch op.Kind {
-	case OperandNone:
+	case wir.OperandNone:
 		return "_"
-	case OperandPath:
-		return b.Path(PathRef(op.Ref)).String()
-	case OperandConst:
-		return spellConst(b.Const(ConstRef(op.Ref)))
-	case OperandType:
-		return b.TypeDisplay(TypeRef(op.Ref))
-	case OperandTemp:
+	case wir.OperandPath:
+		return b.Path(wir.PathRef(op.Ref)).String()
+	case wir.OperandConst:
+		return spellConst(b.Const(wir.ConstRef(op.Ref)))
+	case wir.OperandType:
+		return b.TypeDisplay(wir.TypeRef(op.Ref))
+	case wir.OperandTemp:
 		return "%" + strconv.FormatUint(uint64(op.Ref), 10)
-	case OperandVararg:
+	case wir.OperandVararg:
 		return "..."
 	default:
 		return "?"
 	}
 }
 
-func spellConst(c Const) string {
+func spellConst(c wir.Const) string {
 	switch c.Kind {
-	case ConstNil:
+	case wir.ConstNil:
 		return "nil"
-	case ConstBool:
+	case wir.ConstBool:
 		if c.Bool {
 			return "true"
 		}
 		return "false"
-	case ConstNumber:
+	case wir.ConstNumber:
 		return c.Number
-	case ConstString:
+	case wir.ConstString:
 		return strconv.Quote(c.Str)
 	default:
 		return "?"
 	}
 }
 
-func (b *Body) spellCheck(inst Instruction) string {
+func spellCheck(b *wir.Body, inst wir.Instruction) string {
 	c := b.Check(inst.Check)
 	subject := c.Path.String()
 	neg := ""
@@ -293,54 +295,54 @@ func (b *Body) spellCheck(inst Instruction) string {
 		neg = " (neg)"
 	}
 	switch c.Kind {
-	case CheckNone:
+	case wir.CheckNone:
 		// A condition that did not normalize to a path check: name the value.
-		return "cond " + b.spellOperand(inst.A)
-	case CheckTruthy:
+		return "cond " + spellOperand(b, inst.A)
+	case wir.CheckTruthy:
 		return "truthy " + subject
-	case CheckFalsy:
+	case wir.CheckFalsy:
 		return "falsy " + subject
-	case CheckNil:
+	case wir.CheckNil:
 		return "nil " + subject
-	case CheckNotNil:
+	case wir.CheckNotNil:
 		return "notnil " + subject
-	case CheckTypeEqual:
+	case wir.CheckTypeEqual:
 		return "type_eq " + subject + " " + typeCheckOperand(c)
-	case CheckTypeNot:
+	case wir.CheckTypeNot:
 		return "type_ne " + subject + " " + typeCheckOperand(c)
-	case CheckLiteralEqual:
+	case wir.CheckLiteralEqual:
 		return "lit_eq " + subject + " " + literalCheckOperand(c)
-	case CheckLiteralNot:
+	case wir.CheckLiteralNot:
 		return "lit_ne " + subject + " " + literalCheckOperand(c)
-	case CheckPathEqual:
+	case wir.CheckPathEqual:
 		return "path_eq " + subject + " " + c.OtherPath.String()
-	case CheckPathNot:
+	case wir.CheckPathNot:
 		return "path_ne " + subject + " " + c.OtherPath.String()
-	case CheckLenGe:
+	case wir.CheckLenGe:
 		return "len_ge " + subject + " " + strconv.FormatInt(c.LenFloor, 10) + neg
-	case CheckIndexInRange:
+	case wir.CheckIndexInRange:
 		return "in_range " + subject + " " + c.OtherPath.String() + neg
-	case CheckNumGe:
+	case wir.CheckNumGe:
 		return "num_ge " + subject + " " + strconv.FormatInt(c.NumFloor, 10) + neg
-	case CheckNumLe:
+	case wir.CheckNumLe:
 		return "num_le " + subject + " " + strconv.FormatInt(c.NumCeil, 10) + neg
-	case CheckFrozenTable:
+	case wir.CheckFrozenTable:
 		return "frozen " + subject
-	case CheckModResidue:
+	case wir.CheckModResidue:
 		return "mod_residue " + subject + " " + strconv.FormatInt(c.Modulus, 10) + " " + strconv.FormatInt(c.Residue, 10) + neg
 	default:
 		return "cond?"
 	}
 }
 
-func typeCheckOperand(c Check) string {
+func typeCheckOperand(c wir.Check) string {
 	if c.TypeName != "" {
 		return strconv.Quote(c.TypeName)
 	}
 	return "== " + c.OtherPath.String()
 }
 
-func literalCheckOperand(c Check) string {
+func literalCheckOperand(c wir.Check) string {
 	if c.Literal != nil {
 		return c.Literal.String()
 	}
@@ -350,70 +352,70 @@ func literalCheckOperand(c Check) string {
 	return "?"
 }
 
-func operatorMnemonic(op Operator) string {
+func operatorMnemonic(op wir.Operator) string {
 	switch op {
-	case BinAdd:
+	case wir.BinAdd:
 		return "add"
-	case BinSub:
+	case wir.BinSub:
 		return "sub"
-	case BinMul:
+	case wir.BinMul:
 		return "mul"
-	case BinDiv:
+	case wir.BinDiv:
 		return "div"
-	case BinIDiv:
+	case wir.BinIDiv:
 		return "idiv"
-	case BinMod:
+	case wir.BinMod:
 		return "mod"
-	case BinPow:
+	case wir.BinPow:
 		return "pow"
-	case BinBAnd:
+	case wir.BinBAnd:
 		return "band"
-	case BinBOr:
+	case wir.BinBOr:
 		return "bor"
-	case BinBXor:
+	case wir.BinBXor:
 		return "bxor"
-	case BinShl:
+	case wir.BinShl:
 		return "shl"
-	case BinShr:
+	case wir.BinShr:
 		return "shr"
-	case BinEq:
+	case wir.BinEq:
 		return "eq"
-	case BinNe:
+	case wir.BinNe:
 		return "ne"
-	case BinLt:
+	case wir.BinLt:
 		return "lt"
-	case BinLe:
+	case wir.BinLe:
 		return "le"
-	case BinGt:
+	case wir.BinGt:
 		return "gt"
-	case BinGe:
+	case wir.BinGe:
 		return "ge"
-	case UnNeg:
+	case wir.UnNeg:
 		return "neg"
-	case UnNot:
+	case wir.UnNot:
 		return "not"
-	case UnLen:
+	case wir.UnLen:
 		return "len"
-	case UnBNot:
+	case wir.UnBNot:
 		return "bnot"
-	case LogAnd:
+	case wir.LogAnd:
 		return "and"
-	case LogOr:
+	case wir.LogOr:
 		return "or"
 	default:
 		return fmt.Sprintf("op%d", op)
 	}
 }
 
-func claimMnemonic(k ClaimKind) string {
+func claimMnemonic(k wir.ClaimKind) string {
 	switch k {
-	case ClaimCast:
+	case wir.ClaimCast:
 		return "cast"
-	case ClaimAssert:
+	case wir.ClaimAssert:
 		return "assert"
-	case ClaimAnnotation:
+	case wir.ClaimAnnotation:
 		return "annotation"
-	case ClaimAssertsPredicate:
+	case wir.ClaimAssertsPredicate:
 		return "asserts"
 	default:
 		return "none"

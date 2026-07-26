@@ -155,37 +155,6 @@ func TestBranchDiffConstraintsUseFlatPool(t *testing.T) {
 	}
 }
 
-func TestPrintHandBuiltBody(t *testing.T) {
-	b := NewBody("hand")
-	g := cfg.New()
-	entry, exit := g.Entry(), g.Exit()
-
-	p := g.AddNode(cfg.NodeAssign)
-	g.AddEdge(entry, p, false)
-	g.AddEdge(p, exit, false)
-
-	dst := Operand{Kind: OperandPath, Ref: uint32(b.InternPath(path.Path{Root: "c", Symbol: 1}))}
-	a := Operand{Kind: OperandPath, Ref: uint32(b.InternPath(path.Path{Root: "a", Symbol: 2}))}
-	bb := Operand{Kind: OperandPath, Ref: uint32(b.InternPath(path.Path{Root: "b", Symbol: 3}))}
-
-	start := b.Len()
-	b.Emit(Instruction{Op: OpEntry, Point: entry})
-	b.SetPointRange(entry, start, b.Len())
-
-	start = b.Len()
-	b.Emit(Instruction{Op: OpBinOp, Point: p, Dst: dst, A: a, B: bb, Operator: BinAdd})
-	b.SetPointRange(p, start, b.Len())
-
-	start = b.Len()
-	b.Emit(Instruction{Op: OpExit, Point: exit})
-	b.SetPointRange(exit, start, b.Len())
-
-	want := "body hand\nb0: entry\nb1: c = add a b\nb2: exit\n"
-	if got := Print(b, g); got != want {
-		t.Fatalf("print mismatch\n got: %q\nwant: %q", got, want)
-	}
-}
-
 func TestInstructionAssignmentSourceOperand(t *testing.T) {
 	a := Operand{Kind: OperandPath, Ref: 1}
 	b := Operand{Kind: OperandPath, Ref: 2}
