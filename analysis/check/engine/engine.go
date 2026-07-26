@@ -7331,22 +7331,6 @@ func (l *lexicalEvaluator) uncalledStaticCapturedReturnBoundary(child front.Comp
 	return called
 }
 
-// uncalledStaticCapturedReturnDiagnostic states the obligations this lane's
-// entry already decides. The declared return contract is one of them. Call
-// arity is another: the body has no parameters, its only capability is the
-// transported closure handle, and the number of arguments a call site writes
-// is fixed by that body. Neither a caller value nor a branch proof can supply
-// a missing required argument, so the callee's declared arity is refuted here
-// exactly as it is on a called path. Argument types remain demand-driven,
-// because a later refinement can still establish them.
-func uncalledStaticCapturedReturnDiagnostic(key string) bool {
-	return diagnosticFamilyMatches(key,
-		DiagnosticFamilyReturnContract,
-		DiagnosticFamilyCallTooFewArguments,
-		DiagnosticFamilyCallTooManyArguments,
-	)
-}
-
 // uncalledStaticArithmeticBoundary admits a parameter-free closure only when
 // its entire call graph segment is already closed: imported member calls use a
 // project-published import authority and the local call targets a captured
@@ -7447,16 +7431,6 @@ func (l *lexicalEvaluator) uncalledImportedCaptureBoundary(body equation.BodyID,
 		}
 	}
 	return declaredFormalSeeds(child)
-}
-
-// importedCaptureBoundaryDiagnostic names the obligations a declaration and
-// import-authority entry alone discharges: an assignment contract and a member
-// absent from a stated shape are both refuted by those declarations. This
-// boundary can refute an obligation its authorities state; its failure to prove
-// one is not a fact about the body, since a real call site supplies argument and
-// heap evidence the entry withholds.
-func importedCaptureBoundaryDiagnostic(key string) bool {
-	return diagnosticFamilyMatches(key, DiagnosticFamilyAssignment, DiagnosticFamilyMissingMember)
 }
 
 func unannotatedArithmeticFormal(child front.Compilation) bool {
@@ -10998,190 +10972,17 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	lexical.publishNilOriginOptionalFieldUse(&closure, child)
 	lexical.publishCapturedOptionalMemberCallDiagnostic(&closure, operation.Target.Body, child, captures, partition)
 	lexical.publishUncalledFalseEdgeAnyAssignment(&closure, child, captures, partition)
-	// A parameter-free child is closed at allocation time. A capture-free child
-	// whose entire boundary is explicitly any is closed too: each formal has a
-	// concrete precision-boundary fact, rather than an invented top value.
-	// Demand either form privately and qualify its facts by body before they
-	// enter the root publication closure.
-	uncalledSeeds, explicitAnyBoundary := uncalledExplicitAnyBoundary(child)
 	// The derived result contract is published by whichever admitted entry
-	// evaluates the body first. The declaration-only lane further down is the
-	// fallback for a body no other boundary demands, never a second evaluation
-	// of one already performed.
+	// evaluates the body first. The descriptor slice is the precedence rule:
+	// the first lane that admits owns the seed/root policy and diagnostic set.
 	inferredReturnPublished := false
-	gradualLogicalTerms := []string(nil)
-	gradualLogicalBoundary := false
-	declaredBoundary, declaredMethodBoundary, declaredAssignmentBoundary, declaredConcatBoundary, declaredComparisonBoundary, staticAssignmentBoundary, indexedReadBoundary, localUnionReadBoundary := false, false, false, false, false, false, false, false
-	declaredMemberWriteBoundary := false
-	declaredArithmeticReturnBoundary := false
-	declaredConcatOperations := map[string]bool(nil)
-	declaredComparisonOperations := map[string]bool(nil)
-	declaredAssertionOperations := map[string]bool(nil)
-	if admission := uncalledDeclaredBoundary(child); admission.Admitted {
-		uncalledSeeds = admission.Seeds
-		explicitAnyBoundary = false
-		declaredBoundary = true
-		declaredMethodBoundary = admission.Method
-		declaredMemberWriteBoundary = admission.MemberWrite
-		declaredArithmeticReturnBoundary = admission.ArithmeticReturn
-		declaredConcatOperations = admission.Concat
-		declaredConcatBoundary = len(admission.Concat) != 0
-		declaredComparisonOperations = admission.Comparison
-		declaredComparisonBoundary = len(admission.Comparison) != 0
-		declaredAssertionOperations = admission.Assertions
-		declaredAssignmentBoundary = declaredAssignmentBoundary || admission.ArithmeticAssignment
-		formals := make(map[string]bool, len(child.Boundary.Parameters))
-		for _, parameter := range child.Boundary.Parameters {
-			formals[boundaryTerm(parameter.Symbol)] = true
-		}
-		allocations := bodyLocalTableTerms(child)
-		allocationReads := bodyLocalAllocationReadTargets(child, allocations)
-		derivedCells := uncalledDeclaredFormalDerivedCells(child, formals)
-		for _, childOperation := range child.Artifact.Equations {
-			declaredAssignmentBoundary = declaredAssignmentBoundary ||
-				uncalledDeclaredFormalAssignment(child, childOperation, formals, derivedCells) ||
-				uncalledDeclaredLocalAllocationAssignment(childOperation, allocations, allocationReads)
-		}
+	admissionContext := admissionLaneContext{
+		lexical: lexical, body: operation.Target.Body, operation: operation.Target.Name,
+		result: result, child: child, partition: partition,
 	}
-	if staticSeeds, admitted := uncalledStaticAssignmentBoundary(child); admitted && lexical.uncalledStaticCapturedCallsAreGuardedValidation(child, partition) {
-		uncalledSeeds = staticSeeds
-		explicitAnyBoundary = false
-		staticAssignmentBoundary = true
-	}
-	if indexedSeeds, admitted := uncalledDeclaredIndexedReadBoundary(child); admitted {
-		uncalledSeeds = indexedSeeds
-		explicitAnyBoundary = false
-		indexedReadBoundary = true
-	}
-	if unionSeeds, admitted := uncalledDeclaredLocalUnionReadBoundary(child); admitted {
-		uncalledSeeds = unionSeeds
-		explicitAnyBoundary = false
-		localUnionReadBoundary = true
-	}
-	if gradualSeeds, terms, admitted := uncalledGradualLogicalCallBoundary(child); admitted {
-		uncalledSeeds = gradualSeeds
-		gradualLogicalTerms = terms
-		explicitAnyBoundary = false
-		gradualLogicalBoundary = true
-	}
-	staticCapturedReturnBoundary := lexical.uncalledStaticCapturedReturnBoundary(child, partition)
-	arithmeticBoundary := lexical.uncalledStaticArithmeticBoundary(operation.Target.Body, child, partition)
-	typedChannelSendBoundary := uncalledTypedChannelSendBoundary(child)
-	// The static member read boundary is the fallback for a declared receiver
-	// that no richer boundary admits. It authorizes missing members alone, so a
-	// boundary already carrying this body keeps its own seeds and its own wider
-	// diagnostic surface.
-	staticSeeds, staticMemberReadBoundary := uncalledStaticMemberReadSeeds(child)
-	staticMemberReadBoundary = staticMemberReadBoundary && !explicitAnyBoundary && !declaredBoundary &&
-		!staticAssignmentBoundary && !indexedReadBoundary && !localUnionReadBoundary && !gradualLogicalBoundary
-	if staticMemberReadBoundary {
-		uncalledSeeds = staticSeeds
-		explicitAnyBoundary = false
-	}
-	// The formal-call boundary is the last fallback: a body whose calls resolve
-	// entirely from the declared function contracts of its own formals. It fires
-	// only when no richer boundary admits, seeds every formal as its declared
-	// type, and publishes its full seed-owned diagnostic surface.
-	//
-	// A body that also closes over a sealed environment carries one further
-	// authority and only that one: a callee's write through a forwarded formal
-	// replaces the cell's caller-owned content, so the reads after it are decided
-	// here. Its surface is scoped to exactly those operations; the rest of such a
-	// body still depends on caller-owned refinement and stays dormant.
-	declaredFormalCallBoundary, sealedEnvironmentBoundary := false, false
-	formalMemberWriteOperations := map[string]bool(nil)
-	if !explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
-		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary &&
-		!staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary {
-		if formalSeeds, admitted := lexical.uncalledDeclaredFormalCallBoundary(child, lexicalAllocationSite{body: operation.Target.Body, operation: operation.Target.Name}, partition); admitted {
-			if len(child.Boundary.Captures) == 0 {
-				uncalledSeeds = formalSeeds
-				declaredFormalCallBoundary = true
-			} else if operations := lexical.formalMemberWriteObligations(child, partition); len(operations) != 0 {
-				uncalledSeeds = formalSeeds
-				declaredFormalCallBoundary, sealedEnvironmentBoundary = true, true
-				formalMemberWriteOperations = operations
-			}
-		}
-	}
-	// A body closing only over module bindings is the final fallback. Every
-	// lane above supplies its own seeds from the allocating partition; this one
-	// states the import authorities those lanes refuse to transport.
-	importedCaptureBoundary := false
-	if !explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
-		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary &&
-		!staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary &&
-		!declaredFormalCallBoundary {
-		if importedSeeds, admitted := lexical.uncalledImportedCaptureBoundary(operation.Target.Body, child, partition); admitted {
-			uncalledSeeds = importedSeeds
-			importedCaptureBoundary = true
-		}
-	}
-	// A parameter-free, capture-free body is closed by its own entry: nothing
-	// a caller can supply refines it. Admission must therefore not depend on
-	// an arbitrary body-size cap.
-	closedBoundary := len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0
-	// The sealed-capture boundary extends that same closedness to a
-	// parameter-free body whose free environment is exclusively immutable
-	// lexical callables. It is disjoint from the imported lane above, which
-	// states module authorities and refuses exactly the closure-handle captures
-	// this one requires; it runs last so an already admitted body keeps its own
-	// seeds and its own diagnostic surface.
-	sealedCaptureBoundary := false
-	if !closedBoundary && !explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
-		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary && !declaredFormalCallBoundary &&
-		!importedCaptureBoundary && !staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary {
-		sealedCaptureBoundary = uncalledSealedCaptureBoundary(lexical, child, lexicalAllocationSite{body: operation.Target.Body, operation: operation.Target.Name}, partition)
-	}
-	// A function literal passed straight into a generic callee has no root of
-	// its own: its formals are unannotated and every lane above states a
-	// contract the declaration already carries. The call site does carry one —
-	// the callee's declared callback parameter at the type arguments its other
-	// arguments proved — so this final fallback seeds the literal from exactly
-	// that instantiated contract and owns its full seed-derived surface.
-	contextualCallbackBoundary, contextualParameters := false, []typ.Type(nil)
-	if !closedBoundary && !explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
-		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary && !declaredFormalCallBoundary &&
-		!importedCaptureBoundary && !sealedCaptureBoundary && !staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary {
-		if contextualSeeds, parameters, admitted := lexical.contextualCallbackBoundary(operation.Target.Body, child, result, partition); admitted {
-			uncalledSeeds = contextualSeeds
-			contextualParameters = parameters
-			contextualCallbackBoundary = true
-		}
-	}
-	// A closed-any body over a sealed capture environment is decided at this
-	// allocation whatever its own control flow looks like, so its entry carries
-	// the same capture authorities the sealed lanes transport.
-	closedAnyCaptureBoundary := explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
-		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary && !declaredFormalCallBoundary &&
-		!importedCaptureBoundary && !sealedCaptureBoundary && !contextualCallbackBoundary &&
-		uncalledClosedAnyCaptureBoundary(lexical, child, lexicalAllocationSite{body: operation.Target.Body, operation: operation.Target.Name}, partition)
-	if closedBoundary || sealedCaptureBoundary || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary || importedCaptureBoundary {
-		entry, admitted, entryErr := []byte(nil), true, error(nil)
-		if localUnionReadBoundary {
-			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
-		} else if importedCaptureBoundary {
-			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, false, true, false, false)
-		} else if closedAnyCaptureBoundary {
-			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, true, true, false, false)
-		} else if sealedEnvironmentBoundary {
-			// A sealed environment is reconstructed by the capability transport,
-			// not by the declaration alone: the entry carries the capture values
-			// and closure handles the boundary sealed, and stays declaration-owned
-			// so its formals remain axioms.
-			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, true, false, true, true)
-		} else if declaredBoundary || declaredFormalCallBoundary {
-			entry, entryErr = encodeDeclaredChildEntryWithCapabilities(uncalledSeeds, nil, nil, declaredBoundaryIdentitySeeds(operation.Target.Body, child, uncalledSeeds, nil), nil)
-		} else if len(child.Boundary.Captures) == 0 {
-			if gradualLogicalBoundary {
-				entry, entryErr = encodeChildEntryWithCapabilities(uncalledSeeds, nil, nil, nil, nil, gradualLogicalTerms)
-			} else {
-				seeds, closureSeeds := lexical.closedBodyCalleeSeeds(child, uncalledSeeds, partition)
-				entry, entryErr = encodeChildEntry(seeds, closureSeeds...)
-			}
-		} else {
-			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, gradualLogicalBoundary || staticAssignmentBoundary || staticCapturedReturnBoundary || arithmeticBoundary || sealedCaptureBoundary, arithmeticBoundary, arithmeticBoundary || sealedCaptureBoundary, staticAssignmentBoundary, gradualLogicalTerms)
-		}
+	admission, admissionSelected := selectAdmissionLane(admissionContext)
+	if admissionSelected {
+		entry, admitted, entryErr := admission.Root(admissionContext, admission)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -11194,8 +10995,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 		falseEdgeNilClaims := declaredFalseEdgeNilAssignmentClaims(child)
 		restateDeclaredFalseEdgeNil(falseEdgeNilClaims, &outcome)
+		gradualLogicalBoundary := admission.Lane.Name == "gradual-logical-call"
 		if gradualLogicalBoundary {
-			for _, term := range gradualLogicalTerms {
+			for _, term := range admission.GradualLogicalTerms {
 				outcome.Values = append(outcome.Values, equation.Fact{Key: "gradual-logical/" + term + "/entry", Value: []byte(term)})
 			}
 		}
@@ -11214,8 +11016,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// call site instantiated and the result the body proved under them. A
 		// consumer therefore never pairs a derived result with parameters some
 		// other boundary supplied.
+		contextualCallbackBoundary := admission.Lane.Name == "contextual-callback"
 		if contextualCallbackBoundary {
-			if contract, stated := contextualCallableContract(contextualParameters, outcome); stated {
+			if contract, stated := contextualCallableContract(admission.ContextualParameters, outcome); stated {
 				if encoded, ok := shapefact.EncodeTarget(contract); ok {
 					closure.Values = append(closure.Values, equation.Fact{Key: contextualCallablePrefix + result + "/" + operation.Target.Name, Value: encoded})
 				}
@@ -11230,84 +11033,20 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// refutations are therefore source-owned obligations, exactly like the
 		// assignment contract, rather than demand-driven ones.
 		_, closedAnyFormalBoundary := uncalledExplicitAnyBoundary(child)
-		// laneWithholds states the admission lane's own diagnostic surface. Each
-		// lane names the exact families its entry can discharge; a family with no
-		// admission reason stays dormant until a concrete call path supplies one.
-		laneWithholds := func(diagnostic equation.Fact) bool {
-			// A nested allocation publishes its refutations already qualified by
-			// the body that proved them. A lane names the families its own seeds
-			// discharge, and a family states the same obligation whichever body
-			// carries it, so every family test below reads the inner key. The
-			// tests scoped to this body's own artifact keep the qualified key and
-			// therefore never claim a nested operation.
+		admissionDischarges := func(diagnostic equation.Fact) bool {
 			family, _ := childDiagnosticKey(diagnostic.Key)
-			if claimOwnedReads[strings.TrimPrefix(diagnostic.Key, diagnosticFamilyPrefix(DiagnosticFamilyMissingMember))] && diagnosticFamilyMatches(diagnostic.Key, DiagnosticFamilyMissingMember) {
-				return true
-			}
-			if closedAnyFormalBoundary && closedAnyFormalObligation(family) {
+			missingPrefix := diagnosticFamilyPrefix(DiagnosticFamilyMissingMember)
+			if claimOwnedReads[strings.TrimPrefix(diagnostic.Key, missingPrefix)] &&
+				diagnosticFamilyMatches(diagnostic.Key, DiagnosticFamilyMissingMember) {
 				return false
 			}
-			// An allocation-time any boundary can prove only a strict assignment
-			// contract lacks validation. Other child diagnostics still require a
-			// concrete call path, since a cast or operation may establish their
-			// proof before that path reaches publication.
-			if explicitAnyBoundary && !uncalledExplicitAnyDiagnostic(child.Artifact, diagnostic) {
-				return true
-			}
-			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(diagnostic) {
-				return true
-			}
-			if gradualLogicalBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyCallArgumentType) {
-				return true
-			}
-			// A declaration-only entry is sufficient for a member that is absent
-			// from a reachable declared union arm. Other obligations may depend on
-			// a call-specific refinement and therefore remain demand-driven.
-			if declaredBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyMissingMember) &&
-				(!declaredMethodBoundary || !diagnosticFamilyMatches(family, DiagnosticFamilyReturnContract)) &&
-				(!declaredArithmeticReturnBoundary || !diagnosticFamilyMatches(family, DiagnosticFamilyReturnContract)) &&
-				(!declaredAssignmentBoundary || !diagnosticFamilyMatches(family, DiagnosticFamilyAssignment)) &&
-				(!declaredMemberWriteBoundary || !diagnosticFamilyMatches(family, DiagnosticFamilyOptionalAssignmentTarget)) &&
-				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) &&
-				(!declaredComparisonBoundary || !declaredOrderedComparisonDiagnostic(declaredComparisonOperations, diagnostic.Key)) &&
-				!declaredAssertionDiagnostic(declaredAssertionOperations, diagnostic.Key) &&
-				!uncalledDeclaredProviderResultDiagnostic(child, diagnostic.Key) {
-				return true
-			}
-			if staticMemberReadBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyMissingMember) {
-				return true
-			}
-			if staticAssignmentBoundary && !lexical.uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key, partition) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, diagnostic) && !uncalledStaticResultCallDiagnostic(child.Artifact, diagnostic.Key) {
-				return true
-			}
-			if arithmeticBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyCallArgumentType) {
-				return true
-			}
-			if staticCapturedReturnBoundary && !uncalledStaticCapturedReturnDiagnostic(family) {
-				return true
-			}
-			if indexedReadBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyAssignment, DiagnosticFamilyReturnContract) {
-				return true
-			}
-			// The union this boundary admits is the declaration itself, so a
-			// member absent from one of its arms is refuted by that declaration
-			// alone, exactly as it is for a declared-parameter boundary.
-			if localUnionReadBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyAssignment, DiagnosticFamilyMissingMember) {
-				return true
-			}
-			if sealedEnvironmentBoundary && !formalMemberWriteDiagnostic(formalMemberWriteOperations, family) {
-				return true
-			}
-			if declaredFormalCallBoundary && !sealedEnvironmentBoundary && !declaredFormalCallDiagnostic(family) {
-				return true
-			}
-			if importedCaptureBoundary && !importedCaptureBoundaryDiagnostic(family) {
-				return true
-			}
-			return false
+			return admissionDiagnosticDischarged(admissionDiagnosticContext{
+				lexical: lexical, child: child, partition: partition, decision: admission,
+				diagnostic: diagnostic, qualifiedFamily: family,
+			}, closedAnyFormalBoundary)
 		}
 		for _, diagnostic := range outcome.Diagnostics {
-			if laneWithholds(diagnostic) {
+			if !admissionDischarges(diagnostic) {
 				continue
 			}
 			key := qualifiedChildDiagnosticKey(body, diagnostic.Key)
@@ -11321,7 +11060,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// allocation-time diagnostics retain the evidence published by their
 		// owning claim rather than falling back to an unadorned parent fact.
 		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
-			if laneWithholds(item.Fact) {
+			if !admissionDischarges(item.Fact) {
 				continue
 			}
 			if witness, stated := falseEdgeNilClaims[item.Fact.Key]; stated {
@@ -11339,7 +11078,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				Help:     item.Help,
 			}
 		}
-		if typedChannelSendBoundary {
+		if admission.Lane.Name == "typed-channel-send" {
 			closure.Values = append(closure.Values, placementFactsFromChild(outcome.Values)...)
 		}
 		// A body closing only over module authorities is evaluated from a closed
@@ -11348,7 +11087,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// therefore established facts about this body, not caller-specific
 		// reconstructions, and a boundary the entry cannot certify still leaves
 		// its own blocker.
-		if importedCaptureBoundary {
+		if admission.Lane.Name == "imported-capture" {
 			closure.Values = append(closure.Values, placementUncalledBodyFacts(child.Artifact.Equations, outcome.Values)...)
 		}
 	}
