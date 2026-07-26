@@ -10,6 +10,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -25,22 +28,22 @@ import (
 // The pass is fail-open on data only: any body that cannot be seeded or
 // evaluated contributes no entry, and a panic in a downstream kernel is absorbed
 // so the summary can never disturb the module verdict.
-func (l *lexicalEvaluator) escapeSummaryForExport(body equation.BodyID, closure equation.OutputClosure) (summary map[string][]signature.ParamRelation, allocatedReturns map[string]bool, returnTuples map[string][][][]byte) {
+func (l *lexicalEvaluator) escapeSummaryForExport(body equation.BodyID, closure equation.OutputClosure) (summary map[string][]signature.ParamRelation, allocatedReturns map[string]bool, returnTuples map[string][][][]byte, returnTemplates map[string][]exportrelation.Value, conditionalReturns map[string]*exportrelation.ConditionalReturn, forwardedReturns map[string]exportrelation.Value) {
 	defer func() {
 		if recover() != nil {
-			summary, allocatedReturns, returnTuples = nil, nil, nil
+			summary, allocatedReturns, returnTuples, returnTemplates, conditionalReturns, forwardedReturns = nil, nil, nil, nil, nil, nil
 		}
 	}()
 	if l == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, closure)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
 	exports := exportedFunctionHandles(closure.Values)
 	if len(exports) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
 	names := make([]string, 0, len(exports))
 	for name := range exports {
@@ -52,7 +55,7 @@ func (l *lexicalEvaluator) escapeSummaryForExport(body equation.BodyID, closure 
 		if !found {
 			continue
 		}
-		relations, allocatedReturn, tuples, ok := l.escapeRelationsForPrototype(body, child, partition)
+		relations, allocatedReturn, tuples, templates, conditional, forwarded, hasForwarded, ok := l.escapeRelationsForPrototype(body, child, partition)
 		if ok {
 			if summary == nil {
 				summary = make(map[string][]signature.ParamRelation)
@@ -66,7 +69,19 @@ func (l *lexicalEvaluator) escapeSummaryForExport(body equation.BodyID, closure 
 			}
 		}
 		if len(tuples) == 0 {
-			tuples = l.returnTuplesForPrototype(body, child, partition)
+			tuples, templates, conditional, forwarded, hasForwarded = l.returnTuplesForPrototype(body, child, partition)
+		}
+		if len(templates) != 0 {
+			if returnTemplates == nil {
+				returnTemplates = make(map[string][]exportrelation.Value)
+			}
+			returnTemplates[name] = templates
+		}
+		if conditional != nil {
+			if conditionalReturns == nil {
+				conditionalReturns = make(map[string]*exportrelation.ConditionalReturn)
+			}
+			conditionalReturns[name] = conditional
 		}
 		if len(tuples) != 0 {
 			if returnTuples == nil {
@@ -74,32 +89,41 @@ func (l *lexicalEvaluator) escapeSummaryForExport(body equation.BodyID, closure 
 			}
 			returnTuples[name] = tuples
 		}
+		if hasForwarded {
+			if forwardedReturns == nil {
+				forwardedReturns = make(map[string]exportrelation.Value)
+			}
+			forwardedReturns[name] = forwarded
+		}
 	}
-	return summary, allocatedReturns, returnTuples
+	return summary, allocatedReturns, returnTuples, returnTemplates, conditionalReturns, forwardedReturns
 }
 
 // returnTuplesForPrototype uses the same closed declared-entry lane as the
 // uncalled evaluator.  It is independent of escape classification: scalar
 // formals need no placement identity, but their body can still establish a
 // complete value/error return relation.
-func (l *lexicalEvaluator) returnTuplesForPrototype(body equation.BodyID, child front.Compilation, partition equation.Partition) [][][]byte {
+func (l *lexicalEvaluator) returnTuplesForPrototype(body equation.BodyID, child front.Compilation, partition equation.Partition) ([][][]byte, []exportrelation.Value, *exportrelation.ConditionalReturn, exportrelation.Value, bool) {
 	seeds, ok := declaredFormalSeeds(child)
 	if !ok {
-		return nil
+		return nil, nil, nil, exportrelation.Value{}, false
 	}
 	entry, admitted, err := l.uncalledChildEntry(body, child, seeds, partition, false, true, true, true)
 	if err != nil || !admitted {
-		return nil
+		return nil, nil, nil, exportrelation.Value{}, false
 	}
 	outcome, _, err := l.evaluate(child, entry)
 	if err != nil {
-		return nil
+		return nil, nil, nil, exportrelation.Value{}, false
 	}
 	tuples, complete := completeReturnCandidates(outcome.Outcomes)
 	if !complete {
-		return nil
+		return nil, nil, nil, exportrelation.Value{}, false
 	}
-	return tuples
+	forwarded, hasForwarded := singleForwardedReturn(child, tuples, outcome.Values)
+	origins := singleReturnMemberOrigins(child, outcome)
+	templates := completeReturnTemplates(child, outcome, origins)
+	return tuples, templates, conditionalReturnForPrototype(child, outcome, origins), forwarded, hasForwarded
 }
 
 // exportedFunctionHandles reads the returned-table member closure capabilities
@@ -135,14 +159,14 @@ func exportedFunctionHandles(values []equation.Fact) map[string]closureHandle {
 // placement facts. The same evaluation also decides whether the body returns a
 // graph of its own. It returns ok=false when the body cannot be seeded (a
 // vararg or `any` formal, an unreconstructable capture) or its evaluation fails.
-func (l *lexicalEvaluator) escapeRelationsForPrototype(body equation.BodyID, child front.Compilation, partition equation.Partition) ([]signature.ParamRelation, bool, [][][]byte, bool) {
+func (l *lexicalEvaluator) escapeRelationsForPrototype(body equation.BodyID, child front.Compilation, partition equation.Partition) ([]signature.ParamRelation, bool, [][][]byte, []exportrelation.Value, *exportrelation.ConditionalReturn, exportrelation.Value, bool, bool) {
 	entry, identities, ok := l.escapeChildEntry(body, child, partition)
 	if !ok {
-		return nil, false, nil, false
+		return nil, false, nil, nil, nil, exportrelation.Value{}, false, false
 	}
 	outcome, _, err := l.evaluate(child, entry)
 	if err != nil {
-		return nil, false, nil, false
+		return nil, false, nil, nil, nil, exportrelation.Value{}, false, false
 	}
 	tuples, complete := completeReturnCandidates(outcome.Outcomes)
 	if !complete {
@@ -150,7 +174,10 @@ func (l *lexicalEvaluator) escapeRelationsForPrototype(body equation.BodyID, chi
 	}
 	// Tuple publication is optional.  An opaque or partial return catalog must
 	// never suppress the independent placement escape summary.
-	return classifyEscapeParameters(child, outcome.Values, identities), allocatedReturnGraph(outcome.Values, identities), tuples, true
+	forwarded, hasForwarded := singleForwardedReturn(child, tuples, outcome.Values)
+	origins := singleReturnMemberOrigins(child, outcome)
+	templates := completeReturnTemplates(child, outcome, origins)
+	return classifyEscapeParameters(child, outcome.Values, identities), allocatedReturnGraph(outcome.Values, identities), tuples, templates, conditionalReturnForPrototype(child, outcome, origins), forwarded, hasForwarded, true
 }
 
 // completeReturnCandidates preserves the engine's path-correlated return
@@ -202,7 +229,7 @@ func completeReturnCandidates(outcomes []equation.Fact) ([][][]byte, bool) {
 	tuples := make([][][]byte, 0, len(names))
 	for _, name := range names {
 		item := candidates[name]
-		if !item.seen || item.arity < 2 || len(item.values) != item.arity {
+		if !item.seen || item.arity < 1 || len(item.values) != item.arity {
 			return nil, false
 		}
 		values := make([][]byte, item.arity)
@@ -222,6 +249,286 @@ func completeReturnCandidates(outcomes []equation.Fact) ([][][]byte, bool) {
 		}
 	}
 	return tuples, true
+}
+
+func completeReturnTemplates(child front.Compilation, outcome equation.OutputClosure, origins map[string]int) []exportrelation.Value {
+	candidates := completeReturnTemplateMap(child, outcome, origins)
+	if len(candidates) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(candidates))
+	for name := range candidates {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	templates := make([]exportrelation.Value, 0, len(names))
+	for _, name := range names {
+		templates = append(templates, candidates[name])
+	}
+	return templates
+}
+
+func completeReturnTemplateMap(child front.Compilation, outcome equation.OutputClosure, origins map[string]int) map[string]exportrelation.Value {
+	candidates := make(map[string][]byte)
+	for _, fact := range outcome.Outcomes {
+		parts := strings.Split(fact.Key, "/")
+		if len(parts) == 3 && parts[0] == "return-candidate" && parts[2] == "arity" && string(fact.Value) == "1" {
+			candidates[parts[1]] = nil
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	publications := 0
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind == "publication" {
+			publications++
+		}
+	}
+	if publications != len(candidates) {
+		return nil
+	}
+	for _, fact := range outcome.Values {
+		parts := strings.Split(fact.Key, "/")
+		if len(parts) != 3 || parts[0] != "return-relation-surface" || parts[2] != "00000000" {
+			continue
+		}
+		if _, found := candidates[parts[1]]; found {
+			candidates[parts[1]] = fact.Value
+		}
+	}
+	templates := make(map[string]exportrelation.Value, len(candidates))
+	for name, surface := range candidates {
+		if len(surface) == 0 {
+			return nil
+		}
+		template, ok := relationSurfaceTemplate(surface, origins, "")
+		if !ok {
+			parameter, direct := soleDirectReturnFormal(child)
+			if len(candidates) != 1 || !direct {
+				return nil
+			}
+			template = exportrelation.Value{Parameter: &parameter}
+		}
+		templates[name] = template
+	}
+	return templates
+}
+
+func conditionalReturnForPrototype(child front.Compilation, outcome equation.OutputClosure, origins map[string]int) *exportrelation.ConditionalReturn {
+	templates := completeReturnTemplateMap(child, outcome, origins)
+	if len(templates) != 2 {
+		return nil
+	}
+	formals := make(map[string]int, len(child.Boundary.Parameters))
+	for index, parameter := range child.Boundary.Parameters {
+		term := boundaryTerm(parameter.Symbol)
+		formals[term] = index
+		formals[strings.TrimPrefix(term, "path/")] = index
+	}
+	branchName := ""
+	parameter := -1
+	literal := ""
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "branch-relations" {
+			continue
+		}
+		encoded, found := artifactOperand(operation.Operands, "predicate")
+		predicate, decoded := decodeBranchPredicateWire(encoded)
+		index, formal := formals[predicate.Path]
+		if !found || !decoded || predicate.Kind != "literal-equal" || predicate.Negated ||
+			predicate.Literal == "" || !formal || branchName != "" {
+			continue
+		}
+		branchName, parameter, literal = operation.Target.Name, index, predicate.Literal
+	}
+	if branchName == "" {
+		return nil
+	}
+	var match, otherwise exportrelation.Value
+	haveMatch, haveOtherwise := false, false
+	for _, operation := range child.Artifact.Equations {
+		template, returned := templates[operation.Target.Name]
+		if !returned || operation.Occurrence.Kind != "publication" {
+			continue
+		}
+		edge := ""
+		for _, guard := range operation.Guards {
+			parts := strings.Split(string(guard.Encoding), "/")
+			if len(parts) == 4 && parts[0] == "front" && parts[1] == "branch" && parts[2] == branchName {
+				if edge != "" {
+					return nil
+				}
+				edge = parts[3]
+			}
+		}
+		switch edge {
+		case "true":
+			match, haveMatch = template, true
+		case "false":
+			otherwise, haveOtherwise = template, true
+		default:
+			return nil
+		}
+	}
+	if !haveMatch || !haveOtherwise {
+		return nil
+	}
+	return &exportrelation.ConditionalReturn{Parameter: parameter, Literal: literal, Match: match, Otherwise: otherwise}
+}
+
+func relationSurfaceTemplate(encoded []byte, origins map[string]int, prefix string) (exportrelation.Value, bool) {
+	if parameter, found := origins[prefix]; found {
+		return exportrelation.Value{Parameter: &parameter}, true
+	}
+	scalar := exportrelation.Value{Scalar: string(encoded)}
+	if scalar.Closed() {
+		return scalar, true
+	}
+	shape, ok := shapefact.DecodeTable(encoded)
+	if !ok || !shape.Closed || len(shape.Members) == 0 {
+		return exportrelation.Value{}, false
+	}
+	value := exportrelation.Value{Table: make([]exportrelation.Member, 0, len(shape.Members))}
+	for _, member := range shape.Members {
+		if !member.Present || member.Suffix == "" {
+			return exportrelation.Value{}, false
+		}
+		segments, ok := segment.ParseFormattedSegments(member.Suffix)
+		if !ok {
+			return exportrelation.Value{}, false
+		}
+		if len(segments) != 1 {
+			continue
+		}
+		child, ok := relationSurfaceTemplate([]byte(member.Value), origins, prefix+member.Suffix)
+		if !ok {
+			return exportrelation.Value{}, false
+		}
+		value.Table = append(value.Table, exportrelation.Member{Suffix: member.Suffix, Value: child})
+	}
+	return value, len(value.Table) != 0
+}
+
+func singleReturnMemberOrigins(child front.Compilation, outcome equation.OutputClosure) map[string]int {
+	candidate := ""
+	for _, fact := range outcome.Outcomes {
+		parts := strings.Split(fact.Key, "/")
+		if len(parts) != 3 || parts[0] != "return-candidate" || parts[2] != "arity" || string(fact.Value) != "1" {
+			continue
+		}
+		if candidate != "" && candidate != parts[1] {
+			return nil
+		}
+		candidate = parts[1]
+	}
+	if candidate == "" {
+		return nil
+	}
+	formals := make(map[string]int, len(child.Boundary.Parameters))
+	for index, parameter := range child.Boundary.Parameters {
+		formals[boundaryTerm(parameter.Symbol)] = index
+	}
+	if len(formals) == 0 {
+		return nil
+	}
+	prefix := "return-member-origin/" + candidate + "/00000000/"
+	origins := make(map[string]int)
+	for _, fact := range outcome.Values {
+		encoded, found := strings.CutPrefix(fact.Key, prefix)
+		if !found || encoded == "" {
+			continue
+		}
+		suffix, err := base64.RawURLEncoding.DecodeString(encoded)
+		index, formal := formals[string(fact.Value)]
+		if err != nil || len(suffix) == 0 || !formal {
+			continue
+		}
+		if prior, exists := origins[string(suffix)]; exists && prior != index {
+			return nil
+		}
+		origins[string(suffix)] = index
+	}
+	return origins
+}
+
+func singleForwardedReturn(child front.Compilation, tuples [][][]byte, values []equation.Fact) (exportrelation.Value, bool) {
+	if len(tuples) != 1 || len(tuples[0]) != 1 {
+		return exportrelation.Value{}, false
+	}
+	returned := ""
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "publication" {
+			continue
+		}
+		value, found := artifactOperand(operation.Operands, "return-value-00000000")
+		if !found {
+			return exportrelation.Value{}, false
+		}
+		for _, operand := range operation.Operands {
+			if strings.HasPrefix(operand.Role, "return-value-") && operand.Role != "return-value-00000000" {
+				return exportrelation.Value{}, false
+			}
+		}
+		if returned != "" && returned != string(value) {
+			return exportrelation.Value{}, false
+		}
+		returned = string(value)
+	}
+	if returned == "" {
+		return exportrelation.Value{}, false
+	}
+	prefix := importedReturnRelationPrefix + returned + "/"
+	var encoded []byte
+	latest := ""
+	for _, fact := range values {
+		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
+			encoded, latest = fact.Value, fact.Key
+		}
+	}
+	if encoded == nil {
+		return exportrelation.Value{}, false
+	}
+	var wire importedReturnRelationWire
+	if json.Unmarshal(encoded, &wire) != nil {
+		return exportrelation.Value{}, false
+	}
+	formals := make(map[string]int, len(child.Boundary.Parameters))
+	for index, parameter := range child.Boundary.Parameters {
+		formals[boundaryTerm(parameter.Symbol)] = index
+	}
+	var compose func(exportrelation.Value) (exportrelation.Value, bool)
+	compose = func(template exportrelation.Value) (exportrelation.Value, bool) {
+		if template.Parameter != nil {
+			index := *template.Parameter
+			if index < 0 || index >= len(wire.Arguments) {
+				return exportrelation.Value{}, false
+			}
+			argument := wire.Arguments[index]
+			if parameter, found := formals[argument]; found {
+				return exportrelation.Value{Parameter: &parameter}, true
+			}
+			scalar := exportrelation.Value{Scalar: argument}
+			return scalar, scalar.Closed()
+		}
+		if template.Scalar != "" {
+			return exportrelation.Value{Scalar: template.Scalar}, true
+		}
+		if len(template.Table) == 0 {
+			return exportrelation.Value{}, false
+		}
+		out := exportrelation.Value{Table: make([]exportrelation.Member, 0, len(template.Table))}
+		for _, member := range template.Table {
+			child, ok := compose(member.Value)
+			if !ok || member.Suffix == "" {
+				return exportrelation.Value{}, false
+			}
+			out.Table = append(out.Table, exportrelation.Member{Suffix: member.Suffix, Value: child})
+		}
+		return out, true
+	}
+	forwarded, ok := compose(wire.Template)
+	return forwarded, ok && forwarded.Valid(len(child.Boundary.Parameters))
 }
 
 // allocatedReturnGraph reports whether the evaluated body returns a graph that
@@ -313,6 +620,37 @@ func classifyEscapeParameters(child front.Compilation, values []equation.Fact, i
 		relations = append(relations, relation)
 	}
 	return relations
+}
+
+func soleDirectReturnFormal(child front.Compilation) (int, bool) {
+	formals := make(map[string]int, len(child.Boundary.Parameters))
+	for index, parameter := range child.Boundary.Parameters {
+		formals[boundaryTerm(parameter.Symbol)] = index
+	}
+	returned, seen := -1, false
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind == "entry" {
+			continue
+		}
+		if operation.Occurrence.Kind != "publication" {
+			return 0, false
+		}
+		value, found := artifactOperand(operation.Operands, "return-value-00000000")
+		if !found {
+			return 0, false
+		}
+		for _, operand := range operation.Operands {
+			if strings.HasPrefix(operand.Role, "return-value-") && operand.Role != "return-value-00000000" {
+				return 0, false
+			}
+		}
+		index, formal := formals[string(value)]
+		if !formal || (seen && returned != index) {
+			return 0, false
+		}
+		returned, seen = index, true
+	}
+	return returned, seen
 }
 
 // storeContainerFormal names the formal a stored formal is stored into. A store

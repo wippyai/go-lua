@@ -94,6 +94,7 @@ const contextualCallablePrefix = "contextual-callable/"
 const summaryTypePrefix = "summary-type/"
 const methodReturnSummaryPrefix = "method-return-summary/"
 const returnMemberSummaryPrefix = "return-member-summary/"
+const importedReturnRelationPrefix = "imported-return-relation/"
 const channelPayloadPrefix = "channel-payload/"
 const iteratorElementPrefix = "iterator-element/"
 const iteratorKeyPrefix = "iterator-key/"
@@ -215,8 +216,18 @@ type Result struct {
 	// exported body evaluation.  The values remain engine-owned closed facts;
 	// the exporter may project only the nil/presence relation they prove.
 	FunctionReturnTuples map[string][][][]byte
-	Transactions         int
-	Timings              Timings
+	// FunctionReturnTemplates carries each complete, evaluated single-value
+	// return alternative in the finite cross-module relation vocabulary.
+	FunctionReturnTemplates map[string][]exportrelation.Value
+	// FunctionConditionalReturns carries a two-way literal/formal selector
+	// whose return arms were both completely evaluated.
+	FunctionConditionalReturns map[string]*exportrelation.ConditionalReturn
+	// FunctionForwardedReturns carries a finite imported return template only
+	// when the evaluated body returns that exact imported call result. Argument
+	// positions have already been remapped to this function's own formals.
+	FunctionForwardedReturns map[string]exportrelation.Value
+	Transactions             int
+	Timings                  Timings
 }
 
 // PublishedDiagnostic enriches one equation diagnostic fact at the public
@@ -498,23 +509,26 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	// The escape summary is computed last and reads only its own evaluated
 	// outcomes, so it observes the finalized module closure without altering any
 	// field already projected above.
-	functionEscapes, allocatedReturns, functionReturnTuples := lexical.escapeSummaryForExport(compilation.Body, closure)
+	functionEscapes, allocatedReturns, functionReturnTuples, functionReturnTemplates, functionConditionalReturns, functionForwardedReturns := lexical.escapeSummaryForExport(compilation.Body, closure)
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: outcomes, Diagnostics: publicDiagnostics,
-		ReturnCandidates:         cloneFacts(closure.Outcomes),
-		ValueFacts:               valueFacts,
-		Native:                   publishedNativeFactsForCompilation(compilation, valueFacts, outcomes, publicDiagnostics),
-		PublishedDiagnostics:     published,
-		PolicyDiagnostics:        publishedPolicyDiagnostics(compilation.PolicyDiagnostics),
-		DiagnosticSpans:          diagnosticSpans,
-		Placement:                placement,
-		TypeDefinitions:          cloneTypeDefinitions(compilation.TypeDefinitions),
-		FunctionEscapes:          functionEscapes,
-		FunctionAllocatedReturns: allocatedReturns,
-		FunctionReturnTuples:     functionReturnTuples,
-		Transactions:             transactions,
-		Timings:                  Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
+		ReturnCandidates:           cloneFacts(closure.Outcomes),
+		ValueFacts:                 valueFacts,
+		Native:                     publishedNativeFactsForCompilation(compilation, valueFacts, outcomes, publicDiagnostics),
+		PublishedDiagnostics:       published,
+		PolicyDiagnostics:          publishedPolicyDiagnostics(compilation.PolicyDiagnostics),
+		DiagnosticSpans:            diagnosticSpans,
+		Placement:                  placement,
+		TypeDefinitions:            cloneTypeDefinitions(compilation.TypeDefinitions),
+		FunctionEscapes:            functionEscapes,
+		FunctionAllocatedReturns:   allocatedReturns,
+		FunctionReturnTuples:       functionReturnTuples,
+		FunctionReturnTemplates:    functionReturnTemplates,
+		FunctionConditionalReturns: functionConditionalReturns,
+		FunctionForwardedReturns:   functionForwardedReturns,
+		Transactions:               transactions,
+		Timings:                    Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
 	}
 }
 
@@ -25285,6 +25299,12 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				if relation, template, parameterized, ok := importedProviderRelationValue(lexical, provider, application, index, argumentTerms, partition); ok {
 					value = relation
 					importedRelation = parameterized
+					if encoded, encodeErr := encodeImportedReturnRelation(template, argumentTerms); encodeErr == nil {
+						values = append(values, equation.Fact{
+							Key:   importedReturnRelationPrefix + string(result) + "/" + operation.Target.Name,
+							Value: encoded,
+						})
+					}
 					values = append(values, channelPayloadRelationFacts(template, string(result), operation.Target.Name, argumentTerms, partition)...)
 					if template.Parameter != nil {
 						if argument, found := argumentTerms[*template.Parameter]; found {
@@ -27034,6 +27054,31 @@ func hostGlobalProviderResultType(lexical *lexicalEvaluator, provider []byte, in
 	return instantiateProviderReturn(function, arguments, partition, index)
 }
 
+type importedReturnRelationWire struct {
+	Template  exportrelation.Value `json:"template"`
+	Arguments []string             `json:"arguments"`
+}
+
+func encodeImportedReturnRelation(template exportrelation.Value, arguments map[int][]byte) ([]byte, error) {
+	if len(arguments) == 0 {
+		return json.Marshal(importedReturnRelationWire{Template: template})
+	}
+	maximum := -1
+	for index, argument := range arguments {
+		if index < 0 || len(argument) == 0 {
+			return nil, fmt.Errorf("engine: malformed imported return relation argument")
+		}
+		if index > maximum {
+			maximum = index
+		}
+	}
+	wire := importedReturnRelationWire{Template: template, Arguments: make([]string, maximum+1)}
+	for index, argument := range arguments {
+		wire.Arguments[index] = string(argument)
+	}
+	return json.Marshal(wire)
+}
+
 // importedProviderResultType is the exact resolved return slot of a module
 // provider. It is derived solely from the require-seeded entry export and
 // closed call arguments, so callers may carry it as summary metadata without
@@ -28456,6 +28501,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		return equation.TransactionResult{Complete: true}, nil
 	}
 	values := make([][]byte, 0, len(operation.Operands))
+	relationSurfaces := make([][]byte, 0, len(operation.Operands))
 	declared := make(map[int]typ.Type)
 	displays := make(map[int]string)
 	sources := make(map[int][]byte)
@@ -28505,6 +28551,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		}
 		for len(values) <= index {
 			values = append(values, nil)
+			relationSurfaces = append(relationSurfaces, nil)
 		}
 		value, err := resolveCurrentValue(operand.Value, partition)
 		if err != nil {
@@ -28518,6 +28565,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		// classified it is what removes the closure the caller would otherwise
 		// read absence from.
 		surface := keyedContainerSurface(operand.Value, heapMemberSurface(operand.Value, value, partition), partition)
+		relationSurfaces[index] = append([]byte(nil), surface...)
 		if declaredSurface, declared := declaredContainerPublication(operand.Value, surface, partition); declared {
 			surface = declaredSurface
 		}
@@ -28575,6 +28623,10 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 	outcomes = append(outcomes, equation.Fact{Key: prefix + "arity", Value: []byte(strconv.Itoa(len(values)))})
 	for index, value := range values {
 		outcomes = append(outcomes, equation.Fact{Key: prefix + strconv.Itoa(index), Value: value})
+		projected = append(projected, equation.Fact{
+			Key:   fmt.Sprintf("return-relation-surface/%s/%08d", operation.Target.Name, index),
+			Value: relationSurfaces[index],
+		})
 		source := boundOperandValue(operation.Operands, fmt.Sprintf("return-value-%08d", index))
 		for _, origin := range liveMemberOrigins(source, partition) {
 			projected = append(projected, equation.Fact{

@@ -314,7 +314,7 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 		// Project only facts closed by this entry's equation evaluation. The
 		// exporter leaves opaque results and unknown members conservative, while
 		// preserving proven records, callable signatures, unions, and scalars.
-		exportSummary := exporter.DeriveSummaryWithImports(result, entry.Source, importRelations, requireAliases(entry.Source, imports))
+		exportSummary := exporter.DeriveSummary(result)
 		summary.SetExport(exportSummary.Type)
 		if err := summary.Validate(); err != nil {
 			return fmt.Errorf("lint: validate imported signatures: signature manifest %q: %w", summary.Path, err)

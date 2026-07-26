@@ -23,19 +23,20 @@ import (
 )
 
 const (
-	Assert      = "assert"
-	Error       = "error"
-	Integer     = "integer"
-	Number      = "number"
-	Require     = "require"
-	String      = "string"
-	ToString    = "tostring"
-	Type        = "type"
-	Pairs       = "pairs"
-	IPairs      = "ipairs"
-	PCall       = "pcall"
-	XPCall      = "xpcall"
-	TableInsert = "table.insert"
+	Assert         = "assert"
+	Error          = "error"
+	Integer        = "integer"
+	Number         = "number"
+	Require        = "require"
+	String         = "string"
+	ToString       = "tostring"
+	Type           = "type"
+	Pairs          = "pairs"
+	IPairs         = "ipairs"
+	PCall          = "pcall"
+	XPCall         = "xpcall"
+	TableInsert    = "table.insert"
+	OwnershipStore = "ownership.store"
 )
 
 var registry = map[string]signature.Function{
@@ -194,6 +195,16 @@ var registry = map[string]signature.Function{
 		ownership.Store{
 			Param: effect.ParamRef{Index: 2},
 			Into:  effect.ParamRef{Index: 0},
+		},
+	),
+	OwnershipStore: sig(
+		typ.Func().
+			Param("value", typ.Any).
+			Param("owner", typ.Any).
+			Build(),
+		ownership.Store{
+			Param: effect.ParamRef{Index: 0},
+			Into:  effect.ParamRef{Index: 1},
 		},
 	),
 	"rawequal": sig(

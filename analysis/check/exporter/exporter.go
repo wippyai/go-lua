@@ -12,16 +12,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
-	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 // Derive returns the first static return type from evaluated facts.
@@ -41,303 +42,196 @@ func Derive(result engine.Result) typ.Type {
 	return typ.MaterializeUnion(alternatives)
 }
 
-// DeriveSummary publishes only direct, unconditional return templates.
-func DeriveSummary(result engine.Result, source string) exportrelation.Summary {
+// DeriveSummary projects only relations established by engine facts.
+func DeriveSummary(result engine.Result) exportrelation.Summary {
 	export := Derive(result)
-	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, result.FunctionAllocatedReturns, result.FunctionReturnTuples, nil, nil)}
+	return exportrelation.Summary{Type: export, Functions: deriveFunctions(result, export)}
 }
 
-// DeriveSummaryWithImports forwards only an already-published import relation.
-func DeriveSummaryWithImports(result engine.Result, source string, imports map[string]exportrelation.Summary, aliases map[string]string) exportrelation.Summary {
-	export := Derive(result)
-	return exportrelation.Summary{Type: export, Functions: deriveFunctions(source, export, result.FunctionEscapes, result.FunctionAllocatedReturns, result.FunctionReturnTuples, imports, aliases)}
-}
-
-func deriveFunctions(source string, export typ.Type, escapes map[string][]signature.ParamRelation, allocatedReturns map[string]bool, returnTuples map[string][][][]byte, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
-	stmts, ok := parseFunctionStatements(source)
-	if !ok {
-		return nil
+func deriveFunctions(result engine.Result, export typ.Type) []exportrelation.Function {
+	providers := publishedProviderRelations(result)
+	paths := make(map[string]bool, len(result.FunctionEscapes)+len(result.FunctionAllocatedReturns)+len(result.FunctionReturnTuples)+len(result.FunctionReturnTemplates)+len(result.FunctionConditionalReturns)+len(result.FunctionForwardedReturns)+len(providers))
+	for path := range result.FunctionEscapes {
+		paths[path] = true
 	}
-	scope := trackFunctionScope(stmts)
-	return functionRelations(scope, returnedModuleRoots(stmts), export, escapes, allocatedReturns, returnTuples, imports, aliases)
-}
-
-func parseFunctionStatements(source string) ([]ast.Stmt, bool) {
-	stmts, err := parse.ParseString(source, "<export-relation>")
-	return stmts, err == nil
-}
-
-type functionScope struct {
-	locals       map[string]*ast.FunctionExpr
-	functions    map[string]*ast.FunctionExpr
-	storeAliases map[string]bool
-	stores       map[string]bool
-}
-
-func trackFunctionScope(stmts []ast.Stmt) functionScope {
-	scope := functionScope{
-		locals:       make(map[string]*ast.FunctionExpr),
-		functions:    make(map[string]*ast.FunctionExpr),
-		storeAliases: make(map[string]bool),
-		stores:       make(map[string]bool),
+	for path := range result.FunctionAllocatedReturns {
+		paths[path] = true
 	}
-	for _, stmt := range stmts {
-		switch item := stmt.(type) {
-		case *ast.LocalAssignStmt:
-			for i, name := range item.Names {
-				if i < len(item.Exprs) {
-					if fn, ok := item.Exprs[i].(*ast.FunctionExpr); ok {
-						scope.locals[name] = fn
-						delete(scope.storeAliases, name)
-						continue
-					}
-					if ownershipStoreReference(item.Exprs[i]) {
-						scope.storeAliases[name] = true
-						delete(scope.locals, name)
-						continue
-					}
-				}
-				delete(scope.locals, name)
-				delete(scope.storeAliases, name)
+	for path := range result.FunctionReturnTuples {
+		paths[path] = true
+	}
+	for path := range result.FunctionReturnTemplates {
+		paths[path] = true
+	}
+	for path := range result.FunctionConditionalReturns {
+		paths[path] = true
+	}
+	for path := range result.FunctionForwardedReturns {
+		paths[path] = true
+	}
+	for path := range providers {
+		paths[path] = true
+	}
+	ordered := make([]string, 0, len(paths))
+	for path := range paths {
+		ordered = append(ordered, path)
+	}
+	sort.Strings(ordered)
+	out := make([]exportrelation.Function, 0, len(ordered))
+	for _, path := range ordered {
+		if provider, found := providers[path]; found {
+			if provider.Valid() {
+				out = append(out, provider)
 			}
-		case *ast.FuncDefStmt:
-			if item == nil || item.Func == nil {
-				continue
-			}
-			if path, ok := functionPath(item.Name); ok {
-				scope.functions[path] = item.Func
-				delete(scope.stores, path)
-				if !strings.Contains(path, ".") {
-					delete(scope.storeAliases, path)
-				}
-			} else if item.Name != nil {
-				if ident, ok := item.Name.Func.(*ast.IdentExpr); ok {
-					scope.locals[ident.Value] = item.Func
-					delete(scope.storeAliases, ident.Value)
-				}
-			}
-		case *ast.AssignStmt:
-			for i, left := range item.Lhs {
-				if i >= len(item.Rhs) {
-					continue
-				}
-				path, ok := memberPath(left)
-				if !ok {
-					if ident, identOK := left.(*ast.IdentExpr); identOK {
-						delete(scope.locals, ident.Value)
-						delete(scope.storeAliases, ident.Value)
-						invalidateRooted(scope.functions, ident.Value)
-						invalidateRooted(scope.stores, ident.Value)
-					}
-					continue
-				}
-				if ident, identOK := left.(*ast.IdentExpr); identOK {
-					delete(scope.locals, ident.Value)
-					delete(scope.storeAliases, ident.Value)
-					invalidateRooted(scope.functions, ident.Value)
-					invalidateRooted(scope.stores, ident.Value)
-					continue
-				}
-				if ownershipStoreReference(item.Rhs[i]) {
-					scope.stores[path] = true
-					delete(scope.functions, path)
-					continue
-				}
-				if ident, ok := item.Rhs[i].(*ast.IdentExpr); ok && scope.storeAliases[ident.Value] {
-					scope.stores[path] = true
-					delete(scope.functions, path)
-					continue
-				}
-				delete(scope.stores, path)
-				if ident, ok := item.Rhs[i].(*ast.IdentExpr); ok && scope.locals[ident.Value] != nil {
-					scope.functions[path] = scope.locals[ident.Value]
-					continue
-				}
-				delete(scope.functions, path)
-			}
-		}
-	}
-	return scope
-}
-
-func functionRelations(scope functionScope, roots map[string]bool, export typ.Type, escapes map[string][]signature.ParamRelation, allocatedReturns map[string]bool, returnTuples map[string][][][]byte, imports map[string]exportrelation.Summary, aliases map[string]string) []exportrelation.Function {
-	paths := make([]string, 0, len(scope.functions)+len(scope.stores))
-	for path := range scope.functions {
-		paths = append(paths, path)
-	}
-	for path := range scope.stores {
-		if scope.functions[path] == nil {
-			paths = append(paths, path)
-		}
-	}
-	sort.Strings(paths)
-	out := make([]exportrelation.Function, 0, len(paths))
-	for _, path := range paths {
-		relative := path
-		if cut := strings.IndexByte(path, '.'); cut > 0 {
-			relative = path[cut+1:]
-		}
-		// A re-exported ownership.store is the builtin value itself, not a body:
-		// it has no prototype for the engine to evaluate, so the escape summary
-		// carries no relation for it and the store contract is read from the
-		// re-export instead. Every wrapper with a body takes its disposition from
-		// the escape summary below.
-		if scope.stores[path] && returnedModuleMember(path, roots) {
-			out = append(out, exportrelation.Function{
-				Path: relative, Arity: 2, Store: &exportrelation.OwnershipStore{Value: 0, Owner: 1},
-			})
 			continue
 		}
-		if relation, ok := functionRelation(relative, scope.functions[path], escapes[relative], allocatedReturns[relative], returnTuples[relative], imports, aliases); ok && publishedFunction(export, relative, relation.Arity) {
+		function, ok := publishedFunction(export, path)
+		if !ok || function.Variadic != nil {
+			continue
+		}
+		relation := exportrelation.Function{
+			Path:            path,
+			Arity:           len(function.Params),
+			AllocatedReturn: result.FunctionAllocatedReturns[path],
+		}
+		if store, ok := escapeStoreRelation(result.FunctionEscapes[path], relation.Arity); ok {
+			relation.Store = store
+		} else if tuples, ok := completeEvaluatedReturnTuples(result.FunctionReturnTuples[path]); ok {
+			relation.ReturnTuples = tuples
+		} else if forwarded, ok := result.FunctionForwardedReturns[path]; ok && forwarded.Valid(relation.Arity) {
+			relation.Return = forwarded
+			relation.Forwarded = true
+		} else if templates := result.FunctionReturnTemplates[path]; len(templates) == 1 && templates[0].Valid(relation.Arity) {
+			relation.Return = templates[0]
+		} else if conditional := result.FunctionConditionalReturns[path]; conditional.Valid(relation.Arity) {
+			relation.Conditional = conditional
+		} else if borrow, ok := escapeBorrowParameters(result.FunctionEscapes[path], relation.Arity); ok {
+			relation.Borrow = borrow
+		}
+		if relation.Valid() {
 			out = append(out, relation)
 		}
 	}
 	return out
 }
 
-// invalidateRooted drops every member path rooted at root. Replacing the root
-// binding invalidates each relation reached through it.
-func invalidateRooted[T any](relations map[string]T, root string) {
-	for path := range relations {
-		if path == root || strings.HasPrefix(path, root+".") {
-			delete(relations, path)
-		}
-	}
-}
-
-func returnedModuleRoots(stmts []ast.Stmt) map[string]bool {
-	roots := make(map[string]bool)
-	for _, stmt := range stmts {
-		ret, ok := stmt.(*ast.ReturnStmt)
-		if !ok || len(ret.Exprs) != 1 {
-			continue
-		}
-		if root, ok := ret.Exprs[0].(*ast.IdentExpr); ok && root.Value != "" {
-			roots[root.Value] = true
-		}
-	}
-	return roots
-}
-
-func returnedModuleMember(path string, roots map[string]bool) bool {
-	root, _, found := strings.Cut(path, ".")
-	return found && roots[root]
-}
-
-// ownershipStoreReference admits only ownership.store.
-func ownershipStoreReference(expr ast.Expr) bool {
-	member, ok := expr.(*ast.AttrGetExpr)
-	if !ok || ast.KeyName(member.Key) != "store" {
-		return false
-	}
-	global, ok := member.Object.(*ast.IdentExpr)
-	return ok && global.Value == "ownership"
-}
-
-// publishedFunction requires the checked export to publish path at arity.
-func publishedFunction(export typ.Type, path string, arity int) bool {
-	if path == "" || arity < 0 {
-		return false
+// publishedFunction resolves a relation path only through the already-derived
+// module export type. It supplies arity and rejects stale or optional members.
+func publishedFunction(export typ.Type, path string) (*typ.Function, bool) {
+	if path == "" {
+		return nil, false
 	}
 	current := export
 	for _, name := range strings.Split(path, ".") {
 		record, ok := unwrap.Alias(current).(*typ.Record)
 		if !ok || record == nil {
-			return false
+			return nil, false
 		}
 		field := record.GetField(name)
 		if field == nil || field.Optional || field.Type == nil {
-			return false
+			return nil, false
 		}
 		current = field.Type
 	}
 	function, ok := unwrap.Alias(current).(*typ.Function)
-	return ok && function != nil && function.Variadic == nil && len(function.Params) == arity
+	return function, ok && function != nil
 }
 
-func functionPath(name *ast.FuncName) (string, bool) {
-	if name == nil {
-		return "", false
-	}
-	if name.Method != "" {
-		base, ok := memberPath(name.Receiver)
-		if !ok {
-			return "", false
+// publishedProviderRelations follows provider identities already carried by
+// equation write facts into the returned module root. The provider's callable
+// and effect contract comes from the signature registry; no provider name,
+// arity, or parameter role is owned by this package.
+func publishedProviderRelations(result engine.Result) map[string]exportrelation.Function {
+	roots := make(map[string]bool)
+	for _, fact := range result.ReturnCandidates {
+		candidate, slot, ok := returnCandidate(fact)
+		if !ok || slot != "0" {
+			continue
 		}
-		return base + "." + name.Method, true
+		if root, found := returnRoot(result.Artifact, candidate); found {
+			roots[root] = true
+		}
 	}
-	return memberPath(name.Func)
+	if len(roots) == 0 {
+		return nil
+	}
+	providers := make(map[string]string)
+	for _, operation := range result.Artifact.Equations {
+		target := operationOperand(operation.Operands, "target")
+		if target == "" {
+			continue
+		}
+		switch operation.Occurrence.Kind {
+		case "environment-write":
+			invalidateProviderTerms(providers, target)
+			name := operationOperand(operation.Operands, "source-display")
+			if _, ok := providerOwnershipRelation(name, ""); ok {
+				providers[target] = name
+			}
+		case "path-replacement":
+			value := operationOperand(operation.Operands, "value")
+			invalidateProviderTerms(providers, target)
+			if name := providers[value]; name != "" {
+				providers[target] = name
+			}
+		}
+	}
+	out := make(map[string]exportrelation.Function)
+	for term, name := range providers {
+		for root := range roots {
+			path, found := strings.CutPrefix(term, root+".")
+			if !found || path == "" {
+				continue
+			}
+			relation, ok := providerOwnershipRelation(name, path)
+			if ok {
+				out[path] = relation
+			}
+		}
+	}
+	return out
 }
 
-func memberPath(expr ast.Expr) (string, bool) {
-	switch value := expr.(type) {
-	case *ast.IdentExpr:
-		return value.Value, value.Value != ""
-	case *ast.AttrGetExpr:
-		base, ok := memberPath(value.Object)
-		key := ast.KeyName(value.Key)
-		return base + "." + key, ok && key != ""
-	default:
-		return "", false
+func operationOperand(operands []equation.Operand, role string) string {
+	for _, operand := range operands {
+		if operand.Role == role && !operand.Term.Entry {
+			return string(operand.Term.Encoding)
+		}
+	}
+	return ""
+}
+
+func invalidateProviderTerms(providers map[string]string, target string) {
+	for term := range providers {
+		if term == target || strings.HasPrefix(term, target+".") {
+			delete(providers, term)
+		}
 	}
 }
 
-func functionRelation(path string, fn *ast.FunctionExpr, escapes []signature.ParamRelation, allocatedReturn bool, evaluatedTuples [][][]byte, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Function, bool) {
-	if fn == nil || fn.ParList == nil || fn.ParList.HasVargs {
+func providerOwnershipRelation(name, path string) (exportrelation.Function, bool) {
+	if name == "" {
 		return exportrelation.Function{}, false
 	}
-	params := make(map[string]int, len(fn.ParList.Names))
-	for i, name := range fn.ParList.Names {
-		params[name] = i
+	provider, found := (signaturelookup.Source{IncludeStdlib: true}).LookupView(name)
+	if !found || provider.Type == nil || provider.Type.Variadic != nil {
+		return exportrelation.Function{}, false
 	}
-	relation := exportrelation.Function{Path: path, Arity: len(params), AllocatedReturn: allocatedReturn}
-	if store, ok := escapeStoreRelation(escapes, relation.Arity); ok {
-		relation.Store = store
-		return relation, relation.Valid()
-	}
-	if tuples, ok := completeLiteralReturnTuples(fn.Stmts, params); ok && multiReturnTuples(tuples) {
-		relation.ReturnTuples = tuples
-		return relation, relation.Valid()
-	}
-	if tuples, ok := completeEvaluatedReturnTuples(evaluatedTuples); ok {
-		relation.ReturnTuples = tuples
-		return relation, relation.Valid()
-	}
-	if len(fn.Stmts) == 1 {
-		if ret, ok := fn.Stmts[0].(*ast.ReturnStmt); ok && len(ret.Exprs) == 1 {
-			if value, ok := remapValue(ret.Exprs[0], params, nil); ok {
-				relation.Return = value
-				return relation, relation.Valid()
-			}
-			if value, ok := forwardedImportedReturn(ret.Exprs[0], params, imports, aliases); ok {
-				relation.Return = value
-				relation.Forwarded = true
-				return relation, relation.Valid()
-			}
+	arity := len(provider.Type.Params)
+	for _, label := range provider.Effect.Labels {
+		store, ok := effect.NormalizeLabel(label).(ownership.Store)
+		if !ok || store.Param.Index < 0 || store.Param.Index >= arity ||
+			store.Into.Index < 0 || store.Into.Index >= arity || store.Param.Index == store.Into.Index {
+			continue
 		}
-	}
-	if len(fn.Stmts) == 2 {
-		local, localOK := fn.Stmts[0].(*ast.LocalAssignStmt)
-		ret, returnOK := fn.Stmts[1].(*ast.ReturnStmt)
-		if localOK && returnOK && len(local.Names) == 1 && len(local.Exprs) == 1 && len(ret.Exprs) == 1 {
-			if returned, ok := ret.Exprs[0].(*ast.IdentExpr); ok && returned.Value == local.Names[0] {
-				value, ok := remapValue(local.Exprs[0], params, nil)
-				relation.Return = value
-				return relation, ok && relation.Valid()
-			}
+		relation := exportrelation.Function{
+			Path:  path,
+			Arity: arity,
+			Store: &exportrelation.OwnershipStore{Value: store.Param.Index, Owner: store.Into.Index},
 		}
+		return relation, path == "" || relation.Valid()
 	}
-	if conditional, ok := conditionalReturnRelation(fn, params); ok {
-		relation.Conditional = conditional
-		return relation, relation.Valid()
-	}
-	if borrow, ok := escapeBorrowParameters(escapes, relation.Arity); ok {
-		relation.Borrow = borrow
-		return relation, relation.Valid()
-	}
-	// A body with no publishable value relation still carries the producer's
-	// proven return disposition, which consumers read on its own.
-	return relation, relation.Valid()
+	return exportrelation.Function{}, false
 }
 
 // escapeStoreRelation reads the engine's per-parameter escape summary for one
@@ -380,22 +274,9 @@ func escapeBorrowParameters(escapes []signature.ParamRelation, arity int) ([]int
 	return borrow, len(borrow) != 0
 }
 
-func multiReturnTuples(tuples []exportrelation.ReturnTuple) bool {
-	if len(tuples) == 0 {
-		return false
-	}
-	for _, tuple := range tuples {
-		if len(tuple.Values) < 2 {
-			return false
-		}
-	}
-	return true
-}
-
 // completeEvaluatedReturnTuples converts only the engine's complete candidate
-// catalog into the small cross-module relation language.  A value is useful
-// here solely when it is exact nil or a concrete fact known to exclude nil;
-// opaque, any, and optional facts reject the entire catalog.
+// catalog into the small cross-module relation language. Exact scalars retain
+// their values; a closed non-nil shape retains only its presence proof.
 func completeEvaluatedReturnTuples(candidates [][][]byte) ([]exportrelation.ReturnTuple, bool) {
 	if len(candidates) == 0 {
 		return nil, false
@@ -403,7 +284,7 @@ func completeEvaluatedReturnTuples(candidates [][][]byte) ([]exportrelation.Retu
 	tuples := make([]exportrelation.ReturnTuple, 0, len(candidates))
 	arity := -1
 	for _, candidate := range candidates {
-		if len(candidate) != 2 || (arity >= 0 && len(candidate) != arity) {
+		if len(candidate) < 2 || (arity >= 0 && len(candidate) != arity) {
 			return nil, false
 		}
 		arity = len(candidate)
@@ -416,24 +297,15 @@ func completeEvaluatedReturnTuples(candidates [][][]byte) ([]exportrelation.Retu
 			tuple.Values[index] = item
 			tuple.Present[index] = present
 		}
-		// The fact-derived lane is deliberately just an option/error relation:
-		// each complete alternative must contain one exact nil and one proven
-		// present value.  Richer catalogs retain no relation rather than risking
-		// a projection beyond the body facts this compact wire can express.
-		if (tuple.Values[0].Scalar == "scalar/nil") == (tuple.Values[1].Scalar == "scalar/nil") {
-			return nil, false
-		}
 		tuples = append(tuples, tuple)
 	}
 	return tuples, true
 }
 
 func evaluatedReturnValue(value []byte) (exportrelation.Value, bool, bool) {
-	if string(value) == "scalar/nil" {
-		return exportrelation.Value{Scalar: "scalar/nil"}, false, true
-	}
-	if strings.HasPrefix(string(value), "scalar/") && string(value) != "scalar/top" && string(value) != "scalar/any" {
-		return exportrelation.Value{}, true, true
+	scalar := exportrelation.Value{Scalar: string(value)}
+	if scalar.Closed() {
+		return scalar, false, true
 	}
 	target, ok := shapefact.DecodeTarget(value)
 	if !ok || target == nil || typevalue.ProjectionHasNil(target) {
@@ -444,248 +316,6 @@ func evaluatedReturnValue(value []byte) (exportrelation.Value, bool, bool) {
 		return exportrelation.Value{}, false, false
 	default:
 		return exportrelation.Value{}, true, true
-	}
-}
-
-// completeLiteralReturnTuples accepts only a complete finite control tree made
-// from return statements and if statements. It publishes each tuple exactly
-// as the exporter already publishes ordinary scalar/table return templates;
-// an open fallthrough, loop, call, or unsupported expression rejects the
-// whole catalog rather than inventing a provider fact.
-func completeLiteralReturnTuples(stmts []ast.Stmt, params map[string]int) ([]exportrelation.ReturnTuple, bool) {
-	var walk func([]ast.Stmt) ([]exportrelation.ReturnTuple, bool)
-	walk = func(sequence []ast.Stmt) ([]exportrelation.ReturnTuple, bool) {
-		for index, stmt := range sequence {
-			switch value := stmt.(type) {
-			case *ast.ReturnStmt:
-				if len(value.Exprs) == 0 {
-					return nil, false
-				}
-				tuple := exportrelation.ReturnTuple{Values: make([]exportrelation.Value, 0, len(value.Exprs))}
-				for _, expr := range value.Exprs {
-					item, ok := remapValue(expr, params, nil)
-					if !ok {
-						return nil, false
-					}
-					tuple.Values = append(tuple.Values, item)
-				}
-				return []exportrelation.ReturnTuple{tuple}, true
-			case *ast.IfStmt:
-				thenTuples, thenComplete := walk(value.Then)
-				if !thenComplete {
-					return nil, false
-				}
-				if value.HasElse {
-					elseTuples, elseComplete := walk(value.Else)
-					if !elseComplete {
-						return nil, false
-					}
-					return append(thenTuples, elseTuples...), true
-				}
-				tail, tailComplete := walk(sequence[index+1:])
-				if !tailComplete {
-					return nil, false
-				}
-				return append(thenTuples, tail...), true
-			default:
-				return nil, false
-			}
-		}
-		return nil, false
-	}
-	return walk(stmts)
-}
-
-// conditionalReturnRelation accepts one complete source-level literal branch
-// followed by its normal return. Both result expressions must already be
-// finite templates, so importing the relation cannot reconstruct a value from
-// a declaration or an unclosed body fact.
-func conditionalReturnRelation(fn *ast.FunctionExpr, params map[string]int) (*exportrelation.ConditionalReturn, bool) {
-	if fn == nil || len(fn.Stmts) != 2 {
-		return nil, false
-	}
-	branch, branchOK := fn.Stmts[0].(*ast.IfStmt)
-	fallback, fallbackOK := fn.Stmts[1].(*ast.ReturnStmt)
-	if !branchOK || !fallbackOK || branch.HasElse || len(branch.Then) != 1 || len(fallback.Exprs) != 1 {
-		return nil, false
-	}
-	matched, matchedOK := branch.Then[0].(*ast.ReturnStmt)
-	if !matchedOK || len(matched.Exprs) != 1 {
-		return nil, false
-	}
-	parameter, literal, predicateOK := literalParameterPredicate(branch.Condition, params)
-	if !predicateOK {
-		return nil, false
-	}
-	match, matchOK := remapValue(matched.Exprs[0], params, nil)
-	otherwise, otherwiseOK := remapValue(fallback.Exprs[0], params, nil)
-	if !matchOK || !otherwiseOK {
-		return nil, false
-	}
-	return &exportrelation.ConditionalReturn{Parameter: parameter, Literal: literal, Match: match, Otherwise: otherwise}, true
-}
-
-func literalParameterPredicate(expr ast.Expr, params map[string]int) (int, string, bool) {
-	relation, ok := expr.(*ast.RelationalOpExpr)
-	if !ok || relation.Operator != "==" {
-		return 0, "", false
-	}
-	for _, candidate := range []struct {
-		parameter ast.Expr
-		literal   ast.Expr
-	}{{relation.Lhs, relation.Rhs}, {relation.Rhs, relation.Lhs}} {
-		name, nameOK := candidate.parameter.(*ast.IdentExpr)
-		if !nameOK {
-			continue
-		}
-		parameter, parameterOK := params[name.Value]
-		literal, literalOK := remapValue(candidate.literal, params, nil)
-		if !parameterOK || !literalOK || !literal.Closed() || literal.Scalar == "" {
-			continue
-		}
-		return parameter, literal.Scalar, true
-	}
-	return 0, "", false
-}
-
-func forwardedImportedReturn(expr ast.Expr, params map[string]int, imports map[string]exportrelation.Summary, aliases map[string]string) (exportrelation.Value, bool) {
-	call, ok := expr.(*ast.FuncCallExpr)
-	if !ok || call.Receiver != nil || call.Method != "" {
-		return exportrelation.Value{}, false
-	}
-	callee, ok := call.Func.(*ast.AttrGetExpr)
-	if !ok {
-		return exportrelation.Value{}, false
-	}
-	module, ok := callee.Object.(*ast.IdentExpr)
-	if !ok || aliases == nil || imports == nil {
-		return exportrelation.Value{}, false
-	}
-	modulePath, found := aliases[module.Value]
-	if !found {
-		return exportrelation.Value{}, false
-	}
-	name := ast.KeyName(callee.Key)
-	summary, found := imports[modulePath]
-	if !found || name == "" {
-		return exportrelation.Value{}, false
-	}
-	function, found := summary.Function(name, len(call.Args))
-	if !found {
-		return exportrelation.Value{}, false
-	}
-	arguments := make([]exportrelation.Value, len(call.Args))
-	for index, argument := range call.Args {
-		value, ok := remapValue(argument, params, nil)
-		if !ok {
-			return exportrelation.Value{}, false
-		}
-		arguments[index] = value
-	}
-	return composeForwardedRelation(function.Return, arguments)
-}
-
-// composeForwardedRelation substitutes the already-published caller argument
-// templates into one imported return relation. Both inputs are finite export
-// facts; an unresolved parameter or malformed nested template is rejected
-// instead of inventing a return member.
-func composeForwardedRelation(value exportrelation.Value, arguments []exportrelation.Value) (exportrelation.Value, bool) {
-	if value.Parameter != nil {
-		index := *value.Parameter
-		if index < 0 || index >= len(arguments) {
-			return exportrelation.Value{}, false
-		}
-		return arguments[index], true
-	}
-	if value.Scalar != "" {
-		return exportrelation.Value{Scalar: value.Scalar}, true
-	}
-	if len(value.Table) == 0 {
-		return exportrelation.Value{}, false
-	}
-	result := exportrelation.Value{Table: make([]exportrelation.Member, 0, len(value.Table))}
-	for _, member := range value.Table {
-		child, ok := composeForwardedRelation(member.Value, arguments)
-		if !ok || member.Suffix == "" {
-			return exportrelation.Value{}, false
-		}
-		result.Table = append(result.Table, exportrelation.Member{Suffix: member.Suffix, Value: child})
-	}
-	return result, true
-}
-
-func remapValue(value any, params map[string]int, arguments []int) (exportrelation.Value, bool) {
-	switch value := value.(type) {
-	case *ast.IdentExpr:
-		parameter, ok := params[value.Value]
-		if !ok {
-			return exportrelation.Value{}, false
-		}
-		return exportrelation.Value{Parameter: &parameter}, true
-	case *ast.StringExpr:
-		return exportrelation.Value{Scalar: "scalar/string/" + strconv.Quote(value.Value)}, true
-	case *ast.NumberExpr:
-		if _, err := strconv.ParseFloat(value.Value, 64); err != nil {
-			return exportrelation.Value{}, false
-		}
-		return exportrelation.Value{Scalar: "scalar/number/" + value.Value}, true
-	case *ast.TrueExpr:
-		return exportrelation.Value{Scalar: "scalar/bool/true"}, true
-	case *ast.FalseExpr:
-		return exportrelation.Value{Scalar: "scalar/bool/false"}, true
-	case *ast.NilExpr:
-		return exportrelation.Value{Scalar: "scalar/nil"}, true
-	case *ast.TableExpr:
-		members := make([]exportrelation.Member, 0, len(value.Fields))
-		array := 1
-		for _, field := range value.Fields {
-			if field == nil {
-				return exportrelation.Value{}, false
-			}
-			suffix := ""
-			if field.Key == nil {
-				suffix = "[" + strconv.Itoa(array) + "]"
-				array++
-			} else if name := ast.KeyName(field.Key); name != "" {
-				suffix = "." + name
-			} else if number, ok := field.Key.(*ast.NumberExpr); ok {
-				suffix = "[" + number.Value + "]"
-			} else {
-				return exportrelation.Value{}, false
-			}
-			child, ok := remapValue(field.Value, params, arguments)
-			if !ok {
-				return exportrelation.Value{}, false
-			}
-			members = append(members, exportrelation.Member{Suffix: suffix, Value: child})
-		}
-		return exportrelation.Value{Table: members}, len(members) != 0
-	case exportrelation.Value:
-		if value.Parameter != nil {
-			parameter := *value.Parameter
-			if parameter < 0 || parameter >= len(arguments) {
-				return exportrelation.Value{}, false
-			}
-			parameter = arguments[parameter]
-			return exportrelation.Value{Parameter: &parameter}, true
-		}
-		if value.Scalar != "" {
-			return exportrelation.Value{Scalar: value.Scalar}, true
-		}
-		if len(value.Table) == 0 {
-			return exportrelation.Value{}, false
-		}
-		out := exportrelation.Value{Table: make([]exportrelation.Member, 0, len(value.Table))}
-		for _, member := range value.Table {
-			child, ok := remapValue(member.Value, params, arguments)
-			if !ok {
-				return exportrelation.Value{}, false
-			}
-			out.Table = append(out.Table, exportrelation.Member{Suffix: member.Suffix, Value: child})
-		}
-		return out, true
-	default:
-		return exportrelation.Value{}, false
 	}
 }
 

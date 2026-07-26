@@ -1,13 +1,35 @@
 package exporter_test
 
 import (
+	"go/build"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/exporter"
-	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+func TestPackageDoesNotImportCompilerSyntax(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller did not locate exporter test")
+	}
+	pkg, err := build.Default.ImportDir(filepath.Dir(filename), 0)
+	if err != nil {
+		t.Fatalf("inspect exporter imports: %v", err)
+	}
+	forbidden := map[string]bool{
+		"github.com/wippyai/go-lua/compiler/ast":   true,
+		"github.com/wippyai/go-lua/compiler/parse": true,
+	}
+	for _, imported := range pkg.Imports {
+		if forbidden[imported] {
+			t.Fatalf("exporter production package imports forbidden syntax package %q", imported)
+		}
+	}
+}
 
 func TestDeriveProjectsClosedReturnShapes(t *testing.T) {
 	tests := []struct {
@@ -111,7 +133,7 @@ func TestDeriveRejectsARecordShapeInvalidatedByUnknownIndexMutation(t *testing.T
 	}
 }
 
-func TestDeriveSummaryPublishesSealedMemberReturnTemplates(t *testing.T) {
+func TestDeriveSummaryPublishesEvaluatedReturnTemplates(t *testing.T) {
 	source := `local M = {}
 local function identity(value: string) return value end
 M.identity = identity
@@ -121,18 +143,18 @@ return M`
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	summary := exporter.DeriveSummary(result, source)
+	summary := exporter.DeriveSummary(result)
 	identity, ok := summary.Function("identity", 1)
-	if !ok || identity.Return.Parameter == nil || *identity.Return.Parameter != 0 || !identity.Valid() {
-		t.Fatalf("export = %v; identity relation = %#v", summary.Type, identity)
+	if !ok || identity.Return.Parameter == nil || *identity.Return.Parameter != 0 {
+		t.Fatalf("export = %v; identity relation = %#v, want fact-derived parameter return", summary.Type, identity)
 	}
-	make, ok := summary.Function("make", 0)
-	if !ok || len(make.Return.Table) != 2 || !make.Valid() {
-		t.Fatalf("export = %v; literal relation = %#v", summary.Type, make)
+	make, found := summary.Function("make", 0)
+	if !found || len(make.Return.Table) != 2 || !make.Return.Closed() {
+		t.Fatalf("literal relation = %#v, want evaluated closed table return", make)
 	}
 }
 
-func TestDeriveSummaryPublishesDirectParameterReturnTemplate(t *testing.T) {
+func TestDeriveSummaryPublishesFactDerivedParameterReturn(t *testing.T) {
 	source := `local M = {}
 function M.id(value: table): table
   return value
@@ -142,14 +164,14 @@ return M`
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	summary := exporter.DeriveSummary(result, source)
-	identity, ok := summary.Function("id", 1)
-	if !ok || identity.Return.Parameter == nil || *identity.Return.Parameter != 0 {
-		t.Fatalf("id relation = %#v, want parameter 0", identity)
+	summary := exporter.DeriveSummary(result)
+	identity, found := summary.Function("id", 1)
+	if !found || identity.Return.Parameter == nil || *identity.Return.Parameter != 0 {
+		t.Fatalf("id relation = %#v, want engine-proven return of parameter 0", identity)
 	}
 }
 
-func TestDeriveSummaryWithImportsPreservesPublishedFreshTableRelation(t *testing.T) {
+func TestDeriveSummaryPublishesFactDerivedFreshTableTemplate(t *testing.T) {
 	source := `local upstream = require("upstream")
 local M = {}
 function M.make(id: string)
@@ -162,25 +184,19 @@ return M`
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	parameter := 0
-	upstream := exportrelation.Summary{Type: typ.Unknown, Functions: []exportrelation.Function{{
-		Path:  "make",
-		Arity: 1,
-		Return: exportrelation.Value{Table: []exportrelation.Member{
-			{Suffix: ".id", Value: exportrelation.Value{Parameter: &parameter}},
-			{Suffix: ".meta", Value: exportrelation.Value{Table: []exportrelation.Member{{Suffix: ".route", Value: exportrelation.Value{Scalar: `scalar/string/"worker"`}}}}},
-		}},
-	}}}
-	summary := exporter.DeriveSummaryWithImports(result, source, map[string]exportrelation.Summary{"upstream": upstream}, map[string]string{"upstream": "upstream"})
-	for _, name := range []string{"make", "forward"} {
-		function, ok := summary.Function(name, 1)
-		if !ok || len(function.Return.Table) != 2 || len(function.Return.Table[1].Value.Table) != 1 {
-			t.Fatalf("%s relation = %#v, want closed nested table witness", name, function)
+	summary := exporter.DeriveSummary(result)
+	make, found := summary.Function("make", 1)
+	if !found || len(make.Return.Table) != 2 || make.Return.Table[0].Value.Parameter == nil || *make.Return.Table[0].Value.Parameter != 0 {
+		t.Fatalf("make relation = %#v, want evaluated table template with parameter origin", make)
+	}
+	for _, function := range summary.Functions {
+		if function.Path == "forward" && len(function.Return.Table) != 0 {
+			t.Fatalf("forward relation = %#v, want no imported forwarding template without a published forwarding fact", function)
 		}
 	}
 }
 
-func TestDeriveSummaryWithImportsComposesTableArgumentRelation(t *testing.T) {
+func TestDeriveSummaryWithholdsImportedCompositionWithoutFact(t *testing.T) {
 	source := `local protocol = require("protocol")
 type Source = { messages: string, ticks: number }
 type SourceBox = { value: Source }
@@ -193,21 +209,11 @@ return M`
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	parameter := 0
-	upstream := exportrelation.Summary{Type: typ.Unknown, Functions: []exportrelation.Function{{
-		Path: "box_source", Arity: 1,
-		Return: exportrelation.Value{Table: []exportrelation.Member{{Suffix: ".value", Value: exportrelation.Value{Parameter: &parameter}}}},
-	}}}
-	summary := exporter.DeriveSummaryWithImports(result, source, map[string]exportrelation.Summary{"protocol": upstream}, map[string]string{"protocol": "protocol"})
-	function, ok := summary.Function("new_source", 2)
-	if !ok || len(function.Return.Table) != 1 || len(function.Return.Table[0].Value.Table) != 2 {
-		t.Fatalf("new_source relation = %#v, want composed boxed parameter table", function)
-	}
-	messages := function.Return.Table[0].Value.Table[0]
-	ticks := function.Return.Table[0].Value.Table[1]
-	if messages.Suffix != ".messages" || messages.Value.Parameter == nil || *messages.Value.Parameter != 0 ||
-		ticks.Suffix != ".ticks" || ticks.Value.Parameter == nil || *ticks.Value.Parameter != 1 {
-		t.Fatalf("composed members = %#v, want messages/ticks parameter witnesses", function.Return.Table[0].Value.Table)
+	summary := exporter.DeriveSummary(result)
+	for _, function := range summary.Functions {
+		if function.Path == "new_source" && function.Return.Valid(function.Arity) {
+			t.Fatalf("new_source relation = %#v, want no imported composition without a published forwarding fact", function)
+		}
 	}
 }
 
@@ -235,7 +241,7 @@ return M`
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	summary := exporter.DeriveSummary(result, source)
+	summary := exporter.DeriveSummary(result)
 
 	store, ok := summary.Function("store_item", 2)
 	if !ok || !store.Store.Valid(2) {
@@ -263,7 +269,7 @@ return M`
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	summary := exporter.DeriveSummary(result, source)
+	summary := exporter.DeriveSummary(result)
 	store, ok := summary.Function("store_item", 2)
 	if !ok || !store.Store.Valid(2) || store.Store.Value != 0 || store.Store.Owner != 1 {
 		t.Fatalf("store relation = %#v, want published ownership alias", store)
@@ -280,7 +286,7 @@ return M`
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	if _, found := exporter.DeriveSummary(result, source).Function("store_item", 2); found {
+	if _, found := exporter.DeriveSummary(result).Function("store_item", 2); found {
 		t.Fatal("stale ownership alias relation escaped its replaced module root")
 	}
 }

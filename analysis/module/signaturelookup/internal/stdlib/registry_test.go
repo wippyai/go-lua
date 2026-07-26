@@ -481,7 +481,7 @@ func TestSignaturesSeededNames(t *testing.T) {
 	want := []string{
 		Assert, Error, Integer, Number, Require, String, ToString, Type, Pairs, IPairs, PCall, XPCall,
 		"print", "tonumber", "next", "select", "rawget", "rawset", "rawequal",
-		"rawlen", "setmetatable", "getmetatable", "collectgarbage", "unpack",
+		"rawlen", "setmetatable", "getmetatable", "collectgarbage", "unpack", OwnershipStore,
 		TableInsert, "table.remove", "table.concat", "table.sort", "table.unpack",
 		"table.pack", "table.move", "table.create", "table.freeze", "table.isfrozen",
 		"json.encode", "json.decode",
@@ -504,6 +504,23 @@ func TestSignaturesSeededNames(t *testing.T) {
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("names = %v, want %v", got, want)
+	}
+}
+
+func TestOwnershipStoreSignatureOwnsParameterRoles(t *testing.T) {
+	got, ok := Lookup(OwnershipStore)
+	if !ok {
+		t.Fatalf("Lookup(%q) missing", OwnershipStore)
+	}
+	if got.Type == nil || got.Type.Variadic != nil || len(got.Type.Params) != 2 {
+		t.Fatalf("%s type = %#v, want finite arity 2", OwnershipStore, got.Type)
+	}
+	want := ownership.Store{
+		Param: effect.ParamRef{Index: 0},
+		Into:  effect.ParamRef{Index: 1},
+	}
+	if !hasLabel(got.Effect, want) {
+		t.Fatalf("%s effects = %v, want %v", OwnershipStore, got.Effect, want)
 	}
 }
 
