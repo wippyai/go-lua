@@ -27,6 +27,13 @@ type Reconvergence struct {
 	Current func(candidates []Fact) (Fact, bool)
 	// Join is the value lattice.  Reporting false withholds the whole join.
 	Join func(left, right []byte) ([]byte, bool)
+	// Support names further fact families whose rows Current needs in order to
+	// decide one cube's value.  They are collected and guard-filtered exactly
+	// like the primary family, so Current observes only the support rows the
+	// cube itself can observe and never a row belonging to the other edge.
+	// They decide no control flow: the residual guards a join is peeled from
+	// still come from the row Current returns.
+	Support []string
 }
 
 // reconvergenceBudget caps the guard cubes one read may expand.  Decisions are
@@ -126,7 +133,7 @@ func (p Partition) Reconverged(prefix string, lattice Reconvergence) (Fact, bool
 	}
 	var candidates []Fact
 	for _, fact := range p.closure.Values {
-		if strings.HasPrefix(fact.Key, prefix) {
+		if reconvergenceFamily(fact.Key, prefix, lattice.Support) {
 			candidates = append(candidates, fact)
 		}
 	}
@@ -135,6 +142,20 @@ func (p Partition) Reconverged(prefix string, lattice Reconvergence) (Fact, bool
 	}
 	budget := reconvergenceBudget
 	return reconverge(candidates, resolvedBranchGuards(p.closure.Values, p.guards), lattice, &budget)
+}
+
+// reconvergenceFamily reports whether a key belongs to the read's primary
+// family or to one of its support families.
+func reconvergenceFamily(key, prefix string, support []string) bool {
+	if strings.HasPrefix(key, prefix) {
+		return true
+	}
+	for _, family := range support {
+		if family != "" && strings.HasPrefix(key, family) {
+			return true
+		}
+	}
+	return false
 }
 
 func reconverge(candidates []Fact, active []Guard, lattice Reconvergence, budget *int) (Fact, bool) {

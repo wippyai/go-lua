@@ -10577,9 +10577,12 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	var diagnostics []equation.Fact
 	if memberMissing(value) {
-		root, _, declaredSource := tableAddress(operands["value"])
-		_, declared := declaredTypeForTerm(root, partition)
-		if declaredSource && declared {
+		// The payload names the closed receiver that refused the member, so the
+		// refutation is already complete. Which fact family established that
+		// receiver -- a declaration, a call summary, or a branch that selected
+		// one union arm -- does not change what it states: a whole member set
+		// that does not include this one.
+		if _, _, member := tableAddress(operands["value"]); member {
 			for _, operand := range operation.Operands {
 				if operand.Role == "source-display" {
 					diagnostics = append(diagnostics, equation.Fact{Key: "type.member.missing/" + operation.Target.Name, Value: []byte(memberMissingMessage(string(operand.Value), value))})
@@ -23876,6 +23879,62 @@ func reconvergedValue(term []byte, cutoff string, partition equation.Partition) 
 	return fact.Value, true
 }
 
+// reconvergedSurfaceValue is the type-surface read for a term at a control-flow
+// join.  The value lane alone cannot answer it: an edge that assigned a call
+// result publishes an honest unknown value together with the summary type that
+// call proved, so joining values would widen the point to Top although both
+// edges established a type.  Each edge therefore contributes the witness it
+// proved -- its own value when that value is a type, otherwise the summary
+// published at that same point -- and the point holds their union.
+//
+// Every contribution is a checker-derived publication.  A declaration is not
+// consulted here and a claim payload carries no witness, so an edge that proved
+// nothing still widens the join instead of borrowing the other edge's type.
+func reconvergedSurfaceValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	valuePrefix := "value/" + string(term) + "/"
+	summaryPrefix := summaryTypePrefix + string(term) + "/"
+	fact, found := partition.Reconverged(valuePrefix, equation.Reconvergence{
+		Support: []string{summaryPrefix},
+		Current: func(candidates []equation.Fact) (equation.Fact, bool) {
+			values := make([]equation.Fact, 0, len(candidates))
+			summaries := make(map[string][]byte, len(candidates))
+			for _, candidate := range candidates {
+				if strings.HasPrefix(candidate.Key, valuePrefix) {
+					values = append(values, candidate)
+					continue
+				}
+				summaries[strings.TrimPrefix(candidate.Key, summaryPrefix)] = candidate.Value
+			}
+			chosen, selected := latestPublication(values)
+			if !selected {
+				return equation.Fact{}, false
+			}
+			if _, decoded := shapefact.DecodeTarget(chosen.Value); decoded {
+				return chosen, true
+			}
+			summary, published := summaries[strings.TrimPrefix(chosen.Key, valuePrefix)]
+			if !published {
+				return chosen, true
+			}
+			witness, decodeErr := decodeSummaryType(summary)
+			if decodeErr != nil || witness == nil {
+				return chosen, true
+			}
+			encoded, encodable := shapefact.EncodeTarget(witness)
+			if !encodable {
+				return chosen, true
+			}
+			chosen.Value = encoded
+			return chosen, true
+		},
+		Join: joinPublishedValues,
+	})
+	if !found {
+		return nil, false
+	}
+	return fact.Value, true
+}
+
 // joinPublishedValues is the value lattice at a reconvergence point.  Edges
 // that published the same value keep it exactly.  Otherwise the point holds the
 // union of the edge witnesses, and a payload that contributes no witness widens
@@ -24365,7 +24424,8 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 		// therefore takes precedence over the broader module summary. This is
 		// what lets an existing discriminant proof select one union arm without
 		// discarding the summary on the opposite edge.
-		if value, found := latestValue(rootTerm, partition); found {
+		value, found := latestValue(rootTerm, partition)
+		if found {
 			if typeValue, decoded := shapefact.DecodeTarget(value); decoded {
 				return rootTerm, segs, typeValue, true
 			}
@@ -24373,15 +24433,26 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 		// `assert` publishes the exact non-nil postcondition under the current
 		// partition. It is a presence proof for this root just like a guarded
 		// branch value, and is revoked by a later write in assertionNarrowedValue.
-		if value, found := assertionNarrowedValue(rootTerm, "", partition); found {
-			if typeValue, decoded := shapefact.DecodeTarget(value); decoded {
+		if asserted, assertedFound := assertionNarrowedValue(rootTerm, "", partition); assertedFound {
+			if typeValue, decoded := shapefact.DecodeTarget(asserted); decoded {
 				return rootTerm, segs, typeValue, true
 			}
 		}
-		if encoded, found := currentEpochFact(summaryTypePrefix, rootTerm, partition); found {
+		if encoded, summarized := currentEpochFact(summaryTypePrefix, rootTerm, partition); summarized {
 			typeValue, decodeErr := decodeSummaryType(encoded)
 			if decodeErr == nil && typeValue != nil {
 				return rootTerm, segs, typeValue, true
+			}
+		}
+		// A root written on both edges of a branch holds no single publication
+		// at the join, so the value lane resolves to an honest unknown there.
+		// What each edge proved about it still stands, and their union is the
+		// surface the joined point carries.
+		if found && isUnknownScalar(value) {
+			if joined, reconverged := reconvergedSurfaceValue(rootTerm, partition); reconverged {
+				if typeValue, decoded := shapefact.DecodeTarget(joined); decoded {
+					return rootTerm, segs, typeValue, true
+				}
 			}
 		}
 		if typeValue, declared := declaredTypeForTerm(rootTerm, partition); declared {
@@ -24389,10 +24460,10 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 				// A sealed table publication is this root's current runtime value and
 				// proves its presence, so the declaration's nilability is not what a
 				// member read descends through.
-				if value, found := latestValue(rootTerm, partition); !found || !shapefact.IsTable(value) {
+				if !found || !shapefact.IsTable(value) {
 					return rootTerm, segs, typeValue, true
 				}
-			} else if value, found := latestValue(rootTerm, partition); found && string(value) == "scalar/top" && declaredMemberSurface(typeValue) {
+			} else if found && string(value) == "scalar/top" && declaredMemberSurface(typeValue) {
 				// Top is an honest unknown value, not a retraction of the
 				// declaration every write to this root already had to satisfy. The
 				// declared surface therefore remains what a member read descends
@@ -24400,7 +24471,6 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 				return rootTerm, segs, typeValue, true
 			}
 		}
-		value, found := latestValue(rootTerm, partition)
 		if !found {
 			value, found = selectPayloadValue(rootTerm, partition)
 			if !found {

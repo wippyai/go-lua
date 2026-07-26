@@ -283,3 +283,109 @@ func TestSealedArmTablesJoinStructurally(t *testing.T) {
 		t.Fatalf("joined table = %v, want %v", joined, want)
 	}
 }
+
+// treeNodeArms is the discriminated union the joined-surface tests reconverge:
+// one arm a literal-tagged text node, the other a literal-tagged group node.
+func treeNodeArms() (typ.Type, typ.Type) {
+	text := typetable.NewRecord().Field("kind", typ.LiteralString("text")).Field("value", typ.String).Build()
+	group := typetable.NewRecord().Field("kind", typ.LiteralString("group")).Field("count", typ.Number).Build()
+	return text, group
+}
+
+// TestJoinedSurfaceKeepsWhatEachEdgeProved states the rule a local written on
+// both edges of a branch depends on. One edge assigned a literal and holds its
+// type directly; the other assigned a call result and holds an honest unknown
+// value beside the summary that call proved. The joined point is the union of
+// the two witnesses, so a discriminant read past the branch still has a surface
+// to select an arm from.
+func TestJoinedSurfaceKeepsWhatEachEdgeProved(t *testing.T) {
+	text, group := treeNodeArms()
+	literal, ok := shapefact.EncodeTarget(text)
+	if !ok {
+		t.Fatal("encode arm literal witness")
+	}
+	partition := joinTestPartition(t, nil,
+		equation.Fact{Key: "value/path/tree/op-00000001", Value: []byte("scalar/nil")},
+		equation.Fact{Key: "value/path/tree/op-00000003", Value: literal, Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: "value/path/tree/op-00000004", Value: []byte("scalar/top"), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
+		equation.Fact{Key: summaryTypePrefix + "path/tree/op-00000004", Value: mustCanonicalType(group), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
+	)
+	// The value lane alone still reports the honest unknown: one edge published
+	// no value witness at all.
+	if value, found := latestValue([]byte("path/tree"), partition); !found || !isUnknownScalar(value) {
+		t.Fatalf("value lane at the join = %q / %v, want the unknown scalar", value, found)
+	}
+	root, suffix, source, resolved := typedAncestor([]byte("path/tree.kind"), partition)
+	if !resolved {
+		t.Fatal("the joined point published no member surface")
+	}
+	if string(root) != "path/tree" || len(suffix) != 1 {
+		t.Fatalf("ancestor = %s with %d segments, want path/tree with one", root, len(suffix))
+	}
+	if !typ.TypeEquals(source, normalize.UnionForEvidence(text, group)) {
+		t.Fatalf("joined surface = %v, want the union of both edge witnesses", source)
+	}
+}
+
+// TestJoinedSurfaceWithholdsWhenAnEdgeProvedNothing is the falsifiable half: an
+// edge that published neither a value witness nor a summary states nothing
+// about the joined point, so the other edge must not speak for it.
+func TestJoinedSurfaceWithholdsWhenAnEdgeProvedNothing(t *testing.T) {
+	text, _ := treeNodeArms()
+	literal, ok := shapefact.EncodeTarget(text)
+	if !ok {
+		t.Fatal("encode arm literal witness")
+	}
+	partition := joinTestPartition(t, nil,
+		equation.Fact{Key: "value/path/tree/op-00000001", Value: []byte("scalar/nil")},
+		equation.Fact{Key: "value/path/tree/op-00000003", Value: literal, Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: "value/path/tree/op-00000004", Value: []byte("scalar/top"), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
+	)
+	if value, found := reconvergedSurfaceValue([]byte("path/tree"), partition); !found || !isUnknownScalar(value) {
+		t.Fatalf("joined surface = %q / %v, want the unknown scalar", value, found)
+	}
+	if _, _, _, resolved := typedAncestor([]byte("path/tree.kind"), partition); resolved {
+		t.Fatal("an edge that proved nothing still produced a member surface")
+	}
+}
+
+// TestJoinedSurfaceRefusesAClaimPayload holds the trust boundary: a declaration
+// recorded as a claim on the declaring write is user-asserted, not a checker
+// proof, and therefore contributes no witness to the join.
+func TestJoinedSurfaceRefusesAClaimPayload(t *testing.T) {
+	text, _ := treeNodeArms()
+	literal, ok := shapefact.EncodeTarget(text)
+	if !ok {
+		t.Fatal("encode arm literal witness")
+	}
+	partition := joinTestPartition(t, nil,
+		equation.Fact{Key: "value/path/tree/op-00000001", Value: []byte("scalar/nil")},
+		equation.Fact{Key: "value/path/tree/op-00000002", Value: []byte("scalar/claim/claim-kind/3/claim-type/\"TreeNode\"")},
+		equation.Fact{Key: "value/path/tree/op-00000004", Value: literal, Guards: []equation.Guard{joinTestGuard("op-00000003", "true")}},
+	)
+	if value, found := reconvergedSurfaceValue([]byte("path/tree"), partition); !found || !isUnknownScalar(value) {
+		t.Fatalf("joined surface = %q / %v, want the unknown scalar", value, found)
+	}
+}
+
+// TestJoinedSurfaceStaysPrivateInsideAnEdge keeps the join from erasing the
+// precision it exists to preserve: inside one edge that edge's own publication
+// is the surface, not the union with its complement.
+func TestJoinedSurfaceStaysPrivateInsideAnEdge(t *testing.T) {
+	text, group := treeNodeArms()
+	literal, ok := shapefact.EncodeTarget(text)
+	if !ok {
+		t.Fatal("encode arm literal witness")
+	}
+	facts := []equation.Fact{
+		{Key: "value/path/tree/op-00000001", Value: []byte("scalar/nil")},
+		{Key: "value/path/tree/op-00000003", Value: literal, Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		{Key: "value/path/tree/op-00000004", Value: []byte("scalar/top"), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
+		{Key: summaryTypePrefix + "path/tree/op-00000004", Value: mustCanonicalType(group), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
+	}
+	inside := joinTestPartition(t, []equation.Guard{joinTestGuard("op-00000002", "true")}, facts...)
+	_, _, source, resolved := typedAncestor([]byte("path/tree.kind"), inside)
+	if !resolved || !typ.TypeEquals(source, text) {
+		t.Fatalf("inside the true edge surface = %v / %v, want the arm literal alone", source, resolved)
+	}
+}
