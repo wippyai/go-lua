@@ -335,9 +335,9 @@ func conditionalReturnForPrototype(child front.Compilation, outcome equation.Out
 			continue
 		}
 		encoded, found := artifactOperand(operation.Operands, "predicate")
-		predicate, decoded := decodeBranchPredicateWire(encoded)
+		predicate, decoded, err := front.DecodeBranchPredicateWire(encoded)
 		index, formal := formals[predicate.Path]
-		if !found || !decoded || predicate.Kind != "literal-equal" || predicate.Negated ||
+		if !found || err != nil || !decoded || predicate.Kind != "literal-equal" || predicate.Negated ||
 			predicate.Literal == "" || !formal || branchName != "" {
 			continue
 		}

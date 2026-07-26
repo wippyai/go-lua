@@ -74,7 +74,11 @@ const (
 // carries the source-frozen WTO certificate for that same artifact.
 type Compilation struct {
 	Artifact equation.Artifact
-	Cyclic   *equation.CyclicArtifact
+	// draftWiresValidated certifies the final artifact after all front-owned
+	// publication appends. Engine consumers revalidate only externally
+	// assembled Compilation values.
+	draftWiresValidated bool
+	Cyclic              *equation.CyclicArtifact
 	// Frozen is retained for every admitted body, including acyclic bodies.
 	// Cyclic remains the execution-path signal; consumers that need a stable
 	// interprocedural identity must use this certificate instead of rebuilding
@@ -296,6 +300,9 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 		return Compilation{}, err
 	}
 	compilation.Artifact = artifact
+	// Every draft wire in this artifact was built by the validated constructors
+	// fenced in wire_codec.go; the final append adds no draft-wire operands.
+	compilation.draftWiresValidated = true
 	cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
 	if err != nil {
 		return Compilation{}, err
@@ -1015,6 +1022,8 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 			return nil, fmt.Errorf("front: nested body %q native constants: %w", proto.Name, err)
 		}
 		child.Artifact = artifact
+		// compileWIRForBody uses the same fenced constructors as the root.
+		child.draftWiresValidated = true
 		cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
 		if err != nil {
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
@@ -3069,22 +3078,14 @@ func localClosurePath(body *wir.Body, operand wir.Operand) bool {
 	return false
 }
 
-type moduleProviderWire struct {
-	Module string `json:"module"`
-	Suffix string `json:"suffix,omitempty"`
-}
-
 // moduleProvider binds an external call to the exact member of a resolved
 // require alias.  It carries structural path evidence, never a name allowlist.
 func moduleProvider(module, suffix string) (equation.Term, bool) {
-	if module == "" {
-		return equation.Term{}, false
-	}
-	wired, err := json.Marshal(moduleProviderWire{Module: module, Suffix: suffix})
+	wired, err := EncodeModuleProviderWire(ModuleProviderWire{Module: module, Suffix: suffix})
 	if err != nil {
 		return equation.Term{}, false
 	}
-	return equation.ClosedTerm([]byte("provider/module/v1/" + base64.RawURLEncoding.EncodeToString(wired))), true
+	return equation.ClosedTerm(wired), true
 }
 
 // exactRequireModule recognizes Lua's direct require("module") form before

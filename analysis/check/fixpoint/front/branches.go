@@ -1,7 +1,6 @@
 package front
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -14,45 +13,9 @@ import (
 )
 
 const (
-	branchPredicatePrefix = "front/branch-predicate/v1/"
-	branchEvidencePrefix  = "front/branch-evidence/v1/"
 	branchArmEncoding     = "front/branch-arm/v1"
-	branchDiffPrefix      = "front/branch-diff/v1/"
 	densityRelationPrefix = "front/density-relation/v1/"
 )
-
-// branchPredicateWire is the closed branch predicate vocabulary shared with
-// the canonical branch kernel.  It contains resolved WIR identities only;
-// neither an AST node nor a state callback can enter the equation artifact.
-type branchPredicateWire struct {
-	Kind           string `json:"kind"`
-	Path           string `json:"path,omitempty"`
-	OtherPath      string `json:"other_path,omitempty"`
-	TypeName       string `json:"type_name,omitempty"`
-	Literal        string `json:"literal,omitempty"`
-	LenFloor       int64  `json:"len_floor,omitempty"`
-	NumFloor       int64  `json:"num_floor,omitempty"`
-	NumCeil        int64  `json:"num_ceil,omitempty"`
-	HasNumCeil     bool   `json:"has_num_ceil,omitempty"`
-	NumCeilNegated bool   `json:"num_ceil_negated,omitempty"`
-	Modulus        int64  `json:"modulus,omitempty"`
-	Residue        int64  `json:"residue,omitempty"`
-	Negated        bool   `json:"negated,omitempty"`
-}
-
-type branchDiffWire struct {
-	CoHi     int64  `json:"co_hi"`
-	HiPath   string `json:"hi_path"`
-	HiIsLen  bool   `json:"hi_is_len,omitempty"`
-	CoHi2    int64  `json:"co_hi2,omitempty"`
-	Hi2Path  string `json:"hi2_path,omitempty"`
-	Hi2IsLen bool   `json:"hi2_is_len,omitempty"`
-	HasHi2   bool   `json:"has_hi2,omitempty"`
-	LoPath   string `json:"lo_path"`
-	LoIsLen  bool   `json:"lo_is_len,omitempty"`
-	C        int64  `json:"c,omitempty"`
-	Edge     bool   `json:"edge,omitempty"`
-}
 
 // shortCircuitBypass names the value-position short-circuit whose guard a
 // branch is. result carries value on the bypass edge, which is the edge that
@@ -177,20 +140,35 @@ func branchOperands(body *wir.Body, instruction wir.Instruction, bypass shortCir
 }
 
 func branchEvidenceTerm(check wir.ImpliedCheck) (equation.Term, error) {
-	predicate, err := branchPredicateTerm(check.Check)
+	wire, err := branchPredicateWireForCheck(check.Check)
 	if err != nil {
 		return equation.Term{}, err
 	}
-	prefix := fmt.Sprintf("%s%t/%t/", branchEvidencePrefix, check.Edge, check.Polarity)
-	return equation.ClosedTerm(append([]byte(prefix), predicate.Encoding...)), nil
+	encoded, err := EncodeBranchEvidenceWire(wire, check.Edge, check.Polarity)
+	if err != nil {
+		return equation.Term{}, err
+	}
+	return equation.ClosedTerm(encoded), nil
 }
 
 func branchPredicateTerm(check wir.Check) (equation.Term, error) {
+	wire, err := branchPredicateWireForCheck(check)
+	if err != nil {
+		return equation.Term{}, err
+	}
+	encoded, err := EncodeBranchPredicateWire(wire)
+	if err != nil {
+		return equation.Term{}, err
+	}
+	return equation.ClosedTerm(encoded), nil
+}
+
+func branchPredicateWireForCheck(check wir.Check) (BranchPredicateWire, error) {
 	kind, ok := branchCheckKind(check.Kind)
 	if !ok || check.Kind == wir.CheckNone {
-		return equation.Term{}, fmt.Errorf("unsupported normalized check kind %d", check.Kind)
+		return BranchPredicateWire{}, fmt.Errorf("unsupported normalized check kind %d", check.Kind)
 	}
-	wire := branchPredicateWire{
+	wire := BranchPredicateWire{
 		Kind: kind, TypeName: check.TypeName, LenFloor: check.LenFloor,
 		NumFloor: check.NumFloor, NumCeil: check.NumCeil, HasNumCeil: check.HasNumCeil,
 		NumCeilNegated: check.NumCeilNegated, Modulus: check.Modulus, Residue: check.Residue,
@@ -200,29 +178,25 @@ func branchPredicateTerm(check wir.Check) (equation.Term, error) {
 	if requiresBranchPath(check.Kind) {
 		wire.Path, err = checkPathKey(check.Path)
 		if err != nil {
-			return equation.Term{}, err
+			return BranchPredicateWire{}, err
 		}
 	}
 	if requiresOtherBranchPath(check.Kind, check.TypeName) {
 		wire.OtherPath, err = checkPathKey(check.OtherPath)
 		if err != nil {
-			return equation.Term{}, fmt.Errorf("other path: %w", err)
+			return BranchPredicateWire{}, fmt.Errorf("other path: %w", err)
 		}
 	}
 	if check.Kind == wir.CheckLiteralEqual || check.Kind == wir.CheckLiteralNot {
 		wire.Literal, err = literalScalarEncoding(check.Literal)
 		if err != nil {
-			return equation.Term{}, err
+			return BranchPredicateWire{}, err
 		}
 	}
 	if (check.Kind == wir.CheckTypeEqual || check.Kind == wir.CheckTypeNot) && check.TypeName == "" && wire.OtherPath == "" {
-		return equation.Term{}, fmt.Errorf("type predicate has neither a type name nor an other path")
+		return BranchPredicateWire{}, fmt.Errorf("type predicate has neither a type name nor an other path")
 	}
-	encoded, err := json.Marshal(wire)
-	if err != nil {
-		return equation.Term{}, fmt.Errorf("encode predicate: %w", err)
-	}
-	return equation.ClosedTerm(append([]byte(branchPredicatePrefix), encoded...)), nil
+	return wire, nil
 }
 
 func branchDiffTerm(diff wir.BranchDiffConstraint) (equation.Term, error) {
@@ -234,18 +208,18 @@ func branchDiffTerm(diff wir.BranchDiffConstraint) (equation.Term, error) {
 	if err != nil {
 		return equation.Term{}, fmt.Errorf("low path: %w", err)
 	}
-	wire := branchDiffWire{CoHi: diff.CoHi, HiPath: hi, HiIsLen: diff.HiIsLen, CoHi2: diff.CoHi2, Hi2IsLen: diff.Hi2IsLen, HasHi2: diff.HasHi2, LoPath: lo, LoIsLen: diff.LoIsLen, C: diff.C, Edge: diff.Edge}
+	wire := BranchDiffWire{CoHi: diff.CoHi, HiPath: hi, HiIsLen: diff.HiIsLen, CoHi2: diff.CoHi2, Hi2IsLen: diff.Hi2IsLen, HasHi2: diff.HasHi2, LoPath: lo, LoIsLen: diff.LoIsLen, C: diff.C, Edge: diff.Edge}
 	if diff.HasHi2 {
 		wire.Hi2Path, err = checkPathKey(diff.Hi2Path)
 		if err != nil {
 			return equation.Term{}, fmt.Errorf("second high path: %w", err)
 		}
 	}
-	encoded, err := json.Marshal(wire)
+	encoded, err := EncodeBranchDiffWire(wire)
 	if err != nil {
-		return equation.Term{}, fmt.Errorf("encode difference constraint: %w", err)
+		return equation.Term{}, err
 	}
-	return equation.ClosedTerm(append([]byte(branchDiffPrefix), encoded...)), nil
+	return equation.ClosedTerm(encoded), nil
 }
 
 func checkPathKey(checkPath path.Path) (string, error) {

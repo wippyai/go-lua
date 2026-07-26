@@ -1,10 +1,10 @@
 package engine
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 )
 
 // residueWindowPartition holds one published residue window for a path, in the
@@ -24,12 +24,11 @@ func residueWindowPartition(t *testing.T, path string, window string) equation.P
 // evidence encoding, on the requested edge and polarity.
 func encodeEvidence(t *testing.T, edge, polarity string, predicate branchPredicateWire) []byte {
 	t.Helper()
-	encoded, err := json.Marshal(predicate)
+	encoded, err := front.EncodeBranchEvidenceWire(predicate, edge == "true", polarity == "true")
 	if err != nil {
 		t.Fatalf("encoding predicate: %v", err)
 	}
-	prefix := branchEvidencePrefix + edge + "/" + polarity + "/" + branchPredicatePrefix
-	return append([]byte(prefix), encoded...)
+	return encoded
 }
 
 func TestNumericEdgeSatisfiableRefutesAnInfeasibleConjunction(t *testing.T) {
@@ -152,10 +151,10 @@ func TestTrueEdgeNumericPredicatesRejectSufficientChecks(t *testing.T) {
 		{Role: "sufficient-00000000", Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 		{Role: "sufficient-00000001", Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 3, Negated: true})},
 	}}
-	if predicates := trueEdgeNumericPredicates(operation); len(predicates) != 0 {
+	if predicates, err := trueEdgeNumericPredicates(operation); err != nil || len(predicates) != 0 {
 		t.Fatalf("a sufficient check states no necessary condition of its edge, got %v", predicates)
 	}
-	if _, decided := branchNumericTruth(operation, equation.Partition{}); decided {
+	if _, decided, err := branchNumericTruth(operation, equation.Partition{}); err != nil || decided {
 		t.Fatal("a disjunction whose arms exclude each other is still reachable")
 	}
 }
@@ -164,7 +163,7 @@ func TestTrueEdgeNumericPredicatesRejectFalseEdgeEvidence(t *testing.T) {
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
 		{Role: "implied-00000000", Value: encodeEvidence(t, "false", "false", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 	}}
-	if predicates := trueEdgeNumericPredicates(operation); len(predicates) != 0 {
+	if predicates, err := trueEdgeNumericPredicates(operation); err != nil || len(predicates) != 0 {
 		t.Fatalf("false-edge evidence asserts nothing on the true edge, got %v", predicates)
 	}
 }
@@ -176,7 +175,10 @@ func TestTrueEdgeNumericPredicatesIgnoreAnUnknownRole(t *testing.T) {
 		{Role: "recurrence", Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 		{Role: "implied-00000000", Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 	}}
-	predicates := trueEdgeNumericPredicates(operation)
+	predicates, err := trueEdgeNumericPredicates(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(predicates) != 1 || predicates[0].NumFloor != 5 {
 		t.Fatalf("expected exactly the implied check, got %v", predicates)
 	}
@@ -187,34 +189,34 @@ func TestNegatableBranchSelectorRefusesACompoundCondition(t *testing.T) {
 		{Role: "condition", Value: []byte("temp/0")},
 		{Role: "implied-00000000", Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 	}}
-	if _, single := negatableBranchSelector(compound); single {
+	if _, single, err := negatableBranchSelector(compound); err != nil || single {
 		t.Fatal("a compound condition's false edge refutes no individual conjunct")
 	}
 }
 
 func TestBranchNumericTruthProvesTheTrueEdgeOfABoundInsideItsWindow(t *testing.T) {
-	predicate, err := json.Marshal(branchPredicateWire{Kind: "num-ge", Path: "y", NumFloor: 0})
+	predicate, err := front.EncodeBranchPredicateWire(branchPredicateWire{Kind: "num-ge", Path: "y", NumFloor: 0})
 	if err != nil {
 		t.Fatalf("encoding predicate: %v", err)
 	}
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: "predicate", Value: append([]byte(branchPredicatePrefix), predicate...)},
+		{Role: "predicate", Value: predicate},
 	}}
-	truth, decided := branchNumericTruth(operation, residueWindowPartition(t, "y", `{"low":1,"high":3}`))
-	if !decided || !truth {
+	truth, decided, err := branchNumericTruth(operation, residueWindowPartition(t, "y", `{"low":1,"high":3}`))
+	if err != nil || !decided || !truth {
 		t.Fatalf("a window at [1, 3] proves y >= 0, got truth=%v decided=%v", truth, decided)
 	}
 }
 
 func TestBranchNumericTruthLeavesAnUndecidedBoundAlone(t *testing.T) {
-	predicate, err := json.Marshal(branchPredicateWire{Kind: "num-ge", Path: "y", NumFloor: 2})
+	predicate, err := front.EncodeBranchPredicateWire(branchPredicateWire{Kind: "num-ge", Path: "y", NumFloor: 2})
 	if err != nil {
 		t.Fatalf("encoding predicate: %v", err)
 	}
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: "predicate", Value: append([]byte(branchPredicatePrefix), predicate...)},
+		{Role: "predicate", Value: predicate},
 	}}
-	if _, decided := branchNumericTruth(operation, residueWindowPartition(t, "y", `{"low":0,"high":3}`)); decided {
+	if _, decided, err := branchNumericTruth(operation, residueWindowPartition(t, "y", `{"low":0,"high":3}`)); err != nil || decided {
 		t.Fatal("a window straddling the floor decides neither arm")
 	}
 }

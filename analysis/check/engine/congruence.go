@@ -2,11 +2,13 @@ package engine
 
 import (
 	"encoding/base64"
+	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -21,11 +23,14 @@ const pathEqualityPrefix = "path-equality/"
 // pathEqualityFacts records the equalities a branch proves on each of its
 // edges. The true edge of `p == q` proves the equality; so does the false edge
 // of `p ~= q`, which is the early-return spelling of the same guard.
-func pathEqualityFacts(operation equation.BoundEquation, partition equation.Partition) []equation.Fact {
+func pathEqualityFacts(operation equation.BoundEquation, partition equation.Partition) ([]equation.Fact, error) {
 	var facts []equation.Fact
 	seen := make(map[string]bool)
 	for _, operand := range operation.Operands {
-		predicate, edge, polarity, ok := branchEvidencePredicateOnEdge(operand)
+		predicate, edge, polarity, ok, err := branchEvidencePredicateOnEdge(operand)
+		if err != nil {
+			return nil, err
+		}
 		if !ok || predicate.Path == "" || predicate.OtherPath == "" || predicate.Negated {
 			continue
 		}
@@ -59,7 +64,7 @@ func pathEqualityFacts(operation equation.BoundEquation, partition equation.Part
 			)),
 		})
 	}
-	return facts
+	return facts, nil
 }
 
 // pathEqualityKey orders the two terms so one relation has one key whichever
@@ -147,7 +152,10 @@ func persistentCongruenceConeFacts(operation equation.BoundEquation, partition e
 	}
 	nonNil := make(map[string]bool)
 	for _, operand := range operation.Operands {
-		predicate, trueEdge, ok := branchEvidencePredicate(operand)
+		predicate, trueEdge, ok, err := branchEvidencePredicate(operand)
+		if err != nil {
+			return nil, err
+		}
 		if !ok || !trueEdge || predicate.Negated || predicate.Kind != "not-nil" || predicate.Path == "" {
 			continue
 		}
@@ -156,7 +164,11 @@ func persistentCongruenceConeFacts(operation equation.BoundEquation, partition e
 	if len(nonNil) == 0 {
 		return nil, nil
 	}
-	equal = mergeEqualityClasses(equal, congruenceClasses(operation, partition))
+	current, err := congruenceClasses(operation, partition)
+	if err != nil {
+		return nil, err
+	}
+	equal = mergeEqualityClasses(equal, current)
 	guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.TrueEdge})
 	facts, err := correlationConeFacts(equal, nonNil, operation, partition, guard)
 	if err != nil {
@@ -200,10 +212,13 @@ func mergeEqualityClasses(into, from map[string]map[string]bool) map[string]map[
 // type as the narrowed term did before the narrowing: transferring into a
 // different declared surface would claim a refinement the equality does not
 // establish.
-func congruenceTransfers(operation equation.BoundEquation, partition equation.Partition, narrowed map[string]typ.Type, order []string) []impliedNarrowing {
-	equal := congruenceClasses(operation, partition)
+func congruenceTransfers(operation equation.BoundEquation, partition equation.Partition, narrowed map[string]typ.Type, order []string) ([]impliedNarrowing, error) {
+	equal, err := congruenceClasses(operation, partition)
+	if err != nil {
+		return nil, err
+	}
 	if len(equal) == 0 || len(order) == 0 {
-		return nil
+		return nil, nil
 	}
 	base := func(term string) (typ.Type, bool) {
 		value, err := resolveCurrentValue([]byte(term), partition)
@@ -234,15 +249,18 @@ func congruenceTransfers(operation equation.BoundEquation, partition equation.Pa
 			out = append(out, impliedNarrowing{term: target, narrowed: narrowed[term]})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // congruenceClasses joins the equalities this branch proves on its own true
 // edge with those already proven on the path reaching it.
-func congruenceClasses(operation equation.BoundEquation, partition equation.Partition) map[string]map[string]bool {
+func congruenceClasses(operation equation.BoundEquation, partition equation.Partition) (map[string]map[string]bool, error) {
 	equal := provenPathEqualities(partition)
 	for _, operand := range operation.Operands {
-		predicate, trueEdge, ok := branchEvidencePredicate(operand)
+		predicate, trueEdge, ok, err := branchEvidencePredicate(operand)
+		if err != nil {
+			return nil, err
+		}
 		if !ok || !trueEdge || predicate.Negated || predicate.Kind != "path-equal" ||
 			predicate.Path == "" || predicate.OtherPath == "" {
 			continue
@@ -263,7 +281,7 @@ func congruenceClasses(operation equation.BoundEquation, partition equation.Part
 		equal[predicate.Path][predicate.OtherPath] = true
 		equal[predicate.OtherPath][predicate.Path] = true
 	}
-	return equal
+	return equal, nil
 }
 
 // correlatedEqualityTargets lists the paths a source is equal to, including the
@@ -294,23 +312,21 @@ func correlatedEqualityTargets(source string, equal map[string]map[string]bool) 
 // with the edge it was published on and its polarity there. The narrower
 // true-edge reader remains the default; a consumer that must also read the
 // false edge of an inequality uses this one.
-func branchEvidencePredicateOnEdge(operand equation.BoundOperand) (branchPredicateWire, bool, bool, bool) {
-	encoded := operand.Value
-	edge, polarity := true, true
-	if strings.HasPrefix(string(encoded), branchEvidencePrefix) {
-		rest := strings.TrimPrefix(string(encoded), branchEvidencePrefix)
-		parts := strings.SplitN(rest, "/", 3)
-		if len(parts) != 3 {
-			return branchPredicateWire{}, false, false, false
-		}
-		edge, polarity = parts[0] == "true", parts[1] == "true"
-		encoded = []byte(parts[2])
-	} else if operand.Role != "predicate" {
-		return branchPredicateWire{}, false, false, false
+func branchEvidencePredicateOnEdge(operand equation.BoundOperand) (branchPredicateWire, bool, bool, bool, error) {
+	if predicate, edge, polarity, present, err := front.DecodeBranchEvidenceWire(operand.Value); err != nil {
+		return branchPredicateWire{}, false, false, false, err
+	} else if present {
+		return predicate, edge, polarity, true, nil
 	}
-	predicate, ok := decodeBranchPredicateWire(encoded)
-	if !ok {
-		return branchPredicateWire{}, false, false, false
+	if operand.Role != "predicate" {
+		return branchPredicateWire{}, false, false, false, nil
 	}
-	return predicate, edge, polarity, true
+	predicate, present, err := front.DecodeBranchPredicateWire(operand.Value)
+	if err != nil {
+		return branchPredicateWire{}, false, false, false, err
+	}
+	if !present {
+		return branchPredicateWire{}, false, false, false, fmt.Errorf("engine: predicate role has no predicate wire")
+	}
+	return predicate, true, true, true, nil
 }

@@ -1,0 +1,301 @@
+package front
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+)
+
+const (
+	branchPredicatePrefix = "front/branch-predicate/v1/"
+	branchEvidencePrefix  = "front/branch-evidence/v1/"
+	branchDiffPrefix      = "front/branch-diff/v1/"
+	moduleProviderPrefix  = "provider/module/v1/"
+)
+
+// BranchPredicateWire is the closed branch predicate vocabulary. The front
+// owns both its schema and codec; consumers must not reconstruct either from
+// the JSON representation.
+type BranchPredicateWire struct {
+	Kind           string `json:"kind"`
+	Path           string `json:"path,omitempty"`
+	OtherPath      string `json:"other_path,omitempty"`
+	TypeName       string `json:"type_name,omitempty"`
+	Literal        string `json:"literal,omitempty"`
+	LenFloor       int64  `json:"len_floor,omitempty"`
+	NumFloor       int64  `json:"num_floor,omitempty"`
+	NumCeil        int64  `json:"num_ceil,omitempty"`
+	HasNumCeil     bool   `json:"has_num_ceil,omitempty"`
+	NumCeilNegated bool   `json:"num_ceil_negated,omitempty"`
+	Modulus        int64  `json:"modulus,omitempty"`
+	Residue        int64  `json:"residue,omitempty"`
+	Negated        bool   `json:"negated,omitempty"`
+}
+
+// BranchDiffWire is one normalized difference-logic descriptor:
+//
+//	CoHi*HiPath + CoHi2*Hi2Path - LoPath <= C
+type BranchDiffWire struct {
+	CoHi     int64  `json:"co_hi"`
+	HiPath   string `json:"hi_path"`
+	HiIsLen  bool   `json:"hi_is_len,omitempty"`
+	CoHi2    int64  `json:"co_hi2,omitempty"`
+	Hi2Path  string `json:"hi2_path,omitempty"`
+	Hi2IsLen bool   `json:"hi2_is_len,omitempty"`
+	HasHi2   bool   `json:"has_hi2,omitempty"`
+	LoPath   string `json:"lo_path"`
+	LoIsLen  bool   `json:"lo_is_len,omitempty"`
+	C        int64  `json:"c,omitempty"`
+	Edge     bool   `json:"edge,omitempty"`
+}
+
+// ModuleProviderWire binds a provider to one resolved require module and
+// structural member suffix.
+type ModuleProviderWire struct {
+	Module string `json:"module"`
+	Suffix string `json:"suffix,omitempty"`
+}
+
+// ValidateDraftWires checks an externally assembled compilation. Compilations
+// returned by this front carry a private post-construction certificate and pay
+// no second decode cost at the engine boundary.
+func (compilation Compilation) ValidateDraftWires() error {
+	if compilation.draftWiresValidated {
+		return nil
+	}
+	return ValidateDraftWires(compilation.Artifact)
+}
+
+// ValidateDraftWires is the admission fence for the front-owned wire families.
+// An unrelated operand is absent semantics; an operand that carries one of
+// these tags but cannot decode is a malformed artifact and must stop before
+// any engine consumer can reinterpret it as absence.
+func ValidateDraftWires(artifact equation.Artifact) error {
+	for _, operation := range artifact.Equations {
+		for _, operand := range operation.Operands {
+			encoded := operand.Term.Encoding
+			_, predicatePresent, predicateErr := DecodeBranchPredicateWire(encoded)
+			if predicateErr != nil {
+				return fmt.Errorf("front: operation %q role %q: %w", operation.Target.Name, operand.Role, predicateErr)
+			}
+			_, _, _, evidencePresent, evidenceErr := DecodeBranchEvidenceWire(encoded)
+			if evidenceErr != nil {
+				return fmt.Errorf("front: operation %q role %q: %w", operation.Target.Name, operand.Role, evidenceErr)
+			}
+			_, differencePresent, differenceErr := DecodeBranchDiffWire(encoded)
+			if differenceErr != nil {
+				return fmt.Errorf("front: operation %q role %q: %w", operation.Target.Name, operand.Role, differenceErr)
+			}
+			_, _, providerErr := DecodeModuleProviderWire(encoded)
+			if providerErr != nil {
+				return fmt.Errorf("front: operation %q role %q: %w", operation.Target.Name, operand.Role, providerErr)
+			}
+			switch {
+			case operand.Role == "predicate" && !predicatePresent:
+				return fmt.Errorf("front: operation %q predicate role has no predicate wire", operation.Target.Name)
+			case strings.HasPrefix(operand.Role, "difference-") && !differencePresent:
+				return fmt.Errorf("front: operation %q difference role %q has no difference wire", operation.Target.Name, operand.Role)
+			case strings.HasPrefix(operand.Role, "implied-") && !evidencePresent:
+				return fmt.Errorf("front: operation %q implied role %q has no evidence wire", operation.Target.Name, operand.Role)
+			case strings.HasPrefix(operand.Role, "sufficient-") &&
+				!strings.HasPrefix(operand.Role, "sufficient-arm-") && !evidencePresent:
+				return fmt.Errorf("front: operation %q sufficient role %q has no evidence wire", operation.Target.Name, operand.Role)
+			case strings.Contains(operand.Role, "-check-") && !evidencePresent:
+				return fmt.Errorf("front: operation %q check role %q has no evidence wire", operation.Target.Name, operand.Role)
+			}
+		}
+	}
+	return nil
+}
+
+func decodeDraftJSON(encoded []byte, destination any) error {
+	return json.Unmarshal(encoded, destination)
+}
+
+// EncodeBranchPredicateWire is the sole constructor of predicate wire bytes.
+func EncodeBranchPredicateWire(wire BranchPredicateWire) ([]byte, error) {
+	if err := validateBranchPredicateWire(wire); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return nil, fmt.Errorf("front: encode branch predicate: %w", err)
+	}
+	return append([]byte(branchPredicatePrefix), encoded...), nil
+}
+
+// DecodeBranchPredicateWire distinguishes an unrelated value (present=false)
+// from a malformed predicate value (present=true, err!=nil).
+func DecodeBranchPredicateWire(encoded []byte) (wire BranchPredicateWire, present bool, err error) {
+	if !bytes.HasPrefix(encoded, []byte(branchPredicatePrefix)) {
+		return BranchPredicateWire{}, false, nil
+	}
+	if err := decodeDraftJSON(encoded[len(branchPredicatePrefix):], &wire); err != nil {
+		return BranchPredicateWire{}, true, fmt.Errorf("front: decode branch predicate: %w", err)
+	}
+	if err := validateBranchPredicateWire(wire); err != nil {
+		return BranchPredicateWire{}, true, err
+	}
+	return wire, true, nil
+}
+
+func validateBranchPredicateWire(wire BranchPredicateWire) error {
+	requiresPath := true
+	requiresOther := false
+	switch wire.Kind {
+	case "truthy", "falsy", "nil", "not-nil", "len-ge", "num-ge", "num-le", "frozen-table", "mod-residue":
+	case "literal-equal", "literal-not":
+		if wire.Literal == "" {
+			return fmt.Errorf("front: literal branch predicate has no literal")
+		}
+	case "path-equal", "path-not", "index-in-range":
+		requiresOther = true
+	case "type-equal", "type-not":
+		if wire.TypeName == "" && wire.OtherPath == "" {
+			return fmt.Errorf("front: type branch predicate has neither type name nor other path")
+		}
+	default:
+		return fmt.Errorf("front: unknown branch predicate kind %q", wire.Kind)
+	}
+	if requiresPath && wire.Path == "" {
+		return fmt.Errorf("front: branch predicate %q has no path", wire.Kind)
+	}
+	if requiresOther && wire.OtherPath == "" {
+		return fmt.Errorf("front: branch predicate %q has no other path", wire.Kind)
+	}
+	return nil
+}
+
+// EncodeBranchEvidenceWire is the sole constructor of a predicate plus its
+// branch-edge polarity envelope.
+func EncodeBranchEvidenceWire(wire BranchPredicateWire, edge, polarity bool) ([]byte, error) {
+	predicate, err := EncodeBranchPredicateWire(wire)
+	if err != nil {
+		return nil, err
+	}
+	prefix := fmt.Sprintf("%s%t/%t/", branchEvidencePrefix, edge, polarity)
+	return append([]byte(prefix), predicate...), nil
+}
+
+// DecodeBranchEvidenceWire distinguishes a non-evidence value from a malformed
+// evidence envelope and returns the enclosed predicate through the same codec.
+func DecodeBranchEvidenceWire(encoded []byte) (wire BranchPredicateWire, edge, polarity, present bool, err error) {
+	if !bytes.HasPrefix(encoded, []byte(branchEvidencePrefix)) {
+		return BranchPredicateWire{}, false, false, false, nil
+	}
+	rest := encoded[len(branchEvidencePrefix):]
+	first := bytes.IndexByte(rest, '/')
+	if first < 0 {
+		return BranchPredicateWire{}, false, false, true, fmt.Errorf("front: malformed branch evidence edge")
+	}
+	second := bytes.IndexByte(rest[first+1:], '/')
+	if second < 0 {
+		return BranchPredicateWire{}, false, false, true, fmt.Errorf("front: malformed branch evidence polarity")
+	}
+	second += first + 1
+	parseBool := func(value []byte) (bool, error) {
+		switch string(value) {
+		case "true":
+			return true, nil
+		case "false":
+			return false, nil
+		default:
+			return false, fmt.Errorf("invalid boolean %q", value)
+		}
+	}
+	edge, err = parseBool(rest[:first])
+	if err != nil {
+		return BranchPredicateWire{}, false, false, true, fmt.Errorf("front: branch evidence edge: %w", err)
+	}
+	polarity, err = parseBool(rest[first+1 : second])
+	if err != nil {
+		return BranchPredicateWire{}, false, false, true, fmt.Errorf("front: branch evidence polarity: %w", err)
+	}
+	wire, predicatePresent, err := DecodeBranchPredicateWire(rest[second+1:])
+	if err != nil {
+		return BranchPredicateWire{}, false, false, true, err
+	}
+	if !predicatePresent {
+		return BranchPredicateWire{}, false, false, true, fmt.Errorf("front: branch evidence has no predicate")
+	}
+	return wire, edge, polarity, true, nil
+}
+
+// EncodeBranchDiffWire is the sole constructor of difference wire bytes.
+func EncodeBranchDiffWire(wire BranchDiffWire) ([]byte, error) {
+	if err := validateBranchDiffWire(wire); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return nil, fmt.Errorf("front: encode branch difference: %w", err)
+	}
+	return append([]byte(branchDiffPrefix), encoded...), nil
+}
+
+// DecodeBranchDiffWire distinguishes absence from a malformed descriptor.
+func DecodeBranchDiffWire(encoded []byte) (wire BranchDiffWire, present bool, err error) {
+	if !bytes.HasPrefix(encoded, []byte(branchDiffPrefix)) {
+		return BranchDiffWire{}, false, nil
+	}
+	if err := decodeDraftJSON(encoded[len(branchDiffPrefix):], &wire); err != nil {
+		return BranchDiffWire{}, true, fmt.Errorf("front: decode branch difference: %w", err)
+	}
+	if err := validateBranchDiffWire(wire); err != nil {
+		return BranchDiffWire{}, true, err
+	}
+	return wire, true, nil
+}
+
+func validateBranchDiffWire(wire BranchDiffWire) error {
+	if wire.HiPath == "" || wire.LoPath == "" || (wire.HasHi2 && wire.Hi2Path == "") {
+		return fmt.Errorf("front: branch difference has an empty operand")
+	}
+	if !wire.HasHi2 && (wire.Hi2Path != "" || wire.CoHi2 != 0 || wire.Hi2IsLen) {
+		return fmt.Errorf("front: branch difference has a second operand without its presence tag")
+	}
+	return nil
+}
+
+// EncodeModuleProviderWire is the sole constructor of a module provider wire.
+func EncodeModuleProviderWire(wire ModuleProviderWire) ([]byte, error) {
+	if wire.Module == "" {
+		return nil, fmt.Errorf("front: module provider has no module")
+	}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return nil, fmt.Errorf("front: encode module provider: %w", err)
+	}
+	return []byte(moduleProviderPrefix + base64.RawURLEncoding.EncodeToString(encoded)), nil
+}
+
+// DecodeModuleProviderWire distinguishes unrelated providers from malformed
+// module-provider bytes and rejects non-canonical JSON spellings.
+func DecodeModuleProviderWire(encoded []byte) (wire ModuleProviderWire, present bool, err error) {
+	if !bytes.HasPrefix(encoded, []byte(moduleProviderPrefix)) {
+		return ModuleProviderWire{}, false, nil
+	}
+	payload := encoded[len(moduleProviderPrefix):]
+	wired, decodeErr := base64.RawURLEncoding.DecodeString(string(payload))
+	if decodeErr != nil {
+		return ModuleProviderWire{}, true, fmt.Errorf("front: decode module provider base64: %w", decodeErr)
+	}
+	if err := decodeDraftJSON(wired, &wire); err != nil {
+		return ModuleProviderWire{}, true, fmt.Errorf("front: decode module provider JSON: %w", err)
+	}
+	if wire.Module == "" {
+		return ModuleProviderWire{}, true, fmt.Errorf("front: module provider has no module")
+	}
+	canonical, marshalErr := json.Marshal(wire)
+	if marshalErr != nil {
+		return ModuleProviderWire{}, true, fmt.Errorf("front: canonicalize module provider: %w", marshalErr)
+	}
+	if !bytes.Equal(canonical, wired) {
+		return ModuleProviderWire{}, true, fmt.Errorf("front: non-canonical module provider")
+	}
+	return wire, true, nil
+}

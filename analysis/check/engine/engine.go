@@ -65,8 +65,6 @@ var errMultipleChildReturnAlternatives = errors.New("multiple child return alter
 // always receive a named error instead of an unclassified process crash.
 var ErrInternalPanic = errors.New("engine: internal panic")
 
-const branchPredicatePrefix = "front/branch-predicate/v1/"
-const branchEvidencePrefix = "front/branch-evidence/v1/"
 const densityRelationPrefix = "front/density-relation/v1/"
 
 const literalDiagnosticPrefix = "diagnostic/literal-source/"
@@ -151,27 +149,6 @@ const (
 	// line may carry before it reports the relation without the shape.
 	inlineEvidenceTypeLimit = 96
 )
-
-// branchPredicateWire mirrors the front's closed predicate wire vocabulary.
-// It intentionally contains only resolved WIR data, never an AST expression or
-// an evaluator callback.
-type branchPredicateWire struct {
-	Kind           string `json:"kind"`
-	Path           string `json:"path,omitempty"`
-	OtherPath      string `json:"other_path,omitempty"`
-	TypeName       string `json:"type_name,omitempty"`
-	Literal        string `json:"literal,omitempty"`
-	LenFloor       int64  `json:"len_floor,omitempty"`
-	NumFloor       int64  `json:"num_floor,omitempty"`
-	NumCeil        int64  `json:"num_ceil,omitempty"`
-	HasNumCeil     bool   `json:"has_num_ceil,omitempty"`
-	NumCeilNegated bool   `json:"num_ceil_negated,omitempty"`
-	Modulus        int64  `json:"modulus,omitempty"`
-	Residue        int64  `json:"residue,omitempty"`
-	Negated        bool   `json:"negated,omitempty"`
-	ProducerPoint  uint32 `json:"producer_point,omitempty"`
-	HasProducer    bool   `json:"has_producer,omitempty"`
-}
 
 type Result struct {
 	Artifact equation.Artifact
@@ -384,6 +361,9 @@ func bindCheckEntry(artifact equation.Artifact, imports map[string]typ.Type) (eq
 
 func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding, lexical *lexicalEvaluator, ctx context.Context) (equation.OutputClosure, int, error) {
 	artifact := compilation.Artifact
+	if err := compilation.ValidateDraftWires(); err != nil {
+		return equation.OutputClosure{}, 0, fmt.Errorf("engine: validate front draft wires: %w", err)
+	}
 	if compilation.Cyclic == nil {
 		bound, err := equation.BindEntry(artifact, binding)
 		if err != nil {
@@ -1954,7 +1934,10 @@ func branchPredicateDescription(operation equation.Equation) (string, bool) {
 	for _, operand := range operation.Operands {
 		switch operand.Role {
 		case "predicate":
-			if !strings.HasPrefix(string(operand.Term.Encoding), branchPredicatePrefix) || json.Unmarshal(operand.Term.Encoding[len(branchPredicatePrefix):], &predicate) != nil {
+			var present bool
+			var err error
+			predicate, present, err = front.DecodeBranchPredicateWire(operand.Term.Encoding)
+			if err != nil || !present {
 				return "", false
 			}
 		case "predicate-display":
@@ -2937,6 +2920,9 @@ func lexicalRequiresHeapTransport(compilation front.Compilation) bool {
 func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []byte) (equation.OutputClosure, int, error) {
 	if l == nil || !compilation.Body.Valid() || len(compilation.Artifact.Equations) == 0 {
 		return equation.OutputClosure{}, 0, fmt.Errorf("engine: incomplete lexical body admission")
+	}
+	if err := compilation.ValidateDraftWires(); err != nil {
+		return equation.OutputClosure{}, 0, fmt.Errorf("engine: validate lexical front draft wires: %w", err)
 	}
 	entry := compilation.Artifact.Equations[0].Entry
 	binding := equation.EntryBinding{Parameter: entry, Value: append([]byte(nil), entryValue...)}
@@ -6094,9 +6080,9 @@ func branchConditionTerm(operations []equation.Equation, target string) ([]byte,
 			if operand.Role != "predicate" {
 				continue
 			}
-			var predicate branchPredicateWire
 			encoded := operand.Term.Encoding
-			if !strings.HasPrefix(string(encoded), branchPredicatePrefix) || json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate) != nil || predicate.Path == "" {
+			predicate, present, err := front.DecodeBranchPredicateWire(encoded)
+			if err != nil || !present || predicate.Path == "" {
 				return nil, false
 			}
 			return []byte("path/" + predicate.Path), true
@@ -6583,7 +6569,10 @@ func branchChecksPath(operations []equation.Equation, branch, path string) bool 
 			continue
 		}
 		for _, operand := range operation.Operands {
-			predicate, trueEdge, recognized := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
+			predicate, trueEdge, recognized, err := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
+			if err != nil {
+				return false
+			}
 			if !recognized || !trueEdge || predicate.Path != path {
 				continue
 			}
@@ -7529,8 +7518,8 @@ func entryEstablishedSymbolPath(child front.Compilation, item string) bool {
 // operand carries a term, an arm marker, or display text and states no path.
 func branchEvidencePaths(role string, encoding []byte) ([]string, bool) {
 	if strings.HasPrefix(role, "difference-") {
-		wire, ok := decodeBranchDiff(encoding)
-		if !ok {
+		wire, present, err := front.DecodeBranchDiffWire(encoding)
+		if err != nil || !present {
 			return nil, false
 		}
 		paths := []string{wire.HiPath, wire.LoPath}
@@ -7539,18 +7528,19 @@ func branchEvidencePaths(role string, encoding []byte) ([]string, bool) {
 		}
 		return paths, true
 	}
-	if strings.HasPrefix(string(encoding), branchEvidencePrefix) {
-		parts := strings.SplitN(strings.TrimPrefix(string(encoding), branchEvidencePrefix), "/", 3)
-		if len(parts) != 3 {
-			return nil, false
-		}
-		encoding = []byte(parts[2])
-	} else if role != "predicate" {
+	predicate, _, _, evidencePresent, err := front.DecodeBranchEvidenceWire(encoding)
+	if err != nil {
 		return nil, false
 	}
-	predicate, ok := decodeBranchPredicateWire(encoding)
-	if !ok {
-		return nil, false
+	if !evidencePresent {
+		if role != "predicate" {
+			return nil, false
+		}
+		var predicatePresent bool
+		predicate, predicatePresent, err = front.DecodeBranchPredicateWire(encoding)
+		if err != nil || !predicatePresent {
+			return nil, false
+		}
 	}
 	var paths []string
 	if predicate.Path != "" {
@@ -8125,8 +8115,8 @@ func runtimeTypeEqualPredicate(operands []equation.Operand, role string) (branch
 	if !found {
 		return branchPredicateWire{}, false
 	}
-	wire, ok := decodeBranchPredicateWire(encoded)
-	if !ok || wire.Kind != "type-equal" || wire.Negated || wire.Path == "" || wire.OtherPath != "" {
+	wire, present, err := front.DecodeBranchPredicateWire(encoded)
+	if err != nil || !present || wire.Kind != "type-equal" || wire.Negated || wire.Path == "" || wire.OtherPath != "" {
 		return branchPredicateWire{}, false
 	}
 	if !runtimeTypeProofName(wire.TypeName) {
@@ -8226,7 +8216,10 @@ func (index *admissionBodyIndex) typePredicateHelper() bool {
 
 func (index *admissionBodyIndex) notNilBranch(operation equation.Equation, errorPath string) bool {
 	for _, operand := range operation.Operands {
-		predicate, trueEdge, ok := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
+		predicate, trueEdge, ok, err := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
+		if err != nil {
+			return false
+		}
 		if ok && trueEdge && !predicate.Negated && predicate.Kind == "not-nil" && "path/"+predicate.Path == errorPath {
 			return true
 		}
@@ -9214,11 +9207,11 @@ func nilOriginCandidates(child front.Compilation) map[string]nilOriginWitness {
 			continue
 		}
 		predicate, found := artifactOperand(operation.Operands, "predicate")
-		if !found || !strings.HasPrefix(string(predicate), branchPredicatePrefix) {
+		if !found {
 			continue
 		}
-		var relation branchPredicateWire
-		if json.Unmarshal(predicate[len(branchPredicatePrefix):], &relation) != nil {
+		relation, present, err := front.DecodeBranchPredicateWire(predicate)
+		if err != nil || !present {
 			continue
 		}
 		if relation.Kind != "truthy" || relation.Negated || relation.Path == "" {
@@ -9681,11 +9674,11 @@ func declaredFalseEdgeNilAssignmentClaims(child front.Compilation) map[string]de
 			continue
 		}
 		predicate, found := artifactOperand(operation.Operands, "predicate")
-		if !found || !strings.HasPrefix(string(predicate), branchPredicatePrefix) {
+		if !found {
 			continue
 		}
-		var relation branchPredicateWire
-		if json.Unmarshal(predicate[len(branchPredicatePrefix):], &relation) != nil || relation.Kind != "truthy" || relation.Negated || relation.Path == "" || !formals["path/"+relation.Path] {
+		relation, present, err := front.DecodeBranchPredicateWire(predicate)
+		if err != nil || !present || relation.Kind != "truthy" || relation.Negated || relation.Path == "" || !formals["path/"+relation.Path] {
 			continue
 		}
 		for target, alternative := range trueWrites[operation.Target.Name] {
@@ -14670,8 +14663,11 @@ func currentIndexRelations(partition equation.Partition) ([]branchPredicateWire,
 		if publishedAt == "" {
 			continue
 		}
-		predicate, isPredicate, _ := branchEvidencePredicate(equation.BoundOperand{Role: "predicate", Value: fact.Payload})
-		difference, isDifference := decodeBranchDiff(fact.Payload)
+		predicate, isPredicate, predicateErr := front.DecodeBranchPredicateWire(fact.Payload)
+		difference, isDifference, differenceErr := front.DecodeBranchDiffWire(fact.Payload)
+		if predicateErr != nil || differenceErr != nil {
+			continue
+		}
 		if !isPredicate && !isDifference {
 			continue
 		}
@@ -17675,15 +17671,27 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		return equation.TransactionResult{}, err
 	}
 	result.Closure.Values = append(result.Closure.Values, cone...)
-	result.Closure.Values = append(result.Closure.Values, pathEqualityFacts(operation, partition)...)
+	equalities, err := pathEqualityFacts(operation, partition)
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	result.Closure.Values = append(result.Closure.Values, equalities...)
 	result.Closure.Values = append(result.Closure.Values, recurrenceExitFacts(operation)...)
-	result.Closure.Values = append(result.Closure.Values, residueClassBranchFacts(operation)...)
+	residues, err := residueClassBranchFacts(operation)
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	result.Closure.Values = append(result.Closure.Values, residues...)
 	bypass, err := shortCircuitBypassFacts(operation, partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
 	result.Closure.Values = append(result.Closure.Values, bypass...)
-	result.Closure.Values = append(result.Closure.Values, nativeBranchPublicationFacts(operation, partition, result.Closure.Values)...)
+	nativeFacts, err := nativeBranchPublicationFacts(operation, partition, result.Closure.Values)
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	result.Closure.Values = append(result.Closure.Values, nativeFacts...)
 	return result, nil
 }
 
@@ -17691,14 +17699,20 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 // branch's true edge. The row is guarded to that edge, so a later branch sees
 // it only in the partition where the predicate held. Rebinding the subject is
 // checked by the reader against the ordinary epoch row.
-func residueClassBranchFacts(operation equation.BoundEquation) []equation.Fact {
+func residueClassBranchFacts(operation equation.BoundEquation) ([]equation.Fact, error) {
 	for _, operand := range operation.Operands {
 		if operand.Role != "predicate" {
 			continue
 		}
-		predicate, ok := decodeBranchPredicateWire(operand.Value)
-		if !ok || predicate.Kind != "mod-residue" || predicate.Path == "" || predicate.Modulus <= 0 {
-			return nil
+		predicate, present, err := front.DecodeBranchPredicateWire(operand.Value)
+		if err != nil {
+			return nil, err
+		}
+		if !present {
+			return nil, fmt.Errorf("engine: predicate role has no predicate wire")
+		}
+		if predicate.Kind != "mod-residue" || predicate.Path == "" || predicate.Modulus <= 0 {
+			return nil, nil
 		}
 		payload, err := json.Marshal(branchResidueClassWire{
 			Modulus: predicate.Modulus,
@@ -17706,7 +17720,7 @@ func residueClassBranchFacts(operation equation.BoundEquation) []equation.Fact {
 			Negated: predicate.Negated,
 		})
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{
 			Name: operation.Target.Name,
@@ -17720,9 +17734,9 @@ func residueClassBranchFacts(operation equation.BoundEquation) []equation.Fact {
 			).String(),
 			Value:  payload,
 			Guards: equation.GuardSet(guard),
-		}}
+		}}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // nativeBranchPublicationFacts publishes the native disposition from the same
@@ -17730,7 +17744,7 @@ func residueClassBranchFacts(operation equation.BoundEquation) []equation.Fact {
 // proven edge is dynamic; a proven edge makes the opposite arm unreachable.
 // This is the complete partition rule, so no later WIR walk may reinterpret
 // constants, types, residue constraints, or CFG reachability.
-func nativeBranchPublicationFacts(operation equation.BoundEquation, partition equation.Partition, values []equation.Fact) []equation.Fact {
+func nativeBranchPublicationFacts(operation equation.BoundEquation, partition equation.Partition, values []equation.Fact) ([]equation.Fact, error) {
 	var partitionKey, truthinessKey []byte
 	var predicate branchPredicateWire
 	hasTruthinessPredicate := false
@@ -17741,12 +17755,19 @@ func nativeBranchPublicationFacts(operation equation.BoundEquation, partition eq
 		case "native-truthiness-key":
 			truthinessKey = operand.Value
 		case "predicate":
-			predicate, hasTruthinessPredicate = decodeBranchPredicateWire(operand.Value)
+			var err error
+			predicate, hasTruthinessPredicate, err = front.DecodeBranchPredicateWire(operand.Value)
+			if err != nil {
+				return nil, err
+			}
+			if !hasTruthinessPredicate {
+				return nil, fmt.Errorf("engine: predicate role has no predicate wire")
+			}
 			hasTruthinessPredicate = hasTruthinessPredicate && (predicate.Kind == "truthy" || predicate.Kind == "falsy")
 		}
 	}
 	if len(partitionKey) == 0 {
-		return nil
+		return nil, nil
 	}
 	edge := ""
 	body := fmt.Sprintf("%x", operation.Target.Body)
@@ -17807,9 +17828,9 @@ func nativeBranchPublicationFacts(operation equation.BoundEquation, partition eq
 	}
 	facts := []equation.Fact{{Key: string(partitionKey), Value: []byte(descriptor)}}
 	if len(truthinessKey) == 0 || !hasTruthinessPredicate {
-		return facts
+		return facts, nil
 	}
-	return append(facts, equation.Fact{Key: string(truthinessKey), Value: []byte("class=" + class)})
+	return append(facts, equation.Fact{Key: string(truthinessKey), Value: []byte("class=" + class)}), nil
 }
 
 // shortCircuitBypassFacts states what a value-position short-circuit yields on
@@ -17919,10 +17940,15 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 	// true edge is an addition rather than a withdrawal, so it stays at the
 	// point where no other rule decides the selector and a richer closure keeps
 	// the arm it owns.
-	if proven, decided := branchNumericTruth(operation, partition); decided && !proven {
-		return equation.TransactionResult{Complete: true, Closure: numericBranchOutcome(operation, partition, false)}, nil
+	if proven, decided, err := branchNumericTruth(operation, partition); err != nil {
+		return equation.TransactionResult{}, err
+	} else if decided && !proven {
+		closure, outcomeErr := numericBranchOutcome(operation, partition, false)
+		return equation.TransactionResult{Complete: outcomeErr == nil, Closure: closure}, outcomeErr
 	}
-	if closure, recognized := typePredicateBranchClosure(operation, partition); recognized {
+	if closure, recognized, err := typePredicateBranchClosure(operation, partition); err != nil {
+		return equation.TransactionResult{}, err
+	} else if recognized {
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	if closure, recognized, err := correlationBranchClosure(operation, partition); err != nil {
@@ -18007,7 +18033,10 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 	}
 	if !boundaryPossible {
 		for _, operand := range operation.Operands {
-			predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+			predicate, trueEdge, recognized, evidenceErr := branchEvidencePredicate(operand)
+			if evidenceErr != nil {
+				return equation.TransactionResult{}, evidenceErr
+			}
 			if !recognized || !trueEdge || predicate.Path == "" {
 				continue
 			}
@@ -18024,10 +18053,14 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 		// point where the numeric authorities still hold facts that decide it.
 		// Their verdict is a proof or nothing at all, so an undecided answer
 		// keeps both arms.
-		if proven, decided := branchNumericTruth(operation, partition); decided {
-			return equation.TransactionResult{Complete: true, Closure: numericBranchOutcome(operation, partition, proven)}, nil
+		if proven, decided, numericErr := branchNumericTruth(operation, partition); numericErr != nil {
+			return equation.TransactionResult{}, numericErr
+		} else if decided {
+			closure, outcomeErr := numericBranchOutcome(operation, partition, proven)
+			return equation.TransactionResult{Complete: outcomeErr == nil, Closure: closure}, outcomeErr
 		}
-		return equation.TransactionResult{Complete: true, Closure: undecidedBranchOutcome(operation, partition)}, nil
+		closure, outcomeErr := undecidedBranchOutcome(operation, partition)
+		return equation.TransactionResult{Complete: outcomeErr == nil, Closure: closure}, outcomeErr
 	}
 	truth, frozenGuard := true, false
 	var err error
@@ -18035,10 +18068,14 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 		truth, frozenGuard, err = branchTruth(operation.Operands, partition)
 	}
 	if errors.Is(err, errUnknownScalar) {
-		if proven, decided := branchNumericTruth(operation, partition); decided {
-			return equation.TransactionResult{Complete: true, Closure: numericBranchOutcome(operation, partition, proven)}, nil
+		if proven, decided, numericErr := branchNumericTruth(operation, partition); numericErr != nil {
+			return equation.TransactionResult{}, numericErr
+		} else if decided {
+			closure, outcomeErr := numericBranchOutcome(operation, partition, proven)
+			return equation.TransactionResult{Complete: outcomeErr == nil, Closure: closure}, outcomeErr
 		}
-		return equation.TransactionResult{Complete: true, Closure: undecidedBranchOutcome(operation, partition)}, nil
+		closure, outcomeErr := undecidedBranchOutcome(operation, partition)
+		return equation.TransactionResult{Complete: outcomeErr == nil, Closure: closure}, outcomeErr
 	}
 	if err != nil {
 		return equation.TransactionResult{}, err
@@ -18056,7 +18093,10 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 	// that ends a loop therefore keeps both arms, and the frozen-guard outcome
 	// and the advisories a decided condition carries are not its to publish.
 	if recurrenceExitBranch(operation.Operands) {
-		closure := undecidedBranchOutcome(operation, partition)
+		closure, outcomeErr := undecidedBranchOutcome(operation, partition)
+		if outcomeErr != nil {
+			return equation.TransactionResult{}, outcomeErr
+		}
 		closure.Values = append(closure.Values, boundaryFacts...)
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
@@ -18081,7 +18121,11 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 		closure.Outcomes = append(closure.Outcomes, equation.Fact{Key: "frozen-branch/" + operation.Target.Name, Value: []byte("proven")})
 	}
 	if truth {
-		for _, proof := range runtimeTypeBranchProofs(operation, partition) {
+		proofs, proofErr := runtimeTypeBranchProofs(operation, partition)
+		if proofErr != nil {
+			return equation.TransactionResult{}, proofErr
+		}
+		for _, proof := range proofs {
 			guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.TrueEdge})
 			closure.Values = append(closure.Values, equation.Fact{Key: runtimeTypeProofKey(proof.path, proof.typeName), Value: []byte("proven"), Guards: equation.GuardSet(guard)})
 		}
@@ -18108,7 +18152,10 @@ func compoundTypeEqualityBranchClosure(operation equation.BoundEquation, partiti
 		if !strings.HasPrefix(operand.Role, "implied-") {
 			continue
 		}
-		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		predicate, trueEdge, recognized, err := branchEvidencePredicate(operand)
+		if err != nil {
+			return equation.OutputClosure{}, false, err
+		}
 		if !recognized || !trueEdge {
 			continue
 		}
@@ -18198,7 +18245,7 @@ func compoundBranchOutcome(operation equation.BoundEquation, truth bool) equatio
 // type proof and the projected path value are guarded to the true edge, so
 // they refine only the arm they belong to and the false edge stays unrefined:
 // a conjunct that fails proves nothing about any individual conjunct.
-func undecidedBranchOutcome(operation equation.BoundEquation, partition equation.Partition) equation.OutputClosure {
+func undecidedBranchOutcome(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, error) {
 	closure := equation.OutputClosure{}
 	trueGuard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.TrueEdge})
 	for _, edge := range [2]string{"true", "false"} {
@@ -18208,8 +18255,12 @@ func undecidedBranchOutcome(operation equation.BoundEquation, partition equation
 			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("undecided/" + edge), Guards: equation.GuardSet(guard)},
 		)
 	}
-	closure.Values = append(closure.Values, trueEdgeRefinements(operation, partition, trueGuard)...)
-	return closure
+	refinements, err := trueEdgeRefinements(operation, partition, trueGuard)
+	if err != nil {
+		return equation.OutputClosure{}, err
+	}
+	closure.Values = append(closure.Values, refinements...)
+	return closure, nil
 }
 
 // trueEdgeRefinements are the facts a branch's own true-edge evidence
@@ -18217,14 +18268,22 @@ func undecidedBranchOutcome(operation equation.BoundEquation, partition equation
 // container length floors, and the narrowed path values its normalized checks
 // carry. They are guarded to the true edge, so every branch outcome that keeps
 // that edge reachable publishes exactly this set.
-func trueEdgeRefinements(operation equation.BoundEquation, partition equation.Partition, guard equation.Guard) []equation.Fact {
+func trueEdgeRefinements(operation equation.BoundEquation, partition equation.Partition, guard equation.Guard) ([]equation.Fact, error) {
 	facts := make([]equation.Fact, 0)
-	for _, item := range runtimeTypeBranchProofs(operation, partition) {
+	proofs, err := runtimeTypeBranchProofs(operation, partition)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range proofs {
 		facts = append(facts, equation.Fact{
 			Key: runtimeTypeProofKey(item.path, item.typeName), Value: []byte("proven"), Guards: equation.GuardSet(guard),
 		})
 	}
-	for _, item := range lengthFloorBranchProofs(operation) {
+	floors, err := lengthFloorBranchProofs(operation)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range floors {
 		facts = append(facts, equation.Fact{
 			Key: factkey.BuildKey(factkey.HeapLengthFloor, []factkey.Part{
 				heapIndexSubject([]byte("path/"+item.path), partition),
@@ -18232,7 +18291,11 @@ func trueEdgeRefinements(operation equation.BoundEquation, partition equation.Pa
 			Value: []byte(strconv.FormatInt(item.floor, 10)), Guards: equation.GuardSet(guard),
 		})
 	}
-	for _, item := range impliedTrueEdgeNarrowings(operation, partition) {
+	narrowings, err := impliedTrueEdgeNarrowings(operation, partition)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range narrowings {
 		encoded, ok := shapefact.EncodeTarget(item.narrowed)
 		if !ok {
 			continue
@@ -18241,7 +18304,7 @@ func trueEdgeRefinements(operation equation.BoundEquation, partition equation.Pa
 			Key: termFamilyKey(factkey.Value, item.term, operation.Target.Name).String(), Value: encoded, Guards: equation.GuardSet(guard),
 		})
 	}
-	return facts
+	return facts, nil
 }
 
 // numericBranchOutcome selects the single arm the numeric authorities proved.
@@ -18251,17 +18314,21 @@ func trueEdgeRefinements(operation equation.BoundEquation, partition equation.Pa
 // own true-edge refinements, so it is analyzed with the guard's evidence rather
 // than merely reached. A decision that ends a loop is not such a proof, so it
 // keeps both arms.
-func numericBranchOutcome(operation equation.BoundEquation, partition equation.Partition, truth bool) equation.OutputClosure {
+func numericBranchOutcome(operation equation.BoundEquation, partition equation.Partition, truth bool) (equation.OutputClosure, error) {
 	if recurrenceExitBranch(operation.Operands) {
 		return undecidedBranchOutcome(operation, partition)
 	}
 	closure := compoundBranchOutcome(operation, truth)
 	if !truth {
-		return closure
+		return closure, nil
 	}
 	guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.TrueEdge})
-	closure.Values = append(closure.Values, trueEdgeRefinements(operation, partition, guard)...)
-	return closure
+	refinements, err := trueEdgeRefinements(operation, partition, guard)
+	if err != nil {
+		return equation.OutputClosure{}, err
+	}
+	closure.Values = append(closure.Values, refinements...)
+	return closure, nil
 }
 
 type impliedNarrowing struct {
@@ -18309,7 +18376,7 @@ func discriminantCandidates(root []byte, suffix []segment.Segment, source typ.Ty
 // Only an already-published type witness is refined. An un-understood selector
 // must not invent a value for a path nothing was proven about, and an empty
 // projection means the check refutes its own edge rather than narrowing it.
-func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equation.Partition) []impliedNarrowing {
+func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equation.Partition) ([]impliedNarrowing, error) {
 	narrowed := make(map[string]typ.Type)
 	order := make([]string, 0, len(operation.Operands))
 	record := func(term string, value typ.Type) {
@@ -18328,7 +18395,11 @@ func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equat
 		}
 		return shapefact.DecodeTarget(value)
 	}
-	for _, predicate := range branchTrueEdgePredicates(operation, partition) {
+	predicates, err := branchTrueEdgePredicates(operation, partition)
+	if err != nil {
+		return nil, err
+	}
+	for _, predicate := range predicates {
 		if predicate.Path == "" {
 			continue
 		}
@@ -18461,14 +18532,18 @@ func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equat
 	// receives is a narrowing of the other. The transfer is not privileged
 	// towards nil removal: a discriminant selection carries exactly as far as
 	// the equality does.
-	for _, transfer := range congruenceTransfers(operation, partition, narrowed, order) {
+	transfers, err := congruenceTransfers(operation, partition, narrowed, order)
+	if err != nil {
+		return nil, err
+	}
+	for _, transfer := range transfers {
 		record(transfer.term, transfer.narrowed)
 	}
 	out := make([]impliedNarrowing, 0, len(order))
 	for _, term := range order {
 		out = append(out, impliedNarrowing{term: term, narrowed: narrowed[term]})
 	}
-	return out
+	return out, nil
 }
 
 // nilabilityProjection selects the side of witness that a truthiness or nil
@@ -18605,11 +18680,17 @@ func soleBranchPredicate(operation equation.BoundEquation) (branchPredicateWire,
 		if operand.Role != "predicate" {
 			continue
 		}
-		if found || !strings.HasPrefix(string(operand.Value), branchPredicatePrefix) {
+		if found {
 			return branchPredicateWire{}, false, nil
 		}
-		if err := json.Unmarshal(operand.Value[len(branchPredicatePrefix):], &predicate); err != nil {
-			return branchPredicateWire{}, false, fmt.Errorf("engine: decode branch predicate: %w", err)
+		var present bool
+		var err error
+		predicate, present, err = front.DecodeBranchPredicateWire(operand.Value)
+		if err != nil {
+			return branchPredicateWire{}, false, err
+		}
+		if !present {
+			return branchPredicateWire{}, false, fmt.Errorf("engine: predicate role has no predicate wire")
 		}
 		found = true
 	}
@@ -18622,11 +18703,14 @@ func soleBranchPredicate(operation equation.BoundEquation) (branchPredicateWire,
 // slot is nil, so a not-nil error edge proves the value nil, and a nil error
 // edge proves the value the checked type T. Only the true edge carries a
 // projection; the false edge negates a compound guard and proves nothing here.
-func typePredicateBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool) {
+func typePredicateBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
 	var errorPath string
 	errorAbsent := false
 	for _, operand := range operation.Operands {
-		predicate, trueEdge, ok := branchEvidencePredicate(operand)
+		predicate, trueEdge, ok, err := branchEvidencePredicate(operand)
+		if err != nil {
+			return equation.OutputClosure{}, false, err
+		}
 		if !ok || !trueEdge || predicate.Negated || predicate.Path == "" {
 			continue
 		}
@@ -18637,7 +18721,7 @@ func typePredicateBranchClosure(operation equation.BoundEquation, partition equa
 		}
 	}
 	if errorPath == "" {
-		return equation.OutputClosure{}, false
+		return equation.OutputClosure{}, false, nil
 	}
 	encodedError := base64.RawURLEncoding.EncodeToString([]byte(errorPath))
 	predicatePairs := partition.IterateValuesPrefix(typePredicatePairPrefix)
@@ -18672,9 +18756,9 @@ func typePredicateBranchClosure(operation equation.BoundEquation, partition equa
 				{Key: "narrowing/" + operation.Target.Name, Value: []byte("type-predicate/false"), Guards: equation.GuardSet(falseGuard)},
 			},
 			Values: []equation.Fact{{Key: termFamilyKey(factkey.Value, string(valuePath), operation.Target.Name).String(), Value: trueValue, Guards: equation.GuardSet(trueGuard)}},
-		}, true
+		}, true, nil
 	}
-	return equation.OutputClosure{}, false
+	return equation.OutputClosure{}, false, nil
 }
 
 // appendClosedGuardAdvice preserves an existing branch closure while allowing
@@ -18711,11 +18795,17 @@ func typedNilBranchClosure(operation equation.BoundEquation, partition equation.
 		if operand.Role != "predicate" {
 			continue
 		}
-		if found || !strings.HasPrefix(string(operand.Value), branchPredicatePrefix) {
+		if found {
 			return equation.OutputClosure{}, false, nil
 		}
-		if err := json.Unmarshal(operand.Value[len(branchPredicatePrefix):], &predicate); err != nil {
-			return equation.OutputClosure{}, false, fmt.Errorf("engine: decode nil branch predicate: %w", err)
+		var present bool
+		var err error
+		predicate, present, err = front.DecodeBranchPredicateWire(operand.Value)
+		if err != nil {
+			return equation.OutputClosure{}, false, err
+		}
+		if !present {
+			return equation.OutputClosure{}, false, fmt.Errorf("engine: predicate role has no predicate wire")
 		}
 		found = true
 	}
@@ -18780,7 +18870,10 @@ func correlationBranchClosure(operation equation.BoundEquation, partition equati
 	equal := make(map[string]map[string]bool)
 	nonNil := make(map[string]bool)
 	for _, operand := range operation.Operands {
-		predicate, trueEdge, ok := branchEvidencePredicate(operand)
+		predicate, trueEdge, ok, err := branchEvidencePredicate(operand)
+		if err != nil {
+			return equation.OutputClosure{}, false, err
+		}
 		if !ok || !trueEdge || predicate.Negated {
 			continue
 		}
@@ -19084,10 +19177,14 @@ func correlationConeEpochs(source, target string, partition equation.Partition) 
 
 type runtimeTypeBranchProof struct{ path, typeName string }
 
-func runtimeTypeBranchProofs(operation equation.BoundEquation, partition equation.Partition) []runtimeTypeBranchProof {
+func runtimeTypeBranchProofs(operation equation.BoundEquation, partition equation.Partition) ([]runtimeTypeBranchProof, error) {
 	seen := make(map[string]bool)
 	proofs := make([]runtimeTypeBranchProof, 0)
-	for _, predicate := range branchTrueEdgePredicates(operation, partition) {
+	predicates, err := branchTrueEdgePredicates(operation, partition)
+	if err != nil {
+		return nil, err
+	}
+	for _, predicate := range predicates {
 		if predicate.Kind != "type-equal" || predicate.Negated || predicate.Path == "" || !runtimeTypeProofName(predicate.TypeName) {
 			continue
 		}
@@ -19097,7 +19194,7 @@ func runtimeTypeBranchProofs(operation equation.BoundEquation, partition equatio
 			proofs = append(proofs, runtimeTypeBranchProof{path: predicate.Path, typeName: predicate.TypeName})
 		}
 	}
-	return proofs
+	return proofs, nil
 }
 
 // branchTrueEdgePredicates lists the normalized checks a branch's true edge
@@ -19105,35 +19202,41 @@ func runtimeTypeBranchProofs(operation equation.BoundEquation, partition equatio
 // relation its condition term carries when that condition is the result of a
 // call to an exported one-sided type predicate. Both are the same closed
 // descriptor, so every true-edge consumer reads one list.
-func branchTrueEdgePredicates(operation equation.BoundEquation, partition equation.Partition) []branchPredicateWire {
+func branchTrueEdgePredicates(operation equation.BoundEquation, partition equation.Partition) ([]branchPredicateWire, error) {
 	predicates := make([]branchPredicateWire, 0, len(operation.Operands)+1)
 	for _, operand := range operation.Operands {
-		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		predicate, trueEdge, recognized, err := branchEvidencePredicate(operand)
+		if err != nil {
+			return nil, err
+		}
 		if !recognized || !trueEdge {
 			continue
 		}
 		predicates = append(predicates, predicate)
 	}
-	if predicate, carried := branchConditionTypePredicate(operation, partition); carried {
+	if predicate, carried, err := branchConditionTypePredicate(operation, partition); err != nil {
+		return nil, err
+	} else if carried {
 		predicates = append(predicates, predicate)
 	}
-	return predicates
+	return predicates, nil
 }
 
 // branchConditionTypePredicate reads the relation the branch's condition term
 // carries. call-results published it against the exact argument the call
 // passed, so the descriptor names a path in this body and the true edge decides
 // it exactly as an in-body check does.
-func branchConditionTypePredicate(operation equation.BoundEquation, partition equation.Partition) (branchPredicateWire, bool) {
+func branchConditionTypePredicate(operation equation.BoundEquation, partition equation.Partition) (branchPredicateWire, bool, error) {
 	condition := boundOperandValue(operation.Operands, "condition")
 	if len(condition) == 0 {
-		return branchPredicateWire{}, false
+		return branchPredicateWire{}, false, nil
 	}
 	encoded, found := currentEpochFact(typePredicateRelationPrefix, condition, partition)
 	if !found {
-		return branchPredicateWire{}, false
+		return branchPredicateWire{}, false, nil
 	}
-	return decodeBranchPredicateWire(encoded)
+	predicate, present, err := front.DecodeBranchPredicateWire(encoded)
+	return predicate, present, err
 }
 
 func runtimeTypeProofKey(path, typeName string) string {
@@ -19149,10 +19252,13 @@ type lengthFloorBranchProof struct {
 // true edge establishes. A normalized `#xs >= k` check is the only source: it
 // is already the front's canonical form for every non-empty guard spelling, so
 // no comparison is re-read here.
-func lengthFloorBranchProofs(operation equation.BoundEquation) []lengthFloorBranchProof {
+func lengthFloorBranchProofs(operation equation.BoundEquation) ([]lengthFloorBranchProof, error) {
 	proofs := make([]lengthFloorBranchProof, 0)
 	for _, operand := range operation.Operands {
-		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		predicate, trueEdge, recognized, err := branchEvidencePredicate(operand)
+		if err != nil {
+			return nil, err
+		}
 		if !recognized || !trueEdge || predicate.Negated || predicate.Kind != "len-ge" || predicate.Path == "" || predicate.LenFloor < 1 {
 			continue
 		}
@@ -19171,7 +19277,7 @@ func lengthFloorBranchProofs(operation equation.BoundEquation) []lengthFloorBran
 			proofs[index].floor = predicate.LenFloor
 		}
 	}
-	return proofs
+	return proofs, nil
 }
 
 // indexCeilingBranchBound is the tightest constant upper bound a branch's true
@@ -19190,7 +19296,7 @@ type indexCeilingBranchBound struct {
 // which edge owns it: `i <= 2` proves the ceiling on the true edge, while the
 // ceiling `i >= 3` carries is the false edge's. A residue check on the same
 // path joins the class it states to that path's bound.
-func indexCeilingBranchBounds(operation equation.BoundEquation) []indexCeilingBranchBound {
+func indexCeilingBranchBounds(operation equation.BoundEquation) ([]indexCeilingBranchBound, error) {
 	bounds := make([]indexCeilingBranchBound, 0)
 	position := make(map[string]int)
 	at := func(path string) int {
@@ -19202,7 +19308,10 @@ func indexCeilingBranchBounds(operation equation.BoundEquation) []indexCeilingBr
 		return position[path]
 	}
 	for _, operand := range operation.Operands {
-		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		predicate, trueEdge, recognized, err := branchEvidencePredicate(operand)
+		if err != nil {
+			return nil, err
+		}
 		if !recognized || !trueEdge || predicate.Path == "" {
 			continue
 		}
@@ -19231,7 +19340,7 @@ func indexCeilingBranchBounds(operation equation.BoundEquation) []indexCeilingBr
 			ceilings = append(ceilings, bound)
 		}
 	}
-	return ceilings
+	return ceilings, nil
 }
 
 // lengthFloorProven returns the largest currently proven length lower bound for
@@ -19605,7 +19714,10 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			hasConsumer = true
 		}
 		if operand.Role == "predicate" {
-			predicate, _, ok := branchEvidencePredicate(operand)
+			predicate, _, ok, err := branchEvidencePredicate(operand)
+			if err != nil {
+				return equation.OutputClosure{}, false, err
+			}
 			if !ok {
 				return equation.OutputClosure{}, false, nil
 			}
@@ -19618,7 +19730,10 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 				return equation.OutputClosure{}, false, nil
 			}
 		}
-		predicate, trueEdge, ok := branchEvidencePredicate(operand)
+		predicate, trueEdge, ok, err := branchEvidencePredicate(operand)
+		if err != nil {
+			return equation.OutputClosure{}, false, err
+		}
 		if !ok || !trueEdge {
 			continue
 		}
@@ -19627,7 +19742,10 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			predicates = append(predicates, predicate)
 		}
 	}
-	differences := trueEdgeBranchDifferences(operation)
+	differences, err := trueEdgeBranchDifferences(operation)
+	if err != nil {
+		return equation.OutputClosure{}, false, err
+	}
 	relations := densityBranchRelations(operation.Operands)
 	hasIndexBound := false
 	for _, predicate := range predicates {
@@ -19647,7 +19765,10 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 	// They are the container-side half of the same relation the index bounds
 	// state, so this closure publishes them exactly as the undecided branch
 	// outcome does rather than leaving the container unbounded here.
-	floors := lengthFloorBranchProofs(operation)
+	floors, err := lengthFloorBranchProofs(operation)
+	if err != nil {
+		return equation.OutputClosure{}, false, err
+	}
 	// A proven density relation is the container-side reading of the counter's
 	// own bound: the pair advances together on every trip, so the count this
 	// edge bounds from below is the sequence's length.
@@ -19722,7 +19843,11 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 	// relating the two: i <= ceiling and #c >= floor with 1 <= ceiling <= floor
 	// puts i inside c's sequence. The native element lane already answers a
 	// guarded read this way; the shared decision keeps both lanes on one rule.
-	for _, bound := range indexCeilingBranchBounds(operation) {
+	bounds, err := indexCeilingBranchBounds(operation)
+	if err != nil {
+		return equation.OutputClosure{}, false, err
+	}
+	for _, bound := range bounds {
 		index := []byte("path/" + bound.path)
 		encodedIndex := base64.RawURLEncoding.EncodeToString(index)
 		for _, item := range floors {
@@ -19780,7 +19905,11 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 	// `entry and entry.next_id`. This specialized branch owns the index proof,
 	// but the true edge still owns the ordinary non-nil refinements emitted by
 	// the same front evidence.
-	for _, item := range impliedTrueEdgeNarrowings(operation, partition) {
+	narrowings, err := impliedTrueEdgeNarrowings(operation, partition)
+	if err != nil {
+		return equation.OutputClosure{}, false, err
+	}
+	for _, item := range narrowings {
 		encoded, ok := shapefact.EncodeTarget(item.narrowed)
 		if !ok {
 			continue
@@ -19915,33 +20044,26 @@ func publishedIndexRelations(partition equation.Partition) (map[string][]byte, m
 	return lower, upper
 }
 
-func branchEvidencePredicate(operand equation.BoundOperand) (branchPredicateWire, bool, bool) {
-	encoded := operand.Value
-	if strings.HasPrefix(string(encoded), branchEvidencePrefix) {
-		rest := strings.TrimPrefix(string(encoded), branchEvidencePrefix)
-		parts := strings.SplitN(rest, "/", 3)
-		if len(parts) != 3 || parts[0] != "true" || parts[1] != "true" {
-			return branchPredicateWire{}, false, false
+func branchEvidencePredicate(operand equation.BoundOperand) (branchPredicateWire, bool, bool, error) {
+	if predicate, edge, polarity, present, err := front.DecodeBranchEvidenceWire(operand.Value); err != nil {
+		return branchPredicateWire{}, false, false, err
+	} else if present {
+		if !edge || !polarity {
+			return branchPredicateWire{}, false, false, nil
 		}
-		encoded = []byte(parts[2])
-	} else if operand.Role != "predicate" {
-		return branchPredicateWire{}, false, false
+		return predicate, true, true, nil
 	}
-	predicate, ok := decodeBranchPredicateWire(encoded)
-	return predicate, ok, ok
-}
-
-// decodeBranchPredicateWire reads one closed predicate encoding. It is the sole
-// decoder of the front's predicate vocabulary in this package.
-func decodeBranchPredicateWire(encoded []byte) (branchPredicateWire, bool) {
-	if !strings.HasPrefix(string(encoded), branchPredicatePrefix) {
-		return branchPredicateWire{}, false
+	if operand.Role != "predicate" {
+		return branchPredicateWire{}, false, false, nil
 	}
-	var predicate branchPredicateWire
-	if json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate) != nil || predicate.Kind == "" {
-		return branchPredicateWire{}, false
+	predicate, present, err := front.DecodeBranchPredicateWire(operand.Value)
+	if err != nil {
+		return branchPredicateWire{}, false, false, err
 	}
-	return predicate, true
+	if !present {
+		return branchPredicateWire{}, false, false, fmt.Errorf("engine: predicate role has no predicate wire")
+	}
+	return predicate, true, true, nil
 }
 
 // typedLiteralBranchClosure consumes a value type already carried by an
@@ -19957,12 +20079,15 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 			encoded = operand.Value
 		}
 	}
-	if !strings.HasPrefix(string(encoded), branchPredicatePrefix) {
+	if len(encoded) == 0 {
 		return equation.OutputClosure{}, false, nil
 	}
-	var predicate branchPredicateWire
-	if err := json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate); err != nil {
-		return equation.OutputClosure{}, false, fmt.Errorf("engine: decode typed literal branch predicate: %w", err)
+	predicate, present, err := front.DecodeBranchPredicateWire(encoded)
+	if err != nil {
+		return equation.OutputClosure{}, false, err
+	}
+	if !present {
+		return equation.OutputClosure{}, false, fmt.Errorf("engine: predicate role has no predicate wire")
 	}
 	if predicate.Path == "" || predicate.Negated {
 		return equation.OutputClosure{}, false, nil
@@ -20083,12 +20208,15 @@ func selectBranchClosure(operation equation.BoundEquation, partition equation.Pa
 			encoded = operand.Value
 		}
 	}
-	if !strings.HasPrefix(string(encoded), branchPredicatePrefix) {
+	if len(encoded) == 0 {
 		return equation.OutputClosure{}, false, nil
 	}
-	var predicate branchPredicateWire
-	if err := json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate); err != nil {
-		return equation.OutputClosure{}, false, fmt.Errorf("engine: decode select branch predicate: %w", err)
+	predicate, present, err := front.DecodeBranchPredicateWire(encoded)
+	if err != nil {
+		return equation.OutputClosure{}, false, err
+	}
+	if !present {
+		return equation.OutputClosure{}, false, fmt.Errorf("engine: predicate role has no predicate wire")
 	}
 	if predicate.Kind != "path-equal" || predicate.Path == "" || predicate.OtherPath == "" {
 		return equation.OutputClosure{}, false, nil
@@ -25087,13 +25215,13 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		// no second narrowing vocabulary.
 		if key == "00000000" {
 			if wire, carried := lexical.typePredicateCallRelation(callee, argumentTerms, partition); carried {
-				encoded, encodeErr := json.Marshal(wire)
+				encoded, encodeErr := front.EncodeBranchPredicateWire(wire)
 				if encodeErr != nil {
 					return equation.TransactionResult{}, fmt.Errorf("engine: encode type predicate relation: %w", encodeErr)
 				}
 				values = append(values, equation.Fact{
 					Key:   typePredicateRelationPrefix + string(result) + "/" + operation.Target.Name,
-					Value: append([]byte(branchPredicatePrefix), encoded...),
+					Value: encoded,
 				})
 			}
 		}
@@ -27810,31 +27938,14 @@ func (s *typeArgSession) decideUnion(want, got *typ.Union, params map[string]boo
 	return true
 }
 
-type moduleProviderWire struct {
-	Module string `json:"module"`
-	Suffix string `json:"suffix,omitempty"`
-}
-
 func importedProviderTarget(provider []byte) (modulePath, suffix string, requireResult, ok bool) {
 	encoded := strings.TrimPrefix(string(provider), "provider/module-load/")
 	if encoded != string(provider) && encoded != "" {
 		modulePath, err := strconv.Unquote(encoded)
 		return modulePath, "", true, err == nil && modulePath != ""
 	}
-	encoded = strings.TrimPrefix(string(provider), "provider/module/v1/")
-	if encoded == string(provider) || encoded == "" {
-		return "", "", false, false
-	}
-	wired, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", "", false, false
-	}
-	var wire moduleProviderWire
-	if json.Unmarshal(wired, &wire) != nil || wire.Module == "" {
-		return "", "", false, false
-	}
-	canonical, marshalErr := json.Marshal(wire)
-	if marshalErr != nil || string(canonical) != string(wired) {
+	wire, present, err := front.DecodeModuleProviderWire(provider)
+	if err != nil || !present {
 		return "", "", false, false
 	}
 	return wire.Module, wire.Suffix, false, true
@@ -28458,23 +28569,17 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 }
 
 func frozenPredicate(encoded []byte) bool {
-	if !strings.HasPrefix(string(encoded), branchPredicatePrefix) {
-		return false
-	}
-	var predicate branchPredicateWire
-	return json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate) == nil && predicate.Kind == "frozen-table"
+	predicate, present, err := front.DecodeBranchPredicateWire(encoded)
+	return err == nil && present && predicate.Kind == "frozen-table"
 }
 
 func evaluateBranchPredicate(encoded []byte, partition equation.Partition) (bool, error) {
-	if !strings.HasPrefix(string(encoded), branchPredicatePrefix) {
-		return false, fmt.Errorf("engine: malformed branch predicate")
+	predicate, present, err := front.DecodeBranchPredicateWire(encoded)
+	if err != nil {
+		return false, err
 	}
-	var predicate branchPredicateWire
-	if err := json.Unmarshal(encoded[len(branchPredicatePrefix):], &predicate); err != nil || predicate.Kind == "" {
-		if err != nil {
-			return false, fmt.Errorf("engine: decode branch predicate: %w", err)
-		}
-		return false, fmt.Errorf("engine: branch predicate has no kind")
+	if !present {
+		return false, fmt.Errorf("engine: malformed branch predicate")
 	}
 	return evaluateBranchPredicateWire(predicate, partition)
 }

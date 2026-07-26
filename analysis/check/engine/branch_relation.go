@@ -10,6 +10,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/decision"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric"
@@ -22,34 +23,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-const branchDiffPrefix = "front/branch-diff/v1/"
-
 // affineTermEncoding is the closed value of one affine identity: the index term
 // this expression produced equals base + offset. It names the base by the same
 // term spelling the value and epoch lanes use, so the base's own replacement
 // event is directly readable from it.
 const affineTermEncoding = "affine-term/v1/"
-
-// branchDiffWire mirrors the front's normalized difference-logic branch
-// descriptor
-//
-//	coHi*hi + coHi2*hi2 - lo <= c
-//
-// carried on the branch edge named by Edge. The engine reads the same closed
-// encoding the front publishes; it never re-derives the relation from source.
-type branchDiffWire struct {
-	CoHi     int64  `json:"co_hi"`
-	HiPath   string `json:"hi_path"`
-	HiIsLen  bool   `json:"hi_is_len,omitempty"`
-	CoHi2    int64  `json:"co_hi2,omitempty"`
-	Hi2Path  string `json:"hi2_path,omitempty"`
-	Hi2IsLen bool   `json:"hi2_is_len,omitempty"`
-	HasHi2   bool   `json:"has_hi2,omitempty"`
-	LoPath   string `json:"lo_path"`
-	LoIsLen  bool   `json:"lo_is_len,omitempty"`
-	C        int64  `json:"c,omitempty"`
-	Edge     bool   `json:"edge,omitempty"`
-}
 
 type branchResidueClassWire struct {
 	Modulus int64 `json:"modulus"`
@@ -57,46 +35,43 @@ type branchResidueClassWire struct {
 	Negated bool  `json:"negated,omitempty"`
 }
 
-// decodeBranchDiff reads one published difference descriptor. A descriptor with
-// an empty operand names no relation and is dropped.
-func decodeBranchDiff(encoded []byte) (branchDiffWire, bool) {
-	if !strings.HasPrefix(string(encoded), branchDiffPrefix) {
-		return branchDiffWire{}, false
-	}
-	var wire branchDiffWire
-	if json.Unmarshal(encoded[len(branchDiffPrefix):], &wire) != nil {
-		return branchDiffWire{}, false
-	}
-	if wire.HiPath == "" || wire.LoPath == "" || (wire.HasHi2 && wire.Hi2Path == "") {
-		return branchDiffWire{}, false
-	}
-	return wire, true
-}
-
 // trueEdgeBranchDifferences collects the difference descriptors this branch
 // proves on its true edge.
-func trueEdgeBranchDifferences(operation equation.BoundEquation) []branchDiffWire {
+func trueEdgeBranchDifferences(operation equation.BoundEquation) ([]branchDiffWire, error) {
 	var out []branchDiffWire
 	for _, operand := range operation.Operands {
 		if !strings.HasPrefix(operand.Role, "difference-") {
 			continue
 		}
-		if wire, ok := decodeBranchDiff(operand.Value); ok && wire.Edge {
+		wire, present, err := front.DecodeBranchDiffWire(operand.Value)
+		if err != nil {
+			return nil, fmt.Errorf("engine: decode difference operand %q: %w", operand.Role, err)
+		}
+		if !present {
+			return nil, fmt.Errorf("engine: difference operand %q has no difference wire", operand.Role)
+		}
+		if wire.Edge {
 			out = append(out, wire)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // artifactTrueEdgeLengthRelation reports a published difference descriptor that
 // relates an operand to an array length on the branch's true edge. It reads the
 // artifact form of the operand, before the partition binds it.
-func artifactTrueEdgeLengthRelation(role string, encoding []byte) bool {
+func artifactTrueEdgeLengthRelation(role string, encoding []byte) (bool, error) {
 	if !strings.HasPrefix(role, "difference-") {
-		return false
+		return false, nil
 	}
-	wire, ok := decodeBranchDiff(encoding)
-	return ok && wire.Edge && (wire.LoIsLen || wire.HiIsLen || wire.Hi2IsLen)
+	wire, present, err := front.DecodeBranchDiffWire(encoding)
+	if err != nil {
+		return false, err
+	}
+	if !present {
+		return false, fmt.Errorf("engine: difference role %q has no difference wire", role)
+	}
+	return wire.Edge && (wire.LoIsLen || wire.HiIsLen || wire.Hi2IsLen), nil
 }
 
 // relationVariable names the solver variable for one operand of a normalized
@@ -229,22 +204,30 @@ func relationalIndexUpperBounds(predicates []branchPredicateWire, differences []
 // conjunction it asserts has no model. The false edge is refuted only for a
 // branch whose selector is a single normalized check, because only there is the
 // false edge exactly that check's negation.
-func branchNumericTruth(operation equation.BoundEquation, partition equation.Partition) (truth, decided bool) {
-	predicates := trueEdgeNumericPredicates(operation)
-	differences := trueEdgeBranchDifferences(operation)
+func branchNumericTruth(operation equation.BoundEquation, partition equation.Partition) (truth, decided bool, err error) {
+	predicates, err := trueEdgeNumericPredicates(operation)
+	if err != nil {
+		return false, false, err
+	}
+	differences, err := trueEdgeBranchDifferences(operation)
+	if err != nil {
+		return false, false, err
+	}
 	if len(predicates) == 0 && len(differences) == 0 {
-		return false, false
+		return false, false, nil
 	}
 	if !numericEdgeSatisfiable(predicates, differences, partition) {
-		return false, true
+		return false, true, nil
 	}
-	if predicate, single := negatableBranchSelector(operation); single {
+	if predicate, single, selectorErr := negatableBranchSelector(operation); selectorErr != nil {
+		return false, false, selectorErr
+	} else if single {
 		predicate.Negated = !predicate.Negated
 		if !numericEdgeSatisfiable([]branchPredicateWire{predicate}, nil, partition) {
-			return true, true
+			return true, true, nil
 		}
 	}
-	return false, false
+	return false, false, nil
 }
 
 // trueEdgeNumericPredicates collects the normalized checks the branch's true
@@ -254,36 +237,42 @@ func branchNumericTruth(operation equation.BoundEquation, partition equation.Par
 // check on the same edge and their conjunction describes no execution at all.
 // A refutation reads necessary conditions only, so those roles, and any role
 // this vocabulary does not name, stay out of the assertion set.
-func trueEdgeNumericPredicates(operation equation.BoundEquation) []branchPredicateWire {
+func trueEdgeNumericPredicates(operation equation.BoundEquation) ([]branchPredicateWire, error) {
 	predicates := make([]branchPredicateWire, 0, len(operation.Operands))
 	for _, operand := range operation.Operands {
 		if operand.Role != "predicate" && !strings.HasPrefix(operand.Role, "implied-") {
 			continue
 		}
-		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		predicate, trueEdge, recognized, err := branchEvidencePredicate(operand)
+		if err != nil {
+			return nil, err
+		}
 		if !recognized || !trueEdge || predicate.Path == "" {
 			continue
 		}
 		predicates = append(predicates, predicate)
 	}
-	return predicates
+	return predicates, nil
 }
 
 // negatableBranchSelector returns the normalized check whose negation is
 // exactly the branch's false edge. A branch that also carries a scalar
 // condition is selected by that condition, and a compound condition's false
 // edge refutes no individual conjunct, so neither form yields one.
-func negatableBranchSelector(operation equation.BoundEquation) (branchPredicateWire, bool) {
+func negatableBranchSelector(operation equation.BoundEquation) (branchPredicateWire, bool, error) {
 	for _, operand := range operation.Operands {
 		if operand.Role == "condition" {
-			return branchPredicateWire{}, false
+			return branchPredicateWire{}, false, nil
 		}
 	}
 	predicate, found, err := soleBranchPredicate(operation)
-	if err != nil || !found || predicate.Path == "" {
-		return branchPredicateWire{}, false
+	if err != nil {
+		return branchPredicateWire{}, false, err
 	}
-	return predicate, true
+	if !found || predicate.Path == "" {
+		return branchPredicateWire{}, false, nil
+	}
+	return predicate, true, nil
 }
 
 // numericEdgeSatisfiable reports that the numeric authorities admit a model for
@@ -569,7 +558,7 @@ func indexRelationFacts(predicates []branchPredicateWire, differences []branchDi
 		if predicate.Kind != "num-ge" && predicate.Kind != "index-in-range" {
 			continue
 		}
-		encoded, err := json.Marshal(predicate)
+		encoded, err := front.EncodeBranchPredicateWire(predicate)
 		if err != nil {
 			continue
 		}
@@ -577,12 +566,12 @@ func indexRelationFacts(predicates []branchPredicateWire, differences []branchDi
 			Key: factkey.BuildKey(factkey.HeapIndexRelation, []factkey.Part{
 				factkey.OpaquePart(fmt.Sprintf("p-%08d", len(facts))),
 			}, operationName).String(),
-			Value:  append([]byte(branchPredicatePrefix), encoded...),
+			Value:  encoded,
 			Guards: guards,
 		})
 	}
 	for _, difference := range differences {
-		encoded, err := json.Marshal(difference)
+		encoded, err := front.EncodeBranchDiffWire(difference)
 		if err != nil {
 			continue
 		}
@@ -590,7 +579,7 @@ func indexRelationFacts(predicates []branchPredicateWire, differences []branchDi
 			Key: factkey.BuildKey(factkey.HeapIndexRelation, []factkey.Part{
 				factkey.OpaquePart(fmt.Sprintf("d-%08d", len(facts))),
 			}, operationName).String(),
-			Value:  append([]byte(branchDiffPrefix), encoded...),
+			Value:  encoded,
 			Guards: guards,
 		})
 	}

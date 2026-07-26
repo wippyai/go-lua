@@ -1,9 +1,9 @@
 package engine
 
 import (
-	"encoding/json"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -13,36 +13,36 @@ import (
 // for one normalized difference-logic branch relation.
 func encodeDifference(t *testing.T, wire branchDiffWire) []byte {
 	t.Helper()
-	encoded, err := json.Marshal(wire)
+	encoded, err := front.EncodeBranchDiffWire(wire)
 	if err != nil {
 		t.Fatalf("encoding difference descriptor: %v", err)
 	}
-	return append([]byte(branchDiffPrefix), encoded...)
+	return encoded
 }
 
 func TestDecodeBranchDifferenceRejectsAnEmptyOperand(t *testing.T) {
-	if _, ok := decodeBranchDiff(encodeDifference(t, branchDiffWire{CoHi: 1, HiPath: "i", Edge: true})); ok {
-		t.Fatal("a descriptor without a low operand names no relation and must be dropped")
+	if _, err := front.EncodeBranchDiffWire(branchDiffWire{CoHi: 1, HiPath: "i", Edge: true}); err == nil {
+		t.Fatal("a descriptor without a low operand must be rejected")
 	}
-	if _, ok := decodeBranchDiff([]byte("front/branch-predicate/v1/{}")); ok {
+	if _, present, err := front.DecodeBranchDiffWire([]byte("front/branch-predicate/v1/{}")); present || err != nil {
 		t.Fatal("a predicate encoding must not decode as a difference descriptor")
 	}
 }
 
 func TestArtifactTrueEdgeLengthRelationAdmitsOnlyLengthBearingTrueEdgeRelations(t *testing.T) {
 	lengthRelation := encodeDifference(t, branchDiffWire{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1, Edge: true})
-	if !artifactTrueEdgeLengthRelation("difference-00000000", lengthRelation) {
+	if holds, err := artifactTrueEdgeLengthRelation("difference-00000000", lengthRelation); err != nil || !holds {
 		t.Fatal("i + 1 <= #xs relates an index to an array length on the true edge")
 	}
-	if artifactTrueEdgeLengthRelation("predicate", lengthRelation) {
+	if holds, err := artifactTrueEdgeLengthRelation("predicate", lengthRelation); err != nil || holds {
 		t.Fatal("only a difference operand carries a relation")
 	}
 	falseEdge := encodeDifference(t, branchDiffWire{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1})
-	if artifactTrueEdgeLengthRelation("difference-00000000", falseEdge) {
+	if holds, err := artifactTrueEdgeLengthRelation("difference-00000000", falseEdge); err != nil || holds {
 		t.Fatal("a false-edge relation proves nothing on the guarded arm")
 	}
 	valuesOnly := encodeDifference(t, branchDiffWire{CoHi: 1, HiPath: "q", LoPath: "r", Edge: true})
-	if artifactTrueEdgeLengthRelation("difference-00000000", valuesOnly) {
+	if holds, err := artifactTrueEdgeLengthRelation("difference-00000000", valuesOnly); err != nil || holds {
 		t.Fatal("a relation between two values bounds no array")
 	}
 }
