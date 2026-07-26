@@ -1,0 +1,5 @@
+{
+  "description": "A local callee's declared any return publishes the any boundary to its caller, so a typed local, a typed argument, a declared return, a record field and a concat all refute it; a runtime type test validates it, only the declared slot of a mixed pair carries it, and a body-inferred result carries no boundary at all.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

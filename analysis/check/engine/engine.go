@@ -24841,12 +24841,20 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		// the body rather than on the declaration it was checked against.
 		retainLocalUnion := (localUnion && requiresLocalUnionProof(localUnionSummary) && !closedScalarCallArguments(argumentTerms, partition)) ||
 			requiresLocalUnionProof(localDeclaredReturn)
+		// A callee declaring any at this slot publishes a precision boundary in
+		// place of a value. The declaration is the contract its body was checked
+		// against, so no resolution below it — the body's own sealed outcome, a
+		// member projection of the allocation it returned, a summary derived from
+		// either — may stand in for that claim. The caller receives exactly the
+		// boundary the callee stated, and every obligation any owes stays open
+		// until a runtime validation discharges it.
+		declaredAnyResult := declaredAnyResultSlot(lexical, callee, receiver, method, mustCallResultIndex(key), partition)
 		// A known lexical apply seals its child outcome under the same
 		// application coordinate. call-results is the sole owner of caller
 		// result terms, so it consumes that private projection rather than
 		// falling through to Top.
 		projectedKey := "call-result/" + strings.TrimPrefix(string(application), "call/") + "/" + key
-		if !retainLocalUnion {
+		if !retainLocalUnion && !declaredAnyResult {
 			// An application whose callee differs per edge sealed one outcome per
 			// edge under this same coordinate. Reading them through the value
 			// lattice is what makes the result term hold both, so a caller never
@@ -24864,7 +24872,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		if key == "00000000" && hasValue(partition, "effect.call-bool/"+strings.TrimPrefix(string(application), "call/")) {
 			value = []byte("scalar/boolean")
 		}
-		if index, err := strconv.Atoi(key); err == nil {
+		if index, err := strconv.Atoi(key); err == nil && !declaredAnyResult {
 			// A demanded local child may already have published the returned table
 			// value. If its closed self-return contract identifies that table with
 			// the receiver, restore the receiver's identity and member capabilities
@@ -25007,6 +25015,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if string(value) == "scalar/top" && callBoundaryAnyResult(callee, receiver, partition) {
 				value = []byte("scalar/claim/claim-kind/3/\"any\"")
 			}
+		}
+		if declaredAnyResult {
+			value = []byte("scalar/claim/claim-kind/3/\"any\"")
 		}
 		// A standard-library slot whose declared optionality is positional is
 		// discharged where a guard has already bounded the subject. The proof is
@@ -25861,6 +25872,134 @@ func declaredClosureResultAtIndex(lexical *lexicalEvaluator, handle closureHandl
 		return nil
 	}
 	return unwrap.Alias(child.WIR.Type(reference))
+}
+
+// declaredCalleeResultType reads the return type this application's callee
+// declares at one result slot. Every authority consulted here answers one the
+// result owner already reads, in the order a declaration outranks the callable
+// occupying the term: the callee binding's own declared type, the resolved
+// closure handle's boundary, the sealed function value the term currently
+// holds, and the typed function surface a declared member publishes. A callee
+// with none of them states no contract at this slot.
+func declaredCalleeResultType(lexical *lexicalEvaluator, callee []byte, index int, partition equation.Partition) (typ.Type, bool) {
+	if callee == nil || index < 0 {
+		return nil, false
+	}
+	if declared, stated := declaredTermResultType(callee, index, partition); stated {
+		return declared, true
+	}
+	if lexical != nil {
+		if handle, local := closureHandleFor(callee, partition); local {
+			if declared := declaredClosureResultAtIndex(lexical, handle, index); declared != nil {
+				return declared, true
+			}
+		}
+	}
+	if value, err := resolveCurrentValue(callee, partition); err == nil {
+		if functionType, sealed := sealedFunctionType(value); sealed {
+			if function, ok := genericCalleeSurface(functionType); ok && index < len(function.Returns) && function.Returns[index] != nil {
+				return function.Returns[index], true
+			}
+		}
+	}
+	function, typed := typedCalleeFunction(callee, index, partition)
+	if !typed {
+		return nil, false
+	}
+	return function.Returns[index], true
+}
+
+// declaredTermResultType reads one return slot of the function type a term's
+// own declaration states. The declaration is written at the binding and outranks
+// whatever callable currently occupies the term: a literal bound to a declared
+// callable is checked against that declaration rather than read through it. Only
+// the declaration fact is consulted, so a narrowing publication at the same term
+// is not mistaken for a stated contract.
+func declaredTermResultType(term []byte, index int, partition equation.Partition) (typ.Type, bool) {
+	if term == nil || index < 0 {
+		return nil, false
+	}
+	prefix := "declared-type/" + string(term) + "/"
+	var encoded []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
+			encoded, latest = fact.Value, fact.Key
+		}
+	}
+	if len(encoded) == 0 {
+		return nil, false
+	}
+	declared, decoded := shapefact.DecodeTarget(encoded)
+	if !decoded {
+		return nil, false
+	}
+	function, callable := genericCalleeSurface(declared)
+	if !callable || index >= len(function.Returns) || function.Returns[index] == nil {
+		return nil, false
+	}
+	return function.Returns[index], true
+}
+
+// declaredMethodResultType is the receiver/member counterpart of
+// declaredCalleeResultType. A colon call reaches its callee through the
+// receiver's current member cell, so the same three authorities are read in
+// that order: the member's resolved closure handle, the sealed callable the
+// receiver's own value holds, and the receiver's typed surface.
+func declaredMethodResultType(lexical *lexicalEvaluator, receiver, method []byte, index int, partition equation.Partition) (typ.Type, bool) {
+	if receiver == nil || method == nil || index < 0 {
+		return nil, false
+	}
+	name, named := callMethodName(method)
+	if !named {
+		return nil, false
+	}
+	if lexical != nil {
+		if handle, local := methodClosureHandleFor(receiver, name, partition); local {
+			if declared := declaredClosureResultAtIndex(lexical, handle, index); declared != nil {
+				return declared, true
+			}
+		}
+	}
+	if receiverValue, err := resolveCurrentValue(receiver, partition); err == nil {
+		if callee, found := currentMethodCallable(receiver, receiverValue, name, partition); found {
+			if functionType, sealed := sealedFunctionType(callee); sealed {
+				if function, ok := genericCalleeSurface(functionType); ok && index < len(function.Returns) && function.Returns[index] != nil {
+					return function.Returns[index], true
+				}
+			}
+		}
+	}
+	return typedMethodReturnType(receiver, method, index, partition)
+}
+
+// declaredAnyResultSlot recognizes an explicit any a callee declares at one
+// return slot. The declaration is the callee's boundary: what its body computes
+// is checked against that contract, never read through it, so this slot carries
+// the same claim an imported any export publishes. An absent declaration and an
+// inferred result answer false — an unknown is the absence of information, not
+// a stated boundary.
+func declaredAnyResultSlot(lexical *lexicalEvaluator, callee, receiver, method []byte, index int, partition equation.Partition) bool {
+	if index < 0 {
+		return false
+	}
+	if declared, stated := declaredCalleeResultType(lexical, callee, index, partition); stated && declaredAnyReturn(declared) {
+		return true
+	}
+	declared, stated := declaredMethodResultType(lexical, receiver, method, index, partition)
+	return stated && declaredAnyReturn(declared)
+}
+
+// declaredAnyReturn peels the spellings a declaration may wear — an alias chain
+// and a generic application — before deciding. Only the exact any kind answers
+// true; an optional or a union that merely contains any is a different contract
+// and keeps its own resolution.
+func declaredAnyReturn(declared typ.Type) bool {
+	if declared == nil {
+		return false
+	}
+	expanded := unwrap.Alias(subst.ExpandInstantiated(declared))
+	return expanded != nil && expanded.Kind() == kind.Any
 }
 
 // inferredClosureResultAtIndex retains a finite union only when every return
