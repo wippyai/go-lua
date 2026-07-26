@@ -54,6 +54,8 @@ local function unannotated()
 end
 local literal = unannotated()
 local literal_kind: number = literal.kind -- expect-error: cannot assign literal.kind
+-- The same literal read straight off the call result, with no cell of its own.
+local inline_kind: number = (unannotated()).kind -- expect-error: cannot assign unannotated(...).kind
 
 -- Fail-closed: a cast is a claim, not a checked declaration.
 local function casted(raw: any)

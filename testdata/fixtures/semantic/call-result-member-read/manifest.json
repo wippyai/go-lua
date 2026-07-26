@@ -1,0 +1,3 @@
+{
+  "description": "A call result publishes its sealed shape without a heap cell of its own, and that shape answers a member read taken straight off the result."
+}

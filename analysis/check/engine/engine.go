@@ -14162,6 +14162,15 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 			}
 		}
 	}
+	// A container with no heap cell of its own still publishes its sealed shape,
+	// and that shape is the authority for its own members. This is the same
+	// literal a spelled member read consumes; a call result reaches it here
+	// because its result term names no cell for the identity lane above.
+	if string(values[0].Value) == "scalar/top" {
+		if member, found := sealedContainerMemberValue(operands["container"], operands["key"], partition); found {
+			values[0].Value = member
+		}
+	}
 	// Reading a container at its own length is the border read. The inventory
 	// decides whether that border can be the empty one, and the container's
 	// element contract is what every occupied slot satisfies.
@@ -23977,6 +23986,36 @@ func childWritesCapture(child front.Compilation, capture string) bool {
 	return false
 }
 
+// completedCallableResultValue fuses a returned callable's own surface with the
+// result contract its allocation derived. The two are stated together inside the
+// callee and cross this boundary separately: the surface rides the result value,
+// the contract rides the application coordinate. A callable that already states
+// its result, a generic one, and a slot with no contract row are all left as
+// they are, so the completion never invents a return the callee did not derive.
+func completedCallableResultValue(value, application []byte, key string, partition equation.Partition) ([]byte, bool) {
+	functionType, sealed := sealedFunctionType(value)
+	if !sealed {
+		return nil, false
+	}
+	surface, ok := genericCalleeSurface(functionType)
+	if !ok || len(surface.Returns) != 0 || len(surface.TypeParams) != 0 {
+		return nil, false
+	}
+	contract, found := partition.Value(callInferredReturnPrefix + strings.TrimPrefix(string(application), "call/") + "/" + key)
+	if !found || len(contract.Value) == 0 {
+		return nil, false
+	}
+	result, err := typ.DecodeCanonical(context.Background(), contract.Value)
+	if err != nil || result == nil {
+		return nil, false
+	}
+	completed, fused := withInferredReturn(surface, result)
+	if !fused {
+		return nil, false
+	}
+	return providerReturnTypeValue(completed)
+}
+
 // callResultsKernel publishes explicit Top facts for unresolved owned result
 // slots, never a missing slot or an invented concrete value.
 func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -24258,6 +24297,14 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if present, ok := presentResultValue(value); ok {
 				value = present
 			}
+		}
+		// A returned callable arrives with the surface its literal declared and
+		// without the result its body derived: the callee stated the two in one
+		// allocation and only the surface rides the value lattice. Fuse the
+		// contract this application carried back so the result term holds the
+		// complete callable a direct closure binding holds.
+		if completed, fused := completedCallableResultValue(value, application, key, partition); fused {
+			value = completed
 		}
 		values = append(values,
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
@@ -28392,24 +28439,59 @@ func shapeMemberValue(term []byte, partition equation.Partition) ([]byte, bool) 
 		if !ok {
 			continue
 		}
-		if identity, tracked := tableIdentityForTerm([]byte("path/"+ancestor), partition); tracked &&
-			(heapHasExternalCallback(identity, partition) || heapOpaqueMemberWrite(identity, partition)) {
-			// A store at an unresolved key can address this very field: Lua
-			// indexes a dotted name by its string key like any other. The
-			// literal therefore proves neither this member's value nor its
-			// absence while that store stands.
-			return nil, false
-		}
-		member, found := table.Lookup(suffix)
-		if !found {
-			return nil, false
-		}
-		if !member.Present {
-			return []byte("scalar/nil"), true
-		}
-		return []byte(member.Value), true
+		return sealedShapeMemberValue([]byte("path/"+ancestor), table, suffix, partition)
 	}
 	return nil, false
+}
+
+// sealedShapeMemberValue reads one member out of a sealed shape a term holds.
+// The literal is the authority for its own members, and it is revoked by
+// exactly the stores that can reach a slot it names: an external callback that
+// holds the table, or a write at a key this partition could not resolve. Lua
+// indexes a dotted name by its string key like any other, so such a store
+// proves neither the member's value nor its absence.
+func sealedShapeMemberValue(term []byte, table shapefact.Table, suffix string, partition equation.Partition) ([]byte, bool) {
+	if identity, tracked := tableIdentityForTerm(term, partition); tracked &&
+		(heapHasExternalCallback(identity, partition) || heapOpaqueMemberWrite(identity, partition)) {
+		return nil, false
+	}
+	member, found := table.Lookup(suffix)
+	if !found {
+		return nil, false
+	}
+	if !member.Present {
+		return []byte("scalar/nil"), true
+	}
+	return []byte(member.Value), true
+}
+
+// sealedContainerMemberValue answers a runtime index read from the sealed shape
+// the container term itself holds. A call result is the term this reaches: it
+// carries the callee's published shape but no heap cell of its own, so the
+// identity lane above has no authority to consult. Where an identity does exist
+// that lane owns the read and this one states nothing, which keeps a tracked
+// cell's post-write member from being answered by its allocation-time literal.
+func sealedContainerMemberValue(container, key []byte, partition equation.Partition) ([]byte, bool) {
+	if _, tracked := tableIdentityForTerm(container, partition); tracked {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(container, partition)
+	if err != nil {
+		return nil, false
+	}
+	table, ok := shapefact.DecodeTable(value)
+	if !ok {
+		return nil, false
+	}
+	resolved, keyErr := resolveCurrentValue(key, partition)
+	if keyErr != nil {
+		return nil, false
+	}
+	suffix, exact := tableMemberSuffix(resolved, []byte("suffix/"))
+	if !exact {
+		return nil, false
+	}
+	return sealedShapeMemberValue(container, table, suffix, partition)
 }
 
 // selectConstrainedArms composes every select constraint that holds in this

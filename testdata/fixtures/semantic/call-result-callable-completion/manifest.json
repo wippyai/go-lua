@@ -1,0 +1,3 @@
+{
+  "description": "A returned callable's declared surface and the result its body derived cross a call boundary separately and are fused back into one contract on the result term."
+}
