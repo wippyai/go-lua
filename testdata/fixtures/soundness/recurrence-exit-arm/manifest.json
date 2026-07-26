@@ -1,0 +1,9 @@
+{
+  "description": "The branch that ends a loop is evaluated once per trip, so the value one trip carried into the condition decides that trip and never the loop: both of its arms stay reachable and every statement the exit arm alone reaches is still checked. A counter reaching its own bound, a flag the body clears, a test placed after the body, a condition that resolves to a constant, and an entering value that refutes the condition each state nothing about which arm the loop leaves on. A guard that ends no loop keeps deciding from the single execution that reaches it, an exit edge the front states in its own right is unchanged, and the exit arm keeps the condition it left on.",
+  "files": [
+    "main.lua"
+  ],
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

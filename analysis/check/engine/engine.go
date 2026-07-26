@@ -18292,6 +18292,27 @@ func recurrenceExitFacts(operation equation.BoundEquation) []equation.Fact {
 	return nil
 }
 
+// recurrenceExitBranch reads the same front relation as a predicate: this
+// decision is the one that ends a loop, with one arm staying inside the cycle
+// and the other leaving it. Such a decision is evaluated once per trip and the
+// trips disagree by construction -- the arm that stays inside runs on every
+// trip that continued and the arm that leaves runs on the trip that ended -- so
+// the value one trip carried into the condition decides that trip and never the
+// loop. A branch the front marked this way therefore keeps both arms whatever
+// that value states, and a read past the loop is decided by the value lane's
+// own fixed point.
+//
+// Every other decision is a property of the single execution that reaches it
+// and keeps deciding exactly as before.
+func recurrenceExitBranch(operands []equation.BoundOperand) bool {
+	for _, operand := range operands {
+		if operand.Role == "recurrence-exit" {
+			return true
+		}
+	}
+	return false
+}
+
 func branchSelectionKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	// The numeric authorities answer first when they refute the true edge.
 	// Refuting an arm is a withdrawal and it dominates every refinement the
@@ -18424,6 +18445,23 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
+	// The precision boundary a condition crossed is a property of the value,
+	// not of the arm this decision selects, so both readings below publish it.
+	var boundaryFacts []equation.Fact
+	if boundaryPossible {
+		boundaryFacts = append(boundaryFacts, equation.Fact{Key: "value/" + string(boundarySource) + "/" + operation.Target.Name, Value: append([]byte(nil), boundaryValue...)})
+		if strings.HasPrefix(string(boundaryConsumer), "path/") {
+			boundaryFacts = append(boundaryFacts, equation.Fact{Key: "gradual-any/" + string(boundaryConsumer) + "/" + operation.Target.Name, Value: append([]byte(nil), boundarySource...)})
+		}
+	}
+	// This decision states what one trip carried into the condition. A branch
+	// that ends a loop therefore keeps both arms, and the frozen-guard outcome
+	// and the advisories a decided condition carries are not its to publish.
+	if recurrenceExitBranch(operation.Operands) {
+		closure := undecidedBranchOutcome(operation, partition)
+		closure.Values = append(closure.Values, boundaryFacts...)
+		return equation.TransactionResult{Complete: true, Closure: closure}, nil
+	}
 	edge := strconv.FormatBool(truth)
 	narrowing := "falsy"
 	if truth {
@@ -18437,12 +18475,7 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 		Key:   "branch-proof/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + operation.Target.Name + "/" + edge,
 		Value: []byte("proven"),
 	})
-	if boundaryPossible {
-		closure.Values = append(closure.Values, equation.Fact{Key: "value/" + string(boundarySource) + "/" + operation.Target.Name, Value: append([]byte(nil), boundaryValue...)})
-		if strings.HasPrefix(string(boundaryConsumer), "path/") {
-			closure.Values = append(closure.Values, equation.Fact{Key: "gradual-any/" + string(boundaryConsumer) + "/" + operation.Target.Name, Value: append([]byte(nil), boundarySource...)})
-		}
-	}
+	closure.Values = append(closure.Values, boundaryFacts...)
 	if frozenGuard && truth {
 		closure.Outcomes = append(closure.Outcomes, equation.Fact{Key: "frozen-branch/" + operation.Target.Name, Value: []byte("proven")})
 	}
@@ -18610,8 +18643,12 @@ func trueEdgeRefinements(operation equation.BoundEquation, partition equation.Pa
 // equation it owns withholds its publications and its diagnostics exactly as it
 // does for an arm refuted anywhere else. The surviving arm keeps the branch's
 // own true-edge refinements, so it is analyzed with the guard's evidence rather
-// than merely reached.
+// than merely reached. A decision that ends a loop is not such a proof, so it
+// keeps both arms.
 func numericBranchOutcome(operation equation.BoundEquation, partition equation.Partition, truth bool) equation.OutputClosure {
+	if recurrenceExitBranch(operation.Operands) {
+		return undecidedBranchOutcome(operation, partition)
+	}
 	closure := compoundBranchOutcome(operation, truth)
 	if !truth {
 		return closure

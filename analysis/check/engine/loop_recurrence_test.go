@@ -247,6 +247,116 @@ end
 	}
 }
 
+// TestLoopExitArmIsNotDecidedByTheEnteringTrip pins which arms a loop's own
+// decision keeps. The branch that ends a loop is evaluated once per trip and
+// the trips disagree by construction: the arm that stays inside runs on every
+// trip that continued and the arm that leaves runs on the trip that ended. The
+// value entering the condition is one trip's, so a decision taken from it would
+// select a single arm and leave every statement behind the other one unchecked.
+func TestLoopExitArmIsNotDecidedByTheEnteringTrip(t *testing.T) {
+	for _, item := range []struct{ name, source string }{
+		{"counter reaching its own bound", `local counted: integer = 0
+while counted < 3 do
+    counted = counted + 1
+end
+local reported: string = 5
+print(reported)
+`},
+		{"flag the body clears", `local open: boolean = true
+while open do
+    open = false
+end
+local reported: string = 5
+print(reported)
+`},
+		{"condition resolving to a constant", `local function truthy(): boolean return true end
+while truthy() do
+end
+local reported: string = 5
+print(reported)
+`},
+		{"entering value that refutes the condition", `local counted: integer = 0
+while counted > 3 do
+    local reported: string = 5
+    print(reported)
+    counted = counted + 1
+end
+`},
+		{"post-body test reaching its own bound", `local repeated: integer = 0
+repeat
+    repeated = repeated + 1
+until repeated >= 3
+local reported: string = 5
+print(reported)
+`},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			summaries := diagnosticSummaries(checkSource(t, item.source))
+			if !strings.Contains(summaries, "cannot assign reported") {
+				t.Fatalf("an arm the loop's own decision left unselected was never checked:\n%s", summaries)
+			}
+		})
+	}
+}
+
+// TestDecisionsOutsideALoopKeepDeciding is the precision guardrail for the same
+// rule. A guard that ends no loop is a property of the single execution that
+// reaches it, an exit edge the front states in its own right keeps carrying the
+// obligations behind it, and a condition no value decides is unchanged.
+func TestDecisionsOutsideALoopKeepDeciding(t *testing.T) {
+	refuted := checkSource(t, `local straight: integer = 0
+if straight > 3 then
+    local reported: string = 5
+    print(reported)
+end
+`)
+	if summaries := diagnosticSummaries(refuted); summaries != "" {
+		t.Fatalf("an arm one execution refutes carried an obligation anyway:\n%s", summaries)
+	}
+	for _, item := range []struct{ name, source string }{
+		{"break edge", `while true do
+    break
+end
+local reported: string = 5
+print(reported)
+`},
+		{"numeric range", `for _ = 1, 3 do
+end
+local reported: string = 5
+print(reported)
+`},
+		{"post-body test no value decides", `local function done(): boolean return math.random(2) > 1 end
+repeat
+    print("x")
+until done()
+local reported: string = 5
+print(reported)
+`},
+		{"condition no trip decides", `local function scan(more: () -> boolean)
+    while more() do
+        print("x")
+    end
+    local reported: string = 5
+    print(reported)
+end
+return scan
+`},
+		{"statement the loop does not stand behind", `local reported: string = 5
+print(reported)
+local function truthy(): boolean return true end
+while truthy() do
+end
+`},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			summaries := diagnosticSummaries(checkSource(t, item.source))
+			if !strings.Contains(summaries, "cannot assign reported") {
+				t.Fatalf("an exit the front states separately stopped carrying its obligations:\n%s", summaries)
+			}
+		})
+	}
+}
+
 // TestWhileExitKeepsTheConditionItLeftOn is the precision guardrail. The exit
 // arm's own narrowing is derived from the value entering the condition, which is
 // already the join over every trip, so the exit keeps it instead of joining it
