@@ -1883,6 +1883,13 @@ func functionRequiresSealedTypeChecks(fn *ast.FunctionExpr, bindings *bind.Resul
 	var requiresStatements func([]ast.Stmt) bool
 	var requiresExpression func(ast.Expr) bool
 	requiresExpression = func(expr ast.Expr) bool {
+		// A normalized type comparison needs the sealed topology wherever it is
+		// written, not only in a condition: the CFG and this lowering must agree
+		// on whether the comparison owns its call, and they disagree exactly
+		// when one of them recognizes the predicate and the other does not.
+		if conditionRequiresSealedTypeChecks(expr, bindings) {
+			return true
+		}
 		switch value := expr.(type) {
 		case *ast.FunctionExpr:
 			return requiresStatements(value.Stmts)
@@ -1938,6 +1945,16 @@ func functionRequiresSealedTypeChecks(fn *ast.FunctionExpr, bindings *bind.Resul
 					if requiresExpression(expression) {
 						return true
 					}
+				}
+			case *ast.ReturnStmt:
+				for _, expression := range value.Exprs {
+					if requiresExpression(expression) {
+						return true
+					}
+				}
+			case *ast.FuncCallStmt:
+				if requiresExpression(value.Expr) {
+					return true
 				}
 			}
 		}

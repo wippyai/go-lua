@@ -38,7 +38,7 @@ local function f(body: any?): Response
     return {status = 200, body = body}
 end
 return f`)
-	if hasPublished(member, "type.return.contract", "not ") {
+	if hasPublished(member, "type.return.contract", "body") {
 		t.Fatalf("any member into an any? field must not be refuted: %#v", member.PublishedDiagnostics)
 	}
 
@@ -47,7 +47,8 @@ local function f(body: any?): Response
     return {status = 200, body = body}
 end
 return f`)
-	if !hasPublished(concrete, "type.return.contract", "not ") {
+	// The refutation is stated at the member the declaration names.
+	if !hasPublished(concrete, "type.return.contract", "returned value 1.body comes from any/unknown") {
 		t.Fatalf("any member into a string field must stay refuted: %#v", concrete.PublishedDiagnostics)
 	}
 }

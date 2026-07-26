@@ -19,10 +19,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/interproc"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
@@ -166,6 +168,9 @@ const (
 	// The classification is produced by the transaction that already refuted
 	// the operand, so publication renders it without re-deriving the cause.
 	concatOperandOriginPrefix = "concat-operand-origin/"
+	// booleanResultPrefix records that an operator fixed its result kind to
+	// boolean regardless of what its operands held.
+	booleanResultPrefix = "boolean-result/"
 	// concatOriginOptionalField and concatOriginOptionalResult are the two
 	// closed origins the engine can prove for a nilable concat operand.
 	concatOriginOptionalField  = "optional-field"
@@ -471,8 +476,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	// result. A root write has no allocation boundary to authorize that extra
 	// publication; keep the pre-existing root surface unchanged.
 	closure.Diagnostics = rootPublishedDiagnostics(artifact, closure.Diagnostics)
-	diagnosticSpans := diagnosticSpans(compilation.ClaimSpans, compilation.CallSpans, compilation.BranchSpans, compilation.EffectSpans, compilation.ExpressionSpans, compilation.ReturnSpans, closure.Diagnostics)
-	structuralAssignmentDiagnosticSpans(compilation, closure, diagnosticSpans)
+	diagnosticSpans := diagnosticSpans(compilation, closure.Diagnostics)
 	for key, span := range lexical.diagnosticSpans {
 		if diagnosticSpans == nil {
 			diagnosticSpans = make(map[string]wir.Span)
@@ -657,11 +661,19 @@ func rootPublishedDiagnostics(artifact equation.Artifact, diagnostics []equation
 	return filtered
 }
 
-func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expressionSpans, returnSpans map[string]wir.Span, diagnostics []equation.Fact) map[string]wir.Span {
+// diagnosticSpans binds every published diagnostic of one compilation to its
+// authored source coordinate. The compilation is the single span authority: its
+// front-published maps carry the operation anchors, and its WIR carries the
+// constructor entries a member-resolved fact is stated at.
+func diagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact) map[string]wir.Span {
+	claimSpans, callSpans := compilation.ClaimSpans, compilation.CallSpans
+	branchSpans, effectSpans := compilation.BranchSpans, compilation.EffectSpans
+	expressionSpans, returnSpans := compilation.ExpressionSpans, compilation.ReturnSpans
 	if (len(claimSpans) == 0 && len(callSpans) == 0 && len(branchSpans) == 0 && len(effectSpans) == 0 && len(expressionSpans) == 0 && len(returnSpans) == 0) || len(diagnostics) == 0 {
 		return nil
 	}
 	out := make(map[string]wir.Span)
+	defer structuralMemberDiagnosticSpans(compilation, diagnostics, out)
 	for _, item := range diagnostics {
 		var name string
 		switch {
@@ -781,12 +793,12 @@ func diagnosticSpans(claimSpans, callSpans, branchSpans, effectSpans, expression
 	return out
 }
 
-// structuralAssignmentDiagnosticSpans replaces a root annotation's source
+// structuralMemberDiagnosticSpans replaces an aggregate diagnostic's source
 // anchor only when its closed table literal has a proven refuting member. The
 // member coordinates come from WIR TableEntry metadata; no source tree is
-// revisited and an open/malformed literal retains the ordinary claim span.
-func structuralAssignmentDiagnosticSpans(compilation front.Compilation, closure equation.OutputClosure, spans map[string]wir.Span) {
-	if compilation.WIR == nil || len(closure.Diagnostics) == 0 || spans == nil {
+// revisited and an open/malformed literal retains the ordinary operation span.
+func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact, spans map[string]wir.Span) {
+	if compilation.WIR == nil || len(diagnostics) == 0 || spans == nil {
 		return
 	}
 	literalMembers := make(map[string]map[string]wir.Span)
@@ -805,7 +817,7 @@ func structuralAssignmentDiagnosticSpans(compilation front.Compilation, closure 
 			literalMembers[term] = members
 		}
 	}
-	for _, diagnostic := range closure.Diagnostics {
+	for _, diagnostic := range diagnostics {
 		name, assignment := strings.CutPrefix(diagnostic.Key, "type.assignment/")
 		if !assignment {
 			continue
@@ -836,6 +848,57 @@ func structuralAssignmentDiagnosticSpans(compilation front.Compilation, closure 
 				spans[diagnostic.Key] = span
 				break
 			}
+		}
+	}
+	structuralReturnMemberDiagnosticSpans(compilation, diagnostics, spans, literalMembers)
+}
+
+// structuralReturnMemberDiagnosticSpans anchors a member-resolved return
+// contract at the constructor slot that filled the refuted field. The key
+// already carries the suffix publicationKernel selected, so the coordinate is
+// recovered from the same WIR table entries the assignment path reads rather
+// than from a second source lookup. A returned value that is not a literal in
+// this body, and a suffix absent from that literal, keep the publication span.
+func structuralReturnMemberDiagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact, spans map[string]wir.Span, literalMembers map[string]map[string]wir.Span) {
+	if len(literalMembers) == 0 {
+		return
+	}
+	publications := make(map[string]equation.Equation)
+	for _, candidate := range compilation.Artifact.Equations {
+		if candidate.Occurrence.Kind == "publication" {
+			publications[candidate.Target.Name] = candidate
+		}
+	}
+	for _, diagnostic := range diagnostics {
+		contract, ok := strings.CutPrefix(diagnostic.Key, "type.return.contract/")
+		if !ok {
+			continue
+		}
+		name, indexed, hasSlot := strings.Cut(contract, "/")
+		if !hasSlot {
+			continue
+		}
+		slot, suffix, member := strings.Cut(indexed, "/")
+		if !member || suffix == "" {
+			continue
+		}
+		operation, found := publications[name]
+		if !found {
+			continue
+		}
+		index, err := strconv.Atoi(slot)
+		if err != nil || index < 0 {
+			continue
+		}
+		term := ""
+		for _, operand := range operation.Operands {
+			if operand.Role == fmt.Sprintf("return-value-%08d", index) {
+				term = string(operand.Term.Encoding)
+				break
+			}
+		}
+		if span, published := literalMembers[term][suffix]; published {
+			spans[diagnostic.Key] = span
 		}
 	}
 }
@@ -924,9 +987,13 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			continue
 		}
 		if contract, ok := strings.CutPrefix(key, "type.return.contract/"); ok {
-			operationName, slot, indexed := strings.Cut(contract, "/")
-			if operation, found := publications[operationName]; found && indexed {
-				out = append(out, enrichReturnContractDiagnostic(item, operation, operationName, slot, returnSpans))
+			operationName, indexed, hasSlot := strings.Cut(contract, "/")
+			// A member-anchored contract carries the refuted field's suffix
+			// after its slot index. The slot stays the tuple coordinate; the
+			// suffix selects the declared field the narration must name.
+			slot, member, _ := strings.Cut(indexed, "/")
+			if operation, found := publications[operationName]; found && hasSlot {
+				out = append(out, enrichReturnContractDiagnostic(item, operation, operationName, slot, member, returnSpans))
 				continue
 			}
 			out = append(out, item)
@@ -1365,7 +1432,7 @@ func functionContractDiagnostic(operation string, facts []equation.Fact) bool {
 // annotation it must satisfy. Both anchors are already-published source
 // metadata: the returned expression's own span and the authored return type's
 // span. The declared contract is a user assertion, never a proven fact.
-func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation.Equation, operationName, slot string, returnSpans map[string]wir.Span) PublishedDiagnostic {
+func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation.Equation, operationName, slot, member string, returnSpans map[string]wir.Span) PublishedDiagnostic {
 	index, err := strconv.Atoi(slot)
 	if err != nil || index < 0 {
 		return item
@@ -1377,23 +1444,37 @@ func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation
 			break
 		}
 	}
-	declared := ""
+	declaredTarget := typ.Type(nil)
 	for _, operand := range operation.Operands {
 		if operand.Role != fmt.Sprintf("declared-return-%08d", index) {
 			continue
 		}
 		if target, ok := shapefact.DecodeTarget(operand.Term.Encoding); ok && target != nil {
-			declared = typeformat.Short(target)
+			declaredTarget = target
 		}
 		break
 	}
-	if declared == "" {
+	if declaredTarget == nil {
 		return item
 	}
-	subject := returnValueSubject(index, display)
+	declared, subject := typeformat.Short(declaredTarget), returnValueSubject(index, display)
+	// The contract line names the declared slot, never the authored expression
+	// that filled it: the declaration is a statement about the slot.
+	contractSubject := fmt.Sprintf("returned value %d", index+1)
 	declaredSpan := returnSpans[fmt.Sprintf("%s/declared-return-%08d", operationName, index)]
 	if !declaredSpan.Valid() {
 		declaredSpan = item.Span
+	}
+	// A member-anchored contract states the declaration of the exact field the
+	// aggregate failed, so both the subject and the contract narrow from the
+	// whole returned value to that field before the shared narration runs.
+	if member != "" {
+		fieldType, found := recordFieldType(declaredTarget, member)
+		if !found {
+			return item
+		}
+		declared = typeformat.Short(fieldType)
+		subject, contractSubject = returnMemberSubject(index, member), returnMemberSubject(index, member)
 	}
 	// A boundary refutation states a missing proof, not an observed value. Its
 	// evidence names the unvalidated source rather than a literal the body
@@ -1401,15 +1482,16 @@ func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation
 	if strings.Contains(item.Message, "comes from any/unknown") {
 		item.Evidence = []DiagnosticEvidence{
 			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type any", subject)},
-			{Span: declaredSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("returned value %d must satisfy declared return type %s", index+1, declared)},
+			{Span: declaredSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s must satisfy declared return type %s", contractSubject, declared)},
+			{Span: item.Span, Kind: "user assertion", Trust: "claimed", Message: userAssertedAnyEvidence},
 			{Span: item.Span, Kind: "unvalidated value", Trust: "unknown", Reason: "explicit boundary validation", Message: fmt.Sprintf("%s comes from any/unknown", subject)},
-			{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s is %s", subject, declared)},
+			{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s satisfies the declared return type", subject)},
 		}
 		item.Labels = []DiagnosticLabel{
 			{Span: item.Span, Message: "returned value any"},
 			{Span: declaredSpan, Message: "declared return type " + declared},
 		}
-		item.Help = fmt.Sprintf("Validate or narrow the returned value before returning it; any/unknown values do not prove the declared return type %s.", declared)
+		item.Help = returnContractHelp
 		return item
 	}
 	valueEvidence := fmt.Sprintf("%s has literal value %s", subject, returnContractObservedValue(item.Message, subject))
@@ -1418,14 +1500,44 @@ func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation
 	}
 	item.Evidence = []DiagnosticEvidence{
 		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: valueEvidence},
-		{Span: declaredSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("returned value %d must satisfy declared return type %s", index+1, declared)},
+		{Span: declaredSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s must satisfy declared return type %s", contractSubject, declared)},
 	}
 	item.Labels = []DiagnosticLabel{
 		{Span: item.Span, Message: "returned value"},
 		{Span: declaredSpan, Message: "declared return type " + declared},
 	}
-	item.Help = "Return a value compatible with the declared return type, or change the return annotation if this value is valid."
+	item.Help = returnContractHelp
 	return item
+}
+
+// returnContractHelp is the single remediation every return-contract refutation
+// states: the declaration is the contract, so either the value satisfies it or
+// the annotation is wrong.
+const returnContractHelp = "Return a value compatible with the declared return type, or change the return annotation if this value is valid."
+
+// userAssertedAnyEvidence is the diagnostic domain's own spelling of an any
+// annotation's trust. It is the same line the argument boundary states, so a
+// reader sees one account of what an any declaration does and does not prove.
+var userAssertedAnyEvidence = diag.FormatAssertionClaims(assertion.Of(assertion.AnyClaim))
+
+// recordFieldType resolves one declared field of a record target by the member
+// suffix a refutation named. Only a direct, statically named field resolves; a
+// nested or computed suffix names no single declaration here.
+func recordFieldType(target typ.Type, suffix string) (typ.Type, bool) {
+	name, ok := strings.CutPrefix(suffix, ".")
+	if !ok || name == "" {
+		return nil, false
+	}
+	record, ok := unwrap.Alias(subst.ExpandInstantiated(target)).(*typ.Record)
+	if !ok {
+		return nil, false
+	}
+	for _, field := range record.Fields {
+		if field.Name == name && field.Type != nil {
+			return field.Type, true
+		}
+	}
+	return nil, false
 }
 
 // returnContractObservedValue recovers the observed value the publication
@@ -6263,7 +6375,7 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 				Key:   "type.call.direct.argument_type/" + item.Target.Name + "/" + indexedCallSubject("argument", index),
 				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))),
 			}
-			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, []equation.Fact{fact})
+			spans := diagnosticSpans(child, []equation.Fact{fact})
 			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + published.Fact.Key
 				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), published.Fact.Value...)})
@@ -6401,7 +6513,7 @@ func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *
 				Key:   "type.call.direct.argument_type/" + item.Target.Name + "/" + indexedCallSubject("argument", index),
 				Value: []byte(fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(function.Params[index].Type.String()))),
 			}
-			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, []equation.Fact{fact})
+			spans := diagnosticSpans(child, []equation.Fact{fact})
 			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + published.Fact.Key
 				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), published.Fact.Value...)})
@@ -8346,7 +8458,7 @@ func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equati
 			}
 			shapeTarget, _ := artifactOperand(claim.Operands, "shape-target")
 			fact := equation.Fact{Key: "type.assignment/" + claim.Target.Name, Value: []byte(assignmentAnyMismatchMessage(display, string(targetType), shapeTarget))}
-			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, []equation.Fact{fact})
+			spans := diagnosticSpans(child, []equation.Fact{fact})
 			for _, item := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + item.Fact.Key
 				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)})
@@ -8894,7 +9006,7 @@ func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.Compi
 			}
 		}
 	}
-	spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
+	spans := diagnosticSpans(child, closure.Diagnostics)
 	projected := equation.OutputClosure{}
 	body := fmt.Sprintf("%x", child.Body)
 	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
@@ -9643,7 +9755,7 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 	// seeds have established that boundary.
 	closure.Diagnostics = rootPublishedDiagnostics(child.Artifact, closure.Diagnostics)
 	body := fmt.Sprintf("%x", child.Body)
-	spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, closure.Diagnostics)
+	spans := diagnosticSpans(child, closure.Diagnostics)
 	transported := make(map[string]bool)
 	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 		if !childCallDiagnostic(item.Fact) {
@@ -10359,7 +10471,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 		}
 		body := fmt.Sprintf("%x", child.Body)
-		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
+		spans := diagnosticSpans(child, outcome.Diagnostics)
 		claimOwnedReads := claimConsumedStaticReads(child.Artifact)
 		// A body whose entire formal boundary is declared explicit any is decided
 		// at allocation time whichever lane admitted it: no caller value can be
@@ -10593,7 +10705,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
-			spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
+			spans := diagnosticSpans(child, outcome.Diagnostics)
 			if span, ok := spans[diagnostic.Key]; ok {
 				lexical.diagnosticSpans[key] = span
 			}
@@ -10622,7 +10734,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		if evaluateErr != nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: select child %q: %w", prototype, evaluateErr)
 		}
-		spans := diagnosticSpans(child.ClaimSpans, child.CallSpans, child.BranchSpans, child.EffectSpans, child.ExpressionSpans, child.ReturnSpans, outcome.Diagnostics)
+		spans := diagnosticSpans(child, outcome.Diagnostics)
 		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil)
 		for _, diagnostic := range outcome.Diagnostics {
 			if !selectChildDiagnostic(diagnostic.Key) {
@@ -11476,6 +11588,13 @@ func sealShapeValue(value []byte, partition equation.Partition) ([]byte, error) 
 		// boundary: the literal's member value is the type the runtime test
 		// already certified for that term.
 		resolved = validatedBoundaryValue([]byte(member.Value), resolved, partition)
+		// An unvalidated boundary seals as that boundary. The member's source
+		// crossed any/unknown without a proof, and an operator that computes a
+		// runtime value from it discharges no declaration: the slot still holds
+		// a value nothing validated. Sealing the member as Top would drop that
+		// provenance, leaving a later declared-shape consumer with a merely
+		// unknown member it can neither prove nor refute.
+		resolved = unvalidatedBoundaryMemberValue([]byte(member.Value), resolved, partition)
 		resolved, err = sealShapeValue(resolved, partition)
 		if err != nil {
 			return nil, err
@@ -12014,6 +12133,14 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			}
 		}
 	}
+	// A comparison's result kind is fixed by the operator: Lua yields a boolean
+	// whatever the operands hold. Unknown operands leave that boolean's value
+	// undecided, never its kind, so the kind is published as this result's own
+	// proof. A contract that accepts every boolean is discharged by it even
+	// where the operands crossed a precision boundary.
+	if wir.Op(kind) == wir.OpBinOp && comparisonOperator(wir.Operator(op)) {
+		values = append(values, equation.Fact{Key: booleanResultPrefix + string(result) + "/" + operation.Target.Name, Value: []byte("proven")})
+	}
 	if wir.Op(kind) == wir.OpBinOp && (wir.Operator(op) == wir.BinEq || wir.Operator(op) == wir.BinNe) {
 		// Equality against an explicit-any boundary has no concrete boolean
 		// result. Carry only the already-published boundary to the comparison
@@ -12037,6 +12164,17 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
+}
+
+// comparisonOperator names the binary operators whose result kind is a boolean
+// by the language definition, independently of what their operands hold.
+func comparisonOperator(operator wir.Operator) bool {
+	switch operator {
+	case wir.BinEq, wir.BinNe, wir.BinLt, wir.BinLe, wir.BinGt, wir.BinGe:
+		return true
+	default:
+		return false
+	}
 }
 
 func closedPlacementIdentityComparison(left, right []byte, partition equation.Partition) bool {
@@ -14742,6 +14880,42 @@ func tableAgainstRecord(value []byte, target typ.Type, comparison *shapeComparis
 		return shapeUnknown
 	}
 	return shapeProven
+}
+
+// anyBoundaryRecordMember names the first declared field a returned aggregate
+// fills from an unvalidated any/unknown boundary. It is the member-resolved
+// reading of the same rule tableAgainstRecord applies whole: a boundary value
+// discharges no concrete field type. Both walk the record's fields in the same
+// order, so the member reported here is exactly the member that refuted the
+// aggregate. A value that is not a closed literal, a target that is not a
+// record, and a field that accepts every value all report nothing.
+func anyBoundaryRecordMember(value []byte, target typ.Type) (string, typ.Type, bool) {
+	table, ok := shapefact.DecodeTable(value)
+	if !ok {
+		return "", nil, false
+	}
+	record, ok := unwrap.Alias(subst.ExpandInstantiated(target)).(*typ.Record)
+	if !ok {
+		return "", nil, false
+	}
+	for _, field := range record.Fields {
+		member, found := table.Lookup("." + field.Name)
+		if !found || !member.Present {
+			continue
+		}
+		memberValue := tableDescendantEvidence(table, member.Suffix, []byte(member.Value))
+		if isUnvalidatedAnyValue(memberValue) && typeRequiresBoundaryProof(field.Type) {
+			return "." + field.Name, field.Type, true
+		}
+	}
+	return "", nil, false
+}
+
+// returnMemberSubject names one member slot of a returned aggregate. The member
+// suffix is appended to the slot the declaration indexes, so the reader sees
+// the exact field the contract names rather than the whole returned value.
+func returnMemberSubject(index int, suffix string) string {
+	return fmt.Sprintf("returned value %d%s", index+1, suffix)
 }
 
 // tableDescendantEvidence reconciles a nested literal member with the direct
@@ -19126,7 +19300,38 @@ func declaredExplicitAny(term []byte, partition equation.Partition) bool {
 // any result. A runtime type test is that boundary's own validator, so a proven
 // edge that decides the required type outright clears it.
 func anyBoundaryValue(term []byte, value []byte, known bool, expected typ.Type, partition equation.Partition) bool {
-	return anyBoundarySource(term, value, known, partition) && !anyBoundaryRuntimeValidated(term, expected, partition)
+	return anyBoundarySource(term, value, known, partition) &&
+		!anyBoundaryRuntimeValidated(term, expected, partition) &&
+		!operatorFixedBooleanResult(term, expected, partition)
+}
+
+// operatorFixedBooleanResult reports whether this term is an operator result
+// whose kind the language fixes to boolean, against a declaration that accepts
+// every boolean. The operand provenance decides which boolean the comparison
+// yields, never whether it is one, so such a declaration is discharged by the
+// operator itself and no boundary proof is owed. A declaration that admits only
+// part of the boolean domain is not discharged here.
+func operatorFixedBooleanResult(term []byte, expected typ.Type, partition equation.Partition) bool {
+	if expected == nil {
+		return false
+	}
+	prefix := booleanResultPrefix + string(term) + "/"
+	proven := false
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "proven" {
+			proven = true
+			break
+		}
+	}
+	if !proven {
+		return false
+	}
+	for _, witness := range [][]byte{[]byte("scalar/bool/true"), []byte("scalar/bool/false")} {
+		if valueAgainstType(witness, expected) != shapeProven {
+			return false
+		}
+	}
+	return true
 }
 
 // anyBoundarySource states the published any/unknown provenance of a term
@@ -19184,7 +19389,10 @@ var luaRuntimeTypeProofs = []struct {
 // boundary's own validator, so consumers that read only the value observe the
 // same validation an annotation would.
 func validatedBoundaryValue(term []byte, value []byte, partition equation.Partition) []byte {
-	if !isUnvalidatedAnyValue(value) {
+	// The proof replaces whatever the term left unknown, not only a value
+	// already spelled as an explicit any: a member read through a gradual
+	// boundary resolves to Top, and the same runtime test certifies it.
+	if !isUnknownScalar(value) {
 		return value
 	}
 	for _, proof := range luaRuntimeTypeProofs {
@@ -19196,6 +19404,23 @@ func validatedBoundaryValue(term []byte, value []byte, partition equation.Partit
 		}
 	}
 	return value
+}
+
+// unvalidatedBoundaryMemberValue states the any/unknown provenance a literal's
+// member carries into its sealed shape. It reads the same published boundary
+// anyBoundaryValue consults and never invents one: only a term whose source is
+// an unvalidated boundary, and whose computed value is not already a concrete
+// witness of its own, seals as the boundary. A runtime type test on the same
+// term is that boundary's validator, so validatedBoundaryValue runs first and a
+// proven term never reaches here.
+func unvalidatedBoundaryMemberValue(term []byte, value []byte, partition equation.Partition) []byte {
+	if isUnvalidatedAnyValue(value) || !isUnknownScalar(value) {
+		return value
+	}
+	if !anyBoundarySource(term, value, true, partition) {
+		return value
+	}
+	return []byte("scalar/claim/claim-kind/3/\"any\"")
 }
 
 func explicitAnyBoundaryFact(term, operation string) equation.Fact {
@@ -25427,6 +25652,18 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 			continue
 		}
 		if valueAgainstType(values[index], expected) != shapeRefuted {
+			continue
+		}
+		// The declaration is discharged field by field, so when the refutation
+		// is one member's unvalidated boundary the contract is stated at that
+		// member. The whole-value message stays for every other refutation: it
+		// is the aggregate itself, not one slot, that failed the declaration.
+		if suffix, fieldType, member := anyBoundaryRecordMember(values[index], expected); member {
+			diagnostics = append(diagnostics, equation.Fact{
+				Key: fmt.Sprintf("type.return.contract/%s/%08d/%s", operation.Target.Name, index, suffix),
+				Value: []byte(fmt.Sprintf("%s comes from any/unknown; no proof shows it satisfies declared return type %s",
+					returnMemberSubject(index, suffix), typeformat.Short(fieldType))),
+			})
 			continue
 		}
 		subject := returnValueSubject(index, displays[index])
