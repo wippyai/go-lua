@@ -1703,6 +1703,13 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			if target, ok := shapefact.EncodeTarget(body.Type(instruction.Type)); ok {
 				draft.Operands = append(draft.Operands, equation.Operand{Role: "shape-target", Term: equation.ClosedTerm(target)})
 			}
+			// An annotation on an ordinary root write contracts a cell the
+			// preceding write has already bound. It decides that write's
+			// obligation without rebinding the cell, so it publishes no value of
+			// its own: the write remains the cell's sole definition.
+			if instruction.Assign == wir.AssignOrdinaryRootWrite {
+				draft.Operands = append(draft.Operands, equation.Operand{Role: "write-contract", Term: equation.ClosedTerm([]byte("scalar/bool/true"))})
+			}
 			if instruction.Dst.Kind == wir.OperandPath {
 				display := body.Path(wir.PathRef(instruction.Dst.Ref)).String()
 				if display == "" {

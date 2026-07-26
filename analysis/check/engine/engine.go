@@ -887,6 +887,12 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			item.Code = diagnosticCode(inner)
 			key = inner
 		}
+		// An unproven claim's obligation site is its own evidence: the surface
+		// carries a label and the remediation instead of an empty explanation.
+		if strings.HasPrefix(key, "claim/unproven/") {
+			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "unproven claim"}}
+			item.Help = "Prove the claim by narrowing the value to the claimed type, or remove the claim."
+		}
 		if projected, ok := projectLifecycleDiagnostic(item, fact, lifecycleEvidence); ok {
 			out = append(out, projected)
 			continue
@@ -8446,7 +8452,7 @@ func nilOriginCandidates(child front.Compilation) map[string]nilOriginWitness {
 			continue
 		}
 		claim, display, declared, annotated := nilOriginDeclaration(child, term)
-		if !annotated || nilOriginTermEscapes(child, term, claim) {
+		if !annotated || nilOriginTermEscapes(child, term, claim, declared) {
 			delete(witnesses, term)
 			continue
 		}
@@ -8480,7 +8486,14 @@ func nilOriginDeclaration(child front.Compilation, term string) (string, string,
 		value, hasValue := artifactOperand(operation.Operands, "value")
 		kind, hasKind := artifactOperand(operation.Operands, "kind")
 		claimType, hasType := artifactOperand(operation.Operands, "type")
-		if !hasTarget || !hasValue || !hasKind || !hasType || string(target) != term || string(value) != term || string(kind) != "claim-kind/3" {
+		if !hasTarget || !hasValue || !hasKind || !hasType || string(target) != term || string(kind) != "claim-kind/3" {
+			continue
+		}
+		// The binding is born nil either because the reader wrote nil into it or
+		// because the declaration carried no initializer at all, in which case
+		// the claim consumes its own target as the placeholder the lowering
+		// wrote. Any other source is a value the declaration did not birth.
+		if string(value) != term && string(value) != "scalar/nil" {
 			continue
 		}
 		declared, err := strconv.Unquote(strings.TrimPrefix(string(claimType), "claim-type/"))
@@ -8504,8 +8517,11 @@ func nilOriginDeclaration(child front.Compilation, term string) (string, string,
 // nilOriginTermEscapes reports whether a binding leaves this recognizer's
 // write model: a nested closure may capture and rebind it, a heap-level
 // operation may replace it outside the ordinary environment-write lane, or a
-// second annotation may refine the same cell.
-func nilOriginTermEscapes(child front.Compilation, term string, claim string) bool {
+// second annotation may refine the same cell. A claim that re-states the
+// binding's own declaration is not such a refinement: the declaration contracts
+// every write to the local, so each write carries it and none of them admits a
+// value the declaration had not already admitted.
+func nilOriginTermEscapes(child front.Compilation, term string, claim string, declared string) bool {
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "path-replacement", "path-invalidation", "index-mutation", "generic-for", "channel-select", "dynamic-index-read":
@@ -8519,9 +8535,14 @@ func nilOriginTermEscapes(child front.Compilation, term string, claim string) bo
 			if operation.Target.Name == claim {
 				continue
 			}
-			if target, found := artifactOperand(operation.Operands, "target"); found && string(target) == term {
-				return true
+			target, found := artifactOperand(operation.Operands, "target")
+			if !found || string(target) != term {
+				continue
 			}
+			if nilOriginRestatesDeclaration(operation, declared) {
+				continue
+			}
+			return true
 		}
 	}
 	for _, nested := range child.Nested {
@@ -8532,6 +8553,20 @@ func nilOriginTermEscapes(child front.Compilation, term string, claim string) bo
 		}
 	}
 	return false
+}
+
+// nilOriginRestatesDeclaration reports whether a claim carries exactly the
+// annotation that declared the cell. Only an annotation claim can re-state a
+// declaration; a cast or a non-nil assertion always retypes the binding and
+// leaves the origin model even when it names the declared type.
+func nilOriginRestatesDeclaration(operation equation.Equation, declared string) bool {
+	kind, hasKind := artifactOperand(operation.Operands, "kind")
+	claimType, hasType := artifactOperand(operation.Operands, "type")
+	if !hasKind || !hasType || string(kind) != "claim-kind/3" {
+		return false
+	}
+	restated, err := strconv.Unquote(strings.TrimPrefix(string(claimType), "claim-type/"))
+	return err == nil && restated == declared
 }
 
 // publishNilOriginUnsafeUse publishes the origin-ordered witness trace for a
@@ -12404,6 +12439,19 @@ func factOperation(key string) string {
 
 // claimKernel makes user claims explicit checked refinements. An unproven
 // claim remains a downstream assumption but never becomes reusable proof.
+// claimIsWriteContract reports whether a claim decides an ordinary root write
+// rather than binding the cell it names. The declaration that introduced the
+// local remains the cell's type authority; a write contract only discharges the
+// obligation that one later write owes that declaration.
+func claimIsWriteContract(operation equation.BoundEquation) bool {
+	for _, operand := range operation.Operands {
+		if operand.Role == "write-contract" {
+			return string(operand.Value) == "scalar/bool/true"
+		}
+	}
+	return false
+}
+
 func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition, imported map[string]bool) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
@@ -12509,7 +12557,14 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if boundaryValidated && len(shapeTarget) != 0 {
 			value = append([]byte(nil), shapeTarget...)
 		}
-		closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}}}
+		closure := equation.OutputClosure{}
+		// A write contract decides an already-bound cell. Republishing the cell
+		// here would add a second definition of it after the write that owns it,
+		// displacing whatever a branch had narrowed that write to; the contract
+		// therefore reports and publishes nothing about the cell's value.
+		if !claimIsWriteContract(operation) {
+			closure.Values = append(closure.Values, equation.Fact{Key: "value/" + target + "/" + operation.Target.Name, Value: value})
+		}
 		if throwTemplate.Key != "" {
 			closure.Values = append(closure.Values, throwTemplate)
 		}
@@ -12521,7 +12576,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// this exact binding. Later aggregate literals may consume that
 		// publication through their recorded member origins; an unproven claim
 		// deliberately publishes no type authority.
-		if kind == "claim-kind/3" && len(shapeTarget) != 0 {
+		if kind == "claim-kind/3" && len(shapeTarget) != 0 && !claimIsWriteContract(operation) {
 			closure.Values = append(closure.Values, equation.Fact{Key: "type/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), shapeTarget...)})
 		}
 		// A cast becomes a reusable type witness only when the cast's own

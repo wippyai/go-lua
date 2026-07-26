@@ -653,38 +653,7 @@ func (b *builder) lowerLocalAssign(s *ast.LocalAssignStmt) {
 			b.markAssignmentSourceSpan(b.curPoint, 0, dst, wirSpanFromSource(ast.SpanOf(s.Exprs[i])))
 		}
 		if declared != 0 {
-			source := b.annotationSourceOperand(values[i], dst)
-			// Keep the authored expression span when lowering materializes it into
-			// dst. The claim still consumes the exact lowered operand; selected
-			// call-result displays are presentation-only.
-			sourceSpan := bindingSpan(values[i])
-			methodResultSelector := bindingMethodResultSelector(values[i])
-			claimSourceDisplay := ""
-			if source == dst && bindingCallResultSelector(values[i]) {
-				// A call-result member chain has been materialized into its
-				// destination; direct paths remain rendered from canonical WIR
-				// segments, and non-call expressions retain their prior projection.
-				claimSourceDisplay = bindingDisplay(values[i])
-			}
-			b.emit(wir.Instruction{
-				Op:  wir.OpClaim,
-				Dst: dst,
-				// Keep the assignment source separate from the target.  An
-				// annotation is a contract on the value that flowed into this
-				// declaration, not a claim that the newly-bound local proves
-				// itself.  In particular this preserves an explicit `any` source
-				// through the equation claim instead of losing it to the target
-				// write.
-				A:                         source,
-				Claim:                     wir.ClaimAnnotation,
-				Type:                      declared,
-				ClaimTypeDisplay:          authoredTypeDisplay(s.Types[i]),
-				ClaimSourceDisplay:        claimSourceDisplay,
-				ClaimSourceMethodSelector: methodResultSelector,
-				TargetSpan:                localNameSpan(s, i),
-				DeclaredSpan:              wirSpanFromSource(ast.SpanOf(s.Types[i])),
-				ExprSpan:                  sourceSpan,
-			})
+			b.emitAnnotationClaim(dst, values[i], declared, s.Types[i], localNameSpan(s, i), wir.AssignLocalDeclaration)
 		}
 		if symbol, ok := b.bindings.LocalSymbolAt(s, i); ok {
 			b.debugDeclareAt(b.curPoint, symbol)
@@ -752,9 +721,74 @@ func (b *builder) annotationSourceOperand(v binding, dst wir.Operand) wir.Operan
 			if path, ok := pathexpr.Resolve(expr, b.bindings); ok {
 				return b.pathOperand(path)
 			}
+		case *ast.NilExpr:
+			// An authored nil is a value the reader supplied and the annotation
+			// contracts it like any other. It is separable from the target
+			// because the placeholder nil a declaration without an initializer
+			// writes has no source expression at all and still falls through to
+			// dst below.
+			return b.constNil()
 		}
 	}
 	return dst
+}
+
+// emitAnnotationClaim records a declared type as the contract on the value
+// written into dst. A declaration and an ordinary reassignment of the declared
+// symbol share one contract: the annotation governs every write to the local it
+// declares, so both lower to the same claim. The assign kind separates the two:
+// a declaration binds the cell it annotates, while a reassignment only contracts
+// a cell the preceding write already bound.
+func (b *builder) emitAnnotationClaim(dst wir.Operand, v binding, declared wir.TypeRef, annotation ast.TypeExpr, targetSpan wir.Span, assign wir.AssignKind) {
+	source := b.annotationSourceOperand(v, dst)
+	// Keep the authored expression span when lowering materializes it into
+	// dst. The claim still consumes the exact lowered operand; selected
+	// call-result displays are presentation-only.
+	claimSourceDisplay := ""
+	if source == dst && bindingCallResultSelector(v) {
+		// A call-result member chain has been materialized into its
+		// destination; direct paths remain rendered from canonical WIR
+		// segments, and non-call expressions retain their prior projection.
+		claimSourceDisplay = bindingDisplay(v)
+	}
+	b.emit(wir.Instruction{
+		Op:  wir.OpClaim,
+		Dst: dst,
+		// Keep the assignment source separate from the target.  An annotation is
+		// a contract on the value that flowed into this write, not a claim that
+		// the newly-bound local proves itself.  In particular this preserves an
+		// explicit `any` source through the equation claim instead of losing it
+		// to the target write.
+		A:                         source,
+		Claim:                     wir.ClaimAnnotation,
+		Assign:                    assign,
+		Type:                      declared,
+		ClaimTypeDisplay:          authoredTypeDisplay(annotation),
+		ClaimSourceDisplay:        claimSourceDisplay,
+		ClaimSourceMethodSelector: bindingMethodResultSelector(v),
+		TargetSpan:                targetSpan,
+		DeclaredSpan:              wirSpanFromSource(ast.SpanOf(annotation)),
+		ExprSpan:                  bindingSpan(v),
+	})
+}
+
+// declaredRootAnnotation returns the interned declared type of a root local
+// path together with the annotation the reader authored. Only a bare root write
+// is governed here: a member write carries the container's own element
+// contract, not the root declaration.
+func (b *builder) declaredRootAnnotation(dst wir.Operand) (wir.TypeRef, ast.TypeExpr) {
+	if b == nil || b.body == nil || b.bindings == nil || dst.Kind != wir.OperandPath {
+		return 0, nil
+	}
+	p := b.body.Path(wir.PathRef(dst.Ref))
+	if p.Symbol == 0 || len(p.Segments) != 0 {
+		return 0, nil
+	}
+	annotation, ok := b.bindings.SymbolTypeAnnotation(p.Symbol)
+	if !ok || annotation == nil {
+		return 0, nil
+	}
+	return b.internType(annotation), annotation
 }
 
 func (b *builder) recordLocalRequireModule(s *ast.LocalAssignStmt, index int, dst wir.Operand) {
@@ -794,8 +828,15 @@ func (b *builder) lowerAssignTarget(index int, target ast.Expr, v binding) {
 	switch t := target.(type) {
 	case *ast.IdentExpr:
 		dst, _ := b.targetOperand(t)
+		declared, annotation := b.declaredRootAnnotation(dst)
+		if declared != 0 {
+			v = v.withContextType(declared)
+		}
 		b.bindInto(dst, v)
 		b.markAssignmentTargetSpan(b.curPoint, 0, dst, tableEntryValueSpan(t))
+		if declared != 0 {
+			b.emitAnnotationClaim(dst, v, declared, annotation, tableEntryValueSpan(t), wir.AssignOrdinaryRootWrite)
+		}
 	case *ast.AttrGetExpr:
 		if p, ok := pathexpr.Resolve(t, b.bindings); ok {
 			valueSpan := wir.Span{}

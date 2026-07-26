@@ -1,0 +1,5 @@
+{
+  "description": "A declared local's annotation contracts every write to that local, not only its initializer: a wrong scalar, a wrong record member, a missing required member, a nil into a non-optional declaration, a branch-guarded write, a captured write from a closure, and each target of a multiple assignment are all refuted at the write, while conforming reassignments, rebinding within a declared union, loop rebinding, and nil into an optional declaration stay clean.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

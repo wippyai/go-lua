@@ -378,6 +378,27 @@
             ]
           }
         ]
+      },
+      {
+        "file": "main.lua",
+        "line": 23,
+        "column": 17,
+        "severity": "error",
+        "code": "lint.claim.unproven",
+        "message_contains": [
+          "claim \"number\"",
+          "is not proven"
+        ],
+        "render_contains": [
+          "claim \"number\" is not proven"
+        ],
+        "help_contains": [
+          "Prove the claim by narrowing"
+        ],
+        "label_contains": [
+          "unproven claim"
+        ],
+        "allow_empty_evidence": true
       }
     ]
   },
