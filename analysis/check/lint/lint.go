@@ -625,16 +625,7 @@ func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.
 			out = append(out, newEnrichedDiagnostic(entry, span, diagnostic.Code(projection.Code), projection.Message, projection))
 			continue
 		}
-		code := diagnostic.Code("lint." + strings.ReplaceAll(fact.Key, "/", "."))
-		if strings.HasPrefix(fact.Key, "claim/unproven/") {
-			code = "lint.claim.unproven"
-		} else if strings.HasPrefix(fact.Key, "type.call.direct.") {
-			// The trailing operation name is equation identity only. The fact's
-			// stable prefix is the public call-rule code.
-			code = diagnostic.Code(fact.Key[:strings.IndexByte(fact.Key, '/')])
-		} else if strings.HasPrefix(fact.Key, "type.assignment/") {
-			code = "type.assignment"
-		}
+		code := diagnostic.Code(engine.DiagnosticCode(fact.Key))
 		out = append(out, newDiagnostic(entry, span, code, string(fact.Value)))
 	}
 	for _, projection := range result.PolicyDiagnostics {
@@ -666,17 +657,8 @@ func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, 
 		labels = append(labels, diagnostic.Label{File: entry.Path, Span: labelSpan, Message: item.Message})
 	}
 	result := newDiagnosticSpec(entry, span, code, message, diagnostic.NewExplanation(evidence...), projection.Help, labels)
-	if code == "lint.condition.redundant" || code == "advice.always_true_guard" || code == "advice.redundant_claim" || code == "send.isolation" {
-		result.Severity = diagnostic.SeverityHint
-	}
-	if code == "effect.freeze.mutation" || code == "effect.lifecycle.unreleased" || code == "typestate.unproven_requirement" {
-		result.Severity = diagnostic.SeverityWarning
-	}
-	if code == "type.operator.concat_operand" {
-		result.Severity = diagnostic.SeverityWarning
-	}
-	if code == "channel.select.exhaustiveness" || code == "lint.union.exhaustiveness" {
-		result.Severity = diagnostic.SeverityWarning
+	if severity, registered := engine.DiagnosticFamilySeverity(projection.Fact.Key); registered {
+		result.Severity = severity
 	}
 	return result
 }

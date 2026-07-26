@@ -73,7 +73,7 @@ func channelSelectCoverageConsumer(body *wir.Body, identity [32]byte, chain wir.
 		return selectConsumerDiagnostic{}, false
 	}
 	span := chain.HeadSpan
-	return selectConsumerDiagnostic{Key: fmt.Sprintf("channel.select.exhaustiveness/%x/%d", identity, chain.ID), Message: "channel select is not exhaustive; missing " + caseWord(missing) + ": " + quotedCases(missing), Span: span, Evidence: []DiagnosticEvidence{
+	return selectConsumerDiagnostic{Key: fmt.Sprintf(diagnosticFamilyPrefix(DiagnosticFamilyChannelSelectExhaustiveness)+"%x/%d", identity, chain.ID), Message: "channel select is not exhaustive; missing " + caseWord(missing) + ": " + quotedCases(missing), Span: span, Evidence: []DiagnosticEvidence{
 		{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "branch chain checks channel `" + result + ".channel`"},
 		{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "handled cases: " + quotedCases(covered)},
 		{Span: span, Kind: diagnostic.EvidenceMissingProof, Trust: diagnostic.TrustUnknown, Message: "missing cases: " + quotedCases(missing)},
@@ -256,7 +256,7 @@ func channelSelectUnionConsumer(body *wir.Body, identity [32]byte, chain wir.IfC
 			continue
 		}
 		span := chain.HeadSpan
-		return selectConsumerDiagnostic{Key: fmt.Sprintf("lint.union.exhaustiveness/%x/%d", identity, chain.ID), Message: "discriminated union handling is not exhaustive; missing " + caseWord(missing) + ": " + quotedCases(missing), Span: span, Evidence: []DiagnosticEvidence{
+		return selectConsumerDiagnostic{Key: fmt.Sprintf(diagnosticFamilyPrefix(DiagnosticFamilyUnionExhaustiveness)+"%x/%d", identity, chain.ID), Message: "discriminated union handling is not exhaustive; missing " + caseWord(missing) + ": " + quotedCases(missing), Span: span, Evidence: []DiagnosticEvidence{
 			{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "branch chain checks discriminant `" + spelling + "`"},
 			{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "possible cases: " + quotedCases(displays)},
 			{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "handled cases: " + quotedCases(covered)},

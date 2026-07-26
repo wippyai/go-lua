@@ -440,7 +440,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		if len(unresolvedTypes) != 0 {
 			kept := closure.Diagnostics[:0]
 			for _, diagnostic := range closure.Diagnostics {
-				if strings.HasPrefix(diagnostic.Key, "claim/unproven/") {
+				if diagnosticFamilyMatches(diagnostic.Key, DiagnosticFamilyUnprovenClaim) {
 					if payload, ok := decodeDiagnosticPayload(diagnostic.Value); ok && payload.Kind == diagnosticClaimUnproven {
 						if name, err := strconv.Unquote(payload.Required); err == nil && unresolvedTypes[name] {
 							continue
@@ -618,7 +618,7 @@ func rootPublishedDiagnostics(artifact equation.Artifact, diagnostics []equation
 	}
 	filtered := make([]equation.Fact, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
-		name, missing := strings.CutPrefix(diagnostic.Key, "type.member.missing/")
+		name, missing := strings.CutPrefix(diagnostic.Key, diagnosticFamilyPrefix(DiagnosticFamilyMissingMember))
 		if missing && staticReads[name] {
 			continue
 		}
@@ -641,14 +641,20 @@ func diagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact)
 	out := make(map[string]wir.Span)
 	defer structuralMemberDiagnosticSpans(compilation, diagnostics, out)
 	for _, item := range diagnostics {
-		var name string
-		switch {
-		case strings.HasPrefix(item.Key, "claim/unproven/"):
-			name = strings.TrimPrefix(item.Key, "claim/unproven/")
-		case strings.HasPrefix(item.Key, "type.assignment/"):
-			name = strings.TrimPrefix(item.Key, "type.assignment/")
-		case strings.HasPrefix(item.Key, "type.member.missing/"):
-			name = strings.TrimPrefix(item.Key, "type.member.missing/")
+		if _, child := childDiagnosticKey(item.Key); child {
+			continue
+		}
+		id, family, _, registered := lookupDiagnosticFamily(item.Key)
+		if !registered {
+			continue
+		}
+		name := strings.TrimPrefix(item.Key, family.KeyPrefix)
+		switch family.AnchorKind {
+		case DiagnosticAnchorClaim:
+			if id != DiagnosticFamilyUnprovenClaim && id != DiagnosticFamilyAssignment {
+				continue
+			}
+		case DiagnosticAnchorMemberConsumer:
 			if span, ok := effectSpans[name]; ok {
 				out[item.Key] = span
 				continue
@@ -657,48 +663,50 @@ func diagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact)
 				out[item.Key] = span
 				continue
 			}
-		case strings.HasPrefix(item.Key, "advice.redundant_claim/"):
-			name = strings.TrimPrefix(item.Key, "advice.redundant_claim/")
+		case DiagnosticAnchorApplyOrClaim:
 			if span, ok := callSpans[name+"/call"]; ok {
 				out[item.Key] = span
 				continue
 			}
-		case strings.HasPrefix(item.Key, "advice.always_true_guard/"), strings.HasPrefix(item.Key, "lint.condition.redundant/"):
+		case DiagnosticAnchorBranch:
 			name = item.Key[strings.LastIndexByte(item.Key, '/')+1:]
 			if span, ok := branchSpans[name]; ok {
 				out[item.Key] = span
 			}
 			continue
-		case strings.HasPrefix(item.Key, "type.call.direct."):
-			if slash := strings.IndexByte(item.Key, '/'); slash >= 0 {
-				if span, ok := callSpans[item.Key[slash+1:]]; ok {
+		case DiagnosticAnchorApply:
+			switch id {
+			case DiagnosticFamilyCallArgumentType, DiagnosticFamilyCallNotCallable, DiagnosticFamilyCallTooFewArguments, DiagnosticFamilyCallTooManyArguments:
+				if slash := strings.IndexByte(item.Key, '/'); slash >= 0 {
+					if span, ok := callSpans[item.Key[slash+1:]]; ok {
+						out[item.Key] = span
+					}
+				}
+			case DiagnosticFamilySendIsolation:
+				if span, ok := callSpans[name+"/argument-00000002"]; ok {
+					out[item.Key] = span
+					continue
+				}
+				if span, ok := callSpans[name+"/call"]; ok {
+					out[item.Key] = span
+				}
+			case DiagnosticFamilyOptionalCallReceiver:
+				if span, ok := callSpans[name+"/call"]; ok {
 					out[item.Key] = span
 				}
 			}
 			continue
-		case strings.HasPrefix(item.Key, "send.isolation/"):
-			name = strings.TrimPrefix(item.Key, "send.isolation/")
-			if span, ok := callSpans[name+"/argument-00000002"]; ok {
-				out[item.Key] = span
-				continue
+		case DiagnosticAnchorLifecycle:
+			if id == DiagnosticFamilyUnreleasedResource {
+				name = strings.TrimPrefix(item.Key, family.KeyPrefix)
+			} else {
+				name = item.Key[strings.LastIndexByte(item.Key, '/')+1:]
 			}
 			if span, ok := callSpans[name+"/call"]; ok {
 				out[item.Key] = span
 			}
 			continue
-		case strings.HasPrefix(item.Key, "channel.send.closed/"), strings.HasPrefix(item.Key, "channel.close.closed/"), strings.HasPrefix(item.Key, "typestate.invalid_requirement/"), strings.HasPrefix(item.Key, "typestate.invalid_transition/"), strings.HasPrefix(item.Key, "typestate.unproven_requirement/"):
-			name = item.Key[strings.LastIndexByte(item.Key, '/')+1:]
-			if span, ok := callSpans[name+"/call"]; ok {
-				out[item.Key] = span
-			}
-			continue
-		case strings.HasPrefix(item.Key, "effect.lifecycle.unreleased/"):
-			name = strings.TrimPrefix(item.Key, "effect.lifecycle.unreleased/")
-			if span, ok := callSpans[name+"/call"]; ok {
-				out[item.Key] = span
-			}
-			continue
-		case strings.HasPrefix(item.Key, "effect.freeze.mutation/"):
+		case DiagnosticAnchorEffect:
 			parts := strings.Split(item.Key, "/")
 			if len(parts) == 3 {
 				if span, ok := effectSpans[parts[1]]; ok {
@@ -706,35 +714,26 @@ func diagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact)
 				}
 			}
 			continue
-		case strings.HasPrefix(item.Key, "type.operator.concat_operand/"):
+		case DiagnosticAnchorExpression:
 			if name := diagnosticOperationName(item.Key); name != "" {
-				parts := strings.Split(item.Key, "/")
-				if len(parts) == 3 {
-					if span, ok := expressionSpans[name+"/"+parts[2]]; ok {
-						out[item.Key] = span
+				if id == DiagnosticFamilyConcatOperand {
+					parts := strings.Split(item.Key, "/")
+					if len(parts) == 3 {
+						if span, ok := expressionSpans[name+"/"+parts[2]]; ok {
+							out[item.Key] = span
+						}
 					}
-				}
-			}
-			continue
-		case strings.HasPrefix(item.Key, "type.operator.comparison_operand/"):
-			if name := diagnosticOperationName(item.Key); name != "" {
-				if span, ok := expressionSpans[name]; ok {
+				} else if span, ok := expressionSpans[name]; ok {
 					out[item.Key] = span
 				}
 			}
 			continue
-		case strings.HasPrefix(item.Key, "type.call.optional_receiver/"):
-			if span, ok := callSpans[strings.TrimPrefix(item.Key, "type.call.optional_receiver/")+"/call"]; ok {
+		case DiagnosticAnchorPathReplacement:
+			if span, ok := effectSpans[name]; ok {
 				out[item.Key] = span
 			}
 			continue
-		case strings.HasPrefix(item.Key, "type.assignment.optional_target/"):
-			if span, ok := effectSpans[strings.TrimPrefix(item.Key, "type.assignment.optional_target/")]; ok {
-				out[item.Key] = span
-			}
-			continue
-		case strings.HasPrefix(item.Key, "type.return.contract/"):
-			name = strings.TrimPrefix(item.Key, "type.return.contract/")
+		case DiagnosticAnchorPublication:
 			operation, slot, indexed := strings.Cut(name, "/")
 			if indexed {
 				if span, ok := returnSpans[operation+"/return-value-"+slot]; ok {
@@ -784,7 +783,7 @@ func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics 
 		}
 	}
 	for _, diagnostic := range diagnostics {
-		name, assignment := strings.CutPrefix(diagnostic.Key, "type.assignment/")
+		name, assignment := strings.CutPrefix(diagnostic.Key, diagnosticFamilyPrefix(DiagnosticFamilyAssignment))
 		if !assignment {
 			continue
 		}
@@ -837,7 +836,7 @@ func structuralReturnMemberDiagnosticSpans(compilation front.Compilation, diagno
 		}
 	}
 	for _, diagnostic := range diagnostics {
-		contract, ok := strings.CutPrefix(diagnostic.Key, "type.return.contract/")
+		contract, ok := strings.CutPrefix(diagnostic.Key, diagnosticFamilyPrefix(DiagnosticFamilyReturnContract))
 		if !ok {
 			continue
 		}
@@ -930,81 +929,29 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 	out := make([]PublishedDiagnostic, 0, len(closure.Diagnostics))
 	for _, fact := range closure.Diagnostics {
 		message, payload := diagnosticMessage(fact.Value)
+		_, family, key, registered := lookupDiagnosticFamily(fact.Key)
 		item := PublishedDiagnostic{Fact: cloneFact(fact), Code: diagnosticCode(fact.Key), Span: spans[fact.Key], Message: message, Payload: payload}
-		key := fact.Key
-		if inner, ok := childDiagnosticKey(fact.Key); ok {
-			item.Code = diagnosticCode(inner)
-			key = inner
-		}
-		// An unproven claim's obligation site is its own evidence: the surface
-		// carries a label and the remediation instead of an empty explanation.
-		if strings.HasPrefix(key, "claim/unproven/") {
-			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "unproven claim"}}
-			item.Help = "Prove the claim by narrowing the value to the claimed type, or remove the claim."
-		}
-		if projected, ok := projectLifecycleDiagnostic(item, fact, lifecycleEvidence); ok {
-			out = append(out, projected)
-			continue
-		}
-		if projected, ok := projectSelectDiagnostic(item, fact, selectEvidence); ok {
-			out = append(out, projected)
-			continue
-		}
-		if projected, ok := projectOperationDiagnostic(item, fact, key, artifact, claims, applies, expressions, callSpans, branchSpans, closure.Values); ok {
-			out = append(out, projected)
-			continue
-		}
-		if contract, ok := strings.CutPrefix(key, "type.return.contract/"); ok {
-			operationName, indexed, hasSlot := strings.Cut(contract, "/")
-			// A member-anchored contract carries the refuted field's suffix
-			// after its slot index. The slot stays the tuple coordinate; the
-			// suffix selects the declared field the narration must name.
-			slot, member, _ := strings.Cut(indexed, "/")
-			if operation, found := publications[operationName]; found && hasSlot {
-				out = append(out, enrichReturnContractDiagnostic(item, operation, operationName, slot, member, returnSpans))
+		if registered {
+			item.Code = family.Code
+			context := diagnosticNarrationContext{
+				fact: fact, key: key, family: family, artifact: artifact, closure: closure,
+				claims: claims, applies: applies, expressions: expressions, writes: writes,
+				indexMutations: indexMutations, pathReplacements: pathReplacements, publications: publications,
+				claimTargetSpans: claimTargetSpans, callSpans: callSpans, branchSpans: branchSpans,
+				returnSpans: returnSpans, lifecycleEvidence: lifecycleEvidence, selectEvidence: selectEvidence,
+			}
+			if projected, narrated := family.Narrate(item, context); narrated {
+				out = append(out, projected)
 				continue
 			}
-			out = append(out, item)
-			continue
 		}
-		if optionalTarget, ok := strings.CutPrefix(fact.Key, "type.assignment.optional_target/"); ok {
-			if operation, found := pathReplacements[optionalTarget]; found {
-				out = append(out, enrichOptionalWriteTargetDiagnostic(item, operation, optionalTarget, closure.Values))
-				continue
-			}
-			out = append(out, item)
-			continue
-		}
-		name, assignment := strings.CutPrefix(fact.Key, "type.assignment/")
+		name, assignment := strings.CutPrefix(fact.Key, diagnosticFamilyPrefix(DiagnosticFamilyAssignment))
 		if !assignment {
-			name, missing := strings.CutPrefix(fact.Key, "type.member.missing/")
-			if missing {
-				if operation, found := claims[name]; found {
-					out = append(out, enrichMissingMemberDiagnostic(item, operation, claimTargetSpans[name], closure))
-					continue
-				}
-				if operation, found := writes[name]; found {
-					out = append(out, enrichMissingStaticPathDiagnostic(item, operation))
-					continue
-				}
-				if operation, found := applies[name]; found {
-					out = append(out, enrichMissingMemberCallDiagnostic(item, operation))
-					continue
-				}
-			}
 			out = append(out, item)
 			continue
 		}
 		operation, found := claims[name]
 		if !found {
-			if mutation, found := indexMutations[name]; found {
-				out = append(out, enrichClosedDynamicWriteDiagnostic(item, mutation, claimTargetSpans[name]))
-				continue
-			}
-			if replacement, found := pathReplacements[name]; found && functionContractDiagnostic(name, closure.Values) {
-				out = append(out, enrichFunctionContractWriteDiagnostic(item, replacement, claimTargetSpans[name], closure))
-				continue
-			}
 			out = append(out, item)
 			continue
 		}
@@ -1735,7 +1682,7 @@ func (l *lexicalEvaluator) calleeReturnContractSpans(artifact equation.Artifact,
 		return spans
 	}
 	for _, fact := range closure.Diagnostics {
-		name, assignment := strings.CutPrefix(fact.Key, "type.assignment/")
+		name, assignment := strings.CutPrefix(fact.Key, diagnosticFamilyPrefix(DiagnosticFamilyAssignment))
 		if !assignment {
 			continue
 		}
@@ -1912,65 +1859,6 @@ func enrichMissingStaticPathDiagnostic(item PublishedDiagnostic, operation equat
 	return item
 }
 
-func projectLifecycleDiagnostic(item PublishedDiagnostic, fact equation.Fact, evidence map[string][]DiagnosticEvidence) (PublishedDiagnostic, bool) {
-	if isChannelLifecycleDiagnostic(fact.Key) {
-		return enrichChannelLifecycleDiagnostic(item), true
-	}
-	if isResourceTypestateDiagnostic(fact.Key) {
-		return enrichResourceTypestateDiagnostic(item), true
-	}
-	if inner, _ := childDiagnosticKey(fact.Key); strings.HasPrefix(inner, "effect.lifecycle.unreleased/") {
-		return enrichUnreleasedLifecycleDiagnostic(item, evidence[fact.Key]), true
-	}
-	return PublishedDiagnostic{}, false
-}
-
-func projectSelectDiagnostic(item PublishedDiagnostic, fact equation.Fact, evidence map[string][]DiagnosticEvidence) (PublishedDiagnostic, bool) {
-	inner, _ := childDiagnosticKey(fact.Key)
-	if !strings.HasPrefix(inner, "channel.select.exhaustiveness/") && !strings.HasPrefix(inner, "lint.union.exhaustiveness/") {
-		return PublishedDiagnostic{}, false
-	}
-	item.Evidence = append([]DiagnosticEvidence(nil), evidence[fact.Key]...)
-	if strings.HasPrefix(inner, "lint.union.exhaustiveness/") {
-		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "union case check"}}
-		item.Help = "Handle each missing case, or add an else branch when a fallback is valid."
-	} else {
-		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel case check"}}
-		item.Help = "Add an elseif branch for each missing case, or add a default branch when a fallback is valid."
-	}
-	return item, true
-}
-
-func projectOperationDiagnostic(item PublishedDiagnostic, fact equation.Fact, key string, artifact equation.Artifact, claims, applies, expressions map[string]equation.Equation, callSpans, branchSpans map[string]wir.Span, values []equation.Fact) (PublishedDiagnostic, bool) {
-	if strings.HasPrefix(fact.Key, "effect.freeze.mutation/") {
-		return enrichFrozenMutationDiagnostic(item, artifact, callSpans), true
-	}
-	if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "type.call.direct.") {
-		return enrichDirectCallDiagnostic(item, operation, values), true
-	}
-	if name, ok := strings.CutPrefix(key, "type.call.optional_receiver/"); ok {
-		if operation, found := applies[name]; found {
-			return enrichOptionalReceiverDiagnostic(item, operation), true
-		}
-	}
-	if operation, ok := expressions[diagnosticOperationName(key)]; ok && strings.HasPrefix(key, "type.operator.concat_operand/") {
-		return enrichConcatOperandDiagnostic(item, operation, values), true
-	}
-	if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
-		return enrichRedundantCastDiagnostic(item, operation, callSpans), true
-	}
-	if operation, ok := applies[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "send.isolation/") {
-		return enrichSendIsolationDiagnostic(item, operation), true
-	}
-	if operation, ok := claims[diagnosticOperationName(fact.Key)]; ok && strings.HasPrefix(fact.Key, "advice.redundant_claim/") {
-		return enrichRedundantClaimDiagnostic(item, operation), true
-	}
-	if operation, ok := branchOperation(artifact, diagnosticOperationName(fact.Key)); ok && (strings.HasPrefix(fact.Key, "advice.always_true_guard/") || strings.HasPrefix(fact.Key, "lint.condition.redundant/")) {
-		return enrichConstantGuardDiagnostic(item, operation, fact.Key, artifact, branchSpans), true
-	}
-	return PublishedDiagnostic{}, false
-}
-
 func enrichFrozenMutationDiagnostic(item PublishedDiagnostic, artifact equation.Artifact, callSpans map[string]wir.Span) PublishedDiagnostic {
 	parts := strings.Split(item.Fact.Key, "/")
 	if len(parts) != 3 {
@@ -2140,23 +2028,12 @@ func childDiagnosticKey(key string) (string, bool) {
 	return parts[2], true
 }
 
-func isChannelLifecycleDiagnostic(key string) bool {
-	inner, _ := childDiagnosticKey(key)
-	return strings.HasPrefix(inner, "channel.send.closed/") || strings.HasPrefix(inner, "channel.close.closed/")
-}
-
-func isResourceTypestateDiagnostic(key string) bool {
-	inner, _ := childDiagnosticKey(key)
-	return strings.HasPrefix(inner, "typestate.invalid_requirement/") || strings.HasPrefix(inner, "typestate.invalid_transition/") || strings.HasPrefix(inner, "typestate.unproven_requirement/")
-}
-
 func enrichChannelLifecycleDiagnostic(item PublishedDiagnostic) PublishedDiagnostic {
-	inner, _ := childDiagnosticKey(item.Fact.Key)
 	display := item.Payload.Source
 	if item.Payload.Kind != diagnosticChannelLifecycle || display == "" {
 		return item
 	}
-	if strings.HasPrefix(inner, "channel.send.closed/") {
+	if item.Code == "channel.send.closed" {
 		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "this send call runs after `" + display + "` is proven closed"}}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel lifecycle call"}}
 		item.Help = "Send before closing the channel."
@@ -2169,9 +2046,8 @@ func enrichChannelLifecycleDiagnostic(item PublishedDiagnostic) PublishedDiagnos
 }
 
 func enrichResourceTypestateDiagnostic(item PublishedDiagnostic) PublishedDiagnostic {
-	inner, _ := childDiagnosticKey(item.Fact.Key)
-	transition := strings.HasPrefix(inner, "typestate.invalid_transition/")
-	unproven := strings.HasPrefix(inner, "typestate.unproven_requirement/")
+	transition := item.Code == "typestate.invalid_transition"
+	unproven := item.Code == "typestate.unproven_requirement"
 	resource, expected, found := item.Payload.Source, item.Payload.Required, item.Payload.Observed
 	if resource == "" || expected == "" || (!unproven && found == "") {
 		return item
@@ -2278,22 +2154,6 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 		}
 	}
 	return nil, false
-}
-
-func diagnosticOperationName(key string) string {
-	for _, prefix := range []string{"advice.redundant_claim/", "advice.always_true_guard/", "lint.condition.redundant/", "send.isolation/", "effect.freeze.mutation/", "effect.lifecycle.unreleased/", "channel.send.closed/", "channel.close.closed/", "typestate.invalid_requirement/", "typestate.invalid_transition/", "type.operator.concat_operand/", "type.operator.comparison_operand/", "type.call.optional_receiver/"} {
-		if name, ok := strings.CutPrefix(key, prefix); ok {
-			if prefix == "type.operator.concat_operand/" {
-				name, _, _ = strings.Cut(name, "/")
-			}
-			return name
-		}
-	}
-	parts := strings.Split(key, "/")
-	if len(parts) < 3 {
-		return ""
-	}
-	return parts[1]
 }
 
 // enrichDirectCallDiagnostic is the canonical source-facing form of a closed
@@ -2424,7 +2284,7 @@ func concatOperandDiagnosticParts(key string) (code, operation, subject string, 
 	if inner, child := childDiagnosticKey(key); child {
 		key = inner
 	}
-	const prefix = "type.operator.concat_operand/"
+	prefix := diagnosticFamilyPrefix(DiagnosticFamilyConcatOperand)
 	if !strings.HasPrefix(key, prefix) {
 		return "", "", "", false
 	}
@@ -2611,63 +2471,13 @@ func mergeChildPublishedDiagnostics(items []PublishedDiagnostic, child map[strin
 }
 
 func diagnosticCode(key string) string {
-	if strings.HasPrefix(key, "child/") {
-		parts := strings.SplitN(key, "/", 3)
-		if len(parts) == 3 {
-			return diagnosticCode(parts[2])
-		}
+	_, family, inner, found := lookupDiagnosticFamily(key)
+	if found {
+		return family.Code
+	} else if slash := strings.IndexByte(inner, '/'); slash >= 0 && strings.HasPrefix(inner[:slash], "type.call.direct.") {
+		return inner[:slash]
 	}
-	switch {
-	case strings.HasPrefix(key, "advice.redundant_claim/"):
-		return "advice.redundant_claim"
-	case strings.HasPrefix(key, "advice.always_true_guard/"):
-		return "advice.always_true_guard"
-	case strings.HasPrefix(key, "lint.condition.redundant/"):
-		return "lint.condition.redundant"
-	case strings.HasPrefix(key, "type.nil.unsafe_use/"):
-		return "type.nil.unsafe_use"
-	case strings.HasPrefix(key, "type.assignment/"):
-		return "type.assignment"
-	case strings.HasPrefix(key, "type.assignment.optional_target/"):
-		return "type.assignment.optional_target"
-	case strings.HasPrefix(key, "type.return.contract/"):
-		return "type.return.contract"
-	case strings.HasPrefix(key, "type.call.optional_receiver/"):
-		return "type.call.optional_receiver"
-	case strings.HasPrefix(key, "type.member.missing/"):
-		return "type.member.missing"
-	case strings.HasPrefix(key, "type.operator.concat_operand/"):
-		return "type.operator.concat_operand"
-	case strings.HasPrefix(key, "type.operator.comparison_operand/"):
-		return "type.operator.comparison_operand"
-	case strings.HasPrefix(key, "send.isolation/"):
-		return "send.isolation"
-	case strings.HasPrefix(key, "effect.freeze.mutation/"):
-		return "effect.freeze.mutation"
-	case strings.HasPrefix(key, "effect.lifecycle.unreleased/"):
-		return "effect.lifecycle.unreleased"
-	case strings.HasPrefix(key, "channel.send.closed/"):
-		return "channel.send.closed"
-	case strings.HasPrefix(key, "channel.close.closed/"):
-		return "channel.close.closed"
-	case strings.HasPrefix(key, "typestate.invalid_requirement/"):
-		return "typestate.invalid_requirement"
-	case strings.HasPrefix(key, "typestate.invalid_transition/"):
-		return "typestate.invalid_transition"
-	case strings.HasPrefix(key, "typestate.unproven_requirement/"):
-		return "typestate.unproven_requirement"
-	case strings.HasPrefix(key, "channel.select.exhaustiveness/"):
-		return "channel.select.exhaustiveness"
-	case strings.HasPrefix(key, "lint.union.exhaustiveness/"):
-		return "lint.union.exhaustiveness"
-	case strings.HasPrefix(key, "claim/unproven/"):
-		return "lint.claim.unproven"
-	case strings.HasPrefix(key, "type.call.direct."):
-		if slash := strings.IndexByte(key, '/'); slash >= 0 {
-			return key[:slash]
-		}
-	}
-	return "lint." + strings.ReplaceAll(key, "/", ".")
+	return "lint." + strings.ReplaceAll(inner, "/", ".")
 }
 
 func branchOperation(artifact equation.Artifact, name string) (equation.Equation, bool) {
@@ -2736,13 +2546,13 @@ func enrichRedundantCastDiagnostic(item PublishedDiagnostic, operation equation.
 }
 
 func enrichConstantGuardDiagnostic(item PublishedDiagnostic, operation equation.Equation, key string, artifact equation.Artifact, branchSpans map[string]wir.Span) PublishedDiagnostic {
-	if strings.HasPrefix(key, "advice.always_true_guard/") {
+	if diagnosticFamilyMatches(key, DiagnosticFamilyAlwaysTrueGuard) {
 		item.Message = "condition is proven always true"
 		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "condition is proven to be true on every reachable path"}}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "constant guard"}}
 		item.Help = "Remove the guard or move the guarded code out of the branch."
 	}
-	if strings.HasPrefix(key, "lint.condition.redundant/") {
+	if diagnosticFamilyMatches(key, DiagnosticFamilyRedundantCondition) {
 		always := string(item.Fact.Value) == "true"
 		if always {
 			item.Message = "condition is always true here"
@@ -5829,15 +5639,17 @@ func formalMemberWriteDiagnostic(obligations map[string]bool, key string) bool {
 // against a seeded root; an absence family (an unproven claim over a value that
 // resolved to Top) is never a positive fact and is withheld.
 func declaredFormalCallDiagnostic(key string) bool {
-	switch {
-	case strings.HasPrefix(key, "type.member.missing/"),
-		strings.HasPrefix(key, "type.assignment/"),
-		strings.HasPrefix(key, "type.assignment.optional_target/"),
-		strings.HasPrefix(key, "type.return.contract/"),
-		strings.HasPrefix(key, "type.call."):
-		return true
-	}
-	return false
+	return diagnosticFamilyMatches(key,
+		DiagnosticFamilyMissingMember,
+		DiagnosticFamilyAssignment,
+		DiagnosticFamilyOptionalAssignmentTarget,
+		DiagnosticFamilyReturnContract,
+		DiagnosticFamilyOptionalCallReceiver,
+		DiagnosticFamilyCallArgumentType,
+		DiagnosticFamilyCallNotCallable,
+		DiagnosticFamilyCallTooFewArguments,
+		DiagnosticFamilyCallTooManyArguments,
+	)
 }
 
 // contextualCallbackBoundary seeds an unannotated function literal from the
@@ -6331,7 +6143,7 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 			if !stated || !callableContractRejectsNil(contract) || (!capturedNil && !capturedUnconditionalNil && !childNilWrite) {
 				continue
 			}
-			fact := diagnosticFact("type.call.direct.argument_type/"+item.Target.Name+"/"+indexedCallSubject("argument", index), DiagnosticPayload{
+			fact := diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyCallArgumentType)+item.Target.Name+"/"+indexedCallSubject("argument", index), DiagnosticPayload{
 				Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Required: callableContractDisplay(contract), Flags: DiagnosticMayBeNil,
 			})
 			spans := diagnosticSpans(child, []equation.Fact{fact})
@@ -6468,7 +6280,7 @@ func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *
 			if !capturedCallResultOptionalMember(l, child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, captured, partition) {
 				continue
 			}
-			fact := diagnosticFact("type.call.direct.argument_type/"+item.Target.Name+"/"+indexedCallSubject("argument", index), DiagnosticPayload{
+			fact := diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyCallArgumentType)+item.Target.Name+"/"+indexedCallSubject("argument", index), DiagnosticPayload{
 				Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Required: callableContractDisplay(function.Params[index].Type), Flags: DiagnosticMayBeNil,
 			})
 			spans := diagnosticSpans(child, []equation.Fact{fact})
@@ -7472,13 +7284,11 @@ func (l *lexicalEvaluator) uncalledStaticCapturedReturnBoundary(child front.Comp
 // exactly as it is on a called path. Argument types remain demand-driven,
 // because a later refinement can still establish them.
 func uncalledStaticCapturedReturnDiagnostic(key string) bool {
-	switch {
-	case strings.HasPrefix(key, "type.return.contract/"),
-		strings.HasPrefix(key, "type.call.direct.too_few_args/"),
-		strings.HasPrefix(key, "type.call.direct.too_many_args/"):
-		return true
-	}
-	return false
+	return diagnosticFamilyMatches(key,
+		DiagnosticFamilyReturnContract,
+		DiagnosticFamilyCallTooFewArguments,
+		DiagnosticFamilyCallTooManyArguments,
+	)
 }
 
 // uncalledStaticArithmeticBoundary admits a parameter-free closure only when
@@ -7590,7 +7400,7 @@ func (l *lexicalEvaluator) uncalledImportedCaptureBoundary(body equation.BodyID,
 // one is not a fact about the body, since a real call site supplies argument and
 // heap evidence the entry withholds.
 func importedCaptureBoundaryDiagnostic(key string) bool {
-	return strings.HasPrefix(key, "type.assignment/") || strings.HasPrefix(key, "type.member.missing/")
+	return diagnosticFamilyMatches(key, DiagnosticFamilyAssignment, DiagnosticFamilyMissingMember)
 }
 
 func unannotatedArithmeticFormal(child front.Compilation) bool {
@@ -7664,7 +7474,7 @@ func uncalledPublishedStdlibCalls(operations []equation.Equation) map[string]boo
 // consume a captured call result. It cannot publish a result, a refinement, or
 // a diagnostic from an unrelated method call.
 func uncalledStaticOptionalMethodDiagnostic(artifact equation.Artifact, diagnostic equation.Fact) bool {
-	if !strings.HasPrefix(diagnostic.Key, "type.call.direct.not_callable/") && !strings.HasPrefix(diagnostic.Key, "type.call.optional_receiver/") {
+	if !diagnosticFamilyMatches(diagnostic.Key, DiagnosticFamilyCallNotCallable, DiagnosticFamilyOptionalCallReceiver) {
 		return false
 	}
 	name := diagnosticOperationName(diagnostic.Key)
@@ -7712,7 +7522,7 @@ func hasCapturedNoResultCall(operations []equation.Equation, captures map[string
 // validation effect cannot be replayed without a real invocation. An
 // independent declared formal remains a complete existing boundary witness.
 func (l *lexicalEvaluator) uncalledStaticAssignmentDiagnostic(artifact equation.Artifact, key string, partition equation.Partition) bool {
-	const prefix = "type.assignment/"
+	prefix := diagnosticFamilyPrefix(DiagnosticFamilyAssignment)
 	if !strings.HasPrefix(key, prefix) {
 		return false
 	}
@@ -7889,7 +7699,7 @@ func (l *lexicalEvaluator) uncalledStaticCapturedCallsAreGuardedValidation(child
 // chain prevents unrelated local calls or source-shaped names from entering a
 // declaration-only child evaluation.
 func uncalledStaticResultCallDiagnostic(artifact equation.Artifact, key string) bool {
-	if !strings.HasPrefix(key, "type.call.direct.argument_type/") {
+	if !diagnosticFamilyMatches(key, DiagnosticFamilyCallArgumentType) {
 		return false
 	}
 	operationName := diagnosticOperationName(key)
@@ -7914,7 +7724,7 @@ func uncalledStaticResultCallDiagnostic(artifact equation.Artifact, key string) 
 // exact apply -> external-call -> call-results -> write chain prevents an
 // opaque call or source spelling from entering the private evaluation.
 func uncalledDeclaredProviderResultDiagnostic(child front.Compilation, key string) bool {
-	if !strings.HasPrefix(key, "type.assignment/") && !strings.HasPrefix(key, "type.call.direct.argument_type/") {
+	if !diagnosticFamilyMatches(key, DiagnosticFamilyAssignment, DiagnosticFamilyCallArgumentType) {
 		return false
 	}
 	formals := make(map[string]bool, len(child.Boundary.Parameters))
@@ -7931,7 +7741,7 @@ func uncalledDeclaredProviderResultDiagnostic(child front.Compilation, key strin
 	if len(paths) == 0 {
 		return false
 	}
-	operationName := strings.TrimPrefix(key, "type.assignment/")
+	operationName := strings.TrimPrefix(key, diagnosticFamilyPrefix(DiagnosticFamilyAssignment))
 	if operationName == key {
 		operationName = diagnosticOperationName(key)
 	}
@@ -8890,7 +8700,7 @@ func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equati
 				}
 			}
 			shapeTarget, _ := artifactOperand(claim.Operands, "shape-target")
-			fact := diagnosticFact("type.assignment/"+claim.Target.Name, assignmentAnyMismatchPayload(display, string(targetType), shapeTarget))
+			fact := diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyAssignment)+claim.Target.Name, assignmentAnyMismatchPayload(display, string(targetType), shapeTarget))
 			spans := diagnosticSpans(child, []equation.Fact{fact})
 			for _, item := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + item.Fact.Key
@@ -8948,20 +8758,22 @@ func uncalledSealedTableCapture(term, value []byte, partition equation.Partition
 // value the declaration permits, so an assignment, argument, callability, or
 // return contract refuted against it cannot be discharged by any caller.
 func closedAnyFormalObligation(key string) bool {
-	return strings.HasPrefix(key, "type.call.direct.argument_type/") ||
-		strings.HasPrefix(key, "type.call.direct.not_callable/") ||
-		strings.HasPrefix(key, "type.return.contract/") ||
-		strings.HasPrefix(key, "type.assignment/")
+	return diagnosticFamilyMatches(key,
+		DiagnosticFamilyCallArgumentType,
+		DiagnosticFamilyCallNotCallable,
+		DiagnosticFamilyReturnContract,
+		DiagnosticFamilyAssignment,
+	)
 }
 
 // uncalledExplicitAnyDiagnostic retains only strict assignment contracts. A
 // runtime claim may validate an any value only along an invoked path, but an
 // annotation assignment is a source-owned obligation at the closed boundary.
 func uncalledExplicitAnyDiagnostic(artifact equation.Artifact, diagnostic equation.Fact) bool {
-	if strings.HasPrefix(diagnostic.Key, "type.assignment/") {
+	if diagnosticFamilyMatches(diagnostic.Key, DiagnosticFamilyAssignment) {
 		return true
 	}
-	name, unproven := strings.CutPrefix(diagnostic.Key, "claim/unproven/")
+	name, unproven := strings.CutPrefix(diagnostic.Key, diagnosticFamilyPrefix(DiagnosticFamilyUnprovenClaim))
 	if !unproven || typePredicateResultClaim(artifact, name) {
 		return false
 	}
@@ -9078,7 +8890,7 @@ func uncalledTypedChannelSendBoundary(child front.Compilation) bool {
 }
 
 func uncalledTypedChannelSendDiagnostic(diagnostic equation.Fact) bool {
-	return strings.HasPrefix(diagnostic.Key, "type.call.direct.argument_type/")
+	return diagnosticFamilyMatches(diagnostic.Key, DiagnosticFamilyCallArgumentType)
 }
 
 type nestedCaptureSeed struct {
@@ -9967,7 +9779,7 @@ func (l *lexicalEvaluator) publishNilOriginUnsafeUse(closure *equation.OutputClo
 			continue
 		}
 		fact := equation.Fact{
-			Key:   "type.nil.unsafe_use/" + operation.Target.Name,
+			Key:   diagnosticFamilyPrefix(DiagnosticFamilyNilUnsafeUse) + operation.Target.Name,
 			Value: []byte(witness.display + " may be nil at method call"),
 		}
 		item := PublishedDiagnostic{
@@ -10155,7 +9967,7 @@ func (l *lexicalEvaluator) publishNilOriginOptionalFieldUse(closure *equation.Ou
 			continue
 		}
 		fact := equation.Fact{
-			Key:   "type.nil.unsafe_use/" + operation.Target.Name,
+			Key:   diagnosticFamilyPrefix(DiagnosticFamilyNilUnsafeUse) + operation.Target.Name,
 			Value: []byte(witness.display + " may be nil at method call"),
 		}
 		key := "child/" + body + "/" + fact.Key
@@ -10274,7 +10086,7 @@ func declaredFalseEdgeNilAssignmentClaims(child front.Compilation) map[string]de
 				break
 			}
 		}
-		claims["type.assignment/"+operation.Target.Name] = declaredNilAssignmentWitness{source: string(value), predecessor: operation.Dependencies[0].Name, display: display, alternative: alternative}
+		claims[diagnosticFamilyPrefix(DiagnosticFamilyAssignment)+operation.Target.Name] = declaredNilAssignmentWitness{source: string(value), predecessor: operation.Dependencies[0].Name, display: display, alternative: alternative}
 	}
 	return claims
 }
@@ -10577,7 +10389,7 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 		innerArgument += " (" + formalName + ")"
 	}
 	outerArgument := formal + 1
-	key := "type.call.direct.argument_type/" + caller.Target.Name + "/" + indexedCallSubject("argument", formal)
+	key := diagnosticFamilyPrefix(DiagnosticFamilyCallArgumentType) + caller.Target.Name + "/" + indexedCallSubject("argument", formal)
 	if sourceHasAnyBoundary(callerOperands.arguments[formal], partition.Values()) {
 		display := "argument " + strconv.Itoa(outerArgument)
 		for _, operand := range caller.Operands {
@@ -10640,7 +10452,16 @@ func childCallDiagnostic(fact equation.Fact) bool {
 		}
 		key = parts[2]
 	}
-	return strings.HasPrefix(key, "type.assignment/") || strings.HasPrefix(key, "type.return.contract/") || strings.HasPrefix(key, "type.call.direct.") || strings.HasPrefix(key, "type.operator.concat_operand/") || strings.HasPrefix(key, "type.operator.comparison_operand/")
+	return diagnosticFamilyMatches(key,
+		DiagnosticFamilyAssignment,
+		DiagnosticFamilyReturnContract,
+		DiagnosticFamilyCallArgumentType,
+		DiagnosticFamilyCallNotCallable,
+		DiagnosticFamilyCallTooFewArguments,
+		DiagnosticFamilyCallTooManyArguments,
+		DiagnosticFamilyConcatOperand,
+		DiagnosticFamilyComparisonOperand,
+	)
 }
 
 // childEntryDescendantSeeds preserves exact path facts below a captured entry
@@ -11246,7 +11067,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			// tests scoped to this body's own artifact keep the qualified key and
 			// therefore never claim a nested operation.
 			family, _ := childDiagnosticKey(diagnostic.Key)
-			if claimOwnedReads[strings.TrimPrefix(diagnostic.Key, "type.member.missing/")] && strings.HasPrefix(diagnostic.Key, "type.member.missing/") {
+			if claimOwnedReads[strings.TrimPrefix(diagnostic.Key, diagnosticFamilyPrefix(DiagnosticFamilyMissingMember))] && diagnosticFamilyMatches(diagnostic.Key, DiagnosticFamilyMissingMember) {
 				return true
 			}
 			if closedAnyFormalBoundary && closedAnyFormalObligation(family) {
@@ -11262,42 +11083,42 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if typedChannelSendBoundary && !uncalledTypedChannelSendDiagnostic(diagnostic) {
 				return true
 			}
-			if gradualLogicalBoundary && !strings.HasPrefix(family, "type.call.direct.argument_type/") {
+			if gradualLogicalBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyCallArgumentType) {
 				return true
 			}
 			// A declaration-only entry is sufficient for a member that is absent
 			// from a reachable declared union arm. Other obligations may depend on
 			// a call-specific refinement and therefore remain demand-driven.
-			if declaredBoundary && !strings.HasPrefix(family, "type.member.missing/") &&
-				(!declaredMethodBoundary || !strings.HasPrefix(family, "type.return.contract/")) &&
-				(!declaredArithmeticReturnBoundary || !strings.HasPrefix(family, "type.return.contract/")) &&
-				(!declaredAssignmentBoundary || !strings.HasPrefix(family, "type.assignment/")) &&
-				(!declaredMemberWriteBoundary || !strings.HasPrefix(family, "type.assignment.optional_target/")) &&
+			if declaredBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyMissingMember) &&
+				(!declaredMethodBoundary || !diagnosticFamilyMatches(family, DiagnosticFamilyReturnContract)) &&
+				(!declaredArithmeticReturnBoundary || !diagnosticFamilyMatches(family, DiagnosticFamilyReturnContract)) &&
+				(!declaredAssignmentBoundary || !diagnosticFamilyMatches(family, DiagnosticFamilyAssignment)) &&
+				(!declaredMemberWriteBoundary || !diagnosticFamilyMatches(family, DiagnosticFamilyOptionalAssignmentTarget)) &&
 				(!declaredConcatBoundary || !declaredConcatDiagnostic(declaredConcatOperations, diagnostic.Key)) &&
 				(!declaredComparisonBoundary || !declaredOrderedComparisonDiagnostic(declaredComparisonOperations, diagnostic.Key)) &&
 				!declaredAssertionDiagnostic(declaredAssertionOperations, diagnostic.Key) &&
 				!uncalledDeclaredProviderResultDiagnostic(child, diagnostic.Key) {
 				return true
 			}
-			if staticMemberReadBoundary && !strings.HasPrefix(family, "type.member.missing/") {
+			if staticMemberReadBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyMissingMember) {
 				return true
 			}
 			if staticAssignmentBoundary && !lexical.uncalledStaticAssignmentDiagnostic(child.Artifact, diagnostic.Key, partition) && !uncalledStaticOptionalMethodDiagnostic(child.Artifact, diagnostic) && !uncalledStaticResultCallDiagnostic(child.Artifact, diagnostic.Key) {
 				return true
 			}
-			if arithmeticBoundary && !strings.HasPrefix(family, "type.call.direct.argument_type/") {
+			if arithmeticBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyCallArgumentType) {
 				return true
 			}
 			if staticCapturedReturnBoundary && !uncalledStaticCapturedReturnDiagnostic(family) {
 				return true
 			}
-			if indexedReadBoundary && !strings.HasPrefix(family, "type.assignment/") && !strings.HasPrefix(family, "type.return.contract/") {
+			if indexedReadBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyAssignment, DiagnosticFamilyReturnContract) {
 				return true
 			}
 			// The union this boundary admits is the declaration itself, so a
 			// member absent from one of its arms is refuted by that declaration
 			// alone, exactly as it is for a declared-parameter boundary.
-			if localUnionReadBoundary && !strings.HasPrefix(family, "type.assignment/") && !strings.HasPrefix(family, "type.member.missing/") {
+			if localUnionReadBoundary && !diagnosticFamilyMatches(family, DiagnosticFamilyAssignment, DiagnosticFamilyMissingMember) {
 				return true
 			}
 			if sealedEnvironmentBoundary && !formalMemberWriteDiagnostic(formalMemberWriteOperations, family) {
@@ -11460,7 +11281,13 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 		body := fmt.Sprintf("%x", child.Body)
 		for _, diagnostic := range outcome.Diagnostics {
-			if !isChannelLifecycleDiagnostic(diagnostic.Key) && !isResourceTypestateDiagnostic(diagnostic.Key) {
+			if !diagnosticFamilyMatches(diagnostic.Key,
+				DiagnosticFamilyClosedChannelSend,
+				DiagnosticFamilyClosedChannelClose,
+				DiagnosticFamilyInvalidTypestateRequirement,
+				DiagnosticFamilyInvalidTypestateTransition,
+				DiagnosticFamilyUnprovenTypestateRequirement,
+			) {
 				continue
 			}
 			key := "child/" + body + "/" + diagnostic.Key
@@ -11473,7 +11300,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		for _, diagnostic := range resourceUnreleasedDiagnostics(child, outcome) {
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
-			acquire := strings.TrimPrefix(diagnostic.Key, "effect.lifecycle.unreleased/")
+			acquire := strings.TrimPrefix(diagnostic.Key, diagnosticFamilyPrefix(DiagnosticFamilyUnreleasedResource))
 			if span, ok := child.CallSpans[acquire+"/call"]; ok {
 				lexical.diagnosticSpans[key] = span
 			}
@@ -11532,11 +11359,13 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 // value violates, and a member no seeded arm declares. Body-local advice has no
 // such seeded consumer and stays private.
 func selectChildDiagnostic(key string) bool {
-	return strings.HasPrefix(key, "type.assignment/") ||
-		strings.HasPrefix(key, "type.member.missing/") ||
-		strings.HasPrefix(key, "type.call.direct.argument_type/") ||
-		strings.HasPrefix(key, "type.operator.concat_operand/") ||
-		strings.HasPrefix(key, "type.operator.comparison_operand/")
+	return diagnosticFamilyMatches(key,
+		DiagnosticFamilyAssignment,
+		DiagnosticFamilyMissingMember,
+		DiagnosticFamilyCallArgumentType,
+		DiagnosticFamilyConcatOperand,
+		DiagnosticFamilyComparisonOperand,
+	)
 }
 
 func declaredConcatDiagnostic(allowed map[string]bool, key string) bool {
@@ -11549,12 +11378,12 @@ func declaredConcatDiagnostic(allowed map[string]bool, key string) bool {
 // narrowing edge made the assertion declaration-owned, so no other claim in the
 // same body borrows this surface.
 func declaredAssertionDiagnostic(allowed map[string]bool, key string) bool {
-	name, unproven := strings.CutPrefix(key, "claim/unproven/")
+	name, unproven := strings.CutPrefix(key, diagnosticFamilyPrefix(DiagnosticFamilyUnprovenClaim))
 	return unproven && allowed[name]
 }
 
 func declaredOrderedComparisonDiagnostic(allowed map[string]bool, key string) bool {
-	name, ok := strings.CutPrefix(key, "type.operator.comparison_operand/")
+	name, ok := strings.CutPrefix(key, diagnosticFamilyPrefix(DiagnosticFamilyComparisonOperand))
 	return ok && allowed[name]
 }
 
@@ -11833,7 +11662,7 @@ func selectChildRootTerm(term string) string {
 }
 
 func enrichChildSelectDiagnostic(item PublishedDiagnostic, child front.Compilation, targets map[string]wir.Span) PublishedDiagnostic {
-	name, assignment := strings.CutPrefix(item.Fact.Key, "type.assignment/")
+	name, assignment := strings.CutPrefix(item.Fact.Key, diagnosticFamilyPrefix(DiagnosticFamilyAssignment))
 	if !assignment || len(item.Evidence) != 0 {
 		return item
 	}
@@ -11957,7 +11786,7 @@ func resourceUnreleasedDiagnostics(child front.Compilation, closure equation.Out
 		if childHasResourceClose(child) {
 			flags |= DiagnosticHasTransition
 		}
-		diagnostics = append(diagnostics, diagnosticFact("effect.lifecycle.unreleased/"+acquire, DiagnosticPayload{
+		diagnostics = append(diagnostics, diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyUnreleasedResource)+acquire, DiagnosticPayload{
 			Kind: diagnosticResourceUnreleased, Source: display, Flags: flags,
 		}))
 	}
@@ -12118,7 +11947,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			for _, operand := range operation.Operands {
 				if operand.Role == "source-display" {
 					if payload, ok := memberMissingDiagnosticPayload(string(operand.Value), value); ok {
-						diagnostics = append(diagnostics, diagnosticFact("type.member.missing/"+operation.Target.Name, payload))
+						diagnostics = append(diagnostics, diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyMissingMember)+operation.Target.Name, payload))
 					}
 					break
 				}
@@ -12754,7 +12583,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			if string(v) == "scalar/top" {
 				if _, found := optionalProviderConcatWitness(term, partition); found {
 					diagnostics = append(diagnostics, equation.Fact{
-						Key:   fmt.Sprintf("type.operator.concat_operand/%s/value-%08d", operation.Target.Name, i),
+						Key:   fmt.Sprintf(diagnosticFamilyPrefix(DiagnosticFamilyConcatOperand)+"%s/value-%08d", operation.Target.Name, i),
 						Value: []byte("concat operand may be nil"),
 					})
 					originFacts = append(originFacts, concatOperandOriginFacts(operation.Target.Name, i, term, partition)...)
@@ -12764,7 +12593,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			}
 			if concatOperandMayBeNil(v) {
 				diagnostics = append(diagnostics, equation.Fact{
-					Key:   fmt.Sprintf("type.operator.concat_operand/%s/value-%08d", operation.Target.Name, i),
+					Key:   fmt.Sprintf(diagnosticFamilyPrefix(DiagnosticFamilyConcatOperand)+"%s/value-%08d", operation.Target.Name, i),
 					Value: []byte("concat operand may be nil"),
 				})
 				originFacts = append(originFacts, concatOperandOriginFacts(operation.Target.Name, i, term, partition)...)
@@ -12836,7 +12665,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	if string(value) == "scalar/top" && wir.Op(kind) == wir.OpBinOp {
 		if message, refuted := orderedComparisonUnionDiagnostic(wir.Operator(op), by["left"], by["right"], partition); refuted {
 			diagnostics = append(diagnostics, equation.Fact{
-				Key:   "type.operator.comparison_operand/" + operation.Target.Name,
+				Key:   diagnosticFamilyPrefix(DiagnosticFamilyComparisonOperand) + operation.Target.Name,
 				Value: []byte(message),
 			})
 		}
@@ -14290,7 +14119,7 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	// contract only with a concrete non-callable value; opaque callables and
 	// unknown values remain unreported rather than being treated as proof.
 	if existing, found := declaredTypeForTerm(operands["target"], partition); found && functionContractWriteRefuted(value, existing) {
-		result.Closure.Diagnostics = append(result.Closure.Diagnostics, diagnosticFact("type.assignment/"+operation.Target.Name, DiagnosticPayload{
+		result.Closure.Diagnostics = append(result.Closure.Diagnostics, diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyAssignment)+operation.Target.Name, DiagnosticPayload{
 			Kind: diagnosticFunctionWriteMismatch, Source: string(operands["display"]), Observed: assignmentEvidenceValue(value), Required: functionContractDisplay(existing),
 		}))
 		result.Closure.Values = append(result.Closure.Values, equation.Fact{Key: "assignment-function-contract/" + operation.Target.Name, Value: []byte("refuted")})
@@ -15468,7 +15297,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 				closure.Values = append(closure.Values, equation.Fact{Key: "cast-target/" + target + "/" + operation.Target.Name, Value: append([]byte(nil), shapeTarget...)})
 			}
 			if !channelCastFromNil {
-				closure.Diagnostics = []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven runtime claim")}}
+				closure.Diagnostics = []equation.Fact{{Key: diagnosticFamilyPrefix(DiagnosticFamilyRedundantClaim) + operation.Target.Name, Value: []byte("proven runtime claim")}}
 			}
 		}
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
@@ -15533,7 +15362,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	mapReadMissing := declaredOptionalMapReadMissingSlot(source, partition)
 	if kind == "claim-kind/3" && available && memberMissing(value) {
 		if payload, ok := memberMissingDiagnosticPayload(sourceDisplay, value); ok {
-			closure.Diagnostics = []equation.Fact{diagnosticFact("type.member.missing/"+operation.Target.Name, payload)}
+			closure.Diagnostics = []equation.Fact{diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyMissingMember)+operation.Target.Name, payload)}
 		}
 		// A declaration without an initializer reads its own Lua nil slot. That
 		// slot establishes the declared local's downstream contract; it is not an
@@ -15608,9 +15437,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			payload.Flags |= DiagnosticMapReadMissing
 		}
 		if payload.Kind != "" {
-			closure.Diagnostics = []equation.Fact{diagnosticFact("type.assignment/"+operation.Target.Name, payload)}
+			closure.Diagnostics = []equation.Fact{diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyAssignment)+operation.Target.Name, payload)}
 		} else {
-			closure.Diagnostics = []equation.Fact{{Key: "type.assignment/" + operation.Target.Name, Value: []byte(message)}}
+			closure.Diagnostics = []equation.Fact{{Key: diagnosticFamilyPrefix(DiagnosticFamilyAssignment) + operation.Target.Name, Value: []byte(message)}}
 		}
 		if memberSurface != nil {
 			closure.Values = append(closure.Values, equation.Fact{Key: "assignment-member-surface/" + operation.Target.Name, Value: memberSurface})
@@ -15618,7 +15447,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	} else if (!isUnknownScalar(value) || !importedResultPath(string(source), imported) || targetType != "claim-type/\"string\"") && !claimTypeIsAny(targetType) && !callableRecordShape && !declarationSlotDefaultValue(kind, targetType, target, source, value) && !guardedLocalCallResultClaim(lexical, operation, source) {
 		// The closure keys facts by identity, so separate unproven claims must
 		// retain their operation identity.
-		closure.Diagnostics = []equation.Fact{diagnosticFact("claim/unproven/"+operation.Target.Name, DiagnosticPayload{
+		closure.Diagnostics = []equation.Fact{diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyUnprovenClaim)+operation.Target.Name, DiagnosticPayload{
 			Kind: diagnosticClaimUnproven, Required: strings.TrimPrefix(targetType, "claim-type/"),
 		})}
 	}
@@ -17238,7 +17067,7 @@ func frozenMutationDiagnostic(operation equation.BoundEquation, partition equati
 		proof = "guard"
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-		Key:   "effect.freeze.mutation/" + operation.Target.Name + "/" + proof,
+		Key:   diagnosticFamilyPrefix(DiagnosticFamilyFrozenMutation) + operation.Target.Name + "/" + proof,
 		Value: []byte(fmt.Sprintf("cannot mutate frozen table %q", display)),
 	}}}}, nil
 }
@@ -17266,7 +17095,7 @@ func optionalWriteContainerDiagnostic(operation equation.BoundEquation, display 
 		return equation.Fact{}, equation.Fact{}, false
 	}
 	return equation.Fact{
-			Key:   "type.assignment.optional_target/" + operation.Target.Name,
+			Key:   diagnosticFamilyPrefix(DiagnosticFamilyOptionalAssignmentTarget) + operation.Target.Name,
 			Value: []byte(fmt.Sprintf("cannot assign through optional %s without nil check", containerDisplay)),
 		}, equation.Fact{
 			Key:   optionalWriteContainerPrefix + operation.Target.Name,
@@ -17471,7 +17300,7 @@ func declaredElementWriteDiagnostic(operation equation.BoundEquation, operands m
 	if anySource {
 		observed = "any"
 	}
-	return diagnosticFact("type.assignment/"+operation.Target.Name, DiagnosticPayload{
+	return diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyAssignment)+operation.Target.Name, DiagnosticPayload{
 		Kind: diagnosticAssignmentMismatch, Source: source, Observed: observed, Required: expected,
 	}), true
 }
@@ -17561,7 +17390,7 @@ func closedDynamicWriteDiagnostic(operation equation.BoundEquation, operands map
 			source = string(operand.Value)
 		}
 	}
-	return diagnosticFact("type.assignment/"+operation.Target.Name, DiagnosticPayload{
+	return diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyAssignment)+operation.Target.Name, DiagnosticPayload{
 		Kind: diagnosticAssignmentMismatch, Source: source, Observed: assignmentValueType(value), Required: strings.Join(contracts, " & "),
 	}), true
 }
@@ -18371,10 +18200,10 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 		}
 	}
 	if truth && !boundaryPossible {
-		closure.Diagnostics = []equation.Fact{{Key: "advice.always_true_guard/" + operation.Target.Name, Value: []byte("proven constant guard")}}
+		closure.Diagnostics = []equation.Fact{{Key: diagnosticFamilyPrefix(DiagnosticFamilyAlwaysTrueGuard) + operation.Target.Name, Value: []byte("proven constant guard")}}
 	}
 	if len(operation.Guards) != 0 && !boundaryPossible {
-		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: "lint.condition.redundant/" + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
+		closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: diagnosticFamilyPrefix(DiagnosticFamilyRedundantCondition) + operation.Target.Name, Value: []byte(strconv.FormatBool(truth))})
 	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
 }
@@ -18973,7 +18802,7 @@ func appendClosedGuardAdvice(closure equation.OutputClosure, operation equation.
 		return closure
 	}
 	closure.Diagnostics = append(closure.Diagnostics, equation.Fact{
-		Key: "advice.always_true_guard/" + operation.Target.Name, Value: []byte("proven constant guard"),
+		Key: diagnosticFamilyPrefix(DiagnosticFamilyAlwaysTrueGuard) + operation.Target.Name, Value: []byte("proven constant guard"),
 	})
 	return closure
 }
@@ -20880,7 +20709,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 					proof = "guard"
 				}
 				return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-					Key:   "effect.freeze.mutation/" + operation.Target.Name + "/" + proof,
+					Key:   diagnosticFamilyPrefix(DiagnosticFamilyFrozenMutation) + operation.Target.Name + "/" + proof,
 					Value: []byte(fmt.Sprintf("cannot call mutator on frozen table %q", display)),
 				}}}}, nil
 			}
@@ -20888,7 +20717,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	if operands.display == "string" && !operands.spread && len(operands.arguments) == 1 {
 		if argument, known := resolveKnownCurrentValue(operands.arguments[0], partition); known && strings.HasPrefix(string(argument), "scalar/string/") {
-			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{Key: "advice.redundant_claim/" + operation.Target.Name, Value: []byte("proven string cast")}}}}, nil
+			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{Key: diagnosticFamilyPrefix(DiagnosticFamilyRedundantClaim) + operation.Target.Name, Value: []byte("proven string cast")}}}}, nil
 		}
 	}
 	callee, known := resolveKnownCurrentValue(operands.callee, partition)
@@ -20906,7 +20735,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if hasCallee && known && memberMissing(callee) {
 		if payload, ok := memberMissingDiagnosticPayload(operands.display, callee); ok {
 			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{
-				diagnosticFact("type.member.missing/"+operation.Target.Name, payload),
+				diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyMissingMember)+operation.Target.Name, payload),
 			}}}, nil
 		}
 	}
@@ -20928,7 +20757,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 		if (strings.HasPrefix(string(operands.receiver), "temp/") || len(operation.Guards) == 0) && optionalMethodReceiverAtCall(operands.receiver, receiver, operands.method, partition) {
 			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-				Key:   "type.call.optional_receiver/" + operation.Target.Name,
+				Key:   diagnosticFamilyPrefix(DiagnosticFamilyOptionalCallReceiver) + operation.Target.Name,
 				Value: []byte(fmt.Sprintf("cannot call method on an optional value without a nil check: %s may be nil", operands.display)),
 			}}}}, nil
 		}
@@ -20962,7 +20791,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 					if missing, encoded := memberMissingValue(receiverType); encoded {
 						if payload, ok := memberMissingDiagnosticPayload(operands.display, missing); ok {
 							return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{
-								diagnosticFact("type.member.missing/"+operation.Target.Name, payload),
+								diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyMissingMember)+operation.Target.Name, payload),
 							}}}, nil
 						}
 					}
@@ -21638,7 +21467,7 @@ func tableInsertEpoch(operation equation.BoundEquation, operands directCallOpera
 			proof = "guard"
 		}
 		return equation.OutputClosure{Diagnostics: []equation.Fact{{
-			Key:   "effect.freeze.mutation/" + operation.Target.Name + "/" + proof,
+			Key:   diagnosticFamilyPrefix(DiagnosticFamilyFrozenMutation) + operation.Target.Name + "/" + proof,
 			Value: []byte(fmt.Sprintf("cannot call mutator on frozen table %q", callArgumentDisplay(operation.Operands, 0))),
 		}}}, true
 	}
@@ -21774,7 +21603,7 @@ func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCal
 			display := callArgumentDisplay(operation.Operands, 0)
 			if display != "" {
 				return equation.OutputClosure{Diagnostics: []equation.Fact{
-					diagnosticFact("typestate.unproven_requirement/"+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateUnproven, Source: display, Required: "open"}),
+					diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyUnprovenTypestateRequirement)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateUnproven, Source: display, Required: "open"}),
 				}}, true
 			}
 		}
@@ -21796,12 +21625,12 @@ func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCal
 			return equation.OutputClosure{}, true
 		}
 		return equation.OutputClosure{Diagnostics: []equation.Fact{
-			diagnosticFact("typestate.invalid_requirement/"+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: "open", Observed: state}),
+			diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyInvalidTypestateRequirement)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: "open", Observed: state}),
 		}}, true
 	case "resource.begin":
 		if state != "open" {
 			return equation.OutputClosure{Diagnostics: []equation.Fact{
-				diagnosticFact("typestate.invalid_requirement/"+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: "open", Observed: state}),
+				diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyInvalidTypestateRequirement)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: "open", Observed: state}),
 			}}, true
 		}
 		transaction := []byte("scalar/resource/" + operation.Target.Name)
@@ -21814,7 +21643,7 @@ func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCal
 			return equation.OutputClosure{Values: []equation.Fact{resourceLifecycleStateFact(identity, operation.Target.Name, "committed")}}, true
 		}
 		return equation.OutputClosure{Diagnostics: []equation.Fact{
-			diagnosticFact("typestate.invalid_transition/"+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateTransition, Source: display, Required: "active", Observed: state}),
+			diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyInvalidTypestateTransition)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateTransition, Source: display, Required: "active", Observed: state}),
 		}}, true
 	default:
 		return equation.OutputClosure{}, false
@@ -23867,7 +23696,7 @@ func sendSafetyResult(operation equation.BoundEquation, verdict sendSafetyVerdic
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
 		Values:      []equation.Fact{{Key: key, Value: []byte(verdict.content)}},
-		Diagnostics: []equation.Fact{diagnosticFact("send.isolation/"+operation.Target.Name, DiagnosticPayload{Kind: diagnosticSendIsolation, Name: verdict.kind})},
+		Diagnostics: []equation.Fact{diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilySendIsolation)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticSendIsolation, Name: verdict.kind})},
 	}}
 }
 
@@ -28664,7 +28493,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		// until a runtime validation republishes a proof for the same term.
 		if typeRequiresBoundaryProof(expected) && anyBoundaryValue(sources[index], values[index], true, expected, partition) {
 			subject := returnValueSubject(index, displays[index])
-			diagnostics = append(diagnostics, diagnosticFact(fmt.Sprintf("type.return.contract/%s/%08d", operation.Target.Name, index), DiagnosticPayload{
+			diagnostics = append(diagnostics, diagnosticFact(fmt.Sprintf(diagnosticFamilyPrefix(DiagnosticFamilyReturnContract)+"%s/%08d", operation.Target.Name, index), DiagnosticPayload{
 				Kind: diagnosticReturnContract, Subject: subject, Required: typeformat.Short(expected), Flags: DiagnosticAnyBoundary,
 			}))
 			continue
@@ -28677,7 +28506,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		// member. The whole-value message stays for every other refutation: it
 		// is the aggregate itself, not one slot, that failed the declaration.
 		if suffix, fieldType, member := anyBoundaryRecordMember(values[index], expected); member {
-			diagnostics = append(diagnostics, diagnosticFact(fmt.Sprintf("type.return.contract/%s/%08d/%s", operation.Target.Name, index, suffix), DiagnosticPayload{
+			diagnostics = append(diagnostics, diagnosticFact(fmt.Sprintf(diagnosticFamilyPrefix(DiagnosticFamilyReturnContract)+"%s/%08d/%s", operation.Target.Name, index, suffix), DiagnosticPayload{
 				Kind: diagnosticReturnContract, Name: "member", Subject: returnMemberSubject(index, suffix), Required: typeformat.Short(fieldType), Flags: DiagnosticAnyBoundary,
 			}))
 			continue
@@ -28687,7 +28516,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		if optionalConcreteWitness(values[index]) && valueAgainstType([]byte("scalar/nil"), expected) == shapeRefuted {
 			payload.Flags |= DiagnosticMayBeNil
 		}
-		diagnostics = append(diagnostics, diagnosticFact(fmt.Sprintf("type.return.contract/%s/%08d", operation.Target.Name, index), payload))
+		diagnostics = append(diagnostics, diagnosticFact(fmt.Sprintf(diagnosticFamilyPrefix(DiagnosticFamilyReturnContract)+"%s/%08d", operation.Target.Name, index), payload))
 	}
 	// Every return occurrence owns its internal tuple.  A file can have more
 	// than one reachable return (for example, a loop return plus the fallthrough

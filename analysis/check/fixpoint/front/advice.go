@@ -78,9 +78,10 @@ func advicePolicyDiagnostics(body *wir.Body, source cfg.Graph) []ControlDiagnost
 			if name == "" {
 				continue
 			}
+			code := "lint.unused.local"
 			out = append(out, ControlDiagnostic{
-				Key:      fmt.Sprintf("lint.unused.local/%d/%d", inst.TargetSpan.StartLine, inst.Point),
-				Code:     "lint.unused.local",
+				Key:      fmt.Sprintf(code+"/%d/%d", inst.TargetSpan.StartLine, inst.Point),
+				Code:     code,
 				Message:  "local \"" + name + "\" is never read",
 				Span:     inst.TargetSpan,
 				Evidence: []ControlDiagnosticEvidence{{Span: inst.TargetSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "no read of local \"" + name + "\" was found in this scope"}},
@@ -197,7 +198,8 @@ func adviceDeadLocalAssignment(body *wir.Body, graph adviceGraph, root pathdom.P
 		evidence = append(evidence, ControlDiagnosticEvidence{Span: overwrite, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "later assignment replaces \"" + name + "\" before the earlier value is read"})
 		labels = append(labels, ControlDiagnosticLabel{Span: overwrite, Message: "overwriting assignment"})
 	}
-	return ControlDiagnostic{Key: fmt.Sprintf("lint.dead.assignment/%d/%d", declaration.TargetSpan.StartLine, declaration.Point), Code: "lint.dead.assignment", Message: message, Span: declaration.TargetSpan, Evidence: evidence, Labels: labels, Help: help}, true
+	code := "lint.dead.assignment"
+	return ControlDiagnostic{Key: fmt.Sprintf(code+"/%d/%d", declaration.TargetSpan.StartLine, declaration.Point), Code: code, Message: message, Span: declaration.TargetSpan, Evidence: evidence, Labels: labels, Help: help}, true
 }
 
 type adviceWrite struct {
@@ -338,7 +340,8 @@ func adviceRedundantGuards(body *wir.Body, graph adviceGraph) []ControlDiagnosti
 				continue
 			}
 			if implies {
-				out = append(out, ControlDiagnostic{Key: fmt.Sprintf("advice.always_true_guard/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: "advice.always_true_guard", Message: "condition is proven always true", Span: inner.ExprSpan, Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "condition is proven to be true on every reachable path"}}, Labels: []ControlDiagnosticLabel{{Span: inner.ExprSpan, Message: "constant guard"}}, Help: "Remove the guard or move the guarded code out of the branch."})
+				code := "advice.always_true_guard"
+				out = append(out, ControlDiagnostic{Key: fmt.Sprintf(code+"/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: code, Message: "condition is proven always true", Span: inner.ExprSpan, Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "condition is proven to be true on every reachable path"}}, Labels: []ControlDiagnosticLabel{{Span: inner.ExprSpan, Message: "constant guard"}}, Help: "Remove the guard or move the guarded code out of the branch."})
 			}
 			if redundant {
 				message, help := "condition is always false here", "Remove this unreachable branch, or change the prior guard if this path should still run."
@@ -350,7 +353,8 @@ func adviceRedundantGuards(body *wir.Body, graph adviceGraph) []ControlDiagnosti
 				if prior.Kind == wir.CheckNotNil {
 					priorMessage = check.Path.String() + " is not nil"
 				}
-				out = append(out, ControlDiagnostic{Key: fmt.Sprintf("lint.condition.redundant/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: "lint.condition.redundant", Message: message, Span: inner.ExprSpan,
+				code := "lint.condition.redundant"
+				out = append(out, ControlDiagnostic{Key: fmt.Sprintf(code+"/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: code, Message: message, Span: inner.ExprSpan,
 					Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "current check: " + current}, {Span: outer.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "prior guard established " + priorMessage}, {Span: inner.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: check.Path.String() + " is unchanged between the prior guard and this check"}},
 					Labels:   []ControlDiagnosticLabel{{Span: inner.ExprSpan, Message: "current check"}, {Span: outer.ExprSpan, Message: "prior guard"}}, Help: help})
 			}
