@@ -29,10 +29,11 @@ func declaredChildBoundary(t *testing.T, source string) (front.Compilation, map[
 // owns, keyed by the display the claim states.
 func declaredAssignmentClaims(t *testing.T, child front.Compilation, formals map[string]bool) map[string]bool {
 	t.Helper()
-	derived := uncalledDeclaredFormalDerivedCells(child, formals)
+	index := indexAdmissionBody(child)
+	derived := index.declaredFormalDerivedCells(formals)
 	owned := make(map[string]bool)
 	for _, operation := range child.Artifact.Equations {
-		if !uncalledDeclaredFormalAssignment(child, operation, formals, derived) {
+		if !index.declaredFormalAssignment(operation, formals, derived) {
 			continue
 		}
 		display, found := artifactOperand(operation.Operands, "display")
@@ -104,7 +105,8 @@ local function display(u: User): string
     return shown
 end
 return display`)
-	derived := uncalledDeclaredFormalDerivedCells(child, formals)
+	index := indexAdmissionBody(child)
+	derived := index.declaredFormalDerivedCells(formals)
 	for _, operation := range child.Artifact.Equations {
 		if operation.Occurrence.Kind != "environment-write" || !declaredCellAllocationWrite(operation) {
 			continue

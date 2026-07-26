@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 )
 
 // TestAdmissionLanePrecedencePinned transcribes the effective priority of the
@@ -104,5 +106,72 @@ func TestAdmissionLaneVocabularyGuard(t *testing.T) {
 	}
 	if !foundDescriptors {
 		t.Fatal("admission lane descriptors not found")
+	}
+}
+
+// TestAdmissionHelpersStayDescriptorOwned fences the displaced free-function
+// battery. Stateful evaluator methods remain legitimate owners; a new
+// freestanding uncalled admission predicate would recreate the parallel
+// surface this lane removed.
+func TestAdmissionHelpersStayDescriptorOwned(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, parseErr := parser.ParseFile(fset, name, nil, 0)
+		if parseErr != nil {
+			t.Fatalf("parse %s: %v", name, parseErr)
+		}
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Recv != nil || !strings.HasPrefix(function.Name.Name, "uncalled") {
+				continue
+			}
+			t.Errorf("%s: freestanding admission helper %s must be a descriptor query", fset.Position(function.Pos()), function.Name.Name)
+		}
+	}
+}
+
+// TestAdmissionConsumerRequiresBodyIndex is the consumer mutation proof. The
+// explicit-any body is admitted from its declaration-owned seed projection;
+// severing that projection at the allocation consumer must fail closed rather
+// than letting any descriptor recompute the boundary from Compilation.
+func TestAdmissionConsumerRequiresBodyIndex(t *testing.T) {
+	compilation, err := front.Compile(`
+local function validate(value: any): string
+    local strict: string = value
+    return strict
+end
+return validate`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compilation.Nested) != 1 {
+		t.Fatalf("nested bodies = %d, want 1", len(compilation.Nested))
+	}
+	child := compilation.Nested[0]
+	bodyIndex := indexAdmissionBody(child)
+	ctx := admissionLaneContext{child: child, bodyIndex: bodyIndex}
+	decision, admitted := selectAdmissionLane(&ctx)
+	if !admitted || decision.Lane == nil || decision.Lane.Name != "explicit-any" {
+		name := ""
+		if decision.Lane != nil {
+			name = decision.Lane.Name
+		}
+		t.Fatalf("indexed admission = (%q, %v), want explicit-any", name, admitted)
+	}
+
+	ctx.bodyIndex = admissionBodyIndex{} // mutation: disconnect the consumer from its projection.
+	if decision, admitted := selectAdmissionLane(&ctx); admitted {
+		name := ""
+		if decision.Lane != nil {
+			name = decision.Lane.Name
+		}
+		t.Fatalf("admission survived missing body index through lane %q", name)
 	}
 }

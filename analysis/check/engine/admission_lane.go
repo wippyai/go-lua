@@ -12,7 +12,7 @@ import (
 type admissionLane struct {
 	Name       string
 	Precedence int
-	Admit      func(admissionLaneContext) (admissionLaneDecision, bool)
+	Admit      func(*admissionLane, *admissionLaneContext) (admissionLaneDecision, bool)
 	Discharges DiagnosticFamilySet
 }
 
@@ -23,6 +23,7 @@ type admissionLaneContext struct {
 	result    string
 	child     front.Compilation
 	partition equation.Partition
+	bodyIndex admissionBodyIndex
 }
 
 type admissionRootPolicy func(admissionLaneContext, admissionLaneDecision) ([]byte, bool, error)
@@ -44,6 +45,7 @@ type admissionDiagnosticContext struct {
 	lexical         *lexicalEvaluator
 	child           front.Compilation
 	partition       equation.Partition
+	bodyIndex       admissionBodyIndex
 	decision        admissionLaneDecision
 	diagnostic      equation.Fact
 	qualifiedFamily string
@@ -64,10 +66,10 @@ func admissionDiagnosticDischarged(ctx admissionDiagnosticContext, closedAnyForm
 	switch ctx.decision.Lane.Name {
 	case "static-assignment":
 		return ctx.lexical.uncalledStaticAssignmentDiagnostic(ctx.child.Artifact, diagnostic.Key, ctx.partition) ||
-			uncalledStaticOptionalMethodDiagnostic(ctx.child.Artifact, diagnostic) ||
-			uncalledStaticResultCallDiagnostic(ctx.child.Artifact, diagnostic.Key)
+			ctx.staticOptionalMethodDiagnostic() ||
+			ctx.staticResultCallDiagnostic()
 	case "typed-channel-send":
-		return uncalledTypedChannelSendDiagnostic(diagnostic)
+		return ctx.typedChannelSendDiagnostic()
 	case "declared":
 		switch {
 		case diagnosticFamilyMatches(family, DiagnosticFamilyMissingMember):
@@ -75,7 +77,7 @@ func admissionDiagnosticDischarged(ctx admissionDiagnosticContext, closedAnyForm
 		case diagnosticFamilyMatches(family, DiagnosticFamilyReturnContract):
 			return ctx.decision.Declared.Method || ctx.decision.Declared.ArithmeticReturn
 		case diagnosticFamilyMatches(family, DiagnosticFamilyAssignment):
-			return ctx.decision.DeclaredAssignment || uncalledDeclaredProviderResultDiagnostic(ctx.child, diagnostic.Key)
+			return ctx.decision.DeclaredAssignment || ctx.declaredProviderResultDiagnostic()
 		case diagnosticFamilyMatches(family, DiagnosticFamilyOptionalAssignmentTarget):
 			return ctx.decision.Declared.MemberWrite
 		case diagnosticFamilyMatches(family, DiagnosticFamilyConcatOperand):
@@ -85,12 +87,12 @@ func admissionDiagnosticDischarged(ctx admissionDiagnosticContext, closedAnyForm
 		case diagnosticFamilyMatches(family, DiagnosticFamilyUnprovenClaim):
 			return declaredAssertionDiagnostic(ctx.decision.Declared.Assertions, diagnostic.Key)
 		case diagnosticFamilyMatches(family, DiagnosticFamilyCallArgumentType):
-			return uncalledDeclaredProviderResultDiagnostic(ctx.child, diagnostic.Key)
+			return ctx.declaredProviderResultDiagnostic()
 		default:
 			return false
 		}
 	case "explicit-any":
-		return uncalledExplicitAnyDiagnostic(ctx.child.Artifact, diagnostic)
+		return ctx.explicitAnyDiagnostic()
 	case "declared-formal-call":
 		if ctx.decision.SealedEnvironment {
 			return formalMemberWriteDiagnostic(ctx.decision.FormalMemberWrites, family)
@@ -104,25 +106,25 @@ var admissionLanes = []admissionLane{
 	{
 		Name:       "gradual-logical-call",
 		Precedence: 0,
-		Admit:      admitGradualLogicalCall,
+		Admit:      (*admissionLane).admitGradualLogicalCall,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyCallArgumentType),
 	},
 	{
 		Name:       "declared-local-union-read",
 		Precedence: 1,
-		Admit:      admitDeclaredLocalUnionRead,
+		Admit:      (*admissionLane).admitDeclaredLocalUnionRead,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyAssignment, DiagnosticFamilyMissingMember),
 	},
 	{
 		Name:       "declared-indexed-read",
 		Precedence: 2,
-		Admit:      admitDeclaredIndexedRead,
+		Admit:      (*admissionLane).admitDeclaredIndexedRead,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyAssignment, DiagnosticFamilyReturnContract),
 	},
 	{
 		Name:       "static-assignment",
 		Precedence: 3,
-		Admit:      admitStaticAssignment,
+		Admit:      (*admissionLane).admitStaticAssignment,
 		Discharges: NewDiagnosticFamilySet(
 			DiagnosticFamilyAssignment,
 			DiagnosticFamilyOptionalCallReceiver,
@@ -133,13 +135,13 @@ var admissionLanes = []admissionLane{
 	{
 		Name:       "typed-channel-send",
 		Precedence: 4,
-		Admit:      admitTypedChannelSend,
+		Admit:      (*admissionLane).admitTypedChannelSend,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyCallArgumentType),
 	},
 	{
 		Name:       "declared",
 		Precedence: 5,
-		Admit:      admitDeclared,
+		Admit:      (*admissionLane).admitDeclared,
 		Discharges: NewDiagnosticFamilySet(
 			DiagnosticFamilyMissingMember,
 			DiagnosticFamilyReturnContract,
@@ -154,31 +156,31 @@ var admissionLanes = []admissionLane{
 	{
 		Name:       "explicit-any",
 		Precedence: 6,
-		Admit:      admitExplicitAny,
+		Admit:      (*admissionLane).admitExplicitAny,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyAssignment, DiagnosticFamilyUnprovenClaim),
 	},
 	{
 		Name:       "static-captured-return",
 		Precedence: 7,
-		Admit:      admitStaticCapturedReturn,
+		Admit:      (*admissionLane).admitStaticCapturedReturn,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyReturnContract, DiagnosticFamilyCallTooFewArguments, DiagnosticFamilyCallTooManyArguments),
 	},
 	{
 		Name:       "static-arithmetic",
 		Precedence: 8,
-		Admit:      admitStaticArithmetic,
+		Admit:      (*admissionLane).admitStaticArithmetic,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyCallArgumentType),
 	},
 	{
 		Name:       "static-member-read",
 		Precedence: 9,
-		Admit:      admitStaticMemberRead,
+		Admit:      (*admissionLane).admitStaticMemberRead,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyMissingMember),
 	},
 	{
 		Name:       "declared-formal-call",
 		Precedence: 10,
-		Admit:      admitDeclaredFormalCall,
+		Admit:      (*admissionLane).admitDeclaredFormalCall,
 		Discharges: NewDiagnosticFamilySet(
 			DiagnosticFamilyMissingMember,
 			DiagnosticFamilyAssignment,
@@ -194,27 +196,33 @@ var admissionLanes = []admissionLane{
 	{
 		Name:       "imported-capture",
 		Precedence: 11,
-		Admit:      admitImportedCapture,
+		Admit:      (*admissionLane).admitImportedCapture,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyAssignment, DiagnosticFamilyMissingMember),
 	},
 	{
 		Name:       "sealed-capture",
 		Precedence: 12,
-		Admit:      admitSealedCapture,
+		Admit:      (*admissionLane).admitSealedCapture,
 		Discharges: RegisteredDiagnosticFamilies(),
 	},
 	{
 		Name:       "contextual-callback",
 		Precedence: 13,
-		Admit:      admitContextualCallback,
+		Admit:      (*admissionLane).admitContextualCallback,
 		Discharges: RegisteredDiagnosticFamilies(),
 	},
 }
 
-func selectAdmissionLane(ctx admissionLaneContext) (admissionLaneDecision, bool) {
+func selectAdmissionLane(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	// Every descriptor is a query over the one body projection built by the
+	// allocation consumer. A missing projection is an unindexed admission
+	// request, so it cannot prove any allocation-time boundary.
+	if ctx == nil || !ctx.bodyIndex.ready {
+		return admissionLaneDecision{}, false
+	}
 	for index := range admissionLanes {
 		lane := &admissionLanes[index]
-		decision, admitted := lane.Admit(ctx)
+		decision, admitted := lane.Admit(lane, ctx)
 		if !admitted {
 			continue
 		}
@@ -224,25 +232,25 @@ func selectAdmissionLane(ctx admissionLaneContext) (admissionLaneDecision, bool)
 	return admissionLaneDecision{}, false
 }
 
-func admitTypedChannelSend(ctx admissionLaneContext) (admissionLaneDecision, bool) {
-	if !uncalledTypedChannelSendBoundary(ctx.child) {
+func (lane *admissionLane) admitTypedChannelSend(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	if !ctx.bodyIndex.typedChannelSendBoundary() {
 		return admissionLaneDecision{}, false
 	}
 	// The old orchestration computed this independent obligation lane after
 	// declaration admission. When both hold, the declaration still owns the
 	// seed/root policy while channel send narrows the discharged surface.
-	if declared, admitted := admitDeclared(ctx); admitted {
+	if declared, admitted := lane.admitDeclared(ctx); admitted {
 		return declared, true
 	}
 	return admissionLaneDecision{Root: admissionRootClosedBody}, true
 }
 
-func admitExplicitAny(ctx admissionLaneContext) (admissionLaneDecision, bool) {
-	seeds, admitted := uncalledExplicitAnyBoundary(ctx.child)
+func (lane *admissionLane) admitExplicitAny(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	seeds, admitted := ctx.bodyIndex.explicitAnyBoundary()
 	if !admitted {
 		return admissionLaneDecision{}, false
 	}
-	closedCapture := uncalledClosedAnyCaptureBoundary(ctx.lexical, ctx.child, lexicalAllocationSite{body: ctx.body, operation: ctx.operation}, ctx.partition)
+	closedCapture := ctx.closedAnyCaptureBoundary()
 	root := admissionRootCaptured
 	if len(ctx.child.Boundary.Captures) == 0 {
 		root = admissionRootClosedBody
@@ -252,49 +260,49 @@ func admitExplicitAny(ctx admissionLaneContext) (admissionLaneDecision, bool) {
 	return admissionLaneDecision{Seeds: seeds, Root: root, ClosedAnyCapture: closedCapture}, true
 }
 
-func admitGradualLogicalCall(ctx admissionLaneContext) (admissionLaneDecision, bool) {
-	seeds, terms, admitted := uncalledGradualLogicalCallBoundary(ctx.child)
+func (lane *admissionLane) admitGradualLogicalCall(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	seeds, terms, admitted := ctx.bodyIndex.gradualLogicalCallBoundary()
 	if !admitted {
 		return admissionLaneDecision{}, false
 	}
 	return admissionLaneDecision{Seeds: seeds, Root: admissionRootGradualLogical, GradualLogicalTerms: terms}, true
 }
 
-func admitDeclaredLocalUnionRead(ctx admissionLaneContext) (admissionLaneDecision, bool) {
-	seeds, admitted := uncalledDeclaredLocalUnionReadBoundary(ctx.child)
+func (lane *admissionLane) admitDeclaredLocalUnionRead(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	seeds, admitted := ctx.bodyIndex.declaredLocalUnionReadBoundary()
 	return admissionLaneDecision{Seeds: seeds, Root: admissionRootLocalUnionRead}, admitted
 }
 
-func admitDeclaredIndexedRead(ctx admissionLaneContext) (admissionLaneDecision, bool) {
-	seeds, admitted := uncalledDeclaredIndexedReadBoundary(ctx.child)
+func (lane *admissionLane) admitDeclaredIndexedRead(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	seeds, admitted := ctx.bodyIndex.declaredIndexedReadBoundary()
 	return admissionLaneDecision{Seeds: seeds, Root: admissionRootClosedBody}, admitted
 }
 
-func admitStaticAssignment(ctx admissionLaneContext) (admissionLaneDecision, bool) {
-	seeds, admitted := uncalledStaticAssignmentBoundary(ctx.child)
+func (lane *admissionLane) admitStaticAssignment(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	seeds, admitted := ctx.bodyIndex.staticAssignmentBoundary()
 	if !admitted || !ctx.lexical.uncalledStaticCapturedCallsAreGuardedValidation(ctx.child, ctx.partition) {
 		return admissionLaneDecision{}, false
 	}
 	return admissionLaneDecision{Seeds: seeds, Root: admissionRootStaticAssignment}, true
 }
 
-func admitDeclared(ctx admissionLaneContext) (admissionLaneDecision, bool) {
-	admission := uncalledDeclaredBoundary(ctx.child)
+func (lane *admissionLane) admitDeclared(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	admission := ctx.bodyIndex.declaredBoundary()
 	if !admission.Admitted {
 		return admissionLaneDecision{}, false
 	}
 	assignment := admission.ArithmeticAssignment
-	formals := make(map[string]bool, len(ctx.child.Boundary.Parameters))
-	for _, parameter := range ctx.child.Boundary.Parameters {
-		formals[boundaryTerm(parameter.Symbol)] = true
-	}
+	formals := ctx.bodyIndex.formals
 	allocations := bodyLocalTableTerms(ctx.child)
 	allocationReads := bodyLocalAllocationReadTargets(ctx.child, allocations)
-	derivedCells := uncalledDeclaredFormalDerivedCells(ctx.child, formals)
-	for _, operation := range ctx.child.Artifact.Equations {
+	derivedCells := ctx.bodyIndex.declaredFormalDerivedCells(formals)
+	for _, operation := range ctx.bodyIndex.operations {
+		if operation.Occurrence.Kind != "claim" {
+			continue
+		}
 		assignment = assignment ||
-			uncalledDeclaredFormalAssignment(ctx.child, operation, formals, derivedCells) ||
-			uncalledDeclaredLocalAllocationAssignment(operation, allocations, allocationReads)
+			ctx.bodyIndex.declaredFormalAssignment(operation, formals, derivedCells) ||
+			ctx.bodyIndex.declaredLocalAllocationAssignment(operation, allocations, allocationReads)
 	}
 	return admissionLaneDecision{
 		Seeds:              admission.Seeds,
@@ -304,27 +312,27 @@ func admitDeclared(ctx admissionLaneContext) (admissionLaneDecision, bool) {
 	}, true
 }
 
-func admitStaticCapturedReturn(ctx admissionLaneContext) (admissionLaneDecision, bool) {
+func (lane *admissionLane) admitStaticCapturedReturn(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
 	if !ctx.lexical.uncalledStaticCapturedReturnBoundary(ctx.child, ctx.partition) {
 		return admissionLaneDecision{}, false
 	}
 	return admissionLaneDecision{Root: admissionRootCaptured}, true
 }
 
-func admitStaticArithmetic(ctx admissionLaneContext) (admissionLaneDecision, bool) {
+func (lane *admissionLane) admitStaticArithmetic(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
 	if !ctx.lexical.uncalledStaticArithmeticBoundary(ctx.body, ctx.child, ctx.partition) {
 		return admissionLaneDecision{}, false
 	}
 	return admissionLaneDecision{Root: admissionRootArithmetic}, true
 }
 
-func admitStaticMemberRead(ctx admissionLaneContext) (admissionLaneDecision, bool) {
-	seeds, admitted := uncalledStaticMemberReadSeeds(ctx.child)
+func (lane *admissionLane) admitStaticMemberRead(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	seeds, admitted := ctx.bodyIndex.staticMemberReadSeeds()
 	return admissionLaneDecision{Seeds: seeds, Root: admissionRootClosedBody}, admitted
 }
 
-func admitDeclaredFormalCall(ctx admissionLaneContext) (admissionLaneDecision, bool) {
-	seeds, admitted := ctx.lexical.uncalledDeclaredFormalCallBoundary(ctx.child, lexicalAllocationSite{body: ctx.body, operation: ctx.operation}, ctx.partition)
+func (lane *admissionLane) admitDeclaredFormalCall(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	seeds, admitted := ctx.lexical.uncalledDeclaredFormalCallBoundary(ctx.bodyIndex, lexicalAllocationSite{body: ctx.body, operation: ctx.operation}, ctx.partition)
 	if !admitted {
 		return admissionLaneDecision{}, false
 	}
@@ -343,20 +351,20 @@ func admitDeclaredFormalCall(ctx admissionLaneContext) (admissionLaneDecision, b
 	}, true
 }
 
-func admitImportedCapture(ctx admissionLaneContext) (admissionLaneDecision, bool) {
-	seeds, admitted := ctx.lexical.uncalledImportedCaptureBoundary(ctx.body, ctx.child, ctx.partition)
+func (lane *admissionLane) admitImportedCapture(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
+	seeds, admitted := ctx.lexical.uncalledImportedCaptureBoundary(ctx.body, ctx.bodyIndex, ctx.partition)
 	return admissionLaneDecision{Seeds: seeds, Root: admissionRootImportedCapture}, admitted
 }
 
-func admitSealedCapture(ctx admissionLaneContext) (admissionLaneDecision, bool) {
+func (lane *admissionLane) admitSealedCapture(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
 	if len(ctx.child.Boundary.Parameters) == 0 && len(ctx.child.Boundary.Captures) == 0 {
 		return admissionLaneDecision{Root: admissionRootClosedBody}, true
 	}
-	admitted := uncalledSealedCaptureBoundary(ctx.lexical, ctx.child, lexicalAllocationSite{body: ctx.body, operation: ctx.operation}, ctx.partition)
+	admitted := ctx.sealedCaptureBoundary()
 	return admissionLaneDecision{Root: admissionRootSealedCapture}, admitted
 }
 
-func admitContextualCallback(ctx admissionLaneContext) (admissionLaneDecision, bool) {
+func (lane *admissionLane) admitContextualCallback(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
 	seeds, parameters, admitted := ctx.lexical.contextualCallbackBoundary(ctx.body, ctx.child, ctx.result, ctx.partition)
 	return admissionLaneDecision{Seeds: seeds, Root: admissionRootClosedBody, ContextualParameters: parameters}, admitted
 }
