@@ -123,15 +123,23 @@ const (
 	heapIndexRevokePrefix      = "heap/index-revoke/"
 	heapIndexLowerPrefix       = "heap/index-lower/"
 	heapIndexUpperPrefix       = "heap/index-upper/"
-	heapLengthFloorPrefix      = "heap/length-floor/"
-	heapTableEscapePrefix      = "heap/table-escape/"
-	indexReadDisplayPrefix     = "index-read-display/"
-	indexReadScalarPrefix      = "index-read-scalar/"
-	typedOptionalReadPrefix    = "typed-optional-read/"
-	typePredicateTargetPrefix  = "type-predicate-target/"
-	typePredicatePairPrefix    = "type-predicate-pair/"
-	typePredicateValuePrefix   = "type-predicate-value/"
-	callTypePredicatePrefix    = "call-type-predicate/"
+	// heapIndexRelationPrefix carries a branch's true-edge relations forward in
+	// their normalized form. The boolean index pairs name only the terms the
+	// branch itself mentioned; an index term computed inside the arm is
+	// discharged against these relations instead.
+	heapIndexRelationPrefix = "heap/index-relation/"
+	// affineIndexPrefix names the affine identity of a computed index term:
+	// the term equals a base path plus a constant offset.
+	affineIndexPrefix         = "affine-index/"
+	heapLengthFloorPrefix     = "heap/length-floor/"
+	heapTableEscapePrefix     = "heap/table-escape/"
+	indexReadDisplayPrefix    = "index-read-display/"
+	indexReadScalarPrefix     = "index-read-scalar/"
+	typedOptionalReadPrefix   = "typed-optional-read/"
+	typePredicateTargetPrefix = "type-predicate-target/"
+	typePredicatePairPrefix   = "type-predicate-pair/"
+	typePredicateValuePrefix  = "type-predicate-value/"
+	callTypePredicatePrefix   = "call-type-predicate/"
 	// optionalResultOriginPrefix names the callee slot whose declared optional
 	// result established a value's nil possibility. It is presentation
 	// provenance for that same published witness, never a second proof.
@@ -11050,6 +11058,9 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	var diagnostics []equation.Fact
 	var originFacts []equation.Fact
 	var boundarySources [][]byte
+	// binaryLeft and binaryRight retain the resolved operands of a binary
+	// expression so the affine identity reads the same values the operator did.
+	var binaryLeft, binaryRight []byte
 	var err error
 	switch wir.Op(kind) {
 	case wir.OpLogical:
@@ -11206,6 +11217,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		if er != nil {
 			return equation.TransactionResult{}, er
 		}
+		binaryLeft, binaryRight = left, right
 		operator := wir.Operator(op)
 		boundaryComparison := (operator == wir.BinEq || operator == wir.BinNe) &&
 			(isExplicitAnyValue(left) || sourceHasAnyBoundary(by["left"], partition.Values()) ||
@@ -11276,6 +11288,17 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	switch wir.Op(kind) {
 	case wir.OpBinOp:
 		values = append(values, residueExpressionFacts(wir.Operator(op), by, string(result), operation.Target.Name, partition)...)
+		// A constant shift of a numeric path is an identity this result
+		// carries, not a value it computes. Publishing it here is what lets a
+		// later read of the shifted slot be discharged against the relations
+		// proved about the base, which no boolean pair over the base term
+		// alone can express.
+		if base, offset, affine := affineExpressionTerm(wir.Operator(op), by["left"], binaryLeft, by["right"], binaryRight); affine {
+			values = append(values, equation.Fact{
+				Key:   affineIndexPrefix + string(result) + "/" + operation.Target.Name,
+				Value: encodeAffineTerm(base, offset),
+			})
+		}
 	case wir.OpUnOp:
 		if wir.Operator(op) == wir.UnLen && strings.HasPrefix(string(by["value"]), "path/") {
 			values = append(values, equation.Fact{
@@ -12229,6 +12252,8 @@ func heapIndexSubject(container []byte, partition equation.Partition) string {
 
 // indexPresenceProven accepts only a current guarded proof for this container
 // and key. Any later dynamic write through the same heap identity revokes it.
+// An index term the guard never named itself is decided by its affine identity
+// against the same guard's relations.
 func indexPresenceProven(container, index []byte, partition equation.Partition) bool {
 	subject := heapIndexSubject(container, partition)
 	prefix := heapIndexPresencePrefix + subject + "/" + base64.RawURLEncoding.EncodeToString(index) + "/"
@@ -12239,7 +12264,7 @@ func indexPresenceProven(container, index []byte, partition equation.Partition) 
 		}
 	}
 	if proof == "" {
-		return false
+		return affineIndexPresenceProven(container, index, partition)
 	}
 	// A bound proves nothing about a value the body has since replaced. The
 	// index term's current epoch is exactly that replacement event, so a proof
@@ -12247,6 +12272,15 @@ func indexPresenceProven(container, index []byte, partition equation.Partition) 
 	if epoch, versioned := currentEpoch(index, partition); versioned && epoch > factOperation(proof) {
 		return false
 	}
+	if revoked(subject, factOperation(proof), partition) {
+		return false
+	}
+	return true
+}
+
+// revoked reports that a dynamic write through this heap identity followed the
+// proof, so the proof describes a table state the body has since left.
+func revoked(subject, provenAt string, partition equation.Partition) bool {
 	revokePrefix := heapIndexRevokePrefix + subject + "/"
 	revocation := ""
 	for _, fact := range partition.Values() {
@@ -12254,7 +12288,110 @@ func indexPresenceProven(container, index []byte, partition equation.Partition) 
 			revocation = fact.Key
 		}
 	}
-	return revocation == "" || factOperation(proof) > factOperation(revocation)
+	return revocation != "" && provenAt <= factOperation(revocation)
+}
+
+// affineIndexPresenceProven decides a shifted index term. The term's affine
+// identity names the base path and the constant offset; the relations the
+// guards proved about that base are then discharged at the shifted constant.
+// Both the identity and each relation must postdate the base's current value:
+// a base replaced after the shift was computed leaves the two describing
+// different values, and a base replaced after the guard leaves the relation
+// stated about a value that is gone.
+func affineIndexPresenceProven(container, index []byte, partition equation.Partition) bool {
+	containerPath, isPath := strings.CutPrefix(string(container), "path/")
+	if !isPath || containerPath == "" {
+		return false
+	}
+	base, offset, computedAt, affine := affineIndexIdentity(index, partition)
+	if !affine {
+		return false
+	}
+	basePath, baseIsPath := strings.CutPrefix(string(base), "path/")
+	if !baseIsPath || basePath == "" {
+		return false
+	}
+	if epoch, versioned := currentEpoch(base, partition); versioned && epoch > computedAt {
+		return false
+	}
+	predicates, differences, provenAt := currentIndexRelations(partition)
+	if len(predicates) == 0 && len(differences) == 0 {
+		return false
+	}
+	if !affineIndexInRange(predicates, differences, basePath, containerPath, offset) {
+		return false
+	}
+	return !revoked(heapIndexSubject(container, partition), provenAt, partition)
+}
+
+// affineIndexIdentity reads the current affine identity of an index term. A
+// term whose binding has been rewritten since the shift keeps no identity: the
+// epoch lane is the single record of that replacement.
+func affineIndexIdentity(index []byte, partition equation.Partition) ([]byte, int64, string, bool) {
+	prefix := affineIndexPrefix + string(index) + "/"
+	latest, found := partition.LatestValuePrefix(prefix)
+	if !found {
+		return nil, 0, "", false
+	}
+	computedAt := strings.TrimPrefix(latest.Key, prefix)
+	if epoch, versioned := currentEpoch(index, partition); versioned && epoch != computedAt {
+		return nil, 0, "", false
+	}
+	base, offset, decoded := decodeAffineTerm(latest.Value)
+	if !decoded {
+		return nil, 0, "", false
+	}
+	return base, offset, computedAt, true
+}
+
+// currentIndexRelations collects the republished branch relations that still
+// hold here, together with the earliest point any of them was proved. A
+// relation whose own operands have been replaced since it was published is
+// dropped rather than carried into the goal.
+func currentIndexRelations(partition equation.Partition) ([]branchPredicateWire, []branchDiffWire, string) {
+	var predicates []branchPredicateWire
+	var differences []branchDiffWire
+	provenAt := ""
+	for _, fact := range partition.Values() {
+		if !strings.HasPrefix(fact.Key, heapIndexRelationPrefix) {
+			continue
+		}
+		publishedAt := factOperation(fact.Key)
+		if publishedAt == "" {
+			continue
+		}
+		predicate, isPredicate, _ := branchEvidencePredicate(equation.BoundOperand{Role: "predicate", Value: fact.Value})
+		difference, isDifference := decodeBranchDiff(fact.Value)
+		if !isPredicate && !isDifference {
+			continue
+		}
+		if relationStale(relationPaths(predicate, difference, isPredicate), publishedAt, partition) {
+			continue
+		}
+		if isPredicate {
+			predicates = append(predicates, predicate)
+		} else {
+			differences = append(differences, difference)
+		}
+		if provenAt == "" || publishedAt < provenAt {
+			provenAt = publishedAt
+		}
+	}
+	return predicates, differences, provenAt
+}
+
+// relationStale reports that one of the relation's own operands has been
+// replaced since the relation was published.
+func relationStale(paths []string, publishedAt string, partition equation.Partition) bool {
+	for _, name := range paths {
+		if name == "" {
+			continue
+		}
+		if epoch, versioned := currentEpoch([]byte("path/"+name), partition); versioned && epoch > publishedAt {
+			return true
+		}
+	}
+	return false
 }
 
 func factOperation(key string) string {
@@ -16316,6 +16453,7 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			Value: []byte(strconv.FormatInt(item.floor, 10)), Guards: []equation.Guard{guard},
 		})
 	}
+	closure.Values = append(closure.Values, indexRelationFacts(predicates, differences, operation.Target.Name, []equation.Guard{guard})...)
 	lower, upper := publishedIndexRelations(partition)
 	for _, predicate := range predicates {
 		if predicate.Negated || predicate.Path == "" {

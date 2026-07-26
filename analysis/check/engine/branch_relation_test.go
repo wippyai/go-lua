@@ -3,6 +3,10 @@ package engine
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // encodeDifference produces the closed descriptor encoding the front publishes
@@ -113,6 +117,106 @@ func TestRelationalIndexUpperBoundsSeparatesValueFromLength(t *testing.T) {
 	differences := []branchDiffWire{{CoHi: 1, HiPath: "i", LoPath: "a", Edge: true}}
 	if proven := relationalIndexUpperBounds(predicates, differences, []string{"i"}); len(proven) != 0 {
 		t.Fatalf("a value relation must not be read as a length bound, got %v", proven)
+	}
+}
+
+func TestAffineTermEncodingRoundTripsANegativeOffset(t *testing.T) {
+	base, offset, ok := decodeAffineTerm(encodeAffineTerm([]byte("path/a.b[1]"), -3))
+	if !ok || string(base) != "path/a.b[1]" || offset != -3 {
+		t.Fatalf("expected path/a.b[1] shifted by -3, got %q %d %v", base, offset, ok)
+	}
+	if _, _, ok := decodeAffineTerm([]byte("scalar/number/1")); ok {
+		t.Fatal("a value encoding is not an affine identity")
+	}
+	if _, _, ok := decodeAffineTerm([]byte(affineTermEncoding + "1")); ok {
+		t.Fatal("an identity without a base names no term")
+	}
+}
+
+func TestAffineExpressionTermReadsAConstantShiftOfANumericPath(t *testing.T) {
+	integerPath, ok := shapefact.EncodeTarget(typ.Integer)
+	if !ok {
+		t.Fatal("encoding the integer witness")
+	}
+	one := []byte("scalar/number/1")
+	base, offset, affine := affineExpressionTerm(wir.BinAdd, []byte("path/i"), integerPath, one, one)
+	if !affine || string(base) != "path/i" || offset != 1 {
+		t.Fatalf("i + 1 is the base i shifted by 1, got %q %d %v", base, offset, affine)
+	}
+	base, offset, affine = affineExpressionTerm(wir.BinAdd, one, one, []byte("path/i"), integerPath)
+	if !affine || string(base) != "path/i" || offset != 1 {
+		t.Fatalf("1 + i is the same identity, got %q %d %v", base, offset, affine)
+	}
+	base, offset, affine = affineExpressionTerm(wir.BinSub, []byte("path/i"), integerPath, one, one)
+	if !affine || string(base) != "path/i" || offset != -1 {
+		t.Fatalf("i - 1 is the base i shifted by -1, got %q %d %v", base, offset, affine)
+	}
+}
+
+func TestAffineExpressionTermWithholdsTermsOffTheSlotLattice(t *testing.T) {
+	integerPath, ok := shapefact.EncodeTarget(typ.Integer)
+	if !ok {
+		t.Fatal("encoding the integer witness")
+	}
+	stringPath, ok := shapefact.EncodeTarget(typ.String)
+	if !ok {
+		t.Fatal("encoding the string witness")
+	}
+	one := []byte("scalar/number/1")
+	if _, _, affine := affineExpressionTerm(wir.BinAdd, []byte("path/i"), integerPath, []byte("scalar/number/1.5"), []byte("scalar/number/1.5")); affine {
+		t.Fatal("a fractional offset leaves the term off every slot")
+	}
+	if _, _, affine := affineExpressionTerm(wir.BinSub, one, one, []byte("path/i"), integerPath); affine {
+		t.Fatal("1 - i negates the base and is not a constant shift of it")
+	}
+	if _, _, affine := affineExpressionTerm(wir.BinMul, []byte("path/i"), integerPath, one, one); affine {
+		t.Fatal("only add and subtract shift a base by a constant")
+	}
+	if _, _, affine := affineExpressionTerm(wir.BinAdd, []byte("path/s"), stringPath, one, one); affine {
+		t.Fatal("a non-numeric base carries no affine identity")
+	}
+	if _, _, affine := affineExpressionTerm(wir.BinAdd, []byte("temp/3"), integerPath, one, one); affine {
+		t.Fatal("a temporary base cannot be named by the relations the goal is discharged against")
+	}
+}
+
+func TestAffineIndexInRangeShiftsBothSidesOfTheGuard(t *testing.T) {
+	// i >= 1 and i + 1 <= #xs put i + 1 in range but leave i + 2 past the end.
+	predicates := []branchPredicateWire{{Kind: "num-ge", Path: "i", NumFloor: 1}}
+	differences := []branchDiffWire{{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1, Edge: true}}
+	if !affineIndexInRange(predicates, differences, "i", "xs", 1) {
+		t.Fatal("i + 1 <= #xs is exactly the shifted upper bound")
+	}
+	if affineIndexInRange(predicates, differences, "i", "xs", 2) {
+		t.Fatal("i + 1 <= #xs leaves i + 2 one slot past the end")
+	}
+	if affineIndexInRange(predicates, differences, "i", "xs", -1) {
+		t.Fatal("i >= 1 floors i, not i - 1")
+	}
+}
+
+func TestAffineIndexInRangeTakesANegativeOffsetsFloorFromTheBase(t *testing.T) {
+	// i >= 2 and i <= #xs put i - 1 in range.
+	predicates := []branchPredicateWire{
+		{Kind: "num-ge", Path: "i", NumFloor: 2},
+		{Kind: "index-in-range", Path: "i", OtherPath: "xs"},
+	}
+	if !affineIndexInRange(predicates, nil, "i", "xs", -1) {
+		t.Fatal("i >= 2 floors i - 1 at 1 and i <= #xs ceilings it")
+	}
+	if affineIndexInRange(predicates, nil, "i", "xs", 1) {
+		t.Fatal("i <= #xs does not reach i + 1")
+	}
+}
+
+func TestAffineIndexInRangeRequiresAProvenFloor(t *testing.T) {
+	// Without a floor on i, i + 1 <= #xs still admits a non-positive index.
+	differences := []branchDiffWire{{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1, Edge: true}}
+	if affineIndexInRange(nil, differences, "i", "xs", 1) {
+		t.Fatal("an upper bound alone proves no slot")
+	}
+	if affineIndexInRange([]branchPredicateWire{{Kind: "num-ge", Path: "j", NumFloor: 1}}, differences, "i", "xs", 1) {
+		t.Fatal("a floor on another path does not floor i")
 	}
 }
 

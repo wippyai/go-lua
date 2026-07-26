@@ -1,4 +1,4 @@
 {
-  "description": "An index term of the form i + k is proven in range from bounds on the term itself: i + 1 <= #xs with i >= 1 admits xs[i+1], and a negative offset takes its floor from the base, so i >= 2 with i <= #xs admits xs[i-1] and one guard covers a whole window. The offsets are exact: i + 1 <= #xs does not reach i + 2, and i >= 1 does not floor i - 1, so those reads stay optional.",
+  "description": "An index term of the form i + k is proven in range from bounds on the term itself: i + 1 <= #xs with i >= 1 admits xs[i+1], and a negative offset takes its floor from the base, so i >= 2 with i <= #xs admits xs[i-1] and one guard covers a whole window. The shift is an identity the term carries, so binding it to a local keeps the proof. The offsets are exact: i + 1 <= #xs does not reach i + 2, and i >= 1 does not floor i - 1, so those reads stay optional. Soundness holds: after the base is replaced, after the base is replaced between the shift and the read, and after the array is mutated, the read stays optional.",
   "files": ["main.lua"]
 }

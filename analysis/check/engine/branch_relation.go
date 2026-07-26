@@ -2,17 +2,32 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/decision"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/solver"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/subst"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 const branchDiffPrefix = "front/branch-diff/v1/"
+
+// affineTermEncoding is the closed value of one affine identity: the index term
+// this expression produced equals base + offset. It names the base by the same
+// term spelling the value and epoch lanes use, so the base's own replacement
+// event is directly readable from it.
+const affineTermEncoding = "affine-term/v1/"
 
 // branchDiffWire mirrors the front's normalized difference-logic branch
 // descriptor
@@ -192,6 +207,182 @@ func relationalIndexUpperBounds(predicates []branchPredicateWire, differences []
 		}
 	}
 	return proven
+}
+
+// encodeAffineTerm renders one affine identity. The offset leads so the base
+// term, which contains the separator itself, stays the undivided tail.
+func encodeAffineTerm(base []byte, offset int64) []byte {
+	return []byte(affineTermEncoding + strconv.FormatInt(offset, 10) + "/" + string(base))
+}
+
+// decodeAffineTerm reads an affine identity back into its base term and offset.
+func decodeAffineTerm(encoded []byte) ([]byte, int64, bool) {
+	rest, found := strings.CutPrefix(string(encoded), affineTermEncoding)
+	if !found {
+		return nil, 0, false
+	}
+	digits, base, split := strings.Cut(rest, "/")
+	offset, err := strconv.ParseInt(digits, 10, 64)
+	if !split || err != nil || base == "" {
+		return nil, 0, false
+	}
+	return []byte(base), offset, true
+}
+
+// affineExpressionTerm reads an integer add or subtract of a bound path and a
+// constant as the affine identity base + offset. The carrier decides the
+// answer: a shifted term lands on a slot exactly when its base does, so the
+// base must be a number and the offset an exact integer. A fractional constant,
+// a non-numeric base, or a subtraction that negates the base yields no
+// identity, and the index term then carries no in-range proof at all.
+func affineExpressionTerm(operator wir.Operator, leftTerm, leftValue, rightTerm, rightValue []byte) ([]byte, int64, bool) {
+	switch operator {
+	case wir.BinAdd:
+		if offset, constant := integerConstantOperand(rightValue); constant && affineCarrier(leftTerm, leftValue) {
+			return leftTerm, offset, true
+		}
+		if offset, constant := integerConstantOperand(leftValue); constant && affineCarrier(rightTerm, rightValue) {
+			return rightTerm, offset, true
+		}
+	case wir.BinSub:
+		offset, constant := integerConstantOperand(rightValue)
+		if constant && offset != math.MinInt64 && affineCarrier(leftTerm, leftValue) {
+			return leftTerm, -offset, true
+		}
+	}
+	return nil, 0, false
+}
+
+// affineCarrier accepts a base operand that is a bound path holding a number.
+// The path spelling is required because the relations an in-range proof is
+// discharged against name paths, not temporaries.
+func affineCarrier(term, value []byte) bool {
+	if !strings.HasPrefix(string(term), "path/") {
+		return false
+	}
+	target, ok := shapefact.DecodeTarget(value)
+	if !ok || target == nil {
+		return false
+	}
+	switch unwrap.Alias(subst.ExpandInstantiated(target)).Kind() {
+	case kind.Integer, kind.Number:
+		return true
+	}
+	return false
+}
+
+// integerConstantOperand accepts only a constant that is exactly an integer.
+// A float operand leaves the shifted term off the slot lattice, so it produces
+// no offset rather than a rounded one.
+func integerConstantOperand(value []byte) (int64, bool) {
+	if text, found := strings.CutPrefix(string(value), "scalar/number/"); found {
+		offset, err := strconv.ParseInt(text, 10, 64)
+		return offset, err == nil
+	}
+	if target, ok := shapefact.DecodeTarget(value); ok {
+		if literal, isLiteral := unwrap.Alias(target).(*typ.Literal); isLiteral && literal != nil && literal.Base == kind.Integer {
+			offset, err := strconv.ParseInt(literal.String(), 10, 64)
+			return offset, err == nil
+		}
+	}
+	return 0, false
+}
+
+// indexRelationFacts republishes the relations a branch proves on its true edge
+// as guarded facts, in the exact closed encoding the front produced. An index
+// term the branch never saw - a shifted term computed inside the arm - is
+// discharged against these same relations later, so the branch keeps them
+// available instead of collapsing them into the boolean pairs it can name now.
+func indexRelationFacts(predicates []branchPredicateWire, differences []branchDiffWire, operationName string, guards []equation.Guard) []equation.Fact {
+	facts := make([]equation.Fact, 0, len(predicates)+len(differences))
+	for _, predicate := range predicates {
+		if predicate.Negated || predicate.Path == "" {
+			continue
+		}
+		if predicate.Kind != "num-ge" && predicate.Kind != "index-in-range" {
+			continue
+		}
+		encoded, err := json.Marshal(predicate)
+		if err != nil {
+			continue
+		}
+		facts = append(facts, equation.Fact{
+			Key:    heapIndexRelationPrefix + fmt.Sprintf("p-%08d", len(facts)) + "/" + operationName,
+			Value:  append([]byte(branchPredicatePrefix), encoded...),
+			Guards: guards,
+		})
+	}
+	for _, difference := range differences {
+		encoded, err := json.Marshal(difference)
+		if err != nil {
+			continue
+		}
+		facts = append(facts, equation.Fact{
+			Key:    heapIndexRelationPrefix + fmt.Sprintf("d-%08d", len(facts)) + "/" + operationName,
+			Value:  append([]byte(branchDiffPrefix), encoded...),
+			Guards: guards,
+		})
+	}
+	return facts
+}
+
+// relationPaths lists every path a republished relation constrains. A write to
+// any of them replaces a value the relation was stated about, so the relation
+// stops holding at that point.
+func relationPaths(predicate branchPredicateWire, difference branchDiffWire, isPredicate bool) []string {
+	if isPredicate {
+		return []string{predicate.Path, predicate.OtherPath}
+	}
+	return []string{difference.HiPath, difference.Hi2Path, difference.LoPath}
+}
+
+// provenNumericFloor returns the largest constant lower bound the relations
+// state directly on a path. The floor is a normalized constant, not a goal, so
+// it is read back rather than re-derived.
+func provenNumericFloor(predicates []branchPredicateWire, path string) (int64, bool) {
+	floor, found := int64(0), false
+	for _, predicate := range predicates {
+		if predicate.Kind != "num-ge" || predicate.Negated || predicate.Path != path {
+			continue
+		}
+		if !found || predicate.NumFloor > floor {
+			floor, found = predicate.NumFloor, true
+		}
+	}
+	return floor, found
+}
+
+// affineIndexInRange decides presence of container[base+offset] from the
+// relations the guard proved about base. The upper side is a portfolio goal at
+// the shifted constant: base + offset <= len(container) is the difference
+// base - len(container) <= -offset. The lower side is the base's own constant
+// floor shifted by the same offset, which is why i >= 1 admits i + 1 but never
+// i - 1.
+func affineIndexInRange(predicates []branchPredicateWire, differences []branchDiffWire, base, container string, offset int64) bool {
+	if base == "" || container == "" || offset == math.MinInt64 {
+		return false
+	}
+	floor, hasFloor := provenNumericFloor(predicates, base)
+	shifted, representable := addChecked(floor, offset)
+	if !hasFloor || !representable || shifted < 1 {
+		return false
+	}
+	asserted := relationAssertions(predicates, differences)
+	if len(asserted) == 0 {
+		return false
+	}
+	goal := numeric.Le{X: relationVariable(base, false), Y: relationVariable(container, true), C: -offset}
+	return solver.DefaultPortfolio().Entails(asserted, goal) == decision.Valid
+}
+
+// addChecked reports the sum only when it is representable, so a source-level
+// offset can never wrap a floor into a proof.
+func addChecked(a, b int64) (int64, bool) {
+	sum := a + b
+	if (b > 0 && sum < a) || (b < 0 && sum > a) {
+		return 0, false
+	}
+	return sum, true
 }
 
 // provenFloorPaths lists the index paths that currently carry a positive floor,
