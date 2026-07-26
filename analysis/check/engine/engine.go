@@ -5474,6 +5474,7 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
 	arithmeticTerms := uncalledDeclaredFormalArithmeticTerms(child, formals)
+	derivedCells := uncalledDeclaredFormalDerivedCells(child, formals)
 	memberCalls := make(map[string]bool)
 	hasDirectMethod := false
 	for _, operation := range child.Artifact.Equations {
@@ -5530,7 +5531,7 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 			hasDeclaredMemberWrite = hasDeclaredMemberWrite || uncalledDeclaredFormalMemberWrite(operation, formals)
 		case "claim":
 			hasDeclaredMemberRead = hasDeclaredMemberRead || uncalledDeclaredFormalMemberRead(child, operation, formals)
-			hasDeclaredAssignment = hasDeclaredAssignment || uncalledDeclaredFormalAssignment(child, operation, formals)
+			hasDeclaredAssignment = hasDeclaredAssignment || uncalledDeclaredFormalAssignment(child, operation, formals, derivedCells)
 			hasDeclaredArithmeticAssignment = hasDeclaredArithmeticAssignment || uncalledDeclaredFormalArithmeticAssignment(operation, arithmeticTerms)
 			if uncalledDeclaredFormalAssertion(child, operation, formals) {
 				assertionOperations[operation.Target.Name] = true
@@ -7136,10 +7137,11 @@ func uncalledDeclaredFormalMemberWrite(operation equation.Equation, formals map[
 }
 
 // uncalledDeclaredFormalAssignment identifies an annotation claim from an
-// exact declared formal or its static member path. The value has the same
-// declaration-owned witness as an admitted missing-member read; arbitrary
-// locals and branch-only refinements remain demand-driven.
-func uncalledDeclaredFormalAssignment(child front.Compilation, operation equation.Equation, formals map[string]bool) bool {
+// exact declared formal, its static member path, or a cell this body fills
+// from those alone. The value has the same declaration-owned witness as an
+// admitted missing-member read; arbitrary locals and branch-only refinements
+// remain demand-driven.
+func uncalledDeclaredFormalAssignment(child front.Compilation, operation equation.Equation, formals map[string]bool, derived map[string]bool) bool {
 	if operation.Occurrence.Kind != "claim" {
 		return false
 	}
@@ -7166,7 +7168,141 @@ func uncalledDeclaredFormalAssignment(child front.Compilation, operation equatio
 		}
 		return uncalledDeclaredFormalValue(child, value)
 	}
-	return uncalledDeclaredFormalMemberRead(child, operation, formals)
+	if uncalledDeclaredFormalMemberRead(child, operation, formals) {
+		return true
+	}
+	// A cell every write of which names a declaration-owned term holds a value
+	// that is a function of the declared parameter types, so the contract stated
+	// on it is decided here. A guarded annotation keeps the demand-driven path:
+	// the edge it sits on is selected by a value a caller still supplies.
+	return len(operation.Guards) == 0 && derived[string(value)]
+}
+
+// uncalledDeclaredFormalMemberTerm states whether a term is a static member
+// lens of a declaration-owned formal.
+func uncalledDeclaredFormalMemberTerm(child front.Compilation, term []byte, formals map[string]bool) bool {
+	root, suffix, member := tableAddress(term)
+	if !member || !formals[string(root)] || !uncalledDeclaredFormalValue(child, root) {
+		return false
+	}
+	segments, static := segment.ParseFormattedSegments(suffix)
+	return static && len(segments) != 0
+}
+
+// uncalledDeclaredFormalDerivedCells computes the cells whose every write in
+// this body names a term the declaration already owns: a seeded formal, a
+// static member path of one, a closed scalar, or another such cell. A value
+// position short-circuit is the form that needs it — its result is threaded
+// through a cell the front writes once before the guard and once on the edge
+// that evaluates the right operand, so no single claim names either operand —
+// but the relation is the general one and the set is stated for every cell.
+//
+// The set is the least fixpoint: a cell enters only once every write reaching
+// it names an already-known term, so one write this body cannot account for
+// keeps the cell out. An in-place annotation is not such a write; it restates
+// the cell it reads under a spelled contract, which is the obligation being
+// decided rather than a value source of its own.
+func uncalledDeclaredFormalDerivedCells(child front.Compilation, formals map[string]bool) map[string]bool {
+	// The write set of every cell this body names is indexed once. A cell is
+	// decided by all of its writes together, so scanning the artifact per cell
+	// would make that decision quadratic in the body.
+	type cellWrites struct {
+		sources             [][]byte
+		accounted, declared bool
+	}
+	cells := make(map[string]*cellWrites)
+	for _, operation := range child.Artifact.Equations {
+		environmentWrite := operation.Occurrence.Kind == "environment-write" && !declaredCellAllocationWrite(operation)
+		value, hasValue := artifactOperand(operation.Operands, "value")
+		for _, operand := range operation.Operands {
+			if !declaredCellWriteRole(operand.Role) {
+				continue
+			}
+			term := string(operand.Term.Encoding)
+			if declaredCellInPlaceAnnotation(operation, term) {
+				continue
+			}
+			cell := cells[term]
+			if cell == nil {
+				cell = &cellWrites{accounted: true}
+				cells[term] = cell
+			}
+			if environmentWrite && hasValue {
+				cell.declared = cell.declared || operand.Role == "target"
+				cell.sources = append(cell.sources, value)
+				continue
+			}
+			cell.accounted = false
+		}
+	}
+	derived := make(map[string]bool)
+	known := func(term []byte) bool {
+		if len(term) == 0 {
+			return false
+		}
+		if derived[string(term)] || strings.HasPrefix(string(term), "scalar/") {
+			return true
+		}
+		if formals[string(term)] {
+			return uncalledDeclaredFormalValue(child, term)
+		}
+		return uncalledDeclaredFormalMemberTerm(child, term, formals)
+	}
+	for {
+		added := false
+		for term, cell := range cells {
+			if !cell.declared || !cell.accounted || derived[term] || len(cell.sources) == 0 {
+				continue
+			}
+			complete := true
+			for _, source := range cell.sources {
+				if !known(source) {
+					complete = false
+					break
+				}
+			}
+			if complete {
+				derived[term], added = true, true
+			}
+		}
+		if !added {
+			return derived
+		}
+	}
+}
+
+// declaredCellWriteRole states whether a role names a term in a result
+// position. The roles are over-approximated on purpose: a role read as a write
+// can only withhold a cell from the derived set, while a write role missed
+// would admit one this body does not account for.
+func declaredCellWriteRole(role string) bool {
+	switch {
+	case role == "target", role == "result", role == "allocation-result",
+		strings.HasPrefix(role, "target-"), strings.HasPrefix(role, "result-"):
+		return true
+	default:
+		return false
+	}
+}
+
+// declaredCellAllocationWrite recognizes the write that binds a constructor to
+// its cell. Its value operand is a table shape rather than a term, so the cell
+// carries a graph this scalar chain does not state.
+func declaredCellAllocationWrite(operation equation.Equation) bool {
+	_, allocation := artifactOperand(operation.Operands, "allocation-result")
+	return allocation
+}
+
+// declaredCellInPlaceAnnotation recognizes the annotation of a cell by itself.
+func declaredCellInPlaceAnnotation(operation equation.Equation, term string) bool {
+	if operation.Occurrence.Kind != "claim" {
+		return false
+	}
+	kind, hasKind := artifactOperand(operation.Operands, "kind")
+	target, hasTarget := artifactOperand(operation.Operands, "target")
+	value, hasValue := artifactOperand(operation.Operands, "value")
+	return hasKind && hasTarget && hasValue && string(kind) == "claim-kind/3" &&
+		string(target) == term && string(value) == term
 }
 
 // uncalledDeclaredFormalAssertion identifies a non-nil assertion on an exact
@@ -7255,12 +7391,7 @@ func uncalledDeclaredFormalMemberRead(child front.Compilation, operation equatio
 	if !found {
 		return false
 	}
-	root, suffix, member := tableAddress(value)
-	if !member || !formals[string(root)] || !uncalledDeclaredFormalValue(child, root) {
-		return false
-	}
-	segments, static := segment.ParseFormattedSegments(suffix)
-	return static && len(segments) != 0
+	return uncalledDeclaredFormalMemberTerm(child, value, formals)
 }
 
 // uncalledDeclaredLocalAllocationAssignment identifies an assignment claim whose
@@ -9719,6 +9850,34 @@ func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.Compi
 	if err != nil {
 		return false, equation.OutputClosure{}, err
 	}
+	restateDeclaredFalseEdgeNil(claims, &closure)
+	spans := diagnosticSpans(child, closure.Diagnostics)
+	projected := equation.OutputClosure{}
+	body := fmt.Sprintf("%x", child.Body)
+	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
+		witness, found := claims[item.Fact.Key]
+		if !found {
+			continue
+		}
+		item = enrichDeclaredFalseEdgeNil(item, witness)
+		key := "child/" + body + "/" + item.Fact.Key
+		fact := equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)}
+		projected.Diagnostics = append(projected.Diagnostics, fact)
+		if item.Span.Valid() {
+			l.diagnosticSpans[key] = item.Span
+		}
+		item.Fact = fact
+		l.childPublished[key] = item
+	}
+	return true, projected, nil
+}
+
+// restateDeclaredFalseEdgeNil applies one witness to a body's own evaluation:
+// the merged cell carries the declaration's Lua nil beside the true edge's
+// value, and the contract stated on it is refused for that nil rather than for
+// the alternative's type. Every publication of the body applies it, so a call
+// boundary and an allocation boundary state the identical refutation.
+func restateDeclaredFalseEdgeNil(claims map[string]declaredNilAssignmentWitness, closure *equation.OutputClosure) {
 	for key, witness := range claims {
 		alternative, known := expressionValueType(witness.alternative)
 		if !known || alternative == nil {
@@ -9735,30 +9894,18 @@ func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.Compi
 			}
 		}
 	}
-	spans := diagnosticSpans(child, closure.Diagnostics)
-	projected := equation.OutputClosure{}
-	body := fmt.Sprintf("%x", child.Body)
-	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
-		if _, found := claims[item.Fact.Key]; !found {
-			continue
-		}
-		// This closed witness has a fact-to-claim-to-missing-proof dependency
-		// chain. Preserve that semantic order when the source declaration and
-		// value use share a line; ordinary evidence remains source ordered.
-		for index := range item.Evidence {
-			item.Evidence[index].CausalOrder = uint32(index + 1)
-		}
-		item.Help = optionalAssignmentHelp(claims[item.Fact.Key].display)
-		key := "child/" + body + "/" + item.Fact.Key
-		fact := equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)}
-		projected.Diagnostics = append(projected.Diagnostics, fact)
-		if item.Span.Valid() {
-			l.diagnosticSpans[key] = item.Span
-		}
-		item.Fact = fact
-		l.childPublished[key] = item
+}
+
+// enrichDeclaredFalseEdgeNil states the witness's own order at the publication
+// boundary. This closed witness has a fact-to-claim-to-missing-proof dependency
+// chain, so its evidence keeps that semantic order when the source declaration
+// and the value use share a line; ordinary evidence remains source ordered.
+func enrichDeclaredFalseEdgeNil(item PublishedDiagnostic, witness declaredNilAssignmentWitness) PublishedDiagnostic {
+	for index := range item.Evidence {
+		item.Evidence[index].CausalOrder = uint32(index + 1)
 	}
-	return true, projected, nil
+	item.Help = optionalAssignmentHelp(witness.display)
+	return item
 }
 
 // nilOriginWitness is the closed origin chain of one nil-born binding: the
@@ -11104,9 +11251,10 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		}
 		allocations := bodyLocalTableTerms(child)
 		allocationReads := bodyLocalAllocationReadTargets(child, allocations)
+		derivedCells := uncalledDeclaredFormalDerivedCells(child, formals)
 		for _, childOperation := range child.Artifact.Equations {
 			declaredAssignmentBoundary = declaredAssignmentBoundary ||
-				uncalledDeclaredFormalAssignment(child, childOperation, formals) ||
+				uncalledDeclaredFormalAssignment(child, childOperation, formals, derivedCells) ||
 				uncalledDeclaredLocalAllocationAssignment(childOperation, allocations, allocationReads)
 		}
 	}
@@ -11259,6 +11407,8 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		if evaluateErr != nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: uncalled lexical child %q: %w", prototype, evaluateErr)
 		}
+		falseEdgeNilClaims := declaredFalseEdgeNilAssignmentClaims(child)
+		restateDeclaredFalseEdgeNil(falseEdgeNilClaims, &outcome)
 		if gradualLogicalBoundary {
 			for _, term := range gradualLogicalTerms {
 				outcome.Values = append(outcome.Values, equation.Fact{Key: "gradual-logical/" + term + "/entry", Value: []byte(term)})
@@ -11388,6 +11538,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
 			if laneWithholds(item.Fact) {
 				continue
+			}
+			if witness, stated := falseEdgeNilClaims[item.Fact.Key]; stated {
+				item = enrichDeclaredFalseEdgeNil(item, witness)
 			}
 			key := "child/" + body + "/" + item.Fact.Key
 			lexical.childPublished[key] = PublishedDiagnostic{

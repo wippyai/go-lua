@@ -42,3 +42,35 @@ local guarded: false | string = ran and user.name
 local guarded_is_not_a_string: string = ran and user.name -- expect-error
 local defaulted: true | string = ran or user.name
 local defaulted_is_not_a_string: string = ran or user.name -- expect-error
+
+-- A nested body states the same projection. The front threads the result of a
+-- value-position short-circuit through a cell it writes once before the guard
+-- and once on the edge that evaluates the right operand, so no single claim
+-- names either operand; the cell is filled from this declaration's own terms
+-- alone, so the contract stated on it is decided where the formals are seeded.
+local function shown_of(u: User): string
+    local nested_or: string = u.nick or u.name
+    local nested_or_is_not_a_number: number = u.nick or u.name -- expect-error
+    return nested_or
+end
+local called: string = shown_of(user)
+
+-- The and-form inside the same body: the record side is refuted by the edge
+-- that carries the result, so the chain stays optional and a total annotation
+-- on it is refused.
+local function suite_of(e: Entry): string?
+    local nested_and: string? = e.meta and e.meta.suite
+    local nested_and_is_not_total: string = e.meta and e.meta.suite -- expect-error
+    return nested_and
+end
+local suite_of_entry: string? = suite_of(acyclic)
+
+-- An uncalled declaration carries the same obligation: no invocation can supply
+-- a formal more precise than the declared type the projection is proven from.
+local function uncalled_shown(u: User, e: Entry): string
+    local uncalled_or: string = u.nick or u.name
+    local uncalled_or_is_not_a_number: number = u.nick or u.name -- expect-error
+    local uncalled_and: string? = e.meta and e.meta.suite
+    local uncalled_and_is_not_total: string = e.meta and e.meta.suite -- expect-error
+    return uncalled_or
+end
