@@ -1,0 +1,5 @@
+{
+  "description": "A returned array of one formal's keys carries that relation to its application, where the formal names the caller's own container: the read at an element of the array is proven present. The relation is withheld for another container, for a container mutated since it was established, for an array holding an element no enumeration produced, and for a callee that writes the formal it enumerated.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

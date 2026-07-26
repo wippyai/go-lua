@@ -178,3 +178,131 @@ local hits: string? = counts[key]
 		t.Fatalf("the declared element was not the answer: a string claim was admitted")
 	}
 }
+
+// TestReturnedKeysOfContainerProvesThePresenceItRelates pins the cross-call
+// half of the presence lane. The callee states the relation against its own
+// formal; the application substitutes the argument, so the caller's read at an
+// element of the returned array is decided against the caller's container.
+func TestReturnedKeysOfContainerProvesThePresenceItRelates(t *testing.T) {
+	diagnostics := checkSource(t, `local counts: {[string]: number} = {}
+local function keys_of(source: {[string]: number})
+    local out = {}
+    for key in pairs(source) do
+        table.insert(out, key)
+    end
+    return out
+end
+local names = keys_of(counts)
+for _, name in ipairs(names) do
+    local hits: number = counts[name]
+end
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("a returned array of the argument's keys did not prove its reads present:\n%s", diagnosticSummaries(diagnostics))
+	}
+}
+
+// TestReturnedKeysOfContainerWithholdsWhatItCannotAccount pins the relation's
+// fail-closed edges. Each source keeps the same call and the same read; only
+// the fact the relation rests on is removed.
+func TestReturnedKeysOfContainerWithholdsWhatItCannotAccount(t *testing.T) {
+	const callee = `local counts: {[string]: number} = {}
+local function keys_of(source: {[string]: number})
+    local out = {}
+    for key in pairs(source) do
+        table.insert(out, key)
+    end
+    return out
+end
+`
+	for name, body := range map[string]string{
+		"another-container": `local other: {[string]: number} = {}
+local names = keys_of(other)
+for _, name in ipairs(names) do
+    local hits: number = counts[name]
+end
+`,
+		"container-mutated-after-the-relation": `local names = keys_of(counts)
+counts["added"] = 1
+for _, name in ipairs(names) do
+    local hits: number = counts[name]
+end
+`,
+		"element-no-enumeration-produced": `local names = keys_of(counts)
+table.insert(names, "literal")
+for _, name in ipairs(names) do
+    local hits: number = counts[name]
+end
+`,
+		"container-reached-an-unevaluated-callee": `local names = keys_of(counts)
+opaque_sink(counts)
+for _, name in ipairs(names) do
+    local hits: number = counts[name]
+end
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			diagnostics := checkSource(t, callee+body)
+			if !strings.Contains(diagnosticSummaries(diagnostics), "may be nil") {
+				t.Fatalf("relation survived a fact it cannot account for:\n%s", diagnosticSummaries(diagnostics))
+			}
+		})
+	}
+}
+
+// TestKeysOfRelationRequiresAnUnwrittenFormal pins the producer's own gate. A
+// callee that writes the formal it enumerated returns keys of a container it
+// has itself since changed, so the relation is never stated.
+func TestKeysOfRelationRequiresAnUnwrittenFormal(t *testing.T) {
+	diagnostics := checkSource(t, `local counts: {[string]: number} = {}
+local function keys_and_write(source: {[string]: number})
+    local out = {}
+    for key in pairs(source) do
+        table.insert(out, key)
+    end
+    source.extra = 1
+    return out
+end
+local names = keys_and_write(counts)
+for _, name in ipairs(names) do
+    local hits: number = counts[name]
+end
+`)
+	if !strings.Contains(diagnosticSummaries(diagnostics), "may be nil") {
+		t.Fatalf("a callee that wrote its enumerated formal still stated the relation:\n%s", diagnosticSummaries(diagnostics))
+	}
+}
+
+// TestKeysOfRelationPublishesOneAccountedRowPerWrite pins the vocabulary: the
+// relation is a per-write accounting row against the array's heap identity, and
+// the application anchors that same row on the result it hands the caller.
+func TestKeysOfRelationPublishesOneAccountedRowPerWrite(t *testing.T) {
+	result, err := engine.Check(`local counts: {[string]: number} = {}
+local function keys_of(source: {[string]: number})
+    local out = {}
+    for key in pairs(source) do
+        table.insert(out, key)
+    end
+    return out
+end
+local names = keys_of(counts)
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	relation, application := 0, 0
+	for _, fact := range result.ValueFacts {
+		if strings.HasPrefix(fact.Key, "heap/keys-of/") {
+			relation++
+		}
+		if strings.HasPrefix(fact.Key, "call-keys-of/") {
+			application++
+		}
+	}
+	if application != 1 {
+		t.Fatalf("application published %d keys-of rows, want exactly one; facts = %#v", application, result.ValueFacts)
+	}
+	if relation == 0 {
+		t.Fatalf("no accounted keys-of row reached the caller; facts = %#v", result.ValueFacts)
+	}
+}

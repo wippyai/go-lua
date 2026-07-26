@@ -136,9 +136,23 @@ const (
 	// this row transports the term those types were read from, so the loop
 	// header can bind its key variable to that same container.
 	iteratorKeySourcePrefix = "iterator-key-source/"
-	heapIndexRevokePrefix   = "heap/index-revoke/"
-	heapIndexLowerPrefix    = "heap/index-lower/"
-	heapIndexUpperPrefix    = "heap/index-upper/"
+	// iterationKeyOfPrefix names the container a term's current value was
+	// enumerated from. The presence lane states what one key proves about one
+	// container; this row states where the key itself came from, so a container
+	// the keys are collected into can carry the same origin to its own readers.
+	iterationKeyOfPrefix = "iteration/key-of/"
+	// heapKeysOfPrefix carries the relation between an array and the container
+	// whose keys its elements are. It is established one accounted write at a
+	// time: the row names the write's operation, so a write the relation never
+	// accounted for is what withholds it.
+	heapKeysOfPrefix = "heap/keys-of/"
+	// callKeysOfPrefix carries the relation across one application: the callee
+	// states it against a formal, and this row states it against the argument
+	// the caller bound to that formal.
+	callKeysOfPrefix      = "call-keys-of/"
+	heapIndexRevokePrefix = "heap/index-revoke/"
+	heapIndexLowerPrefix  = "heap/index-lower/"
+	heapIndexUpperPrefix  = "heap/index-upper/"
 	// heapIndexRelationPrefix carries a branch's true-edge relations forward in
 	// their normalized form. The boolean index pairs name only the terms the
 	// branch itself mentioned; an index term computed inside the arm is
@@ -9109,6 +9123,15 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	// this call actually transported participate, and only cells the callee
 	// itself authored (an entry-authored cell is the caller's own pre-call
 	// value).
+	// A returned array whose elements the callee accounted as keys of one of its
+	// formals carries that relation to this application, where the formal names
+	// the caller's own container.
+	if len(child.Boundary.Parameters) != 0 {
+		if partitionErr := buildChildPartition(); partitionErr != nil {
+			return equation.TransactionResult{}, partitionErr
+		}
+		projected.Values = append(projected.Values, projectReturnKeysOf(operation, child, arguments, l.parameterWrites[handle.Prototype], closure, childPartition)...)
+	}
 	if transported := transportedHeapIdentities(tableIdentitySeeds, memberCellSeeds); len(transported) != 0 && l.childMutatesHeapMembers(child) {
 		if partitionErr := buildChildPartition(); partitionErr != nil {
 			return equation.TransactionResult{}, partitionErr
@@ -10017,6 +10040,55 @@ func projectReturnMemberIdentities(operation equation.BoundEquation, child front
 			Key:   "call-member-identity/" + strings.TrimPrefix(operation.Target.Name, "call/") + "/" + parts[1] + "/" + parts[2],
 			Value: identity,
 		})
+	}
+	return facts
+}
+
+// projectReturnKeysOf substitutes the caller's argument for the formal a
+// returned array's keys-of relation names. The callee states the relation
+// against its own boundary term, which is the relational form: only the caller
+// knows which container that formal was bound to, and only there does the
+// relation name a table its own reads can be decided against.
+func projectReturnKeysOf(operation equation.BoundEquation, child front.Compilation, arguments [][]byte, written map[string]bool, closure equation.OutputClosure, childPartition equation.Partition) []equation.Fact {
+	formals := make(map[string]int, len(child.Boundary.Parameters))
+	for index, parameter := range child.Boundary.Parameters {
+		formals[boundaryTerm(parameter.Symbol)] = index
+	}
+	if len(formals) == 0 {
+		return nil
+	}
+	var facts []equation.Fact
+	seen := make(map[int]bool)
+	for _, publication := range child.Artifact.Equations {
+		if publication.Occurrence.Kind != "publication" {
+			continue
+		}
+		for _, operand := range publication.Operands {
+			if !strings.HasPrefix(operand.Role, "return-value-") {
+				continue
+			}
+			index, err := strconv.Atoi(strings.TrimPrefix(operand.Role, "return-value-"))
+			if err != nil || index < 0 || seen[index] {
+				continue
+			}
+			identity, resolved := closureTableIdentity(operand.Term.Encoding, closure.Values)
+			if !resolved {
+				continue
+			}
+			origin, related := arrayKeysOfContainer(identity, childPartition)
+			if !related || unverifiedCallAfter(operand.Term.Encoding, origin.Established, childPartition) {
+				continue
+			}
+			formal, isFormal := formals[string(origin.Container)]
+			if !isFormal || formal >= len(arguments) || written[string(origin.Container)] {
+				continue
+			}
+			seen[index] = true
+			facts = append(facts, equation.Fact{
+				Key:   callKeysOfPrefix + strings.TrimPrefix(operation.Target.Name, "call/") + "/" + fmt.Sprintf("%08d", index),
+				Value: append([]byte(nil), arguments[formal]...),
+			})
+		}
 	}
 	return facts
 }
@@ -11736,6 +11808,14 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if hasIdentity {
 		values = append(values, heapIdentityFact(target, operation.Target.Name, identity))
 		if table, ok := shapefact.DecodeTable(value); ok {
+			// The member rows below transcribe the identity's own value, so they
+			// introduce no element the keys-of relation has not already accounted
+			// for. Republishing the relation at this operation keeps the
+			// transcription accounted while a mutation through the identity, which
+			// publishes at an operation of its own, stays unaccounted.
+			if origin, related := heapKeysOfOrigin(identity, partition); related && len(table.Members) != 0 {
+				values = append(values, heapKeysOfFact(identity, origin.Container, operation.Target.Name))
+			}
 			if table.Closed {
 				values = append(values, heapClosedFact(identity, operation.Target.Name))
 			}
@@ -13904,6 +13984,152 @@ func keyIterationPresenceFacts(source []byte, key, operation string, partition e
 			base64.RawURLEncoding.EncodeToString([]byte(key)) + "/" + operation,
 		Value: []byte("proven"),
 	}}
+}
+
+// iterationKeyOfFact records that a keyed iteration bound this term to a key of
+// the container it enumerates. The presence lane states the same event as a
+// proof about one read; this row states the key's origin, which is what a
+// container collecting those keys carries forward to its own readers.
+func iterationKeyOfFact(source []byte, key, operation string) equation.Fact {
+	return equation.Fact{
+		Key:   iterationKeyOfPrefix + base64.RawURLEncoding.EncodeToString([]byte(key)) + "/" + operation,
+		Value: append([]byte(nil), source...),
+	}
+}
+
+// iterationKeyOfContainer names the container this term's current value was
+// enumerated from. A term rebound after the enumeration holds some other value,
+// so its origin no longer describes it.
+func iterationKeyOfContainer(term []byte, partition equation.Partition) ([]byte, bool) {
+	prefix := iterationKeyOfPrefix + base64.RawURLEncoding.EncodeToString(term) + "/"
+	latest, container := "", []byte(nil)
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		if fact.Key > latest {
+			latest, container = fact.Key, fact.Value
+		}
+	}
+	if latest == "" || len(container) == 0 {
+		return nil, false
+	}
+	if epoch, versioned := currentEpoch(term, partition); versioned && epoch > factOperation(latest) {
+		return nil, false
+	}
+	return container, true
+}
+
+// heapKeysOfFact accounts one write into an array as a key of the container the
+// value was enumerated from. The relation is the join of these rows, so a write
+// that leaves none is exactly what withholds it.
+func heapKeysOfFact(identity, source []byte, operation string) equation.Fact {
+	return equation.Fact{
+		Key:   heapKeysOfPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation,
+		Value: append([]byte(nil), source...),
+	}
+}
+
+// arrayKeysOfContainer names the container whose keys are the elements of this
+// array. Every publication through the identity must be one of the accounted
+// writes and must name the same container: a write with no accounting row holds
+// a value no enumeration produced, and one naming another container leaves the
+// elements a mixture no single relation describes. A metatable, an external
+// callback, and a store at a key the analysis never resolved each leave a slot
+// outside the accounting entirely.
+func arrayKeysOfContainer(identity []byte, partition equation.Partition) (keysOfOrigin, bool) {
+	if heapMetaAttached(identity, partition) || heapHasExternalCallback(identity, partition) || heapOpaqueMemberWrite(identity, partition) {
+		return keysOfOrigin{}, false
+	}
+	origin, related := heapKeysOfOrigin(identity, partition)
+	if !related {
+		return keysOfOrigin{}, false
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(identity)
+	for _, family := range []string{heapMemberPrefix, memberCellPrefix, heapStaticReplacePrefix} {
+		for _, fact := range partition.ValuesPrefix(family + encoded + "/") {
+			if !origin.Accounted[factOperation(fact.Key)] {
+				return keysOfOrigin{}, false
+			}
+		}
+	}
+	return origin, true
+}
+
+// keysOfContainerCurrent reports that the container the relation names still
+// holds the slots the enumeration observed. The array states which keys existed
+// when the relation was established, so everything that can move a slot since
+// then leaves it describing a state the container has left: this is the same
+// revocation set the enumeration's own key variable answers to, measured across
+// the interval the relation spans.
+func keysOfContainerCurrent(origin keysOfOrigin, partition equation.Partition) bool {
+	identity, named := tableIdentityForTerm(origin.Container, partition)
+	if !named || heapMetaAttached(identity, partition) || heapHasExternalCallback(identity, partition) {
+		return false
+	}
+	if heapInventoryChangedAfter(identity, origin.Established, partition) {
+		return false
+	}
+	if revoked(heapIndexSubject(origin.Container, partition), origin.Established, partition) {
+		return false
+	}
+	return !unverifiedCallAfter(origin.Container, origin.Established, partition)
+}
+
+// heapKeysOfOrigin is the container every accounted write into this identity
+// named, with the operations those writes belong to. It is the relation's own
+// record; the unaccounted-write test arrayKeysOfContainer applies to it is what
+// turns the record into an answer about the array's current contents. Two rows
+// naming different containers describe a mixture no single relation states.
+func heapKeysOfOrigin(identity []byte, partition equation.Partition) (keysOfOrigin, bool) {
+	origin := keysOfOrigin{Accounted: make(map[string]bool)}
+	for _, fact := range partition.ValuesPrefix(heapKeysOfPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/") {
+		if len(fact.Value) == 0 {
+			return keysOfOrigin{}, false
+		}
+		operation := factOperation(fact.Key)
+		origin.Accounted[operation] = true
+		if origin.Established == "" || operation < origin.Established {
+			origin.Established = operation
+		}
+		if origin.Container == nil {
+			origin.Container = append([]byte(nil), fact.Value...)
+		} else if !bytes.Equal(origin.Container, fact.Value) {
+			return keysOfOrigin{}, false
+		}
+	}
+	if len(origin.Container) == 0 || origin.Established == "" {
+		return keysOfOrigin{}, false
+	}
+	return origin, true
+}
+
+// keysOfOrigin is one array's keys-of record: the container its accounted
+// writes named, the operations those writes belong to, and the earliest of
+// them. The earliest is the point from which the array's contents describe the
+// container, so it is the interval start every revocation is measured against.
+type keysOfOrigin struct {
+	Container   []byte
+	Accounted   map[string]bool
+	Established string
+}
+
+// arrayElementKeyPresenceFacts states what an array of one container's keys
+// proves about the term an iteration binds its elements to. The element is a
+// key the enumeration produced, so the presence lane answers the read at that
+// key exactly as it answers the enumeration's own key variable, under the same
+// revocations.
+func arrayElementKeyPresenceFacts(array []byte, element, operation string, partition equation.Partition) []equation.Fact {
+	identity, found := tableIdentityForTerm(array, partition)
+	if !found {
+		return nil
+	}
+	origin, related := arrayKeysOfContainer(identity, partition)
+	if !related || !keysOfContainerCurrent(origin, partition) {
+		return nil
+	}
+	facts := keyIterationPresenceFacts(origin.Container, element, operation, partition)
+	if len(facts) == 0 {
+		return nil
+	}
+	return append(facts, iterationKeyOfFact(origin.Container, element, operation))
 }
 
 // keyIterationPresenceProven decides a read whose key came from a keyed
@@ -16493,6 +16719,7 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 				resultValue = iteratorKey
 				if enumeratedSource {
 					values = append(values, keyIterationPresenceFacts(keySource, result, operation.Target.Name, partition)...)
+					values = append(values, iterationKeyOfFact(keySource, result, operation.Target.Name))
 				}
 			} else if index == 1 {
 				resultValue = iteratorElement
@@ -16510,6 +16737,9 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 				}
 			} else {
 				resultValue = iteratorElement
+				if enumeratedSource {
+					values = append(values, arrayElementKeyPresenceFacts(keySource, result, operation.Target.Name, partition)...)
+				}
 			}
 		} else if len(iteratorReturns) != 0 {
 			index, indexErr := strconv.Atoi(strings.TrimPrefix(operand.Role, "result-"))
@@ -20103,6 +20333,12 @@ func tableInsertEpoch(operation equation.BoundEquation, operands directCallOpera
 	if memberIdentity, found := tableIdentityForTerm(operands.arguments[1], partition); found {
 		values = append(values, heapMemberIdentityFact(identity, suffix, operation.Target.Name, memberIdentity))
 	}
+	// The appended value carries its own origin. When it is a key an iteration
+	// enumerated, this write is accounted as one of that container's keys, and
+	// the join over every write into the array is the relation its readers get.
+	if source, enumerated := iterationKeyOfContainer(operands.arguments[1], partition); enumerated {
+		values = append(values, heapKeysOfFact(identity, source, operation.Target.Name))
+	}
 	return equation.OutputClosure{Values: values}, true
 }
 
@@ -23516,14 +23752,15 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			values = append(values, equation.Fact{Key: iteratorElementPrefix + string(result) + "/" + operation.Target.Name, Value: element})
 			if len(key) != 0 {
 				values = append(values, equation.Fact{Key: iteratorKeyPrefix + string(result) + "/" + operation.Target.Name, Value: key})
-				// A key witness exists only for a keyed iteration, so the same
-				// provider effect that produced it names the container being
-				// enumerated. Carrying that term forward lets the loop header
-				// state the presence relation between that container and the
-				// variable it binds the key to.
-				if source, found := iteratorSourceTerm(provider, argumentTerms); found && len(source) != 0 {
-					values = append(values, equation.Fact{Key: iteratorKeySourcePrefix + string(result) + "/" + operation.Target.Name, Value: append([]byte(nil), source...)})
-				}
+			}
+			// The provider effect that produced the witness names the container
+			// being enumerated. Carrying that term forward lets the loop header
+			// state what the iteration relates its bound variables to: a keyed
+			// iteration relates its key variable to the container's slots, an
+			// indexed one relates its element variable to whatever the elements
+			// themselves carry.
+			if source, found := iteratorSourceTerm(provider, argumentTerms); found && len(source) != 0 {
+				values = append(values, equation.Fact{Key: iteratorKeySourcePrefix + string(result) + "/" + operation.Target.Name, Value: append([]byte(nil), source...)})
 			}
 		}
 		if source, found := iteratorSourceTerm(provider, argumentTerms); found {
@@ -23557,6 +23794,19 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				break
 			}
 		}
+		// A returned array of one container's keys is that relation's subject at
+		// this caller, so it needs an identity of its own exactly as a returned
+		// container carrying a caller table does. The row is published at this
+		// same operation, which is what makes every later publication through
+		// the identity an unaccounted write.
+		if keysOf, found := partition.Value(callKeysOfPrefix + strings.TrimPrefix(string(application), "call/") + "/" + key); found && len(keysOf.Value) != 0 {
+			if !hasResultIdentity {
+				resultIdentity = []byte("call-result-table/" + strings.TrimPrefix(string(application), "call/") + "/" + key)
+				hasResultIdentity = true
+				values = append(values, heapIdentityFact(string(result), operation.Target.Name, resultIdentity))
+			}
+			values = append(values, heapKeysOfFact(resultIdentity, keysOf.Value, operation.Target.Name))
+		}
 		// A container the callee returned carrying one of the caller's own tables
 		// needs an identity of its own before that member link can be stated. The
 		// minted identity names this exact call and result slot, so two
@@ -23565,6 +23815,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		if memberIdentities := partition.ValuesPrefix(memberIdentityPrefix); len(memberIdentities) != 0 {
 			if !hasResultIdentity {
 				resultIdentity = []byte("call-result-table/" + strings.TrimPrefix(string(application), "call/") + "/" + key)
+				hasResultIdentity = true
 				values = append(values, heapIdentityFact(string(result), operation.Target.Name, resultIdentity))
 			}
 			for _, fact := range memberIdentities {
