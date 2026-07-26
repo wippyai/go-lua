@@ -23,6 +23,26 @@ const (
 	memberMissingPrefix  = "shape/member-missing/v1/"
 )
 
+// Canonical fixed payload spellings are exported for consumers that compare
+// or transport an already-decoded sentinel. Parameterized spellings must be
+// built with ScalarValue or ClaimValue so no other package owns wire assembly.
+const (
+	ScalarTopWire                   = "scalar/top"
+	ScalarNilWire                   = "scalar/nil"
+	ScalarBooleanWire               = "scalar/boolean"
+	ScalarTrueWire                  = "scalar/bool/true"
+	ScalarFalseWire                 = "scalar/bool/false"
+	ScalarTableWire                 = "scalar/table"
+	ScalarFunctionWire              = "scalar/function"
+	ScalarOptionalNilComparisonWire = "scalar/bool/optional-nil-comparison"
+	ScalarExternalCallbackAnyWire   = "scalar/external-callback-any"
+)
+
+var (
+	scalarTrueValue  = []byte(ScalarTrueWire)
+	scalarFalseValue = []byte(ScalarFalseWire)
+)
+
 // PayloadForm is the closed top-level value-payload dialect. A form is
 // accepted only when its envelope belongs to the declared vocabulary;
 // kind-specific semantic projections fail closed on malformed content.
@@ -246,11 +266,11 @@ func Encode(payload Payload) ([]byte, bool) {
 func encodeScalar(scalar Scalar) []byte {
 	switch scalar.Kind {
 	case ScalarTop:
-		return []byte("scalar/top")
+		return []byte(ScalarTopWire)
 	case ScalarNil:
-		return []byte("scalar/nil")
+		return []byte(ScalarNilWire)
 	case ScalarBoolean:
-		return []byte("scalar/boolean")
+		return []byte(ScalarBooleanWire)
 	case ScalarBool:
 		return []byte("scalar/bool/" + strconv.FormatBool(scalar.Bool))
 	case ScalarNumber:
@@ -258,16 +278,16 @@ func encodeScalar(scalar Scalar) []byte {
 	case ScalarString:
 		return append([]byte(scalarStringPrefix), scalar.Data...)
 	case ScalarTable:
-		return []byte("scalar/table")
+		return []byte(ScalarTableWire)
 	case ScalarFunction:
 		if len(scalar.Data) == 0 {
-			return []byte("scalar/function")
+			return []byte(ScalarFunctionWire)
 		}
 		return append([]byte(scalarFunctionPrefix), scalar.Data...)
 	case ScalarOptionalNilComparison:
-		return []byte("scalar/bool/optional-nil-comparison")
+		return []byte(ScalarOptionalNilComparisonWire)
 	case ScalarExternalCallbackAny:
-		return []byte("scalar/external-callback-any")
+		return []byte(ScalarExternalCallbackAnyWire)
 	case ScalarChannel:
 		return append([]byte("scalar/channel/"), scalar.Data...)
 	case ScalarChannelEntry:
@@ -283,6 +303,132 @@ func encodeScalar(scalar Scalar) []byte {
 	default:
 		return nil
 	}
+}
+
+// ScalarValue is the sole constructor for a parameterized scalar wire value.
+// Invalid scalar data fails closed as nil rather than emitting an undeclared
+// payload spelling.
+func ScalarValue(scalar Scalar) []byte {
+	encoded, ok := Encode(Payload{Form: PayloadScalar, Scalar: scalar})
+	if !ok {
+		return nil
+	}
+	return encoded
+}
+
+// ScalarValueString is the string projection for string-valued carrier fields.
+// Empty means the scalar was not encodable.
+func ScalarValueString(scalar Scalar) string {
+	return string(ScalarValue(scalar))
+}
+
+// BooleanValue returns an immutable canonical boolean payload. The shared
+// bytes follow the same immutable-input contract as decoded Payload data and
+// keep branch publication allocation-free.
+func BooleanValue(value bool) []byte {
+	if value {
+		return scalarTrueValue
+	}
+	return scalarFalseValue
+}
+
+func BooleanValueString(value bool) string {
+	if value {
+		return ScalarTrueWire
+	}
+	return ScalarFalseWire
+}
+
+// ScalarTextValue constructs a data-bearing scalar directly from its textual
+// suffix. Kinds without a textual suffix, and empty required suffixes, fail
+// closed. The string form serves carrier fields without a []byte round trip.
+func ScalarTextValue(kind ScalarKind, data string) []byte {
+	if data == "" {
+		if kind == ScalarFunction {
+			return []byte(ScalarFunctionWire)
+		}
+		return nil
+	}
+	switch kind {
+	case ScalarNumber:
+		return []byte(scalarNumberPrefix + data)
+	case ScalarString:
+		return []byte(scalarStringPrefix + data)
+	case ScalarFunction:
+		return []byte(scalarFunctionPrefix + data)
+	case ScalarChannel:
+		return []byte("scalar/channel/" + data)
+	case ScalarChannelEntry:
+		return []byte("scalar/channel-entry/" + data)
+	case ScalarChannelSummary:
+		return []byte("scalar/channel-summary/" + data)
+	case ScalarDeclaration:
+		return []byte("scalar/declaration/" + data)
+	case ScalarProvider:
+		return []byte("scalar/provider/" + data)
+	case ScalarResource:
+		return []byte("scalar/resource/" + data)
+	default:
+		return nil
+	}
+}
+
+func ScalarTextValueString(kind ScalarKind, data string) string {
+	if data == "" {
+		if kind == ScalarFunction {
+			return ScalarFunctionWire
+		}
+		return ""
+	}
+	switch kind {
+	case ScalarNumber:
+		return scalarNumberPrefix + data
+	case ScalarString:
+		return scalarStringPrefix + data
+	case ScalarFunction:
+		return scalarFunctionPrefix + data
+	case ScalarChannel:
+		return "scalar/channel/" + data
+	case ScalarChannelEntry:
+		return "scalar/channel-entry/" + data
+	case ScalarChannelSummary:
+		return "scalar/channel-summary/" + data
+	case ScalarDeclaration:
+		return "scalar/declaration/" + data
+	case ScalarProvider:
+		return "scalar/provider/" + data
+	case ScalarResource:
+		return "scalar/resource/" + data
+	default:
+		return ""
+	}
+}
+
+// BooleanTextValue constructs the exact boolean scalar carried by branch
+// protocols. Any text other than "true" or "false" fails closed.
+func BooleanTextValue(text string) []byte {
+	switch text {
+	case "true":
+		return scalarTrueValue
+	case "false":
+		return scalarFalseValue
+	default:
+		return nil
+	}
+}
+
+// ClaimValue is the sole constructor for a claim wire value. Invalid claim
+// kinds or empty targets fail closed as nil.
+func ClaimValue(claim Claim) []byte {
+	if claim.Kind < wir.ClaimCast || claim.Kind > wir.ClaimAssertsPredicate || len(claim.Target) == 0 {
+		return nil
+	}
+	encoded := make([]byte, 0, len(scalarClaimPrefix)+len("claim-kind/N/")+len(claim.Target))
+	encoded = append(encoded, scalarClaimPrefix...)
+	encoded = append(encoded, "claim-kind/"...)
+	encoded = append(encoded, byte('0'+claim.Kind), '/')
+	encoded = append(encoded, claim.Target...)
+	return encoded
 }
 
 // IsScalar reports whether value is any declared scalar, claim, or scalar

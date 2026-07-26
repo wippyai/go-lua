@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -171,7 +172,7 @@ func branchOperands(body *wir.Body, instruction wir.Instruction, bypass shortCir
 		operands = append(operands,
 			equation.Operand{Role: "short-circuit-result", Term: result},
 			equation.Operand{Role: "short-circuit-operand", Term: value},
-			equation.Operand{Role: "short-circuit-bypass", Term: equation.ClosedTerm([]byte("scalar/bool/" + strconv.FormatBool(bypass.edge)))},
+			equation.Operand{Role: "short-circuit-bypass", Term: equation.ClosedTerm([]byte(shapefact.BooleanValueString(bypass.edge)))},
 		)
 	}
 	return operands, nil
@@ -264,13 +265,13 @@ func literalScalarEncoding(value typ.Type) (string, error) {
 	}
 	switch value := literal.Value.(type) {
 	case bool:
-		return "scalar/bool/" + strconv.FormatBool(value), nil
+		return shapefact.BooleanValueString(value), nil
 	case int64:
-		return "scalar/number/" + strconv.FormatInt(value, 10), nil
+		return shapefact.ScalarTextValueString(shapefact.ScalarNumber, strconv.FormatInt(value, 10)), nil
 	case float64:
-		return "scalar/number/" + strconv.FormatFloat(value, 'g', -1, 64), nil
+		return shapefact.ScalarTextValueString(shapefact.ScalarNumber, strconv.FormatFloat(value, 'g', -1, 64)), nil
 	case string:
-		return "scalar/string/" + strconv.Quote(value), nil
+		return shapefact.ScalarTextValueString(shapefact.ScalarString, strconv.Quote(value)), nil
 	default:
 		return "", fmt.Errorf("literal predicate has unsupported scalar type %T", value)
 	}

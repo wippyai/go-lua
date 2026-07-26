@@ -196,8 +196,9 @@ func walkPublishedValues(value any, visit func(string)) {
 	}
 }
 
-// A payload class is protocol data, so only the codec may test its wire
-// prefix. Consumers must switch on Decode's declared forms and scalar kinds.
+// A payload wire is protocol data, so only the codec may own a scalar/ or
+// shape/ literal. Consumers compare exported canonical sentinels, construct
+// through typed codec values, and switch on Decode's declared forms.
 func TestNoPayloadLiteralPrefixTestsOutsideCodec(t *testing.T) {
 	root := filepath.Join(repositoryRoot(t), "analysis")
 	codecDir := filepath.Join(root, "check", "fixpoint", "shapefact")
@@ -211,7 +212,7 @@ func TestNoPayloadLiteralPrefixTestsOutsideCodec(t *testing.T) {
 			}
 			return nil
 		}
-		if filepath.Ext(path) != ".go" {
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		source, err := os.ReadFile(path)
@@ -226,6 +227,13 @@ func TestNoPayloadLiteralPrefixTestsOutsideCodec(t *testing.T) {
 			return err
 		}
 		ast.Inspect(file, func(node ast.Node) bool {
+			expression, ok := node.(ast.Expr)
+			if ok {
+				text, constant := constantStringExpression(expression)
+				if constant && (strings.HasPrefix(text, "scalar/") || strings.HasPrefix(text, "shape/")) {
+					t.Errorf("%s: payload wire literal must be owned by shapefact", path)
+				}
+			}
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -250,5 +258,30 @@ func TestNoPayloadLiteralPrefixTestsOutsideCodec(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// constantStringExpression folds only source-level string concatenation. It
+// keeps the ownership fence discriminating when an incumbent construction is
+// split into adjacent literals to evade a simple prefix grep.
+func constantStringExpression(expression ast.Expr) (string, bool) {
+	switch expression := expression.(type) {
+	case *ast.BasicLit:
+		if expression.Kind != token.STRING {
+			return "", false
+		}
+		text, err := strconv.Unquote(expression.Value)
+		return text, err == nil
+	case *ast.ParenExpr:
+		return constantStringExpression(expression.X)
+	case *ast.BinaryExpr:
+		if expression.Op != token.ADD {
+			return "", false
+		}
+		left, leftOK := constantStringExpression(expression.X)
+		right, rightOK := constantStringExpression(expression.Y)
+		return left + right, leftOK && rightOK
+	default:
+		return "", false
 	}
 }

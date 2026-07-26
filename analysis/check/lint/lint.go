@@ -622,7 +622,12 @@ func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.
 			// The engine publishes the canonical code alongside its evidence.
 			// A key-derived code is only the fallback for a fact that reached
 			// publication without one.
-			out = append(out, newEnrichedDiagnostic(entry, span, diagnostic.Code(projection.Code), projection.Message, projection))
+			item, err := newEnrichedDiagnostic(entry, span, diagnostic.Code(projection.Code), projection.Message, projection)
+			if err != nil {
+				out = append(out, newDiagnostic(entry, span, "lint.analysis.evidence", err.Error()))
+			} else {
+				out = append(out, item)
+			}
 			continue
 		}
 		code := diagnostic.Code(engine.DiagnosticCode(fact.Key))
@@ -633,18 +638,32 @@ func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.
 			continue
 		}
 		span := spanForFact(entry.Source, projection.Span)
-		out = append(out, newEnrichedDiagnostic(entry, span, diagnostic.Code(projection.Code), projection.Message, projection))
+		item, err := newEnrichedDiagnostic(entry, span, diagnostic.Code(projection.Code), projection.Message, projection)
+		if err != nil {
+			out = append(out, newDiagnostic(entry, span, "lint.analysis.evidence", err.Error()))
+		} else {
+			out = append(out, item)
+		}
 	}
 	diagnostic.Sort(out)
 	return diagnostic.CoalesceSamePrimary(out), time.Since(started)
 }
 
-func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, message string, projection engine.PublishedDiagnostic) diagnostic.Diagnostic {
+func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, message string, projection engine.PublishedDiagnostic) (diagnostic.Diagnostic, error) {
 	evidence := make([]diagnostic.Evidence, 0, len(projection.Evidence))
-	for _, item := range projection.Evidence {
-		kind, _ := evidenceKind(item.Kind)
-		trust, _ := evidenceTrust(item.Trust)
-		reason, _ := evidenceReason(item.Reason)
+	for index, item := range projection.Evidence {
+		kind, err := evidenceKind(item.Kind)
+		if err != nil {
+			return diagnostic.Diagnostic{}, fmt.Errorf("lint: diagnostic evidence %d: %w", index, err)
+		}
+		trust, err := evidenceTrust(item.Trust)
+		if err != nil {
+			return diagnostic.Diagnostic{}, fmt.Errorf("lint: diagnostic evidence %d: %w", index, err)
+		}
+		reason, err := evidenceReason(item.Reason)
+		if err != nil {
+			return diagnostic.Diagnostic{}, fmt.Errorf("lint: diagnostic evidence %d: %w", index, err)
+		}
 		evidence = append(evidence, diagnostic.Evidence{
 			Kind: kind, Trust: trust, Reason: reason,
 			Span: spanForFact(entry.Source, item.Span), Message: item.Message,
@@ -660,7 +679,7 @@ func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, 
 	if severity, registered := engine.DiagnosticFamilySeverity(projection.Fact.Key); registered {
 		result.Severity = severity
 	}
-	return result
+	return result, nil
 }
 
 func evidenceKind(kind diagnostic.EvidenceKind) (diagnostic.EvidenceKind, error) {

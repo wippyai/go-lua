@@ -227,30 +227,34 @@ var (
 	}
 	HeapOpaqueMemberWrite = Family{
 		ID: FamilyHeapOpaqueMemberWrite, Prefix: "heap/opaque-member-write/", Subject: Identity,
-		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{FamilyHeapOpaqueMemberWrite, FamilyHeapTableEscape},
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{FamilyHeapTableEscape},
 	}
 	HeapKeysOf = Family{
 		ID: FamilyHeapKeysOf, Prefix: "heap/keys-of/", Subject: Identity,
 		PayloadKind: PayloadTerm, RevocationSet: RevocationSet{
-			FamilyHeapMember, FamilyHeapMemberCell, FamilyHeapStaticReplace, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape,
+			FamilyHeapMember, FamilyHeapMemberCell, FamilyHeapStaticReplace, FamilyHeapMetaAttached,
+			FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapIndexRevoke,
 		},
 	}
 	HeapKeyedRead = Family{
 		ID: FamilyHeapKeyedRead, Prefix: "heap/keyed-read/", Subject: EncodedTerm,
-		PayloadKind: PayloadIdentity, RevocationSet: RevocationSet{FamilyHeapKeyedRead},
+		PayloadKind: PayloadIdentity, RevocationSet: RevocationSet{},
 	}
 	HeapKeyedElement = Family{
 		ID: FamilyHeapKeyedElement, Prefix: "heap/keyed-element/", Subject: Identity,
-		PayloadKind: PayloadType, RevocationSet: RevocationSet{FamilyHeapKeyedElement, FamilyHeapTableEscape},
+		PayloadKind: PayloadType, RevocationSet: RevocationSet{
+			FamilyHeapMetaAttached, FamilyHeapExternalCallback, FamilyHeapTableEscape,
+		},
 	}
 	HeapIndexPresence = Family{
 		ID: FamilyHeapIndexPresence, Prefix: "heap/index-presence/", Subject: Tagged, Qualifiers: []Kind{EncodedTerm},
-		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyHeapIndexRevoke, FamilyHeapTableEscape},
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyHeapIndexRevoke},
 	}
 	HeapKeyPresence = Family{
 		ID: FamilyHeapKeyPresence, Prefix: "heap/key-presence/", Subject: Tagged, Qualifiers: []Kind{EncodedTerm},
 		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{
-			FamilyHeapMember, FamilyHeapMemberCell, FamilyHeapStaticReplace, FamilyHeapOpaqueMemberWrite, FamilyHeapIndexRevoke, FamilyHeapTableEscape,
+			FamilyHeapMember, FamilyHeapMemberCell, FamilyHeapStaticReplace, FamilyHeapMetaAttached,
+			FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapIndexRevoke,
 		},
 	}
 	HeapIndexRevoke = Family{
@@ -259,7 +263,7 @@ var (
 	}
 	HeapLengthFloor = Family{
 		ID: FamilyHeapLengthFloor, Prefix: "heap/length-floor/", Subject: Tagged,
-		PayloadKind: PayloadInteger, RevocationSet: RevocationSet{FamilyHeapIndexRevoke, FamilyHeapTableEscape},
+		PayloadKind: PayloadInteger, RevocationSet: RevocationSet{FamilyHeapIndexRevoke},
 	}
 	HeapTableEscape = Family{
 		ID: FamilyHeapTableEscape, Prefix: "heap/table-escape/", Subject: Tagged,
@@ -473,6 +477,13 @@ func Lookup(key string) (Family, bool) {
 		}
 	}
 	return Family{}, false
+}
+
+// FamilyByID resolves the stable identity used by a declaration's
+// RevocationSet. Consumers never translate through prefix strings.
+func FamilyByID(id FamilyID) (Family, bool) {
+	family, ok := byID[id]
+	return family, ok
 }
 
 // segmentPrefix returns the key's first width segments, separator included.

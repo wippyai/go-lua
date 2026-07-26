@@ -49,6 +49,56 @@ func PathPart(path PathKey) Part {
 	return TermPart("path/" + path.String())
 }
 
+// RebindSubject projects one semantic subject into another family's declared
+// subject kind. Revocation licenses use it when an identity-scoped proof is
+// revoked by a tagged identity family (or the inverse). Opaque coordinates are
+// intentionally never guessed across kinds.
+func RebindSubject(subject Part, family Family) (Part, bool) {
+	switch family.Subject {
+	case Identity:
+		switch {
+		case subject.kind == Identity:
+			return subject, true
+		case subject.kind == Tagged && subject.tag == taggedIdentity:
+			return IdentityPart(subject.data), true
+		}
+	case EncodedTerm:
+		switch {
+		case subject.kind == EncodedTerm:
+			return subject, true
+		case subject.kind == Term:
+			return EncodedTermPart([]byte(subject.text)), true
+		case subject.kind == Tagged && subject.tag == taggedTerm:
+			return EncodedTermPart(subject.data), true
+		}
+	case Term:
+		switch {
+		case subject.kind == Term:
+			return subject, true
+		case subject.kind == EncodedTerm:
+			return TermPart(string(subject.data)), true
+		case subject.kind == Tagged && subject.tag == taggedTerm:
+			return TermPart(string(subject.data)), true
+		}
+	case Tagged:
+		switch {
+		case subject.kind == Tagged:
+			return subject, true
+		case subject.kind == Identity:
+			return TaggedIdentityPart(subject.data), true
+		case subject.kind == EncodedTerm:
+			return TaggedTermPart(subject.data), true
+		case subject.kind == Term:
+			return TaggedTermPart([]byte(subject.text)), true
+		}
+	default:
+		if subject.kind == family.Subject {
+			return subject, true
+		}
+	}
+	return Part{}, false
+}
+
 // Key is either a complete family key or a typed family prefix. BuildKey is the
 // only function that assembles its string representation.
 type Key struct {

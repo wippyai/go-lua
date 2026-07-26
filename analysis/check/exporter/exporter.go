@@ -488,7 +488,7 @@ func overlayStaticWrites(fields map[fieldKey]typ.Type, root, candidate string, v
 		}
 	}
 	for key, value := range latestByField {
-		if string(value.value) == "scalar/nil" {
+		if string(value.value) == shapefact.ScalarNilWire {
 			delete(fields, key)
 			continue
 		}

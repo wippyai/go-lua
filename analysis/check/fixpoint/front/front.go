@@ -1720,7 +1720,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = operands
 		case operation.family == "path-invalidation" || operation.family == "index-mutation":
-			container := equation.ClosedTerm([]byte("scalar/top"))
+			container := equation.ClosedTerm([]byte(shapefact.ScalarTopWire))
 			if instruction.Dst.Kind != wir.OperandNone {
 				var err error
 				container, err = pathStoreTerm(body, instruction.Dst)
@@ -1903,7 +1903,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			// obligation without rebinding the cell, so it publishes no value of
 			// its own: the write remains the cell's sole definition.
 			if instruction.Assign == wir.AssignOrdinaryRootWrite {
-				draft.Operands = append(draft.Operands, equation.Operand{Role: "write-contract", Term: equation.ClosedTerm([]byte("scalar/bool/true"))})
+				draft.Operands = append(draft.Operands, equation.Operand{Role: "write-contract", Term: equation.ClosedTerm([]byte(shapefact.ScalarTrueWire))})
 			}
 			if instruction.Dst.Kind == wir.OperandPath {
 				display := body.Path(wir.PathRef(instruction.Dst.Ref)).String()
@@ -1915,7 +1915,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			if instruction.ClaimSourceDisplay != "" {
 				draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(instruction.ClaimSourceDisplay))})
 				if instruction.ClaimSourceMethodSelector {
-					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-method-selector", Term: equation.ClosedTerm([]byte("scalar/bool/true"))})
+					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-method-selector", Term: equation.ClosedTerm([]byte(shapefact.ScalarTrueWire))})
 				}
 			} else if instruction.A.Kind == wir.OperandPath {
 				sourceDisplay := diagnosticPathDisplay(body.Path(wir.PathRef(instruction.A.Ref)))
@@ -1949,7 +1949,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				return equation.Artifact{}, fmt.Errorf("front: branch %s: %w", operation.target.Name, err)
 			}
 			if hasDynamicIndexRead {
-				operands = append(operands, equation.Operand{Role: "index-presence-consumer", Term: equation.ClosedTerm([]byte("scalar/bool/true"))})
+				operands = append(operands, equation.Operand{Role: "index-presence-consumer", Term: equation.ClosedTerm([]byte(shapefact.ScalarTrueWire))})
 			}
 			// A decision one arm of which leaves a loop states which arm that is.
 			// The arm that stays inside republishes on every trip, so a point the
@@ -2509,11 +2509,11 @@ func genericForOperands(body *wir.Body, instruction wir.Instruction, bindings []
 	operands := make([]equation.Operand, 0, len(roles)+1+2*len(bindings))
 	operands = append(operands, equation.Operand{Role: "iteration-kind", Term: equation.ClosedTerm([]byte("iteration-kind/generic"))})
 	for index, role := range roles {
-		term := equation.ClosedTerm([]byte("scalar/nil"))
+		term := equation.ClosedTerm([]byte(shapefact.ScalarNilWire))
 		// An open iterator tail carries no closed state/control coordinates. It
 		// is not nil: retain Top so the loop cannot manufacture a finite tuple.
 		if instruction.ListSpread {
-			term = equation.ClosedTerm([]byte("scalar/top"))
+			term = equation.ClosedTerm([]byte(shapefact.ScalarTopWire))
 		}
 		if index < len(sources) {
 			resolved, err := scalarTerm(body, sources[index])
@@ -2729,7 +2729,7 @@ func pathStoreTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
 // transactions total without inventing a key or value.
 func dynamicStoreTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
 	if operand.Kind == wir.OperandNone {
-		return equation.ClosedTerm([]byte("scalar/top")), nil
+		return equation.ClosedTerm([]byte(shapefact.ScalarTopWire)), nil
 	}
 	return pathStoreTerm(body, operand)
 }
@@ -2770,14 +2770,14 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 			// This is an unrepresentable source operand, not Lua nil. Keep the
 			// expression transaction complete with Top so it cannot invent a
 			// concrete value or decide a branch from missing syntax evidence.
-			operands = append(operands, equation.Operand{Role: role, Term: equation.ClosedTerm([]byte("scalar/top"))})
+			operands = append(operands, equation.Operand{Role: role, Term: equation.ClosedTerm([]byte(shapefact.ScalarTopWire))})
 			return nil
 		}
 		// Lua reads an undeclared global as nil.  Keep that semantic value in
 		// the expression graph; the lexical front publishes the corresponding
 		// unresolved-reference diagnostic separately.
 		if implicitGlobalPath(body, value) {
-			operands = append(operands, equation.Operand{Role: role, Term: equation.ClosedTerm([]byte("scalar/nil"))})
+			operands = append(operands, equation.Operand{Role: role, Term: equation.ClosedTerm([]byte(shapefact.ScalarNilWire))})
 			return nil
 		}
 		term, err := scalarTerm(body, value)
@@ -2834,13 +2834,13 @@ func scalarTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
 		constant := body.Const(wir.ConstRef(operand.Ref))
 		switch constant.Kind {
 		case wir.ConstNil:
-			return equation.ClosedTerm([]byte("scalar/nil")), nil
+			return equation.ClosedTerm([]byte(shapefact.ScalarNilWire)), nil
 		case wir.ConstBool:
-			return equation.ClosedTerm([]byte("scalar/bool/" + strconv.FormatBool(constant.Bool))), nil
+			return equation.ClosedTerm([]byte(shapefact.BooleanValueString(constant.Bool))), nil
 		case wir.ConstNumber:
-			return equation.ClosedTerm([]byte("scalar/number/" + constant.Number)), nil
+			return equation.ClosedTerm([]byte(shapefact.ScalarTextValueString(shapefact.ScalarNumber, constant.Number))), nil
 		case wir.ConstString:
-			return equation.ClosedTerm([]byte("scalar/string/" + strconv.Quote(constant.Str))), nil
+			return equation.ClosedTerm([]byte(shapefact.ScalarTextValueString(shapefact.ScalarString, strconv.Quote(constant.Str)))), nil
 		default:
 			return equation.Term{}, fmt.Errorf("unknown constant kind %d", constant.Kind)
 		}
@@ -3358,7 +3358,7 @@ func directCallDisplay(body *wir.Body, instruction wir.Instruction) (string, boo
 func indexedRole(prefix string, index int) string { return fmt.Sprintf("%s-%08d", prefix, index) }
 
 func boolTerm(value bool) equation.Term {
-	return equation.ClosedTerm([]byte("scalar/bool/" + strconv.FormatBool(value)))
+	return equation.ClosedTerm([]byte(shapefact.BooleanValueString(value)))
 }
 
 func callCheckTerm(check wir.Check) (equation.Term, error) {
@@ -3764,7 +3764,7 @@ func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, curren
 	if err != nil {
 		return nil, err
 	}
-	value := "scalar/table"
+	value := shapefact.ScalarTableWire
 	if instruction.Op == wir.OpClosure {
 		proto := body.Proto(instruction.Func)
 		value = CallableValue(proto.Type)
@@ -3842,7 +3842,7 @@ func tableShapeTerm(body *wir.Body, instruction wir.Instruction) ([]byte, bool, 
 func CallableValue(t typ.Type) string {
 	fn, ok := unwrap.Alias(t).(*typ.Function)
 	if !ok || fn == nil {
-		return "scalar/function"
+		return shapefact.ScalarFunctionWire
 	}
 	type typeParam struct {
 		Name       string `json:"name"`
@@ -3867,7 +3867,7 @@ func CallableValue(t typ.Type) string {
 	}
 	for _, param := range fn.TypeParams {
 		if param == nil || param.Name == "" {
-			return "scalar/function"
+			return shapefact.ScalarFunctionWire
 		}
 		item := typeParam{Name: param.Name}
 		if param.Constraint != nil {
@@ -3877,7 +3877,7 @@ func CallableValue(t typ.Type) string {
 	}
 	for index, param := range fn.Params {
 		if param.Type == nil {
-			return "scalar/function"
+			return shapefact.ScalarFunctionWire
 		}
 		wire.Params[index] = param.Type.String()
 		if bound, ok := unwrap.Annotations(param.Type).(*typ.TypeParam); ok && bound.Name != "" {
@@ -3903,14 +3903,14 @@ func CallableValue(t typ.Type) string {
 	}
 	for index, result := range fn.Returns {
 		if result == nil {
-			return "scalar/function"
+			return shapefact.ScalarFunctionWire
 		}
 		wire.Returns[index] = result.String()
 	}
 	if fn.Variadic != nil {
 		wire.VariadicType = fn.Variadic.String()
 		if wire.VariadicType == "" {
-			return "scalar/function"
+			return shapefact.ScalarFunctionWire
 		}
 	}
 	// The spelling fields carry display and arity; Canonical carries the
@@ -3918,14 +3918,14 @@ func CallableValue(t typ.Type) string {
 	// states no contract, so it is not published as a callable at all.
 	canonical, err := typ.EncodeCanonical(context.Background(), fn)
 	if err != nil || len(canonical) == 0 {
-		return "scalar/function"
+		return shapefact.ScalarFunctionWire
 	}
 	wire.Canonical = base64.RawURLEncoding.EncodeToString(canonical)
 	encoded, err := json.Marshal(wire)
 	if err != nil {
-		return "scalar/function"
+		return shapefact.ScalarFunctionWire
 	}
-	return "scalar/function/" + base64.RawURLEncoding.EncodeToString(encoded)
+	return shapefact.ScalarTextValueString(shapefact.ScalarFunction, base64.RawURLEncoding.EncodeToString(encoded))
 }
 
 // allocationEntryWriteOperands projects a closed constructor entry onto its

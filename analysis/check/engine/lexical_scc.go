@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/interproc"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 )
 
 const lexicalSCCDemand interproc.DemandKey = "engine/lexical-closed-output/v1"
@@ -223,7 +224,7 @@ func lexicalSCCTopClosure(operands directCallOperands, target string) equation.O
 	closure := equation.OutputClosure{}
 	for index := 0; index < operands.resultArity; index++ {
 		closure.Values = append(closure.Values, equation.Fact{
-			Key: coordinateFamilyKey(factkey.CallResult, target, fmt.Sprintf("%08d", index)).String(), Value: []byte("scalar/top"),
+			Key: coordinateFamilyKey(factkey.CallResult, target, fmt.Sprintf("%08d", index)).String(), Value: []byte(shapefact.ScalarTopWire),
 		})
 	}
 	return closure
@@ -464,13 +465,13 @@ func lexicalSCCJoinFacts(previous, candidate []equation.Fact, strict bool) ([]eq
 			changed = true
 			continue
 		}
-		if string(prior) == string(fact.Value) || string(prior) == "scalar/top" {
+		if string(prior) == string(fact.Value) || string(prior) == shapefact.ScalarTopWire {
 			continue
 		}
 		if strict || len(prior) == 0 {
 			return nil, false, fmt.Errorf("engine: incompatible recursive outcome coordinate %q", fact.Key)
 		}
-		all[fact.Key] = []byte("scalar/top")
+		all[fact.Key] = []byte(shapefact.ScalarTopWire)
 		changed = true
 	}
 	keys := make([]string, 0, len(all))

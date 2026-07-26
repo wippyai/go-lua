@@ -1021,7 +1021,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		// sufficient closed evidence for the diagnostic projection.
 		anySource := (available && isUnvalidatedAnyValue(value)) || sourceHasAnyBoundary(operands["value"], closure.Values)
 		if !available && anySource {
-			value, available = []byte("scalar/claim/claim-kind/3/\"any\""), true
+			value, available = shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)}), true
 		}
 		if !available {
 			out = append(out, item)
@@ -1218,7 +1218,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
-		} else if shapefact.IsForm(value, shapefact.PayloadShapeTarget) || string(value) == "scalar/nil" {
+		} else if shapefact.IsForm(value, shapefact.PayloadShapeTarget) || string(value) == shapefact.ScalarNilWire {
 			targetSpan := claimTargetSpans[name]
 			if !targetSpan.Valid() {
 				targetSpan = item.Span
@@ -1239,7 +1239,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
 		}
-		if hasResultDisplay && shapefact.IsScalar(value) && string(value) != "scalar/nil" {
+		if hasResultDisplay && shapefact.IsScalar(value) && string(value) != shapefact.ScalarNilWire {
 			item.Message = fmt.Sprintf("cannot assign %s because it is %s, not %s", sourceDisplay, valueDescription, declared)
 		}
 		item.Help = "Use a value compatible with the expected type, or change the target type if `" + sourceDisplay + "` is valid."
@@ -1715,7 +1715,7 @@ func hasImportedRelationResult(values []equation.Fact, result []byte) bool {
 	}
 	prefix := "imported-relation-result/" + base64.RawURLEncoding.EncodeToString(result) + "/"
 	for _, fact := range values {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "scalar/bool/true" {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == shapefact.ScalarTrueWire {
 			return true
 		}
 	}
@@ -3427,7 +3427,10 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			values = append(values, channelPayloadSummaryFacts(string(root), "entry", declared)...)
 			if _, channel := ambient.ChannelPayloadType(declared); channel {
 				if !isChannelIdentity(seedValues[string(root)]) {
-					identity := []byte("scalar/channel-entry/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + base64.RawURLEncoding.EncodeToString(root))
+					identity := shapefact.ScalarTextValue(
+						shapefact.ScalarChannelEntry,
+						fmt.Sprintf("%x", operation.Target.Body)+"/"+base64.RawURLEncoding.EncodeToString(root),
+					)
 					values = append(values,
 						equation.Fact{Key: termFamilyKey(factkey.Type, string(root), "entry").String(), Value: append([]byte(nil), declaredTypes[name]...)},
 						equation.Fact{Key: "identity/" + string(root) + "/entry", Value: identity},
@@ -3437,7 +3440,7 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			continue
 		}
 		values = append(values,
-			equation.Fact{Key: termFamilyKey(factkey.Value, string(root), "entry").String(), Value: []byte("scalar/top")},
+			equation.Fact{Key: termFamilyKey(factkey.Value, string(root), "entry").String(), Value: []byte(shapefact.ScalarTopWire)},
 			equation.Fact{Key: epochFactPrefix + string(root) + "/entry", Value: []byte("entry")},
 			equation.Fact{Key: termFamilyKey(factkey.Type, string(root), "entry").String(), Value: append([]byte(nil), declaredTypes[name]...)},
 		)
@@ -3445,7 +3448,10 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			values = append(values, heapIdentityFact(string(root), "entry", declaredBoundaryIdentity(operation.Target.Body, string(root))))
 		}
 		if _, channel := ambient.ChannelPayloadType(declared); channel {
-			identity := []byte("scalar/channel-entry/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + base64.RawURLEncoding.EncodeToString(root))
+			identity := shapefact.ScalarTextValue(
+				shapefact.ScalarChannelEntry,
+				fmt.Sprintf("%x", operation.Target.Body)+"/"+base64.RawURLEncoding.EncodeToString(root),
+			)
 			values = append(values, equation.Fact{Key: "identity/" + string(root) + "/entry", Value: identity})
 		}
 		// A declared boundary type can carry Channel<T> below its root, as a
@@ -3857,7 +3863,7 @@ func uncalledExplicitAnyBoundary(child front.Compilation) ([]entrySeed, bool) {
 		if declared == nil || declared.Kind() != kind.Any {
 			return nil, false
 		}
-		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: []byte("scalar/claim/claim-kind/3/\"any\"")})
+		seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)})})
 	}
 	return seeds, true
 }
@@ -3880,7 +3886,7 @@ func uncalledGradualLogicalCallBoundary(child front.Compilation) ([]entrySeed, [
 		}
 		term := boundaryTerm(parameter.Symbol)
 		formals[term] = true
-		seeds = append(seeds, entrySeed{Term: term, Value: []byte("scalar/top")})
+		seeds = append(seeds, entrySeed{Term: term, Value: []byte(shapefact.ScalarTopWire)})
 		terms = append(terms, term)
 	}
 	tainted := make(map[string]bool, len(formals))
@@ -4218,7 +4224,10 @@ func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equ
 			if err != nil || index < 0 || index >= len(signature.Type.Returns) || !values[string(operand.Term.Encoding)] || !placementClosedScalarType(signature.Type.Returns[index]) {
 				continue
 			}
-			identity := "scalar/provider/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s/%d", child.Body, operation.Target.Name, index)))
+			identity := shapefact.ScalarTextValueString(
+				shapefact.ScalarProvider,
+				base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s/%d", child.Body, operation.Target.Name, index))),
+			)
 			if fact, ok := scalarPlacementFact(identity); ok {
 				facts = append(facts, fact)
 			}
@@ -4250,7 +4259,10 @@ func placementDeclaredScalarLocalWitnesses(child front.Compilation) []equation.F
 		if !decoded || !placementClosedScalarType(declared) {
 			continue
 		}
-		identity := "scalar/declaration/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s", child.Body, target)))
+		identity := shapefact.ScalarTextValueString(
+			shapefact.ScalarDeclaration,
+			base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s", child.Body, target))),
+		)
 		if seen[identity] {
 			continue
 		}
@@ -5566,7 +5578,7 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 				continue
 			}
 			contract, stated := callableParameterContract(signature, index)
-			capturedNil := string(captured[string(operand.Term.Encoding)]) == "scalar/nil"
+			capturedNil := string(captured[string(operand.Term.Encoding)]) == shapefact.ScalarNilWire
 			capturedSource := captureSources[string(operand.Term.Encoding)]
 			capturedUnconditionalNil := latestUnconditionalNilWriteBefore(parentOperations, capturedSource, allocationTarget)
 			childNilWrite := latestPriorWriteIsNilOnCallPath(child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, item.Guards)
@@ -5660,7 +5672,7 @@ func latestUnconditionalNilWriteBefore(operations []equation.Equation, target []
 		if !hasTarget || !hasValue || !bytes.Equal(writeTarget, target) {
 			continue
 		}
-		latest, nilValue = operation.Target.Name, string(value) == "scalar/nil"
+		latest, nilValue = operation.Target.Name, string(value) == shapefact.ScalarNilWire
 	}
 	return latest != "" && nilValue
 }
@@ -5845,7 +5857,7 @@ func latestPriorWriteIsNilOnCallPath(operations []equation.Equation, target []by
 		if guardedOperationsAreExclusive(operations, operation.Guards, callGuards) {
 			continue
 		}
-		latest, nilValue = operation.Target.Name, len(operation.Guards) == 0 && string(value) == "scalar/nil"
+		latest, nilValue = operation.Target.Name, len(operation.Guards) == 0 && string(value) == shapefact.ScalarNilWire
 	}
 	return latest != "" && nilValue
 }
@@ -7891,7 +7903,7 @@ func truthyImpliedTypePredicate(artifact equation.Artifact, term string) (branch
 				continue
 			}
 			bypass, hasBypass := artifactOperand(operation.Operands, "short-circuit-bypass")
-			if !hasBypass || string(bypass) != "scalar/bool/false" {
+			if !hasBypass || string(bypass) != shapefact.ScalarFalseWire {
 				return branchPredicateWire{}, false
 			}
 			wire, ok := runtimeTypeEqualPredicate(operation.Operands, "predicate")
@@ -8480,7 +8492,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			if _, boundary, explicit := explicitAnySourceFact(arguments[index], partition.Values()); explicit {
 				value, known = boundary, true
 			} else if summaryTypeIsAny(arguments[index], partition.Values()) {
-				value, known = []byte("scalar/claim/claim-kind/3/\"any\""), true
+				value, known = shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)}), true
 			}
 		}
 		if !known || (isUnknownScalar(value) && !isExplicitAnyValue(value)) {
@@ -9009,12 +9021,12 @@ func nilOriginCandidates(child front.Compilation) map[string]nilOriginWitness {
 			continue
 		}
 		witness := witnesses[string(target)]
-		if len(operation.Guards) == 0 && string(value) == "scalar/nil" && len(witness.joins) == 0 {
+		if len(operation.Guards) == 0 && string(value) == shapefact.ScalarNilWire && len(witness.joins) == 0 {
 			witness.valid = true
 			witnesses[string(target)] = witness
 			continue
 		}
-		if !witness.valid || len(operation.Guards) != 1 || string(value) == "scalar/nil" {
+		if !witness.valid || len(operation.Guards) != 1 || string(value) == shapefact.ScalarNilWire {
 			witness.valid = false
 			witnesses[string(target)] = witness
 			continue
@@ -9075,7 +9087,7 @@ func nilOriginDeclaration(child front.Compilation, term string) (string, string,
 		// because the declaration carried no initializer at all, in which case
 		// the claim consumes its own target as the placeholder the lowering
 		// wrote. Any other source is a value the declaration did not birth.
-		if string(value) != term && string(value) != "scalar/nil" {
+		if string(value) != term && string(value) != shapefact.ScalarNilWire {
 			continue
 		}
 		declared, err := strconv.Unquote(strings.TrimPrefix(string(claimType), "claim-type/"))
@@ -9424,11 +9436,11 @@ func declaredFalseEdgeNilAssignmentClaims(child front.Compilation) map[string]de
 		if !hasTarget || !hasValue || !strings.HasPrefix(string(target), "path/") {
 			continue
 		}
-		if len(operation.Guards) == 0 && string(value) == "scalar/nil" {
+		if len(operation.Guards) == 0 && string(value) == shapefact.ScalarNilWire {
 			nilWrites[string(target)] = true
 			continue
 		}
-		if len(operation.Guards) != 1 || string(value) == "scalar/nil" {
+		if len(operation.Guards) != 1 || string(value) == shapefact.ScalarNilWire {
 			continue
 		}
 		parts := strings.Split(string(operation.Guards[0].Encoding), "/")
@@ -10124,7 +10136,7 @@ func allocationTemplateKernel(operation equation.BoundEquation, partition equati
 	for _, operand := range operation.Operands {
 		switch {
 		case operand.Role == "open-tail":
-			if string(operand.Value) != "scalar/bool/false" {
+			if string(operand.Value) != shapefact.ScalarFalseWire {
 				complete, decomposable = false, false
 			}
 		case strings.HasPrefix(operand.Role, "value-"):
@@ -10703,10 +10715,10 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	if child.Cyclic == nil && (childHasChannelLifecycle(child) || childHasResourceLifecycle(child)) {
 		seeds := make([]entrySeed, 0, len(child.Boundary.Parameters)+len(child.Boundary.Captures))
 		for _, parameter := range child.Boundary.Parameters {
-			seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: []byte("scalar/top")})
+			seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: []byte(shapefact.ScalarTopWire)})
 		}
 		for _, capture := range child.Boundary.Captures {
-			seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: []byte("scalar/top")})
+			seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: []byte(shapefact.ScalarTopWire)})
 		}
 		entry, entryErr := encodeChildEntry(seeds)
 		if entryErr != nil {
@@ -11000,7 +11012,7 @@ func (l *lexicalEvaluator) selectChildEntry(child front.Compilation, captures []
 	closureByTerm := make(map[string]closureHandle)
 	for index, capture := range child.Boundary.Captures {
 		term := boundaryTerm(capture.Symbol)
-		value := []byte("scalar/top")
+		value := []byte(shapefact.ScalarTopWire)
 		if index < len(captures) {
 			source := []byte(captures[index])
 			sources[term] = append([]byte(nil), source...)
@@ -11027,7 +11039,7 @@ func (l *lexicalEvaluator) selectChildEntry(child front.Compilation, captures []
 				continue
 			}
 			if _, seeded := byTerm[term]; !seeded {
-				byTerm[term] = entrySeed{Term: term, Value: []byte("scalar/top")}
+				byTerm[term] = entrySeed{Term: term, Value: []byte(shapefact.ScalarTopWire)}
 			}
 		}
 	}
@@ -11435,7 +11447,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	values = append(values, rebaseChannelPayloadFacts(operands["value"], target, operation.Target.Name, partition)...)
 	identity, hasIdentity := tableIdentityForTerm(operands["value"], partition)
-	if !hasIdentity && (shapefact.IsTable(value) || string(value) == "scalar/table") {
+	if !hasIdentity && (shapefact.IsTable(value) || string(value) == shapefact.ScalarTableWire) {
 		identity, hasIdentity = sealedTableIdentity(operation), true
 	}
 	if hasIdentity {
@@ -11453,7 +11465,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 				values = append(values, heapClosedFact(identity, operation.Target.Name))
 			}
 			for _, member := range table.Members {
-				memberValue := []byte("scalar/nil")
+				memberValue := []byte(shapefact.ScalarNilWire)
 				if member.Present {
 					memberValue = []byte(member.Value)
 				}
@@ -11663,7 +11675,7 @@ func sealShapeValue(value []byte, partition equation.Partition) ([]byte, error) 
 		}
 		resolved, err := resolveCurrentValue([]byte(member.Value), partition)
 		if err != nil {
-			member.Value = "scalar/top"
+			member.Value = shapefact.ScalarTopWire
 			continue
 		}
 		// A member sourced from a validated boundary seals the proof, not the
@@ -11686,7 +11698,7 @@ func sealShapeValue(value []byte, partition equation.Partition) ([]byte, error) 
 	if table.Tail != "" && !expandTableTail(&table, partition) {
 		// Nothing sizes this expansion, so the constructor has no finite member
 		// inventory and the literal keeps only its broad table kind.
-		return []byte("scalar/table"), nil
+		return []byte(shapefact.ScalarTableWire), nil
 	}
 	sealed, ok := shapefact.EncodeTable(table)
 	if !ok {
@@ -11724,7 +11736,7 @@ func expandTableTail(table *shapefact.Table, partition equation.Partition) bool 
 		if suffix == "" || occupied[suffix] {
 			return false
 		}
-		member := shapefact.Member{Suffix: suffix, Present: true, Value: "scalar/top"}
+		member := shapefact.Member{Suffix: suffix, Present: true, Value: shapefact.ScalarTopWire}
 		if index == 0 {
 			resolved, resolveErr := resolveCurrentValue(tail, partition)
 			if resolveErr != nil {
@@ -11942,7 +11954,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		if er != nil {
 			return equation.TransactionResult{}, er
 		}
-		if string(left) == "scalar/top" {
+		if string(left) == shapefact.ScalarTopWire {
 			// A Top left operand leaves either short-circuit result reachable.
 			// Keep only an already-published gradual boundary from either operand;
 			// the expression does not manufacture a boundary or a value.
@@ -11985,7 +11997,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		if er != nil {
 			return equation.TransactionResult{}, er
 		}
-		if string(operand) == "scalar/top" {
+		if string(operand) == shapefact.ScalarTopWire {
 			value = operand
 			break
 		}
@@ -11995,23 +12007,23 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			if errors.Is(er, errUnknownScalar) {
 				// not on an undecided operand still yields a boolean; which one
 				// it yields is exactly what remains unknown.
-				value = []byte("scalar/boolean")
+				value = []byte(shapefact.ScalarBooleanWire)
 				break
 			}
 			err = er
-			value = []byte("scalar/bool/" + strconv.FormatBool(!truth))
+			value = shapefact.BooleanValue(!truth)
 		case wir.UnLen:
 			n, er := scalarLength(operand)
 			if errors.Is(er, errUnknownScalar) {
-				value = []byte("scalar/top")
+				value = []byte(shapefact.ScalarTopWire)
 			} else {
 				err = er
-				value = []byte("scalar/number/" + strconv.FormatInt(n, 10))
+				value = shapefact.ScalarTextValue(shapefact.ScalarNumber, strconv.FormatInt(n, 10))
 			}
 		case wir.UnNeg:
 			n, er := scalarNumber(operand)
 			if errors.Is(er, errUnknownScalar) {
-				value = []byte("scalar/top")
+				value = []byte(shapefact.ScalarTopWire)
 			} else {
 				err = er
 				value = numberValue(-n)
@@ -12034,7 +12046,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				err = er
 				break
 			}
-			if string(v) == "scalar/top" {
+			if string(v) == shapefact.ScalarTopWire {
 				if _, found := optionalProviderConcatWitness(term, partition); found {
 					diagnostics = append(diagnostics, equation.Fact{
 						Key:   fmt.Sprintf(diagnosticFamilyPrefix(DiagnosticFamilyConcatOperand)+"%s/value-%08d", operation.Target.Name, i),
@@ -12051,7 +12063,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 					Value: []byte("concat operand may be nil"),
 				})
 				originFacts = append(originFacts, concatOperandOriginFacts(operation.Target.Name, i, term, partition)...)
-				value = []byte("scalar/top")
+				value = []byte(shapefact.ScalarTopWire)
 				break
 			}
 			var s string
@@ -12066,10 +12078,10 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				// owed: the result carries that same boundary. Top would state absence
 				// of information where the boundary is a published fact, and the
 				// gradual relay below reaches only operands rooted at a path.
-				value = []byte("scalar/claim/claim-kind/3/\"any\"")
+				value = shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)})
 				break
 			} else {
-				value = []byte("scalar/top")
+				value = []byte(shapefact.ScalarTopWire)
 				break
 			}
 			if er != nil {
@@ -12079,14 +12091,14 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			b.WriteString(s)
 		}
 		if value == nil && err == nil {
-			value = []byte("scalar/string/" + strconv.Quote(b.String()))
+			value = shapefact.ScalarTextValue(shapefact.ScalarString, strconv.Quote(b.String()))
 		}
 		// Concatenation that reaches its normal result still produces a string.
 		// A nilable operand remains a separately published warning, but must not
 		// turn a following string annotation into an unrelated unproven claim.
 		// The result type comes from this already-lowered operator, not an
 		// annotation or a source-level special case.
-		if len(diagnostics) != 0 && string(value) == "scalar/top" {
+		if len(diagnostics) != 0 && string(value) == shapefact.ScalarTopWire {
 			if encoded, ok := shapefact.EncodeTarget(typ.String); ok {
 				value = encoded
 			}
@@ -12105,8 +12117,8 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		boundaryComparison := (operator == wir.BinEq || operator == wir.BinNe) &&
 			(isExplicitAnyValue(left) || sourceHasAnyBoundary(by["left"], partition.Values()) ||
 				isExplicitAnyValue(right) || sourceHasAnyBoundary(by["right"], partition.Values()))
-		if string(left) == "scalar/top" || string(right) == "scalar/top" || boundaryComparison {
-			value = []byte("scalar/top")
+		if string(left) == shapefact.ScalarTopWire || string(right) == shapefact.ScalarTopWire || boundaryComparison {
+			value = []byte(shapefact.ScalarTopWire)
 		} else {
 			value, err = basicBinary(operator, left, right)
 		}
@@ -12116,7 +12128,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	if string(value) == "scalar/top" && wir.Op(kind) == wir.OpBinOp {
+	if string(value) == shapefact.ScalarTopWire && wir.Op(kind) == wir.OpBinOp {
 		if message, refuted := orderedComparisonUnionDiagnostic(wir.Operator(op), by["left"], by["right"], partition); refuted {
 			diagnostics = append(diagnostics, equation.Fact{
 				Key:   diagnosticFamilyPrefix(DiagnosticFamilyComparisonOperand) + operation.Target.Name,
@@ -12129,7 +12141,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	// operator derive the result from those already-published witnesses.  This
 	// keeps provider results such as integer(any) useful through arithmetic and
 	// concatenation without inventing a concrete runtime value.
-	if string(value) == "scalar/top" && len(diagnostics) == 0 {
+	if string(value) == shapefact.ScalarTopWire && len(diagnostics) == 0 {
 		// A sealed contiguous literal has a proven sequence cardinality. Other
 		// sealed tables retain the broad number result: Lua length is not a
 		// member count for records, holes, or non-sequence shapes.
@@ -12165,7 +12177,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			}
 		}
 	}
-	if string(value) == "scalar/top" && len(diagnostics) == 0 {
+	if string(value) == shapefact.ScalarTopWire && len(diagnostics) == 0 {
 		if typed, ok := typedExpressionResult(wir.Op(kind), wir.Operator(op), by, partition); ok {
 			value = typed
 		}
@@ -12451,7 +12463,7 @@ func heapSequenceShape(term []byte, partition equation.Partition) (shapefact.Tab
 		if !current || len(value) == 0 {
 			return shapefact.Table{}, false
 		}
-		if string(value) == "scalar/nil" {
+		if string(value) == shapefact.ScalarNilWire {
 			members[suffix] = shapefact.Member{Suffix: suffix}
 			continue
 		}
@@ -12702,7 +12714,9 @@ func keyedReadContainer(term []byte, partition equation.Partition) ([]byte, bool
 	if latest == "" || len(identity) == 0 {
 		return nil, false
 	}
-	if epoch, versioned := currentEpoch(term, partition); versioned && epoch > latest {
+	if !((familyReadLicense{
+		Family: factkey.HeapKeyedRead, Subject: factkey.EncodedTermPart(term), Proof: latest, EpochTerm: term,
+	}).Valid(partition)) {
 		return nil, false
 	}
 	return identity, true
@@ -12985,7 +12999,7 @@ func keyedContainerSurface(term, value []byte, partition equation.Partition) []b
 	}
 	opened, ok := shapefact.EncodeTable(shapefact.Table{})
 	if !ok {
-		return []byte("scalar/top")
+		return []byte(shapefact.ScalarTopWire)
 	}
 	return opened
 }
@@ -13039,12 +13053,15 @@ func borderIndexPresenceProven(container, key []byte, partition equation.Partiti
 	if !ok || named != string(container) {
 		return false
 	}
-	// An escaped container may have had its border moved by the callee, so the
-	// inventory this proof reads is no longer the live one.
+	// Table escape is specific to a mutable container border. It is not a
+	// family-wide length-floor revoker because the same family carries immutable
+	// string bounds; keep that consumer-specific condition beside this read.
 	if containerTableEscaped(container, partition) {
 		return false
 	}
-	if revoked(heapIndexSubject(container, partition), taken, partition) {
+	if !((familyReadLicense{
+		Family: factkey.HeapLengthFloor, Subject: heapIndexSubject(container, partition), Proof: taken,
+	}).Valid(partition)) {
 		return false
 	}
 	if lengthFloorProven(container, partition) >= 1 {
@@ -13383,7 +13400,7 @@ func expressionOperatorText(operator wir.Operator) (string, bool) {
 // optional annotation fact. Top and other gradual values remain silent: they
 // have no proof that a nil can reach the operand.
 func concatOperandMayBeNil(value []byte) bool {
-	if string(value) == "scalar/nil" {
+	if string(value) == shapefact.ScalarNilWire {
 		return true
 	}
 	// A finite provider result can retain nilability as a sealed type witness
@@ -13470,37 +13487,37 @@ func optionalProviderConcatWitness(term []byte, partition equation.Partition) ([
 }
 
 func numberValue(v float64) []byte {
-	return []byte("scalar/number/" + strconv.FormatFloat(v, 'g', -1, 64))
+	return shapefact.ScalarTextValue(shapefact.ScalarNumber, strconv.FormatFloat(v, 'g', -1, 64))
 }
 func basicBinary(op wir.Operator, a, b []byte) ([]byte, error) {
 	switch op {
 	case wir.BinEq:
-		if (optionalConcreteWitness(a) && string(b) == "scalar/nil") || (optionalConcreteWitness(b) && string(a) == "scalar/nil") {
+		if (optionalConcreteWitness(a) && string(b) == shapefact.ScalarNilWire) || (optionalConcreteWitness(b) && string(a) == shapefact.ScalarNilWire) {
 			return []byte(optionalNilComparison), nil
 		}
 		if abstractEqualityOperand(a) || abstractEqualityOperand(b) {
 			if disjointPublishedValues(a, b) {
-				return []byte("scalar/bool/false"), nil
+				return []byte(shapefact.ScalarFalseWire), nil
 			}
-			return []byte("scalar/top"), nil
+			return []byte(shapefact.ScalarTopWire), nil
 		}
-		return []byte("scalar/bool/" + strconv.FormatBool(bytes.Equal(a, b))), nil
+		return shapefact.BooleanValue(bytes.Equal(a, b)), nil
 	case wir.BinNe:
 		if abstractEqualityOperand(a) || abstractEqualityOperand(b) {
 			if disjointPublishedValues(a, b) {
-				return []byte("scalar/bool/true"), nil
+				return []byte(shapefact.ScalarTrueWire), nil
 			}
-			return []byte("scalar/top"), nil
+			return []byte(shapefact.ScalarTopWire), nil
 		}
-		return []byte("scalar/bool/" + strconv.FormatBool(!bytes.Equal(a, b))), nil
+		return shapefact.BooleanValue(!bytes.Equal(a, b)), nil
 	}
 	x, e := scalarNumber(a)
 	if e != nil {
-		return []byte("scalar/top"), nil
+		return []byte(shapefact.ScalarTopWire), nil
 	}
 	y, e := scalarNumber(b)
 	if e != nil {
-		return []byte("scalar/top"), nil
+		return []byte(shapefact.ScalarTopWire), nil
 	}
 	switch op {
 	case wir.BinAdd:
@@ -13518,15 +13535,15 @@ func basicBinary(op wir.Operator, a, b []byte) ([]byte, error) {
 	case wir.BinPow:
 		return numberValue(math.Pow(x, y)), nil
 	case wir.BinLt:
-		return []byte("scalar/bool/" + strconv.FormatBool(x < y)), nil
+		return shapefact.BooleanValue(x < y), nil
 	case wir.BinLe:
-		return []byte("scalar/bool/" + strconv.FormatBool(x <= y)), nil
+		return shapefact.BooleanValue(x <= y), nil
 	case wir.BinGt:
-		return []byte("scalar/bool/" + strconv.FormatBool(x > y)), nil
+		return shapefact.BooleanValue(x > y), nil
 	case wir.BinGe:
-		return []byte("scalar/bool/" + strconv.FormatBool(x >= y)), nil
+		return shapefact.BooleanValue(x >= y), nil
 	default:
-		return []byte("scalar/top"), nil
+		return []byte(shapefact.ScalarTopWire), nil
 	}
 }
 
@@ -13575,7 +13592,7 @@ func optionalConcreteWitness(value []byte) bool {
 	return ok && optionalConcreteWitnessType(witness)
 }
 
-const optionalNilComparison = "scalar/bool/optional-nil-comparison"
+const optionalNilComparison = shapefact.ScalarOptionalNilComparisonWire
 
 func optionalConcreteWitnessType(witness typ.Type) bool {
 	return witness != nil && proof.OptionalTypeHasConcreteValue(witness)
@@ -13598,7 +13615,7 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	}
 	value, err := resolveCurrentValue(operands["value"], partition)
 	if err != nil {
-		value = []byte("scalar/top")
+		value = []byte(shapefact.ScalarTopWire)
 	}
 	var declaredContract []byte
 	for _, operand := range operation.Operands {
@@ -13692,7 +13709,7 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 			if _, present := heapMemberCurrent(factkey.HeapMember, identity, suffix, partition); !present && heapTableClosed(identity, partition) {
 				if routed, found := heapMetaNewIndexCurrent(identity, partition); found {
 					writeIdentity = routed
-					value = []byte("scalar/top")
+					value = []byte(shapefact.ScalarTopWire)
 					// The metamethod decides what the routed slot receives, so the
 					// written term is not that slot's source and confers nothing on it.
 					memberSource = value
@@ -13853,7 +13870,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	if (!strings.HasPrefix(target, "path/") && !strings.HasPrefix(target, "temp/")) || len(operands["container"]) == 0 || len(operands["key"]) == 0 {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed dynamic index read")
 	}
-	value := []byte("scalar/top")
+	value := []byte(shapefact.ScalarTopWire)
 	values := []equation.Fact{{Key: termFamilyKey(factkey.Value, target, operation.Target.Name).String(), Value: value}, {Key: epochFactPrefix + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)}}
 	if identity, found := tableIdentityForTerm(operands["container"], partition); found {
 		key, keyErr := resolveCurrentValue(operands["key"], partition)
@@ -13872,7 +13889,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 			if member, found := heapMemberCurrent(factkey.HeapMember, identity, suffix, partition); found {
 				values[0].Value = member
 			} else if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) && !heapHasExternalCallback(identity, partition) {
-				values[0].Value = []byte("scalar/nil")
+				values[0].Value = []byte(shapefact.ScalarNilWire)
 			}
 			if memberIdentity, found := heapMemberCurrent(factkey.HeapMemberIdentity, identity, suffix, partition); found {
 				values = append(values, heapIdentityFact(target, operation.Target.Name, memberIdentity))
@@ -13883,7 +13900,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	// and that shape is the authority for its own members. This is the same
 	// literal a spelled member read consumes; a call result reaches it here
 	// because its result term names no cell for the identity lane above.
-	if string(values[0].Value) == "scalar/top" {
+	if string(values[0].Value) == shapefact.ScalarTopWire {
 		if member, found := sealedContainerMemberValue(operands["container"], operands["key"], partition); found {
 			values[0].Value = member
 		}
@@ -13891,7 +13908,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	// Reading a container at its own length is the border read. The inventory
 	// decides whether that border can be the empty one, and the container's
 	// element contract is what every occupied slot satisfies.
-	if string(values[0].Value) == "scalar/top" {
+	if string(values[0].Value) == shapefact.ScalarTopWire {
 		if border, found := borderMemberValue(operands["container"], operands["key"], partition); found {
 			values[0].Value = border
 		}
@@ -13901,7 +13918,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	// have not been materialized locally. RuntimeIndex preserves Lua's missing
 	// slot nilability, and providerReturnTypeValue rejects open, generic, and
 	// any-shaped answers before they can reach this result slot.
-	if string(values[0].Value) == "scalar/top" {
+	if string(values[0].Value) == shapefact.ScalarTopWire {
 		if projected, display, scalar, optional, ok := typedRuntimeIndexResult(operands["container"], operands["key"], operation.Target.Name, partition); ok {
 			values[0].Value = projected
 			values = append(values, equation.Fact{Key: indexReadDisplayPrefix + target + "/" + operation.Target.Name, Value: []byte(display)})
@@ -14055,7 +14072,10 @@ func indexPresenceProven(container, index []byte, consumer string, partition equ
 	if epoch, versioned := currentEpoch(index, partition); versioned && epoch > proof && (consumer == "" || epoch <= consumer) {
 		return false
 	}
-	if revoked(subject, proof, partition) {
+	if !((familyReadLicense{
+		Family: factkey.HeapIndexPresence, Subject: subject,
+		Proof: proof,
+	}).Valid(partition)) {
 		return false
 	}
 	return true
@@ -14167,13 +14187,13 @@ func arrayKeysOfContainer(identity []byte, partition equation.Partition) (keysOf
 // the interval the relation spans.
 func keysOfContainerCurrent(origin keysOfOrigin, partition equation.Partition) bool {
 	identity, named := tableIdentityForTerm(origin.Container, partition)
-	if !named || heapMetaAttached(identity, partition) || heapHasExternalCallback(identity, partition) {
+	if !named {
 		return false
 	}
-	if heapInventoryChangedAfter(identity, origin.Established, partition) {
-		return false
-	}
-	if revoked(heapIndexSubject(origin.Container, partition), origin.Established, partition) {
+	if !((familyReadLicense{
+		Family: factkey.HeapKeysOf, Subject: factkey.IdentityPart(identity), Proof: origin.Established,
+		AdmittedAt: origin.Established,
+	}).Valid(partition)) {
 		return false
 	}
 	if unverifiedCallAfter(origin.Container, origin.Established, partition) {
@@ -14295,7 +14315,7 @@ func arrayElementKeyPresenceFacts(array []byte, element, operation string, parti
 // projected back, so the enumerated inventory is no longer accounted for
 // either.
 func keyIterationPresenceProven(container, index []byte, partition equation.Partition) bool {
-	identity, found := tableIdentityForTerm(container, partition)
+	_, found := tableIdentityForTerm(container, partition)
 	if !found {
 		return false
 	}
@@ -14317,16 +14337,10 @@ func keyIterationPresenceProven(container, index []byte, partition equation.Part
 		return false
 	}
 	provenAt := proof
-	if epoch, versioned := currentEpoch(index, partition); versioned && epoch > provenAt {
-		return false
-	}
-	if revoked(subject, provenAt, partition) {
-		return false
-	}
-	if heapMetaAttached(identity, partition) || heapHasExternalCallback(identity, partition) {
-		return false
-	}
-	if heapInventoryChangedAfter(identity, provenAt, partition) {
+	if !((familyReadLicense{
+		Family: factkey.HeapKeyPresence, Subject: subject,
+		Proof: provenAt, EpochTerm: index, AdmittedAt: provenAt,
+	}).Valid(partition)) {
 		return false
 	}
 	return !unverifiedCallAfter(container, provenAt, partition)
@@ -14354,48 +14368,6 @@ func unverifiedCallAfter(container []byte, operation string, partition equation.
 		}
 	}
 	return false
-}
-
-// heapInventoryChangedAfter reports that the slots of this identity were
-// published again after the given operation. It reads the member, member-cell,
-// static-replacement and unresolved-key families together because each of them
-// is a way the live inventory can differ from the one an earlier enumeration
-// observed.
-func heapInventoryChangedAfter(identity []byte, operation string, partition equation.Partition) bool {
-	for _, family := range []factkey.Family{
-		factkey.HeapMember, factkey.HeapMemberCell, factkey.HeapStaticReplace, factkey.HeapOpaqueMemberWrite,
-	} {
-		values := partition.FamilyValues(factkey.BuildKey(family, []factkey.Part{factkey.IdentityPart(identity)}, ""))
-		for {
-			fact, ok := values.Next()
-			if !ok {
-				break
-			}
-			if fact.Occurrence > operation {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// revoked reports that a dynamic write through this heap identity followed the
-// proof, so the proof describes a table state the body has since left.
-func revoked(subject factkey.Part, provenAt string, partition equation.Partition) bool {
-	revocation := ""
-	values := partition.FamilyValues(factkey.BuildKey(
-		factkey.HeapIndexRevoke, []factkey.Part{subject}, "",
-	))
-	for {
-		fact, ok := values.Next()
-		if !ok {
-			break
-		}
-		if string(fact.Payload) == "revoked" && fact.Occurrence > revocation {
-			revocation = fact.Occurrence
-		}
-	}
-	return revocation != "" && provenAt <= revocation
 }
 
 // affineIndexPresenceProven decides a shifted index term. The term's affine
@@ -14428,7 +14400,10 @@ func affineIndexPresenceProven(container, index []byte, partition equation.Parti
 	if !affineIndexInRange(predicates, differences, basePath, containerPath, offset) {
 		return false
 	}
-	return !revoked(heapIndexSubject(container, partition), provenAt, partition)
+	return (familyReadLicense{
+		Family: factkey.HeapIndexPresence, Subject: heapIndexSubject(container, partition),
+		Proof: provenAt,
+	}).Valid(partition)
 }
 
 // affineIndexIdentity reads the current affine identity of an index term. A
@@ -14520,7 +14495,7 @@ func factOperation(key string) string {
 func claimIsWriteContract(operation equation.BoundEquation) bool {
 	for _, operand := range operation.Operands {
 		if operand.Role == "write-contract" {
-			return string(operand.Value) == "scalar/bool/true"
+			return string(operand.Value) == shapefact.ScalarTrueWire
 		}
 	}
 	return false
@@ -14536,7 +14511,7 @@ func declarationSlotDefaultValue(kind, targetType, target string, source, value 
 		return false
 	}
 	claim, claimed := shapefact.DecodeClaim(value)
-	return string(value) == "scalar/nil" ||
+	return string(value) == shapefact.ScalarNilWire ||
 		(claimed && claim.Kind == wir.ClaimAnnotation && string(claim.Target) == targetType)
 }
 
@@ -14620,7 +14595,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// its symbolic arm identity.  This admits neither a broad claim nor an
 	// arbitrary interface cast.
 	channelCastFromNil := false
-	if kind == "claim-kind/1" && string(value) == "scalar/nil" {
+	if kind == "claim-kind/1" && string(value) == shapefact.ScalarNilWire {
 		if target, ok := shapefact.DecodeTarget(shapeTarget); ok {
 			_, channelCastFromNil = ambient.ChannelPayloadType(target)
 		}
@@ -14727,7 +14702,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
-	refined := []byte("scalar/claim/" + kind + "/" + targetType)
+	refined := claimPayload(kind, targetType)
 	closure := equation.OutputClosure{Values: []equation.Fact{{Key: termFamilyKey(factkey.Value, target, operation.Target.Name).String(), Value: refined}}}
 	// A refuted claim still binds its cell: the assignment happens and the cell
 	// holds the value the source carried, not the type the claim named. The
@@ -15325,7 +15300,7 @@ func lexicalMemberCallableSurface(lexical *lexicalEvaluator, source []byte, targ
 		parsed, callResult := factkey.CallResult.ParseKey(fact.Key)
 		if callResult && parsed.Subject.Spelling() == "member-surface" && parsed.Occurrence == "00000000" {
 			relation := valueAgainstType(fact.Value, function.Returns[0])
-			if relation == shapeUnknown && string(fact.Value) == "scalar/nil" && !unwrap.IsOptionalLike(function.Returns[0]) {
+			if relation == shapeUnknown && string(fact.Value) == shapefact.ScalarNilWire && !unwrap.IsOptionalLike(function.Returns[0]) {
 				relation = shapeRefuted
 			}
 			return append([]byte(nil), fact.Value...), relation
@@ -15479,7 +15454,7 @@ func valueAgainstTypeSeen(value []byte, target typ.Type, comparison *shapeCompar
 		if !ok || optional.Inner == nil {
 			return shapeUnknown
 		}
-		if string(value) == "scalar/nil" {
+		if string(value) == shapefact.ScalarNilWire {
 			return shapeProven
 		}
 		return valueAgainstTypeSeen(value, optional.Inner, comparison)
@@ -15538,7 +15513,7 @@ func valueAgainstTypeSeen(value []byte, target typ.Type, comparison *shapeCompar
 		}
 		return tableAgainstContainer(value, mapping.Value, mapping.Key, comparison)
 	case kind.Nil:
-		return scalarRelation(value, func() bool { return string(value) == "scalar/nil" })
+		return scalarRelation(value, func() bool { return string(value) == shapefact.ScalarNilWire })
 	case kind.Boolean:
 		return scalarRelation(value, func() bool {
 			scalar, ok := shapefact.DecodeScalar(value)
@@ -15620,7 +15595,7 @@ func tableAgainstMap(value []byte, target typ.Type) shapeRelation {
 func tableAgainstRecord(value []byte, target typ.Type, comparison *shapeComparison) shapeRelation {
 	table, ok := shapefact.DecodeTable(value)
 	if !ok {
-		if string(value) == "scalar/table" {
+		if string(value) == shapefact.ScalarTableWire {
 			return shapeUnknown
 		}
 		return knownScalarRelation(value, false)
@@ -15957,9 +15932,9 @@ func acceptsEveryValue(target typ.Type) bool {
 func containerKeyValue(entry segment.Segment) ([]byte, bool) {
 	switch entry.Kind {
 	case segment.SegmentField, segment.SegmentIndexString:
-		return []byte("scalar/string/" + strconv.Quote(entry.Name)), true
+		return shapefact.ScalarTextValue(shapefact.ScalarString, strconv.Quote(entry.Name)), true
 	case segment.SegmentIndexInt:
-		return []byte("scalar/number/" + strconv.Itoa(entry.Index)), true
+		return shapefact.ScalarTextValue(shapefact.ScalarNumber, strconv.Itoa(entry.Index)), true
 	default:
 		return nil, false
 	}
@@ -15970,7 +15945,7 @@ func scalarRelation(value []byte, compatible func() bool) shapeRelation {
 }
 
 func knownScalarRelation(value []byte, compatible bool) shapeRelation {
-	if shapefact.IsTable(value) || string(value) == "scalar/table" || !shapefact.IsScalar(value) || isUnknownScalar(value) {
+	if shapefact.IsTable(value) || string(value) == shapefact.ScalarTableWire || !shapefact.IsScalar(value) || isUnknownScalar(value) {
 		return shapeUnknown
 	}
 	if compatible {
@@ -15985,11 +15960,11 @@ func literalValue(literal *typ.Literal) string {
 	}
 	switch literal.Base {
 	case kind.Boolean:
-		return "scalar/bool/" + literal.String()
+		return shapefact.BooleanValueString(literal.String() == "true")
 	case kind.Integer, kind.Number:
-		return "scalar/number/" + literal.String()
+		return shapefact.ScalarTextValueString(shapefact.ScalarNumber, literal.String())
 	case kind.String:
-		return "scalar/string/" + literal.String()
+		return shapefact.ScalarTextValueString(shapefact.ScalarString, literal.String())
 	default:
 		return ""
 	}
@@ -16046,7 +16021,7 @@ func isExplicitAnyValue(value []byte) bool {
 }
 
 func isUnvalidatedAnyValue(value []byte) bool {
-	return isExplicitAnyValue(value) || string(value) == "scalar/external-callback-any"
+	return isExplicitAnyValue(value) || string(value) == shapefact.ScalarExternalCallbackAnyWire
 }
 
 func sourceHasExplicitAny(source []byte, values []equation.Fact) bool {
@@ -16191,7 +16166,7 @@ func sourceHasGradualLogicalBoundary(source []byte, values []equation.Fact) bool
 // equation handoff, never to infer a value for an unrecorded member read.
 func explicitAnySourceFact(source []byte, values []equation.Fact) ([]byte, []byte, bool) {
 	if root, found := gradualAnySourceFact(source, values); found {
-		return root, []byte("scalar/claim/claim-kind/3/\"any\""), true
+		return root, claimPayload("claim-kind/3", `"any"`), true
 	}
 	path := strings.TrimPrefix(string(source), "path/")
 	if path == string(source) || path == "" {
@@ -16205,7 +16180,7 @@ func explicitAnySourceFact(source []byte, values []equation.Fact) ([]byte, []byt
 			}
 			declared, ok := shapefact.DecodeTarget(fact.Value)
 			if ok && declared != nil && unwrap.Alias(subst.ExpandInstantiated(declared)).Kind() == kind.Any {
-				return []byte("path/" + path), []byte("scalar/claim/claim-kind/3/\"any\""), true
+				return []byte("path/" + path), claimPayload("claim-kind/3", `"any"`), true
 			}
 		}
 		prefix := termFamilyKey(factkey.Value, "path/"+path, "").String()
@@ -16320,7 +16295,7 @@ func assignmentValueType(value []byte) string {
 	switch {
 	case shapefact.IsTable(value):
 		return "table"
-	case string(value) == "scalar/nil":
+	case string(value) == shapefact.ScalarNilWire:
 		return "nil"
 	case func() bool {
 		scalar, ok := shapefact.DecodeScalar(value)
@@ -16332,9 +16307,9 @@ func assignmentValueType(value []byte) string {
 		return "string"
 	case shapefact.IsScalarKind(value, shapefact.ScalarNumber):
 		return "number"
-	case string(value) == "scalar/table":
+	case string(value) == shapefact.ScalarTableWire:
 		return "table"
-	case string(value) == "scalar/function":
+	case string(value) == shapefact.ScalarFunctionWire:
 		return "function"
 	default:
 		return "unknown"
@@ -16343,6 +16318,25 @@ func assignmentValueType(value []byte) string {
 
 func validClaimKind(kind string) bool {
 	return kind == "claim-kind/1" || kind == "claim-kind/2" || kind == "claim-kind/3" || kind == "claim-kind/4"
+}
+
+// claimPayload translates the front's declared claim-kind operand into the
+// typed payload codec. Unknown kinds fail closed as an absent payload.
+func claimPayload(kind, target string) []byte {
+	var claimKind wir.ClaimKind
+	switch kind {
+	case "claim-kind/1":
+		claimKind = wir.ClaimCast
+	case "claim-kind/2":
+		claimKind = wir.ClaimAssert
+	case "claim-kind/3":
+		claimKind = wir.ClaimAnnotation
+	case "claim-kind/4":
+		claimKind = wir.ClaimAssertsPredicate
+	default:
+		return nil
+	}
+	return shapefact.ClaimValue(shapefact.Claim{Kind: claimKind, Target: []byte(target)})
 }
 
 func validClaimType(kind, targetType string) bool {
@@ -16396,7 +16390,7 @@ func methodReturnOptionalClaimValue(term []byte, partition equation.Partition) (
 // A non-nil assertion on such a value always fails at runtime, so it is refuted
 // rather than trusted. An optional or unknown value is not provably nil.
 func valueIsProvablyNil(value []byte) bool {
-	if string(value) == "scalar/nil" {
+	if string(value) == shapefact.ScalarNilWire {
 		return true
 	}
 	if witness, ok := shapefact.DecodeTarget(value); ok && witness != nil {
@@ -16406,7 +16400,7 @@ func valueIsProvablyNil(value []byte) bool {
 }
 
 func claimProven(value []byte, kind, targetType string) bool {
-	if _, claimed := shapefact.DecodeClaim(value); claimed || string(value) == "scalar/top" {
+	if _, claimed := shapefact.DecodeClaim(value); claimed || string(value) == shapefact.ScalarTopWire {
 		return false
 	}
 	if kind == "claim-kind/2" {
@@ -16418,11 +16412,11 @@ func claimProven(value []byte, kind, targetType string) bool {
 	}
 	switch typeName {
 	case "nil":
-		return string(value) == "scalar/nil"
+		return string(value) == shapefact.ScalarNilWire
 	case "boolean":
 		scalar, ok := shapefact.DecodeScalar(value)
 		_, boolean := scalar.BooleanText()
-		return (ok && boolean) || string(value) == "scalar/boolean"
+		return (ok && boolean) || string(value) == shapefact.ScalarBooleanWire
 	case "string":
 		return shapefact.IsScalarKind(value, shapefact.ScalarString)
 	case "number":
@@ -16696,7 +16690,7 @@ func declaredElementWriteDiagnostic(operation equation.BoundEquation, operands m
 	// it, so the element contract does not describe the store. Reads already
 	// carry the resulting absence: an element is optional until an in-range
 	// proof discharges it.
-	if string(value) == "scalar/nil" {
+	if string(value) == shapefact.ScalarNilWire {
 		return equation.Fact{}, false
 	}
 	anySource := isExplicitAnyValue(value) || sourceHasAnyBoundary(operands["value"], partition.Values())
@@ -16897,7 +16891,7 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	value := []byte("scalar/top")
+	value := []byte(shapefact.ScalarTopWire)
 	numericInduction := false
 	// The front carries the iteration form as part of the same closed loop
 	// carrier as the control triple. A numeric loop counter is therefore typed
@@ -17148,7 +17142,7 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 	// the write itself would leave a read with no completed producer, which is an
 	// artifact malformation rather than an absent fact.
 	unrefined := equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: append([]equation.Fact{
-		{Key: termFamilyKey(factkey.Value, string(operands["result"]), operation.Target.Name).String(), Value: []byte("scalar/top")},
+		{Key: termFamilyKey(factkey.Value, string(operands["result"]), operation.Target.Name).String(), Value: []byte(shapefact.ScalarTopWire)},
 		{Key: epochFactPrefix + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 	}, suspensionFacts...)}}
 	type selectCase struct {
@@ -17238,7 +17232,7 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 		return equation.TransactionResult{}, marshalErr
 	}
 	values := []equation.Fact{
-		{Key: termFamilyKey(factkey.Value, string(operands["result"]), operation.Target.Name).String(), Value: []byte("scalar/top")},
+		{Key: termFamilyKey(factkey.Value, string(operands["result"]), operation.Target.Name).String(), Value: []byte(shapefact.ScalarTopWire)},
 		{Key: epochFactPrefix + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
 		{Key: termFamilyKey(factkey.Type, string(operands["result"]), operation.Target.Name).String(), Value: encodedResult},
 		{Key: "select/origin/" + string(operands["result"]) + "/" + operation.Target.Name, Value: []byte(selectID)},
@@ -17453,7 +17447,7 @@ func shortCircuitBypassFacts(operation equation.BoundEquation, partition equatio
 		case "short-circuit-operand":
 			operand = item.Value
 		case "short-circuit-bypass":
-			edge, edgeKnown = string(item.Value) == "scalar/bool/true", true
+			edge, edgeKnown = string(item.Value) == shapefact.ScalarTrueWire, true
 		}
 	}
 	if len(result) == 0 || len(operand) == 0 || !edgeKnown {
@@ -17685,7 +17679,7 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 		narrowing = "truthy"
 	}
 	closure := equation.OutputClosure{Outcomes: []equation.Fact{
-		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge)},
+		{Key: "branch/" + operation.Target.Name, Value: shapefact.BooleanTextValue(edge)},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte(narrowing)},
 	}}
 	closure.Values = append(closure.Values, equation.Fact{
@@ -17788,7 +17782,7 @@ func compoundBranchOutcome(operation equation.BoundEquation, truth bool) equatio
 	}
 	return equation.OutputClosure{
 		Outcomes: []equation.Fact{
-			{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge)},
+			{Key: "branch/" + operation.Target.Name, Value: shapefact.BooleanTextValue(edge)},
 			{Key: "narrowing/" + operation.Target.Name, Value: []byte(narrowing)},
 		},
 		Values: []equation.Fact{{
@@ -17823,7 +17817,7 @@ func undecidedBranchOutcome(operation equation.BoundEquation, partition equation
 	for _, edge := range [2]string{"true", "false"} {
 		guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: edge})
 		closure.Outcomes = append(closure.Outcomes,
-			equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge), Guards: equation.GuardSet(guard)},
+			equation.Fact{Key: "branch/" + operation.Target.Name, Value: shapefact.BooleanTextValue(edge), Guards: equation.GuardSet(guard)},
 			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("undecided/" + edge), Guards: equation.GuardSet(guard)},
 		)
 	}
@@ -18199,7 +18193,7 @@ func typeWitnessBranchClosure(operation equation.BoundEquation, partition equati
 		}
 		guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: edge.name})
 		closure.Outcomes = append(closure.Outcomes,
-			equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge.name), Guards: equation.GuardSet(guard)},
+			equation.Fact{Key: "branch/" + operation.Target.Name, Value: shapefact.BooleanTextValue(edge.name), Guards: equation.GuardSet(guard)},
 			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("type-witness/" + edge.name), Guards: equation.GuardSet(guard)},
 		)
 		closure.Values = append(closure.Values, equation.Fact{Key: termFamilyKey(factkey.Value, string(term), operation.Target.Name).String(), Value: encoded, Guards: equation.GuardSet(guard)})
@@ -18276,7 +18270,7 @@ func typePredicateBranchClosure(operation equation.BoundEquation, partition equa
 		}
 		// A nil error edge validates the value: it holds the checked type T. A
 		// non-nil error edge invalidates it: the value slot is nil.
-		trueValue := []byte("scalar/nil")
+		trueValue := []byte(shapefact.ScalarNilWire)
 		if errorAbsent {
 			trueValue = append([]byte(nil), fact.Value...)
 		}
@@ -18284,8 +18278,8 @@ func typePredicateBranchClosure(operation equation.BoundEquation, partition equa
 		falseGuard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.FalseEdge})
 		return equation.OutputClosure{
 			Outcomes: []equation.Fact{
-				{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/true"), Guards: equation.GuardSet(trueGuard)},
-				{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/false"), Guards: equation.GuardSet(falseGuard)},
+				{Key: "branch/" + operation.Target.Name, Value: []byte(shapefact.ScalarTrueWire), Guards: equation.GuardSet(trueGuard)},
+				{Key: "branch/" + operation.Target.Name, Value: []byte(shapefact.ScalarFalseWire), Guards: equation.GuardSet(falseGuard)},
 				{Key: "narrowing/" + operation.Target.Name, Value: []byte("type-predicate/true"), Guards: equation.GuardSet(trueGuard)},
 				{Key: "narrowing/" + operation.Target.Name, Value: []byte("type-predicate/false"), Guards: equation.GuardSet(falseGuard)},
 			},
@@ -18367,7 +18361,7 @@ func typedNilBranchClosure(operation equation.BoundEquation, partition equation.
 		}
 		guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: edge.name})
 		closure.Outcomes = append(closure.Outcomes,
-			equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge.name), Guards: equation.GuardSet(guard)},
+			equation.Fact{Key: "branch/" + operation.Target.Name, Value: shapefact.BooleanTextValue(edge.name), Guards: equation.GuardSet(guard)},
 			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("typed-nil/" + edge.name), Guards: equation.GuardSet(guard)},
 		)
 		closure.Values = append(closure.Values, equation.Fact{Key: termFamilyKey(factkey.Value, string(term), operation.Target.Name).String(), Value: value, Guards: equation.GuardSet(guard)})
@@ -18427,8 +18421,8 @@ func correlationBranchClosure(operation equation.BoundEquation, partition equati
 
 	guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.TrueEdge})
 	closure := equation.OutputClosure{Outcomes: []equation.Fact{
-		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/true"), Guards: equation.GuardSet(guard)},
-		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/false"), Guards: equation.GuardSet(equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.FalseEdge}))},
+		{Key: "branch/" + operation.Target.Name, Value: []byte(shapefact.ScalarTrueWire), Guards: equation.GuardSet(guard)},
+		{Key: "branch/" + operation.Target.Name, Value: []byte(shapefact.ScalarFalseWire), Guards: equation.GuardSet(equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.FalseEdge}))},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte("correlation/true"), Guards: equation.GuardSet(guard)},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte("correlation/false"), Guards: equation.GuardSet(equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.FalseEdge}))},
 	}}
@@ -18510,7 +18504,7 @@ func correlationConeFacts(equal map[string]map[string]bool, nonNil map[string]bo
 func returnTupleBranchClass(predicate branchPredicateWire) (returnTupleClass, bool) {
 	switch predicate.Kind {
 	case "nil":
-		return returnTupleLiteralClass("scalar/nil"), true
+		return returnTupleLiteralClass(shapefact.ScalarNilWire), true
 	case "not-nil":
 		return returnTupleClassNotNil, true
 	case "truthy":
@@ -18576,8 +18570,8 @@ func returnTupleTrueBranchClosure(operation equation.BoundEquation, partition eq
 	}
 	falseGuard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: otherEdge})
 	closure.Outcomes = append(closure.Outcomes,
-		equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge), Guards: equation.GuardSet(guard)},
-		equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + otherEdge), Guards: equation.GuardSet(falseGuard)},
+		equation.Fact{Key: "branch/" + operation.Target.Name, Value: shapefact.BooleanTextValue(edge), Guards: equation.GuardSet(guard)},
+		equation.Fact{Key: "branch/" + operation.Target.Name, Value: shapefact.BooleanTextValue(otherEdge), Guards: equation.GuardSet(falseGuard)},
 		equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("return-tuple/" + edge), Guards: equation.GuardSet(guard)},
 		equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("return-tuple/" + otherEdge), Guards: equation.GuardSet(falseGuard)},
 	)
@@ -18879,25 +18873,12 @@ func subjectLengthFloorProven(subject factkey.Part, partition equation.Partition
 	if floor == 0 {
 		return 0
 	}
-	if revocation := subjectLatestRevocation(subject, partition); revocation != "" && proofPoint <= revocation {
+	if !((familyReadLicense{
+		Family: factkey.HeapLengthFloor, Subject: subject, Proof: proofPoint,
+	}).Valid(partition)) {
 		return 0
 	}
 	return floor
-}
-
-func subjectLatestRevocation(subject factkey.Part, partition equation.Partition) string {
-	revocation := ""
-	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapIndexRevoke, []factkey.Part{subject}, ""))
-	for {
-		fact, ok := values.Next()
-		if !ok {
-			break
-		}
-		if string(fact.Payload) == "revoked" && fact.Occurrence > revocation {
-			revocation = fact.Occurrence
-		}
-	}
-	return revocation
 }
 
 // opaqueCalleeEffect reports that this application's effect on the tables it
@@ -19057,14 +19038,15 @@ func subjectHasIndexProof(subject factkey.Part, partition equation.Partition) bo
 	if subjectLengthFloorProven(subject, partition) > 0 {
 		return true
 	}
-	revocation := subjectLatestRevocation(subject, partition)
 	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapIndexPresence, []factkey.Part{subject}, ""))
 	for {
 		fact, ok := values.Next()
 		if !ok {
 			break
 		}
-		if string(fact.Payload) == "proven" && (revocation == "" || fact.Occurrence > revocation) {
+		if string(fact.Payload) == "proven" && (familyReadLicense{
+			Family: factkey.HeapIndexPresence, Subject: subject, Proof: fact.Occurrence,
+		}).Valid(partition) {
 			return true
 		}
 	}
@@ -19234,7 +19216,7 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 	hasConsumer := false
 	predicates := make([]branchPredicateWire, 0, len(operation.Operands))
 	for _, operand := range operation.Operands {
-		if operand.Role == "index-presence-consumer" && string(operand.Value) == "scalar/bool/true" {
+		if operand.Role == "index-presence-consumer" && string(operand.Value) == shapefact.ScalarTrueWire {
 			hasConsumer = true
 		}
 		if operand.Role == "predicate" {
@@ -19271,8 +19253,8 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 	}
 	guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.TrueEdge})
 	closure := equation.OutputClosure{Outcomes: []equation.Fact{
-		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/true"), Guards: equation.GuardSet(guard)},
-		{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/false"), Guards: equation.GuardSet(equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.FalseEdge}))},
+		{Key: "branch/" + operation.Target.Name, Value: []byte(shapefact.ScalarTrueWire), Guards: equation.GuardSet(guard)},
+		{Key: "branch/" + operation.Target.Name, Value: []byte(shapefact.ScalarFalseWire), Guards: equation.GuardSet(equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.FalseEdge}))},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte("index/true"), Guards: equation.GuardSet(guard)},
 		{Key: "narrowing/" + operation.Target.Name, Value: []byte("index/false"), Guards: equation.GuardSet(equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.FalseEdge}))},
 	}}
@@ -19676,7 +19658,7 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 		}
 		guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: edge.name})
 		closure.Outcomes = append(closure.Outcomes,
-			equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge.name), Guards: equation.GuardSet(guard)},
+			equation.Fact{Key: "branch/" + operation.Target.Name, Value: shapefact.BooleanTextValue(edge.name), Guards: equation.GuardSet(guard)},
 			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("typed/" + edge.name), Guards: equation.GuardSet(guard)},
 		)
 		closure.Values = append(closure.Values, equation.Fact{Key: termFamilyKey(factkey.Value, string(root), operation.Target.Name).String(), Value: value, Guards: equation.GuardSet(guard)})
@@ -19794,7 +19776,7 @@ func selectBranchClosure(operation equation.BoundEquation, partition equation.Pa
 		}
 		guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: edge})
 		closure.Outcomes = append(closure.Outcomes,
-			equation.Fact{Key: "branch/" + operation.Target.Name, Value: []byte("scalar/bool/" + edge), Guards: equation.GuardSet(guard)},
+			equation.Fact{Key: "branch/" + operation.Target.Name, Value: shapefact.BooleanTextValue(edge), Guards: equation.GuardSet(guard)},
 			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("select/" + edge), Guards: equation.GuardSet(guard)},
 		)
 		closure.Values = append(closure.Values, equation.Fact{Key: "select/constraint/" + operation.Target.Name + "/" + edge, Value: wire, Guards: equation.GuardSet(guard)})
@@ -20205,7 +20187,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	if operands.display == "table.isfrozen" {
 		return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
-			Key: "effect.call-bool/" + operation.Target.Name, Value: []byte("scalar/boolean"),
+			Key: "effect.call-bool/" + operation.Target.Name, Value: []byte(shapefact.ScalarBooleanWire),
 		}}}}, nil
 	}
 	if operands.display == "table.insert" && len(operands.arguments) != 0 && strings.HasPrefix(string(operands.arguments[0]), "path/") {
@@ -20350,7 +20332,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	if !signatureKnown || operands.spread {
-		if string(callee) == "scalar/function" {
+		if string(callee) == shapefact.ScalarFunctionWire {
 			// An unshaped callable includes generic and otherwise uninstantiated
 			// lexical functions. Its body result is not a certified call result.
 			return equation.TransactionResult{Complete: true}, nil
@@ -20735,7 +20717,7 @@ func operatorFixedBooleanResult(term []byte, expected typ.Type, partition equati
 	if !proven {
 		return false
 	}
-	for _, witness := range [][]byte{[]byte("scalar/bool/true"), []byte("scalar/bool/false")} {
+	for _, witness := range [][]byte{[]byte(shapefact.ScalarTrueWire), []byte(shapefact.ScalarFalseWire)} {
 		if valueAgainstType(witness, expected) != shapeProven {
 			return false
 		}
@@ -20847,7 +20829,7 @@ func unvalidatedBoundaryMemberValue(term []byte, value []byte, partition equatio
 	if !anyBoundarySource(term, value, true, partition) {
 		return value
 	}
-	return []byte("scalar/claim/claim-kind/3/\"any\"")
+	return claimPayload("claim-kind/3", `"any"`)
 }
 
 func explicitAnyBoundaryFact(term, operation string) equation.Fact {
@@ -21054,7 +21036,7 @@ const channelLifecyclePrefix = "effect.lifecycle.channel/"
 // inferred for an unknown receiver or for an identity that has escaped.
 func channelLifecycleEpoch(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
 	if operands.display == "channel.new" && !operands.spread && len(operands.arguments) == 0 {
-		identity := []byte("scalar/channel/" + operation.Target.Name)
+		identity := shapefact.ScalarTextValue(shapefact.ScalarChannel, operation.Target.Name)
 		return equation.OutputClosure{Values: []equation.Fact{
 			{Key: coordinateFamilyKey(factkey.CallResult, operation.Target.Name, "00000000").String(), Value: identity},
 			channelLifecycleStateFact(identity, operation.Target.Name, "open"),
@@ -21097,7 +21079,7 @@ const resourceLifecyclePrefix = "effect.lifecycle.resource/"
 // result is opaque and therefore cannot be fabricated by an unknown call.
 func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
 	if operands.display == "resource.connect" && !operands.spread && len(operands.arguments) == 0 {
-		identity := []byte("scalar/resource/" + operation.Target.Name)
+		identity := shapefact.ScalarTextValue(shapefact.ScalarResource, operation.Target.Name)
 		return equation.OutputClosure{Values: []equation.Fact{
 			{Key: coordinateFamilyKey(factkey.CallResult, operation.Target.Name, "00000000").String(), Value: identity},
 			resourceLifecycleStateFact(identity, operation.Target.Name, "open"),
@@ -21142,7 +21124,7 @@ func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCal
 				diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyInvalidTypestateRequirement)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: "open", Observed: state}),
 			}}, true
 		}
-		transaction := []byte("scalar/resource/" + operation.Target.Name)
+		transaction := shapefact.ScalarTextValue(shapefact.ScalarResource, operation.Target.Name)
 		return equation.OutputClosure{Values: []equation.Fact{
 			{Key: coordinateFamilyKey(factkey.CallResult, operation.Target.Name, "00000000").String(), Value: transaction},
 			resourceLifecycleStateFact(transaction, operation.Target.Name, "active"),
@@ -21263,7 +21245,7 @@ func resolveCurrentIdentity(term []byte, partition equation.Partition) ([]byte, 
 		return value, true
 	}
 	if _, known := currentChannelPayloadFact(term, partition); known {
-		return []byte("scalar/channel-summary/" + base64.RawURLEncoding.EncodeToString(term)), true
+		return shapefact.ScalarTextValue(shapefact.ScalarChannelSummary, base64.RawURLEncoding.EncodeToString(term)), true
 	}
 	// A typed module summary can prove that a derived field is a Channel<T>,
 	// but it has no heap allocation fact in this local partition. Preserve a
@@ -21273,7 +21255,7 @@ func resolveCurrentIdentity(term []byte, partition equation.Partition) ([]byte, 
 	if _, channelOK := typedChannelPayload(term, partition); !channelOK {
 		return nil, false
 	}
-	return []byte("scalar/channel-summary/" + base64.RawURLEncoding.EncodeToString(term)), true
+	return shapefact.ScalarTextValue(shapefact.ScalarChannelSummary, base64.RawURLEncoding.EncodeToString(term)), true
 }
 
 // typedChannelPayload keeps an instantiated Channel<T> intact while walking
@@ -22295,7 +22277,7 @@ func metatableIndexChainFrom(metatable []byte, visited map[string]bool, partitio
 func inheritedMemberValue(identity []byte, suffix string, partition equation.Partition) (value []byte, found, decided bool) {
 	chain, complete := metatableIndexChain(identity, partition)
 	for _, link := range chain {
-		if member, present := heapMemberCurrent(factkey.HeapMember, link, suffix, partition); present && string(member) != "scalar/nil" {
+		if member, present := heapMemberCurrent(factkey.HeapMember, link, suffix, partition); present && string(member) != shapefact.ScalarNilWire {
 			return member, true, true
 		}
 	}
@@ -22317,7 +22299,7 @@ func composedMetatableSurface(chain [][]byte, own shapefact.Table, partition equ
 	}
 	for _, link := range chain {
 		for suffix, value := range heapMemberInventory(link, partition) {
-			if _, shadowed := members[suffix]; shadowed || value == "scalar/nil" {
+			if _, shadowed := members[suffix]; shadowed || value == shapefact.ScalarNilWire {
 				continue
 			}
 			members[suffix] = shapefact.Member{Suffix: suffix, Present: true, Value: value}
@@ -22814,7 +22796,7 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 					return missing, true
 				}
 			}
-			return []byte("scalar/nil"), true
+			return []byte(shapefact.ScalarNilWire), true
 		}
 		return nil, false
 	}
@@ -22973,7 +22955,7 @@ func closedUnmutatedHeapRead(term []byte, partition equation.Partition) bool {
 		}
 	}
 	value, found := heapMemberCurrent(factkey.HeapMember, identity, last, partition)
-	return found && string(value) != "scalar/nil" && !isUnknownScalar(value)
+	return found && string(value) != shapefact.ScalarNilWire && !isUnknownScalar(value)
 }
 
 func declaredOptionalMapReadWitness(term []byte, partition equation.Partition) (typ.Type, bool, bool) {
@@ -23339,9 +23321,9 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 			}
 			result.display = string(operand.Value) + "." + result.method
 		case operand.Role == "list-spread":
-			if string(operand.Value) == "scalar/bool/true" {
+			if string(operand.Value) == shapefact.ScalarTrueWire {
 				result.spread = true
-			} else if string(operand.Value) != "scalar/bool/false" {
+			} else if string(operand.Value) != shapefact.ScalarFalseWire {
 				return directCallOperands{}, fmt.Errorf("engine: malformed call argument spread")
 			}
 		case operand.Role == "result-arity":
@@ -23441,7 +23423,7 @@ func methodCallable(receiver []byte, method string) ([]byte, bool) {
 		return nil, false
 	}
 	if !member.Present {
-		return []byte("scalar/nil"), true
+		return []byte(shapefact.ScalarNilWire), true
 	}
 	return []byte(member.Value), true
 }
@@ -23472,7 +23454,7 @@ func optionalMethodReceiverAtCall(receiverTerm, receiver []byte, method string, 
 	if optionalMethodReceiver(receiverTerm, receiver, method) {
 		return true
 	}
-	if string(receiver) != "scalar/nil" {
+	if string(receiver) != shapefact.ScalarNilWire {
 		return false
 	}
 	declared, found := declaredTypeForTerm(receiverTerm, partition)
@@ -23999,7 +23981,7 @@ func resolveKnownCurrentValue(term []byte, partition equation.Partition) ([]byte
 
 func numericForInductionSatisfies(term, value []byte, expected string, partition equation.Partition) bool {
 	if strings.HasSuffix(expected, "?") {
-		return string(value) != "scalar/nil" && numericForInductionSatisfies(term, value, strings.TrimSuffix(expected, "?"), partition)
+		return string(value) != shapefact.ScalarNilWire && numericForInductionSatisfies(term, value, strings.TrimSuffix(expected, "?"), partition)
 	}
 	valuePrefix := termFamilyKey(factkey.Value, string(term), "").String()
 	latest := ""
@@ -24059,7 +24041,7 @@ func provenValueNotSubtype(value []byte, spelling string) bool {
 	}
 	// A table or a callable carries no scalar witness type, and no primitive
 	// contract admits either of them.
-	return shapefact.IsTable(value) || string(value) == "scalar/table" ||
+	return shapefact.IsTable(value) || string(value) == shapefact.ScalarTableWire ||
 		shapefact.IsScalarKind(value, shapefact.ScalarFunction)
 }
 
@@ -24140,8 +24122,8 @@ func externalCallKernel(lexical *lexicalEvaluator, operation equation.BoundEquat
 	}
 	if !strings.HasPrefix(string(operands["application"]), "call/") ||
 		(!strings.HasPrefix(string(operands["provider"]), "provider/global/") && !strings.HasPrefix(string(operands["provider"]), "provider/module/") && !strings.HasPrefix(string(operands["provider"]), "provider/module-load/")) ||
-		(string(operands["argument-spread"]) != "scalar/bool/true" && string(operands["argument-spread"]) != "scalar/bool/false") ||
-		(string(operands["result-spread"]) != "scalar/bool/true" && string(operands["result-spread"]) != "scalar/bool/false") ||
+		(string(operands["argument-spread"]) != shapefact.ScalarTrueWire && string(operands["argument-spread"]) != shapefact.ScalarFalseWire) ||
+		(string(operands["result-spread"]) != shapefact.ScalarTrueWire && string(operands["result-spread"]) != shapefact.ScalarFalseWire) ||
 		!strings.HasPrefix(string(operands["context"]), "call-context/") {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external call boundary")
 	}
@@ -24318,7 +24300,7 @@ func opaqueCallbackMemberJoins(child front.Compilation, capture string, identity
 		}
 		value, hasValue := artifactOperand(item.Operands, "value")
 		if !hasValue || !shapefact.IsScalar(value) {
-			value = []byte("scalar/top")
+			value = []byte(shapefact.ScalarTopWire)
 		}
 		prior, repeated := written[suffix]
 		if !repeated {
@@ -24331,7 +24313,7 @@ func opaqueCallbackMemberJoins(child front.Compilation, capture string, identity
 		// callback runs joins into the one cell.
 		joined, joinable := joinPublishedValues(prior, value)
 		if !joinable {
-			joined = []byte("scalar/top")
+			joined = []byte(shapefact.ScalarTopWire)
 		}
 		written[suffix] = joined
 	}
@@ -24343,7 +24325,7 @@ func opaqueCallbackMemberJoins(child front.Compilation, capture string, identity
 		}
 		joined, joinable := joinPublishedValues(current, written[suffix])
 		if !joinable {
-			joined = []byte("scalar/top")
+			joined = []byte(shapefact.ScalarTopWire)
 		}
 		facts = append(facts, heapMemberFact(identity, suffix, operation, joined))
 	}
@@ -24478,7 +24460,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		if len(result) == 0 || !strings.HasPrefix(string(result), "temp/") || (len(targetTerms) != 0 && len(targetTerms[key]) == 0) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result %q", key)
 		}
-		value := []byte("scalar/top")
+		value := []byte(shapefact.ScalarTopWire)
 		localCallableResult := false
 		projectedLocalResult := false
 		joinedLocalResult := false
@@ -24531,7 +24513,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			}
 		}
 		if key == "00000000" && hasValue(partition, "effect.call-bool/"+strings.TrimPrefix(string(application), "call/")) {
-			value = []byte("scalar/boolean")
+			value = []byte(shapefact.ScalarBooleanWire)
 		}
 		if index, err := strconv.Atoi(key); err == nil && !declaredAnyResult {
 			// A demanded local child may already have published the returned table
@@ -24543,25 +24525,25 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					value, receiverResult = contract, true
 				}
 			}
-			if string(value) == "scalar/top" && receiver != nil && externalCallbackReceiverMayMutate(receiver, provider, partition) {
-				value = []byte("scalar/external-callback-any")
+			if string(value) == shapefact.ScalarTopWire && receiver != nil && externalCallbackReceiverMayMutate(receiver, provider, partition) {
+				value = []byte(shapefact.ScalarExternalCallbackAnyWire)
 			}
 			// A local child result is the most precise existing publication. Only
 			// when it is absent may the result owner use the direct callee's sealed
 			// function contract; an opaque callable has no such witness.
-			if string(value) == "scalar/top" {
+			if string(value) == shapefact.ScalarTopWire {
 				if contract, ok := sealedCallableResultValue(lexical, callee, index, argumentTerms, partition); ok {
 					value = contract
 					localCallableResult = true
 				}
 			}
-			if string(value) == "scalar/top" {
+			if string(value) == shapefact.ScalarTopWire {
 				if contract, ok := inferredCallableResultValue(callee, index, partition); ok {
 					value = contract
 					localCallableResult = true
 				}
 			}
-			if string(value) == "scalar/top" {
+			if string(value) == shapefact.ScalarTopWire {
 				if summary, ok := sealedCallableResultType(lexical, callee, index, argumentTerms, partition); ok && requiresLocalUnionProof(summary) {
 					localSummary = summary
 				}
@@ -24574,27 +24556,27 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					}
 				}
 			}
-			if string(value) == "scalar/top" {
+			if string(value) == shapefact.ScalarTopWire {
 				if contract, ok := typedCallableResultValue(callee, index, argumentTerms, partition); ok {
 					value = contract
 				}
 			}
-			if string(value) == "scalar/top" {
+			if string(value) == shapefact.ScalarTopWire {
 				if contract, ok := sealedMethodResultValue(lexical, receiver, method, index, partition); ok {
 					value = contract
 				}
 			}
-			if string(value) == "scalar/top" {
+			if string(value) == shapefact.ScalarTopWire {
 				if contract, ok := sealedMethodReceiverResultValue(lexical, receiver, method, index, partition); ok {
 					value, receiverResult = contract, true
 				}
 			}
-			if string(value) == "scalar/top" {
+			if string(value) == shapefact.ScalarTopWire {
 				if contract, receiverTerm, ok := sealedStaticMemberReceiverResultValue(lexical, callee, index, partition); ok {
 					value, receiverResult, receiverResultTerm = contract, true, receiverTerm
 				}
 			}
-			if string(value) == "scalar/top" {
+			if string(value) == shapefact.ScalarTopWire {
 				if summary, ok := typedMethodReturnType(receiver, method, index, partition); ok {
 					methodSummary = summary
 				}
@@ -24602,7 +24584,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					value = contract
 				}
 			}
-			if string(value) == "scalar/top" {
+			if string(value) == shapefact.ScalarTopWire {
 				if contract, ok := ambientChannelMethodResultValue(receiver, method, index, partition); ok {
 					value = contract
 				}
@@ -24664,7 +24646,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			// supplies. Nothing is fabricated from the metatable's shape: the
 			// composition is withheld unless every link of that chain is a proven
 			// closed allocation.
-			if string(value) == "scalar/top" && providerName(provider) == "setmetatable" {
+			if string(value) == shapefact.ScalarTopWire && providerName(provider) == "setmetatable" {
 				if receiver, found := argumentTerms[0]; found {
 					setMetatableReceiver = receiver
 					if installed, stated := argumentTerms[1]; stated && index == 0 {
@@ -24679,12 +24661,12 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			// boundary. Top would state absence of information where the boundary is
 			// itself a published fact, and every obligation any owes would then be
 			// discharged by that absence.
-			if string(value) == "scalar/top" && callBoundaryAnyResult(callee, receiver, partition) {
-				value = []byte("scalar/claim/claim-kind/3/\"any\"")
+			if string(value) == shapefact.ScalarTopWire && callBoundaryAnyResult(callee, receiver, partition) {
+				value = claimPayload("claim-kind/3", `"any"`)
 			}
 		}
 		if declaredAnyResult {
-			value = []byte("scalar/claim/claim-kind/3/\"any\"")
+			value = claimPayload("claim-kind/3", `"any"`)
 		}
 		// A standard-library slot whose declared optionality is positional is
 		// discharged where a guard has already bounded the subject. The proof is
@@ -24776,7 +24758,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		if importedRelation {
 			values = append(values, equation.Fact{
 				Key:   "imported-relation-result/" + base64.RawURLEncoding.EncodeToString(result) + "/" + operation.Target.Name,
-				Value: []byte("scalar/bool/true"),
+				Value: []byte(shapefact.ScalarTrueWire),
 			})
 		}
 		if methodSummary != nil {
@@ -24882,7 +24864,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		// validated value. When the exact predicate argument is explicitly any,
 		// retain that boundary on the control result so a possible arm is
 		// evaluated without turning the value result into a type witness.
-		if string(value) == "scalar/top" && typePredicateErrorTarget != nil && (key == "00000001" || (key == "00000000" && len(resultTerms) == 1)) {
+		if string(value) == shapefact.ScalarTopWire && typePredicateErrorTarget != nil && (key == "00000001" || (key == "00000000" && len(resultTerms) == 1)) {
 			if argument, found := argumentTerms[0]; found {
 				if root, _, ok := explicitAnySourceFact(argument, partition.Values()); ok {
 					values = append(values, equation.Fact{Key: "gradual-any/" + string(result) + "/" + operation.Target.Name, Value: root})
@@ -25075,7 +25057,7 @@ func (c returnTupleClass) contains(value exportrelation.Value, occupied bool) (h
 	switch c {
 	case returnTupleClassTruthy:
 		if value.Scalar != "" {
-			return value.Scalar != "scalar/nil" && value.Scalar != "scalar/bool/false", true
+			return value.Scalar != shapefact.ScalarNilWire && value.Scalar != shapefact.ScalarFalseWire, true
 		}
 		if len(value.Table) != 0 {
 			return true, true
@@ -25083,7 +25065,7 @@ func (c returnTupleClass) contains(value exportrelation.Value, occupied bool) (h
 		return false, false
 	case returnTupleClassNotNil:
 		if value.Scalar != "" {
-			return value.Scalar != "scalar/nil", true
+			return value.Scalar != shapefact.ScalarNilWire, true
 		}
 		return occupied, occupied
 	}
@@ -25094,7 +25076,7 @@ func (c returnTupleClass) contains(value exportrelation.Value, occupied bool) (h
 	if value.Scalar != "" {
 		return value.Scalar == literal, true
 	}
-	return false, occupied && literal == "scalar/nil"
+	return false, occupied && literal == shapefact.ScalarNilWire
 }
 
 // returnTupleTriggerClasses names every class this catalog can state about one
@@ -25194,7 +25176,7 @@ func returnTupleValuePresent(tuple exportrelation.ReturnTuple, slot int) bool {
 		return true
 	}
 	value := tuple.Values[slot]
-	return (value.Scalar != "" && value.Scalar != "scalar/nil") || len(value.Table) != 0
+	return (value.Scalar != "" && value.Scalar != shapefact.ScalarNilWire) || len(value.Table) != 0
 }
 
 func mustCallResultIndex(key string) int {
@@ -26640,8 +26622,8 @@ func materializeImportedReturn(template exportrelation.Value, application []byte
 		if !ok {
 			return nil, false
 		}
-		table.Members = append(table.Members, shapefact.Member{Suffix: member.Suffix, Present: string(value) != "scalar/nil", Value: string(value)})
-		if string(value) == "scalar/nil" {
+		table.Members = append(table.Members, shapefact.Member{Suffix: member.Suffix, Present: string(value) != shapefact.ScalarNilWire, Value: string(value)})
+		if string(value) == shapefact.ScalarNilWire {
 			table.Members[len(table.Members)-1].Value = ""
 		}
 		// A nested finite member is already part of the same validated return
@@ -26819,7 +26801,7 @@ func heapMemberSurfaceForIdentity(identity, value []byte, partition equation.Par
 		members[member.Suffix] = member
 	}
 	for suffix, fact := range latest {
-		members[suffix] = shapefact.Member{Suffix: suffix, Present: string(fact.payload) != "scalar/nil", Value: string(fact.payload)}
+		members[suffix] = shapefact.Member{Suffix: suffix, Present: string(fact.payload) != shapefact.ScalarNilWire, Value: string(fact.payload)}
 	}
 	table.Members = table.Members[:0]
 	for _, member := range members {
@@ -26926,7 +26908,7 @@ func importedCalleeFunction(lexical *lexicalEvaluator, provider []byte, partitio
 // manifest and must remain visible to each later assignment contract.
 func importedReturnValue(result typ.Type) ([]byte, bool) {
 	if result != nil && unwrap.Alias(result).Kind() == kind.Any {
-		return []byte("scalar/claim/claim-kind/3/\"any\""), true
+		return claimPayload("claim-kind/3", `"any"`), true
 	}
 	return providerReturnTypeValue(result)
 }
@@ -27771,7 +27753,7 @@ func indexedRoleValue(role, prefix string, value []byte) (int, string, bool) {
 
 func hasValue(partition equation.Partition, key string) bool {
 	for _, item := range partition.Values() {
-		if item.Key == key && string(item.Value) == "scalar/boolean" {
+		if item.Key == key && string(item.Value) == shapefact.ScalarBooleanWire {
 			return true
 		}
 	}
@@ -28068,7 +28050,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		}
 		subject := returnValueSubject(index, displays[index])
 		payload := DiagnosticPayload{Kind: diagnosticReturnContract, Subject: subject, Observed: assignmentEvidenceValue(values[index]), Required: typeformat.Short(expected)}
-		if optionalConcreteWitness(values[index]) && valueAgainstType([]byte("scalar/nil"), expected) == shapeRefuted {
+		if optionalConcreteWitness(values[index]) && valueAgainstType([]byte(shapefact.ScalarNilWire), expected) == shapeRefuted {
 			payload.Flags |= DiagnosticMayBeNil
 		}
 		diagnostics = append(diagnostics, diagnosticFact(fmt.Sprintf(diagnosticFamilyPrefix(DiagnosticFamilyReturnContract)+"%s/%08d", operation.Target.Name, index), payload))
@@ -28305,7 +28287,7 @@ func scalarIsNil(value []byte) (bool, error) {
 			return false, errUnknownScalar
 		}
 	}
-	return string(value) == "scalar/nil", nil
+	return string(value) == shapefact.ScalarNilWire, nil
 }
 
 // scalarEqualsEncoding compares two current values for runtime equality. Two
@@ -28344,7 +28326,7 @@ func singleValueWitness(value []byte, target typ.Type, isTarget bool) (string, b
 		return "", false
 	}
 	if resolved.Kind() == kind.Nil {
-		return "scalar/nil", true
+		return shapefact.ScalarNilWire, true
 	}
 	literal, ok := resolved.(*typ.Literal)
 	if !ok {
@@ -28352,13 +28334,13 @@ func singleValueWitness(value []byte, target typ.Type, isTarget bool) (string, b
 	}
 	switch text := literal.Value.(type) {
 	case string:
-		return "scalar/string/" + strconv.Quote(text), true
+		return shapefact.ScalarTextValueString(shapefact.ScalarString, strconv.Quote(text)), true
 	case bool:
-		return "scalar/bool/" + strconv.FormatBool(text), true
+		return shapefact.BooleanValueString(text), true
 	case int64:
-		return "scalar/number/" + strconv.FormatInt(text, 10), true
+		return shapefact.ScalarTextValueString(shapefact.ScalarNumber, strconv.FormatInt(text, 10)), true
 	case float64:
-		return "scalar/number/" + strconv.FormatFloat(text, 'g', -1, 64), true
+		return shapefact.ScalarTextValueString(shapefact.ScalarNumber, strconv.FormatFloat(text, 'g', -1, 64)), true
 	default:
 		return "", false
 	}
@@ -28550,7 +28532,7 @@ func guardsHold(guards []equation.Guard, partition equation.Partition) bool {
 		if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || (parts[3] != "true" && parts[3] != "false") {
 			return false
 		}
-		if string(outcomes["branch/"+parts[2]]) != "scalar/bool/"+parts[3] {
+		if !bytes.Equal(outcomes["branch/"+parts[2]], shapefact.BooleanTextValue(parts[3])) {
 			return false
 		}
 	}
@@ -28586,9 +28568,9 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	}
 	switch string(absence) {
 	case "front/absence/nil":
-		return []byte("scalar/nil"), nil
+		return []byte(shapefact.ScalarNilWire), nil
 	case "front/absence/top":
-		return []byte("scalar/top"), nil
+		return []byte(shapefact.ScalarTopWire), nil
 	case "front/absence/error":
 		return nil, fmt.Errorf("engine: value path %q has no completed write before %q", term, cutoff)
 	default:
@@ -28655,7 +28637,7 @@ func resolveCurrentValueWithAuthorities(term []byte, partition equation.Partitio
 	// be outside this scalar model. Root paths remain strict so an absent
 	// variable is never fabricated as a truthy or falsy value.
 	if derivedPathTerm(term) {
-		return []byte("scalar/top"), nil
+		return []byte(shapefact.ScalarTopWire), nil
 	}
 	return nil, fmt.Errorf("engine: value path %q has no completed write", term)
 }
@@ -28886,13 +28868,13 @@ func possibleMemberValue(identity []byte, suffix string, value []byte, partition
 	if len(value) == 0 || isUnknownScalar(value) || shapefact.IsTable(value) {
 		return value
 	}
-	incoming := []byte("scalar/nil")
+	incoming := []byte(shapefact.ScalarNilWire)
 	if current, published := heapMemberCurrent(factkey.HeapMember, identity, suffix, partition); published && len(current) != 0 {
 		incoming = current
 	}
 	joined, ok := joinPublishedValues(value, incoming)
 	if !ok || len(joined) == 0 {
-		return []byte("scalar/top")
+		return []byte(shapefact.ScalarTopWire)
 	}
 	return joined
 }
@@ -28923,7 +28905,7 @@ func widenRecurrentFact(lane equation.FactLane, key string, left, right []byte) 
 	return mergeRecurrentFact(lane, key, left, right, func(left, right []byte) ([]byte, bool) {
 		joined, ok := joinPublishedValues(left, right)
 		if !ok {
-			return []byte("scalar/top"), true
+			return []byte(shapefact.ScalarTopWire), true
 		}
 		return widenRecurrentValue(joined), true
 	})
@@ -29017,19 +28999,19 @@ const recurrenceWidenDepth = 8
 // scalar.
 func widenRecurrentValue(joined []byte) []byte {
 	if isUnknownScalar(joined) {
-		return []byte("scalar/top")
+		return []byte(shapefact.ScalarTopWire)
 	}
 	witness, known := joinedValueWitness(joined)
 	if !known || witness == nil {
-		return []byte("scalar/top")
+		return []byte(shapefact.ScalarTopWire)
 	}
 	widened, ok := widenRecurrentWitness(witness, 0)
 	if !ok || widened == nil {
-		return []byte("scalar/top")
+		return []byte(shapefact.ScalarTopWire)
 	}
 	encoded, encodable := shapefact.EncodeTarget(widened)
 	if !encodable || len(encoded) > recurrenceWidenBudget {
-		return []byte("scalar/top")
+		return []byte(shapefact.ScalarTopWire)
 	}
 	return encoded
 }
@@ -29098,16 +29080,16 @@ func joinPublishedValues(left, right []byte) ([]byte, bool) {
 		return append([]byte(nil), left...), true
 	}
 	if isUnknownScalar(left) || isUnknownScalar(right) {
-		return []byte("scalar/top"), true
+		return []byte(shapefact.ScalarTopWire), true
 	}
 	leftWitness, leftKnown := joinedValueWitness(left)
 	rightWitness, rightKnown := joinedValueWitness(right)
 	if !leftKnown || !rightKnown {
-		return []byte("scalar/top"), true
+		return []byte(shapefact.ScalarTopWire), true
 	}
 	encoded, ok := shapefact.EncodeTarget(normalize.UnionForEvidence(leftWitness, rightWitness))
 	if !ok {
-		return []byte("scalar/top"), true
+		return []byte(shapefact.ScalarTopWire), true
 	}
 	return encoded, true
 }
@@ -29192,7 +29174,7 @@ func sealedShapeMemberValue(term []byte, table shapefact.Table, suffix string, p
 		return nil, false
 	}
 	if !member.Present {
-		return []byte("scalar/nil"), true
+		return []byte(shapefact.ScalarNilWire), true
 	}
 	return []byte(member.Value), true
 }
@@ -29394,7 +29376,7 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		// member no arm of a closed summary union carries is therefore absent
 		// from the whole result, exactly as it is for a declared receiver.
 		if !refutable || !closedMemberSurface(receiver) {
-			return []byte("scalar/top"), true
+			return []byte(shapefact.ScalarTopWire), true
 		}
 		return memberMissingValue(receiver)
 	}
@@ -29720,7 +29702,7 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 				if !found || !shapefact.IsTable(value) {
 					return rootTerm, segs, typeValue, true
 				}
-			} else if found && string(value) == "scalar/top" && declaredMemberSurface(typeValue) {
+			} else if found && string(value) == shapefact.ScalarTopWire && declaredMemberSurface(typeValue) {
 				// Top is an honest unknown value, not a retraction of the
 				// declaration every write to this root already had to satisfy. The
 				// declared surface therefore remains what a member read descends
@@ -29805,11 +29787,11 @@ func luaTruthy(value []byte) (bool, error) {
 		return true, nil
 	}
 	switch string(value) {
-	case "scalar/boolean", optionalNilComparison:
+	case shapefact.ScalarBooleanWire, optionalNilComparison:
 		return false, errUnknownScalar
-	case "scalar/nil", "scalar/bool/false":
+	case shapefact.ScalarNilWire, shapefact.ScalarFalseWire:
 		return false, nil
-	case "scalar/bool/true":
+	case shapefact.ScalarTrueWire:
 		return true, nil
 	default:
 		scalar, ok := shapefact.DecodeScalar(value)
@@ -29828,11 +29810,11 @@ func undecidedLogicalValue(left, right []byte, operator wir.Operator) []byte {
 	leftType, leftKnown := shapefact.DecodeWitnessType(left)
 	rightType, rightKnown := shapefact.DecodeWitnessType(right)
 	if !leftKnown || !rightKnown {
-		return []byte("scalar/top")
+		return []byte(shapefact.ScalarTopWire)
 	}
 	truthy, falsy, split := proof.TruthinessSplit(leftType)
 	if !split {
-		return []byte("scalar/top")
+		return []byte(shapefact.ScalarTopWire)
 	}
 	survivor := falsy
 	if operator == wir.LogOr {
@@ -29844,7 +29826,7 @@ func undecidedLogicalValue(left, right []byte, operator wir.Operator) []byte {
 	}
 	encoded, ok := shapefact.EncodeTarget(normalize.UnionForEvidence(members...))
 	if !ok {
-		return []byte("scalar/top")
+		return []byte(shapefact.ScalarTopWire)
 	}
 	return encoded
 }
@@ -30005,7 +29987,7 @@ func publishedOutcomes(stored, evidence []equation.Fact) []equation.Fact {
 		value := candidates[0]
 		for _, candidate := range candidates[1:] {
 			if !bytes.Equal(value, candidate) {
-				value = []byte("scalar/top")
+				value = []byte(shapefact.ScalarTopWire)
 				break
 			}
 		}
