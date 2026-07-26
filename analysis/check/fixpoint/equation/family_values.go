@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 )
 
 // FamilyValue is one family-scoped publication. Subject and qualifiers are
@@ -15,6 +16,7 @@ type FamilyValue struct {
 	Payload     []byte
 	payloadKind factkey.PayloadKind
 	parsed      factkey.ParsedKey
+	guarded     bool
 }
 
 func (v FamilyValue) Qualifier(index int) (factkey.SubjectRef, bool) {
@@ -22,6 +24,11 @@ func (v FamilyValue) Qualifier(index int) (factkey.SubjectRef, bool) {
 }
 
 func (v FamilyValue) QualifierCount() int { return v.parsed.QualifierCount() }
+
+// Guarded reports whether the publication belongs to a branch edge. It lets a
+// family consumer preserve the publication's control-flow provenance without
+// exposing or re-parsing the guard encoding.
+func (v FamilyValue) Guarded() bool { return v.guarded }
 
 // DecodedPayload opts a value-payload family into the shared codec. Families
 // whose declarations name another payload kind fail closed; their bytes must
@@ -31,6 +38,25 @@ func (v FamilyValue) DecodedPayload() (shapefact.Payload, bool) {
 		return shapefact.Payload{}, false
 	}
 	return shapefact.Decode(v.Payload)
+}
+
+// DecodedTypestatePublication opts a typestate-payload family into the domain
+// codec and verifies that the typed resource repeats the key's exact identity.
+// A family-kind mismatch, malformed payload, or key/payload identity mismatch
+// fails closed.
+func (v FamilyValue) DecodedTypestatePublication() (typestate.Publication, bool) {
+	if v.payloadKind != factkey.PayloadTypestate {
+		return typestate.Publication{}, false
+	}
+	publication, ok := typestate.DecodePublication(v.Payload)
+	if !ok {
+		return typestate.Publication{}, false
+	}
+	identity, ok := v.Subject.Decode(nil)
+	if !ok || publication.Resource.ID != typestate.ResourceID(string(identity)) {
+		return typestate.Publication{}, false
+	}
+	return publication, true
 }
 
 // FamilyValueIterator walks one binary-searched prefix range without
@@ -101,6 +127,7 @@ func (it *FamilyValueIterator) Next() (FamilyValue, bool) {
 			Payload:     fact.Value,
 			payloadKind: it.family.PayloadKind,
 			parsed:      parsed,
+			guarded:     len(fact.Guards) != 0,
 		}, true
 	}
 	return FamilyValue{}, false

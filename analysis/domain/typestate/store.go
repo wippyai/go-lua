@@ -256,14 +256,17 @@ func (s Store) InvalidTransitions() []InvalidTransition {
 	return out
 }
 
-// Escape transfers the local obligation to an external owner.
+// Escape transfers local lifecycle authority to an external owner. A final
+// resource still becomes escaped: its obligation was already satisfied, but a
+// consumer may no longer use the last locally observed state after the value
+// crosses an opaque boundary.
 func (s Store) Escape(resource Resource) Store {
 	if s.top {
 		return s
 	}
 	next := s.Clone()
 	slot, ok := next.slots[resource]
-	if !ok || slot.Locality == LocalityBottom || slot.Locality == LocalityClosed {
+	if !ok || slot.Locality == LocalityBottom || slot.Locality == LocalityEscaped {
 		return next
 	}
 	slot.Locality = LocalityEscaped

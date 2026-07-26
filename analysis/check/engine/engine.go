@@ -27,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	placementvocab "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
+	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -11374,39 +11375,56 @@ func resourceUnreleasedDiagnostics(child front.Compilation, closure equation.Out
 	if childHasPCall(child) && childHasNestedResourceClose(child) {
 		return nil
 	}
+	partition, err := equation.PartitionFromClosuresWithGuards(nil, closure)
+	if err != nil {
+		return nil
+	}
 	// A transition published under a branch guard happened on one edge only, so
 	// it is not the state the function exits in. The unguarded transitions are
 	// the ones every path performs; a guarded one counts only for a resource
 	// whose whole lifetime is inside that same arm, which is exactly the case
 	// with no unguarded transition to read.
-	latest, guarded := make(map[string]equation.Fact), make(map[string]equation.Fact)
-	for _, fact := range closure.Values {
-		if !strings.HasPrefix(fact.Key, resourceLifecyclePrefix) {
+	type observedPublication struct {
+		publication typestate.Publication
+		occurrence  string
+	}
+	latest := make(map[typestate.Resource]observedPublication)
+	guarded := make(map[typestate.Resource]observedPublication)
+	values := partition.AllFamilyValues(factkey.BuildKey(factkey.LifecycleResourceState, nil, ""))
+	for {
+		value, found := values.Next()
+		if !found {
+			break
+		}
+		publication, decoded := value.DecodedTypestatePublication()
+		if !decoded {
 			continue
 		}
-		identity := strings.TrimPrefix(fact.Key, resourceLifecyclePrefix)
-		slash := strings.LastIndexByte(identity, '/')
-		if slash < 0 {
+		declared, carried := lifecycleFactFamily(publication.Resource.Protocol)
+		if !carried || declared.ID != factkey.FamilyLifecycleResourceState {
 			continue
 		}
-		identity = identity[:slash]
 		target := latest
-		if len(fact.Guards) != 0 {
+		if value.Guarded() {
 			target = guarded
 		}
-		if previous, found := target[identity]; !found || fact.Key > previous.Key {
-			target[identity] = fact
+		if previous, found := target[publication.Resource]; !found || value.Occurrence > previous.occurrence {
+			target[publication.Resource] = observedPublication{publication: publication, occurrence: value.Occurrence}
 		}
 	}
-	for identity, fact := range guarded {
-		if _, found := latest[identity]; !found {
-			latest[identity] = fact
+	for resource, publication := range guarded {
+		if _, found := latest[resource]; !found {
+			latest[resource] = publication
 		}
 	}
 	var diagnostics []equation.Fact
-	for encoded, state := range latest {
-		identity, err := base64.RawURLEncoding.DecodeString(encoded)
-		if err != nil || !isResourceIdentity(identity) || string(state.Value) != "open" {
+	for _, observation := range latest {
+		publication := observation.publication
+		identity := []byte(publication.Resource.ID)
+		if publication.Resource.Protocol != typestate.ProtocolConnection ||
+			publication.Slot.Locality != typestate.LocalityOpen ||
+			publication.Slot.Current != typestate.StateOpen ||
+			!isResourceIdentity(identity) {
 			continue
 		}
 		resource, _ := shapefact.DecodeScalarKind(identity, shapefact.ScalarResource)
@@ -11747,10 +11765,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	values = append(values, projectTypePredicateWriteRelation(target, operands["value"], operation.Target.Name, partition)...)
 	values = append(values, projectReturnTupleWriteRelation(target, operands["value"], operation.Target.Name, partition)...)
 	if isChannelIdentity(value) {
-		values = append(values, equation.Fact{
-			Key:   "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
-			Value: append([]byte(nil), operands["display"]...),
-		})
+		values = append(values, channelLifecycleDisplayFact(operands["target"], operation.Target.Name, operands["display"]))
 	}
 	if handle, ok := closureHandleFor(operands["value"], partition); ok {
 		encoded, marshalErr := json.Marshal(handle)
@@ -14011,10 +14026,7 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 		})
 	}
 	if isChannelIdentity(value) {
-		result.Closure.Values = append(result.Closure.Values, equation.Fact{
-			Key:   "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
-			Value: append([]byte(nil), operands["display"]...),
-		})
+		result.Closure.Values = append(result.Closure.Values, channelLifecycleDisplayFact(operands["target"], operation.Target.Name, operands["display"]))
 	}
 	return result, nil
 }
@@ -20687,14 +20699,11 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if state, handled := sendIsolationState(operation, operands, partition); handled {
 		return state, nil
 	}
-	if closure, escaped := channelLifecycleEscape(operation, operands, partition); escaped {
+	if closure, escaped := lifecycleEscape(operation, operands, partition); escaped {
 		// Passing an exact channel identity through an otherwise opaque call
-		// transfers lifecycle authority out of this local epoch. The state is
-		// now may-closed, so subsequent channel operations deliberately remain
-		// silent unless a fresh identity is established.
-		return equation.TransactionResult{Complete: true, Closure: closure}, nil
-	}
-	if closure, escaped := resourceLifecycleEscape(operation, operands, partition); escaped {
+		// or resource through an otherwise opaque call transfers lifecycle
+		// authority out of this local epoch. Subsequent operations deliberately
+		// remain silent unless a fresh identity is established.
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	if operands.display == "table.isfrozen" {
@@ -21532,8 +21541,6 @@ func tableInsertEpoch(operation equation.BoundEquation, operands directCallOpera
 	return equation.OutputClosure{Values: values}, true
 }
 
-const channelLifecyclePrefix = "effect.lifecycle.channel/"
-
 // channelLifecycleEpoch reuses the established fact epoch discipline: a
 // recognized constructor creates a fresh opaque identity, and later exact
 // method calls read and strongly replace that identity's state. No fact is
@@ -21541,9 +21548,15 @@ const channelLifecyclePrefix = "effect.lifecycle.channel/"
 func channelLifecycleEpoch(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
 	if operands.display == "channel.new" && !operands.spread && len(operands.arguments) == 0 {
 		identity := shapefact.ScalarTextValue(shapefact.ScalarChannel, operation.Target.Name)
+		resource := typestate.Resource{ID: typestate.ResourceID(string(identity)), Protocol: typestate.ProtocolChannel}
+		publication, acquired := typestate.AcquirePublication(resource, typestate.StateOpen, typestate.Obligation{})
+		stateFact, encoded := lifecyclePublicationFact(publication, operation.Target.Name)
+		if !acquired || !encoded {
+			return equation.OutputClosure{}, true
+		}
 		return equation.OutputClosure{Values: []equation.Fact{
 			{Key: coordinateFamilyKey(factkey.CallResult, operation.Target.Name, "00000000").String(), Value: identity},
-			channelLifecycleStateFact(identity, operation.Target.Name, "open"),
+			stateFact,
 		}}, true
 	}
 	if operands.receiver == nil || (operands.method != "close" && operands.method != "send" && operands.method != "receive") {
@@ -21553,15 +21566,15 @@ func channelLifecycleEpoch(operation equation.BoundEquation, operands directCall
 	if !known || !isChannelIdentity(identity) {
 		return equation.OutputClosure{}, false
 	}
-	state, proven := channelLifecycleState(partition, identity)
-	if !proven || state == "escaped" {
+	publication, proven := currentLifecyclePublication(partition, factkey.LifecycleChannelState, identity)
+	if !proven || !publication.LocallyControlled() {
 		return equation.OutputClosure{}, true
 	}
 	if operands.method == "receive" {
 		return equation.OutputClosure{}, true
 	}
 	closure := equation.OutputClosure{}
-	if state == "closed" {
+	if publication.Requires(typestate.StateClosed) {
 		code, action := "channel.send.closed", "send"
 		if operands.method == "close" {
 			code, action = "channel.close.closed", "close"
@@ -21571,12 +21584,14 @@ func channelLifecycleEpoch(operation equation.BoundEquation, operands directCall
 		}))
 	}
 	if operands.method == "close" {
-		closure.Values = append(closure.Values, channelLifecycleStateFact(identity, operation.Target.Name, "closed"))
+		if next, transitioned := publication.Transition(typestate.StateClosed); transitioned {
+			if fact, encoded := lifecyclePublicationFact(next, operation.Target.Name); encoded {
+				closure.Values = append(closure.Values, fact)
+			}
+		}
 	}
 	return closure, true
 }
-
-const resourceLifecyclePrefix = "effect.lifecycle.resource/"
 
 // resourceLifecycleEpoch is the same closed-identity epoch used for channels,
 // specialized to the declared connection acquire/release pair. The acquire
@@ -21584,9 +21599,15 @@ const resourceLifecyclePrefix = "effect.lifecycle.resource/"
 func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
 	if operands.display == "resource.connect" && !operands.spread && len(operands.arguments) == 0 {
 		identity := shapefact.ScalarTextValue(shapefact.ScalarResource, operation.Target.Name)
+		resource := typestate.Resource{ID: typestate.ResourceID(string(identity)), Protocol: typestate.ProtocolConnection}
+		publication, acquired := typestate.AcquirePublication(resource, typestate.StateOpen, typestate.Obligation{Final: typestate.StateClosed})
+		stateFact, encoded := lifecyclePublicationFact(publication, operation.Target.Name)
+		if !acquired || !encoded {
+			return equation.OutputClosure{}, true
+		}
 		return equation.OutputClosure{Values: []equation.Fact{
 			{Key: coordinateFamilyKey(factkey.CallResult, operation.Target.Name, "00000000").String(), Value: identity},
-			resourceLifecycleStateFact(identity, operation.Target.Name, "open"),
+			stateFact,
 		}}, true
 	}
 	if operands.spread || len(operands.arguments) != 1 {
@@ -21598,14 +21619,14 @@ func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCal
 			display := callArgumentDisplay(operation.Operands, 0)
 			if display != "" {
 				return equation.OutputClosure{Diagnostics: []equation.Fact{
-					diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyUnprovenTypestateRequirement)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateUnproven, Source: display, Required: "open"}),
+					diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyUnprovenTypestateRequirement)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateUnproven, Source: display, Required: typestate.StateOpen.String()}),
 				}}, true
 			}
 		}
 		return equation.OutputClosure{}, false
 	}
-	state, proven := resourceLifecycleState(partition, identity)
-	if !proven || state == "escaped" {
+	publication, proven := currentLifecyclePublication(partition, factkey.LifecycleResourceState, identity)
+	if !proven || !publication.LocallyControlled() {
 		return equation.OutputClosure{}, true
 	}
 	display := callArgumentDisplay(operation.Operands, 0)
@@ -21614,56 +21635,53 @@ func resourceLifecycleEpoch(operation equation.BoundEquation, operands directCal
 	}
 	switch operands.display {
 	case "resource.close":
-		return equation.OutputClosure{Values: []equation.Fact{resourceLifecycleStateFact(identity, operation.Target.Name, "closed")}}, true
+		next, transitioned := publication.Transition(typestate.StateClosed)
+		if !transitioned {
+			return equation.OutputClosure{}, true
+		}
+		fact, encoded := lifecyclePublicationFact(next, operation.Target.Name)
+		if !encoded {
+			return equation.OutputClosure{}, true
+		}
+		return equation.OutputClosure{Values: []equation.Fact{fact}}, true
 	case "resource.query":
-		if state == "open" {
+		if publication.Requires(typestate.StateOpen) {
 			return equation.OutputClosure{}, true
 		}
 		return equation.OutputClosure{Diagnostics: []equation.Fact{
-			diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyInvalidTypestateRequirement)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: "open", Observed: state}),
+			diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyInvalidTypestateRequirement)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: typestate.StateOpen.String(), Observed: publication.Slot.Current.String()}),
 		}}, true
 	case "resource.begin":
-		if state != "open" {
+		if publication.Resource.Protocol != typestate.ProtocolConnection || !publication.Requires(typestate.StateOpen) {
 			return equation.OutputClosure{Diagnostics: []equation.Fact{
-				diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyInvalidTypestateRequirement)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: "open", Observed: state}),
+				diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyInvalidTypestateRequirement)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateRequirement, Source: display, Required: typestate.StateOpen.String(), Observed: publication.Slot.Current.String()}),
 			}}, true
 		}
 		transaction := shapefact.ScalarTextValue(shapefact.ScalarResource, operation.Target.Name)
+		resource := typestate.Resource{ID: typestate.ResourceID(string(transaction)), Protocol: typestate.ProtocolTransaction}
+		acquired, valid := typestate.AcquirePublication(resource, typestate.StateActive, typestate.Obligation{Final: typestate.StateCommitted})
+		stateFact, encoded := lifecyclePublicationFact(acquired, operation.Target.Name)
+		if !valid || !encoded {
+			return equation.OutputClosure{}, true
+		}
 		return equation.OutputClosure{Values: []equation.Fact{
 			{Key: coordinateFamilyKey(factkey.CallResult, operation.Target.Name, "00000000").String(), Value: transaction},
-			resourceLifecycleStateFact(transaction, operation.Target.Name, "active"),
+			stateFact,
 		}}, true
 	case "resource.commit":
-		if state == "active" {
-			return equation.OutputClosure{Values: []equation.Fact{resourceLifecycleStateFact(identity, operation.Target.Name, "committed")}}, true
+		if publication.Resource.Protocol == typestate.ProtocolTransaction && publication.Requires(typestate.StateActive) {
+			next, transitioned := publication.Transition(typestate.StateCommitted)
+			fact, encoded := lifecyclePublicationFact(next, operation.Target.Name)
+			if transitioned && encoded {
+				return equation.OutputClosure{Values: []equation.Fact{fact}}, true
+			}
 		}
 		return equation.OutputClosure{Diagnostics: []equation.Fact{
-			diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyInvalidTypestateTransition)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateTransition, Source: display, Required: "active", Observed: state}),
+			diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyInvalidTypestateTransition)+operation.Target.Name, DiagnosticPayload{Kind: diagnosticTypestateTransition, Source: display, Required: typestate.StateActive.String(), Observed: publication.Slot.Current.String()}),
 		}}, true
 	default:
 		return equation.OutputClosure{}, false
 	}
-}
-
-func resourceLifecycleStateFact(identity []byte, operation, state string) equation.Fact {
-	return equation.Fact{Key: resourceLifecyclePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte(state)}
-}
-
-func resourceLifecycleEscape(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
-	identities := make(map[string][]byte)
-	for _, term := range operands.arguments {
-		if value, known := resolveKnownCurrentValue(term, partition); known && isResourceIdentity(value) {
-			identities[string(value)] = value
-		}
-	}
-	if len(identities) == 0 {
-		return equation.OutputClosure{}, false
-	}
-	closure := equation.OutputClosure{}
-	for _, identity := range identities {
-		closure.Values = append(closure.Values, resourceLifecycleStateFact(identity, operation.Target.Name, "escaped"))
-	}
-	return closure, true
 }
 
 func isResourceIdentity(value []byte) bool {
@@ -21671,53 +21689,96 @@ func isResourceIdentity(value []byte) bool {
 	return ok && bytes.HasPrefix(resource.Data, []byte("op-"))
 }
 
-func resourceLifecycleState(partition equation.Partition, identity []byte) (string, bool) {
-	prefix := resourceLifecyclePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	fact, found := partition.LatestValuePrefix(prefix)
-	if !found {
-		return "", false
+func lifecyclePublicationFact(publication typestate.Publication, operation string) (equation.Fact, bool) {
+	family, declared := lifecycleFactFamily(publication.Resource.Protocol)
+	encoded, valid := typestate.EncodePublication(publication)
+	if !declared || !valid {
+		return equation.Fact{}, false
 	}
-	state := string(fact.Value)
-	return state, state == "open" || state == "closed" || state == "active" || state == "committed" || state == "escaped"
+	key := factkey.BuildKey(family, []factkey.Part{
+		factkey.IdentityPart([]byte(publication.Resource.ID)),
+	}, operation)
+	if key.String() == "" {
+		return equation.Fact{}, false
+	}
+	return equation.Fact{Key: key.String(), Value: encoded}, true
 }
 
-func channelLifecycleEscape(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
-	identities := make(map[string][]byte)
-	for _, term := range operands.arguments {
-		if value, known := resolveKnownCurrentValue(term, partition); known && isChannelIdentity(value) {
-			identities[string(value)] = value
+func lifecycleFactFamily(protocol typestate.Protocol) (factkey.Family, bool) {
+	switch protocol {
+	case typestate.ProtocolChannel:
+		return factkey.LifecycleChannelState, true
+	case typestate.ProtocolConnection, typestate.ProtocolTransaction:
+		return factkey.LifecycleResourceState, true
+	default:
+		return factkey.Family{}, false
+	}
+}
+
+func currentLifecyclePublication(partition equation.Partition, family factkey.Family, identity []byte) (typestate.Publication, bool) {
+	values := partition.FamilyValues(factkey.BuildKey(family, []factkey.Part{factkey.IdentityPart(identity)}, ""))
+	latest := ""
+	var current typestate.Publication
+	for {
+		value, ok := values.Next()
+		if !ok {
+			break
 		}
+		publication, decoded := value.DecodedTypestatePublication()
+		declared, carried := lifecycleFactFamily(publication.Resource.Protocol)
+		if !decoded || !carried || declared.ID != family.ID || value.Occurrence <= latest {
+			continue
+		}
+		current, latest = publication, value.Occurrence
+	}
+	return current, latest != ""
+}
+
+// lifecycleEscape is the single authority-loss publisher for both concrete
+// lifecycle families. Only a previously decoded exact publication can be
+// escaped; merely resembling a channel/resource scalar cannot fabricate a
+// protocol or state.
+func lifecycleEscape(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) (equation.OutputClosure, bool) {
+	publications := make(map[typestate.Resource]typestate.Publication)
+	recognized := false
+	collect := func(term []byte, allowResource bool) {
+		value, known := resolveKnownCurrentValue(term, partition)
+		if !known {
+			return
+		}
+		family := factkey.Family{}
+		switch {
+		case isChannelIdentity(value):
+			family, recognized = factkey.LifecycleChannelState, true
+		case allowResource && isResourceIdentity(value):
+			family, recognized = factkey.LifecycleResourceState, true
+		default:
+			return
+		}
+		if publication, proven := currentLifecyclePublication(partition, family, value); proven {
+			publications[publication.Resource] = publication
+		}
+	}
+	for _, term := range operands.arguments {
+		collect(term, true)
 	}
 	if operands.receiver != nil {
-		if value, known := resolveKnownCurrentValue(operands.receiver, partition); known && isChannelIdentity(value) {
-			identities[string(value)] = value
-		}
+		collect(operands.receiver, false)
 	}
-	if len(identities) == 0 {
+	if !recognized {
 		return equation.OutputClosure{}, false
 	}
 	closure := equation.OutputClosure{}
-	for _, identity := range identities {
-		closure.Values = append(closure.Values, channelLifecycleStateFact(identity, operation.Target.Name, "escaped"))
+	for _, publication := range publications {
+		escaped, changed := publication.Escape()
+		if !changed {
+			continue
+		}
+		if fact, encoded := lifecyclePublicationFact(escaped, operation.Target.Name); encoded {
+			closure.Values = append(closure.Values, fact)
+		}
 	}
 	return closure, true
-}
-
-func channelLifecycleStateFact(identity []byte, operation, state string) equation.Fact {
-	return equation.Fact{
-		Key:   channelLifecyclePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation,
-		Value: []byte(state),
-	}
-}
-
-func channelLifecycleState(partition equation.Partition, identity []byte) (string, bool) {
-	prefix := channelLifecyclePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	fact, found := partition.LatestValuePrefix(prefix)
-	if !found {
-		return "", false
-	}
-	state := string(fact.Value)
-	return state, state == "open" || state == "closed" || state == "escaped"
 }
 
 func isChannelIdentity(value []byte) bool {
@@ -23600,11 +23661,36 @@ func tableFieldName(value string) bool {
 }
 
 func channelDisplay(partition equation.Partition, receiver []byte) string {
-	prefix := "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(receiver) + "/"
-	if fact, found := partition.LatestValuePrefix(prefix); found && len(fact.Value) != 0 {
-		return string(fact.Value)
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.LifecycleChannelDisplay,
+		[]factkey.Part{factkey.EncodedTermPart(receiver)},
+		"",
+	))
+	latest, display := "", []byte(nil)
+	for {
+		value, found := values.Next()
+		if !found {
+			break
+		}
+		if len(value.Payload) != 0 && value.Occurrence > latest {
+			latest, display = value.Occurrence, value.Payload
+		}
+	}
+	if len(display) != 0 {
+		return string(display)
 	}
 	return strings.TrimPrefix(string(receiver), "path/")
+}
+
+func channelLifecycleDisplayFact(receiver []byte, operation string, display []byte) equation.Fact {
+	return equation.Fact{
+		Key: factkey.BuildKey(
+			factkey.LifecycleChannelDisplay,
+			[]factkey.Part{factkey.EncodedTermPart(receiver)},
+			operation,
+		).String(),
+		Value: append([]byte(nil), display...),
+	}
 }
 
 func callArgumentDisplay(operands []equation.BoundOperand, index int) string {

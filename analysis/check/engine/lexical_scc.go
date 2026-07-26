@@ -275,8 +275,11 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 		values = append(values, fact)
 	}
 	for _, fact := range closure.Values {
-		if matchBoundary(fact.Key) || strings.HasPrefix(fact.Key, "effect.lifecycle.channel/") ||
-			strings.HasPrefix(fact.Key, "effect.lifecycle.resource/") {
+		family, declared := factkey.Lookup(fact.Key)
+		lifecycle := declared && (family.ID == factkey.FamilyLifecycleChannelState ||
+			family.ID == factkey.FamilyLifecycleChannelDisplay ||
+			family.ID == factkey.FamilyLifecycleResourceState)
+		if matchBoundary(fact.Key) || lifecycle {
 			keep(fact)
 		}
 		if _, tableIdentity := factkey.HeapTableIdentity.ParseKey(fact.Key); tableIdentity && matchBoundary(fact.Key) && len(fact.Value) != 0 {

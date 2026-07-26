@@ -111,6 +111,18 @@ func TestEscapedResourceDoesNotProduceLocalObligation(t *testing.T) {
 	}
 }
 
+func TestEscapeRevokesAClosedResourcesLocalStateAuthority(t *testing.T) {
+	resource := Resource{ID: "client.socket", Protocol: "socket"}
+	escaped := Empty().
+		Acquire(resource, "connected", Obligation{Final: "closed"}).
+		Transition(resource, "connected", "closed").
+		Escape(resource)
+	slot, ok := escaped.Lookup(resource)
+	if !ok || slot.Locality != LocalityEscaped || slot.Current != "closed" {
+		t.Fatalf("escaped closed slot = %#v/%v", slot, ok)
+	}
+}
+
 func TestJoinOfClosedAndEscapedRemainsLocallySatisfied(t *testing.T) {
 	lock := Resource{ID: "guard.lock", Protocol: "lock"}
 	open := Empty().Acquire(lock, "held", Obligation{Final: "released"})

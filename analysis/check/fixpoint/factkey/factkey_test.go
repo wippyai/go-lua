@@ -147,6 +147,9 @@ func TestBuildKeyOwnsDeclaredFamilySpellings(t *testing.T) {
 		{NativeCaptureEpochRoot, []Part{OpaquePart("2f2f"), OpaquePart("op-7")}, "capture_epoch_root/2f2f/op-7/op-1"},
 		{NativeCaptureTransport, []Part{OpaquePart("2f2f"), OpaquePart("op-7")}, "capture_transport/2f2f/op-7/op-1"},
 		{NativeProjection, []Part{OpaquePart("2f2f"), OpaquePart("00000007")}, "native-projection/2f2f/00000007/op-1"},
+		{LifecycleChannelState, []Part{IdentityPart(identity)}, "effect.lifecycle.channel/" + encode(string(identity)) + "/op-1"},
+		{LifecycleChannelDisplay, []Part{EncodedTermPart([]byte("path/sym2"))}, "effect.lifecycle.channel.display/" + encode("path/sym2") + "/op-1"},
+		{LifecycleResourceState, []Part{IdentityPart(identity)}, "effect.lifecycle.resource/" + encode(string(identity)) + "/op-1"},
 	} {
 		key := BuildKey(test.family, test.parts, "op-1")
 		if key.String() != test.want {
@@ -195,12 +198,12 @@ func TestTerminalTermSubjectOwnsNestedTermSyntax(t *testing.T) {
 }
 
 func TestFamiliesAreCompleteRecords(t *testing.T) {
-	if len(families) != 49 {
-		t.Fatalf("declared families = %d, want 49", len(families))
+	if len(families) != 52 {
+		t.Fatalf("declared families = %d, want 52", len(families))
 	}
 	for _, family := range families {
 		if family.ID == 0 || family.Prefix == "" || family.RevocationSet == nil ||
-			family.PayloadKind > PayloadRelation {
+			family.PayloadKind > PayloadTypestate {
 			t.Errorf("incomplete family record: %+v", family)
 		}
 		if declared, ok := Lookup(family.Prefix + "subject/op"); !ok || declared.ID != family.ID {

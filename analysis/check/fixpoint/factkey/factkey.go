@@ -72,6 +72,7 @@ const (
 	PayloadInteger
 	PayloadType
 	PayloadRelation
+	PayloadTypestate
 )
 
 // FamilyID is the stable identity used by revocation sets. Prefix strings are
@@ -129,6 +130,9 @@ const (
 	FamilyNativeTypedProducer
 	FamilyNativeTableConstructionBound
 	FamilyNativeProjection
+	FamilyLifecycleChannelState
+	FamilyLifecycleChannelDisplay
+	FamilyLifecycleResourceState
 )
 
 // RevocationSet names the fact families whose publications can invalidate a
@@ -396,6 +400,21 @@ var (
 		Qualifiers:  []Kind{Opaque},
 		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{},
 	}
+	// Lifecycle state families retain their established wire prefixes, while
+	// their payload declaration makes typestate's publication codec the sole
+	// interpreter. ChannelDisplay is term metadata, not lifecycle state.
+	LifecycleChannelState = Family{
+		ID: FamilyLifecycleChannelState, Prefix: "effect.lifecycle.channel/", Subject: Identity,
+		PayloadKind: PayloadTypestate, RevocationSet: RevocationSet{FamilyLifecycleChannelState},
+	}
+	LifecycleChannelDisplay = Family{
+		ID: FamilyLifecycleChannelDisplay, Prefix: "effect.lifecycle.channel.display/", Subject: EncodedTerm,
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{FamilyLifecycleChannelDisplay},
+	}
+	LifecycleResourceState = Family{
+		ID: FamilyLifecycleResourceState, Prefix: "effect.lifecycle.resource/", Subject: Identity,
+		PayloadKind: PayloadTypestate, RevocationSet: RevocationSet{FamilyLifecycleResourceState},
+	}
 )
 
 // families declares every family whose keys are built or read structurally.
@@ -451,6 +470,9 @@ var families = []Family{
 	NativeTypedProducer,
 	NativeTableConstructionBound,
 	NativeProjection,
+	LifecycleChannelState,
+	LifecycleChannelDisplay,
+	LifecycleResourceState,
 }
 
 // byPrefix indexes the declarations so a key is matched without scanning them.
