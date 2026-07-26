@@ -1,0 +1,3 @@
+{
+  "description": "A returned local's checked container declaration is the contract that leaves its body; an unannotated local keeps its literal shape and a cast proves nothing."
+}

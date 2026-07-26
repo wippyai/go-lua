@@ -9343,12 +9343,47 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 				}
 				projected.Values = append(projected.Values, values...)
 				projected.Values = append(projected.Values, equation.Fact{Key: "call-closure/" + strings.TrimPrefix(operation.Target.Name, "call/") + "/00000000", Value: encoded})
+				// The returned callable's own derived result contract belongs to
+				// the capability, not to the body that allocated it. Carry it
+				// under the same application coordinate the handle rides so the
+				// result owner can rebind both to its slot together.
+				if contract, stated := childInferredCallableReturn(fact.Key, closure.Values); stated {
+					projected.Values = append(projected.Values, equation.Fact{Key: callInferredReturnPrefix + strings.TrimPrefix(operation.Target.Name, "call/") + "/00000000", Value: contract})
+				}
 				break
 			}
 		}
 	}
 	l.projectChildDiagnostics(&projected, operation, operands, child, handle, closure, partition)
 	return equation.TransactionResult{Complete: true, Closure: projected}, nil
+}
+
+// callInferredReturnPrefix keys a returned callable's derived result contract
+// under the application coordinate that returned it, beside the call-closure
+// handle the same result slot rebinds.
+const callInferredReturnPrefix = "call-inferred-return/"
+
+// childInferredCallableReturn reads the derived result contract a child body
+// published for the exact callable term it returned. The handle fact names that
+// term, so no other allocation inside the same body can supply the contract.
+func childInferredCallableReturn(handleKey string, values []equation.Fact) ([]byte, bool) {
+	term := strings.TrimPrefix(handleKey, "closure/")
+	slash := strings.LastIndex(term, "/")
+	if slash <= 0 {
+		return nil, false
+	}
+	prefix := inferredCallableReturnPrefix + term[:slash] + "/"
+	var contract []byte
+	latest := ""
+	for _, fact := range values {
+		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
+			contract, latest = fact.Value, fact.Key
+		}
+	}
+	if contract == nil {
+		return nil, false
+	}
+	return append([]byte(nil), contract...), true
 }
 
 // declaredBranchAssignmentDiagnostics checks one declaration-owned body
@@ -12208,14 +12243,24 @@ func inferredUncalledReturnType(outcome equation.OutputClosure) (typ.Type, bool)
 }
 
 // inferredCallableReturn reads the derived result contract published for a
-// callable term by the allocation that materialized it.
+// callable term by the allocation that materialized it. The allocation states
+// the capability and the result it derived in one transaction, so the contract
+// is read only beside the handle that same operation published: a later write
+// rebinding the term republishes the handle without a contract, and the
+// superseded closure's result then stops answering for its replacement.
 func inferredCallableReturn(term []byte, partition equation.Partition) (typ.Type, bool) {
-	prefix := inferredCallableReturnPrefix + string(term) + "/"
-	latest, found := partition.LatestValuePrefix(prefix)
-	if !found || len(latest.Value) == 0 {
+	handle, bound := partition.LatestValuePrefix("closure/" + string(term) + "/")
+	if !bound {
 		return nil, false
 	}
-	result, err := typ.DecodeCanonical(context.Background(), latest.Value)
+	contract, found := partition.LatestValuePrefix(inferredCallableReturnPrefix + string(term) + "/")
+	if !found || len(contract.Value) == 0 {
+		return nil, false
+	}
+	if strings.TrimPrefix(handle.Key, "closure/"+string(term)+"/") != strings.TrimPrefix(contract.Key, inferredCallableReturnPrefix+string(term)+"/") {
+		return nil, false
+	}
+	result, err := typ.DecodeCanonical(context.Background(), contract.Value)
 	if err != nil || result == nil {
 		return nil, false
 	}
@@ -23987,6 +24032,12 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				}
 			}
 			if string(value) == "scalar/top" {
+				if contract, ok := inferredCallableResultValue(callee, index, partition); ok {
+					value = contract
+					localCallableResult = true
+				}
+			}
+			if string(value) == "scalar/top" {
 				if summary, ok := sealedCallableResultType(lexical, callee, index, argumentTerms, partition); ok && requiresLocalUnionProof(summary) {
 					localSummary = summary
 				}
@@ -24317,6 +24368,13 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		for _, fact := range partition.Values() {
 			if fact.Key == closureKey {
 				values = append(values, equation.Fact{Key: "closure/" + string(result) + "/" + operation.Target.Name, Value: append([]byte(nil), fact.Value...)})
+				break
+			}
+		}
+		inferredReturnKey := callInferredReturnPrefix + strings.TrimPrefix(string(application), "call/") + "/" + key
+		for _, fact := range partition.Values() {
+			if fact.Key == inferredReturnKey {
+				values = append(values, equation.Fact{Key: inferredCallableReturnPrefix + string(result) + "/" + operation.Target.Name, Value: append([]byte(nil), fact.Value...)})
 				break
 			}
 		}
@@ -24806,6 +24864,38 @@ func sealedCallableResultValue(lexical *lexicalEvaluator, callee []byte, index i
 		}
 	}
 	return sealedFunctionResultValue(value, index)
+}
+
+// inferredCallableResultValue completes a local callee whose declaration omits
+// its result. The allocation that materialized the callable already derived the
+// contract its body publishes, so the result owner reads that publication
+// instead of leaving the slot Top. A callee that declares its returns keeps the
+// declaration as its sole authority, and a generic callee keeps the
+// instantiation path: neither is completed here.
+func inferredCallableResultValue(callee []byte, index int, partition equation.Partition) ([]byte, bool) {
+	if callee == nil || index != 0 {
+		return nil, false
+	}
+	if _, local := closureHandleFor(callee, partition); !local {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(callee, partition)
+	if err != nil {
+		return nil, false
+	}
+	functionType, ok := sealedFunctionType(value)
+	if !ok {
+		return nil, false
+	}
+	function, ok := genericCalleeSurface(functionType)
+	if !ok || len(function.Returns) != 0 || len(function.TypeParams) != 0 {
+		return nil, false
+	}
+	result, inferred := inferredCallableReturn(callee, partition)
+	if !inferred {
+		return nil, false
+	}
+	return providerReturnTypeValue(result)
 }
 
 // sealedCallableResultType exposes a local declared return only as an
@@ -26949,6 +27039,82 @@ func hasValue(partition equation.Partition, key string) bool {
 	return false
 }
 
+// declaredContainerPublication reads the declaration a returned container term
+// was checked against. A declaration types every write to the cell it binds, so
+// it is the honest summary of what leaves the body; the sealed shape the
+// constructor happened to produce is an implementation detail of one path
+// through it. This is the precedence declaredMapContainerType already applies
+// to a container read, stated at the boundary where the container leaves its
+// body.
+//
+// Only a container declaration participates. A scalar cell carries branch
+// narrowing the declaration cannot express, and an optional declaration would
+// retract a presence the sealed value proves; both keep the value lane. A term
+// with no checked declaration keeps its literal shape as well: nothing checked
+// it, so nothing else describes it.
+func declaredContainerPublication(term, value []byte, partition equation.Partition) ([]byte, bool) {
+	if !tableFamilyValue(value) {
+		return nil, false
+	}
+	declared, found := checkedDeclarationForTerm(term, partition)
+	if !found || declared == nil || !containerTypeKind(declared) {
+		return nil, false
+	}
+	encoded, ok := shapefact.EncodeTarget(declared)
+	if !ok || string(encoded) == string(value) {
+		return nil, false
+	}
+	return encoded, true
+}
+
+// checkedDeclarationForTerm reads the declaration a statement inside this body
+// published for a cell. It is deliberately narrower than declaredTypeForTerm:
+// the entry boundary states a formal's contract as metadata about what the
+// caller may supply, and the caller's own argument is the more precise
+// authority for it, so an entry publication is not a body-checked declaration
+// and states nothing here.
+func checkedDeclarationForTerm(term []byte, partition equation.Partition) (typ.Type, bool) {
+	prefix := "type/" + string(term) + "/"
+	var encoded []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
+			encoded, latest = fact.Value, fact.Key
+		}
+	}
+	if encoded == nil || strings.TrimPrefix(latest, prefix) == "entry" {
+		return nil, false
+	}
+	return shapefact.DecodeTarget(encoded)
+}
+
+// containerTypeKind reports that a type is one of the table families a
+// declaration types uniformly. An optional declaration is excluded: the sealed
+// value proves a presence the declaration would retract.
+func containerTypeKind(declared typ.Type) bool {
+	base := unwrap.Alias(subst.ExpandInstantiated(declared))
+	if base == nil {
+		return false
+	}
+	switch base.Kind() {
+	case kind.Array, kind.Map, kind.ReadonlyMap, kind.Record:
+		return true
+	}
+	return false
+}
+
+// tableFamilyValue reports that a published value states a table: either the
+// sealed shape a constructor produced or the structural target a synthesized
+// component surface published for it. A nil or scalar cell is neither, and a
+// container declaration must never republish it as a table.
+func tableFamilyValue(value []byte) bool {
+	if shapefact.IsTable(value) {
+		return true
+	}
+	target, ok := shapefact.DecodeTarget(value)
+	return ok && containerTypeKind(target)
+}
+
 // publicationKernel resolves every selected return slot before publishing any
 // output.  A false or unknown guard contributes no tuple; a selected guard
 // contributes the complete indexed tuple, including nil-valued slots.
@@ -27018,7 +27184,11 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		// decides the keyed component the caller reads, and where it cannot be
 		// classified it is what removes the closure the caller would otherwise
 		// read absence from.
-		values[index] = keyedContainerSurface(operand.Value, heapMemberSurface(operand.Value, value, partition), partition)
+		surface := keyedContainerSurface(operand.Value, heapMemberSurface(operand.Value, value, partition), partition)
+		if declaredSurface, declared := declaredContainerPublication(operand.Value, surface, partition); declared {
+			surface = declaredSurface
+		}
+		values[index] = surface
 		sources[index] = operand.Value
 	}
 	for index, value := range values {
