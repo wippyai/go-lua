@@ -1019,7 +1019,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 		// raw.id).  The scalar read can still retain a literal heap fact, but the
 		// ancestor boundary is the authoritative assignment source and is itself
 		// sufficient closed evidence for the diagnostic projection.
-		anySource := (available && isUnvalidatedAnyValue(value)) || sourceHasAnyBoundary(operands["value"], closure.Values)
+		anySource := (available && isUnvalidatedAnyValue(value)) || sourceHasAnyBoundaryInFacts(operands["value"], closure.Values)
 		if !available && anySource {
 			value, available = shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)}), true
 		}
@@ -3547,18 +3547,12 @@ func closureHandleFor(term []byte, partition equation.Partition) (closureHandle,
 		}
 	}
 	prefix := "closure/" + string(term) + "/"
-	var encoded []byte
-	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (encoded == nil || fact.Key > latest) {
-			encoded, latest = fact.Value, fact.Key
-		}
-	}
-	if encoded == nil {
+	fact, found := partition.LatestValuePrefix(prefix)
+	if !found {
 		return closureHandle{}, false
 	}
 	var handle closureHandle
-	return handle, json.Unmarshal(encoded, &handle) == nil && validClosureHandle(handle)
+	return handle, json.Unmarshal(fact.Value, &handle) == nil && validClosureHandle(handle)
 }
 
 // memberCellForTerm resolves the final static member through its current
@@ -3603,7 +3597,8 @@ func memberClosuresFor(term []byte, partition equation.Partition) []memberClosur
 		key  string
 		wire memberClosureWire
 	})
-	for _, fact := range partition.Values() {
+	memberValues := partition.IterateValuesPrefix(prefix)
+	for fact, ok := memberValues.Next(); ok; fact, ok = memberValues.Next() {
 		if !strings.HasPrefix(fact.Key, prefix) {
 			continue
 		}
@@ -8489,9 +8484,9 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			// An explicit-any source is itself a completed precision-boundary
 			// publication. Preserve that exact boundary through the child entry;
 			// replacing it with Top would erase the downstream contract check.
-			if _, boundary, explicit := explicitAnySourceFact(arguments[index], partition.Values()); explicit {
+			if _, boundary, explicit := explicitAnySourceFact(arguments[index], partition); explicit {
 				value, known = boundary, true
-			} else if summaryTypeIsAny(arguments[index], partition.Values()) {
+			} else if summaryTypeIsAny(arguments[index], partition) {
 				value, known = shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)}), true
 			}
 		}
@@ -8509,7 +8504,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		// the same clearance anyBoundaryValue applies to an assignment and a
 		// return; the argument position must not refuse a proof the rest of the
 		// engine accepts.
-		if (isExplicitAnyValue(value) || sourceHasAnyBoundary(arguments[index], partition.Values()) || declaredExplicitAny(arguments[index], partition)) && typeRequiresBoundaryProof(declared) &&
+		if (isExplicitAnyValue(value) || sourceHasAnyBoundary(arguments[index], partition) || declaredExplicitAny(arguments[index], partition)) && typeRequiresBoundaryProof(declared) &&
 			!anyBoundaryRuntimeValidated(arguments[index], declared, partition) {
 			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: "any", Required: typeformat.Short(declared)}), nil
 		}
@@ -8526,7 +8521,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			}
 		}
 		seeds = append(seeds, seed)
-		if (declared != nil && declared.Kind() == kind.Any) || sourceHasAnyBoundary(arguments[index], partition.Values()) {
+		if (declared != nil && declared.Kind() == kind.Any) || sourceHasAnyBoundary(arguments[index], partition) {
 			gradualAnyTerms = append(gradualAnyTerms, term)
 		}
 		if callback, found := closureHandleFor(arguments[index], partition); found {
@@ -9560,7 +9555,9 @@ func projectExternalCallbackReturnFacts(operation equation.BoundEquation, child 
 				parsed, ok := factkey.HeapExternalCallback.ParseKey(fact.Key)
 				decoded, matches := parsed.Subject.Decode(nil)
 				if ok && matches && bytes.Equal(decoded, identity) && !seen[fact.Key] {
-					facts = append(facts, cloneFact(fact))
+					// The child closure is immutable and the caller merge seals
+					// the projected row, so transport does not clone its payload.
+					facts = append(facts, fact)
 					seen[fact.Key] = true
 				}
 			}
@@ -9670,7 +9667,7 @@ func closureTableIdentity(term []byte, values []equation.Fact) ([]byte, bool) {
 	for _, fact := range values {
 		parsed, ok := factkey.HeapTableIdentity.ParseKey(fact.Key)
 		if ok && parsed.Subject.Spelling() == string(term) && (identity == nil || fact.Key > latest) {
-			identity, latest = append([]byte(nil), fact.Value...), fact.Key
+			identity, latest = fact.Value, fact.Key
 		}
 	}
 	return identity, identity != nil
@@ -9706,7 +9703,9 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 			continue
 		}
 		if summary, ok := l.projectSummaryCallDiagnostic(caller, callerOperands, child, item, partition); ok {
-			projected.Diagnostics = append(projected.Diagnostics, cloneFact(summary.Fact))
+			// The summary fact was constructed for this projection and is not
+			// shared with a mutable owner, so appending it needs no second copy.
+			projected.Diagnostics = append(projected.Diagnostics, summary.Fact)
 			l.diagnosticSpans[summary.Fact.Key] = summary.Span
 			l.childPublished[summary.Fact.Key] = summary
 			transported[item.Fact.Key] = true
@@ -9802,7 +9801,7 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 	}
 	outerArgument := formal + 1
 	key := diagnosticFamilyPrefix(DiagnosticFamilyCallArgumentType) + caller.Target.Name + "/" + indexedCallSubject("argument", formal)
-	if sourceHasAnyBoundary(callerOperands.arguments[formal], partition.Values()) {
+	if sourceHasAnyBoundary(callerOperands.arguments[formal], partition) {
 		display := "argument " + strconv.Itoa(outerArgument)
 		for _, operand := range caller.Operands {
 			if operand.Role == fmt.Sprintf("argument-display-%08d", formal) && len(operand.Value) != 0 {
@@ -11355,9 +11354,9 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			}
 		}
 	}
-	if boundary, ok := gradualAnyBoundaryFact(target, operands["value"], operation.Target.Name, partition.Values()); ok {
+	if boundary, ok := gradualAnyBoundaryFact(target, operands["value"], operation.Target.Name, partition); ok {
 		values = append(values, boundary)
-	} else if root, _, explicit := explicitAnySourceFact(operands["value"], partition.Values()); explicit {
+	} else if root, _, explicit := explicitAnySourceFact(operands["value"], partition); explicit {
 		values = append(values, equation.Fact{Key: "gradual-any/" + target + "/" + operation.Target.Name, Value: root})
 	}
 	if optional, ok := currentEpochFact("optional-provider-result/", operands["value"], partition); ok {
@@ -11630,7 +11629,8 @@ func projectReturnTupleWriteRelation(target string, source []byte, operation str
 	encodedSource := base64.RawURLEncoding.EncodeToString(source)
 	encodedTarget := base64.RawURLEncoding.EncodeToString([]byte(target))
 	var facts []equation.Fact
-	for _, fact := range partition.Values() {
+	returnRelations := partition.IterateValuesPrefix(returnTupleTruePrefix)
+	for fact, ok := returnRelations.Next(); ok; fact, ok = returnRelations.Next() {
 		if !strings.HasPrefix(fact.Key, returnTupleTruePrefix) || !returnTupleClass(fact.Value).stated() {
 			continue
 		}
@@ -11648,7 +11648,7 @@ func projectReturnTupleWriteRelation(target string, source []byte, operation str
 		if left == parts[1] && right == parts[2] {
 			continue
 		}
-		facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + class + "/" + left + "/" + right, Value: append([]byte(nil), fact.Value...)})
+		facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + class + "/" + left + "/" + right, Value: fact.Value})
 	}
 	return facts
 }
@@ -12115,8 +12115,8 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		binaryLeft, binaryRight = left, right
 		operator := wir.Operator(op)
 		boundaryComparison := (operator == wir.BinEq || operator == wir.BinNe) &&
-			(isExplicitAnyValue(left) || sourceHasAnyBoundary(by["left"], partition.Values()) ||
-				isExplicitAnyValue(right) || sourceHasAnyBoundary(by["right"], partition.Values()))
+			(isExplicitAnyValue(left) || sourceHasAnyBoundary(by["left"], partition) ||
+				isExplicitAnyValue(right) || sourceHasAnyBoundary(by["right"], partition))
 		if string(left) == shapefact.ScalarTopWire || string(right) == shapefact.ScalarTopWire || boundaryComparison {
 			value = []byte(shapefact.ScalarTopWire)
 		} else {
@@ -12217,14 +12217,14 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	values = append(values, originFacts...)
 	if wir.Op(kind) == wir.OpLogical {
 		for _, source := range boundarySources {
-			if boundary, ok := gradualAnyBoundaryFact(string(result), source, operation.Target.Name, partition.Values()); ok {
+			if boundary, ok := gradualAnyBoundaryFact(string(result), source, operation.Target.Name, partition); ok {
 				values = append(values, boundary)
 				break
 			}
 		}
 	}
 	if wir.Op(kind) == wir.OpUnOp && wir.Operator(op) == wir.UnNot {
-		if boundary, ok := gradualAnyBoundaryFact(string(result), by["value"], operation.Target.Name, partition.Values()); ok {
+		if boundary, ok := gradualAnyBoundaryFact(string(result), by["value"], operation.Target.Name, partition); ok {
 			values = append(values, boundary)
 		}
 	}
@@ -12240,7 +12240,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			if !found {
 				break
 			}
-			if root, _, explicit := explicitAnySourceFact(term, partition.Values()); explicit {
+			if root, _, explicit := explicitAnySourceFact(term, partition); explicit {
 				values = append(values, equation.Fact{Key: "gradual-any/" + string(result) + "/" + operation.Target.Name, Value: root})
 				break
 			}
@@ -12263,7 +12263,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		// result so branch evaluation can retain the possible arm; the boundary
 		// is not a type proof for either operand.
 		for _, role := range []string{"left", "right"} {
-			if root, _, found := explicitAnySourceFact(by[role], partition.Values()); found {
+			if root, _, found := explicitAnySourceFact(by[role], partition); found {
 				values = append(values, equation.Fact{Key: "gradual-any/" + string(result) + "/" + operation.Target.Name, Value: root})
 				break
 			}
@@ -12298,7 +12298,7 @@ func nativeConcatSitePublication(operation equation.BoundEquation, operands map[
 		if !found {
 			break
 		}
-		if declaredExplicitAny(term, partition) || sourceHasAnyBoundary(term, partition.Values()) {
+		if declaredExplicitAny(term, partition) || sourceHasAnyBoundary(term, partition) {
 			return equation.Fact{}, false
 		}
 		value, err := resolveCurrentValue(term, partition)
@@ -12399,18 +12399,18 @@ func projectTypePredicateWriteRelation(target string, source []byte, operation s
 		return nil
 	}
 	encodedSource := base64.RawURLEncoding.EncodeToString(source)
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, typePredicatePairPrefix) {
-			parts := strings.Split(strings.TrimPrefix(fact.Key, typePredicatePairPrefix), "/")
-			if len(parts) == 2 && parts[0] == encodedSource {
-				return []equation.Fact{{Key: typePredicateValuePrefix + base64.RawURLEncoding.EncodeToString([]byte(target)) + "/" + parts[1] + "/" + operation, Value: append([]byte(nil), fact.Value...)}}
-			}
+	pairs := partition.IterateValuesPrefix(typePredicatePairPrefix)
+	for fact, ok := pairs.Next(); ok; fact, ok = pairs.Next() {
+		parts := strings.Split(strings.TrimPrefix(fact.Key, typePredicatePairPrefix), "/")
+		if len(parts) == 2 && parts[0] == encodedSource {
+			return []equation.Fact{{Key: typePredicateValuePrefix + base64.RawURLEncoding.EncodeToString([]byte(target)) + "/" + parts[1] + "/" + operation, Value: fact.Value}}
 		}
-		if strings.HasPrefix(fact.Key, typePredicateValuePrefix) {
-			parts := strings.Split(strings.TrimPrefix(fact.Key, typePredicateValuePrefix), "/")
-			if len(parts) == 3 && parts[1] == encodedSource {
-				return []equation.Fact{{Key: typePredicatePairPrefix + parts[0] + "/" + base64.RawURLEncoding.EncodeToString([]byte(target)), Value: append([]byte(nil), fact.Value...)}}
-			}
+	}
+	predicateValues := partition.IterateValuesPrefix(typePredicateValuePrefix)
+	for fact, ok := predicateValues.Next(); ok; fact, ok = predicateValues.Next() {
+		parts := strings.Split(strings.TrimPrefix(fact.Key, typePredicateValuePrefix), "/")
+		if len(parts) == 3 && parts[1] == encodedSource {
+			return []equation.Fact{{Key: typePredicatePairPrefix + parts[0] + "/" + base64.RawURLEncoding.EncodeToString([]byte(target)), Value: fact.Value}}
 		}
 	}
 	return nil
@@ -13467,21 +13467,14 @@ func concatOperandOptionalField(term []byte, partition equation.Partition) bool 
 // obligation and cannot be reused as an assignment or member-access proof.
 func optionalProviderConcatWitness(term []byte, partition equation.Partition) ([]byte, bool) {
 	prefix := termFamilyKey(factkey.Value, string(term), "").String()
-	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
-			latest = fact.Key
-		}
-	}
-	if latest == "" {
+	latest, found := partition.LatestValuePrefix(prefix)
+	if !found {
 		return nil, false
 	}
-	operation := strings.TrimPrefix(latest, prefix)
+	operation := strings.TrimPrefix(latest.Key, prefix)
 	want := "optional-provider-result/" + string(term) + "/" + operation
-	for _, fact := range partition.Values() {
-		if fact.Key == want {
-			return append([]byte(nil), fact.Value...), true
-		}
+	if fact, found := partition.Value(want); found {
+		return fact.Value, true
 	}
 	return nil, false
 }
@@ -13934,7 +13927,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	// member, but it does preserve the already-published boundary itself. The
 	// downstream consumer may therefore reject a typed use instead of treating
 	// this exact unvalidated read as an opaque Top value.
-	if root, _, explicit := explicitAnySourceFact(operands["container"], partition.Values()); explicit {
+	if root, _, explicit := explicitAnySourceFact(operands["container"], partition); explicit {
 		values = append(values, equation.Fact{Key: "gradual-any/" + target + "/" + operation.Target.Name, Value: root})
 	}
 	if allocation, found := placementAllocationForTerm(operands["container"], partition); found {
@@ -14012,17 +14005,11 @@ func keyedComponentContainerType(container []byte, partition equation.Partition)
 
 func castTargetWitness(term []byte, partition equation.Partition) (typ.Type, bool) {
 	prefix := "cast-target/" + string(term) + "/"
-	var witness []byte
-	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (witness == nil || fact.Key > latest) {
-			witness, latest = fact.Value, fact.Key
-		}
-	}
-	if witness == nil {
+	fact, found := partition.LatestValuePrefix(prefix)
+	if !found {
 		return nil, false
 	}
-	return shapefact.DecodeTarget(witness)
+	return shapefact.DecodeTarget(fact.Value)
 }
 
 // heapIndexSubject binds an index proof to the sealed table identity when one
@@ -14125,7 +14112,8 @@ func iterationKeyOfFact(source []byte, key, operation string) equation.Fact {
 func iterationKeyOfContainer(term []byte, partition equation.Partition) ([]byte, bool) {
 	prefix := iterationKeyOfPrefix + base64.RawURLEncoding.EncodeToString(term) + "/"
 	latest, container := "", []byte(nil)
-	for _, fact := range partition.ValuesPrefix(prefix) {
+	directValues := partition.IterateValuesPrefix(prefix)
+	for fact, ok := directValues.Next(); ok; fact, ok = directValues.Next() {
 		if fact.Key > latest {
 			latest, container = fact.Key, fact.Value
 		}
@@ -14358,7 +14346,8 @@ func unverifiedCallAfter(container []byte, operation string, partition equation.
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(allocation.Identity))
 	blocked := placementBlockerPrefix + encoded + "/opaque-call/"
 	discharged := placementContractPrefix + encoded + "/local/"
-	for _, fact := range partition.ValuesPrefix(blocked) {
+	blockedValues := partition.IterateValuesPrefix(blocked)
+	for fact, ok := blockedValues.Next(); ok; fact, ok = blockedValues.Next() {
 		point := factOperation(fact.Key)
 		if string(fact.Value) != "proven" || point <= operation {
 			continue
@@ -14609,7 +14598,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// an explicit-any boundary, but it cannot discharge a later declared
 	// assignment contract. The boundary itself is already-published evidence
 	// and remains authoritative until validation supplies a separate proof.
-	anySource := isUnvalidatedAnyValue(value) || sourceHasAnyBoundary(source, partition.Values()) || providerAnyResultBoundary(source, partition)
+	anySource := isUnvalidatedAnyValue(value) || sourceHasAnyBoundary(source, partition) || providerAnyResultBoundary(source, partition)
 	// An explicit-any declaration remains a boundary, but an exact sealed
 	// member may still be the concrete counterexample for its assignment
 	// diagnostic. Keep that existing heap publication separate from the
@@ -14632,7 +14621,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	boundaryValidated := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) &&
 		runtimeTypeValidationProves(source, targetType, shapeTarget, partition)
 	boundaryRequiresProof := kind == "claim-kind/3" && anySource && assignmentTargetRequiresProof(targetType) && !boundaryValidated
-	castFromAnyBoundary := kind == "claim-kind/1" && sourceHasAnyBoundary(source, partition.Values())
+	castFromAnyBoundary := kind == "claim-kind/1" && sourceHasAnyBoundary(source, partition)
 	// A cast is a view of its operand, never a copy: the result denotes the same
 	// runtime table. Carrying the operand's heap identity onto the result keeps a
 	// later write through the cast addressed to that same cell, so a wider cast
@@ -16024,8 +16013,8 @@ func isUnvalidatedAnyValue(value []byte) bool {
 	return isExplicitAnyValue(value) || string(value) == shapefact.ScalarExternalCallbackAnyWire
 }
 
-func sourceHasExplicitAny(source []byte, values []equation.Fact) bool {
-	_, _, found := explicitAnySourceFact(source, values)
+func sourceHasExplicitAny(source []byte, partition equation.Partition) bool {
+	_, _, found := explicitAnySourceFact(source, partition)
 	return found
 }
 
@@ -16033,8 +16022,163 @@ func sourceHasExplicitAny(source []byte, values []equation.Fact) bool {
 // path and its structural ancestors. A concrete value at such a path is not a
 // validation proof: the declared any boundary remains authoritative until a
 // runtime guard publishes a proof for that same path.
-func sourceHasAnyBoundary(source []byte, values []equation.Fact) bool {
-	if sourceHasExplicitAny(source, values) {
+func sourceHasAnyBoundary(source []byte, partition equation.Partition) bool {
+	if sourceHasExplicitAny(source, partition) {
+		return true
+	}
+	term := string(source)
+	path := strings.TrimPrefix(term, "path/")
+	if path == term || path == "" {
+		return false
+	}
+	for {
+		values := partition.FamilyValues(termFamilyKey(factkey.Type, "path/"+path, ""))
+		for fact, ok := values.Next(); ok; fact, ok = values.Next() {
+			declared, ok := shapefact.DecodeTarget(fact.Payload)
+			if ok && declared != nil && unwrap.Alias(subst.ExpandInstantiated(declared)).Kind() == kind.Any {
+				return true
+			}
+		}
+		if summaryTypeIsAny([]byte("path/"+path), partition) {
+			return true
+		}
+		cut := strings.LastIndexAny(path, ".[")
+		if cut < 0 {
+			return false
+		}
+		path = path[:cut]
+	}
+}
+
+// summaryTypeIsAny recognizes the current, project-published summary at a
+// path.  Imported and joined values carry this canonical fact rather than a
+// local declaration; matching it to the term's current epoch prevents an old
+// Any summary from surviving a later write.
+func summaryTypeIsAny(term []byte, partition equation.Partition) bool {
+	termText := string(term)
+	if !strings.HasPrefix(termText, "path/") {
+		return false
+	}
+	epochPrefix := epochFactPrefix + termText + "/"
+	latest, found := partition.LatestValuePrefix(epochPrefix)
+	if !found {
+		return false
+	}
+	operation := strings.TrimPrefix(latest.Key, epochPrefix)
+	summaryKey := termFamilyKey(factkey.SummaryType, termText, operation).String()
+	fact, found := partition.Value(summaryKey)
+	if !found {
+		return false
+	}
+	summary, err := typ.DecodeCanonical(context.Background(), fact.Value)
+	return err == nil && summary != nil && unwrap.Alias(subst.ExpandInstantiated(summary)).Kind() == kind.Any
+}
+
+func hasSummaryAnyArgument(arguments [][]byte, partition equation.Partition) bool {
+	for _, argument := range arguments {
+		if summaryTypeIsAny(argument, partition) {
+			return true
+		}
+	}
+	return false
+}
+
+func gradualAnyBoundaryFact(target string, source []byte, operation string, partition equation.Partition) (equation.Fact, bool) {
+	root, found := gradualAnySourceFact(source, partition)
+	if !found {
+		return equation.Fact{}, false
+	}
+	return equation.Fact{Key: "gradual-any/" + target + "/" + operation, Value: root}, true
+}
+
+func gradualAnySourceFact(source []byte, partition equation.Partition) ([]byte, bool) {
+	term := string(source)
+	path := strings.TrimPrefix(term, "path/")
+	if (path == term || path == "") && !strings.HasPrefix(term, "temp/") {
+		return nil, false
+	}
+	for {
+		candidate := term
+		if strings.HasPrefix(term, "path/") {
+			candidate = "path/" + path
+		}
+		prefix := "gradual-any/" + candidate + "/"
+		// Every gradual-any publication carries its originating path; therefore
+		// the latest row is the complete current marker for this candidate. Fact
+		// payloads are immutable partition storage, so carrying the marker does
+		// not need to restate its bytes.
+		if fact, found := partition.LatestValuePrefix(prefix); found && strings.HasPrefix(string(fact.Value), "path/") {
+			return fact.Value, true
+		}
+		if !strings.HasPrefix(term, "path/") {
+			return nil, false
+		}
+		cut := strings.LastIndexAny(path, ".[")
+		if cut < 0 {
+			return nil, false
+		}
+		path = path[:cut]
+	}
+}
+
+// sourceHasGradualLogicalBoundary identifies the exact untyped formal whose
+// published gradual boundary reached an argument through a logical result.
+// The marker is attached only by the guarded uncalled admission above; a
+// general explicit-any boundary keeps its established diagnostic projection.
+func sourceHasGradualLogicalBoundary(source []byte, partition equation.Partition) bool {
+	root, found := gradualAnySourceFact(source, partition)
+	if !found {
+		return false
+	}
+	prefix := "gradual-logical/" + string(root) + "/"
+	fact, found := partition.LatestValuePrefix(prefix)
+	return found && string(fact.Value) == string(root)
+}
+
+// explicitAnySourceFact returns only an already-published exact source or
+// ancestor fact. It is used to retain a precision boundary through a closed
+// equation handoff, never to infer a value for an unrecorded member read.
+func explicitAnySourceFact(source []byte, partition equation.Partition) ([]byte, []byte, bool) {
+	if root, found := gradualAnySourceFact(source, partition); found {
+		return root, shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)}), true
+	}
+	term := string(source)
+	path := strings.TrimPrefix(term, "path/")
+	if path == term || path == "" {
+		return nil, nil, false
+	}
+	for {
+		declaredValues := partition.FamilyValues(termFamilyKey(factkey.DeclaredType, "path/"+path, ""))
+		for fact, ok := declaredValues.Next(); ok; fact, ok = declaredValues.Next() {
+			declared, ok := shapefact.DecodeTarget(fact.Payload)
+			if ok && declared != nil && unwrap.Alias(subst.ExpandInstantiated(declared)).Kind() == kind.Any {
+				return []byte("path/" + path), shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)}), true
+			}
+		}
+		prefix := termFamilyKey(factkey.Value, "path/"+path, "")
+		var value []byte
+		latest := ""
+		values := partition.FamilyValues(prefix)
+		for fact, ok := values.Next(); ok; fact, ok = values.Next() {
+			if isExplicitAnyValue(fact.Payload) && (value == nil || fact.Occurrence > latest) {
+				value, latest = fact.Payload, fact.Occurrence
+			}
+		}
+		if value != nil {
+			return []byte("path/" + path), value, true
+		}
+		cut := strings.LastIndexAny(path, ".[")
+		if cut < 0 {
+			return nil, nil, false
+		}
+		path = path[:cut]
+	}
+}
+
+// Full scan required: rich-diagnostic serialization projects an already-closed
+// value lane that has no partition capability, and must preserve its verdict.
+func sourceHasAnyBoundaryInFacts(source []byte, values []equation.Fact) bool {
+	if _, _, found := explicitAnySourceFactInFacts(source, values); found {
 		return true
 	}
 	path := strings.TrimPrefix(string(source), "path/")
@@ -16052,7 +16196,7 @@ func sourceHasAnyBoundary(source []byte, values []equation.Fact) bool {
 				return true
 			}
 		}
-		if summaryTypeIsAny([]byte("path/"+path), values) {
+		if summaryTypeIsAnyInFacts([]byte("path/"+path), values) {
 			return true
 		}
 		cut := strings.LastIndexAny(path, ".[")
@@ -16063,11 +16207,7 @@ func sourceHasAnyBoundary(source []byte, values []equation.Fact) bool {
 	}
 }
 
-// summaryTypeIsAny recognizes the current, project-published summary at a
-// path.  Imported and joined values carry this canonical fact rather than a
-// local declaration; matching it to the term's current epoch prevents an old
-// Any summary from surviving a later write.
-func summaryTypeIsAny(term []byte, values []equation.Fact) bool {
+func summaryTypeIsAnyInFacts(term []byte, values []equation.Fact) bool {
 	if !strings.HasPrefix(string(term), "path/") {
 		return false
 	}
@@ -16081,36 +16221,17 @@ func summaryTypeIsAny(term []byte, values []equation.Fact) bool {
 	if latest == "" {
 		return false
 	}
-	operation := strings.TrimPrefix(latest, epochPrefix)
-	summaryKey := termFamilyKey(factkey.SummaryType, string(term), operation).String()
+	summaryKey := termFamilyKey(factkey.SummaryType, string(term), strings.TrimPrefix(latest, epochPrefix)).String()
 	for _, fact := range values {
-		if fact.Key != summaryKey {
-			continue
-		}
-		summary, err := typ.DecodeCanonical(context.Background(), fact.Value)
-		return err == nil && summary != nil && unwrap.Alias(subst.ExpandInstantiated(summary)).Kind() == kind.Any
-	}
-	return false
-}
-
-func hasSummaryAnyArgument(arguments [][]byte, values []equation.Fact) bool {
-	for _, argument := range arguments {
-		if summaryTypeIsAny(argument, values) {
-			return true
+		if fact.Key == summaryKey {
+			summary, err := typ.DecodeCanonical(context.Background(), fact.Value)
+			return err == nil && summary != nil && unwrap.Alias(subst.ExpandInstantiated(summary)).Kind() == kind.Any
 		}
 	}
 	return false
 }
 
-func gradualAnyBoundaryFact(target string, source []byte, operation string, values []equation.Fact) (equation.Fact, bool) {
-	root, found := gradualAnySourceFact(source, values)
-	if !found {
-		return equation.Fact{}, false
-	}
-	return equation.Fact{Key: "gradual-any/" + target + "/" + operation, Value: root}, true
-}
-
-func gradualAnySourceFact(source []byte, values []equation.Fact) ([]byte, bool) {
+func gradualAnySourceFactInFacts(source []byte, values []equation.Fact) ([]byte, bool) {
 	term := string(source)
 	path := strings.TrimPrefix(term, "path/")
 	if (path == term || path == "") && !strings.HasPrefix(term, "temp/") {
@@ -16143,12 +16264,8 @@ func gradualAnySourceFact(source []byte, values []equation.Fact) ([]byte, bool) 
 	}
 }
 
-// sourceHasGradualLogicalBoundary identifies the exact untyped formal whose
-// published gradual boundary reached an argument through a logical result.
-// The marker is attached only by the guarded uncalled admission above; a
-// general explicit-any boundary keeps its established diagnostic projection.
-func sourceHasGradualLogicalBoundary(source []byte, values []equation.Fact) bool {
-	root, found := gradualAnySourceFact(source, values)
+func sourceHasGradualLogicalBoundaryInFacts(source []byte, values []equation.Fact) bool {
+	root, found := gradualAnySourceFactInFacts(source, values)
 	if !found {
 		return false
 	}
@@ -16161,12 +16278,9 @@ func sourceHasGradualLogicalBoundary(source []byte, values []equation.Fact) bool
 	return false
 }
 
-// explicitAnySourceFact returns only an already-published exact source or
-// ancestor fact. It is used to retain a precision boundary through a closed
-// equation handoff, never to infer a value for an unrecorded member read.
-func explicitAnySourceFact(source []byte, values []equation.Fact) ([]byte, []byte, bool) {
-	if root, found := gradualAnySourceFact(source, values); found {
-		return root, claimPayload("claim-kind/3", `"any"`), true
+func explicitAnySourceFactInFacts(source []byte, values []equation.Fact) ([]byte, []byte, bool) {
+	if root, found := gradualAnySourceFactInFacts(source, values); found {
+		return root, shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)}), true
 	}
 	path := strings.TrimPrefix(string(source), "path/")
 	if path == string(source) || path == "" {
@@ -16180,7 +16294,7 @@ func explicitAnySourceFact(source []byte, values []equation.Fact) ([]byte, []byt
 			}
 			declared, ok := shapefact.DecodeTarget(fact.Value)
 			if ok && declared != nil && unwrap.Alias(subst.ExpandInstantiated(declared)).Kind() == kind.Any {
-				return []byte("path/" + path), claimPayload("claim-kind/3", `"any"`), true
+				return []byte("path/" + path), shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)}), true
 			}
 		}
 		prefix := termFamilyKey(factkey.Value, "path/"+path, "").String()
@@ -16693,7 +16807,7 @@ func declaredElementWriteDiagnostic(operation equation.BoundEquation, operands m
 	if string(value) == shapefact.ScalarNilWire {
 		return equation.Fact{}, false
 	}
-	anySource := isExplicitAnyValue(value) || sourceHasAnyBoundary(operands["value"], partition.Values())
+	anySource := isExplicitAnyValue(value) || sourceHasAnyBoundary(operands["value"], partition)
 	if !anySource && valueAgainstType(value, element) != shapeRefuted {
 		return equation.Fact{}, false
 	}
@@ -17589,7 +17703,7 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 	unknownCondition := false
 	var boundarySource, boundaryValue, boundaryConsumer []byte
 	acceptBoundary := func(source []byte) bool {
-		term, value, found := explicitAnySourceFact(source, partition.Values())
+		term, value, found := explicitAnySourceFact(source, partition)
 		if !found {
 			return false
 		}
@@ -18253,7 +18367,8 @@ func typePredicateBranchClosure(operation equation.BoundEquation, partition equa
 		return equation.OutputClosure{}, false
 	}
 	encodedError := base64.RawURLEncoding.EncodeToString([]byte(errorPath))
-	for _, fact := range partition.Values() {
+	predicatePairs := partition.IterateValuesPrefix(typePredicatePairPrefix)
+	for fact, ok := predicatePairs.Next(); ok; fact, ok = predicatePairs.Next() {
 		if !strings.HasPrefix(fact.Key, typePredicatePairPrefix) || fact.Value == nil {
 			continue
 		}
@@ -18272,7 +18387,7 @@ func typePredicateBranchClosure(operation equation.BoundEquation, partition equa
 		// non-nil error edge invalidates it: the value slot is nil.
 		trueValue := []byte(shapefact.ScalarNilWire)
 		if errorAbsent {
-			trueValue = append([]byte(nil), fact.Value...)
+			trueValue = fact.Value
 		}
 		trueGuard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.TrueEdge})
 		falseGuard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.FalseEdge})
@@ -18541,7 +18656,8 @@ func returnTupleTrueBranchClosure(operation equation.BoundEquation, partition eq
 	}
 	guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: edge})
 	closure := equation.OutputClosure{}
-	for _, fact := range partition.Values() {
+	returnValues := partition.IterateValuesPrefix(prefix)
+	for fact, ok := returnValues.Next(); ok; fact, ok = returnValues.Next() {
 		if !strings.HasPrefix(fact.Key, prefix) {
 			continue
 		}
@@ -19172,12 +19288,8 @@ func runtimeTypeProven(term []byte, name string, partition equation.Partition) b
 		return false
 	}
 	prefix := runtimeTypeProofKey(strings.TrimPrefix(string(term), "path/"), name)
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "proven" {
-			return true
-		}
-	}
-	return false
+	fact, found := partition.LatestValuePrefix(prefix)
+	return found && string(fact.Value) == "proven"
 }
 
 func runtimeTypeProofAdmitsTarget(name string, target typ.Type) bool {
@@ -19798,10 +19910,9 @@ type selectConstraintWire struct {
 }
 
 func exactFact(key string, partition equation.Partition) ([]byte, bool) {
-	for _, fact := range partition.Values() {
-		if fact.Key == key {
-			return append([]byte(nil), fact.Value...), true
-		}
+	fact, found := partition.Value(key)
+	if found {
+		return fact.Value, true
 	}
 	return nil, false
 }
@@ -20409,11 +20520,11 @@ func staticMemberCall(callee []byte) (receiver []byte, method string, ok bool) {
 }
 
 func callArgumentsNeedPublishedContract(arguments [][]byte, partition equation.Partition) bool {
-	if hasSummaryAnyArgument(arguments, partition.Values()) || hasPublishedOptionalArgument(arguments, partition) {
+	if hasSummaryAnyArgument(arguments, partition) || hasPublishedOptionalArgument(arguments, partition) {
 		return true
 	}
 	for _, argument := range arguments {
-		if sourceHasAnyBoundary(argument, partition.Values()) {
+		if sourceHasAnyBoundary(argument, partition) {
 			return true
 		}
 	}
@@ -20648,7 +20759,8 @@ func (l *lexicalEvaluator) memberRelayEntry(operation equation.BoundEquation, op
 		return false
 	}
 	prefix := "member-closure/" + string(receiver) + "/entry/"
-	for _, fact := range partition.Values() {
+	relayValues := partition.IterateValuesPrefix(prefix)
+	for fact, ok := relayValues.Next(); ok; fact, ok = relayValues.Next() {
 		if !strings.HasPrefix(fact.Key, prefix) {
 			continue
 		}
@@ -20664,19 +20776,17 @@ func (l *lexicalEvaluator) memberRelayEntry(operation equation.BoundEquation, op
 // front declaration. Unlike a shape or inferred value, it identifies a
 // deliberate precision boundary and never manufactures compatibility proof.
 func declaredExplicitAny(term []byte, partition equation.Partition) bool {
-	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
+	termText := string(term)
+	if !strings.HasPrefix(termText, "path/") && !strings.HasPrefix(termText, "temp/") {
 		return false
 	}
-	boundaryPrefix := "explicit-any/" + string(term) + "/"
-	prefix := termFamilyKey(factkey.DeclaredType, string(term), "").String()
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, boundaryPrefix) && string(fact.Value) == "declared" {
-			return true
-		}
-		if !strings.HasPrefix(fact.Key, prefix) {
-			continue
-		}
-		declared, ok := shapefact.DecodeTarget(fact.Value)
+	boundaryPrefix := "explicit-any/" + termText + "/"
+	if fact, found := partition.LatestValuePrefix(boundaryPrefix); found && string(fact.Value) == "declared" {
+		return true
+	}
+	values := partition.FamilyValues(termFamilyKey(factkey.DeclaredType, termText, ""))
+	for fact, ok := values.Next(); ok; fact, ok = values.Next() {
+		declared, ok := shapefact.DecodeTarget(fact.Payload)
 		if ok && declared != nil && unwrap.Alias(subst.ExpandInstantiated(declared)).Kind() == kind.Any {
 			return true
 		}
@@ -20707,14 +20817,7 @@ func operatorFixedBooleanResult(term []byte, expected typ.Type, partition equati
 		return false
 	}
 	prefix := booleanResultPrefix + string(term) + "/"
-	proven := false
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "proven" {
-			proven = true
-			break
-		}
-	}
-	if !proven {
+	if fact, found := partition.LatestValuePrefix(prefix); !found || string(fact.Value) != "proven" {
 		return false
 	}
 	for _, witness := range [][]byte{[]byte(shapefact.ScalarTrueWire), []byte(shapefact.ScalarFalseWire)} {
@@ -20730,7 +20833,7 @@ func operatorFixedBooleanResult(term []byte, expected typ.Type, partition equati
 // assignment kernel consumes.
 func anyBoundarySource(term []byte, value []byte, known bool, partition equation.Partition) bool {
 	return (known && isUnvalidatedAnyValue(value)) ||
-		sourceHasAnyBoundary(term, partition.Values()) ||
+		sourceHasAnyBoundary(term, partition) ||
 		providerAnyResultBoundary(term, partition)
 }
 
@@ -21169,12 +21272,11 @@ func isResourceIdentity(value []byte) bool {
 
 func resourceLifecycleState(partition equation.Partition, identity []byte) (string, bool) {
 	prefix := resourceLifecyclePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	state, latest := "", ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (state == "" || fact.Key > latest) {
-			state, latest = string(fact.Value), fact.Key
-		}
+	fact, found := partition.LatestValuePrefix(prefix)
+	if !found {
+		return "", false
 	}
+	state := string(fact.Value)
 	return state, state == "open" || state == "closed" || state == "active" || state == "committed" || state == "escaped"
 }
 
@@ -21209,12 +21311,11 @@ func channelLifecycleStateFact(identity []byte, operation, state string) equatio
 
 func channelLifecycleState(partition equation.Partition, identity []byte) (string, bool) {
 	prefix := channelLifecyclePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	state, latest := "", ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (state == "" || fact.Key > latest) {
-			state, latest = string(fact.Value), fact.Key
-		}
+	fact, found := partition.LatestValuePrefix(prefix)
+	if !found {
+		return "", false
 	}
+	state := string(fact.Value)
 	return state, state == "open" || state == "closed" || state == "escaped"
 }
 
@@ -21406,19 +21507,18 @@ func isTableTypeForPlacement(t typ.Type) bool {
 }
 
 func declaredTypeForTerm(term []byte, partition equation.Partition) (typ.Type, bool) {
-	var encoded []byte
-	latest := ""
+	// A solved type fact sorts after its declared-type fallback, so it is the
+	// winning family whenever both are visible for the same term.
 	typePrefix := termFamilyKey(factkey.Type, string(term), "").String()
-	declaredPrefix := termFamilyKey(factkey.DeclaredType, string(term), "").String()
-	for _, fact := range partition.Values() {
-		if (strings.HasPrefix(fact.Key, typePrefix) || strings.HasPrefix(fact.Key, declaredPrefix)) && fact.Key > latest {
-			encoded, latest = fact.Value, fact.Key
-		}
+	fact, found := partition.LatestValuePrefix(typePrefix)
+	if !found {
+		declaredPrefix := termFamilyKey(factkey.DeclaredType, string(term), "").String()
+		fact, found = partition.LatestValuePrefix(declaredPrefix)
 	}
-	if len(encoded) == 0 {
+	if !found || len(fact.Value) == 0 {
 		return nil, false
 	}
-	return shapefact.DecodeTarget(encoded)
+	return shapefact.DecodeTarget(fact.Value)
 }
 
 // boundaryFormalRebound reports whether the callee, or a body nested inside it
@@ -21443,7 +21543,7 @@ func boundaryFormalRebound(child front.Compilation, symbol wir.SymbolID) bool {
 // top-like one, so both withhold the instantiation and leave the formal
 // unconstrained.
 func instantiatedFormalType(term []byte, value []byte, partition equation.Partition) ([]byte, bool) {
-	if isExplicitAnyValue(value) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition) {
+	if isExplicitAnyValue(value) || sourceHasAnyBoundary(term, partition) || declaredExplicitAny(term, partition) {
 		return nil, false
 	}
 	resolved, found, authorityErr := resolveAuthorityType(instantiatedFormalTypeAuthorities, typeAuthorityContext{
@@ -21530,7 +21630,8 @@ func channelPayloadRelationFacts(template exportrelation.Value, result, operatio
 func rebaseChannelPayloadFacts(source []byte, target, operation string, partition equation.Partition) []equation.Fact {
 	prefix := channelPayloadPrefix + string(source)
 	var facts []equation.Fact
-	for _, fact := range partition.Values() {
+	payloadValues := partition.IterateValuesPrefix(prefix)
+	for fact, ok := payloadValues.Next(); ok; fact, ok = payloadValues.Next() {
 		if !strings.HasPrefix(fact.Key, prefix) {
 			continue
 		}
@@ -21539,7 +21640,7 @@ func rebaseChannelPayloadFacts(source []byte, target, operation string, partitio
 		if cut < 0 {
 			continue
 		}
-		facts = append(facts, equation.Fact{Key: channelPayloadPrefix + target + rest[:cut] + "/" + operation, Value: append([]byte(nil), fact.Value...)})
+		facts = append(facts, equation.Fact{Key: channelPayloadPrefix + target + rest[:cut] + "/" + operation, Value: fact.Value})
 	}
 	return facts
 }
@@ -22624,9 +22725,10 @@ func literalDiagnosticValue(term []byte, partition equation.Partition) ([]byte, 
 	prefix := literalDiagnosticPrefix + string(term) + "/"
 	var value []byte
 	latest := ""
-	for _, fact := range partition.Values() {
+	literalValues := partition.IterateValuesPrefix(prefix)
+	for fact, ok := literalValues.Next(); ok; fact, ok = literalValues.Next() {
 		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest && scalarLiteralDiagnosticValue(fact.Value) {
-			value, latest = append([]byte(nil), fact.Value...), fact.Key
+			value, latest = fact.Value, fact.Key
 		}
 	}
 	return value, value != nil
@@ -23098,14 +23200,8 @@ func tableFieldName(value string) bool {
 
 func channelDisplay(partition equation.Partition, receiver []byte) string {
 	prefix := "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(receiver) + "/"
-	display, latest := "", ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (display == "" || fact.Key > latest) {
-			display, latest = string(fact.Value), fact.Key
-		}
-	}
-	if display != "" {
-		return display
+	if fact, found := partition.LatestValuePrefix(prefix); found && len(fact.Value) != 0 {
+		return string(fact.Value)
 	}
 	return strings.TrimPrefix(string(receiver), "path/")
 }
@@ -23238,12 +23334,8 @@ func isolationStateFact(prefix string, term []byte) equation.TransactionResult {
 
 func isolationStatePresent(partition equation.Partition, prefix string, term []byte) bool {
 	key := prefix + base64.RawURLEncoding.EncodeToString(term)
-	for _, fact := range partition.Values() {
-		if fact.Key == key && string(fact.Value) == "proven" {
-			return true
-		}
-	}
-	return false
+	fact, found := partition.Value(key)
+	return found && string(fact.Value) == "proven"
 }
 
 // isIsolatedLiteral recognizes only a sealed table whose complete graph is
@@ -23521,26 +23613,22 @@ func priorSealedTableValue(term []byte, partition equation.Partition) ([]byte, b
 		return nil, false
 	}
 	prefix := termFamilyKey(factkey.Value, string(term), "").String()
-	facts := make([]equation.Fact, 0)
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) {
-			facts = append(facts, fact)
-		}
-	}
-	sort.Slice(facts, func(i, j int) bool { return facts[i].Key > facts[j].Key })
-	if len(facts) < 2 || !isClaimRefinement(facts[0].Value) {
+	latest, found := partition.LatestValuePrefix(prefix)
+	if !found || !isClaimRefinement(latest.Value) {
 		return nil, false
 	}
-	for _, fact := range facts[1:] {
-		if isClaimRefinement(fact.Value) {
+	var prior equation.Fact
+	values := partition.IterateValuesPrefix(prefix)
+	for fact, ok := values.Next(); ok; fact, ok = values.Next() {
+		if fact.Key >= latest.Key || isClaimRefinement(fact.Value) || prior.Key >= fact.Key {
 			continue
 		}
-		if shapefact.IsTable(fact.Value) {
-			return append([]byte(nil), fact.Value...), true
-		}
+		prior = fact
+	}
+	if prior.Key == "" || !shapefact.IsTable(prior.Value) {
 		return nil, false
 	}
-	return nil, false
+	return prior.Value, true
 }
 
 func callArgumentIndex(role string) (int, error) {
@@ -23602,7 +23690,7 @@ func positionalArgumentContract(operation equation.BoundEquation, signature call
 	// typed parameter contract.  The argument may retain a concrete shape
 	// from its allocation, but that shape crossed the boundary without
 	// validation and cannot discharge this call's declared requirement.
-	if known && published && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && typeRequiresBoundaryProof(contract) &&
+	if known && published && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition) || declaredExplicitAny(term, partition)) && typeRequiresBoundaryProof(contract) &&
 		!anyBoundaryRuntimeValidated(term, contract, partition) {
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), DiagnosticPayload{Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Observed: "any", Required: callableContractDisplay(contract)}), true, false
 	}
@@ -23984,16 +24072,11 @@ func numericForInductionSatisfies(term, value []byte, expected string, partition
 		return string(value) != shapefact.ScalarNilWire && numericForInductionSatisfies(term, value, strings.TrimSuffix(expected, "?"), partition)
 	}
 	valuePrefix := termFamilyKey(factkey.Value, string(term), "").String()
-	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, valuePrefix) && fact.Key > latest {
-			latest = fact.Key
-		}
-	}
-	if latest == "" {
+	latest, found := partition.LatestValuePrefix(valuePrefix)
+	if !found {
 		return false
 	}
-	operation := strings.TrimPrefix(latest, valuePrefix)
+	operation := strings.TrimPrefix(latest.Key, valuePrefix)
 	witness, current := partition.Value(numericForInductionPrefix + string(term) + "/" + operation)
 	if !current || !bytes.Equal(witness.Value, value) {
 		return false
@@ -24093,7 +24176,8 @@ func runtimeTypeProofDisplay(term []byte, partition equation.Partition) (string,
 	}
 	prefix := "runtime-type-proof/" + base64.RawURLEncoding.EncodeToString(term) + "/"
 	var typeName string
-	for _, fact := range partition.Values() {
+	proofValues := partition.IterateValuesPrefix(prefix)
+	for fact, ok := proofValues.Next(); ok; fact, ok = proofValues.Next() {
 		if !strings.HasPrefix(fact.Key, prefix) || string(fact.Value) != "proven" {
 			continue
 		}
@@ -24716,15 +24800,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		// root so a later member read or send traverses the transported graph.
 		if key == "00000000" {
 			marker := placementLocalReturnRootPrefix + strings.TrimPrefix(string(application), "call/")
-			for _, fact := range partition.Values() {
-				if fact.Key != marker || len(fact.Value) == 0 {
-					continue
-				}
+			if fact, found := partition.Value(marker); found && len(fact.Value) != 0 {
 				values = append(values, placementBindingFact(string(result), operation.Target.Name, string(fact.Value)))
 				if targetTerm, ok := targetTerms[key]; ok && len(targetTerm) != 0 {
 					values = append(values, placementBindingFact(string(targetTerm), operation.Target.Name, string(fact.Value)))
 				}
-				break
 			}
 		}
 		// A callee body that exports a one-sided type predicate decides, through
@@ -24866,19 +24946,16 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		// evaluated without turning the value result into a type witness.
 		if string(value) == shapefact.ScalarTopWire && typePredicateErrorTarget != nil && (key == "00000001" || (key == "00000000" && len(resultTerms) == 1)) {
 			if argument, found := argumentTerms[0]; found {
-				if root, _, ok := explicitAnySourceFact(argument, partition.Values()); ok {
+				if root, _, ok := explicitAnySourceFact(argument, partition); ok {
 					values = append(values, equation.Fact{Key: "gradual-any/" + string(result) + "/" + operation.Target.Name, Value: root})
 				}
 			}
 		}
 		heapKey := "call-heap-identity/" + strings.TrimPrefix(string(application), "call/") + "/" + key
 		resultIdentity, hasResultIdentity := []byte(nil), false
-		for _, fact := range partition.Values() {
-			if fact.Key == heapKey {
-				resultIdentity, hasResultIdentity = append([]byte(nil), fact.Value...), true
-				values = append(values, heapIdentityFact(string(result), operation.Target.Name, fact.Value))
-				break
-			}
+		if fact, found := partition.Value(heapKey); found {
+			resultIdentity, hasResultIdentity = fact.Value, true
+			values = append(values, heapIdentityFact(string(result), operation.Target.Name, fact.Value))
 		}
 		// A returned array of one container's keys is that relation's subject at
 		// this caller, so it needs an identity of its own exactly as a returned
@@ -24928,21 +25005,16 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			}
 		}
 		closureKey := "call-closure/" + strings.TrimPrefix(string(application), "call/") + "/" + key
-		for _, fact := range partition.Values() {
-			if fact.Key == closureKey {
-				values = append(values, equation.Fact{Key: "closure/" + string(result) + "/" + operation.Target.Name, Value: append([]byte(nil), fact.Value...)})
-				break
-			}
+		if fact, found := partition.Value(closureKey); found {
+			values = append(values, equation.Fact{Key: "closure/" + string(result) + "/" + operation.Target.Name, Value: fact.Value})
 		}
 		inferredReturnKey := callInferredReturnPrefix + strings.TrimPrefix(string(application), "call/") + "/" + key
-		for _, fact := range partition.Values() {
-			if fact.Key == inferredReturnKey {
-				values = append(values, equation.Fact{Key: inferredCallableReturnPrefix + string(result) + "/" + operation.Target.Name, Value: append([]byte(nil), fact.Value...)})
-				break
-			}
+		if fact, found := partition.Value(inferredReturnKey); found {
+			values = append(values, equation.Fact{Key: inferredCallableReturnPrefix + string(result) + "/" + operation.Target.Name, Value: fact.Value})
 		}
 		memberPrefix := "call-member-closure/" + strings.TrimPrefix(string(application), "call/") + "/" + key + "/"
-		for _, fact := range partition.Values() {
+		memberClosures := partition.IterateValuesPrefix(memberPrefix)
+		for fact, ok := memberClosures.Next(); ok; fact, ok = memberClosures.Next() {
 			if !strings.HasPrefix(fact.Key, memberPrefix) {
 				continue
 			}
@@ -24950,7 +25022,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if json.Unmarshal(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call member closure")
 			}
-			values = append(values, equation.Fact{Key: "member-closure/" + string(result) + "/" + operation.Target.Name + "/" + strings.TrimPrefix(fact.Key, memberPrefix), Value: append([]byte(nil), fact.Value...)})
+			values = append(values, equation.Fact{Key: "member-closure/" + string(result) + "/" + operation.Target.Name + "/" + strings.TrimPrefix(fact.Key, memberPrefix), Value: fact.Value})
 		}
 	}
 	// A `T:is(value)` call owns the paired `(value, error)` witness. When the
@@ -24989,7 +25061,7 @@ func nativeBuiltinCallPublication(key, callee []byte, results map[string][]byte,
 	}
 	content := "binding=canonical builtin=tostring callee=tostring cardinality=1 completeness=complete joined_to_call_site=true results={'exact': True, 'count': 1}"
 	if argument := arguments[0]; argument != nil {
-		if !declaredExplicitAny(argument, partition) && !sourceHasAnyBoundary(argument, partition.Values()) {
+		if !declaredExplicitAny(argument, partition) && !sourceHasAnyBoundary(argument, partition) {
 			value, err := resolveCurrentValue(argument, partition)
 			if err == nil {
 				carrier, known := nativeConcatOperandCarrier(value)
@@ -25206,10 +25278,11 @@ func currentCallTypePredicateTarget(application []byte, partition equation.Parti
 	prefix := callTypePredicatePrefix + strings.TrimPrefix(string(application), "call/") + "/"
 	var target []byte
 	latest := ""
-	for _, fact := range partition.Values() {
+	callTargets := partition.IterateValuesPrefix(prefix)
+	for fact, ok := callTargets.Next(); ok; fact, ok = callTargets.Next() {
 		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
 			if shapefact.IsForm(fact.Value, shapefact.PayloadShapeTarget) {
-				target, latest = append([]byte(nil), fact.Value...), fact.Key
+				target, latest = fact.Value, fact.Key
 			}
 		}
 	}
@@ -25600,17 +25673,11 @@ func declaredTermResultType(term []byte, index int, partition equation.Partition
 		return nil, false
 	}
 	prefix := termFamilyKey(factkey.DeclaredType, string(term), "").String()
-	var encoded []byte
-	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
-			encoded, latest = fact.Value, fact.Key
-		}
-	}
-	if len(encoded) == 0 {
+	fact, found := partition.LatestValuePrefix(prefix)
+	if !found || len(fact.Value) == 0 {
 		return nil, false
 	}
-	declared, decoded := shapefact.DecodeTarget(encoded)
+	declared, decoded := shapefact.DecodeTarget(fact.Value)
 	if !decoded {
 		return nil, false
 	}
@@ -26172,12 +26239,8 @@ func declaredEntryBoundaryKey(body equation.BodyID) string {
 // capture-free, declaration-owned body. It does not establish nilability; it
 // merely scopes consumption of the separate optional provider result fact.
 func declaredEntryBoundary(body equation.BodyID, partition equation.Partition) bool {
-	for _, fact := range partition.Values() {
-		if fact.Key == declaredEntryBoundaryKey(body) && string(fact.Value) == "declared" {
-			return true
-		}
-	}
-	return false
+	fact, found := partition.Value(declaredEntryBoundaryKey(body))
+	return found && string(fact.Value) == "declared"
 }
 
 func optionalProviderArgumentMayBeNil(argument []byte, partition equation.Partition) bool {
@@ -26702,7 +26765,8 @@ func reachedUnaccountedCallee(term, identity []byte, partition equation.Partitio
 		}
 	}
 	encodedAllocation := base64.RawURLEncoding.EncodeToString([]byte(allocation.Identity))
-	for _, fact := range partition.ValuesPrefix(placementBlockerPrefix + encodedAllocation + "/opaque-call/") {
+	blockers := partition.IterateValuesPrefix(placementBlockerPrefix + encodedAllocation + "/opaque-call/")
+	for fact, ok := blockers.Next(); ok; fact, ok = blockers.Next() {
 		point := factOperation(fact.Key)
 		if string(fact.Value) != "proven" || accounted[point] {
 			continue
@@ -26720,7 +26784,8 @@ func reachedUnaccountedCallee(term, identity []byte, partition equation.Partitio
 // for the call the blocker records.
 func placementContractDischarged(encodedAllocation, point string, partition equation.Partition) bool {
 	prefix := placementContractPrefix + encodedAllocation + "/"
-	for _, fact := range partition.ValuesPrefix(prefix) {
+	contracts := partition.IterateValuesPrefix(prefix)
+	for fact, ok := contracts.Next(); ok; fact, ok = contracts.Next() {
 		if factOperation(fact.Key) == point {
 			return true
 		}
@@ -27033,22 +27098,17 @@ func publishedProviderArgumentType(term []byte, partition equation.Partition) (t
 // a checked value witness.
 func currentPublishedTermFact(family factkey.Family, term []byte, partition equation.Partition) ([]byte, bool) {
 	valuePrefix := termFamilyKey(factkey.Value, string(term), "").String()
-	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, valuePrefix) && fact.Key > latest {
-			latest = fact.Key
-		}
-	}
-	if latest == "" {
+	latest, found := partition.LatestValuePrefix(valuePrefix)
+	if !found {
 		return nil, false
 	}
-	operation := strings.TrimPrefix(latest, valuePrefix)
+	operation := strings.TrimPrefix(latest.Key, valuePrefix)
 	if operation == "entry" {
 		return nil, false
 	}
 	want := termFamilyKey(family, string(term), operation)
 	if fact, found := partition.Value(want.String()); found {
-		return append([]byte(nil), fact.Value...), true
+		return fact.Value, true
 	}
 	return nil, false
 }
@@ -27509,17 +27569,11 @@ func importedProviderTarget(provider []byte) (modulePath, suffix string, require
 
 func importedEntryType(modulePath string, partition equation.Partition) (typ.Type, bool) {
 	prefix := termFamilyKey(factkey.Value, importEntryTerm(modulePath), "").String()
-	var value []byte
-	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latest) {
-			value, latest = fact.Value, fact.Key
-		}
-	}
-	if value == nil {
+	fact, found := partition.LatestValuePrefix(prefix)
+	if !found {
 		return nil, false
 	}
-	return shapefact.DecodeTarget(value)
+	return shapefact.DecodeTarget(fact.Value)
 }
 
 func providerReturnTypeValue(result typ.Type) ([]byte, bool) {
@@ -27752,12 +27806,8 @@ func indexedRoleValue(role, prefix string, value []byte) (int, string, bool) {
 }
 
 func hasValue(partition equation.Partition, key string) bool {
-	for _, item := range partition.Values() {
-		if item.Key == key && string(item.Value) == shapefact.ScalarBooleanWire {
-			return true
-		}
-	}
-	return false
+	item, found := partition.Value(key)
+	return found && string(item.Value) == shapefact.ScalarBooleanWire
 }
 
 // declaredContainerPublication reads the declaration a returned container term
@@ -27796,17 +27846,11 @@ func declaredContainerPublication(term, value []byte, partition equation.Partiti
 // and states nothing here.
 func checkedDeclarationForTerm(term []byte, partition equation.Partition) (typ.Type, bool) {
 	prefix := termFamilyKey(factkey.Type, string(term), "").String()
-	var encoded []byte
-	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
-			encoded, latest = fact.Value, fact.Key
-		}
-	}
-	if encoded == nil || strings.TrimPrefix(latest, prefix) == "entry" {
+	fact, found := partition.LatestValuePrefix(prefix)
+	if !found || strings.TrimPrefix(fact.Key, prefix) == "entry" {
 		return nil, false
 	}
-	return shapefact.DecodeTarget(encoded)
+	return shapefact.DecodeTarget(fact.Value)
 }
 
 // containerTypeKind reports that a type is one of the table families a
@@ -28581,26 +28625,25 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 // assertionNarrowedValue reads a completed assert postcondition. Its operation
 // coordinate is compared with ordinary value publications, so the proof lasts
 // only until a later write to the same path and only through the caller's
-// explicit read boundary. Partition.Values keeps a guarded postcondition
+// explicit read boundary. Indexed partition reads keep a guarded postcondition
 // private to the guard partition that established it.
 func assertionNarrowedValue(term []byte, before string, partition equation.Partition) ([]byte, bool) {
 	assertionPrefix := "assertion-value/" + string(term) + "/"
 	valuePrefix := termFamilyKey(factkey.Value, string(term), "").String()
 	assertion, assertionPoint := []byte(nil), ""
 	latestValuePoint := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, assertionPrefix) {
-			point := strings.TrimPrefix(fact.Key, assertionPrefix)
-			if point != "" && (before == "" || point <= before) && point > assertionPoint {
-				assertion, assertionPoint = fact.Value, point
-			}
-			continue
+	assertions := partition.IterateValuesPrefix(assertionPrefix)
+	for fact, ok := assertions.Next(); ok; fact, ok = assertions.Next() {
+		point := strings.TrimPrefix(fact.Key, assertionPrefix)
+		if point != "" && (before == "" || point <= before) && point > assertionPoint {
+			assertion, assertionPoint = fact.Value, point
 		}
-		if strings.HasPrefix(fact.Key, valuePrefix) {
-			point := strings.TrimPrefix(fact.Key, valuePrefix)
-			if point != "" && (before == "" || point <= before) && point > latestValuePoint {
-				latestValuePoint = point
-			}
+	}
+	values := partition.IterateValuesPrefix(valuePrefix)
+	for fact, ok := values.Next(); ok; fact, ok = values.Next() {
+		point := strings.TrimPrefix(fact.Key, valuePrefix)
+		if point != "" && (before == "" || point <= before) && point > latestValuePoint {
+			latestValuePoint = point
 		}
 	}
 	if assertion == nil || latestValuePoint > assertionPoint {
@@ -28654,7 +28697,8 @@ func correlationConeCurrentValue(term []byte, partition equation.Partition) ([]b
 	prefix := correlationConeValuePrefix + base64.RawURLEncoding.EncodeToString(term) + "/"
 	var value []byte
 	latest := ""
-	for _, fact := range partition.Values() {
+	coneValues := partition.IterateValuesPrefix(prefix)
+	for fact, ok := coneValues.Next(); ok; fact, ok = coneValues.Next() {
 		if !strings.HasPrefix(fact.Key, prefix) || fact.Key <= latest {
 			continue
 		}
@@ -29221,7 +29265,8 @@ func selectConstrainedArms(selectID []byte, cases int, partition equation.Partit
 	for arm := 0; arm < cases; arm++ {
 		arms[arm] = true
 	}
-	for _, fact := range partition.Values() {
+	constraints := partition.IterateValuesPrefix("select/constraint/")
+	for fact, ok := constraints.Next(); ok; fact, ok = constraints.Next() {
 		if !strings.HasPrefix(fact.Key, "select/constraint/") {
 			continue
 		}
@@ -29853,6 +29898,7 @@ func joinVisibleFacts(stored []equation.Fact) []equation.Fact {
 	if err != nil {
 		return stored
 	}
+	// Full scan required: module publication serialization projects every visible fact family.
 	return partition.Values()
 }
 

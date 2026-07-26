@@ -78,7 +78,8 @@ func pathEqualityKey(left, right string) string {
 // belongs to an earlier value of that symbol and is dropped.
 func provenPathEqualities(partition equation.Partition) map[string]map[string]bool {
 	var equal map[string]map[string]bool
-	for _, fact := range partition.Values() {
+	values := partition.IterateValuesPrefix(pathEqualityPrefix)
+	for fact, ok := values.Next(); ok; fact, ok = values.Next() {
 		rest, found := strings.CutPrefix(fact.Key, pathEqualityPrefix)
 		if !found || string(fact.Value) != "proven" {
 			continue

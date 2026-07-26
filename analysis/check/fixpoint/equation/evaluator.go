@@ -397,6 +397,40 @@ func (p Partition) ValuesPrefix(prefix string) []Fact {
 	return out
 }
 
+// ValuesPrefixIterator is the allocation-free iterator form of ValuesPrefix.
+// It is for kernels that consume a prefix range once rather than retaining the
+// selected slice.
+type ValuesPrefixIterator struct {
+	prefix string
+	lane   []Fact
+	active []Guard
+	index  int
+}
+
+// IterateValuesPrefix selects the same visible rows as ValuesPrefix without
+// materializing the guarded subset.
+func (p Partition) IterateValuesPrefix(prefix string) ValuesPrefixIterator {
+	view := p.view()
+	lane := p.closure.Values
+	if view.orderedValues() {
+		start, end := prefixRange(lane, prefix)
+		lane = lane[start:end:end]
+	}
+	return ValuesPrefixIterator{prefix: prefix, lane: lane, active: view.activeGuards()}
+}
+
+// Next returns the next visible row in the selected prefix range.
+func (it *ValuesPrefixIterator) Next() (Fact, bool) {
+	for it.index < len(it.lane) {
+		fact := it.lane[it.index]
+		it.index++
+		if strings.HasPrefix(fact.Key, it.prefix) && guardsIncluded(fact.Guards, it.active) {
+			return fact, true
+		}
+	}
+	return Fact{}, false
+}
+
 // LatestValuePrefix returns the lexically latest visible publication under
 // prefix.  Versioned engine facts encode their current epoch in the key, so
 // this preserves the same selection as a Values scan without visiting

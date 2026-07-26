@@ -196,9 +196,7 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 		return nil
 	}
 	var facts []equation.Fact
-	published := partition.Values()
-	// A term resolution reads the whole partition, so each argument is resolved
-	// at most once for every label of this signature.
+	// Cache each indexed term resolution across every label of this signature.
 	allocations := make(map[int]placementAllocationFact, len(arguments))
 	for _, label := range signature.Effect.Labels {
 		var from int
@@ -270,7 +268,7 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 			}
 			allocation, cached := allocations[index]
 			if !cached {
-				allocation, _ = placementAllocationInFacts(string(arguments[index]), published)
+				allocation, _ = placementAllocationForTerm(arguments[index], partition)
 				allocations[index] = allocation
 			}
 			if allocation.Identity == "" {
@@ -346,7 +344,10 @@ func placementAllocationForTerm(term []byte, partition equation.Partition) (plac
 	if len(term) == 0 {
 		return placementAllocationFact{}, false
 	}
-	return placementAllocationInFacts(string(term), partition.Values())
+	if identity, found := placementBindingForTerm(term, partition); found {
+		return placementAllocationInPartition(identity, "", partition)
+	}
+	return placementAllocationInPartition("", string(term), partition)
 }
 
 // placementAllocationBeforeOperation resolves what a term was bound to on the
@@ -361,17 +362,31 @@ func placementAllocationBeforeOperation(term []byte, operation string, partition
 	if len(term) == 0 || operation == "" {
 		return placementAllocationFact{}, false
 	}
-	facts := partition.Values()
-	before := make([]equation.Fact, 0, len(facts))
-	for _, fact := range facts {
-		if strings.HasPrefix(fact.Key, placementBindingPrefix) {
-			if cut := strings.LastIndexByte(fact.Key, '/'); cut >= 0 && fact.Key[cut+1:] >= operation {
-				continue
-			}
+	prefix := placementBindingPrefix + base64.RawURLEncoding.EncodeToString(term) + "/"
+	latest, identity := "", ""
+	bindings := partition.IterateValuesPrefix(prefix)
+	for fact, ok := bindings.Next(); ok; fact, ok = bindings.Next() {
+		if cut := strings.LastIndexByte(fact.Key, '/'); cut >= 0 && fact.Key[cut+1:] < operation &&
+			fact.Key > latest && len(fact.Value) != 0 {
+			latest, identity = fact.Key, string(fact.Value)
 		}
-		before = append(before, fact)
 	}
-	return placementAllocationInFacts(string(term), before)
+	if identity != "" {
+		return placementAllocationInPartition(identity, "", partition)
+	}
+	return placementAllocationInPartition("", string(term), partition)
+}
+
+func placementAllocationInPartition(identity, result string, partition equation.Partition) (placementAllocationFact, bool) {
+	allocations := partition.IterateValuesPrefix(placementAllocationPrefix)
+	for fact, ok := allocations.Next(); ok; fact, ok = allocations.Next() {
+		var allocation placementAllocationFact
+		if json.Unmarshal(fact.Value, &allocation) == nil && allocation.Identity != "" &&
+			(identity != "" && allocation.Identity == identity || result != "" && allocation.Result == result) {
+			return allocation, true
+		}
+	}
+	return placementAllocationFact{}, false
 }
 
 // placementAllocationInFacts resolves a term against one already-read partition
@@ -603,7 +618,7 @@ func placementMemberDescent(term []byte, partition equation.Partition) (placemen
 	if !valid || len(segments) == 0 {
 		return placementAllocationFact{}, false
 	}
-	parsed := parsePublishedPlacement(partition.Values())
+	parsed := parsePublishedPlacementPartition(partition)
 	children := propagatePublishedPlacement(parsed)
 	for range segments {
 		next, ok := placementSingleTableChild(current.Identity, parsed, children)
@@ -640,8 +655,13 @@ func placementSingleTableChild(identity string, parsed publishedPlacementFacts, 
 	return found, true
 }
 
-func placementBindingForTerm(term string, partition equation.Partition) (string, bool) {
-	return placementBindingInFacts(term, partition.Values())
+func placementBindingForTerm(term []byte, partition equation.Partition) (string, bool) {
+	prefix := placementBindingPrefix + base64.RawURLEncoding.EncodeToString(term) + "/"
+	fact, found := partition.LatestValuePrefix(prefix)
+	if !found || len(fact.Value) == 0 {
+		return "", false
+	}
+	return string(fact.Value), true
 }
 
 func placementBindingInFacts(term string, facts []equation.Fact) (string, bool) {
@@ -663,9 +683,8 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 		return nil
 	}
 	var facts []equation.Fact
-	published := partition.Values()
 	for index, argument := range operands.arguments {
-		allocation, found := placementAllocationInFacts(string(argument), published)
+		allocation, found := placementAllocationForTerm(argument, partition)
 		if !found {
 			// A member of a locally returned graph has no binding of its own; it
 			// reaches its allocation only by descent from the bound root.
@@ -1045,7 +1064,7 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 			if !ok || !allocations[identity] {
 				continue
 			}
-			projected = append(projected, equation.Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...)})
+			projected = append(projected, equation.Fact{Key: fact.Key, Value: fact.Value})
 		case strings.HasPrefix(fact.Key, placementContainmentPrefix):
 			parts, ok := placementProvenFactParts(fact)
 			if !ok {
@@ -1055,7 +1074,7 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 			if !ok || !allocations[parent] || !allocations[child] {
 				continue
 			}
-			projected = append(projected, equation.Fact{Key: fact.Key, Value: append([]byte(nil), fact.Value...)})
+			projected = append(projected, equation.Fact{Key: fact.Key, Value: fact.Value})
 		}
 	}
 	return projected
@@ -1108,6 +1127,8 @@ func placementReturnsAllocation(operations []equation.Equation, values []equatio
 // containment, contracts, and blockers all disqualify the fact because those
 // conclusions require a caller-owned invocation boundary.
 func placementStackWitnessFacts(facts []equation.Fact) []equation.Fact {
+	// The input is a closed publication and placementFactsFromChild rebuilds
+	// every retained row, so selection may alias it without cloning payloads.
 	allocations := make(map[string]equation.Fact)
 	boundary := make(map[string]bool)
 	suspended := make(map[string][]equation.Fact)
@@ -1115,7 +1136,7 @@ func placementStackWitnessFacts(facts []equation.Fact) []equation.Fact {
 		switch {
 		case strings.HasPrefix(fact.Key, placementAllocationPrefix):
 			if allocation, ok := decodePlacementAllocation(fact); ok && allocation.Complete {
-				allocations[allocation.Identity] = cloneFact(fact)
+				allocations[allocation.Identity] = fact
 			}
 		case strings.HasPrefix(fact.Key, placementEventPrefix), strings.HasPrefix(fact.Key, placementBlockerPrefix), strings.HasPrefix(fact.Key, placementContractPrefix):
 			parts, ok := placementProvenFactParts(fact)
@@ -1124,7 +1145,7 @@ func placementStackWitnessFacts(facts []equation.Fact) []equation.Fact {
 			}
 			if identity, ok := placementFactIdentity(parts); ok {
 				if strings.HasPrefix(fact.Key, placementEventPrefix) && parts[3] == string(placementEventSuspended) {
-					suspended[identity] = append(suspended[identity], cloneFact(fact))
+					suspended[identity] = append(suspended[identity], fact)
 				} else {
 					boundary[identity] = true
 				}
@@ -1164,12 +1185,34 @@ type publishedPlacementFacts struct {
 	containment       map[string][]string
 }
 
-func parsePublishedPlacement(facts []equation.Fact) publishedPlacementFacts {
-	parsed := publishedPlacementFacts{
+func newPublishedPlacementFacts() publishedPlacementFacts {
+	return publishedPlacementFacts{
 		allocations: make(map[string]placementAllocationFact), bindings: make(map[string]string),
 		events: make(map[string]map[placementvocab.Event]bool), blockers: make(map[string]map[string]bool),
 		blockerOperations: make(map[string]map[string]map[string]bool), contracts: make(map[string]map[string]bool), containment: make(map[string][]string),
 	}
+}
+
+func parsePublishedPlacementPartition(partition equation.Partition) publishedPlacementFacts {
+	parsed := newPublishedPlacementFacts()
+	for _, prefix := range []string{
+		placementAllocationPrefix,
+		placementBindingPrefix,
+		placementEventPrefix,
+		placementBlockerPrefix,
+		placementContractPrefix,
+		placementContainmentPrefix,
+	} {
+		values := partition.IterateValuesPrefix(prefix)
+		for fact, ok := values.Next(); ok; fact, ok = values.Next() {
+			parsePublishedPlacementFact(&parsed, fact)
+		}
+	}
+	return parsed
+}
+
+func parsePublishedPlacement(facts []equation.Fact) publishedPlacementFacts {
+	parsed := newPublishedPlacementFacts()
 	for _, fact := range facts {
 		parsePublishedPlacementFact(&parsed, fact)
 	}

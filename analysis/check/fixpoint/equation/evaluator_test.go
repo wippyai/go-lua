@@ -237,6 +237,14 @@ func TestPartitionValuesPrefixMatchesFilteredVisibleValues(t *testing.T) {
 				t.Fatalf("%s prefix scan item %d = %#v, want %#v", name, index, got[index], want[index])
 			}
 		}
+		iterator := partition.IterateValuesPrefix("heap/member/a/")
+		var iterated []Fact
+		for fact, ok := iterator.Next(); ok; fact, ok = iterator.Next() {
+			iterated = append(iterated, fact)
+		}
+		if len(iterated) != len(want) {
+			t.Fatalf("%s prefix iterator = %#v, want %#v", name, iterated, want)
+		}
 		latest, ok := partition.LatestValuePrefix("heap/member/a/")
 		if !ok || latest.Key != "heap/member/a/0002" {
 			t.Fatalf("%s latest under prefix = %#v, %v", name, latest, ok)
@@ -247,6 +255,30 @@ func TestPartitionValuesPrefixMatchesFilteredVisibleValues(t *testing.T) {
 		if _, ok := partition.Value("heap/member/a/9999"); ok {
 			t.Fatalf("%s point lookup exposed a fact outside the active guards", name)
 		}
+	}
+}
+
+func TestPartitionValuesPrefixIteratorDoesNotAllocate(t *testing.T) {
+	partition := newPartition(OutputClosure{Values: []Fact{
+		{Key: "marker/a/0001", Value: []byte("first")},
+		{Key: "marker/a/0002", Value: []byte("second")},
+		{Key: "marker/b/0001", Value: []byte("other")},
+	}}, nil)
+	// Warm the shared partition index; iterator construction and traversal are
+	// the kernel read whose allocation contract this test pins.
+	partition.FactCount()
+	allocations := testing.AllocsPerRun(100, func() {
+		iterator := partition.IterateValuesPrefix("marker/a/")
+		count := 0
+		for _, ok := iterator.Next(); ok; _, ok = iterator.Next() {
+			count++
+		}
+		if count != 2 {
+			panic("unexpected prefix iterator count")
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("IterateValuesPrefix allocated %v times per read", allocations)
 	}
 }
 

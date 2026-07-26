@@ -712,7 +712,7 @@ func narrateCallArgument(builder *diagnosticExplanationBuilder, callee, subject 
 		argument += " (" + display + ")"
 	}
 	argumentTerm := []byte(operands[fmt.Sprintf("argument-%08d", argumentIndex-1)])
-	if summaryTypeIsAny(argumentTerm, values) || sourceHasGradualLogicalBoundary(argumentTerm, values) {
+	if summaryTypeIsAnyInFacts(argumentTerm, values) || sourceHasGradualLogicalBoundaryInFacts(argumentTerm, values) {
 		display := strings.TrimPrefix(argument, fmt.Sprintf("argument %d (", argumentIndex))
 		display = strings.TrimSuffix(display, ")")
 		if display == argument {
