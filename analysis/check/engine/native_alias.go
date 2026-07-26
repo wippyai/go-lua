@@ -126,10 +126,16 @@ func aliasBodyFacts(compilation front.Compilation) []NativeFact {
 	return rows
 }
 
+// aliasBodyHasControlOrCall reports the operations that end straight-line alias
+// reasoning: control flow makes the store order read here no longer the order
+// that executes, and a call, a select or an iteration can store through an alias
+// this body never names. A closure allocation is the same disclosure by another
+// route — it captures the cell, so a later invocation stores through it — which
+// is why the guarded element lane refuses it on the same grounds.
 func aliasBodyHasControlOrCall(body *wir.Body) bool {
 	for index := 0; index < body.Len(); index++ {
 		switch body.Instr(index).Op {
-		case wir.OpBranch, wir.OpCall, wir.OpSelect, wir.OpIterate:
+		case wir.OpBranch, wir.OpCall, wir.OpSelect, wir.OpIterate, wir.OpClosure:
 			return true
 		}
 	}

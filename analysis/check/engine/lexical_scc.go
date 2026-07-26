@@ -255,10 +255,8 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 	}
 	matchBoundary := func(key string) bool {
 		for _, term := range boundary {
-			for _, prefix := range []string{"value/", "closure/", "declared-type/", epochFactPrefix, heapTableIdentityPrefix} {
-				if strings.HasPrefix(key, prefix+term+"/") {
-					return true
-				}
+			if lexicalSCCAnchoredAt(key, term) {
+				return true
 			}
 		}
 		return false
@@ -314,23 +312,55 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 	return equation.OutputClosure{Values: values, Outcomes: outcomes}
 }
 
-// lexicalSCCHeapFactIdentity decodes the owning allocation identity from the
-// closed heap fact schemas.  It is deliberately schema-driven: a source path
-// or a declared type cannot enter a recursive summary as a heap capability.
-func lexicalSCCHeapFactIdentity(key string) ([]byte, bool) {
-	for _, prefix := range []string{heapTableClosedPrefix, heapMemberPrefix, heapMemberIdentityPrefix, memberCellPrefix, heapMetaAttachedPrefix, heapMetaIdentityPrefix, heapMetaNewIndexPrefix} {
-		rest, found := strings.CutPrefix(key, prefix)
-		if !found {
-			continue
-		}
-		encoded, _, found := strings.Cut(rest, "/")
-		if !found || encoded == "" {
-			return nil, false
-		}
-		identity, err := base64.RawURLEncoding.DecodeString(encoded)
-		return identity, err == nil && len(identity) != 0
+// lexicalSCCAnchoredAt reports whether one published fact states its subject to
+// be this term. Every family writes its subject in the same place — the family,
+// then the subject, then the occurrence that published it — so the position is
+// read rather than the families listed. A recursive summary therefore carries
+// every fact about its own boundary, including families written after this walk,
+// and the summary stays bounded because the boundary terms are fixed.
+func lexicalSCCAnchoredAt(key, term string) bool {
+	body, _, published := lexicalSCCCutLast(key)
+	return published && strings.HasSuffix(body, "/"+term)
+}
+
+// lexicalSCCCutLast splits a key at its final separator.
+func lexicalSCCCutLast(key string) (string, string, bool) {
+	index := strings.LastIndex(key, "/")
+	if index <= 0 || index == len(key)-1 {
+		return "", "", false
 	}
-	return nil, false
+	return key[:index], key[index+1:], true
+}
+
+// lexicalSCCHeapFactIdentity decodes the allocation identity a heap fact is
+// published about. Every family in the heap namespace names its subject in the
+// same position — the family, then the subject — so this reads the position
+// instead of listing the families, and a family added later is carried without
+// this walk having to learn its name. A subject may state its own kind first:
+// the identity spelling names an allocation, while the term spelling names a
+// path whose value occupies one, and only the former is an allocation this walk
+// follows. A segment that is no identity at all decodes to bytes no allocation
+// matches, which is why reading it costs nothing — the worklist admits a fact
+// only when the decoded identity is one it already follows.
+func lexicalSCCHeapFactIdentity(key string) ([]byte, bool) {
+	rest, heap := strings.CutPrefix(key, heapNamespacePrefix)
+	if !heap {
+		return nil, false
+	}
+	_, rest, named := strings.Cut(rest, "/")
+	if !named {
+		return nil, false
+	}
+	if strings.HasPrefix(rest, heapSubjectTermPrefix) {
+		return nil, false
+	}
+	rest = strings.TrimPrefix(rest, heapSubjectIdentityPrefix)
+	encoded, _, found := strings.Cut(rest, "/")
+	if !found || encoded == "" {
+		return nil, false
+	}
+	identity, err := base64.RawURLEncoding.DecodeString(encoded)
+	return identity, err == nil && len(identity) != 0
 }
 
 // lexicalSCCHeapChildIdentity follows only explicit member-identity and

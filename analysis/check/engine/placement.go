@@ -497,6 +497,14 @@ func placementDeclaredTemplateValue(declared typ.Type, path map[typ.Type]bool) e
 		member(placementMapRepresentativeSuffix, item.Value)
 	case *typ.Array:
 		member(placementMapRepresentativeSuffix, item.Element)
+	case *typ.Tuple:
+		// A tuple states one declared type per integer slot, so each slot is a
+		// member of its own exactly as a record field is. There is no
+		// representative element to stand for the rest: the slots are the whole
+		// container.
+		for index, element := range item.Elements {
+			member("["+strconv.Itoa(index+1)+"]", element)
+		}
 	default:
 		return exportrelation.Value{}
 	}

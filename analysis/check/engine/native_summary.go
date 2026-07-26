@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -79,17 +80,24 @@ func summaryBodyFact(compilation front.Compilation) (NativeFact, bool) {
 }
 
 // nativeExactResultType reports whether a declared result names one concrete
-// contract. A union, an optional and a top type each describe a set of results
-// the call site must still discriminate, so none of them is exact.
+// contract an inline cache can be built against. The exact-capable shapes are
+// named positively: a primitive and a literal are single values, and a record,
+// array, map, tuple or function names one layout whose own members carry
+// whatever further imprecision they have. Every other shape describes a set the
+// call site must still discriminate — a union or optional by construction, an
+// interface or intersection because any number of layouts satisfy it, a generic
+// or instantiated because its arguments decide the layout, a recursive because
+// its unfolding does — and an unresolved reference names nothing yet. The type
+// vocabulary is open, so an unrecognized shape is not exact either.
 func nativeExactResultType(result typ.Type) bool {
 	result = unwrap.Alias(result)
 	if result == nil || typ.AbsentOrTopLike(result) || typ.ContainsTypeParam(result) {
 		return false
 	}
-	switch result.(type) {
-	case *typ.Union, *typ.Optional:
-		return false
-	default:
+	switch result.Kind() {
+	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String, kind.Literal,
+		kind.Record, kind.Array, kind.Map, kind.ReadonlyMap, kind.Tuple, kind.Function:
 		return true
 	}
+	return false
 }

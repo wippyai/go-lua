@@ -110,6 +110,19 @@ const returnTupleTruePrefix = "return-tuple-true/"
 // member/index writes update the object reached by every such lens.  Keeping
 // the identity separate from a shape avoids letting a stale root.field value
 // outrank a write made through an alias.
+// heapNamespacePrefix roots every fact published about an allocation. The
+// families below all live under it, and a consumer that follows allocations
+// rather than families reads this root instead of enumerating them.
+const heapNamespacePrefix = "heap/"
+
+// A heap subject may state its own kind before naming it. The identity spelling
+// names the allocation a fact is about; the term spelling names the path whose
+// value currently occupies one, which is not itself an allocation.
+const (
+	heapSubjectIdentityPrefix = "identity/"
+	heapSubjectTermPrefix     = "term/"
+)
+
 const (
 	heapTableIdentityPrefix    = "heap/table-identity/"
 	heapTableClosedPrefix      = "heap/table-closed/"
@@ -11977,24 +11990,24 @@ func projectReturnTupleWriteRelation(target string, source []byte, operation str
 	encodedTarget := base64.RawURLEncoding.EncodeToString([]byte(target))
 	var facts []equation.Fact
 	for _, fact := range partition.Values() {
-		if !strings.HasPrefix(fact.Key, returnTupleTruePrefix) || (string(fact.Value) != "scalar/nil" && string(fact.Value) != "proven") {
+		if !strings.HasPrefix(fact.Key, returnTupleTruePrefix) || !returnTupleClass(fact.Value).stated() {
 			continue
 		}
 		parts := strings.Split(strings.TrimPrefix(fact.Key, returnTupleTruePrefix), "/")
-		if len(parts) != 2 {
+		if len(parts) != 3 {
 			continue
 		}
-		left, right := parts[0], parts[1]
+		class, left, right := parts[0], parts[1], parts[2]
 		if left == encodedSource {
 			left = encodedTarget
 		}
 		if right == encodedSource {
 			right = encodedTarget
 		}
-		if left == parts[0] && right == parts[1] {
+		if left == parts[1] && right == parts[2] {
 			continue
 		}
-		facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + left + "/" + right, Value: append([]byte(nil), fact.Value...)})
+		facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + class + "/" + left + "/" + right, Value: append([]byte(nil), fact.Value...)})
 	}
 	return facts
 }
@@ -14165,9 +14178,9 @@ func castTargetWitness(term []byte, partition equation.Partition) (typ.Type, boo
 // alias can inherit a path-local proof.
 func heapIndexSubject(container []byte, partition equation.Partition) string {
 	if identity, found := tableIdentityForTerm(container, partition); found {
-		return "identity/" + base64.RawURLEncoding.EncodeToString(identity)
+		return heapSubjectIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity)
 	}
-	return "term/" + base64.RawURLEncoding.EncodeToString(container)
+	return heapSubjectTermPrefix + base64.RawURLEncoding.EncodeToString(container)
 }
 
 // indexPresenceProven accepts only a current guarded proof for this container
@@ -16809,7 +16822,7 @@ func uniqueOrderedStrings(items []string) []string {
 }
 
 func heapIndexWasMutated(identity []byte, before string, partition equation.Partition) bool {
-	prefix := heapIndexRevokePrefix + "identity/" + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	prefix := heapIndexRevokePrefix + heapSubjectIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	beforeIndex, valid := operationIndex(before)
 	if !valid {
 		return true
@@ -18249,29 +18262,47 @@ func correlationConeFacts(equal map[string]map[string]bool, nonNil map[string]bo
 	return facts, nil
 }
 
-// returnTupleTrueBranchClosure applies the one directional fact carried by an
-// imported finite return catalog: when its exact result slot is nil, the paired
-// result slot is present. Both branch outcomes remain guarded; a catalog with
-// an unproven path, nil companion, or stale/untyped target is unavailable.
+// returnTupleBranchClass names the value set one branch predicate decides about
+// its subject. A literal test decides the singleton set of that literal, a
+// truthiness test the set of values that are neither nil nor false, and a
+// nil-presence test everything but nil. Negation does not change which set the
+// predicate is about, only which edge asserts it, so the caller reads the class
+// here and the edge separately. A predicate that decides no such set carries no
+// correlation.
+func returnTupleBranchClass(predicate branchPredicateWire) (returnTupleClass, bool) {
+	switch predicate.Kind {
+	case "nil":
+		return returnTupleLiteralClass("scalar/nil"), true
+	case "not-nil":
+		return returnTupleClassNotNil, true
+	case "truthy":
+		return returnTupleClassTruthy, true
+	case "literal-equal":
+		if predicate.Literal == "" {
+			return "", false
+		}
+		return returnTupleLiteralClass(predicate.Literal), true
+	}
+	return "", false
+}
+
+// returnTupleTrueBranchClosure applies the directional facts carried by an
+// imported finite return catalog: when this result slot falls in the value set
+// the guard decides, the paired result slot is present. Both branch outcomes
+// remain guarded; a catalog with an unproven path, nil companion, or
+// stale/untyped target is unavailable.
 func returnTupleTrueBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
 	predicate, found, err := soleBranchPredicate(operation)
 	if err != nil || !found || predicate.Path == "" {
 		return equation.OutputClosure{}, false, err
 	}
-	literal, equality := "", false
-	switch {
-	case predicate.Kind == "nil" && !predicate.Negated:
-		literal, equality = "scalar/nil", true
-	case predicate.Kind == "literal-equal" && predicate.Literal == "scalar/nil":
-		literal, equality = "scalar/nil", true
-	case predicate.Kind == "truthy" && !predicate.Negated:
-		literal, equality = "proven", true
-	}
-	if !equality {
+	class, decides := returnTupleBranchClass(predicate)
+	if !decides {
 		return equation.OutputClosure{}, false, nil
 	}
 	trigger := []byte("path/" + predicate.Path)
-	prefix := returnTupleTruePrefix + base64.RawURLEncoding.EncodeToString(trigger) + "/"
+	prefix := returnTupleTruePrefix + base64.RawURLEncoding.EncodeToString([]byte(class)) + "/" +
+		base64.RawURLEncoding.EncodeToString(trigger) + "/"
 	edge := "true"
 	if predicate.Negated {
 		edge = "false"
@@ -18279,7 +18310,7 @@ func returnTupleTrueBranchClosure(operation equation.BoundEquation, partition eq
 	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/" + edge)}
 	closure := equation.OutputClosure{}
 	for _, fact := range partition.Values() {
-		if !strings.HasPrefix(fact.Key, prefix) || string(fact.Value) != literal {
+		if !strings.HasPrefix(fact.Key, prefix) {
 			continue
 		}
 		encoded := strings.TrimPrefix(fact.Key, prefix)
@@ -18702,7 +18733,7 @@ func escapeReachableSubjects(container []byte, partition equation.Partition) []s
 // identity subject the revocation publishes, so a member cell, a length floor
 // and an index presence proof all observe one transition.
 func heapIdentityEscapedAfter(identity []byte, publication string, partition equation.Partition) bool {
-	prefix := heapTableEscapePrefix + "identity/" + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	prefix := heapTableEscapePrefix + heapSubjectIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	for _, fact := range partition.ValuesPrefix(prefix) {
 		if string(fact.Value) == "escaped" && factOperation(fact.Key) >= publication {
 			return true
@@ -22262,7 +22293,7 @@ func closedUnmutatedHeapRead(term []byte, partition equation.Partition) bool {
 	if !found || !heapTableClosed(identity, partition) || heapMetaAttached(identity, partition) {
 		return false
 	}
-	prefix := heapIndexRevokePrefix + "identity/" + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	prefix := heapIndexRevokePrefix + heapSubjectIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	for _, fact := range partition.Values() {
 		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "revoked" {
 			return false
@@ -24119,6 +24150,99 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
+// returnTupleClass names a set of trigger values one correlation is stated over.
+// A branch predicate decides such a set, and the catalog is scanned per set: the
+// correlation holds only when every tuple whose trigger falls inside it carries
+// the paired slot. Publishing the set rather than one value is what makes the
+// family answer a truthiness guard soundly — `truthy` admits every value that is
+// neither nil nor false, so a catalog that returns a truthy value without the
+// companion refutes the correlation even when it never returns `true` itself.
+// A single scalar is the singleton case of the same relation.
+type returnTupleClass string
+
+const (
+	returnTupleClassTruthy        returnTupleClass = "truthy"
+	returnTupleClassNotNil        returnTupleClass = "not-nil"
+	returnTupleClassLiteralPrefix                  = "is/"
+)
+
+func returnTupleLiteralClass(literal string) returnTupleClass {
+	return returnTupleClass(returnTupleClassLiteralPrefix + literal)
+}
+
+// returnTupleCorrelationKey names one correlation. The class belongs in the key
+// because a single pair of slots can be correlated by more than one of them at
+// once — a catalog that always pairs the two slots states it for the nil
+// singleton and for truthiness alike — and each is a separate fact about a
+// separate guard rather than competing values for one.
+func returnTupleCorrelationKey(class returnTupleClass, trigger, target []byte) string {
+	return returnTupleTruePrefix + base64.RawURLEncoding.EncodeToString([]byte(class)) + "/" +
+		base64.RawURLEncoding.EncodeToString(trigger) + "/" + base64.RawURLEncoding.EncodeToString(target)
+}
+
+// stated reports whether a published value spells a class this family defines.
+func (c returnTupleClass) stated() bool {
+	if c == returnTupleClassTruthy || c == returnTupleClassNotNil {
+		return true
+	}
+	literal, prefixed := strings.CutPrefix(string(c), returnTupleClassLiteralPrefix)
+	return prefixed && literal != ""
+}
+
+// contains reports whether one catalogued return value falls inside the class,
+// and whether the catalog states enough to decide that at all. An exact scalar
+// decides every class. Without one, the slot's proven occupancy still decides
+// the classes that turn only on nil — a slot the export proves occupied is not
+// nil, and so is outside the nil singleton and inside the nil-presence class —
+// while truthiness stays undecided, because an occupied slot may hold false.
+// A table occupies its slot and is neither nil nor false.
+func (c returnTupleClass) contains(value exportrelation.Value, occupied bool) (holds bool, decided bool) {
+	switch c {
+	case returnTupleClassTruthy:
+		if value.Scalar != "" {
+			return value.Scalar != "scalar/nil" && value.Scalar != "scalar/bool/false", true
+		}
+		if len(value.Table) != 0 {
+			return true, true
+		}
+		return false, false
+	case returnTupleClassNotNil:
+		if value.Scalar != "" {
+			return value.Scalar != "scalar/nil", true
+		}
+		return occupied, occupied
+	}
+	literal, prefixed := strings.CutPrefix(string(c), returnTupleClassLiteralPrefix)
+	if !prefixed {
+		return false, false
+	}
+	if value.Scalar != "" {
+		return value.Scalar == literal, true
+	}
+	return false, occupied && literal == "scalar/nil"
+}
+
+// returnTupleTriggerClasses names every class this catalog can state about one
+// trigger slot: the singleton of each scalar it actually returns there, plus the
+// truthiness and nil-presence classes those same observations populate. Reading
+// the classes off the catalog is what keeps the family open — a producer that
+// returns a value no rule anticipated still gets the class its own returns
+// describe.
+func returnTupleTriggerClasses(tuples []exportrelation.ReturnTuple, slot int) []returnTupleClass {
+	seen := make(map[string]bool)
+	classes := make([]returnTupleClass, 0)
+	for _, tuple := range tuples {
+		if slot >= len(tuple.Values) {
+			return nil
+		}
+		if scalar := tuple.Values[slot].Scalar; scalar != "" && !seen[scalar] {
+			seen[scalar] = true
+			classes = append(classes, returnTupleLiteralClass(scalar))
+		}
+	}
+	return append(classes, returnTupleClassTruthy, returnTupleClassNotNil)
+}
+
 // importedReturnTupleFacts transports only the already-exported finite tuple
 // catalog to the exact local result targets of this call. A tuple is useful
 // here solely as a branch implication; it never replaces a call result value
@@ -24153,34 +24277,36 @@ func importedReturnTupleFacts(lexical *lexicalEvaluator, provider []byte, target
 		if err != nil || !strings.HasPrefix(string(trigger), "temp/") {
 			continue
 		}
+		classes := returnTupleTriggerClasses(function.ReturnTuples, triggerSlot)
 		for _, targetIndex := range keys {
 			target := targets[targetIndex]
 			targetSlot, err := strconv.Atoi(targetIndex)
 			if err != nil || triggerSlot == targetSlot || !strings.HasPrefix(string(target), "temp/") {
 				continue
 			}
-			for _, literal := range []string{"scalar/nil", "scalar/bool/true"} {
+			for _, class := range classes {
 				valid, witnessed := true, false
 				for _, tuple := range function.ReturnTuples {
 					if triggerSlot >= len(tuple.Values) || targetSlot >= len(tuple.Values) {
 						valid = false
 						break
 					}
-					if tuple.Values[triggerSlot].Scalar != literal {
+					holds, decided := class.contains(tuple.Values[triggerSlot], returnTupleValuePresent(tuple, triggerSlot))
+					if decided && !holds {
 						continue
 					}
-					witnessed = true
+					// A trigger the catalog leaves undecided may fall in the class,
+					// so this tuple has to carry the paired slot exactly as a decided
+					// member does. It cannot witness the class on its own: a
+					// correlation no return actually demonstrates states nothing.
+					witnessed = witnessed || decided
 					if !returnTupleValuePresent(tuple, targetSlot) {
 						valid = false
 						break
 					}
 				}
 				if valid && witnessed {
-					value := literal
-					if literal == "scalar/bool/true" {
-						value = "proven"
-					}
-					facts = append(facts, equation.Fact{Key: returnTupleTruePrefix + base64.RawURLEncoding.EncodeToString(trigger) + "/" + base64.RawURLEncoding.EncodeToString(target), Value: []byte(value)})
+					facts = append(facts, equation.Fact{Key: returnTupleCorrelationKey(class, trigger, target), Value: []byte(class)})
 				}
 			}
 		}
