@@ -1738,6 +1738,16 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			if hasDynamicIndexRead {
 				operands = append(operands, equation.Operand{Role: "index-presence-consumer", Term: equation.ClosedTerm([]byte("scalar/bool/true"))})
 			}
+			// A decision one arm of which leaves a loop states which arm that is.
+			// The arm that stays inside republishes on every trip, so a point the
+			// leaving arm alone reaches stands after all of them: what the loop
+			// carried reaches that point instead of being excluded by it. Only
+			// the CFG can establish the relation, and only the guard algebra can
+			// apply it, so the front states it and publishes nothing else about
+			// it.
+			if exitEdge, controls := guardReachability.naturalLoopExit(instruction.Point); controls {
+				operands = append(operands, equation.Operand{Role: "recurrence-exit", Term: equation.ClosedTerm([]byte(strconv.FormatBool(exitEdge)))})
+			}
 			draft.Operands = operands
 		case instruction.Op == wir.OpCall:
 			if operation.external.Encoding != nil && !operation.callResults {
@@ -4055,6 +4065,8 @@ type reachabilityCache struct {
 	graph      cfg.Graph
 	from       map[cfg.Point]map[cfg.Point]bool
 	without    map[reachabilityExclusion]bool
+	loopExits  map[cfg.Point]loopExitArm
+	loops      []naturalLoop
 	dominators *dominance.ImmediateDominators
 }
 
@@ -4062,12 +4074,116 @@ type reachabilityExclusion struct {
 	from, target, exclude cfg.Point
 }
 
+// loopExitArm is one branch's relation to the loop it decides: whether it
+// decides one at all, and which condition the arm that leaves it carries.
+type loopExitArm struct {
+	edge  bool
+	heads bool
+}
+
 func newReachabilityCache(graph cfg.Graph) *reachabilityCache {
 	return &reachabilityCache{
-		graph:   graph,
-		from:    make(map[cfg.Point]map[cfg.Point]bool),
-		without: make(map[reachabilityExclusion]bool),
+		graph:     graph,
+		from:      make(map[cfg.Point]map[cfg.Point]bool),
+		without:   make(map[reachabilityExclusion]bool),
+		loopExits: make(map[cfg.Point]loopExitArm),
 	}
+}
+
+// naturalLoop is one recurrence, named by the back edges that close it. head is
+// the point those edges return to and tails are the points they leave from.
+type naturalLoop struct {
+	head  cfg.Point
+	tails []cfg.Point
+}
+
+// naturalLoops names every recurrence in this graph. A back edge is an edge
+// whose head dominates its tail: it returns control to a point every execution
+// of the tail has already passed, which is what makes the region between them
+// repeat. Edges sharing a head close the same loop and are collected under it.
+func (cache *reachabilityCache) naturalLoops() []naturalLoop {
+	if cache.loops != nil {
+		return cache.loops
+	}
+	byHead := make(map[cfg.Point][]cfg.Point)
+	var heads []cfg.Point
+	for _, edge := range cache.graph.Edges() {
+		if !cache.dominates(edge.To, edge.From) {
+			continue
+		}
+		if _, seen := byHead[edge.To]; !seen {
+			heads = append(heads, edge.To)
+		}
+		byHead[edge.To] = append(byHead[edge.To], edge.From)
+	}
+	sort.Slice(heads, func(i, j int) bool { return heads[i] < heads[j] })
+	cache.loops = make([]naturalLoop, 0, len(heads))
+	for _, head := range heads {
+		cache.loops = append(cache.loops, naturalLoop{head: head, tails: byHead[head]})
+	}
+	return cache.loops
+}
+
+// insideNaturalLoop reports whether a point belongs to one trip of a loop. The
+// head belongs to it, and so does every point that still reaches a back-edge
+// tail without passing through the head again. A point that can reach the tail
+// only by re-entering through the head has already left the loop.
+func (cache *reachabilityCache) insideNaturalLoop(point cfg.Point, loop naturalLoop) bool {
+	if point == loop.head {
+		return true
+	}
+	for _, tail := range loop.tails {
+		if cache.reachesWithout(point, tail, loop.head) {
+			return true
+		}
+	}
+	return false
+}
+
+// naturalLoopExit reports whether a branch decides one loop's continuation and
+// which condition the arm that leaves that loop carries.
+//
+// A branch inside a loop controls it exactly when one arm stays in the loop and
+// the other leaves: taking the leaving arm ends the recurrence, so every trip
+// that ran completed before any point that arm alone reaches. A branch whose
+// arms both stay inside decides a region of a single trip and controls nothing,
+// which is what keeps a body-local decision's arms exclusive of each other.
+//
+// Loops the branch controls must agree on which condition leaves. A branch that
+// controls none, or that two loops disagree about, states no exit.
+func (cache *reachabilityCache) naturalLoopExit(branch cfg.Point) (bool, bool) {
+	if known, found := cache.loopExits[branch]; found {
+		return known.edge, known.heads
+	}
+	classified := loopExitArm{}
+	for _, loop := range cache.naturalLoops() {
+		if !cache.insideNaturalLoop(branch, loop) {
+			continue
+		}
+		inside, leaving, exitEdge := 0, 0, false
+		for _, successor := range cache.graph.Successors(branch) {
+			condition, isBranchEdge := cache.graph.EdgeCond(branch, successor)
+			if !isBranchEdge {
+				continue
+			}
+			if cache.insideNaturalLoop(successor, loop) {
+				inside++
+				continue
+			}
+			leaving++
+			exitEdge = condition
+		}
+		if inside != 1 || leaving != 1 {
+			continue
+		}
+		if classified.heads && classified.edge != exitEdge {
+			classified = loopExitArm{}
+			break
+		}
+		classified = loopExitArm{edge: exitEdge, heads: true}
+	}
+	cache.loopExits[branch] = classified
+	return classified.edge, classified.heads
 }
 
 // dominates reports whether every path from the entry to target passes through

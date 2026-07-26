@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/interproc"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
@@ -5837,7 +5838,18 @@ func (l *lexicalEvaluator) uncalledDeclaredFormalCallBoundary(child front.Compil
 			if !found || !memberCalls[string(application)] {
 				return nil, false
 			}
-		case "dynamic-index-read", "channel-select":
+		case "dynamic-index-read":
+			// A read at a key this body cannot resolve is decided by the container
+			// it reads. When that container is a formal the entry seeded with its
+			// own declaration, the declaration types every slot the read can land
+			// on and proves none of them occupied, so the read's outcome is this
+			// declaration's and needs no caller. Any other container rests on an
+			// authority this entry does not establish.
+			container, found := artifactOperand(operation.Operands, "container")
+			if !found || !formals[string(container)] {
+				return nil, false
+			}
+		case "channel-select":
 			return nil, false
 		}
 	}
@@ -7204,6 +7216,29 @@ func uncalledDeclaredFormalMemberRead(child front.Compilation, operation equatio
 	}
 	segments, static := segment.ParseFormattedSegments(suffix)
 	return static && len(segments) != 0
+}
+
+// uncalledDeclaredLocalAllocationAssignment identifies an assignment claim whose
+// value reads a slot of a table this body itself allocated. Such a table is not
+// a caller's: no argument names it and no capture reaches it, so the writes that
+// establish which of its slots are occupied are all in this body and a conflict
+// proven against one of them is this declaration's own obligation, exactly as a
+// conflict proven against a seeded formal is.
+//
+// The lane it opens carries proven conflicts only. A slot the body leaves
+// unproven states no conflict and keeps the demand-driven path, where a
+// call-specific refinement can still discharge it.
+func uncalledDeclaredLocalAllocationAssignment(operation equation.Equation, allocations map[string]bool) bool {
+	if operation.Occurrence.Kind != "claim" || len(allocations) == 0 {
+		return false
+	}
+	assignment, hasKind := artifactOperand(operation.Operands, "kind")
+	value, hasValue := artifactOperand(operation.Operands, "value")
+	if !hasKind || !hasValue || string(assignment) != "claim-kind/3" {
+		return false
+	}
+	root, suffix, member := tableAddress(value)
+	return member && allocations[string(root)] && len(suffix) != 0
 }
 
 // uncalledDeclaredFormalValue accepts only an exact, non-gradual boundary
@@ -10783,8 +10818,11 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		for _, parameter := range child.Boundary.Parameters {
 			formals[boundaryTerm(parameter.Symbol)] = true
 		}
+		allocations := bodyLocalTableTerms(child)
 		for _, childOperation := range child.Artifact.Equations {
-			declaredAssignmentBoundary = declaredAssignmentBoundary || uncalledDeclaredFormalAssignment(child, childOperation, formals)
+			declaredAssignmentBoundary = declaredAssignmentBoundary ||
+				uncalledDeclaredFormalAssignment(child, childOperation, formals) ||
+				uncalledDeclaredLocalAllocationAssignment(childOperation, allocations)
 		}
 	}
 	if staticSeeds, admitted := uncalledStaticAssignmentBoundary(child); admitted && lexical.uncalledStaticCapturedCallsAreGuardedValidation(child, partition) {
@@ -17541,7 +17579,27 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	}
 	result.Closure.Values = append(result.Closure.Values, cone...)
 	result.Closure.Values = append(result.Closure.Values, pathEqualityFacts(operation, partition)...)
+	result.Closure.Values = append(result.Closure.Values, recurrenceExitFacts(operation)...)
 	return result, nil
+}
+
+// recurrenceExitFacts restates the front's loop-exit relation for this decision
+// as a publication. The relation is a property of the control-flow graph and of
+// no value, so it is stated unguarded and identically on every trip: the guard
+// algebra reads it to know that the arm which leaves the loop stands after every
+// trip the arm that stays inside ran.
+func recurrenceExitFacts(operation equation.BoundEquation) []equation.Fact {
+	for _, operand := range operation.Operands {
+		if operand.Role != "recurrence-exit" {
+			continue
+		}
+		edge := factkey.FalseEdge
+		if string(operand.Value) == "true" {
+			edge = factkey.TrueEdge
+		}
+		return []equation.Fact{{Key: factkey.RecurrenceExitPrefix + operation.Target.Name, Value: []byte(edge)}}
+	}
+	return nil
 }
 
 func branchSelectionKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
@@ -27428,10 +27486,10 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 			}
 			predicate = operand.Value
 		default:
-			// Evidence, arm boundaries, difference constraints, and the
-			// carriers a cycle proved monotone are closed branch metadata. They
-			// are intentionally not alternate selectors.
-			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") && !strings.HasPrefix(operand.Role, "monotone-floor-") {
+			// Evidence, arm boundaries, difference constraints, the carriers a
+			// cycle proved monotone, and the arm that leaves one are closed
+			// branch metadata. They are intentionally not alternate selectors.
+			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") && !strings.HasPrefix(operand.Role, "monotone-floor-") {
 				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}

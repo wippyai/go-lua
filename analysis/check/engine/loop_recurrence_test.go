@@ -99,3 +99,59 @@ print(first)
 		t.Fatalf("a straight-line write stopped establishing its slot:\n%s", summaries)
 	}
 }
+
+// TestWhileExitCarriesWhatTheTripsWrote pins the loop-exit read for the arm-
+// guarded loop forms. A while body publishes under the condition's continuing
+// arm and the statements past the loop stand on the leaving arm, so a read there
+// that reported the arm it can see alone would report the value the loop
+// received rather than the value it produced.
+func TestWhileExitCarriesWhatTheTripsWrote(t *testing.T) {
+	counter := checkSource(t, `local more = function(): boolean return true end
+local xs: {string} = {"a"}
+local i: integer = 1
+while more() do
+    i = i + 1
+end
+if i <= #xs then
+    local first: string = xs[i]
+    print(first)
+end
+`)
+	if !strings.Contains(diagnosticSummaries(counter), "main.lua:8") {
+		t.Fatalf("a guarded read decided the counter from the value the loop received:\n%s", diagnosticSummaries(counter))
+	}
+	// The same read on a counter no trip advances keeps its exact value: a term
+	// the body never writes is not carried around the back edge.
+	untouched := checkSource(t, `local more = function(): boolean return true end
+local xs: {string} = {"a"}
+local i: integer = 1
+while more() do
+    print(i)
+end
+if i <= #xs then
+    local first: string = xs[i]
+    print(first)
+end
+`)
+	if summaries := diagnosticSummaries(untouched); summaries != "" {
+		t.Fatalf("a counter no trip writes was widened by the loop anyway:\n%s", summaries)
+	}
+}
+
+// TestWhileExitKeepsTheConditionItLeftOn is the precision guardrail. The exit
+// arm's own narrowing is derived from the value entering the condition, which is
+// already the join over every trip, so the exit keeps it instead of joining it
+// back against the arm that continued.
+func TestWhileExitKeepsTheConditionItLeftOn(t *testing.T) {
+	narrowed := checkSource(t, `local next = function(): string? return nil end
+local x: string? = next()
+while x ~= nil do
+    x = next()
+end
+local done: string = x
+print(done)
+`)
+	if !strings.Contains(diagnosticSummaries(narrowed), "it is nil") {
+		t.Fatalf("the loop exit lost the condition that ended the loop:\n%s", diagnosticSummaries(narrowed))
+	}
+}

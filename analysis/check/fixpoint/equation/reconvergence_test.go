@@ -288,3 +288,78 @@ func TestDecisionEdgesRefusesAnUnpeelableGuard(t *testing.T) {
 		t.Fatal("a guard naming no decision owes no split")
 	}
 }
+
+// TestLoopExitJoinsTheArmThatStaysInsideTheLoop pins the recurrence exit. The
+// arm that re-enters a loop republishes on every trip, so a point the leaving
+// arm alone reaches stands after all of them and holds what they carried. A cube
+// that still selects the value the loop received must therefore join both arms
+// instead of reporting that seed.
+func TestLoopExitJoinsTheArmThatStaysInsideTheLoop(t *testing.T) {
+	partition := reconvergencePartition(t, []Guard{edgeGuard("op-00000002", "false")},
+		Fact{Key: "front/recurrence-exit/op-00000002", Value: []byte("false")},
+		Fact{Key: "value/x/op-00000001", Value: []byte("seed")},
+		Fact{Key: "value/x/op-00000003", Value: []byte("carried"), Guards: []Guard{edgeGuard("op-00000002", "true")}},
+	)
+	fact, found := partition.Reconverged("value/x/", setLattice())
+	if !found {
+		t.Fatal("reconvergence withheld the loop-exit join")
+	}
+	if string(fact.Value) != "carried|seed" {
+		t.Fatalf("loop-exit value = %q, want carried|seed -- the exit reported the value the loop received", fact.Value)
+	}
+}
+
+// TestLoopExitKeepsAPublicationTheDecisionOwns is the precision guardrail for
+// the same rule. A row the decision itself published, or any row past it, was
+// derived from the value entering the decision -- which is already the join over
+// every trip -- so the exit keeps it exactly instead of widening it again.
+func TestLoopExitKeepsAPublicationTheDecisionOwns(t *testing.T) {
+	partition := reconvergencePartition(t, []Guard{edgeGuard("op-00000002", "false")},
+		Fact{Key: "front/recurrence-exit/op-00000002", Value: []byte("false")},
+		Fact{Key: "value/x/op-00000001", Value: []byte("seed")},
+		Fact{Key: "value/x/op-00000003", Value: []byte("carried"), Guards: []Guard{edgeGuard("op-00000002", "true")}},
+		Fact{Key: "value/x/op-00000004", Value: []byte("narrowed"), Guards: []Guard{edgeGuard("op-00000002", "false")}},
+	)
+	fact, found := partition.Reconverged("value/x/", setLattice())
+	if !found {
+		t.Fatal("reconvergence withheld a decided loop-exit read")
+	}
+	if string(fact.Value) != "narrowed" {
+		t.Fatalf("loop-exit value = %q, want narrowed -- what the exit itself established was joined away", fact.Value)
+	}
+}
+
+// TestRecurrenceExitAppliesOnlyToTheArmThatLeaves keeps the rule off the arm
+// that stays inside. A point inside the loop is separated from the exit by the
+// decision exactly as any arm is separated from its alternative.
+func TestRecurrenceExitAppliesOnlyToTheArmThatLeaves(t *testing.T) {
+	partition := reconvergencePartition(t, []Guard{edgeGuard("op-00000002", "true")},
+		Fact{Key: "front/recurrence-exit/op-00000002", Value: []byte("false")},
+		Fact{Key: "value/x/op-00000001", Value: []byte("seed")},
+		Fact{Key: "value/x/op-00000004", Value: []byte("past"), Guards: []Guard{edgeGuard("op-00000002", "false")}},
+	)
+	fact, found := partition.Reconverged("value/x/", setLattice())
+	if !found {
+		t.Fatal("reconvergence withheld a read inside the loop")
+	}
+	if string(fact.Value) != "seed" {
+		t.Fatalf("in-loop value = %q, want seed -- a publication past the loop reached a point inside it", fact.Value)
+	}
+}
+
+// TestDecisionWithNoPublishedExitStaysExclusive is the acyclic reading: without
+// the deciding body's own exit publication a decision's arms are alternatives,
+// and one arm's row never reaches the other.
+func TestDecisionWithNoPublishedExitStaysExclusive(t *testing.T) {
+	partition := reconvergencePartition(t, []Guard{edgeGuard("op-00000002", "false")},
+		Fact{Key: "value/x/op-00000001", Value: []byte("seed")},
+		Fact{Key: "value/x/op-00000003", Value: []byte("arm"), Guards: []Guard{edgeGuard("op-00000002", "true")}},
+	)
+	fact, found := partition.Reconverged("value/x/", setLattice())
+	if !found {
+		t.Fatal("reconvergence withheld an ordinary decided read")
+	}
+	if string(fact.Value) != "seed" {
+		t.Fatalf("decided value = %q, want seed -- an arm reached its own alternative", fact.Value)
+	}
+}

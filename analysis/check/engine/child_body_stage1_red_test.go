@@ -380,3 +380,86 @@ func checkChildAdmission(t *testing.T, source string) engine.Result {
 	}
 	return result
 }
+
+// TestDeclaredBodyPublishesItsOwnAllocationsConflict pins the admission lane for
+// a table a declared body allocates itself. No argument names that table and no
+// capture reaches it, so the writes deciding which of its slots are occupied are
+// all in this body: a slot proven able to be nil is this declaration's own
+// conflict and reaches the output without a call path.
+func TestDeclaredBodyPublishesItsOwnAllocationsConflict(t *testing.T) {
+	conditional := checkSource(t, `local function collect(src: {string}): string
+    local n: integer = 0
+    local buf: {string} = {}
+    for _, s in ipairs(src) do
+        n = n + 1
+        if s ~= "" then
+            buf[n] = s
+        end
+    end
+    if n >= 1 then
+        local first: string = buf[1]
+        return first
+    end
+    return ""
+end
+return collect
+`)
+	if !strings.Contains(diagnosticSummaries(conditional), "buf[1]") {
+		t.Fatalf("a conflict proven against a body-local allocation never reached the output:\n%s", diagnosticSummaries(conditional))
+	}
+	// The lane carries proven conflicts only. A body whose own allocation states
+	// no conflict publishes nothing, so opening it adds no report of its own.
+	established := checkSource(t, `local function collect(src: {string}): string
+    local buf: {string} = {}
+    buf[1] = "seed"
+    local first: string = buf[1]
+    print(src)
+    return first
+end
+return collect
+`)
+	if summaries := diagnosticSummaries(established); summaries != "" {
+		t.Fatalf("a body-local allocation whose slot the body established was refuted anyway:\n%s", summaries)
+	}
+}
+
+// TestSeededFormalContainerDecidesItsOwnIndexedRead pins the formal-call lane's
+// indexed reads. A read at a key the body cannot resolve is decided by the
+// container it reads: a formal the entry seeded with its own declaration types
+// every slot the read can land on and proves none of them occupied, so a slot
+// the read cannot prove present is this declaration's conflict and reaches the
+// output without a call path.
+func TestSeededFormalContainerDecidesItsOwnIndexedRead(t *testing.T) {
+	counter := checkSource(t, `local function walk(xs: {string}, more: () -> boolean): string
+    local i: integer = 1
+    while more() do
+        i = i + 1
+    end
+    if i <= #xs then
+        local item: string = xs[i]
+        return item
+    end
+    return ""
+end
+return walk
+`)
+	if !strings.Contains(diagnosticSummaries(counter), "may be nil") {
+		t.Fatalf("an indexed read of a seeded formal container stayed dormant:\n%s", diagnosticSummaries(counter))
+	}
+	// A read whose container is not a seeded formal keeps the demand-driven
+	// path: the entry establishes no authority over it.
+	local := checkSource(t, `local function walk(xs: {string}, more: () -> boolean): string
+    local copied = xs
+    local i: integer = 1
+    while more() do
+        i = i + 1
+    end
+    local item: string = copied[i]
+    return item
+end
+return walk
+`)
+	if summaries := diagnosticSummaries(local); summaries != "" {
+		t.Fatalf("a read through a container the entry does not seed was published anyway:\n%s", summaries)
+	}
+}

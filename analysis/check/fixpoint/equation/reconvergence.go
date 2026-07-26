@@ -190,7 +190,93 @@ func (p Partition) Reconverged(prefix string, lattice Reconvergence) (Fact, bool
 		return Fact{}, false
 	}
 	budget := reconvergenceBudget
-	return reconverge(candidates, resolvedBranchGuards(p.closure.Values, p.guards), lattice, &budget)
+	active := resolvedBranchGuards(p.closure.Values, p.guards)
+	active = activePastRecurrence(p.closure.Values, candidates, active, lattice)
+	return reconverge(candidates, active, lattice, &budget)
+}
+
+// activePastRecurrence removes the arm through which this cube left a loop, when
+// the publication the cube currently selects is older than the loop's own
+// decision.  Such a publication is the value the loop received: the arm that
+// stays inside the loop republishes on every trip, so a point the leaving arm
+// alone reaches stands after all of them and holds what they carried.  Removing
+// the arm leaves the decision undecided for this read, so the ordinary peel
+// joins both alternatives and the point reports the recurrence's fixed point
+// rather than its seed.
+//
+// A cube that already selects the decision's own publication, or a later one,
+// keeps its arm.  That row was derived from the value entering the decision --
+// which is the join over every trip -- so peeling it again would only widen a
+// result the loop has already accounted for.
+//
+// Which decision leaves which loop is the deciding body's own publication.  A
+// read that finds no such row treats every decision as ordinary, which is the
+// acyclic reading.
+func activePastRecurrence(evidence, candidates []Fact, active []Guard, lattice Reconvergence) []Guard {
+	var stale map[string]bool
+	for _, guard := range active {
+		decision, edge, ok := decisionOf(guard)
+		if !ok || !recurrenceExitEdge(evidence, decision.name, edge) {
+			continue
+		}
+		if !recurrenceSeeded(candidates, active, lattice, decision.name) {
+			continue
+		}
+		if stale == nil {
+			stale = make(map[string]bool, 1)
+		}
+		stale[decision.name] = true
+	}
+	if len(stale) == 0 {
+		return active
+	}
+	kept := make([]Guard, 0, len(active))
+	for _, guard := range active {
+		if decision, _, ok := decisionOf(guard); ok && stale[decision.name] {
+			continue
+		}
+		kept = append(kept, guard)
+	}
+	return kept
+}
+
+// recurrenceExitEdge reports whether the deciding body published this edge of
+// this decision as the arm that leaves a loop.
+func recurrenceExitEdge(evidence []Fact, name string, edge bool) bool {
+	key := factkey.RecurrenceExitPrefix + name
+	stated := factkey.FalseEdge
+	if edge {
+		stated = factkey.TrueEdge
+	}
+	for _, fact := range evidence {
+		if fact.Key == key && string(fact.Value) == stated {
+			return true
+		}
+	}
+	return false
+}
+
+// recurrenceSeeded reports whether the row this cube selects was published
+// before the named decision.  Publication order is the artifact's own occurrence
+// order, the same order by which every read already selects its latest row.
+func recurrenceSeeded(candidates []Fact, active []Guard, lattice Reconvergence, name string) bool {
+	compatible := make([]Fact, 0, len(candidates))
+	for _, fact := range candidates {
+		if !guardsConflict(fact.Guards, active) {
+			compatible = append(compatible, fact)
+		}
+	}
+	chosen, found := lattice.Current(compatible)
+	return found && factOccurrence(chosen.Key) < name
+}
+
+// factOccurrence is the occurrence a key ends with, which names the operation
+// that published the fact.
+func factOccurrence(key string) string {
+	if cut := strings.LastIndexByte(key, '/'); cut >= 0 {
+		return key[cut+1:]
+	}
+	return key
 }
 
 // WithoutOwnDecision is this partition with the arm publications of one

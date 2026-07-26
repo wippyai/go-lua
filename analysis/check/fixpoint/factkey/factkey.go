@@ -288,6 +288,15 @@ const BranchGuardPrefix = "front/branch/"
 // guard the decision carried.
 const BranchProofPrefix = "branch-proof/"
 
+// RecurrenceExitPrefix roots the fact family that names, for one decision, the
+// edge through which control leaves a loop that decision continues. The loop's
+// back edge re-evaluates that decision, so a publication on the opposite edge
+// belongs to an earlier trip and reaches every point past the loop instead of
+// describing a region those points exclude. The family states the relation
+// only; which decision a read joins, and when, stays with the guard algebra.
+// Its key carries the decision and its value carries the edge.
+const RecurrenceExitPrefix = "front/recurrence-exit/"
+
 // The two edges a branch decision has.
 const (
 	TrueEdge  = "true"
