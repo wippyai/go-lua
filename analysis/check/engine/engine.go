@@ -4167,8 +4167,7 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			equation.Fact{Key: "type/" + string(root) + "/entry", Value: append([]byte(nil), declaredTypes[name]...)},
 		)
 		if declaredIndexableContainer(declared) {
-			identity := []byte("declared-table-entry/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + base64.RawURLEncoding.EncodeToString(root))
-			values = append(values, heapIdentityFact(string(root), "entry", identity))
+			values = append(values, heapIdentityFact(string(root), "entry", declaredBoundaryIdentity(operation.Target.Body, string(root))))
 		}
 		if _, channel := ambient.ChannelPayloadType(declared); channel {
 			identity := []byte("scalar/channel-entry/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + base64.RawURLEncoding.EncodeToString(root))
@@ -4184,17 +4183,80 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
+// declaredIndexableContainer names the declared types that denote a table cell.
+// A record is one: its fields are slots of a table the caller owns, so a write
+// through it is a write to that same cell, exactly as an element store is for
+// an array or a map.
 func declaredIndexableContainer(value typ.Type) bool {
 	value = unwrap.Alias(value)
 	if value == nil {
 		return false
 	}
 	switch value.Kind() {
-	case kind.Array, kind.Map, kind.ReadonlyMap, kind.Tuple:
+	case kind.Array, kind.Map, kind.ReadonlyMap, kind.Tuple, kind.Record:
 		return true
 	default:
 		return false
 	}
+}
+
+// declaredBoundaryTypes indexes the declared type of every boundary cell of a
+// body by its entry term.
+func declaredBoundaryTypes(child front.Compilation) map[string]typ.Type {
+	if child.WIR == nil {
+		return nil
+	}
+	declared := make(map[string]typ.Type, len(child.Boundary.Parameters)+len(child.Boundary.Captures))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Symbol != 0 && parameter.Type != 0 {
+			declared[boundaryTerm(parameter.Symbol)] = child.WIR.Type(parameter.Type)
+		}
+	}
+	for _, capture := range child.Boundary.Captures {
+		if capture.Symbol != 0 && capture.Type != 0 {
+			declared[boundaryTerm(capture.Symbol)] = child.WIR.Type(capture.Type)
+		}
+	}
+	return declared
+}
+
+// declaredBoundaryIdentity is the heap subject a declaration-owned entry states
+// for one of its own boundary cells. It is derived from the body and the term
+// alone, so the same declaration always names the same subject.
+func declaredBoundaryIdentity(body equation.BodyID, term string) []byte {
+	return []byte("declared-table-entry/" + fmt.Sprintf("%x", body) + "/" + base64.RawURLEncoding.EncodeToString([]byte(term)))
+}
+
+// declaredBoundaryIdentitySeeds gives every declared container on a
+// declaration-owned boundary a heap subject of its own. Member state below such
+// a cell is addressed by that subject rather than by a path spelling, which is
+// what lets a callee's write through the cell reach the reads this body makes
+// after the call.
+//
+// It applies only where the seeds are the declaration itself. An entry built
+// from caller arguments carries the caller's own identities, and a mapping the
+// call site withheld — two arguments naming one cell — must stay withheld, so a
+// term that already holds an identity seed keeps it.
+func declaredBoundaryIdentitySeeds(body equation.BodyID, child front.Compilation, seeds []entrySeed, existing []entryTableIdentitySeed) []entryTableIdentitySeed {
+	declared := declaredBoundaryTypes(child)
+	if len(declared) == 0 {
+		return existing
+	}
+	held := make(map[string]bool, len(existing))
+	for _, seed := range existing {
+		held[seed.Term] = true
+	}
+	out := append([]entryTableIdentitySeed(nil), existing...)
+	minted := make([]entryTableIdentitySeed, 0, len(seeds))
+	for _, seed := range seeds {
+		if held[seed.Term] || !declaredIndexableContainer(declared[seed.Term]) {
+			continue
+		}
+		held[seed.Term] = true
+		minted = append(minted, entryTableIdentitySeed{Term: seed.Term, Identity: declaredBoundaryIdentity(body, seed.Term)})
+	}
+	sort.Slice(minted, func(i, j int) bool { return minted[i].Term < minted[j].Term })
+	return append(out, minted...)
 }
 
 func closureHandleFor(term []byte, partition equation.Partition) (closureHandle, bool) {
@@ -4606,19 +4668,35 @@ func capturelessFormalBody(child front.Compilation) bool {
 }
 
 // uncalledSealedCaptureBoundary admits a parameter-free body whose entire free
-// environment is sealed: never-reassigned lexical functions, and the sealed
-// table allocations an object model is built from. Such a body is closed at
-// allocation time exactly like a capture-free one: it takes no argument a
-// caller could refine, and WIR's immutability bit proves no lexical write can
-// rebind a capture cell between allocation and any later call, so the value
-// resolved here is the value every invocation observes. A mutable cell, a
-// callable capture whose own closure environment is not scalar, and a table
-// capture whose surface is not yet final all leave the body dormant.
+// environment is sealed. Such a body is closed at allocation time exactly like a
+// capture-free one: it takes no argument a caller could refine, and its free
+// cells all carry an authority every invocation observes.
 func uncalledSealedCaptureBoundary(lexical *lexicalEvaluator, child front.Compilation, allocation lexicalAllocationSite, partition equation.Partition) bool {
-	if lexical == nil || child.WIR == nil || child.Cyclic != nil ||
-		len(child.Boundary.Parameters) != 0 || len(child.Boundary.Captures) == 0 {
+	return len(child.Boundary.Parameters) == 0 && lexical.sealedCaptureEnvironment(child, allocation, partition)
+}
+
+// sealedCaptureEnvironment reports that every free cell of this body carries an
+// authority no later execution can change. WIR's immutability bit proves no
+// lexical write can rebind a capture cell between allocation and any later call,
+// so each cell resolves here to what every invocation observes; the cell's
+// authority is then one of three:
+//
+//   - a lexical callable whose own environment is sealed by this same relation,
+//   - a table allocation whose member surface is final at this allocation site,
+//   - a declared container, whose declaration is an invariant of the cell rather
+//     than a snapshot of it and therefore needs no finality.
+//
+// A mutable cell, or a cell with none of those authorities, leaves the body
+// dormant.
+func (l *lexicalEvaluator) sealedCaptureEnvironment(child front.Compilation, allocation lexicalAllocationSite, partition equation.Partition) bool {
+	if l == nil || child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) == 0 {
 		return false
 	}
+	sealedTerms := make(map[string]bool, len(child.Boundary.Captures))
+	for _, capture := range child.Boundary.Captures {
+		sealedTerms[boundaryTerm(capture.Symbol)] = true
+	}
+	declared := declaredBoundaryTypes(child)
 	for _, capture := range child.Boundary.Captures {
 		if capture.Mutable {
 			return false
@@ -4630,7 +4708,7 @@ func uncalledSealedCaptureBoundary(lexical *lexicalEvaluator, child front.Compil
 		}
 		handle, found := closureHandleFor(term, partition)
 		if !found {
-			if !lexical.sealedTableCapture(term, value, allocation, partition) {
+			if !declaredIndexableContainer(declared[string(term)]) && !l.sealedTableCapture(term, value, allocation, partition) {
 				return false
 			}
 			continue
@@ -4638,14 +4716,15 @@ func uncalledSealedCaptureBoundary(lexical *lexicalEvaluator, child front.Compil
 		if !isCallableValue(value) {
 			return false
 		}
-		if _, admitted := lexical.byPrototype[handle.Prototype]; !admitted {
+		if _, admitted := l.byPrototype[handle.Prototype]; !admitted {
 			return false
 		}
-		// A captured closure that itself closes over a cell would reintroduce
-		// the staleness this boundary excludes. Only a scalar-closed callable
-		// keeps the environment exact.
+		// A captured closure that closes over a cell this environment does not
+		// itself seal would reintroduce the staleness this boundary excludes. A
+		// scalar needs no cell; a cell this same boundary seals is reconstructed
+		// by the same entry, so the callable's environment stays exact.
 		for _, nested := range handle.Captures {
-			if !strings.HasPrefix(nested, "scalar/") {
+			if !strings.HasPrefix(nested, "scalar/") && !sealedTerms[nested] {
 				return false
 			}
 		}
@@ -5421,17 +5500,23 @@ func (l *lexicalEvaluator) callbackCompositionCall(operands directCallOperands, 
 
 // uncalledDeclaredFormalCallBoundary admits a body whose calls resolve entirely
 // from contracts the boundary itself supplies: the declared function type of one
-// of its own formals, or a closure this same body allocated. The formal is
-// seeded as its declared type (an axiom under test, never a caller value); a
-// call through it derives its result from that declared return and checks
-// arguments against the declared parameters. A body-local closure needs no
-// contract at all — its prototype and its capture cells belong to this captureless
-// body, so the call resolves inside the same evaluation. Every root is therefore
-// seeded — no capture, no unseeded Top — so the body's full diagnostic surface
-// traces to seeded facts. A capture, a dynamic read or select from any root, or
-// a call through a value with neither authority keeps the body dormant.
-func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, bool) {
-	if !capturelessFormalBody(child) {
+// of its own formals, a closure this same body allocated, or a sealed callable
+// this body closes over. The formal is seeded as its declared type (an axiom
+// under test, never a caller value); a call through it derives its result from
+// that declared return and checks arguments against the declared parameters. A
+// body-local closure needs no contract at all — its prototype and its capture
+// cells belong to this body, so the call resolves inside the same evaluation —
+// and a sealed capture carries the same authority, since the environment it
+// resolves from is the one this entry reconstructs. Every root is therefore
+// seeded — no unsealed capture, no unseeded Top — so the body's full diagnostic
+// surface traces to seeded facts. An unsealed capture, a dynamic read or select
+// from any root, or a call through a value with none of those authorities keeps
+// the body dormant.
+func (l *lexicalEvaluator) uncalledDeclaredFormalCallBoundary(child front.Compilation, allocation lexicalAllocationSite, partition equation.Partition) ([]entrySeed, bool) {
+	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) == 0 {
+		return nil, false
+	}
+	if len(child.Boundary.Captures) != 0 && !l.sealedCaptureEnvironment(child, allocation, partition) {
 		return nil, false
 	}
 	formals := make(map[string]bool, len(child.Boundary.Parameters))
@@ -5455,7 +5540,7 @@ func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, b
 	}
 	// An external-call equation is emitted only for a resolved provider (a
 	// standard-library or imported module function). Its result is owned by the
-	// published registry contract; since this boundary has no capture and every
+	// published registry contract; since every capture is sealed and every
 	// formal is seeded, every argument already traces to a seeded root, so the
 	// call needs no additional closedness proof.
 	externalApplications := make(map[string]bool)
@@ -5469,6 +5554,12 @@ func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, b
 		}
 	}
 	localClosures := bodyLocalClosureTerms(child)
+	for _, capture := range child.Boundary.Captures {
+		term := boundaryTerm(capture.Symbol)
+		if _, found := closureHandleFor([]byte(term), partition); found {
+			localClosures[term] = true
+		}
+	}
 	localTables := bodyLocalTableTerms(child)
 	memberCalls := make(map[string]bool)
 	hasClosedCall := false
@@ -5508,6 +5599,141 @@ func uncalledDeclaredFormalCallBoundary(child front.Compilation) ([]entrySeed, b
 		}
 	}
 	return seeds, true
+}
+
+// calleePrototype resolves the lexical prototype one application dispatches to:
+// a capture or local whose closure handle the allocating partition published, or
+// a closure this same body materialized.
+func (l *lexicalEvaluator) calleePrototype(child front.Compilation, callee []byte, partition equation.Partition) (string, bool) {
+	if handle, found := closureHandleFor(callee, partition); found {
+		return handle.Prototype, true
+	}
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "object-materialization" {
+			continue
+		}
+		result, hasResult := artifactOperand(operation.Operands, "result")
+		prototype, hasPrototype := artifactOperand(operation.Operands, "prototype")
+		if hasResult && hasPrototype && string(result) == string(callee) {
+			return strings.TrimPrefix(string(prototype), "prototype/"), true
+		}
+	}
+	return "", false
+}
+
+// applicationArgumentTerms lists an application's argument terms in call order,
+// with a method receiver occupying the first position it binds.
+func applicationArgumentTerms(operation equation.Equation) [][]byte {
+	byIndex := make(map[int][]byte)
+	highest := -1
+	for _, operand := range operation.Operands {
+		if !strings.HasPrefix(operand.Role, "argument-") || strings.HasPrefix(operand.Role, "argument-display-") {
+			continue
+		}
+		index, err := callArgumentIndex(operand.Role)
+		if err != nil {
+			continue
+		}
+		byIndex[index] = operand.Term.Encoding
+		if index > highest {
+			highest = index
+		}
+	}
+	arguments := make([][]byte, 0, highest+2)
+	if receiver, found := artifactOperand(operation.Operands, "receiver"); found {
+		arguments = append(arguments, receiver)
+	}
+	for index := 0; index <= highest; index++ {
+		arguments = append(arguments, byIndex[index])
+	}
+	return arguments
+}
+
+// formalMemberWriteObligations names the operations a body with a sealed free
+// environment decides on its own. Forwarding a declared formal to a callee that
+// writes that formal's member states the post-call content of the cell without
+// any caller: the write replaces whatever the caller knew of it, so a later read
+// of that cell resolves from this body's own evaluation. Reads before the write,
+// and reads of any other cell, still depend on a caller-owned refinement and
+// stay dormant.
+func (l *lexicalEvaluator) formalMemberWriteObligations(child front.Compilation, partition equation.Partition) map[string]bool {
+	if l == nil || child.WIR == nil {
+		return nil
+	}
+	formals := make(map[string]bool, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		formals[boundaryTerm(parameter.Symbol)] = true
+	}
+	written := make(map[string]string, len(formals))
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "apply" {
+			continue
+		}
+		term, hasCallee := artifactOperand(operation.Operands, "callee")
+		if !hasCallee {
+			continue
+		}
+		prototype, resolved := l.calleePrototype(child, term, partition)
+		if !resolved || len(l.parameterWrites[prototype]) == 0 {
+			continue
+		}
+		callee, known := l.byPrototype[prototype]
+		if !known {
+			continue
+		}
+		arguments := applicationArgumentTerms(operation)
+		for index, parameter := range callee.Boundary.Parameters {
+			if index >= len(arguments) || !l.parameterWrites[prototype][boundaryTerm(parameter.Symbol)] {
+				continue
+			}
+			argument := string(arguments[index])
+			if !formals[argument] {
+				continue
+			}
+			if prior, exists := written[argument]; !exists || operation.Target.Name < prior {
+				written[argument] = operation.Target.Name
+			}
+		}
+	}
+	if len(written) == 0 {
+		return nil
+	}
+	obligations := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		for term, writeOperation := range written {
+			if operation.Target.Name <= writeOperation {
+				continue
+			}
+			for _, operand := range operation.Operands {
+				read := string(operand.Term.Encoding)
+				if read == term || strings.HasPrefix(read, term+".") || strings.HasPrefix(read, term+"[") {
+					obligations[operation.Target.Name] = true
+					break
+				}
+			}
+		}
+	}
+	return obligations
+}
+
+// diagnosticOperation reads the operation coordinate a diagnostic key carries.
+func diagnosticOperation(key string) (string, bool) {
+	for _, part := range strings.Split(key, "/") {
+		if strings.HasPrefix(part, "op-") {
+			return part, true
+		}
+	}
+	return "", false
+}
+
+// formalMemberWriteDiagnostic keeps only the refutations proven at an operation
+// the member-write obligation covers.
+func formalMemberWriteDiagnostic(obligations map[string]bool, key string) bool {
+	if !declaredFormalCallDiagnostic(key) {
+		return false
+	}
+	operation, found := diagnosticOperation(key)
+	return found && obligations[operation]
 }
 
 // declaredFormalCallDiagnostic whitelists the refutation families a fully
@@ -7792,6 +8018,12 @@ func (l *lexicalEvaluator) uncalledChildEntry(body equation.BodyID, child front.
 // the caller so a summary lane can add its own capabilities to the same seeds.
 func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies bool) ([]entrySeed, []entryClosureSeed, []entryMemberClosureSeed, []entryTableIdentitySeed, []entryMemberCellSeed, bool) {
 	seeds := append([]entrySeed(nil), formalSeeds...)
+	declared := declaredBoundaryTypes(child)
+	// A declared container capture is seeded as its declaration. The parent's
+	// member surface below such a cell is a fact about this allocation site
+	// alone, so it stays out of the entry and the body accrues member state from
+	// its own evaluation instead.
+	axioms := make(map[string]bool, len(child.Boundary.Captures))
 	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
 	for _, capture := range child.Boundary.Captures {
 		term := boundaryTerm(capture.Symbol)
@@ -7803,6 +8035,15 @@ func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.C
 		if !found {
 			if isUnknownScalar(value) {
 				return nil, nil, nil, nil, nil, false
+			}
+			if allowTypedCaptures && declaredIndexableContainer(declared[term]) {
+				encoded, encodedOK := shapefact.EncodeTarget(declared[term])
+				if !encodedOK {
+					return nil, nil, nil, nil, nil, false
+				}
+				seeds = append(seeds, entrySeed{Term: term, Value: encoded})
+				axioms[term] = true
+				continue
 			}
 			// A require binding can carry its project-selected export type as
 			// entry metadata. This is not a reconstructed module value: the
@@ -7870,11 +8111,18 @@ func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.C
 			}
 		}
 	}
-	boundarySeeds := append([]entrySeed(nil), seeds...)
-	seeds = append(seeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
-	memberClosureSeeds := childEntryMemberClosureSeeds(seeds, nil, partition)
-	tableIdentitySeeds := tableIdentitySeedsForEntry(seeds, nil, partition)
-	memberCellSeeds := memberCellSeedsForEntry(seeds, nil, partition)
+	boundarySeeds := make([]entrySeed, 0, len(seeds))
+	for _, seed := range seeds {
+		if !axioms[seed.Term] {
+			boundarySeeds = append(boundarySeeds, seed)
+		}
+	}
+	descendants := childEntryDescendantSeeds(boundarySeeds, partition)
+	transported := append(append([]entrySeed(nil), boundarySeeds...), descendants...)
+	seeds = append(seeds, descendants...)
+	memberClosureSeeds := childEntryMemberClosureSeeds(transported, nil, partition)
+	tableIdentitySeeds := declaredBoundaryIdentitySeeds(body, child, seeds, tableIdentitySeedsForEntry(transported, nil, partition))
+	memberCellSeeds := memberCellSeedsForEntry(transported, nil, partition)
 	return seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, true
 }
 
@@ -9981,13 +10229,26 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// entirely from the declared function contracts of its own formals. It fires
 	// only when no richer boundary admits, seeds every formal as its declared
 	// type, and publishes its full seed-owned diagnostic surface.
-	declaredFormalCallBoundary := false
+	//
+	// A body that also closes over a sealed environment carries one further
+	// authority and only that one: a callee's write through a forwarded formal
+	// replaces the cell's caller-owned content, so the reads after it are decided
+	// here. Its surface is scoped to exactly those operations; the rest of such a
+	// body still depends on caller-owned refinement and stays dormant.
+	declaredFormalCallBoundary, sealedEnvironmentBoundary := false, false
+	formalMemberWriteOperations := map[string]bool(nil)
 	if !explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
 		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary &&
 		!staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary {
-		if formalSeeds, admitted := uncalledDeclaredFormalCallBoundary(child); admitted {
-			uncalledSeeds = formalSeeds
-			declaredFormalCallBoundary = true
+		if formalSeeds, admitted := lexical.uncalledDeclaredFormalCallBoundary(child, lexicalAllocationSite{body: operation.Target.Body, operation: operation.Target.Name}, partition); admitted {
+			if len(child.Boundary.Captures) == 0 {
+				uncalledSeeds = formalSeeds
+				declaredFormalCallBoundary = true
+			} else if operations := lexical.formalMemberWriteObligations(child, partition); len(operations) != 0 {
+				uncalledSeeds = formalSeeds
+				declaredFormalCallBoundary, sealedEnvironmentBoundary = true, true
+				formalMemberWriteOperations = operations
+			}
 		}
 	}
 	// A body closing only over module bindings is the final fallback. Every
@@ -10041,8 +10302,14 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
 		} else if importedCaptureBoundary {
 			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, false, true, false, false)
+		} else if sealedEnvironmentBoundary {
+			// A sealed environment is reconstructed by the capability transport,
+			// not by the declaration alone: the entry carries the capture values
+			// and closure handles the boundary sealed, and stays declaration-owned
+			// so its formals remain axioms.
+			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, true, false, true, true)
 		} else if declaredBoundary || declaredFormalCallBoundary {
-			entry, entryErr = encodeDeclaredChildEntry(uncalledSeeds)
+			entry, entryErr = encodeDeclaredChildEntryWithCapabilities(uncalledSeeds, nil, nil, declaredBoundaryIdentitySeeds(operation.Target.Body, child, uncalledSeeds, nil), nil)
 		} else if len(child.Boundary.Captures) == 0 {
 			if gradualLogicalBoundary {
 				entry, entryErr = encodeChildEntryWithCapabilities(uncalledSeeds, nil, nil, nil, nil, gradualLogicalTerms)
@@ -10164,7 +10431,10 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			if localUnionReadBoundary && !strings.HasPrefix(family, "type.assignment/") && !strings.HasPrefix(family, "type.member.missing/") {
 				return true
 			}
-			if declaredFormalCallBoundary && !declaredFormalCallDiagnostic(family) {
+			if sealedEnvironmentBoundary && !formalMemberWriteDiagnostic(formalMemberWriteOperations, family) {
+				return true
+			}
+			if declaredFormalCallBoundary && !sealedEnvironmentBoundary && !declaredFormalCallDiagnostic(family) {
 				return true
 			}
 			if importedCaptureBoundary && !importedCaptureBoundaryDiagnostic(family) {
