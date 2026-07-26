@@ -26175,7 +26175,7 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 		default:
 			// Evidence, arm boundaries, and difference constraints are closed
 			// branch metadata. They are intentionally not alternate selectors.
-			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") {
+			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") {
 				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}

@@ -1843,7 +1843,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 		// that topology to the transaction, which is the only place that knows
 		// whether the write lands on a member and therefore what remains
 		// possible rather than established.
-		if recurrentPoints[instruction.Point] && (draft.Occurrence.Kind == "environment-write" || draft.Occurrence.Kind == "index-mutation" || draft.Occurrence.Kind == "path-replacement") {
+		if recurrentPoints[instruction.Point] && (draft.Occurrence.Kind == "environment-write" || draft.Occurrence.Kind == "index-mutation" || draft.Occurrence.Kind == "path-replacement" || draft.Occurrence.Kind == "branch-relations") {
 			draft.Operands = append(draft.Operands, equation.Operand{Role: "recurrence", Term: equation.ClosedTerm([]byte("recurrence/cyclic"))})
 		}
 		drafts = append(drafts, draft)
