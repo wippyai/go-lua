@@ -136,55 +136,19 @@ func boolWireLane(
 // encodeOperationalEffects, decodeOperationalEffects, and
 // canonicalizeOperationalEffectsWire drive it. Adding a fact kind is a single
 // wireLane entry.
-var operationalEffectsWireLanes = []operationalEffectsWireLane{
+var operationalEffectsWireLanes = append([]operationalEffectsWireLane{
 	boolWireLane("SuspensionKnown",
 		func(e *signature.OperationalEffects) *bool { return &e.SuspensionKnown },
 		func(w *operationalEffectsWire) *bool { return &w.SuspensionKnown }),
 	boolWireLane("MaySuspend",
 		func(e *signature.OperationalEffects) *bool { return &e.MaySuspend },
 		func(w *operationalEffectsWire) *bool { return &w.MaySuspend }),
-	wireLane("ReturnPresenceRelations",
-		func(e *signature.OperationalEffects) *[]signature.ReturnPresenceRelation {
-			return &e.ReturnPresenceRelations
-		},
-		func(w *operationalEffectsWire) *[]returnPresenceRelationWire { return &w.ReturnPresenceRelations },
-		encodeReturnPresenceRelation, decodeReturnPresenceRelation, compareReturnPresenceRelationWire, nil),
-	wireLane("NormalReturnPresenceRefinements",
-		func(e *signature.OperationalEffects) *[]signature.PathPresenceRefinement {
-			return &e.NormalReturnPresenceRefinements
-		},
-		func(w *operationalEffectsWire) *[]pathPresenceRefinementWire {
-			return &w.NormalReturnPresenceRefinements
-		},
-		encodeNormalReturnPresenceRefinement, decodeNormalReturnPresenceRefinement, comparePathPresenceRefinementWire, nil),
-	contextWireLane("NormalReturnTypeRefinements",
-		func(e *signature.OperationalEffects) *[]signature.PathTypeRefinement {
-			return &e.NormalReturnTypeRefinements
-		},
-		func(w *operationalEffectsWire) *[]pathTypeRefinementWire { return &w.NormalReturnTypeRefinements },
-		encodeNormalReturnTypeRefinementContext, decodeNormalReturnTypeRefinement, comparePathTypeRefinementWire, nil),
 	contextWireLane("PathPresenceImplications",
 		func(e *signature.OperationalEffects) *[]signature.PathPresenceImplication {
 			return &e.PathPresenceImplications
 		},
 		func(w *operationalEffectsWire) *[]pathPresenceImplicationWire { return &w.PathPresenceImplications },
 		encodePathPresenceImplicationContext, decodePathPresenceImplication, comparePathPresenceImplicationWire, nil),
-	contextWireLane("PathStaticMembers",
-		func(e *signature.OperationalEffects) *[]signature.PathStaticMemberFact { return &e.PathStaticMembers },
-		func(w *operationalEffectsWire) *[]pathStaticMemberWire { return &w.PathStaticMembers },
-		encodePathStaticMemberContext, decodePathStaticMember, comparePathStaticMemberWire, nil),
-	contextWireLane("PathStaticMemberDeltas",
-		func(e *signature.OperationalEffects) *[]signature.PathStaticMemberDelta {
-			return &e.PathStaticMemberDeltas
-		},
-		func(w *operationalEffectsWire) *[]pathStaticMemberDeltaWire {
-			return &w.PathStaticMemberDeltas
-		},
-		encodePathStaticMemberDeltaContext, decodePathStaticMemberDelta, comparePathStaticMemberDeltaWire, nil),
-	wireLane("PathInvalidations",
-		func(e *signature.OperationalEffects) *[]signature.PathInvalidation { return &e.PathInvalidations },
-		func(w *operationalEffectsWire) *[]pathInvalidationWire { return &w.PathInvalidations },
-		encodePathInvalidation, decodePathInvalidation, comparePathInvalidationWire, nil),
 	wireLane("BranchProofs",
 		func(e *signature.OperationalEffects) *[]signature.BranchProof { return &e.BranchProofs },
 		func(w *operationalEffectsWire) *[]branchProofWire { return &w.BranchProofs },
@@ -203,36 +167,6 @@ var operationalEffectsWireLanes = []operationalEffectsWireLane{
 		},
 		func(w *operationalEffectsWire) *[]dynamicValueKeyMembershipWire { return &w.DynamicValueKeys },
 		encodeDynamicValueKeyMembership, decodeDynamicValueKeyMembership, compareDynamicValueKeyMembershipWire, nil),
-	wireLane("FrozenTables",
-		func(e *signature.OperationalEffects) *[]signature.FrozenTable { return &e.FrozenTables },
-		func(w *operationalEffectsWire) *[]frozenTableWire { return &w.FrozenTables },
-		encodeFrozenTable, decodeFrozenTable, compareFrozenTableWire, nil),
-	wireLane("EscapeEvents",
-		func(e *signature.OperationalEffects) *[]signature.EscapeEvent { return &e.EscapeEvents },
-		func(w *operationalEffectsWire) *[]escapeEventWire { return &w.EscapeEvents },
-		encodeEscapeEvent, decodeEscapeEvent, compareEscapeEventWire, nil),
-	wireLane("StoreRelations",
-		func(e *signature.OperationalEffects) *[]signature.StoreRelation { return &e.StoreRelations },
-		func(w *operationalEffectsWire) *[]storeRelationWire { return &w.StoreRelations },
-		encodeStoreRelation, decodeStoreRelation, compareStoreRelationWire, nil),
-	wireLane("ParamRelations",
-		func(e *signature.OperationalEffects) *[]signature.ParamRelation { return &e.ParamRelations },
-		func(w *operationalEffectsWire) *[]paramRelationWire { return &w.ParamRelations },
-		encodeParamRelation, decodeParamRelation, compareParamRelationWire, nil),
-	wireLane("ReturnFlows",
-		func(e *signature.OperationalEffects) *[]signature.ReturnFlow { return &e.ReturnFlows },
-		func(w *operationalEffectsWire) *[]returnFlowWire { return &w.ReturnFlows },
-		encodeReturnFlow, decodeReturnFlow, compareReturnFlowWire, nil),
-	wireLane("LifecycleEffects",
-		func(e *signature.OperationalEffects) *[]signature.LifecycleEffect { return &e.LifecycleEffects },
-		func(w *operationalEffectsWire) *[]lifecycleEffectWire { return &w.LifecycleEffects },
-		encodeLifecycleEffect, decodeLifecycleEffect, compareLifecycleEffectWire, nil),
-	wireLane("TypestateRequirements",
-		func(e *signature.OperationalEffects) *[]signature.TypestateRequirement {
-			return &e.TypestateRequirements
-		},
-		func(w *operationalEffectsWire) *[]typestateRequirementWire { return &w.TypestateRequirements },
-		encodeTypestateRequirement, decodeTypestateRequirement, compareTypestateRequirementWire, nil),
 	contextWireLane("ReturnAllocationTemplates",
 		func(e *signature.OperationalEffects) *[]signature.ReturnAllocationTemplate {
 			return &e.ReturnAllocationTemplates
@@ -240,7 +174,7 @@ var operationalEffectsWireLanes = []operationalEffectsWireLane{
 		func(w *operationalEffectsWire) *[]returnAllocationTemplateWire { return &w.ReturnAllocationTemplates },
 		encodeReturnAllocationTemplateContext, decodeReturnAllocationTemplate, compareReturnAllocationTemplateWire,
 		canonicalizeReturnAllocationTemplateWire),
-}
+}, operationalEffectsColdWireLanes...)
 
 func encodeReturnPresenceRelation(relation signature.ReturnPresenceRelation) (returnPresenceRelationWire, error) {
 	trigger, err := encodePresence(relation.TriggerPresence)

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
+	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
 func returnContract(t *testing.T, source string) engine.PublishedDiagnostic {
@@ -127,10 +128,10 @@ return f`)
 			t.Fatalf("evidence %d = %q, want %q", index+1, item.Evidence[index].Message, message)
 		}
 	}
-	if item.Evidence[0].Trust != "proven" || item.Evidence[1].Trust != "claimed" || item.Evidence[2].Trust != "claimed" {
+	if item.Evidence[0].Trust != diag.TrustProven || item.Evidence[1].Trust != diag.TrustClaimed || item.Evidence[2].Trust != diag.TrustClaimed {
 		t.Fatalf("evidence trust: %#v", item.Evidence)
 	}
-	if item.Evidence[3].Reason != "explicit boundary validation" || item.Evidence[4].Reason != "boundary validation missing" {
+	if item.Evidence[3].Reason != diag.EvidenceReasonExplicitBoundaryValidation || item.Evidence[4].Reason != diag.EvidenceReasonBoundaryValidationMissing {
 		t.Fatalf("evidence reasons: %#v", item.Evidence)
 	}
 	if !strings.Contains(item.Help, "Return a value compatible with the declared return type") {

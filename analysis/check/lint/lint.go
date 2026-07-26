@@ -651,10 +651,12 @@ func projectDiagnostics(entry Entry, result engine.Result, initial []diagnostic.
 func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, message string, projection engine.PublishedDiagnostic) diagnostic.Diagnostic {
 	evidence := make([]diagnostic.Evidence, 0, len(projection.Evidence))
 	for _, item := range projection.Evidence {
+		kind, _ := evidenceKind(item.Kind)
+		trust, _ := evidenceTrust(item.Trust)
+		reason, _ := evidenceReason(item.Reason)
 		evidence = append(evidence, diagnostic.Evidence{
-			Kind: evidenceKind(item.Kind), Trust: evidenceTrust(item.Trust),
-			Reason: evidenceReason(item.Reason),
-			Span:   spanForFact(entry.Source, item.Span), Message: item.Message,
+			Kind: kind, Trust: trust, Reason: reason,
+			Span: spanForFact(entry.Source, item.Span), Message: item.Message,
 			CausalOrder: item.CausalOrder,
 		})
 	}
@@ -679,42 +681,39 @@ func newEnrichedDiagnostic(entry Entry, span source.Span, code diagnostic.Code, 
 	return result
 }
 
-func evidenceKind(kind string) diagnostic.EvidenceKind {
+func evidenceKind(kind diagnostic.EvidenceKind) (diagnostic.EvidenceKind, error) {
 	switch kind {
-	case "abstract fact":
-		return diagnostic.EvidenceAbstractFact
-	case "user assertion":
-		return diagnostic.EvidenceUserAssertion
-	case "missing proof":
-		return diagnostic.EvidenceMissingProof
+	case diagnostic.EvidenceAbstractFact, diagnostic.EvidenceUserAssertion,
+		diagnostic.EvidenceMissingProof, diagnostic.EvidencePrecisionBoundary:
+		return kind, nil
 	default:
-		return diagnostic.EvidencePrecisionBoundary
+		return diagnostic.EvidencePrecisionBoundary, fmt.Errorf("lint: unknown evidence kind %d", kind)
 	}
 }
 
-func evidenceTrust(trust string) diagnostic.TrustKind {
+func evidenceTrust(trust diagnostic.TrustKind) (diagnostic.TrustKind, error) {
 	switch trust {
-	case "proven":
-		return diagnostic.TrustProven
-	case "claimed":
-		return diagnostic.TrustClaimed
-	case "refuted":
-		return diagnostic.TrustRefuted
+	case diagnostic.TrustProven, diagnostic.TrustClaimed, diagnostic.TrustRefuted, diagnostic.TrustUnknown:
+		return trust, nil
 	default:
-		return diagnostic.TrustUnknown
+		return diagnostic.TrustUnknown, fmt.Errorf("lint: unknown evidence trust %d", trust)
 	}
 }
 
-func evidenceReason(reason string) diagnostic.EvidenceReason {
+func evidenceReason(reason diagnostic.EvidenceReason) (diagnostic.EvidenceReason, error) {
 	switch reason {
-	case "boundary validation missing":
-		return diagnostic.EvidenceReasonBoundaryValidationMissing
-	case "index read validation missing":
-		return diagnostic.EvidenceReasonIndexReadValidationMissing
-	case "explicit boundary validation":
-		return diagnostic.EvidenceReasonExplicitBoundaryValidation
+	case diagnostic.EvidenceReasonUnspecified,
+		diagnostic.EvidenceReasonBoundaryValidationMissing,
+		diagnostic.EvidenceReasonIndexReadValidationMissing,
+		diagnostic.EvidenceReasonExplicitBoundaryValidation,
+		diagnostic.EvidenceReasonUserTypeAssertion,
+		diagnostic.EvidenceReasonUserAssertedAny,
+		diagnostic.EvidenceReasonUserAssertedNonNil,
+		diagnostic.EvidenceReasonExactType,
+		diagnostic.EvidenceReasonUnionType:
+		return reason, nil
 	default:
-		return diagnostic.EvidenceReasonUnspecified
+		return diagnostic.EvidenceReasonUnspecified, fmt.Errorf("lint: unknown evidence reason %d", reason)
 	}
 }
 

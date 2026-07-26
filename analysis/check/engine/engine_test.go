@@ -336,7 +336,7 @@ func TestCheckPublishesProvenAnnotationAssignmentMismatch(t *testing.T) {
 	if published.Code != "type.assignment" || published.Message != "cannot assign value because it is number, not string" || !published.Span.Valid() {
 		t.Fatalf("published assignment = %#v, want code, message, and WIR span", published)
 	}
-	if len(published.Evidence) != 2 || published.Evidence[0].Kind != "abstract fact" || published.Evidence[0].Trust != "proven" || !strings.Contains(published.Evidence[0].Message, "value has literal value 42") || published.Evidence[1].Kind != "user assertion" || published.Evidence[1].Trust != "claimed" || !strings.Contains(published.Evidence[1].Message, "value is declared as string") {
+	if len(published.Evidence) != 2 || published.Evidence[0].Kind != diag.EvidenceAbstractFact || published.Evidence[0].Trust != diag.TrustProven || !strings.Contains(published.Evidence[0].Message, "value has literal value 42") || published.Evidence[1].Kind != diag.EvidenceUserAssertion || published.Evidence[1].Trust != diag.TrustClaimed || !strings.Contains(published.Evidence[1].Message, "value is declared as string") {
 		t.Fatalf("assignment evidence = %#v, want closed value and annotation claim", published.Evidence)
 	}
 	if len(published.Labels) != 2 || !strings.Contains(published.Help, "change the target type") {
@@ -945,7 +945,7 @@ target()
 	if argument.Message != "argument 1 (value) is 5, not string" || !argument.Span.Valid() {
 		t.Fatalf("argument diagnostic = %#v, want canonical message and argument span", argument)
 	}
-	if len(argument.Evidence) != 3 || argument.Evidence[0].Message != "argument 1 (value) has literal value 5" || argument.Evidence[1].Message != "takes_string parameter 1 expects string" || argument.Evidence[2].Trust != "refuted" || !strings.Contains(argument.Evidence[2].Message, "value satisfies the parameter type") {
+	if len(argument.Evidence) != 3 || argument.Evidence[0].Message != "argument 1 (value) has literal value 5" || argument.Evidence[1].Message != "takes_string parameter 1 expects string" || argument.Evidence[2].Trust != diag.TrustRefuted || !strings.Contains(argument.Evidence[2].Message, "value satisfies the parameter type") {
 		t.Fatalf("argument evidence = %#v, want closed value, contract, and missing-proof chain", argument.Evidence)
 	}
 	if !strings.Contains(argument.Help, "Pass `value`") || len(argument.Labels) != 1 {
@@ -1026,7 +1026,7 @@ invoke(provider, "bad")
 		if diagnostic.Span.StartLine != 10 || diagnostic.Span.StartCol != 18 {
 			t.Fatalf("summary call span = %#v, want caller argument", diagnostic.Span)
 		}
-		if len(diagnostic.Evidence) != 3 || diagnostic.Evidence[0].Message != `argument 1 (payload) has literal value "bad"` || diagnostic.Evidence[1].Message != "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number" || diagnostic.Evidence[2].Trust != "unknown" || diagnostic.Evidence[2].Message != "no proof on this path shows argument 1 (payload) is number" {
+		if len(diagnostic.Evidence) != 3 || diagnostic.Evidence[0].Message != `argument 1 (payload) has literal value "bad"` || diagnostic.Evidence[1].Message != "inside invoke, argument 1 (payload) is passed to provider.send parameter 1, which requires number" || diagnostic.Evidence[2].Trust != diag.TrustUnknown || diagnostic.Evidence[2].Message != "no proof on this path shows argument 1 (payload) is number" {
 			t.Fatalf("summary call evidence = %#v", diagnostic.Evidence)
 		}
 		if len(diagnostic.Labels) != 1 || !strings.Contains(diagnostic.Labels[0].Message, "argument value") || !strings.Contains(diagnostic.Help, "argument 2") {
@@ -1161,7 +1161,7 @@ local item: number = (value :: {number})[1]
 			continue
 		}
 		for _, evidence := range diagnostic.Evidence {
-			if evidence.Trust == "proven" && evidence.Message == "item can be number or nil here" {
+			if evidence.Trust == diag.TrustProven && evidence.Message == "item can be number or nil here" {
 				return
 			}
 		}
@@ -1276,7 +1276,7 @@ local f: fun(): Res = M.run`)
 		if diagnostic.Code != "type.assignment" || !strings.Contains(diagnostic.Message, "cannot assign M.run because it is fun() -> nil, not fun() -> Res") {
 			continue
 		}
-		if len(diagnostic.Evidence) != 2 || diagnostic.Evidence[0].Kind != "abstract fact" || diagnostic.Evidence[0].Message != "M.run has type fun() -> nil" || diagnostic.Evidence[1].Kind != "user assertion" || diagnostic.Evidence[1].Message != "f is declared as fun() -> Res" {
+		if len(diagnostic.Evidence) != 2 || diagnostic.Evidence[0].Kind != diag.EvidenceAbstractFact || diagnostic.Evidence[0].Message != "M.run has type fun() -> nil" || diagnostic.Evidence[1].Kind != diag.EvidenceUserAssertion || diagnostic.Evidence[1].Message != "f is declared as fun() -> Res" {
 			t.Fatalf("reassigned member assignment evidence = %#v", diagnostic.Evidence)
 		}
 		if len(diagnostic.Labels) != 2 || !strings.Contains(diagnostic.Help, "change the target type") {
@@ -1444,7 +1444,7 @@ end
 			continue
 		}
 		for _, evidence := range diagnostic.Evidence {
-			if evidence.Reason == "explicit boundary validation" && evidence.Message == "raw.items comes from any/unknown" {
+			if evidence.Reason == diag.EvidenceReasonExplicitBoundaryValidation && evidence.Message == "raw.items comes from any/unknown" {
 				return
 			}
 		}
@@ -3244,7 +3244,7 @@ end
 		if len(item.Evidence) != 4 ||
 			item.Evidence[0].Message != `argument 2.decode has type {elapsed: number, kind: "timer"}` ||
 			item.Evidence[2].Message != `argument 2.channel already binds T to {id: string, kind: "event"}` ||
-			item.Evidence[3].Trust != "refuted" || item.Evidence[3].Message != "no binding of T satisfies both members" {
+			item.Evidence[3].Trust != diag.TrustRefuted || item.Evidence[3].Message != "no binding of T satisfies both members" {
 			t.Fatalf("conflict evidence = %#v", item.Evidence)
 		}
 		if len(item.Labels) != 1 || item.Labels[0].Message != "conflicting T binding" || !strings.Contains(item.Help, "agree on T") {

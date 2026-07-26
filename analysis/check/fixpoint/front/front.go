@@ -15,6 +15,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
@@ -196,11 +197,12 @@ type ControlDiagnostic struct {
 }
 
 // ControlDiagnosticEvidence and ControlDiagnosticLabel retain source-owned
-// lexical evidence without making the front depend on a presentation package.
+// lexical evidence. The enum fields keep the front-to-engine boundary
+// fail-closed while messages and source anchors remain front-owned.
 type ControlDiagnosticEvidence struct {
 	Span    wir.Span
-	Kind    string
-	Trust   string
+	Kind    diagnostic.EvidenceKind
+	Trust   diagnostic.TrustKind
 	Message string
 }
 
@@ -443,7 +445,7 @@ func numericForBoundLiteral(expr ast.Expr) (string, bool) {
 func numericForOperandDiagnostic(role, literal string, span ast.Span) ControlDiagnostic {
 	item := controlDiagnostic("numeric_for_bound_type", fmt.Sprintf("numeric for %s must be number, got %s", role, literal), span)
 	item.Code = "type.for.numeric_operand"
-	item.Evidence = []ControlDiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", role, literal)}}
+	item.Evidence = []ControlDiagnosticEvidence{{Span: item.Span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: fmt.Sprintf("%s has literal value %s", role, literal)}}
 	item.Labels = []ControlDiagnosticLabel{{Span: item.Span, Message: role}}
 	item.Help = fmt.Sprintf("Use a number for the numeric for %s, or convert it before the loop.", role)
 	return item
@@ -477,7 +479,7 @@ func unresolvedReferenceDiagnostics(stmts []ast.Stmt, bindings *bind.Result, res
 		wireSpan := wir.Span{StartLine: span.StartLine, StartCol: span.StartCol, EndLine: span.EndLine, EndCol: span.EndCol}
 		out = append(out, ControlDiagnostic{
 			Key: key, Code: code, Message: message, Subject: name, Span: wireSpan, Help: help,
-			Evidence: []ControlDiagnosticEvidence{{Span: wireSpan, Kind: "abstract fact", Trust: "proven", Message: evidenceMessage(code, name)}},
+			Evidence: []ControlDiagnosticEvidence{{Span: wireSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: evidenceMessage(code, name)}},
 			Labels:   []ControlDiagnosticLabel{{Span: wireSpan, Message: message}},
 		})
 	}

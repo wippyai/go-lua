@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
+	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
 func nilOriginDiagnostics(t *testing.T, source string) []engine.PublishedDiagnostic {
@@ -75,19 +76,19 @@ return run`)
 		t.Fatalf("evidence = %#v, want birth, declaration, one join, and the use", item.Evidence)
 	}
 	birth := evidenceLine(t, item, "x born nil at main.lua:7 (else branch had no assignment)")
-	if birth.Kind != "abstract fact" || birth.Trust != "proven" || birth.Span.StartLine != 7 || birth.Span.StartCol != 11 {
+	if birth.Kind != diag.EvidenceAbstractFact || birth.Trust != diag.TrustProven || birth.Span.StartLine != 7 || birth.Span.StartCol != 11 {
 		t.Fatalf("birth evidence = %#v, want a proven fact at the declared name", birth)
 	}
 	declaration := evidenceLine(t, item, "x declared with optional type string?")
-	if declaration.Kind != "user assertion" || declaration.Trust != "claimed" || declaration.Span.StartLine != 7 || declaration.Span.StartCol != 14 {
+	if declaration.Kind != diag.EvidenceUserAssertion || declaration.Trust != diag.TrustClaimed || declaration.Span.StartLine != 7 || declaration.Span.StartCol != 14 {
 		t.Fatalf("declaration evidence = %#v, want a claimed assertion at the annotation", declaration)
 	}
 	join := evidenceLine(t, item, "x survives the if/else join at main.lua:10 (no else assignment)")
-	if join.Kind != "abstract fact" || join.Trust != "proven" || join.Span.StartLine != 10 || join.Span.StartCol != 5 {
+	if join.Kind != diag.EvidenceAbstractFact || join.Trust != diag.TrustProven || join.Span.StartLine != 10 || join.Span.StartCol != 5 {
 		t.Fatalf("join evidence = %#v, want a proven fact at the closing end", join)
 	}
 	use := evidenceLine(t, item, "x reaches use at main.lua:11 (method call on possibly-nil value)")
-	if use.Kind != "abstract fact" || use.Trust != "proven" || use.Span != item.Span {
+	if use.Kind != diag.EvidenceAbstractFact || use.Trust != diag.TrustProven || use.Span != item.Span {
 		t.Fatalf("use evidence = %#v", use)
 	}
 }
@@ -138,11 +139,11 @@ return run`)
 		t.Fatalf("labels = %#v", item.Labels)
 	}
 	declaration := evidenceLine(t, item, "field hook declared optional at main.lua:1 (type string?)")
-	if declaration.Kind != "user assertion" || declaration.Trust != "claimed" || declaration.Span.StartLine != 1 || declaration.Span.StartCol != 28 {
+	if declaration.Kind != diag.EvidenceUserAssertion || declaration.Trust != diag.TrustClaimed || declaration.Span.StartLine != 1 || declaration.Span.StartCol != 28 {
 		t.Fatalf("declaration evidence = %#v, want the authored field name", declaration)
 	}
 	use := evidenceLine(t, item, "c.hook reaches use at main.lua:4 (method call on possibly-nil field)")
-	if use.Kind != "abstract fact" || use.Trust != "proven" {
+	if use.Kind != diag.EvidenceAbstractFact || use.Trust != diag.TrustProven {
 		t.Fatalf("use evidence = %#v", use)
 	}
 }

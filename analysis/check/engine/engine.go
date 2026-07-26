@@ -306,9 +306,9 @@ type PublishedDiagnostic struct {
 // vocabulary without making the equation kernel depend on presentation types.
 type DiagnosticEvidence struct {
 	Span        wir.Span
-	Kind        string
-	Trust       string
-	Reason      string
+	Kind        diag.EvidenceKind
+	Trust       diag.TrustKind
+	Reason      diag.EvidenceReason
 	Message     string
 	CausalOrder uint32
 }
@@ -454,9 +454,6 @@ func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding,
 			return equation.OutputClosure{}, 0, conservativeEvaluationError{err}
 		}
 		return evaluation.Closure, evaluation.Transactions, nil
-	}
-	if _, err := equation.CompileCyclicArtifact(*compilation.Cyclic); err != nil {
-		return equation.OutputClosure{}, 0, fmt.Errorf("engine: compile cyclic artifact: %w", err)
 	}
 	bound, err := equation.BindCyclicEntry(*compilation.Cyclic, binding)
 	if err != nil {
@@ -1161,25 +1158,25 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			}
 			item.Message = fmt.Sprintf("cannot assign %s because it may be nil", sourceDisplay)
 			item.Evidence = []DiagnosticEvidence{
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: valueEvidence},
+				{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: valueEvidence},
 			}
 			if arms, split := unionMemberArmEvidence(operands["value"], sourceDisplay, operation, closure); split {
-				item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: arms})
+				item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: arms})
 			}
-			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)})
-			missing, reason := fmt.Sprintf("no guard on this path proves %s is non-nil", sourceDisplay), "boundary validation missing"
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s is declared as %s", display, declared)})
+			missing, reason := fmt.Sprintf("no guard on this path proves %s is non-nil", sourceDisplay), diag.EvidenceReasonBoundaryValidationMissing
 			if strings.Contains(sourceDisplay, "[") {
 				if dot := strings.LastIndex(sourceDisplay, "."); dot > 0 && strings.Contains(sourceDisplay[:dot], "[") {
 					parent := sourceDisplay[:dot]
-					item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s may be nil before reading %s", parent, sourceDisplay[dot:])})
+					item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s may be nil before reading %s", parent, sourceDisplay[dot:])})
 				}
 				missing = fmt.Sprintf("%s is an indexed read that can miss or read nil; no proof shows the selected slot satisfies the declared type here", sourceDisplay)
-				reason = "index read validation missing"
+				reason = diag.EvidenceReasonIndexReadValidationMissing
 			} else if dot := strings.LastIndex(sourceDisplay, "."); dot > 0 && (methodSelector || receiverMayBeNil(operands["value"], operation, closure)) {
 				parent := sourceDisplay[:dot]
-				item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s may be nil before reading %s", parent, sourceDisplay[dot:])})
+				item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s may be nil before reading %s", parent, sourceDisplay[dot:])})
 			}
-			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: reason, Message: missing})
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Reason: reason, Message: missing})
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value may be nil"}, {Span: targetSpan, Message: "declared type " + declared}}
 			item.Help = optionalAssignmentHelp(sourceDisplay)
 			out = append(out, item)
@@ -1229,8 +1226,8 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				item.Code = "type.call.direct.result_assignment"
 				item.Message = fmt.Sprintf("%s is %s, not %s", subject, projected.result, declared)
 				item.Evidence = []DiagnosticEvidence{
-					{Span: returnSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s declares %s as %s", projected.callee, subject, projected.result)},
-					{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("assignment target %s requires %s", display, declared)},
+					{Span: returnSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s declares %s as %s", projected.callee, subject, projected.result)},
+					{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("assignment target %s requires %s", display, declared)},
 				}
 				item.Labels = []DiagnosticLabel{
 					{Span: item.Span, Message: "call result"},
@@ -1249,9 +1246,9 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			}
 			fieldPath := display + "." + missingField
 			item.Evidence = []DiagnosticEvidence{
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "object literal has type " + boundaryShapeEvidenceValue(value)},
-				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("required field %s has type %s, but the object literal does not provide it", fieldPath, typeformat.Short(missingFieldType))},
+				{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "object literal has type " + boundaryShapeEvidenceValue(value)},
+				{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+				{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("required field %s has type %s, but the object literal does not provide it", fieldPath, typeformat.Short(missingFieldType))},
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "object literal"}, {Span: targetSpan, Message: "declared type " + declared}}
 			item.Help = fmt.Sprintf("Add field `%s`, or make it optional in the declared type if it may be absent.", missingField)
@@ -1273,10 +1270,10 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				targetSpan = item.Span
 			}
 			item.Evidence = []DiagnosticEvidence{
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type any", sourceDisplay)},
-				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
-				{Span: item.Span, Kind: "unvalidated value", Trust: "unknown", Reason: "explicit boundary validation", Message: fmt.Sprintf("%s comes from any/unknown", sourceDisplay)},
-				{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s satisfies the declared type", sourceDisplay)},
+				{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has type any", sourceDisplay)},
+				{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+				{Span: item.Span, Kind: diag.EvidencePrecisionBoundary, Trust: diag.TrustUnknown, Reason: diag.EvidenceReasonExplicitBoundaryValidation, Message: fmt.Sprintf("%s comes from any/unknown", sourceDisplay)},
+				{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Reason: diag.EvidenceReasonBoundaryValidationMissing, Message: fmt.Sprintf("no proof on this path shows %s satisfies the declared type", sourceDisplay)},
 			}
 			item.Labels = []DiagnosticLabel{
 				{Span: item.Span, Message: "assigned value " + valueDescription},
@@ -1292,8 +1289,8 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				targetSpan = item.Span
 			}
 			item.Evidence = []DiagnosticEvidence{
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", sourceDisplay, valueDescription)},
-				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", sourceDisplay, declared)},
+				{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has literal value %s", sourceDisplay, valueDescription)},
+				{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s is declared as %s", sourceDisplay, declared)},
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
 		} else if hasMemberSurface {
@@ -1305,8 +1302,8 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				targetSpan = item.Span
 			}
 			item.Evidence = []DiagnosticEvidence{
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", sourceDisplay, valueDescription)},
-				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+				{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has type %s", sourceDisplay, valueDescription)},
+				{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
 		} else if _, typed := shapefact.DecodeTarget(value); typed || string(value) == "scalar/nil" {
@@ -1315,8 +1312,8 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				targetSpan = item.Span
 			}
 			item.Evidence = []DiagnosticEvidence{
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", sourceDisplay, valueDescription)},
-				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+				{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has type %s", sourceDisplay, valueDescription)},
+				{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
 		} else {
@@ -1325,8 +1322,8 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				targetSpan = item.Span
 			}
 			item.Evidence = []DiagnosticEvidence{
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", sourceDisplay, valueDescription)},
-				{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)},
+				{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has literal value %s", sourceDisplay, valueDescription)},
+				{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
 		}
@@ -1590,11 +1587,11 @@ func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation
 	// never established.
 	if item.Payload.Flags&DiagnosticAnyBoundary != 0 {
 		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type any", subject)},
-			{Span: declaredSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s must satisfy declared return type %s", contractSubject, declared)},
-			{Span: item.Span, Kind: "user assertion", Trust: "claimed", Message: userAssertedAnyEvidence},
-			{Span: item.Span, Kind: "unvalidated value", Trust: "unknown", Reason: "explicit boundary validation", Message: fmt.Sprintf("%s comes from any/unknown", subject)},
-			{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s satisfies the declared return type", subject)},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has type any", subject)},
+			{Span: declaredSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s must satisfy declared return type %s", contractSubject, declared)},
+			{Span: item.Span, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: userAssertedAnyEvidence},
+			{Span: item.Span, Kind: diag.EvidencePrecisionBoundary, Trust: diag.TrustUnknown, Reason: diag.EvidenceReasonExplicitBoundaryValidation, Message: fmt.Sprintf("%s comes from any/unknown", subject)},
+			{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Reason: diag.EvidenceReasonBoundaryValidationMissing, Message: fmt.Sprintf("no proof on this path shows %s satisfies the declared return type", subject)},
 		}
 		item.Labels = []DiagnosticLabel{
 			{Span: item.Span, Message: "returned value any"},
@@ -1608,8 +1605,8 @@ func enrichReturnContractDiagnostic(item PublishedDiagnostic, operation equation
 		valueEvidence = fmt.Sprintf("%s can be nil here", subject)
 	}
 	item.Evidence = []DiagnosticEvidence{
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: valueEvidence},
-		{Span: declaredSpan, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s must satisfy declared return type %s", contractSubject, declared)},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: valueEvidence},
+		{Span: declaredSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s must satisfy declared return type %s", contractSubject, declared)},
 	}
 	item.Labels = []DiagnosticLabel{
 		{Span: item.Span, Message: "returned value"},
@@ -1674,8 +1671,8 @@ func enrichOptionalWriteTargetDiagnostic(item PublishedDiagnostic, operation equ
 		}
 	}
 	item.Evidence = []DiagnosticEvidence{
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: optionalContainerEvidence(container, witness)},
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("writing %s requires its container to be non-nil", target)},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: optionalContainerEvidence(container, witness)},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("writing %s requires its container to be non-nil", target)},
 	}
 	item.Labels = []DiagnosticLabel{
 		{Span: item.Span, Message: "possibly nil container"},
@@ -1719,8 +1716,8 @@ func enrichFunctionContractWriteDiagnostic(item PublishedDiagnostic, operation e
 		targetSpan = item.Span
 	}
 	item.Evidence = []DiagnosticEvidence{
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "assigned value has literal value " + actual},
-		{Span: targetSpan, Kind: "user assertion", Trust: "claimed", Message: display + " is declared as " + declared},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "assigned value has literal value " + actual},
+		{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: display + " is declared as " + declared},
 	}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + actual}, {Span: targetSpan, Message: "declared type " + declared}}
 	item.Help = "Use a value compatible with the expected type, or change the target type if the assigned value is valid."
@@ -1985,7 +1982,7 @@ func enrichMissingStaticPathDiagnostic(item PublishedDiagnostic, operation equat
 	if item.Payload.Kind != diagnosticMemberMissing || receiver == "" {
 		return item
 	}
-	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s reads member %q from receiver type %s", source, member, receiver)}}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s reads member %q from receiver type %s", source, member, receiver)}}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "member read"}}
 	item.Help = fmt.Sprintf("Narrow the receiver before reading `%s`, or add `%s` to every reachable receiver shape.", member, member)
 	return item
@@ -2090,17 +2087,17 @@ func enrichFrozenMutationDiagnostic(item PublishedDiagnostic, artifact equation.
 		}
 		proofMessage = "table " + strconv.Quote(display) + " was frozen by this call before the " + suffix
 	}
-	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: mutation}}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: mutation}}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: label}}
 	if proof != "guard" {
 		if span, ok := callSpans[proof+"/call"]; ok {
-			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: span, Kind: "abstract fact", Trust: "proven", Message: proofMessage})
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: proofMessage})
 			item.Labels = append(item.Labels, DiagnosticLabel{Span: span, Message: "freeze proof"})
 		} else {
-			item.Evidence = append(item.Evidence, DiagnosticEvidence{Kind: "abstract fact", Trust: "proven", Message: proofMessage})
+			item.Evidence = append(item.Evidence, DiagnosticEvidence{Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: proofMessage})
 		}
 	} else {
-		item.Evidence = append(item.Evidence, DiagnosticEvidence{Kind: "abstract fact", Trust: "proven", Message: proofMessage})
+		item.Evidence = append(item.Evidence, DiagnosticEvidence{Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: proofMessage})
 	}
 	if callMutation {
 		item.Help = "Create a mutable copy before calling the mutator, or call it before the table is frozen."
@@ -2141,7 +2138,7 @@ func enrichMissingMemberDiagnostic(item PublishedDiagnostic, operation equation.
 	if receiverText == "" {
 		return item
 	}
-	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s reads member %q from receiver type %s", source, member, receiverText)}}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s reads member %q from receiver type %s", source, member, receiverText)}}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "member read"}}
 	item.Help = fmt.Sprintf("Narrow the receiver before reading `%s`, or add `%s` to every reachable receiver shape.", member, member)
 	return item
@@ -2165,8 +2162,8 @@ func enrichOptionalReceiverDiagnostic(item PublishedDiagnostic, operation equati
 	}
 	selector := receiver + "." + method
 	item.Evidence = []DiagnosticEvidence{
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("receiver %s is optional at call to %s", receiver, selector)},
-		{Span: item.Span, Kind: "missing proof", Trust: "unknown", Message: fmt.Sprintf("no nil check proves receiver %s is present before calling %s", receiver, selector)},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("receiver %s is optional at call to %s", receiver, selector)},
+		{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Message: fmt.Sprintf("no nil check proves receiver %s is present before calling %s", receiver, selector)},
 	}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "method call"}}
 	item.Help = fmt.Sprintf("check %s ~= nil before calling %s.", receiver, selector)
@@ -2191,7 +2188,7 @@ func enrichMissingMemberCallDiagnostic(item PublishedDiagnostic, operation equat
 	if item.Payload.Kind != diagnosticMemberMissing || receiver == "" || method == "" || receiverType == "" {
 		return item
 	}
-	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s.%s has receiver type %s", receiver, method, receiverType)}}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s.%s has receiver type %s", receiver, method, receiverType)}}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "member call"}}
 	item.Help = fmt.Sprintf("Narrow the receiver before reading `%s`, or add `%s` to every reachable receiver shape.", method, method)
 	return item
@@ -2236,12 +2233,12 @@ func enrichChannelLifecycleDiagnostic(item PublishedDiagnostic) PublishedDiagnos
 		return item
 	}
 	if strings.HasPrefix(inner, "channel.send.closed/") {
-		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "this send call runs after `" + display + "` is proven closed"}}
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "this send call runs after `" + display + "` is proven closed"}}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel lifecycle call"}}
 		item.Help = "Send before closing the channel."
 		return item
 	}
-	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "this close call runs after `" + display + "` is proven closed"}}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "this close call runs after `" + display + "` is proven closed"}}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel lifecycle call"}}
 	item.Help = "Avoid closing the same channel twice."
 	return item
@@ -2256,18 +2253,18 @@ func enrichResourceTypestateDiagnostic(item PublishedDiagnostic) PublishedDiagno
 		return item
 	}
 	if unproven {
-		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "missing proof", Trust: "refuted", Message: fmt.Sprintf("no proof establishes `%s` in `%s` state at this call", resource, expected)}}
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustRefuted, Message: fmt.Sprintf("no proof establishes `%s` in `%s` state at this call", resource, expected)}}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "unproven typestate requirement"}}
 		item.Help = fmt.Sprintf("Establish that `%s` is in `%s` state before this call.", resource, expected)
 		return item
 	}
 	if transition {
-		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("this transition requires `%s` to be in `%s`, but solved state is `%s`", resource, expected, found)}}
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("this transition requires `%s` to be in `%s`, but solved state is `%s`", resource, expected, found)}}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "invalid lifecycle transition"}}
 		item.Help = fmt.Sprintf("Transition `%s` only when it is in `%s` state.", resource, expected)
 		return item
 	}
-	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("this call requires `%s` to be in `%s`, but solved state is `%s`", resource, expected, found)}}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("this call requires `%s` to be in `%s`, but solved state is `%s`", resource, expected, found)}}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "invalid typestate requirement"}}
 	item.Help = fmt.Sprintf("Call this operation only when `%s` is in `%s` state.", resource, expected)
 	return item
@@ -2279,14 +2276,14 @@ func enrichUnreleasedLifecycleDiagnostic(item PublishedDiagnostic, transition []
 		return item
 	}
 	item.Evidence = []DiagnosticEvidence{
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "this call acquires `" + display + "` as connection:`open` and requires `closed` before local ownership ends"},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "this call acquires `" + display + "` as connection:`open` and requires `closed` before local ownership ends"},
 	}
 	item.Evidence = append(item.Evidence, transition...)
 	missing := "exit state still has `" + display + "` in protocol connection at `open`; no proof reaches `closed` or escapes ownership on every path"
 	if len(transition) != 0 {
 		missing = "exit state still has `" + display + "` in protocol connection at a non-final state; no proof reaches `closed` or escapes ownership on every path"
 	}
-	item.Evidence = append(item.Evidence, DiagnosticEvidence{Kind: "missing proof", Trust: "refuted", Message: missing})
+	item.Evidence = append(item.Evidence, DiagnosticEvidence{Kind: diag.EvidenceMissingProof, Trust: diag.TrustRefuted, Message: missing})
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "resource acquired"}}
 	if len(transition) != 0 {
 		item.Labels = append(item.Labels, DiagnosticLabel{Span: transition[0].Span, Message: "lifecycle transition"})
@@ -2409,8 +2406,8 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 		}
 		expected, got := item.Payload.Expected, item.Payload.Actual
 		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("call to %s passes %d argument%s", callee, got, plural(got))},
-			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s declares %d parameter%s", callee, expected, plural(expected))},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("call to %s passes %d argument%s", callee, got, plural(got))},
+			{Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s declares %d parameter%s", callee, expected, plural(expected))},
 		}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "call expression"}}
 		if code == "too_few_args" {
@@ -2424,8 +2421,8 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 		}
 		if item.Payload.Flags&DiagnosticMayBeNil != 0 {
 			item.Evidence = []DiagnosticEvidence{
-				{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has a callable type, but may also be nil", callee)},
-				{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no guard on this path proves %s is non-nil before this call", callee)},
+				{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has a callable type, but may also be nil", callee)},
+				{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Reason: diag.EvidenceReasonBoundaryValidationMissing, Message: fmt.Sprintf("no guard on this path proves %s is non-nil before this call", callee)},
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "call target"}}
 			item.Help = fmt.Sprintf("Guard `%s` with a nil check before calling it.", callee)
@@ -2435,7 +2432,7 @@ func enrichDirectCallDiagnostic(item PublishedDiagnostic, operation equation.Equ
 		if value == "" {
 			return item
 		}
-		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", callee, value)}}
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has literal value %s", callee, value)}}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "call target"}}
 		item.Help = fmt.Sprintf("Call a function value, or replace `%s` with a callable expression before this call.", callee)
 	}
@@ -2468,11 +2465,11 @@ func enrichConcatOperandDiagnostic(item PublishedDiagnostic, operation equation.
 	item.Message = fmt.Sprintf("%s operand `%s` of `..` may be nil", side, display)
 	item.Evidence = nil
 	if origin, found := concatOperandOriginEvidence(operationName, index, display, values); found {
-		item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: origin})
+		item.Evidence = append(item.Evidence, DiagnosticEvidence{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: origin})
 	}
 	item.Evidence = append(item.Evidence,
-		DiagnosticEvidence{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s operand `%s` has type nil", side, display)},
-		DiagnosticEvidence{Span: item.Span, Kind: "missing proof", Trust: "unknown", Message: fmt.Sprintf("no guard on this path proves %s is non-nil", display)},
+		DiagnosticEvidence{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s operand `%s` has type nil", side, display)},
+		DiagnosticEvidence{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Message: fmt.Sprintf("no guard on this path proves %s is non-nil", display)},
 	)
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "value may be nil"}}
 	item.Help = fmt.Sprintf("Guard `%s` or provide a default string before using `..`.", display)
@@ -2527,10 +2524,10 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 	}
 	if conflict := item.Payload.Conflict; item.Payload.Kind == diagnosticCallGenericConflict && conflict != nil {
 		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", conflict.DemandedAt, conflict.Demanded)},
-			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d%s states %s at both members", callee, argumentIndex, suffix, conflict.Parameter)},
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s already binds %s to %s", conflict.BoundAt, conflict.Parameter, conflict.Bound)},
-			{Span: item.Span, Kind: "missing proof", Trust: "refuted", Message: fmt.Sprintf("no binding of %s satisfies both members", conflict.Parameter)},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has type %s", conflict.DemandedAt, conflict.Demanded)},
+			{Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s parameter %d%s states %s at both members", callee, argumentIndex, suffix, conflict.Parameter)},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s already binds %s to %s", conflict.BoundAt, conflict.Parameter, conflict.Bound)},
+			{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustRefuted, Message: fmt.Sprintf("no binding of %s satisfies both members", conflict.Parameter)},
 		}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "conflicting " + conflict.Parameter + " binding"}}
 		item.Help = fmt.Sprintf("Pass members that agree on %s, or split the call so each %s binding has its own call site.", conflict.Parameter, conflict.Parameter)
@@ -2557,10 +2554,10 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 		}
 		item.Message = fmt.Sprintf("%s comes from any/unknown; no proof shows it is %s", argument, expected)
 		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type any", argument)},
-			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d%s expects %s", callee, argumentIndex, suffix, expected)},
-			{Span: item.Span, Kind: "unvalidated value", Trust: "unknown", Reason: "explicit boundary validation", Message: fmt.Sprintf("%s comes from any/unknown", display)},
-			{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", display)},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has type any", argument)},
+			{Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s parameter %d%s expects %s", callee, argumentIndex, suffix, expected)},
+			{Span: item.Span, Kind: diag.EvidencePrecisionBoundary, Trust: diag.TrustUnknown, Reason: diag.EvidenceReasonExplicitBoundaryValidation, Message: fmt.Sprintf("%s comes from any/unknown", display)},
+			{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Reason: diag.EvidenceReasonBoundaryValidationMissing, Message: fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", display)},
 		}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "argument value any"}}
 		item.Help = fmt.Sprintf("Validate or narrow `%s` before passing it; any/unknown values do not prove parameter contracts.", display)
@@ -2578,9 +2575,9 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 			display = argument
 		}
 		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s can be %s or nil here", argument, expected)},
-			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d expects %s", callee, argumentIndex, expected)},
-			{Span: item.Span, Kind: "missing proof", Trust: "refuted", Reason: "boundary validation missing", Message: fmt.Sprintf("no guard on this path proves %s is non-nil", display)},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s can be %s or nil here", argument, expected)},
+			{Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s parameter %d expects %s", callee, argumentIndex, expected)},
+			{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustRefuted, Reason: diag.EvidenceReasonBoundaryValidationMissing, Message: fmt.Sprintf("no guard on this path proves %s is non-nil", display)},
 		}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "argument value"}}
 		item.Help = fmt.Sprintf("Guard `%s` with a nil check, provide a default argument value, or change the parameter type to accept nil.", display)
@@ -2603,9 +2600,9 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 		}
 	}
 	item.Evidence = []DiagnosticEvidence{
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: valueFact},
-		{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s expects %s", parameter, expected)},
-		{Span: item.Span, Kind: "missing proof", Trust: "refuted", Message: missingProof},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: valueFact},
+		{Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s expects %s", parameter, expected)},
+		{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustRefuted, Message: missingProof},
 	}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "argument value " + value}}
 	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
@@ -2775,8 +2772,8 @@ func enrichRedundantClaimDiagnostic(item PublishedDiagnostic, operation equation
 	}
 	item.Message = "type claim is redundant; value is already " + target
 	item.Evidence = []DiagnosticEvidence{
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s is proven to be %s before the claim", value, target)},
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("claim checks %s at this site", target)},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s is proven to be %s before the claim", value, target)},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("claim checks %s at this site", target)},
 	}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "claim site"}, {Span: item.Span, Message: "proven value"}}
 	item.Help = "Remove the runtime type claim when the proven source type is sufficient."
@@ -2806,8 +2803,8 @@ func enrichRedundantCastDiagnostic(item PublishedDiagnostic, operation equation.
 	}
 	item.Message = "type cast call is redundant; value is already string"
 	item.Evidence = []DiagnosticEvidence{
-		{Span: argumentSpan, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s is proven to be string before the claim", value)},
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "claim checks string at this site"},
+		{Span: argumentSpan, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s is proven to be string before the claim", value)},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "claim checks string at this site"},
 	}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "claim site"}, {Span: argumentSpan, Message: "proven value"}}
 	item.Help = "Remove the runtime type claim when the proven source type is sufficient."
@@ -2817,7 +2814,7 @@ func enrichRedundantCastDiagnostic(item PublishedDiagnostic, operation equation.
 func enrichConstantGuardDiagnostic(item PublishedDiagnostic, operation equation.Equation, key string, artifact equation.Artifact, branchSpans map[string]wir.Span) PublishedDiagnostic {
 	if strings.HasPrefix(key, "advice.always_true_guard/") {
 		item.Message = "condition is proven always true"
-		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "condition is proven to be true on every reachable path"}}
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "condition is proven to be true on every reachable path"}}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "constant guard"}}
 		item.Help = "Remove the guard or move the guarded code out of the branch."
 	}
@@ -2833,14 +2830,14 @@ func enrichConstantGuardDiagnostic(item PublishedDiagnostic, operation equation.
 		current, currentOK := branchPredicateDescription(operation)
 		prior, priorSpan, priorOK := enclosingBranchProof(operation, artifact, branchSpans)
 		if !currentOK || !priorOK {
-			item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "condition is proven constant under its enclosing guard"}}
+			item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "condition is proven constant under its enclosing guard"}}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "constant guard"}}
 			return item
 		}
 		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "current check: " + current},
-			{Span: priorSpan, Kind: "abstract fact", Trust: "proven", Message: "prior guard established " + prior},
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: strings.Split(current, " ")[0] + " is unchanged between the prior guard and this check"},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "current check: " + current},
+			{Span: priorSpan, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "prior guard established " + prior},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: strings.Split(current, " ")[0] + " is unchanged between the prior guard and this check"},
 		}
 		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "current check"}, {Span: priorSpan, Message: "prior guard"}}
 	}
@@ -3853,9 +3850,6 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 			return equation.OutputClosure{}, 0, err
 		}
 		return evaluation.Closure, evaluation.Transactions, nil
-	}
-	if _, err := equation.CompileCyclicArtifact(*compilation.Cyclic); err != nil {
-		return equation.OutputClosure{}, 0, fmt.Errorf("engine: compile lexical cyclic artifact: %w", err)
 	}
 	bound, err := equation.BindCyclicEntry(*compilation.Cyclic, binding)
 	if err != nil {
@@ -10058,10 +10052,10 @@ func (l *lexicalEvaluator) publishNilOriginUnsafeUse(closure *equation.OutputClo
 			Span:    useSpan,
 			Message: string(fact.Value),
 			Evidence: []DiagnosticEvidence{{
-				Span: child.ClaimNameSpans[witness.claim], Kind: "abstract fact", Trust: "proven",
+				Span: child.ClaimNameSpans[witness.claim], Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven,
 				Message: fmt.Sprintf("%s born nil at %s:%d (else branch had no assignment)", witness.display, l.sourcePath, child.ClaimNameSpans[witness.claim].StartLine),
 			}, {
-				Span: child.ClaimTargetSpans[witness.claim], Kind: "user assertion", Trust: "claimed",
+				Span: child.ClaimTargetSpans[witness.claim], Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed,
 				Message: fmt.Sprintf("%s declared with optional type %s", witness.display, witness.declared),
 			}},
 			Labels: []DiagnosticLabel{{Span: useSpan, Message: "possibly-nil value"}},
@@ -10070,12 +10064,12 @@ func (l *lexicalEvaluator) publishNilOriginUnsafeUse(closure *equation.OutputClo
 		for _, join := range witness.joins {
 			joinSpan := child.BranchJoinSpans[join]
 			item.Evidence = append(item.Evidence, DiagnosticEvidence{
-				Span: joinSpan, Kind: "abstract fact", Trust: "proven",
+				Span: joinSpan, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven,
 				Message: fmt.Sprintf("%s survives the if/else join at %s:%d (no else assignment)", witness.display, l.sourcePath, joinSpan.StartLine),
 			})
 		}
 		item.Evidence = append(item.Evidence, DiagnosticEvidence{
-			Span: useSpan, Kind: "abstract fact", Trust: "proven",
+			Span: useSpan, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven,
 			Message: fmt.Sprintf("%s reaches use at %s:%d (method call on possibly-nil value)", witness.display, l.sourcePath, useSpan.StartLine),
 		})
 		key := "child/" + body + "/" + fact.Key
@@ -10247,10 +10241,10 @@ func (l *lexicalEvaluator) publishNilOriginOptionalFieldUse(closure *equation.Ou
 			Span:    useSpan,
 			Message: string(fact.Value),
 			Evidence: []DiagnosticEvidence{{
-				Span: witness.declared, Kind: "user assertion", Trust: "claimed",
+				Span: witness.declared, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed,
 				Message: fmt.Sprintf("field %s declared optional at %s:%d (type %s)", witness.field, l.sourcePath, witness.declared.StartLine, witness.fieldType),
 			}, {
-				Span: useSpan, Kind: "abstract fact", Trust: "proven",
+				Span: useSpan, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven,
 				Message: fmt.Sprintf("%s reaches use at %s:%d (method call on possibly-nil field)", witness.display, l.sourcePath, useSpan.StartLine),
 			}},
 			Labels: []DiagnosticLabel{{Span: useSpan, Message: "possibly-nil field"}},
@@ -10673,11 +10667,11 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 			Span:    span,
 			Message: message,
 			Evidence: []DiagnosticEvidence{
-				{Span: span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type any", innerDisplay)},
-				{Span: span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("inside %s, %s is passed to %s parameter %d, which requires %s", callerOperands.display, innerDisplay, callee, childArgument, expected)},
-				{Span: span, Kind: "unvalidated value", Trust: "unknown", Reason: "explicit boundary validation", Message: fmt.Sprintf("%s comes from any/unknown", display)},
-				{Span: span, Kind: "user assertion", Trust: "claimed", Message: "user asserted any; not abstract-interpreter proof"},
-				{Span: span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s is %s", innerDisplay, expected)},
+				{Span: span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has type any", innerDisplay)},
+				{Span: span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("inside %s, %s is passed to %s parameter %d, which requires %s", callerOperands.display, innerDisplay, callee, childArgument, expected)},
+				{Span: span, Kind: diag.EvidencePrecisionBoundary, Trust: diag.TrustUnknown, Reason: diag.EvidenceReasonExplicitBoundaryValidation, Message: fmt.Sprintf("%s comes from any/unknown", display)},
+				{Span: span, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: "user asserted any; not abstract-interpreter proof"},
+				{Span: span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Reason: diag.EvidenceReasonBoundaryValidationMissing, Message: fmt.Sprintf("no proof on this path shows %s is %s", innerDisplay, expected)},
 			},
 			Labels: []DiagnosticLabel{{Span: span, Message: "argument value any"}},
 			Help:   fmt.Sprintf("Validate or narrow `%s` before passing it; any/unknown values do not prove parameter contracts.", display),
@@ -10691,9 +10685,9 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 		Message: renderDiagnosticPayload(payload),
 		Payload: payload,
 		Evidence: []DiagnosticEvidence{
-			{Span: span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has literal value %s", innerArgument, value)},
-			{Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("inside %s, %s is passed to %s parameter %d, which requires %s", callerOperands.display, innerArgument, callee, childArgument, expected)},
-			{Span: span, Kind: "missing proof", Trust: "unknown", Message: fmt.Sprintf("no proof on this path shows %s is %s", innerArgument, expected)},
+			{Span: span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has literal value %s", innerArgument, value)},
+			{Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("inside %s, %s is passed to %s parameter %d, which requires %s", callerOperands.display, innerArgument, callee, childArgument, expected)},
+			{Span: span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Message: fmt.Sprintf("no proof on this path shows %s is %s", innerArgument, expected)},
 		},
 		Labels: []DiagnosticLabel{{Span: span, Message: "argument value " + value}},
 		Help:   fmt.Sprintf("Pass a value for argument %d that satisfies the parameter type, or change the callee signature if that argument is valid.", outerArgument),
@@ -11558,7 +11552,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			}
 			if close := firstResourceCloseOperation(child); close != "" {
 				if span, ok := child.CallSpans[close+"/call"]; ok {
-					lexical.lifecycleEvidence[key] = []DiagnosticEvidence{{Span: span, Kind: "abstract fact", Trust: "proven", Message: "this call transitions `" + resourceDisplay(child, acquire) + "` in protocol connection from `open` to `closed` on a reachable path"}}
+					lexical.lifecycleEvidence[key] = []DiagnosticEvidence{{Span: span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "this call transitions `" + resourceDisplay(child, acquire) + "` in protocol connection from `open` to `closed` on a reachable path"}}
 				}
 			}
 		}
@@ -11948,7 +11942,7 @@ func enrichChildSelectDiagnostic(item PublishedDiagnostic, child front.Compilati
 	if !target.Valid() {
 		target = item.Span
 	}
-	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", source, valueType)}, {Span: target, Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s is declared as %s", display, declared)}}
+	item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has type %s", source, valueType)}, {Span: target, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s is declared as %s", display, declared)}}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueType}, {Span: target, Message: "declared type " + declared}}
 	item.Help = "Use a value compatible with the expected type, or change the target type if `" + display + "` is valid."
 	return item
@@ -17665,9 +17659,9 @@ func enrichClosedDynamicWriteDiagnostic(item PublishedDiagnostic, operation equa
 		targetSpan = item.Span
 	}
 	item.Evidence = []DiagnosticEvidence{
-		{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", source, valueType)},
-		{Span: targetSpan, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("assignment target %s requires %s", target, contract)},
-		{Span: item.Span, Kind: "missing proof", Trust: "unknown", Reason: "boundary validation missing", Message: fmt.Sprintf("no proof on this path shows %s is %s", source, contract)},
+		{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("%s has type %s", source, valueType)},
+		{Span: targetSpan, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: fmt.Sprintf("assignment target %s requires %s", target, contract)},
+		{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Reason: diag.EvidenceReasonBoundaryValidationMissing, Message: fmt.Sprintf("no proof on this path shows %s is %s", source, contract)},
 	}
 	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueType}, {Span: targetSpan, Message: "assignment target " + target}}
 	item.Help = "Use a value compatible with the expected type, or change the target type if `" + source + "` is valid."
@@ -24049,24 +24043,24 @@ func enrichSendIsolationDiagnostic(item PublishedDiagnostic, operation equation.
 	switch item.Payload.Name {
 	case "isolated":
 		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "isolation proof: direct fresh object literal has no retained graph identity"},
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "direct literal birth site has no retained graph identity"},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "isolation proof: direct fresh object literal has no retained graph identity"},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "direct literal birth site has no retained graph identity"},
 		}
 		item.Labels = append(item.Labels, DiagnosticLabel{Span: item.Span, Message: "send-safety proof"})
 	case "immutable":
 		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "immutable proof: sent exact identity is frozen"},
-			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "exact identity is frozen before send"},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "immutable proof: sent exact identity is frozen"},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "exact identity is frozen before send"},
 		}
 		item.Labels = append(item.Labels, DiagnosticLabel{Span: item.Span, Message: "send-safety proof"})
 	case "escaped":
-		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: "escape proof: payload has already crossed a retaining boundary"}}
+		item.Evidence = []DiagnosticEvidence{{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "escape proof: payload has already crossed a retaining boundary"}}
 	case "fallback":
 		payload, reason := sendIsolationPayload(operation)
 		_ = payload
 		item.Evidence = []DiagnosticEvidence{
-			{Span: item.Span, Kind: "abstract fact", Trust: "unknown", Message: reason},
-			{Span: item.Span, Kind: "missing proof", Trust: "unknown", Message: reason},
+			{Span: item.Span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustUnknown, Message: reason},
+			{Span: item.Span, Kind: diag.EvidenceMissingProof, Trust: diag.TrustUnknown, Message: reason},
 		}
 	}
 	return item

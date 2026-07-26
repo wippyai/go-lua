@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
@@ -73,10 +74,10 @@ func channelSelectCoverageConsumer(body *wir.Body, identity [32]byte, chain wir.
 	}
 	span := chain.HeadSpan
 	return selectConsumerDiagnostic{Key: fmt.Sprintf("channel.select.exhaustiveness/%x/%d", identity, chain.ID), Message: "channel select is not exhaustive; missing " + caseWord(missing) + ": " + quotedCases(missing), Span: span, Evidence: []DiagnosticEvidence{
-		{Span: span, Kind: "abstract fact", Trust: "proven", Message: "branch chain checks channel `" + result + ".channel`"},
-		{Span: span, Kind: "abstract fact", Trust: "proven", Message: "handled cases: " + quotedCases(covered)},
-		{Span: span, Kind: "missing proof", Trust: "unknown", Message: "missing cases: " + quotedCases(missing)},
-		{Span: span, Kind: "missing proof", Trust: "unknown", Message: "no default case handles the remaining channel cases"},
+		{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "branch chain checks channel `" + result + ".channel`"},
+		{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "handled cases: " + quotedCases(covered)},
+		{Span: span, Kind: diagnostic.EvidenceMissingProof, Trust: diagnostic.TrustUnknown, Message: "missing cases: " + quotedCases(missing)},
+		{Span: span, Kind: diagnostic.EvidenceMissingProof, Trust: diagnostic.TrustUnknown, Message: "no default case handles the remaining channel cases"},
 	}}, true
 }
 
@@ -256,11 +257,11 @@ func channelSelectUnionConsumer(body *wir.Body, identity [32]byte, chain wir.IfC
 		}
 		span := chain.HeadSpan
 		return selectConsumerDiagnostic{Key: fmt.Sprintf("lint.union.exhaustiveness/%x/%d", identity, chain.ID), Message: "discriminated union handling is not exhaustive; missing " + caseWord(missing) + ": " + quotedCases(missing), Span: span, Evidence: []DiagnosticEvidence{
-			{Span: span, Kind: "abstract fact", Trust: "proven", Message: "branch chain checks discriminant `" + spelling + "`"},
-			{Span: span, Kind: "abstract fact", Trust: "proven", Message: "possible cases: " + quotedCases(displays)},
-			{Span: span, Kind: "abstract fact", Trust: "proven", Message: "handled cases: " + quotedCases(covered)},
-			{Span: span, Kind: "missing proof", Trust: "unknown", Message: "missing cases: " + quotedCases(missing)},
-			{Span: span, Kind: "missing proof", Trust: "unknown", Message: "no default branch handles the remaining union cases"},
+			{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "branch chain checks discriminant `" + spelling + "`"},
+			{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "possible cases: " + quotedCases(displays)},
+			{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "handled cases: " + quotedCases(covered)},
+			{Span: span, Kind: diagnostic.EvidenceMissingProof, Trust: diagnostic.TrustUnknown, Message: "missing cases: " + quotedCases(missing)},
+			{Span: span, Kind: diagnostic.EvidenceMissingProof, Trust: diagnostic.TrustUnknown, Message: "no default branch handles the remaining union cases"},
 		}}, true
 	}
 	return selectConsumerDiagnostic{}, false

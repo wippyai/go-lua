@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/diagnostic"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -82,7 +83,7 @@ func advicePolicyDiagnostics(body *wir.Body, source cfg.Graph) []ControlDiagnost
 				Code:     "lint.unused.local",
 				Message:  "local \"" + name + "\" is never read",
 				Span:     inst.TargetSpan,
-				Evidence: []ControlDiagnosticEvidence{{Span: inst.TargetSpan, Kind: "abstract fact", Trust: "proven", Message: "no read of local \"" + name + "\" was found in this scope"}},
+				Evidence: []ControlDiagnosticEvidence{{Span: inst.TargetSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "no read of local \"" + name + "\" was found in this scope"}},
 				Labels:   []ControlDiagnosticLabel{{Span: inst.TargetSpan, Message: "unused local"}},
 				Help:     "Remove it, use it, or rename it with a leading _ when intentionally unused.",
 			})
@@ -189,11 +190,11 @@ func adviceDeadLocalAssignment(body *wir.Body, graph adviceGraph, root pathdom.P
 	if exit.Valid() {
 		message = "assignment to \"" + name + "\" is discarded before it is read"
 		help = "Remove this assignment, or read `" + name + "` before every later overwrite or exit."
-		evidence = append(evidence, ControlDiagnosticEvidence{Span: exit, Kind: "abstract fact", Trust: "proven", Message: "control can leave before \"" + name + "\" is read"})
+		evidence = append(evidence, ControlDiagnosticEvidence{Span: exit, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "control can leave before \"" + name + "\" is read"})
 		labels = append(labels, ControlDiagnosticLabel{Span: exit, Message: "exit before read"})
 	}
 	if overwrite.Valid() {
-		evidence = append(evidence, ControlDiagnosticEvidence{Span: overwrite, Kind: "abstract fact", Trust: "proven", Message: "later assignment replaces \"" + name + "\" before the earlier value is read"})
+		evidence = append(evidence, ControlDiagnosticEvidence{Span: overwrite, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "later assignment replaces \"" + name + "\" before the earlier value is read"})
 		labels = append(labels, ControlDiagnosticLabel{Span: overwrite, Message: "overwriting assignment"})
 	}
 	return ControlDiagnostic{Key: fmt.Sprintf("lint.dead.assignment/%d/%d", declaration.TargetSpan.StartLine, declaration.Point), Code: "lint.dead.assignment", Message: message, Span: declaration.TargetSpan, Evidence: evidence, Labels: labels, Help: help}, true
@@ -263,7 +264,7 @@ func adviceSplitBirth(body *wir.Body, graph adviceGraph, birth wir.Instruction, 
 				continue
 			}
 			return ControlDiagnostic{Key: "advice.split_birth_discriminant", Code: "advice.split_birth_discriminant", Message: tag.path + " is assigned apart from its payload", Span: tag.inst.TargetSpan,
-				Evidence: []ControlDiagnosticEvidence{{Span: birth.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: root.String() + " is born as a table here"}, {Span: tag.inst.TargetSpan, Kind: "abstract fact", Trust: "proven", Message: tag.path + " is assigned literal \"" + tag.literal + "\" here"}, {Span: payload.inst.TargetSpan, Kind: "abstract fact", Trust: "proven", Message: payload.path + " is assigned separately"}, {Span: use.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: tag.path + " is used as a discriminant here"}},
+				Evidence: []ControlDiagnosticEvidence{{Span: birth.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: root.String() + " is born as a table here"}, {Span: tag.inst.TargetSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: tag.path + " is assigned literal \"" + tag.literal + "\" here"}, {Span: payload.inst.TargetSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: payload.path + " is assigned separately"}, {Span: use.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: tag.path + " is used as a discriminant here"}},
 				Labels:   []ControlDiagnosticLabel{{Span: tag.inst.TargetSpan, Message: "tag write"}, {Span: birth.ExprSpan, Message: "table birth"}, {Span: payload.inst.TargetSpan, Message: "payload write"}, {Span: use.ExprSpan, Message: "discriminant use"}}, Help: "Construct the variant in one table literal so the tag and payload are born atomically."}, true
 		}
 	}
@@ -304,13 +305,13 @@ func adviceShape(body *wir.Body, graph adviceGraph, birth wir.Instruction, root 
 		return ControlDiagnostic{}, false
 	}
 	sort.Slice(fields, func(i, j int) bool { return fields[i].path < fields[j].path })
-	evidence := []ControlDiagnosticEvidence{{Span: birth.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: root.String() + " is born as a table here"}}
+	evidence := []ControlDiagnosticEvidence{{Span: birth.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: root.String() + " is born as a table here"}}
 	labels := []ControlDiagnosticLabel{{Span: use.ExprSpan, Message: "shape-relevant use"}, {Span: birth.ExprSpan, Message: "table birth"}}
 	for _, field := range fields {
-		evidence = append(evidence, ControlDiagnosticEvidence{Span: field.inst.TargetSpan, Kind: "abstract fact", Trust: "proven", Message: field.path + " is added only on some paths"})
+		evidence = append(evidence, ControlDiagnosticEvidence{Span: field.inst.TargetSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: field.path + " is added only on some paths"})
 		labels = append(labels, ControlDiagnosticLabel{Span: field.inst.TargetSpan, Message: "conditionally present field"})
 	}
-	evidence = append(evidence, ControlDiagnosticEvidence{Span: use.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: "StableShape is refused because " + root.String() + " has a non-uniform field set"}, ControlDiagnosticEvidence{Span: use.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: root.String() + " is used where a fixed shape matters"})
+	evidence = append(evidence, ControlDiagnosticEvidence{Span: use.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "StableShape is refused because " + root.String() + " has a non-uniform field set"}, ControlDiagnosticEvidence{Span: use.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: root.String() + " is used where a fixed shape matters"})
 	return ControlDiagnostic{Key: "advice.shape.polymorphic", Code: "advice.shape.polymorphic", Message: root.String() + " has a path-dependent field shape", Span: use.ExprSpan, Evidence: evidence, Labels: labels, Help: "Construct all variants with one fixed-shape constructor (all fields present, absent ones nil/default)."}, true
 }
 
@@ -337,7 +338,7 @@ func adviceRedundantGuards(body *wir.Body, graph adviceGraph) []ControlDiagnosti
 				continue
 			}
 			if implies {
-				out = append(out, ControlDiagnostic{Key: fmt.Sprintf("advice.always_true_guard/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: "advice.always_true_guard", Message: "condition is proven always true", Span: inner.ExprSpan, Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: "condition is proven to be true on every reachable path"}}, Labels: []ControlDiagnosticLabel{{Span: inner.ExprSpan, Message: "constant guard"}}, Help: "Remove the guard or move the guarded code out of the branch."})
+				out = append(out, ControlDiagnostic{Key: fmt.Sprintf("advice.always_true_guard/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: "advice.always_true_guard", Message: "condition is proven always true", Span: inner.ExprSpan, Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "condition is proven to be true on every reachable path"}}, Labels: []ControlDiagnosticLabel{{Span: inner.ExprSpan, Message: "constant guard"}}, Help: "Remove the guard or move the guarded code out of the branch."})
 			}
 			if redundant {
 				message, help := "condition is always false here", "Remove this unreachable branch, or change the prior guard if this path should still run."
@@ -350,7 +351,7 @@ func adviceRedundantGuards(body *wir.Body, graph adviceGraph) []ControlDiagnosti
 					priorMessage = check.Path.String() + " is not nil"
 				}
 				out = append(out, ControlDiagnostic{Key: fmt.Sprintf("lint.condition.redundant/%d/%d", inner.ExprSpan.StartLine, inner.Point), Code: "lint.condition.redundant", Message: message, Span: inner.ExprSpan,
-					Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: "current check: " + current}, {Span: outer.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: "prior guard established " + priorMessage}, {Span: inner.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: check.Path.String() + " is unchanged between the prior guard and this check"}},
+					Evidence: []ControlDiagnosticEvidence{{Span: inner.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "current check: " + current}, {Span: outer.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "prior guard established " + priorMessage}, {Span: inner.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: check.Path.String() + " is unchanged between the prior guard and this check"}},
 					Labels:   []ControlDiagnosticLabel{{Span: inner.ExprSpan, Message: "current check"}, {Span: outer.ExprSpan, Message: "prior guard"}}, Help: help})
 			}
 			break
@@ -471,7 +472,7 @@ func adviceInvariantLoopReads(body *wir.Body, graph adviceGraph) []ControlDiagno
 			continue
 		}
 		loop := adviceLoopHead(body, graph, read.Point)
-		out = append(out, ControlDiagnostic{Key: "advice.invariant_loop_read", Code: "advice.invariant_loop_read", Message: path.String() + " is loop-invariant and can be hoisted", Span: read.ExprSpan, Evidence: []ControlDiagnosticEvidence{{Span: read.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: path.String() + " is not written by the loop body"}, {Span: read.ExprSpan, Kind: "abstract fact", Trust: "proven", Message: path.Root + " is non-nil on all loop paths"}}, Labels: []ControlDiagnosticLabel{{Span: read.ExprSpan, Message: "loop read"}, {Span: loop, Message: "loop head"}}, Help: "Read `" + path.String() + "` once before the loop when that makes the code clearer or cheaper."})
+		out = append(out, ControlDiagnostic{Key: "advice.invariant_loop_read", Code: "advice.invariant_loop_read", Message: path.String() + " is loop-invariant and can be hoisted", Span: read.ExprSpan, Evidence: []ControlDiagnosticEvidence{{Span: read.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: path.String() + " is not written by the loop body"}, {Span: read.ExprSpan, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: path.Root + " is non-nil on all loop paths"}}, Labels: []ControlDiagnosticLabel{{Span: read.ExprSpan, Message: "loop read"}, {Span: loop, Message: "loop head"}}, Help: "Read `" + path.String() + "` once before the loop when that makes the code clearer or cheaper."})
 	}
 	return out
 }
