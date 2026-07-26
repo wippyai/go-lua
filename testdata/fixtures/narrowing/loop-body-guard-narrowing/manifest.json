@@ -1,0 +1,5 @@
+{
+  "description": "A branch inside a loop owns its arms per evaluation of that branch. The back edge lets the other arm reach a point in this arm again, but only by evaluating the same branch a second time, which is a later iteration rather than an alternate edge of the decision the point sits under. Truthiness and the nil comparison therefore narrow a loop-bound optional exactly as they do outside a loop, the false arm keeps the other side of the decision, the rejoined point past the branch keeps the declared type, and no arm carries into the element the next iteration binds.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

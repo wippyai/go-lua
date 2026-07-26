@@ -193,6 +193,39 @@ func (p Partition) Reconverged(prefix string, lattice Reconvergence) (Fact, bool
 	return reconverge(candidates, resolvedBranchGuards(p.closure.Values, p.guards), lattice, &budget)
 }
 
+// WithoutOwnDecision is this partition with the arm publications of one
+// decision removed. A decision's arms are its results, not its inputs: the
+// value it tests is the one that reached it, and no execution routes an arm's
+// own publication back into the test that selected that arm.
+//
+// A straight-line evaluation never holds those rows when the decision runs, so
+// this restriction is that evaluation's own state. A recurrent evaluation does
+// hold them, published by the previous trip, and reading them would let a
+// decision narrow what it had already narrowed -- a peeled reading of its own
+// output that loses every arm the earlier narrowing dropped. Publications
+// guarded by other decisions, and the unguarded value this decision consumes,
+// are untouched: only the rows this decision itself produced are withheld.
+func (p Partition) WithoutOwnDecision(name string) Partition {
+	if name == "" {
+		return p
+	}
+	owned := func(guards []Guard) bool {
+		for _, guard := range guards {
+			if decision, _, ok := decisionOf(guard); ok && decision.name == name {
+				return true
+			}
+		}
+		return false
+	}
+	filtered := OutputClosure{
+		Values:           copyFacts(p.closure.Values, func(fact Fact) bool { return !owned(fact.Guards) }),
+		Outcomes:         copyFacts(p.closure.Outcomes, func(fact Fact) bool { return !owned(fact.Guards) }),
+		Diagnostics:      p.closure.Diagnostics,
+		AllocationRekeys: p.closure.AllocationRekeys,
+	}
+	return Partition{closure: filtered, guards: cloneGuards(p.guards)}
+}
+
 // Edge is this partition restricted to one alternative of a single decision.
 // Its Partition answers every read as that edge answers it, so a consumer whose
 // conclusion is not a lattice payload -- a callee identity, a whole evaluation --

@@ -17450,6 +17450,12 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
+	// The value this decision tests is the one that reached it. Its own arms
+	// publish what it decided, so those rows are its result and never its
+	// input. A straight-line evaluation never holds them here; a recurrent one
+	// holds the previous trip's, and reading them would narrow an already
+	// narrowed value, dropping every arm the earlier narrowing kept.
+	partition = partition.WithoutOwnDecision(operation.Target.Name)
 	result, err := branchSelectionKernel(operation, partition)
 	if err != nil || !result.Complete {
 		return result, err

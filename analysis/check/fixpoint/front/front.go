@@ -1456,23 +1456,13 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 	for _, operation := range operations {
 		hasDynamicIndexRead = hasDynamicIndexRead || operation.instruction.Op == wir.OpDynamicIndexRead
 	}
-	loopBindingRoots := make(map[string]bool)
-	for _, bindings := range loopBindings {
-		for _, binding := range bindings {
-			loopBindingRoots[string(binding.term.Encoding)] = true
-		}
-	}
 	branchTargets := make(map[cfg.Point]branchGuardTarget)
 	for _, operation := range operations {
 		if operation.instruction.Op == wir.OpBranch {
 			if _, duplicate := branchTargets[operation.instruction.Point]; duplicate {
 				return equation.Artifact{}, fmt.Errorf("front: multiple branches at CFG point %d", operation.instruction.Point)
 			}
-			check := body.Check(operation.instruction.Check)
-			branchTargets[operation.instruction.Point] = branchGuardTarget{
-				target:              operation.target,
-				literalDiscriminant: literalLoopDiscriminant(check, loopBindingRoots),
-			}
+			branchTargets[operation.instruction.Point] = branchGuardTarget{target: operation.target}
 		}
 	}
 	guardReachability := newReachabilityCache(graph)
@@ -3504,8 +3494,7 @@ func exactPositiveIndex(entry wir.TableEntry, index int) bool {
 }
 
 type branchGuardTarget struct {
-	target              equation.Coordinate
-	literalDiscriminant bool
+	target equation.Coordinate
 }
 
 // recurrentGraphPoints names the CFG points an execution can arrive at more
@@ -3703,20 +3692,6 @@ func numericConstantOperand(body *wir.Body, operand wir.Operand) (float64, bool)
 	return value, true
 }
 
-// literalLoopDiscriminant recognizes the only literal relation whose selected
-// arm can cross a cyclic iteration boundary: a field of the value bound by an
-// existing generic iterator. Other literal comparisons still have ordinary CFG
-// guards, but cannot make a union-arm publication survive a later iteration.
-func literalLoopDiscriminant(check wir.Check, loopBindingRoots map[string]bool) bool {
-	if (check.Kind != wir.CheckLiteralEqual && check.Kind != wir.CheckLiteralNot) || check.Path.IsEmpty() || len(check.Path.Segments) == 0 {
-		return false
-	}
-	root := check.Path
-	root.Segments = nil
-	root.Version = 0
-	return loopBindingRoots["path/"+string(root.Key())]
-}
-
 func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.Point, body equation.BodyID, branches map[cfg.Point]branchGuardTarget) []equation.Guard {
 	guards := make([]equation.Guard, 0, len(branches))
 	for branch, target := range branches {
@@ -3726,14 +3701,7 @@ func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.
 		trueReach, falseReach := false, false
 		for _, successor := range graph.Successors(branch) {
 			condition, isBranchEdge := graph.EdgeCond(branch, successor)
-			reaches := reachability.reaches(successor, point)
-			if target.literalDiscriminant {
-				// A loop back-edge can reach this point only by evaluating the
-				// same literal discriminant again. That is a later iteration,
-				// not an alternate edge of the current decision, so it must not
-				// erase this selected arm's guard.
-				reaches = reachability.reachesWithout(successor, point, branch)
-			}
+			reaches := reachability.reachesWithout(successor, point, branch)
 			if !isBranchEdge || !reaches {
 				continue
 			}
