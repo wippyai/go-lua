@@ -10783,7 +10783,11 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			if hasIdentity {
 				memberIdentity = identity
 			}
-			if cell, published, cellErr := memberCellFactWithIdentity(parent, suffix, operation.Target.Name, value, memberIdentity, partition); cellErr != nil {
+			// The written term, not the value it resolved to, is what carries a
+			// callable capability: a sealed function value describes a signature
+			// and names no body. The slot therefore records the same handle this
+			// write publishes for its own path.
+			if cell, published, cellErr := memberCellFactWithSource(parent, suffix, operation.Target.Name, value, operands["value"], memberIdentity, partition); cellErr != nil {
 				return equation.TransactionResult{}, cellErr
 			} else if published {
 				values = append(values, cell)
@@ -18558,10 +18562,17 @@ func memberCellFactKey(identity []byte, suffix, operation string) string {
 	return heapFactKey(memberCellPrefix, identity, suffix, operation)
 }
 
+// memberCellFactWithIdentity publishes a slot cell whose value is its own
+// source. It confers no callable capability: a sealed value describes a shape
+// and names no body.
 func memberCellFactWithIdentity(identity []byte, suffix, operation string, value, memberIdentity []byte, partition equation.Partition) (equation.Fact, bool, error) {
 	return memberCellFactWithSource(identity, suffix, operation, value, value, memberIdentity, partition)
 }
 
+// memberCellFactWithSource publishes one slot cell. The value is what the slot
+// holds; the source is the term the write read it from and is the only thing
+// that can carry a callable capability or a child allocation identity, because
+// a sealed value describes a shape and names neither a body nor an allocation.
 func memberCellFactWithSource(identity []byte, suffix, operation string, value, source, memberIdentity []byte, partition equation.Partition) (equation.Fact, bool, error) {
 	if len(identity) == 0 || suffix == "" || !segment.ValidFormattedSegments(suffix) || len(value) == 0 {
 		return equation.Fact{}, false, nil
@@ -20614,7 +20625,9 @@ func externalCallKernel(lexical *lexicalEvaluator, operation equation.BoundEquat
 // opaqueCallbackCaptureEffects derives a may-mutate fact only from a callback
 // handle already published in this partition and an unresolved provider. The
 // callback body's own lowered write is the authority; no source name or
-// synthetic callback behavior is consulted.
+// synthetic callback behavior is consulted. An argument does not have to be the
+// callback itself: a container the provider receives carries every callback its
+// published cells hold, and the provider can run any of them.
 func opaqueCallbackCaptureEffects(lexical *lexicalEvaluator, provider []byte, arguments [][]byte, operation string, partition equation.Partition) []equation.Fact {
 	if lexical == nil || providerName(provider) == "" {
 		return nil
@@ -20625,28 +20638,92 @@ func opaqueCallbackCaptureEffects(lexical *lexicalEvaluator, provider []byte, ar
 	facts := make([]equation.Fact, 0)
 	seen := make(map[string]bool)
 	for _, argument := range arguments {
-		handle, known := closureHandleFor(argument, partition)
-		if !known {
-			continue
-		}
-		child, found := lexical.byPrototype[handle.Prototype]
-		if !found || len(handle.Captures) != len(child.Boundary.Captures) {
-			continue
-		}
-		for index, capture := range child.Boundary.Captures {
-			if !childWritesCapture(child, boundaryTerm(capture.Symbol)) {
+		for _, handle := range opaqueArgumentCallbacks(argument, partition) {
+			child, found := lexical.byPrototype[handle.Prototype]
+			if !found || len(handle.Captures) != len(child.Boundary.Captures) {
 				continue
 			}
-			identity, found := tableIdentityForTerm([]byte(handle.Captures[index]), partition)
-			if !found || seen[string(identity)] {
-				continue
+			for index, capture := range child.Boundary.Captures {
+				if !childWritesCapture(child, boundaryTerm(capture.Symbol)) {
+					continue
+				}
+				identity, found := tableIdentityForTerm([]byte(handle.Captures[index]), partition)
+				if !found || seen[string(identity)] {
+					continue
+				}
+				seen[string(identity)] = true
+				facts = append(facts, heapExternalCallbackFact(identity, operation))
+				facts = append(facts, opaqueCallbackMemberJoins(child, boundaryTerm(capture.Symbol), identity, operation, partition)...)
 			}
-			seen[string(identity)] = true
-			facts = append(facts, heapExternalCallbackFact(identity, operation))
-			facts = append(facts, opaqueCallbackMemberJoins(child, boundaryTerm(capture.Symbol), identity, operation, partition)...)
 		}
 	}
 	return facts
+}
+
+// opaqueArgumentCallbacks is the callback reach of one argument: the argument
+// itself when it names a callback, plus every callback published in the member
+// cells of the container it names and of the containers those cells reach. The
+// walk consults published cells only -- a slot the partition never published is
+// not invented, and a cell without a callback handle carries no callable proof.
+// An identity whose inventory an unresolved-key store left incomplete is not
+// skipped: every callback it does publish still counts. Termination comes from
+// the visited identity set, so the walk neither repeats an identity nor stops
+// short of one.
+func opaqueArgumentCallbacks(argument []byte, partition equation.Partition) []closureHandle {
+	handles := make([]closureHandle, 0, 1)
+	if handle, known := closureHandleFor(argument, partition); known {
+		handles = append(handles, handle)
+	}
+	root, found := tableIdentityForTerm(argument, partition)
+	if !found {
+		return handles
+	}
+	queue := [][]byte{root}
+	visited := map[string]bool{}
+	for len(queue) != 0 {
+		identity := queue[0]
+		queue = queue[1:]
+		if visited[string(identity)] {
+			continue
+		}
+		visited[string(identity)] = true
+		for _, suffix := range publishedMemberSuffixes(identity, partition) {
+			cell, present := currentMemberCell(identity, suffix, partition)
+			if !present {
+				continue
+			}
+			if cell.Handle != nil {
+				handles = append(handles, *cell.Handle)
+			}
+			if len(cell.MemberIdentity) != 0 {
+				queue = append(queue, cell.MemberIdentity)
+			}
+		}
+	}
+	return handles
+}
+
+// publishedMemberSuffixes lists, in a stable order, the member slots one
+// identity has published a cell for.
+func publishedMemberSuffixes(identity []byte, partition equation.Partition) []string {
+	prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	seen := map[string]bool{}
+	suffixes := make([]string, 0)
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		rest := strings.TrimPrefix(fact.Key, prefix)
+		cut := strings.LastIndexByte(rest, '/')
+		if cut <= 0 || cut == len(rest)-1 {
+			continue
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(rest[:cut])
+		if err != nil || !segment.ValidFormattedSegments(string(decoded)) || seen[string(decoded)] {
+			continue
+		}
+		seen[string(decoded)] = true
+		suffixes = append(suffixes, string(decoded))
+	}
+	sort.Strings(suffixes)
+	return suffixes
 }
 
 // opaqueCallbackMemberJoins weakens each caller member cell the callback body
