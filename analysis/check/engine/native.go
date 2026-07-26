@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 )
 
@@ -275,15 +276,9 @@ func coalesceNativeContractRevocations(facts []NativeFact) []NativeFact {
 // only when every fact it names was published by this evaluation.
 func projectNativeContracts(facts []NativeFact) []NativeFact {
 	const (
-		tableIdentityPrefix  = "heap/table-identity/"
-		tableClosedPrefix    = "heap/table-closed/"
-		memberPrefix         = "heap/member/"
-		memberIdentityPrefix = "heap/member-identity/"
-		metaAttachedPrefix   = "heap/meta-attached/"
-		indexPresencePrefix  = "heap/index-presence/"
-		callArgumentPrefix   = "call-argument/"
-		freezePrefix         = "effect.freeze/"
-		branchProofPrefix    = "branch-proof/"
+		callArgumentPrefix = "call-argument/"
+		freezePrefix       = "effect.freeze/"
+		branchProofPrefix  = "branch-proof/"
 	)
 	type identityAnchor struct{ term, subject string }
 	type memberRead struct{ identity, member, occurrence string }
@@ -308,39 +303,44 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 		if fact.Lane != NativeLaneValues {
 			continue
 		}
+		family, heapFact := factkey.Lookup(fact.Key)
+		parsed, parsedHeapFact := family.ParseKey(fact.Key)
 		switch {
-		case strings.HasPrefix(fact.Key, tableIdentityPrefix):
+		case heapFact && parsedHeapFact && family.ID == factkey.FamilyHeapTableIdentity:
 			if fact.Term != "" && fact.Value != "" {
 				identityAnchors[fact.Value] = identityAnchor{term: fact.Term, subject: fact.Subject}
 				identityTerms[fact.Term] = nativeSetAdd(identityTerms[fact.Term], base64.RawURLEncoding.EncodeToString([]byte(fact.Value)))
 			}
-		case strings.HasPrefix(fact.Key, tableClosedPrefix) && fact.Value == "closed":
-			identity, occurrence, ok := nativeIdentityOccurrence(fact.Key, tableClosedPrefix)
-			if ok {
+		case heapFact && parsedHeapFact && family.ID == factkey.FamilyHeapTableClosed && fact.Value == "closed":
+			identity, occurrence := parsed.Subject.Encoded(), parsed.Occurrence
+			if identity != "" {
 				// Aliases can publish the same identity. Its earliest close names
 				// the allocation's complete initial key set.
 				if current, found := closed[identity]; !found || occurrence < current.Occurrence {
 					closed[identity] = fact
 				}
 			}
-		case strings.HasPrefix(fact.Key, metaAttachedPrefix) && fact.Value == "attached":
-			identity, occurrence, ok := nativeIdentityOccurrence(fact.Key, metaAttachedPrefix)
-			if ok {
+		case heapFact && parsedHeapFact && family.ID == factkey.FamilyHeapMetaAttached && fact.Value == "attached":
+			identity, occurrence := parsed.Subject.Encoded(), parsed.Occurrence
+			if identity != "" {
 				attached[identity] = true
 				attachReceivers[occurrence] = nativeSetAdd(attachReceivers[occurrence], identity)
 			}
-		case strings.HasPrefix(fact.Key, memberPrefix):
+		case heapFact && parsedHeapFact && family.ID == factkey.FamilyHeapMember:
 			// Rows arrive in key order, so a member is read before the close of
 			// its own allocation. The key set is resolved once every close is
 			// known, below.
-			identity, member, occurrence, ok := nativeMemberOccurrence(fact.Key, memberPrefix)
+			member, ok := parsed.Qualifier(0)
 			if ok {
-				memberReads = append(memberReads, memberRead{identity: identity, member: member, occurrence: occurrence})
+				memberReads = append(memberReads, memberRead{
+					identity: parsed.Subject.Encoded(), member: member.Encoded(), occurrence: parsed.Occurrence,
+				})
 			}
-		case strings.HasPrefix(fact.Key, memberIdentityPrefix):
-			parent, _, _, ok := nativeMemberOccurrence(fact.Key, memberIdentityPrefix)
-			if ok && fact.Value != "" {
-				children[parent] = nativeSetAdd(children[parent], base64.RawURLEncoding.EncodeToString([]byte(fact.Value)))
+		case heapFact && parsedHeapFact && family.ID == factkey.FamilyHeapMemberIdentity:
+			if fact.Value != "" {
+				children[parsed.Subject.Encoded()] = nativeSetAdd(
+					children[parsed.Subject.Encoded()], base64.RawURLEncoding.EncodeToString([]byte(fact.Value)),
+				)
 			}
 		case strings.HasPrefix(fact.Key, callArgumentPrefix):
 			occurrence, position, found := strings.Cut(strings.TrimPrefix(fact.Key, callArgumentPrefix), "/")
@@ -438,13 +438,19 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 	// containers — one an allocation identity this evaluation closed, the other
 	// an opaque-origin binding — so the family keeps one contract spelling.
 	for _, fact := range facts {
-		if fact.Lane != NativeLaneValues || !strings.HasPrefix(fact.Key, indexPresencePrefix) || fact.Value != "proven" {
+		if fact.Lane != NativeLaneValues || fact.Value != "proven" {
 			continue
 		}
-		identity, index, occurrence, ok := nativeMemberOccurrence(fact.Key, indexPresencePrefix)
-		if !ok {
+		family, found := factkey.Lookup(fact.Key)
+		parsed, ok := family.ParseKey(fact.Key)
+		if !found || !ok || family.ID != factkey.FamilyHeapIndexPresence || !parsed.Subject.TaggedIdentity() {
 			continue
 		}
+		indexRef, present := parsed.Qualifier(0)
+		if !present {
+			continue
+		}
+		identity, index, occurrence := parsed.Subject.Encoded(), indexRef.Encoded(), parsed.Occurrence
 		anchor, anchored := identityAnchors[nativeDecodedIdentity(identity)]
 		if !anchored {
 			continue
@@ -543,27 +549,6 @@ func markNativeReachable(identity string, children map[string]map[string]bool, m
 	for child := range children[identity] {
 		markNativeReachable(child, children, marked)
 	}
-}
-
-func nativeIdentityOccurrence(key, prefix string) (identity, occurrence string, ok bool) {
-	rest, found := strings.CutPrefix(key, prefix)
-	if !found {
-		return "", "", false
-	}
-	identity, occurrence, found = strings.Cut(rest, "/")
-	return identity, occurrence, found && identity != "" && occurrence != ""
-}
-
-func nativeMemberOccurrence(key, prefix string) (identity, member, occurrence string, ok bool) {
-	rest, found := strings.CutPrefix(key, prefix)
-	if !found {
-		return "", "", "", false
-	}
-	parts := strings.Split(rest, "/")
-	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		return "", "", "", false
-	}
-	return parts[0], parts[1], parts[2], true
 }
 
 func nativeFreezeTerm(key, prefix string) (term, occurrence string, ok bool) {

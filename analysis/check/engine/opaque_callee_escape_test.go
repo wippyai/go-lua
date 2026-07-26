@@ -1,10 +1,10 @@
 package engine
 
 import (
-	"encoding/base64"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -107,10 +107,10 @@ func TestEscapeReachesTheGraphBeneathAnArgument(t *testing.T) {
 		heapMemberIdentityFact(root, ".items", "op-00000002", nested),
 	)
 	subjects := escapeReachableSubjects([]byte("path/box"), partition)
-	want := "identity/" + base64.RawURLEncoding.EncodeToString(nested)
+	want := factkey.BuildKey(factkey.HeapIndexRevoke, []factkey.Part{factkey.TaggedIdentityPart(nested)}, "op").String()
 	found := false
 	for _, subject := range subjects {
-		found = found || subject == want
+		found = found || factkey.BuildKey(factkey.HeapIndexRevoke, []factkey.Part{subject}, "op").String() == want
 	}
 	if !found {
 		t.Fatalf("subjects %v do not reach the nested container", subjects)
@@ -158,7 +158,10 @@ func TestImmutableArgumentKeepsItsFloorAcrossAnEscape(t *testing.T) {
 func TestEscapedIdentityOrdersAgainstTheCellItInvalidates(t *testing.T) {
 	identity := []byte("sealed-table/root")
 	partition := escapeTestPartition(t,
-		equation.Fact{Key: heapTableEscapePrefix + "identity/" + base64.RawURLEncoding.EncodeToString(identity) + "/op-00000005", Value: []byte("escaped")},
+		equation.Fact{
+			Key:   factkey.BuildKey(factkey.HeapTableEscape, []factkey.Part{factkey.TaggedIdentityPart(identity)}, "op-00000005").String(),
+			Value: []byte("escaped"),
+		},
 	)
 	if !heapIdentityEscapedAfter(identity, "op-00000003", partition) {
 		t.Fatalf("a cell published before the escape survived it")

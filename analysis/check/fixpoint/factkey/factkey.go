@@ -28,8 +28,12 @@ type Kind uint8
 
 const (
 	// Opaque names nothing this schema resolves: a slot ordinal, an encoded
-	// member suffix, a literal discriminator.
+	// literal discriminator.
 	Opaque Kind = iota
+	// EncodedOpaque is an opaque byte string encoded as one URL-safe base64
+	// segment. It is distinct from Opaque because builders, unlike the original
+	// parse-only schema, must know which positions require encoding.
+	EncodedOpaque
 	// Identity names an allocation, encoded.
 	Identity
 	// EncodedTerm names a term, encoded.
@@ -50,13 +54,68 @@ func (k Kind) segments() int {
 	return 1
 }
 
+// PayloadKind names the codec responsible for interpreting a family's Value.
+// The family record owns this choice even when the engine continues to invoke
+// the codec itself during the staged migration.
+type PayloadKind uint8
+
+const (
+	PayloadBytes PayloadKind = iota
+	PayloadMarker
+	PayloadIdentity
+	PayloadTerm
+	PayloadValue
+	PayloadInteger
+	PayloadType
+	PayloadRelation
+)
+
+// FamilyID is the stable identity used by revocation sets. Prefix strings are
+// a wire representation, not the identity by which declarations refer to one
+// another.
+type FamilyID uint8
+
+const (
+	FamilyHeapTableIdentity FamilyID = iota + 1
+	FamilyHeapTableClosed
+	FamilyHeapMember
+	FamilyHeapMemberIdentity
+	FamilyHeapMemberCell
+	FamilyHeapMemberOrigin
+	FamilyHeapStaticReplace
+	FamilyHeapMetaAttached
+	FamilyHeapMetaIdentity
+	FamilyHeapMetaNewIndex
+	FamilyHeapExternalCallback
+	FamilyHeapOpaqueMemberWrite
+	FamilyHeapKeysOf
+	FamilyHeapKeyedRead
+	FamilyHeapKeyedElement
+	FamilyHeapIndexPresence
+	FamilyHeapKeyPresence
+	FamilyHeapIndexRevoke
+	FamilyHeapLengthFloor
+	FamilyHeapTableEscape
+	FamilyHeapIndexLower
+	FamilyHeapIndexUpper
+	FamilyHeapIndexRelation
+)
+
+// RevocationSet names the fact families whose publications can invalidate a
+// fact in this family. The engine's ordering predicates still decide whether a
+// particular publication is later; this record states the closed vocabulary.
+type RevocationSet []FamilyID
+
 // Family declares one fact family's key shape. A key of this family is the
 // prefix, then the subject, then each qualifier in order, then the occurrence
 // that published it.
 type Family struct {
-	Prefix     string
-	Subject    Kind
-	Qualifiers []Kind
+	ID            FamilyID
+	Prefix        string
+	Subject       Kind
+	Qualifiers    []Kind
+	PayloadKind   PayloadKind
+	RevocationSet RevocationSet
 }
 
 // Position is one resolved position of a parsed key.
@@ -74,48 +133,156 @@ const (
 	taggedTerm     = "term"
 )
 
-// families declares every family whose keys are read structurally. The heap
-// namespace states facts about allocations and the terms that reach them; the
-// remaining entries are the families whose keys consumers previously split by
-// hand.
+var (
+	HeapTableIdentity = Family{
+		ID: FamilyHeapTableIdentity, Prefix: "heap/table-identity/", Subject: Term,
+		PayloadKind: PayloadIdentity, RevocationSet: RevocationSet{FamilyHeapTableIdentity},
+	}
+	HeapTableClosed = Family{
+		ID: FamilyHeapTableClosed, Prefix: "heap/table-closed/", Subject: Identity,
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{
+			FamilyHeapMetaAttached, FamilyHeapExternalCallback, FamilyHeapOpaqueMemberWrite, FamilyHeapTableEscape,
+		},
+	}
+	HeapMember = Family{
+		ID: FamilyHeapMember, Prefix: "heap/member/", Subject: Identity, Qualifiers: []Kind{EncodedOpaque},
+		PayloadKind: PayloadValue, RevocationSet: RevocationSet{
+			FamilyHeapMember, FamilyHeapStaticReplace, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape,
+		},
+	}
+	HeapMemberIdentity = Family{
+		ID: FamilyHeapMemberIdentity, Prefix: "heap/member-identity/", Subject: Identity, Qualifiers: []Kind{EncodedOpaque},
+		PayloadKind: PayloadIdentity, RevocationSet: RevocationSet{
+			FamilyHeapMemberIdentity, FamilyHeapStaticReplace, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape,
+		},
+	}
+	HeapMemberCell = Family{
+		ID: FamilyHeapMemberCell, Prefix: "heap/member-cell/", Subject: Identity, Qualifiers: []Kind{EncodedOpaque},
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{
+			FamilyHeapMemberCell, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape,
+		},
+	}
+	HeapMemberOrigin = Family{
+		ID: FamilyHeapMemberOrigin, Prefix: "heap/member-origin/", Subject: Term, Qualifiers: []Kind{EncodedOpaque},
+		PayloadKind: PayloadTerm, RevocationSet: RevocationSet{FamilyHeapMemberOrigin},
+	}
+	HeapStaticReplace = Family{
+		ID: FamilyHeapStaticReplace, Prefix: "heap/static-replace/", Subject: Identity,
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyHeapStaticReplace, FamilyHeapTableEscape},
+	}
+	HeapMetaAttached = Family{
+		ID: FamilyHeapMetaAttached, Prefix: "heap/meta-attached/", Subject: Identity,
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyHeapMetaAttached},
+	}
+	HeapMetaIdentity = Family{
+		ID: FamilyHeapMetaIdentity, Prefix: "heap/meta-identity/", Subject: Identity,
+		PayloadKind: PayloadIdentity, RevocationSet: RevocationSet{FamilyHeapMetaIdentity, FamilyHeapExternalCallback},
+	}
+	HeapMetaNewIndex = Family{
+		ID: FamilyHeapMetaNewIndex, Prefix: "heap/meta-newindex/", Subject: Identity,
+		PayloadKind: PayloadIdentity, RevocationSet: RevocationSet{FamilyHeapMetaNewIndex, FamilyHeapExternalCallback},
+	}
+	HeapExternalCallback = Family{
+		ID: FamilyHeapExternalCallback, Prefix: "heap/external-callback/", Subject: Identity,
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyHeapExternalCallback},
+	}
+	HeapOpaqueMemberWrite = Family{
+		ID: FamilyHeapOpaqueMemberWrite, Prefix: "heap/opaque-member-write/", Subject: Identity,
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{FamilyHeapOpaqueMemberWrite, FamilyHeapTableEscape},
+	}
+	HeapKeysOf = Family{
+		ID: FamilyHeapKeysOf, Prefix: "heap/keys-of/", Subject: Identity,
+		PayloadKind: PayloadTerm, RevocationSet: RevocationSet{
+			FamilyHeapMember, FamilyHeapMemberCell, FamilyHeapStaticReplace, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape,
+		},
+	}
+	HeapKeyedRead = Family{
+		ID: FamilyHeapKeyedRead, Prefix: "heap/keyed-read/", Subject: EncodedTerm,
+		PayloadKind: PayloadIdentity, RevocationSet: RevocationSet{FamilyHeapKeyedRead},
+	}
+	HeapKeyedElement = Family{
+		ID: FamilyHeapKeyedElement, Prefix: "heap/keyed-element/", Subject: Identity,
+		PayloadKind: PayloadType, RevocationSet: RevocationSet{FamilyHeapKeyedElement, FamilyHeapTableEscape},
+	}
+	HeapIndexPresence = Family{
+		ID: FamilyHeapIndexPresence, Prefix: "heap/index-presence/", Subject: Tagged, Qualifiers: []Kind{EncodedTerm},
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyHeapIndexRevoke, FamilyHeapTableEscape},
+	}
+	HeapKeyPresence = Family{
+		ID: FamilyHeapKeyPresence, Prefix: "heap/key-presence/", Subject: Tagged, Qualifiers: []Kind{EncodedTerm},
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{
+			FamilyHeapMember, FamilyHeapMemberCell, FamilyHeapStaticReplace, FamilyHeapOpaqueMemberWrite, FamilyHeapIndexRevoke, FamilyHeapTableEscape,
+		},
+	}
+	HeapIndexRevoke = Family{
+		ID: FamilyHeapIndexRevoke, Prefix: "heap/index-revoke/", Subject: Tagged,
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyHeapIndexRevoke},
+	}
+	HeapLengthFloor = Family{
+		ID: FamilyHeapLengthFloor, Prefix: "heap/length-floor/", Subject: Tagged,
+		PayloadKind: PayloadInteger, RevocationSet: RevocationSet{FamilyHeapIndexRevoke, FamilyHeapTableEscape},
+	}
+	HeapTableEscape = Family{
+		ID: FamilyHeapTableEscape, Prefix: "heap/table-escape/", Subject: Tagged,
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyHeapTableEscape},
+	}
+	HeapIndexLower = Family{
+		ID: FamilyHeapIndexLower, Prefix: "heap/index-lower/", Subject: EncodedTerm,
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyHeapIndexRevoke},
+	}
+	HeapIndexUpper = Family{
+		ID: FamilyHeapIndexUpper, Prefix: "heap/index-upper/", Subject: EncodedTerm, Qualifiers: []Kind{EncodedTerm},
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyHeapIndexRevoke},
+	}
+	HeapIndexRelation = Family{
+		ID: FamilyHeapIndexRelation, Prefix: "heap/index-relation/", Subject: Opaque,
+		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{FamilyHeapIndexRelation},
+	}
+)
+
+// families declares every family whose keys are read structurally. Heap facts
+// about unresolved keyed reads/writes are included as first-class records too;
+// they were the two live heap families missing from the old parse-only table.
 var families = []Family{
-	{Prefix: "heap/table-identity/", Subject: Term},
-	{Prefix: "heap/table-closed/", Subject: Identity},
-	{Prefix: "heap/member/", Subject: Identity, Qualifiers: []Kind{Opaque}},
-	{Prefix: "heap/member-identity/", Subject: Identity, Qualifiers: []Kind{Opaque}},
-	{Prefix: "heap/member-cell/", Subject: Identity, Qualifiers: []Kind{Opaque}},
-	{Prefix: "heap/member-origin/", Subject: Term, Qualifiers: []Kind{Opaque}},
-	{Prefix: "heap/static-replace/", Subject: Identity},
-	{Prefix: "heap/meta-attached/", Subject: Identity},
-	{Prefix: "heap/meta-identity/", Subject: Identity},
-	{Prefix: "heap/meta-newindex/", Subject: Identity},
-	{Prefix: "heap/external-callback/", Subject: Identity},
-	{Prefix: "heap/opaque-member-write/", Subject: Identity},
-	{Prefix: "heap/keys-of/", Subject: Identity},
-	{Prefix: "heap/keyed-read/", Subject: EncodedTerm},
-	{Prefix: "heap/keyed-element/", Subject: Identity},
-	{Prefix: "heap/index-presence/", Subject: Tagged, Qualifiers: []Kind{Opaque}},
-	{Prefix: "heap/key-presence/", Subject: Tagged, Qualifiers: []Kind{Opaque}},
-	{Prefix: "heap/index-revoke/", Subject: Tagged},
-	{Prefix: "heap/length-floor/", Subject: Tagged},
-	{Prefix: "heap/table-escape/", Subject: Tagged},
-	{Prefix: "heap/index-lower/", Subject: EncodedTerm},
-	{Prefix: "heap/index-upper/", Subject: EncodedTerm, Qualifiers: []Kind{EncodedTerm}},
-	{Prefix: "heap/index-relation/", Subject: Opaque},
+	HeapTableIdentity,
+	HeapTableClosed,
+	HeapMember,
+	HeapMemberIdentity,
+	HeapMemberCell,
+	HeapMemberOrigin,
+	HeapStaticReplace,
+	HeapMetaAttached,
+	HeapMetaIdentity,
+	HeapMetaNewIndex,
+	HeapExternalCallback,
+	HeapOpaqueMemberWrite,
+	HeapKeysOf,
+	HeapKeyedRead,
+	HeapKeyedElement,
+	HeapIndexPresence,
+	HeapKeyPresence,
+	HeapIndexRevoke,
+	HeapLengthFloor,
+	HeapTableEscape,
+	HeapIndexLower,
+	HeapIndexUpper,
+	HeapIndexRelation,
 }
 
 // byPrefix indexes the declarations so a key is matched without scanning them.
 // widths are the distinct segment counts the declared prefixes use, longest
 // first, so a family whose name extends another's is found before the shorter
 // one. Both are derived from the declarations themselves rather than assumed.
-var byPrefix, widths = index()
+var byPrefix, byID, widths = index()
 
-func index() (map[string]Family, []int) {
+func index() (map[string]Family, map[FamilyID]Family, []int) {
 	table := make(map[string]Family, len(families))
+	identities := make(map[FamilyID]Family, len(families))
 	seen := make(map[int]bool)
 	var counts []int
 	for _, family := range families {
 		table[family.Prefix] = family
+		identities[family.ID] = family
 		width := strings.Count(family.Prefix, "/")
 		if !seen[width] {
 			seen[width] = true
@@ -123,7 +290,7 @@ func index() (map[string]Family, []int) {
 		}
 	}
 	sort.Sort(sort.Reverse(sort.IntSlice(counts)))
-	return table, counts
+	return table, identities, counts
 }
 
 // Lookup returns the family that declares this key's shape. The longest
@@ -210,6 +377,11 @@ func resolve(kind Kind, segments []string) (Position, bool) {
 			return Position{}, false
 		}
 		return Position{Kind: kind, Identity: decoded}, true
+	case EncodedOpaque:
+		if _, ok := decode(segments[0]); !ok {
+			return Position{}, false
+		}
+		return Position{Kind: kind}, true
 	case EncodedTerm:
 		decoded, ok := decode(segments[0])
 		if !ok {

@@ -3,6 +3,9 @@ package factkey
 import (
 	"encoding/base64"
 	"testing"
+
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 )
 
 func encode(text string) string { return base64.RawURLEncoding.EncodeToString([]byte(text)) }
@@ -102,6 +105,74 @@ func TestBranchGuardAndProofShareOneDeclaration(t *testing.T) {
 	for _, bad := range []string{"front/branch/op-1/maybe", "front/branch/true", "other/op-1/true"} {
 		if _, ok := ParseBranchGuard(bad); ok {
 			t.Errorf("%q parsed as a branch guard", bad)
+		}
+	}
+}
+
+func TestBuildKeyOwnsEveryHeapSpelling(t *testing.T) {
+	identity := []byte("sealed-table/m/op-00000001")
+	for _, test := range []struct {
+		family Family
+		parts  []Part
+		want   string
+	}{
+		{HeapTableIdentity, []Part{TermPart("path/sym2")}, "heap/table-identity/path/sym2/op-1"},
+		{HeapTableClosed, []Part{IdentityPart(identity)}, "heap/table-closed/" + encode(string(identity)) + "/op-1"},
+		{HeapMember, []Part{IdentityPart(identity), EncodedOpaquePart(".a")}, "heap/member/" + encode(string(identity)) + "/LmE/op-1"},
+		{HeapIndexPresence, []Part{TaggedTermPart([]byte("path/sym2")), EncodedTermPart([]byte("path/sym7"))}, "heap/index-presence/term/" + encode("path/sym2") + "/" + encode("path/sym7") + "/op-1"},
+		{HeapIndexUpper, []Part{EncodedTermPart([]byte("path/sym7")), EncodedTermPart([]byte("path/sym2"))}, "heap/index-upper/" + encode("path/sym7") + "/" + encode("path/sym2") + "/op-1"},
+	} {
+		key := BuildKey(test.family, test.parts, "op-1")
+		if key.String() != test.want {
+			t.Errorf("%s key = %q, want %q", test.family.Prefix, key.String(), test.want)
+			continue
+		}
+		parsed, ok := test.family.ParseKey(key.String())
+		if !ok || parsed.Occurrence != "op-1" || parsed.QualifierCount() != len(test.parts)-1 {
+			t.Errorf("%s did not parse its built key: %+v (%v)", test.family.Prefix, parsed, ok)
+		}
+	}
+}
+
+func TestBuildKeyAcceptsStructuralPathKey(t *testing.T) {
+	space := keyspace.New()
+	path, ok := space.FromStateKey(pathdom.PathKey("sym2"))
+	if !ok {
+		t.Fatal("could not intern path subject")
+	}
+	key := BuildKey(HeapTableIdentity, []Part{PathPart(path)}, "op-1")
+	if got, want := key.String(), "heap/table-identity/path/sym2/op-1"; got != want {
+		t.Fatalf("structural path key = %q, want %q", got, want)
+	}
+}
+
+func TestBuildKeyProducesTypedPrefixes(t *testing.T) {
+	identity := []byte("heap")
+	prefix := BuildKey(HeapMember, []Part{IdentityPart(identity)}, "")
+	if got, want := prefix.String(), "heap/member/aGVhcA/"; got != want {
+		t.Fatalf("subject prefix = %q, want %q", got, want)
+	}
+	if family, ok := prefix.Family(); !ok || family.ID != FamilyHeapMember {
+		t.Fatalf("prefix family = %+v (%v)", family, ok)
+	}
+}
+
+func TestHeapFamiliesAreCompleteRecords(t *testing.T) {
+	if len(families) != 23 {
+		t.Fatalf("declared heap families = %d, want 23", len(families))
+	}
+	for _, family := range families {
+		if family.ID == 0 || family.Prefix == "" || len(family.RevocationSet) == 0 ||
+			family.PayloadKind > PayloadRelation {
+			t.Errorf("incomplete family record: %+v", family)
+		}
+		if declared, ok := Lookup(family.Prefix + "subject/op"); !ok || declared.ID != family.ID {
+			t.Errorf("%s is absent from the family lookup", family.Prefix)
+		}
+		for _, revoker := range family.RevocationSet {
+			if _, ok := byID[revoker]; !ok {
+				t.Errorf("%s names undeclared revoker %d", family.Prefix, revoker)
+			}
 		}
 	}
 }

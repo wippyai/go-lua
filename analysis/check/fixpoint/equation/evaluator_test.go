@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 )
 
 func stage3Artifact(t *testing.T) (Artifact, EntryBinding, []ContentID) {
@@ -244,6 +246,48 @@ func TestPartitionValuesPrefixMatchesFilteredVisibleValues(t *testing.T) {
 		if _, ok := partition.Value("heap/member/a/9999"); ok {
 			t.Fatalf("%s point lookup exposed a fact outside the active guards", name)
 		}
+	}
+}
+
+func TestPartitionFamilyValuesParsesSelectedRowsWithoutAllocation(t *testing.T) {
+	identity := []byte("heap")
+	prefix := factkey.BuildKey(factkey.HeapMember, []factkey.Part{factkey.IdentityPart(identity)}, "")
+	first := factkey.BuildKey(factkey.HeapMember, []factkey.Part{
+		factkey.IdentityPart(identity), factkey.EncodedOpaquePart(".a"),
+	}, "op-1")
+	second := factkey.BuildKey(factkey.HeapMember, []factkey.Part{
+		factkey.IdentityPart(identity), factkey.EncodedOpaquePart(".b"),
+	}, "op-2")
+	other := factkey.BuildKey(factkey.HeapTableClosed, []factkey.Part{factkey.IdentityPart(identity)}, "op-3")
+	partition, err := PartitionFromClosuresWithGuards(nil, OutputClosure{Values: []Fact{
+		{Key: first.String(), Value: []byte("one")},
+		{Key: second.String(), Value: []byte("two")},
+		{Key: other.String(), Value: []byte("closed")},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func() {
+		iterator := partition.FamilyValues(prefix)
+		count := 0
+		for {
+			value, ok := iterator.Next()
+			if !ok {
+				break
+			}
+			qualifier, present := value.Qualifier(0)
+			if !present || qualifier.Kind() != factkey.EncodedOpaque || value.Occurrence == "" || len(value.Payload) == 0 {
+				t.Fatalf("malformed family value: %+v", value)
+			}
+			count++
+		}
+		if count != 2 {
+			t.Fatalf("family values = %d, want 2", count)
+		}
+	}
+	read() // Warm the partition view before measuring the read itself.
+	if allocations := testing.AllocsPerRun(100, read); allocations != 0 {
+		t.Fatalf("FamilyValues allocated %v times per read", allocations)
 	}
 }
 

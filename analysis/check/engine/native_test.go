@@ -1,34 +1,39 @@
 package engine
 
 import (
-	"encoding/base64"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 )
+
+func nativeTestClosedKey() string {
+	return factkey.BuildKey(
+		factkey.HeapTableClosed, []factkey.Part{factkey.IdentityPart([]byte("heap"))}, "op-00000003",
+	).String()
+}
 
 func TestNativeContractBridgeProjectsOnlyPublishedSubstrate(t *testing.T) {
 	root := "sealed-table/test/op-00000003"
 	child := "sealed-table/test/op-00000004"
-	rootID := base64.RawURLEncoding.EncodeToString([]byte(root))
-	childID := base64.RawURLEncoding.EncodeToString([]byte(child))
+	changed := []byte("sealed-table/test/op-00000008")
 	rows := projectNativeContracts([]NativeFact{
-		{Lane: NativeLaneValues, Key: "heap/table-identity/path/sym2/op-00000003", Value: root, Term: "path/sym2", Subject: "config", Occurrence: "op-00000003"},
-		{Lane: NativeLaneValues, Key: "heap/table-identity/path/sym2.child/op-00000004", Value: child, Term: "path/sym2.child", Occurrence: "op-00000004"},
-		{Lane: NativeLaneValues, Key: "heap/table-closed/" + rootID + "/op-00000003", Value: "closed", Occurrence: "op-00000003"},
-		{Lane: NativeLaneValues, Key: "heap/table-closed/" + childID + "/op-00000004", Value: "closed", Occurrence: "op-00000004"},
-		{Lane: NativeLaneValues, Key: "heap/member/" + rootID + "/LmNoaWxk/op-00000003", Value: "shape/table/v1/example", Occurrence: "op-00000003"},
-		{Lane: NativeLaneValues, Key: "heap/member-identity/" + rootID + "/LmNoaWxk/op-00000003", Value: child, Occurrence: "op-00000003"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapTableIdentity, []factkey.Part{factkey.TermPart("path/sym2")}, "op-00000003").String(), Value: root, Term: "path/sym2", Subject: "config", Occurrence: "op-00000003"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapTableIdentity, []factkey.Part{factkey.TermPart("path/sym2.child")}, "op-00000004").String(), Value: child, Term: "path/sym2.child", Occurrence: "op-00000004"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapTableClosed, []factkey.Part{factkey.IdentityPart([]byte(root))}, "op-00000003").String(), Value: "closed", Occurrence: "op-00000003"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapTableClosed, []factkey.Part{factkey.IdentityPart([]byte(child))}, "op-00000004").String(), Value: "closed", Occurrence: "op-00000004"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapMember, []factkey.Part{factkey.IdentityPart([]byte(root)), factkey.EncodedOpaquePart(".child")}, "op-00000003").String(), Value: "shape/table/v1/example", Occurrence: "op-00000003"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapMemberIdentity, []factkey.Part{factkey.IdentityPart([]byte(root)), factkey.EncodedOpaquePart(".child")}, "op-00000003").String(), Value: child, Occurrence: "op-00000003"},
 		{Lane: NativeLaneValues, Key: "effect.freeze/sym2/op-00000005", Value: "unconditional", Occurrence: "op-00000005"},
-		{Lane: NativeLaneValues, Key: "heap/index-presence/" + rootID + "/cGF0aC9zeW0z/op-00000006", Value: "proven", Occurrence: "op-00000006"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapIndexPresence, []factkey.Part{factkey.TaggedIdentityPart([]byte(root)), factkey.EncodedTermPart([]byte("path/sym3"))}, "op-00000006").String(), Value: "proven", Occurrence: "op-00000006"},
 		{Lane: NativeLaneValues, Key: "branch-proof/1/op-00000007/true", Value: "proven", Occurrence: "op-00000007"},
 		// The raw close fact remains insufficient after a genuinely new member.
-		{Lane: NativeLaneValues, Key: "heap/table-identity/path/sym9/op-00000008", Value: "sealed-table/test/op-00000008", Term: "path/sym9", Subject: "changed", Occurrence: "op-00000008"},
-		{Lane: NativeLaneValues, Key: "heap/table-closed/c2VhbGVkLXRhYmxlL3Rlc3Qvb3AtMDAwMDAwMDg/op-00000008", Value: "closed", Occurrence: "op-00000008"},
-		{Lane: NativeLaneValues, Key: "heap/member/c2VhbGVkLXRhYmxlL3Rlc3Qvb3AtMDAwMDAwMDg/Lm9yaWdpbmFs/op-00000008", Value: "scalar/number/1", Occurrence: "op-00000008"},
-		{Lane: NativeLaneValues, Key: "heap/member/c2VhbGVkLXRhYmxlL3Rlc3Qvb3AtMDAwMDAwMDg/LmFkZGVk/op-00000009", Value: "scalar/number/2", Occurrence: "op-00000009"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapTableIdentity, []factkey.Part{factkey.TermPart("path/sym9")}, "op-00000008").String(), Value: string(changed), Term: "path/sym9", Subject: "changed", Occurrence: "op-00000008"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapTableClosed, []factkey.Part{factkey.IdentityPart(changed)}, "op-00000008").String(), Value: "closed", Occurrence: "op-00000008"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapMember, []factkey.Part{factkey.IdentityPart(changed), factkey.EncodedOpaquePart(".original")}, "op-00000008").String(), Value: "scalar/number/1", Occurrence: "op-00000008"},
+		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapMember, []factkey.Part{factkey.IdentityPart(changed), factkey.EncodedOpaquePart(".added")}, "op-00000009").String(), Value: "scalar/number/2", Occurrence: "op-00000009"},
 	})
 
 	var deep, element, branch bool
@@ -131,7 +136,7 @@ func TestNativeFactIndexAnchorsTermsAndOccurrencesFromTheArtifact(t *testing.T) 
 			{Key: "value/path/sym2/op-00000003", Value: []byte("scalar/number/7")},
 			{Key: "value/path/sym5/op-00000004", Value: []byte("scalar/function/x")},
 			{Key: "value/path/sym9/op-00000005", Value: []byte("scalar/number/1")},
-			{Key: "heap/table-closed/aGVhcA/op-00000003", Value: []byte("closed")},
+			{Key: nativeTestClosedKey(), Value: []byte("closed")},
 		},
 		[]equation.Fact{{Key: "return/arity", Value: []byte("1")}},
 		[]equation.Fact{{Key: "claim/unproven/op-00000004", Value: []byte("no witness")}},
@@ -147,7 +152,7 @@ func TestNativeFactIndexAnchorsTermsAndOccurrencesFromTheArtifact(t *testing.T) 
 		// A hidden front display is not a source name, so the term stays unnamed.
 		{Lane: NativeLaneValues, Family: "value", Key: "value/path/sym9/op-00000005", Value: "scalar/number/1", Term: "path/sym9", Subject: "", Occurrence: "op-00000005", Trust: NativeTrustProven},
 		// An identity-addressed key still anchors on its equation coordinate.
-		{Lane: NativeLaneValues, Family: "heap", Key: "heap/table-closed/aGVhcA/op-00000003", Value: "closed", Term: "", Subject: "", Occurrence: "op-00000003", Trust: NativeTrustProven},
+		{Lane: NativeLaneValues, Family: "heap", Key: nativeTestClosedKey(), Value: "closed", Term: "", Subject: "", Occurrence: "op-00000003", Trust: NativeTrustProven},
 		// Outcome and diagnostic rows carry no value encoding, so they carry no
 		// proof provenance either.
 		{Lane: NativeLaneOutcomes, Family: "return", Key: "return/arity", Value: "1"},
@@ -232,7 +237,7 @@ func TestNativeFactIndexClassifiesProofProvenance(t *testing.T) {
 func TestNativeFactIndexOrdersRowsDeterministically(t *testing.T) {
 	values := []equation.Fact{
 		{Key: "value/path/sym2/op-00000003", Value: []byte("b")},
-		{Key: "heap/table-closed/aGVhcA/op-00000003", Value: []byte("closed")},
+		{Key: nativeTestClosedKey(), Value: []byte("closed")},
 		{Key: "value/path/sym2/op-00000003", Value: []byte("a")},
 	}
 	first := publishedNativeFacts(nativeTestArtifact(), values, nil, nil).Facts()
@@ -246,7 +251,7 @@ func TestNativeFactIndexOrdersRowsDeterministically(t *testing.T) {
 			t.Fatalf("row %d = %#v and %#v differ under a permuted input", index, first[index], second[index])
 		}
 	}
-	want := []string{"heap/table-closed/aGVhcA/op-00000003", "value/path/sym2/op-00000003", "value/path/sym2/op-00000003"}
+	want := []string{nativeTestClosedKey(), "value/path/sym2/op-00000003", "value/path/sym2/op-00000003"}
 	for index, key := range want {
 		if first[index].Key != key {
 			t.Fatalf("row %d key = %q, want %q", index, first[index].Key, key)
@@ -373,7 +378,8 @@ func TestCheckPublishesNativeFactsForACheckedModule(t *testing.T) {
 	}
 	var closed, constant bool
 	for _, fact := range result.Native.Facts() {
-		closed = closed || strings.HasPrefix(fact.Key, "heap/table-closed/") && fact.Value == "closed"
+		family, heapFact := factkey.Lookup(fact.Key)
+		closed = closed || heapFact && family.ID == factkey.FamilyHeapTableClosed && fact.Value == "closed"
 		constant = constant || fact.Lane == NativeLaneValues && fact.Subject == "config.retries" && fact.Value == "scalar/number/3"
 	}
 	if !closed || !constant {

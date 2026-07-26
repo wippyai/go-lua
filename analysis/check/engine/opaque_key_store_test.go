@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 )
 
 // TestClosedInventoryWithoutOpaqueStoreStillProvesAbsence pins the control: a
@@ -238,7 +239,8 @@ for _, key in ipairs(keys) do suites[key] = 1 end
 	}
 	rows := 0
 	for _, fact := range result.ValueFacts {
-		if !strings.HasPrefix(fact.Key, "heap/opaque-member-write/") {
+		family, ok := factkey.Lookup(fact.Key)
+		if !ok || family.ID != factkey.FamilyHeapOpaqueMemberWrite {
 			continue
 		}
 		rows++

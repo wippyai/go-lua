@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -22,6 +23,12 @@ func joinTestPartition(t *testing.T, guards []equation.Guard, facts ...equation.
 		t.Fatalf("partition: %v", err)
 	}
 	return partition
+}
+
+func joinTestHeapIdentity(term, operation, identity string, guards ...equation.Guard) equation.Fact {
+	fact := heapIdentityFact(term, operation, []byte(identity))
+	fact.Guards = guards
+	return fact
 }
 
 // TestArmWriteReachesPostDominatorAsUnion is the headline reconvergence case:
@@ -473,21 +480,21 @@ func TestInheritedSummaryKeepsEpochAuthority(t *testing.T) {
 func TestInheritedNameJoinsOnlyByAgreement(t *testing.T) {
 	agreeing := joinTestPartition(t, nil,
 		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
-		equation.Fact{Key: heapTableIdentityPrefix + "temp/1/op-00000001", Value: []byte("sealed-table/01/op-00000000")},
+		joinTestHeapIdentity("temp/1", "op-00000001", "sealed-table/01/op-00000000"),
 		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
-		equation.Fact{Key: heapTableIdentityPrefix + "temp/1/op-00000003", Value: []byte("sealed-table/01/op-00000000"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		joinTestHeapIdentity("temp/1", "op-00000003", "sealed-table/01/op-00000000", joinTestGuard("op-00000002", "true")),
 	)
-	identity, found := reconvergedEpochFact(heapTableIdentityPrefix, []byte("temp/1"), agreeing, joinAgreedValues)
+	identity, found := reconvergedFamilyEpochFact(factkey.HeapTableIdentity, []byte("temp/1"), agreeing, joinAgreedValues)
 	if !found || string(identity) != "sealed-table/01/op-00000000" {
 		t.Fatalf("agreeing edges inherited %q / %v, want the common identity", identity, found)
 	}
 	disagreeing := joinTestPartition(t, nil,
 		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
-		equation.Fact{Key: heapTableIdentityPrefix + "temp/1/op-00000001", Value: []byte("sealed-table/01/op-00000000")},
+		joinTestHeapIdentity("temp/1", "op-00000001", "sealed-table/01/op-00000000"),
 		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
-		equation.Fact{Key: heapTableIdentityPrefix + "temp/1/op-00000003", Value: []byte("sealed-table/01/op-00000004"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		joinTestHeapIdentity("temp/1", "op-00000003", "sealed-table/01/op-00000004", joinTestGuard("op-00000002", "true")),
 	)
-	if identity, found := reconvergedEpochFact(heapTableIdentityPrefix, []byte("temp/1"), disagreeing, joinAgreedValues); found {
+	if identity, found := reconvergedFamilyEpochFact(factkey.HeapTableIdentity, []byte("temp/1"), disagreeing, joinAgreedValues); found {
 		t.Fatalf("edges naming different identities inherited %q", identity)
 	}
 }

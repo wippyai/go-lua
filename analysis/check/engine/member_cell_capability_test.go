@@ -123,7 +123,7 @@ func TestContainerCellCallbacksReachesTheUnnamedSlot(t *testing.T) {
 	}
 	partition := memberCellPartition(t,
 		equation.Fact{Key: epochFactPrefix + "path/sym9/op-00000001", Value: []byte("op-00000001")},
-		equation.Fact{Key: heapTableIdentityPrefix + "path/sym9/op-00000001", Value: identity},
+		heapIdentityFact("path/sym9", "op-00000001", identity),
 		cell,
 		opaque,
 	)
@@ -152,7 +152,7 @@ func TestContainerCellCallbacksTerminatesOnASelfReachingContainer(t *testing.T) 
 	}
 	partition := memberCellPartition(t,
 		equation.Fact{Key: epochFactPrefix + "path/sym9/op-00000001", Value: []byte("op-00000001")},
-		equation.Fact{Key: heapTableIdentityPrefix + "path/sym9/op-00000001", Value: identity},
+		heapIdentityFact("path/sym9", "op-00000001", identity),
 		cell,
 	)
 	handles := containerCellCallbacks([]byte("path/sym9"), partition)

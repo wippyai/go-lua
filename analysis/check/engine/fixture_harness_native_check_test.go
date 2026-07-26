@@ -7,12 +7,19 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/lint"
 )
 
 func nativeAssertionRows() []nativeFactRow {
 	return []nativeFactRow{
-		{Module: "main", Fact: engine.NativeFact{Lane: engine.NativeLaneValues, Family: "heap", Key: "heap/table-closed/aGVhcA/op-00000003", Value: "closed", Occurrence: "op-00000003", Trust: engine.NativeTrustProven}},
+		{Module: "main", Fact: engine.NativeFact{
+			Lane: engine.NativeLaneValues, Family: "heap",
+			Key: factkey.BuildKey(
+				factkey.HeapTableClosed, []factkey.Part{factkey.IdentityPart([]byte("heap"))}, "op-00000003",
+			).String(),
+			Value: "closed", Occurrence: "op-00000003", Trust: engine.NativeTrustProven,
+		}},
 		{Module: "main", Fact: engine.NativeFact{Lane: engine.NativeLaneValues, Family: "value", Key: "value/path/sym2/op-00000003", Value: "scalar/number/7", Term: "path/sym2", Subject: "total", Occurrence: "op-00000003", Trust: engine.NativeTrustProven}},
 		{Module: "main", Fact: engine.NativeFact{Lane: engine.NativeLaneValues, Family: "value", Key: "value/path/sym5/op-00000004", Value: "scalar/number/9", Term: "path/sym5", Subject: "scaled", Occurrence: "op-00000004", Trust: engine.NativeTrustProven}},
 		{Module: "producer", Fact: engine.NativeFact{Lane: engine.NativeLaneOutcomes, Family: "return", Key: "return/arity", Value: "1"}},

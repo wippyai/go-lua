@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 )
 
 // TestKeyedIterationProvesTheEnumeratedSlotPresent pins the base of the key
@@ -35,7 +36,9 @@ end
 	}
 	rows := 0
 	for _, fact := range result.ValueFacts {
-		if strings.HasPrefix(fact.Key, "heap/key-presence/identity/") && string(fact.Value) == "proven" {
+		family, ok := factkey.Lookup(fact.Key)
+		parsed, parsedOK := family.ParseKey(fact.Key)
+		if ok && parsedOK && family.ID == factkey.FamilyHeapKeyPresence && parsed.Subject.TaggedIdentity() && string(fact.Value) == "proven" {
 			rows++
 		}
 	}
@@ -296,7 +299,8 @@ local names = keys_of(counts)
 	}
 	relation, application := 0, 0
 	for _, fact := range result.ValueFacts {
-		if strings.HasPrefix(fact.Key, "heap/keys-of/") {
+		family, heapFact := factkey.Lookup(fact.Key)
+		if heapFact && family.ID == factkey.FamilyHeapKeysOf {
 			relation++
 		}
 		if strings.HasPrefix(fact.Key, "call-keys-of/") {

@@ -7,7 +7,6 @@ package engine
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -277,7 +276,7 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 			strings.HasPrefix(fact.Key, "effect.lifecycle.resource/") {
 			keep(fact)
 		}
-		if strings.HasPrefix(fact.Key, heapTableIdentityPrefix) && matchBoundary(fact.Key) && len(fact.Value) != 0 {
+		if _, tableIdentity := factkey.HeapTableIdentity.ParseKey(fact.Key); tableIdentity && matchBoundary(fact.Key) && len(fact.Value) != 0 {
 			identities[string(fact.Value)] = append([]byte(nil), fact.Value...)
 		}
 	}
@@ -347,47 +346,25 @@ func lexicalSCCCutLast(key string) (string, string, bool) {
 // declared family says which of its positions name allocations, so a fact that
 // states its container as a discriminator belongs to that container as much as
 // one that states it as the subject, and a term-spelled subject names a path
-// rather than an allocation and is reached through the boundary instead. An
-// undeclared family under the heap root keeps the positional reading: the
-// segment after the family, which is where every such family writes its
-// subject. A segment that is no identity at all decodes to bytes no allocation
-// matches, which is why reading it costs nothing — the worklist admits a fact
-// only when a decoded identity is one it already follows.
+// rather than an allocation and is reached through the boundary instead.
+// Every engine heap family is declared by factkey, so an undeclared key is not
+// heap vocabulary and names no allocation here.
 func lexicalSCCHeapAllocations(key string) [][]byte {
 	if allocations, declared := factkey.Allocations(key); declared {
 		return allocations
 	}
-	rest, heap := strings.CutPrefix(key, heapNamespacePrefix)
-	if !heap {
-		return nil
-	}
-	_, rest, named := strings.Cut(rest, "/")
-	if !named {
-		return nil
-	}
-	if strings.HasPrefix(rest, heapSubjectTermPrefix) {
-		return nil
-	}
-	rest = strings.TrimPrefix(rest, heapSubjectIdentityPrefix)
-	encoded, _, found := strings.Cut(rest, "/")
-	if !found || encoded == "" {
-		return nil
-	}
-	identity, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil || len(identity) == 0 {
-		return nil
-	}
-	return [][]byte{identity}
+	return nil
 }
 
 // lexicalSCCHeapChildIdentity follows only explicit member-identity and
 // member-cell publications.  The worklist is finite because every identity
 // is frozen by the compiled body or supplied through the certified entry.
 func lexicalSCCHeapChildIdentity(fact equation.Fact) ([]byte, bool) {
-	if strings.HasPrefix(fact.Key, heapMemberIdentityPrefix) && len(fact.Value) != 0 {
+	family, declared := factkey.Lookup(fact.Key)
+	if declared && family.ID == factkey.FamilyHeapMemberIdentity && len(fact.Value) != 0 {
 		return append([]byte(nil), fact.Value...), true
 	}
-	if !strings.HasPrefix(fact.Key, memberCellPrefix) {
+	if !declared || family.ID != factkey.FamilyHeapMemberCell {
 		return nil, false
 	}
 	var cell memberCellWire

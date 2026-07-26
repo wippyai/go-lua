@@ -1,11 +1,10 @@
 package engine
 
 import (
-	"encoding/base64"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
-	"github.com/wippyai/go-lua/analysis/ir/wir"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 )
 
 // A fact states what it is about in the positions its family declares. Some
@@ -15,23 +14,19 @@ import (
 // to its boundary exactly as it owes the ones whose subject is the term itself;
 // reading the declaration rather than the position is what reaches them.
 
-func encodedTerm(symbol wir.SymbolID) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(boundaryTerm(symbol)))
-}
-
 // TestTermSpelledSubjectIsCarriedForItsBoundary pins the case a positional read
 // cannot reach: an index proof over a container the guard could only name by
 // path, qualified by the index it proves. The container is the boundary's own
 // term, so the proof is the boundary's own fact.
 func TestTermSpelledSubjectIsCarriedForItsBoundary(t *testing.T) {
-	container := encodedTerm(2)
-	index := base64.RawURLEncoding.EncodeToString([]byte("path/sym7"))
+	container := []byte(boundaryTerm(2))
+	index := []byte("path/sym7")
 	keys := []string{
-		heapIndexPresencePrefix + heapSubjectTermPrefix + container + "/" + index + "/op-00000001",
-		heapKeyPresencePrefix + heapSubjectTermPrefix + container + "/LmE/op-00000001",
-		heapLengthFloorPrefix + heapSubjectTermPrefix + container + "/op-00000001",
-		heapTableEscapePrefix + heapSubjectTermPrefix + container + "/op-00000001",
-		heapIndexRevokePrefix + heapSubjectTermPrefix + container + "/op-00000001",
+		factkey.BuildKey(factkey.HeapIndexPresence, []factkey.Part{factkey.TaggedTermPart(container), factkey.EncodedTermPart(index)}, "op-00000001").String(),
+		factkey.BuildKey(factkey.HeapKeyPresence, []factkey.Part{factkey.TaggedTermPart(container), factkey.EncodedTermPart([]byte(".a"))}, "op-00000001").String(),
+		factkey.BuildKey(factkey.HeapLengthFloor, []factkey.Part{factkey.TaggedTermPart(container)}, "op-00000001").String(),
+		factkey.BuildKey(factkey.HeapTableEscape, []factkey.Part{factkey.TaggedTermPart(container)}, "op-00000001").String(),
+		factkey.BuildKey(factkey.HeapIndexRevoke, []factkey.Part{factkey.TaggedTermPart(container)}, "op-00000001").String(),
 	}
 	closure := equation.OutputClosure{}
 	for _, key := range keys {
@@ -49,9 +44,11 @@ func TestTermSpelledSubjectIsCarriedForItsBoundary(t *testing.T) {
 // resolves. An index bound states the index as its subject and the container it
 // bounds as a discriminator, so the boundary is named by the qualifier.
 func TestQualifierNamedTermIsCarried(t *testing.T) {
-	container := encodedTerm(2)
-	index := base64.RawURLEncoding.EncodeToString([]byte("path/sym7"))
-	key := heapIndexUpperPrefix + index + "/" + container + "/op-00000001"
+	container := []byte(boundaryTerm(2))
+	index := []byte("path/sym7")
+	key := factkey.BuildKey(
+		factkey.HeapIndexUpper, []factkey.Part{factkey.EncodedTermPart(index), factkey.EncodedTermPart(container)}, "op-00000001",
+	).String()
 	kept := summaryKeys(lexicalSCCSummary(sccBoundary(2), equation.OutputClosure{
 		Values: []equation.Fact{{Key: key, Value: []byte("proven")}},
 	}))
@@ -66,7 +63,9 @@ func TestQualifierNamedTermIsCarried(t *testing.T) {
 // owes its origin to the summary; a positional read of the same key sees the
 // encoding rather than the term and reaches nothing.
 func TestEncodedTermSubjectIsCarriedForItsBoundary(t *testing.T) {
-	key := heapKeyedReadPrefix + encodedTerm(2) + "/op-00000001"
+	key := factkey.BuildKey(
+		factkey.HeapKeyedRead, []factkey.Part{factkey.EncodedTermPart([]byte(boundaryTerm(2)))}, "op-00000001",
+	).String()
 	kept := summaryKeys(lexicalSCCSummary(sccBoundary(2), equation.OutputClosure{
 		Values: []equation.Fact{{Key: key, Value: []byte("alloc-1")}},
 	}))
@@ -78,7 +77,9 @@ func TestEncodedTermSubjectIsCarriedForItsBoundary(t *testing.T) {
 // TestEncodedTermSubjectKeepsForeignTermsOut pins the exclusion the same
 // declaration owes: a keyed read of a term this boundary does not own stays out.
 func TestEncodedTermSubjectKeepsForeignTermsOut(t *testing.T) {
-	key := heapKeyedReadPrefix + encodedTerm(9) + "/op-00000001"
+	key := factkey.BuildKey(
+		factkey.HeapKeyedRead, []factkey.Part{factkey.EncodedTermPart([]byte(boundaryTerm(9)))}, "op-00000001",
+	).String()
 	kept := summaryKeys(lexicalSCCSummary(sccBoundary(2), equation.OutputClosure{
 		Values: []equation.Fact{{Key: key, Value: []byte("alloc-1")}},
 	}))
@@ -91,12 +92,12 @@ func TestEncodedTermSubjectKeepsForeignTermsOut(t *testing.T) {
 // weaken the exclusion. A term-spelled subject or qualifier naming something
 // this boundary does not own stays out, in every position.
 func TestSchemaKeepsForeignTermsOut(t *testing.T) {
-	foreign := encodedTerm(9)
-	index := base64.RawURLEncoding.EncodeToString([]byte("path/sym7"))
+	foreign := []byte(boundaryTerm(9))
+	index := []byte("path/sym7")
 	keys := []string{
-		heapIndexPresencePrefix + heapSubjectTermPrefix + foreign + "/" + index + "/op-00000001",
-		heapLengthFloorPrefix + heapSubjectTermPrefix + foreign + "/op-00000001",
-		heapIndexUpperPrefix + index + "/" + foreign + "/op-00000001",
+		factkey.BuildKey(factkey.HeapIndexPresence, []factkey.Part{factkey.TaggedTermPart(foreign), factkey.EncodedTermPart(index)}, "op-00000001").String(),
+		factkey.BuildKey(factkey.HeapLengthFloor, []factkey.Part{factkey.TaggedTermPart(foreign)}, "op-00000001").String(),
+		factkey.BuildKey(factkey.HeapIndexUpper, []factkey.Part{factkey.EncodedTermPart(index), factkey.EncodedTermPart(foreign)}, "op-00000001").String(),
 	}
 	closure := equation.OutputClosure{}
 	for _, key := range keys {

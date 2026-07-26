@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/decision"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric"
@@ -526,7 +527,9 @@ func indexRelationFacts(predicates []branchPredicateWire, differences []branchDi
 			continue
 		}
 		facts = append(facts, equation.Fact{
-			Key:    heapIndexRelationPrefix + fmt.Sprintf("p-%08d", len(facts)) + "/" + operationName,
+			Key: factkey.BuildKey(factkey.HeapIndexRelation, []factkey.Part{
+				factkey.OpaquePart(fmt.Sprintf("p-%08d", len(facts))),
+			}, operationName).String(),
 			Value:  append([]byte(branchPredicatePrefix), encoded...),
 			Guards: guards,
 		})
@@ -537,7 +540,9 @@ func indexRelationFacts(predicates []branchPredicateWire, differences []branchDi
 			continue
 		}
 		facts = append(facts, equation.Fact{
-			Key:    heapIndexRelationPrefix + fmt.Sprintf("d-%08d", len(facts)) + "/" + operationName,
+			Key: factkey.BuildKey(factkey.HeapIndexRelation, []factkey.Part{
+				factkey.OpaquePart(fmt.Sprintf("d-%08d", len(facts))),
+			}, operationName).String(),
 			Value:  append([]byte(branchDiffPrefix), encoded...),
 			Guards: guards,
 		})

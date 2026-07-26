@@ -106,45 +106,7 @@ const numericForInductionPrefix = "numeric-for-induction/"
 const correlationConeValuePrefix = "correlation-cone/value/"
 const returnTupleTruePrefix = "return-tuple-true/"
 
-// Heap facts are deliberately keyed by a sealed allocation identity, never by
-// a source path.  Paths are merely lenses: assignments copy an identity and
-// member/index writes update the object reached by every such lens.  Keeping
-// the identity separate from a shape avoids letting a stale root.field value
-// outrank a write made through an alias.
-// heapNamespacePrefix roots every fact published about an allocation. The
-// families below all live under it, and a consumer that follows allocations
-// rather than families reads this root instead of enumerating them.
-const heapNamespacePrefix = "heap/"
-
-// A heap subject may state its own kind before naming it. The identity spelling
-// names the allocation a fact is about; the term spelling names the path whose
-// value currently occupies one, which is not itself an allocation.
 const (
-	heapSubjectIdentityPrefix = "identity/"
-	heapSubjectTermPrefix     = "term/"
-)
-
-const (
-	heapTableIdentityPrefix    = "heap/table-identity/"
-	heapTableClosedPrefix      = "heap/table-closed/"
-	heapMemberPrefix           = "heap/member/"
-	heapMemberIdentityPrefix   = "heap/member-identity/"
-	heapStaticReplacePrefix    = "heap/static-replace/"
-	memberCellPrefix           = "heap/member-cell/"
-	heapMemberOriginPrefix     = "heap/member-origin/"
-	heapMetaAttachedPrefix     = "heap/meta-attached/"
-	heapMetaIdentityPrefix     = "heap/meta-identity/"
-	heapMetaNewIndexPrefix     = "heap/meta-newindex/"
-	heapExternalCallbackPrefix = "heap/external-callback/"
-	heapIndexPresencePrefix    = "heap/index-presence/"
-	// heapKeyPresencePrefix carries the presence a keyed iteration establishes:
-	// the loop's key variable names a slot the iteration itself enumerated, so
-	// the container holds a value there. It is a distinct evidence family from
-	// the guard-derived in-range presence because it answers to a different
-	// invalidation. A guard bounds an index against a border; an enumeration
-	// names slots, so every later publication through the same identity --
-	// static as well as dynamic -- leaves it stale.
-	heapKeyPresencePrefix = "heap/key-presence/"
 	// iteratorKeySourcePrefix names the container an active keyed iteration
 	// enumerates. The key/element witnesses transport the iteration's types;
 	// this row transports the term those types were read from, so the loop
@@ -154,51 +116,22 @@ const (
 	// enumerated from. The presence lane states what one key proves about one
 	// container; this row states where the key itself came from, so a container
 	// the keys are collected into can carry the same origin to its own readers.
-	iterationKeyOfPrefix = "iteration/key-of/"
-	// heapKeysOfPrefix carries the relation between an array and the container
-	// whose keys its elements are. It is established one accounted write at a
-	// time: the row names the write's operation, so a write the relation never
-	// accounted for is what withholds it.
-	heapKeysOfPrefix = "heap/keys-of/"
-	// heapKeyedReadPrefix names the container a term was read from at a key this
-	// analysis never resolved. The read answers with the container's keyed
-	// component, so a write through the term reaches a slot only that component
-	// describes, and the row is what carries the write back to it.
-	heapKeyedReadPrefix = "heap/keyed-read/"
-	// heapKeyedElementPrefix carries an element written into whatever a
-	// container holds at an unresolved key. The keyed component's value is the
-	// array those elements prove, so a write leaving no type here withholds the
-	// component rather than leaving it at the store's own empty literal.
-	heapKeyedElementPrefix   = "heap/keyed-element/"
+	iterationKeyOfPrefix     = "iteration/key-of/"
 	keyedElementUnclassified = "unclassified"
 	// callKeysOfPrefix carries the relation across one application: the callee
 	// states it against a formal, and this row states it against the argument
 	// the caller bound to that formal.
-	callKeysOfPrefix      = "call-keys-of/"
-	heapIndexRevokePrefix = "heap/index-revoke/"
-	heapIndexLowerPrefix  = "heap/index-lower/"
-	heapIndexUpperPrefix  = "heap/index-upper/"
-	// heapIndexRelationPrefix carries a branch's true-edge relations forward in
-	// their normalized form. The boolean index pairs name only the terms the
-	// branch itself mentioned; an index term computed inside the arm is
-	// discharged against these relations instead.
-	heapIndexRelationPrefix = "heap/index-relation/"
+	callKeysOfPrefix = "call-keys-of/"
 	// affineIndexPrefix names the affine identity of a computed index term:
 	// the term equals a base path plus a constant offset.
-	affineIndexPrefix     = "affine-index/"
-	heapLengthFloorPrefix = "heap/length-floor/"
-	heapTableEscapePrefix = "heap/table-escape/"
-	// heapOpaqueMemberWritePrefix marks an identity whose member publication is
-	// no longer a complete slot inventory: a store addressed a key that never
-	// resolved to a member suffix.
-	heapOpaqueMemberWritePrefix = "heap/opaque-member-write/"
-	indexReadDisplayPrefix      = "index-read-display/"
-	indexReadScalarPrefix       = "index-read-scalar/"
-	typedOptionalReadPrefix     = "typed-optional-read/"
-	typePredicateTargetPrefix   = "type-predicate-target/"
-	typePredicatePairPrefix     = "type-predicate-pair/"
-	typePredicateValuePrefix    = "type-predicate-value/"
-	callTypePredicatePrefix     = "call-type-predicate/"
+	affineIndexPrefix         = "affine-index/"
+	indexReadDisplayPrefix    = "index-read-display/"
+	indexReadScalarPrefix     = "index-read-scalar/"
+	typedOptionalReadPrefix   = "typed-optional-read/"
+	typePredicateTargetPrefix = "type-predicate-target/"
+	typePredicatePairPrefix   = "type-predicate-pair/"
+	typePredicateValuePrefix  = "type-predicate-value/"
+	callTypePredicatePrefix   = "call-type-predicate/"
 	// typePredicateRelationPrefix names the result term of a call to a body that
 	// exports a one-sided type predicate. The value is the normalized descriptor
 	// a branch reads, instantiated at the argument that call passed.
@@ -10409,7 +10342,9 @@ func projectExternalCallbackReturnFacts(operation equation.BoundEquation, child 
 				seen[key] = true
 			}
 			for _, fact := range closure.Values {
-				if strings.HasPrefix(fact.Key, heapExternalCallbackPrefix+base64.RawURLEncoding.EncodeToString(identity)+"/") && !seen[fact.Key] {
+				parsed, ok := factkey.HeapExternalCallback.ParseKey(fact.Key)
+				decoded, matches := parsed.Subject.Decode(nil)
+				if ok && matches && bytes.Equal(decoded, identity) && !seen[fact.Key] {
 					facts = append(facts, cloneFact(fact))
 					seen[fact.Key] = true
 				}
@@ -10515,11 +10450,11 @@ func projectReturnKeysOf(operation equation.BoundEquation, child front.Compilati
 }
 
 func closureTableIdentity(term []byte, values []equation.Fact) ([]byte, bool) {
-	prefix := heapTableIdentityPrefix + string(term) + "/"
 	var identity []byte
 	latest := ""
 	for _, fact := range values {
-		if strings.HasPrefix(fact.Key, prefix) && (identity == nil || fact.Key > latest) {
+		parsed, ok := factkey.HeapTableIdentity.ParseKey(fact.Key)
+		if ok && parsed.Subject.Spelling() == string(term) && (identity == nil || fact.Key > latest) {
 			identity, latest = append([]byte(nil), fact.Value...), fact.Key
 		}
 	}
@@ -10527,9 +10462,10 @@ func closureTableIdentity(term []byte, values []equation.Fact) ([]byte, bool) {
 }
 
 func heapHasExternalCallbackFacts(identity []byte, values []equation.Fact) bool {
-	prefix := heapExternalCallbackPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	for _, fact := range values {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "may-mutate" {
+		parsed, ok := factkey.HeapExternalCallback.ParseKey(fact.Key)
+		decoded, matches := parsed.Subject.Decode(nil)
+		if ok && matches && bytes.Equal(decoded, identity) && string(fact.Value) == "may-mutate" {
 			return true
 		}
 	}
@@ -12233,7 +12169,6 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		{summaryTypePrefix, joinSummaryTypes},
 		{methodReturnSummaryPrefix, joinSummaryTypes},
 		{"select/origin/", joinAgreedValues},
-		{heapTableIdentityPrefix, joinAgreedValues},
 		{"local-call-result/", joinAgreedValues},
 		{indexReadDisplayPrefix, joinAgreedValues},
 		{indexReadScalarPrefix, joinAgreedValues},
@@ -12251,6 +12186,12 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			// after the result record has been replaced.
 			values = append(values, equation.Fact{Key: family.prefix + target + "/" + operation.Target.Name, Value: nil})
 		}
+	}
+	if inherited, ok := reconvergedFamilyEpochFact(factkey.HeapTableIdentity, operands["value"], partition, joinAgreedValues); ok {
+		values = append(values, equation.Fact{
+			Key:   factkey.BuildKey(factkey.HeapTableIdentity, []factkey.Part{factkey.TermPart(target)}, operation.Target.Name).String(),
+			Value: inherited,
+		})
 	}
 	if !summaryInherited {
 		if summary, known := typedPathType(operands["value"], partition); known {
@@ -13138,7 +13079,7 @@ func heapSequenceShape(term []byte, partition equation.Partition) (shapefact.Tab
 		members[member.Suffix] = member
 	}
 	for suffix := range heapMemberInventory(identity, partition) {
-		value, current := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition)
+		value, current := heapMemberCurrent(factkey.HeapMember, identity, suffix, partition)
 		if !current || len(value) == 0 {
 			return shapefact.Table{}, false
 		}
@@ -13216,18 +13157,21 @@ func heapOpaqueMemberCallables(identity []byte, partition equation.Partition) []
 // their published form, so a boundary that carries the incomplete inventory
 // across also carries what those stores placed in the container.
 func heapOpaqueMemberWriteRows(identity []byte, partition equation.Partition) []opaqueMemberWriteWire {
-	prefix := heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	rows := make([]opaqueMemberWriteWire, 0)
 	// The marker is a may-fact: one arm of a decision storing at an unresolved
 	// key leaves the inventory incomplete at every point past that decision,
 	// because the arm that stored is one of the executions arriving there. It is
 	// therefore read over every published row rather than over the rows one
 	// guard cube admits, which would let a store survive only inside its own arm.
-	for _, fact := range partition.AllValues() {
-		if !strings.HasPrefix(fact.Key, prefix) {
-			continue
+	values := partition.AllFamilyValues(factkey.BuildKey(
+		factkey.HeapOpaqueMemberWrite, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
 		}
-		if wire, ok := decodeOpaqueMemberWrite(fact.Value); ok {
+		if wire, ok := decodeOpaqueMemberWrite(fact.Payload); ok {
 			rows = append(rows, wire)
 		}
 	}
@@ -13252,7 +13196,10 @@ func heapOpaqueMemberWriteFact(identity []byte, operation string, handles []clos
 	if err != nil {
 		return equation.Fact{}, err
 	}
-	return equation.Fact{Key: heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: encoded}, nil
+	return equation.Fact{
+		Key:   factkey.BuildKey(factkey.HeapOpaqueMemberWrite, []factkey.Part{factkey.IdentityPart(identity)}, operation).String(),
+		Value: encoded,
+	}, nil
 }
 
 // keyedStoreClassification records what a store at an unresolved key does
@@ -13379,7 +13326,7 @@ func publishedRowsPrefix(prefix string, partition equation.Partition) []equation
 // this analysis never resolved.
 func keyedReadFact(term []byte, operation string, identity []byte) equation.Fact {
 	return equation.Fact{
-		Key:   heapKeyedReadPrefix + base64.RawURLEncoding.EncodeToString(term) + "/" + operation,
+		Key:   factkey.BuildKey(factkey.HeapKeyedRead, []factkey.Part{factkey.EncodedTermPart(term)}, operation).String(),
 		Value: append([]byte(nil), identity...),
 	}
 }
@@ -13388,17 +13335,23 @@ func keyedReadFact(term []byte, operation string, identity []byte) equation.Fact
 // analysis never resolved. A term rebound after that read holds some other
 // value, so its origin no longer describes it.
 func keyedReadContainer(term []byte, partition equation.Partition) ([]byte, bool) {
-	prefix := heapKeyedReadPrefix + base64.RawURLEncoding.EncodeToString(term) + "/"
 	latest, identity := "", []byte(nil)
-	for _, fact := range partition.ValuesPrefix(prefix) {
-		if fact.Key > latest {
-			latest, identity = fact.Key, fact.Value
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapKeyedRead, []factkey.Part{factkey.EncodedTermPart(term)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if fact.Occurrence > latest {
+			latest, identity = fact.Occurrence, fact.Payload
 		}
 	}
 	if latest == "" || len(identity) == 0 {
 		return nil, false
 	}
-	if epoch, versioned := currentEpoch(term, partition); versioned && epoch > factOperation(latest) {
+	if epoch, versioned := currentEpoch(term, partition); versioned && epoch > latest {
 		return nil, false
 	}
 	return identity, true
@@ -13410,7 +13363,7 @@ func keyedReadContainer(term []byte, partition equation.Partition) ([]byte, bool
 // component instead of leaving it at the store's own value.
 func keyedElementFact(identity []byte, operation string, element []byte, partition equation.Partition) equation.Fact {
 	fact := equation.Fact{
-		Key:   heapKeyedElementPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation,
+		Key:   factkey.BuildKey(factkey.HeapKeyedElement, []factkey.Part{factkey.IdentityPart(identity)}, operation).String(),
 		Value: []byte(keyedElementUnclassified),
 	}
 	resolved, err := resolveCurrentValue(element, partition)
@@ -13433,19 +13386,22 @@ func keyedElementFact(identity []byte, operation string, element []byte, partiti
 // unresolved-key slots. One write that carried no type leaves the whole set
 // unclassified: the slot holds a value nothing describes.
 func keyedElementWrites(identity []byte, partition equation.Partition) ([]typ.Type, bool, bool) {
-	rows := publishedRowsPrefix(heapKeyedElementPrefix+base64.RawURLEncoding.EncodeToString(identity)+"/", partition)
-	if len(rows) == 0 {
-		return nil, true, false
-	}
-	elements := make([]typ.Type, 0, len(rows))
-	for _, fact := range rows {
-		elementType, known := shapefact.DecodeTarget(fact.Value)
+	values := partition.AllFamilyValues(factkey.BuildKey(
+		factkey.HeapKeyedElement, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	var elements []typ.Type
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		elementType, known := shapefact.DecodeTarget(fact.Payload)
 		if !known || elementType == nil {
 			return nil, false, true
 		}
 		elements = append(elements, elementType)
 	}
-	return elements, true, true
+	return elements, true, len(elements) != 0
 }
 
 // keyedReadReachedUnaccountedCall reports that a value read from one of this
@@ -13454,15 +13410,18 @@ func keyedElementWrites(identity []byte, partition equation.Partition) ([]typ.Ty
 // operation; a call that publishes none may have placed anything in the slot,
 // which leaves every store's own value no longer describing it.
 func keyedReadReachedUnaccountedCall(identity []byte, partition equation.Partition) bool {
-	encoded := base64.RawURLEncoding.EncodeToString(identity)
 	reads := make(map[string]bool)
-	for _, fact := range publishedRowsPrefix(heapKeyedReadPrefix, partition) {
-		if !bytes.Equal(fact.Value, identity) {
+	values := partition.AllFamilyValues(factkey.BuildKey(factkey.HeapKeyedRead, nil, ""))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if !bytes.Equal(fact.Payload, identity) {
 			continue
 		}
-		term, _, ok := strings.Cut(strings.TrimPrefix(fact.Key, heapKeyedReadPrefix), "/")
-		decoded, err := base64.RawURLEncoding.DecodeString(term)
-		if !ok || err != nil {
+		decoded, valid := fact.Subject.Decode(nil)
+		if !valid {
 			continue
 		}
 		reads[string(decoded)] = true
@@ -13471,8 +13430,15 @@ func keyedReadReachedUnaccountedCall(identity []byte, partition equation.Partiti
 		return false
 	}
 	accounted := make(map[string]bool)
-	for _, fact := range publishedRowsPrefix(heapKeyedElementPrefix+encoded+"/", partition) {
-		accounted[factOperation(fact.Key)] = true
+	elements := partition.AllFamilyValues(factkey.BuildKey(
+		factkey.HeapKeyedElement, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := elements.Next()
+		if !ok {
+			break
+		}
+		accounted[fact.Occurrence] = true
 	}
 	for _, fact := range publishedRowsPrefix("call-argument/", partition) {
 		if !reads[string(fact.Value)] {
@@ -14399,7 +14365,7 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 			// metatable, so retain only Top at the routed member: proving the
 			// direct table write would be unsound, while a concrete forwarded value
 			// would overstate the incomplete metamethod model.
-			if _, present := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); !present && heapTableClosed(identity, partition) {
+			if _, present := heapMemberCurrent(factkey.HeapMember, identity, suffix, partition); !present && heapTableClosed(identity, partition) {
 				if routed, found := heapMetaNewIndexCurrent(identity, partition); found {
 					writeIdentity = routed
 					value = []byte("scalar/top")
@@ -14474,7 +14440,9 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 	// holds no sequence position and leaves those proofs standing.
 	if container, indexed := staticIndexWriteContainer(operands["target"]); indexed {
 		result.Closure.Values = append(result.Closure.Values, equation.Fact{
-			Key:   heapIndexRevokePrefix + heapIndexSubject(container, partition) + "/" + operation.Target.Name,
+			Key: factkey.BuildKey(factkey.HeapIndexRevoke, []factkey.Part{
+				heapIndexSubject(container, partition),
+			}, operation.Target.Name).String(),
 			Value: []byte("revoked"),
 		})
 	}
@@ -14577,12 +14545,12 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 			values = append(values, keyedReadFact(operands["target"], operation.Target.Name, identity))
 		}
 		if keyErr == nil && exact && !opaque {
-			if member, found := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); found {
+			if member, found := heapMemberCurrent(factkey.HeapMember, identity, suffix, partition); found {
 				values[0].Value = member
 			} else if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) && !heapHasExternalCallback(identity, partition) {
 				values[0].Value = []byte("scalar/nil")
 			}
-			if memberIdentity, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, suffix, partition); found {
+			if memberIdentity, found := heapMemberCurrent(factkey.HeapMemberIdentity, identity, suffix, partition); found {
 				values = append(values, heapIdentityFact(target, operation.Target.Name, memberIdentity))
 			}
 		}
@@ -14801,11 +14769,11 @@ func castTargetWitness(term []byte, partition equation.Partition) (typ.Type, boo
 // heapIndexSubject binds an index proof to the sealed table identity when one
 // exists. Falling back to the exact term remains conservative: no unproven
 // alias can inherit a path-local proof.
-func heapIndexSubject(container []byte, partition equation.Partition) string {
+func heapIndexSubject(container []byte, partition equation.Partition) factkey.Part {
 	if identity, found := tableIdentityForTerm(container, partition); found {
-		return heapSubjectIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity)
+		return factkey.TaggedIdentityPart(identity)
 	}
-	return heapSubjectTermPrefix + base64.RawURLEncoding.EncodeToString(container)
+	return factkey.TaggedTermPart(container)
 }
 
 // indexPresenceProven accepts only a current guarded proof for this container
@@ -14814,11 +14782,17 @@ func heapIndexSubject(container []byte, partition equation.Partition) string {
 // against the same guard's relations.
 func indexPresenceProven(container, index []byte, consumer string, partition equation.Partition) bool {
 	subject := heapIndexSubject(container, partition)
-	prefix := heapIndexPresencePrefix + subject + "/" + base64.RawURLEncoding.EncodeToString(index) + "/"
 	proof := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "proven" && fact.Key > proof {
-			proof = fact.Key
+	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapIndexPresence, []factkey.Part{
+		subject, factkey.EncodedTermPart(index),
+	}, ""))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "proven" && fact.Occurrence > proof {
+			proof = fact.Occurrence
 		}
 	}
 	if proof == "" {
@@ -14836,10 +14810,10 @@ func indexPresenceProven(container, index []byte, consumer string, partition equ
 	// this read that a previous trip performed: those run before the proof is
 	// established again, not after it, and the proof this read consumes is the
 	// one the current trip re-published.
-	if epoch, versioned := currentEpoch(index, partition); versioned && epoch > factOperation(proof) && (consumer == "" || epoch <= consumer) {
+	if epoch, versioned := currentEpoch(index, partition); versioned && epoch > proof && (consumer == "" || epoch <= consumer) {
 		return false
 	}
-	if revoked(subject, factOperation(proof), partition) {
+	if revoked(subject, proof, partition) {
 		return false
 	}
 	return true
@@ -14865,8 +14839,9 @@ func keyIterationPresenceFacts(source []byte, key, operation string, partition e
 		return nil
 	}
 	return []equation.Fact{{
-		Key: heapKeyPresencePrefix + heapIndexSubject(source, partition) + "/" +
-			base64.RawURLEncoding.EncodeToString([]byte(key)) + "/" + operation,
+		Key: factkey.BuildKey(factkey.HeapKeyPresence, []factkey.Part{
+			heapIndexSubject(source, partition), factkey.EncodedTermPart([]byte(key)),
+		}, operation).String(),
 		Value: []byte("proven"),
 	}}
 }
@@ -14907,7 +14882,7 @@ func iterationKeyOfContainer(term []byte, partition equation.Partition) ([]byte,
 // that leaves none is exactly what withholds it.
 func heapKeysOfFact(identity, source []byte, operation string) equation.Fact {
 	return equation.Fact{
-		Key:   heapKeysOfPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation,
+		Key:   factkey.BuildKey(factkey.HeapKeysOf, []factkey.Part{factkey.IdentityPart(identity)}, operation).String(),
 		Value: append([]byte(nil), source...),
 	}
 }
@@ -14927,10 +14902,14 @@ func arrayKeysOfContainer(identity []byte, partition equation.Partition) (keysOf
 	if !related {
 		return keysOfOrigin{}, false
 	}
-	encoded := base64.RawURLEncoding.EncodeToString(identity)
-	for _, family := range []string{heapMemberPrefix, memberCellPrefix, heapStaticReplacePrefix} {
-		for _, fact := range partition.ValuesPrefix(family + encoded + "/") {
-			if !origin.Accounted[factOperation(fact.Key)] {
+	for _, family := range []factkey.Family{factkey.HeapMember, factkey.HeapMemberCell, factkey.HeapStaticReplace} {
+		values := partition.FamilyValues(factkey.BuildKey(family, []factkey.Part{factkey.IdentityPart(identity)}, ""))
+		for {
+			fact, ok := values.Next()
+			if !ok {
+				break
+			}
+			if !origin.Accounted[fact.Occurrence] {
 				return keysOfOrigin{}, false
 			}
 		}
@@ -14992,18 +14971,25 @@ func containerReachedUnstatedCallAfter(container []byte, established string, par
 // naming different containers describe a mixture no single relation states.
 func heapKeysOfOrigin(identity []byte, partition equation.Partition) (keysOfOrigin, bool) {
 	origin := keysOfOrigin{Accounted: make(map[string]bool)}
-	for _, fact := range partition.ValuesPrefix(heapKeysOfPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/") {
-		if len(fact.Value) == 0 {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapKeysOf, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if len(fact.Payload) == 0 {
 			return keysOfOrigin{}, false
 		}
-		operation := factOperation(fact.Key)
+		operation := fact.Occurrence
 		origin.Accounted[operation] = true
 		if origin.Established == "" || operation < origin.Established {
 			origin.Established = operation
 		}
 		if origin.Container == nil {
-			origin.Container = append([]byte(nil), fact.Value...)
-		} else if !bytes.Equal(origin.Container, fact.Value) {
+			origin.Container = append([]byte(nil), fact.Payload...)
+		} else if !bytes.Equal(origin.Container, fact.Payload) {
 			return keysOfOrigin{}, false
 		}
 	}
@@ -15071,17 +15057,23 @@ func keyIterationPresenceProven(container, index []byte, partition equation.Part
 		return false
 	}
 	subject := heapIndexSubject(container, partition)
-	prefix := heapKeyPresencePrefix + subject + "/" + base64.RawURLEncoding.EncodeToString(index) + "/"
 	proof := ""
-	for _, fact := range partition.ValuesPrefix(prefix) {
-		if string(fact.Value) == "proven" && fact.Key > proof {
-			proof = fact.Key
+	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapKeyPresence, []factkey.Part{
+		subject, factkey.EncodedTermPart(index),
+	}, ""))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "proven" && fact.Occurrence > proof {
+			proof = fact.Occurrence
 		}
 	}
 	if proof == "" {
 		return false
 	}
-	provenAt := factOperation(proof)
+	provenAt := proof
 	if epoch, versioned := currentEpoch(index, partition); versioned && epoch > provenAt {
 		return false
 	}
@@ -15127,10 +15119,16 @@ func unverifiedCallAfter(container []byte, operation string, partition equation.
 // is a way the live inventory can differ from the one an earlier enumeration
 // observed.
 func heapInventoryChangedAfter(identity []byte, operation string, partition equation.Partition) bool {
-	encoded := base64.RawURLEncoding.EncodeToString(identity)
-	for _, family := range []string{heapMemberPrefix, memberCellPrefix, heapStaticReplacePrefix, heapOpaqueMemberWritePrefix} {
-		for _, fact := range partition.ValuesPrefix(family + encoded + "/") {
-			if factOperation(fact.Key) > operation {
+	for _, family := range []factkey.Family{
+		factkey.HeapMember, factkey.HeapMemberCell, factkey.HeapStaticReplace, factkey.HeapOpaqueMemberWrite,
+	} {
+		values := partition.FamilyValues(factkey.BuildKey(family, []factkey.Part{factkey.IdentityPart(identity)}, ""))
+		for {
+			fact, ok := values.Next()
+			if !ok {
+				break
+			}
+			if fact.Occurrence > operation {
 				return true
 			}
 		}
@@ -15140,15 +15138,21 @@ func heapInventoryChangedAfter(identity []byte, operation string, partition equa
 
 // revoked reports that a dynamic write through this heap identity followed the
 // proof, so the proof describes a table state the body has since left.
-func revoked(subject, provenAt string, partition equation.Partition) bool {
-	revokePrefix := heapIndexRevokePrefix + subject + "/"
+func revoked(subject factkey.Part, provenAt string, partition equation.Partition) bool {
 	revocation := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, revokePrefix) && string(fact.Value) == "revoked" && fact.Key > revocation {
-			revocation = fact.Key
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapIndexRevoke, []factkey.Part{subject}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "revoked" && fact.Occurrence > revocation {
+			revocation = fact.Occurrence
 		}
 	}
-	return revocation != "" && provenAt <= factOperation(revocation)
+	return revocation != "" && provenAt <= revocation
 }
 
 // affineIndexPresenceProven decides a shifted index term. The term's affine
@@ -15212,16 +15216,18 @@ func currentIndexRelations(partition equation.Partition) ([]branchPredicateWire,
 	var predicates []branchPredicateWire
 	var differences []branchDiffWire
 	provenAt := ""
-	for _, fact := range partition.Values() {
-		if !strings.HasPrefix(fact.Key, heapIndexRelationPrefix) {
-			continue
+	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapIndexRelation, nil, ""))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
 		}
-		publishedAt := factOperation(fact.Key)
+		publishedAt := fact.Occurrence
 		if publishedAt == "" {
 			continue
 		}
-		predicate, isPredicate, _ := branchEvidencePredicate(equation.BoundOperand{Role: "predicate", Value: fact.Value})
-		difference, isDifference := decodeBranchDiff(fact.Value)
+		predicate, isPredicate, _ := branchEvidencePredicate(equation.BoundOperand{Role: "predicate", Value: fact.Payload})
+		difference, isDifference := decodeBranchDiff(fact.Payload)
 		if !isPredicate && !isDifference {
 			continue
 		}
@@ -17212,7 +17218,7 @@ func pathInvalidationKernel(operation equation.BoundEquation, partition equation
 	// container path is still the only available conservative subject.
 	subject := heapIndexSubject(operands["container"], partition)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
-		Key: heapIndexRevokePrefix + subject + "/" + operation.Target.Name, Value: []byte("revoked"),
+		Key: factkey.BuildKey(factkey.HeapIndexRevoke, []factkey.Part{subject}, operation.Target.Name).String(), Value: []byte("revoked"),
 	}}}}, nil
 }
 
@@ -17541,7 +17547,7 @@ func closedDynamicWriteDiagnostic(operation equation.BoundEquation, operands map
 		if !member.Present {
 			return equation.Fact{}, false
 		}
-		memberValue, current := heapMemberCurrent(heapMemberPrefix, identity, member.Suffix, partition)
+		memberValue, current := heapMemberCurrent(factkey.HeapMember, identity, member.Suffix, partition)
 		if !current {
 			return equation.Fact{}, false
 		}
@@ -17582,16 +17588,22 @@ func uniqueOrderedStrings(items []string) []string {
 }
 
 func heapIndexWasMutated(identity []byte, before string, partition equation.Partition) bool {
-	prefix := heapIndexRevokePrefix + heapSubjectIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	beforeIndex, valid := operationIndex(before)
 	if !valid {
 		return true
 	}
-	for _, fact := range partition.Values() {
-		if !strings.HasPrefix(fact.Key, prefix) || string(fact.Value) != "revoked" {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapIndexRevoke, []factkey.Part{factkey.TaggedIdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) != "revoked" {
 			continue
 		}
-		if mutationIndex, valid := operationIndex(factOperation(fact.Key)); valid && mutationIndex+1 < beforeIndex {
+		if mutationIndex, valid := operationIndex(fact.Occurrence); valid && mutationIndex+1 < beforeIndex {
 			return true
 		}
 	}
@@ -18504,7 +18516,9 @@ func trueEdgeRefinements(operation equation.BoundEquation, partition equation.Pa
 	}
 	for _, item := range lengthFloorBranchProofs(operation) {
 		facts = append(facts, equation.Fact{
-			Key:   heapLengthFloorPrefix + heapIndexSubject([]byte("path/"+item.path), partition) + "/" + operation.Target.Name,
+			Key: factkey.BuildKey(factkey.HeapLengthFloor, []factkey.Part{
+				heapIndexSubject([]byte("path/"+item.path), partition),
+			}, operation.Target.Name).String(),
 			Value: []byte(strconv.FormatInt(item.floor, 10)), Guards: []equation.Guard{guard},
 		})
 	}
@@ -19519,34 +19533,39 @@ func lengthFloorProven(container []byte, partition equation.Partition) int64 {
 // subjectLengthFloorProven is the length-floor reader over an already-resolved
 // revocation subject. A container reached only through an escape has a subject
 // but no term of its own, so the proof and its revocation are answered here.
-func subjectLengthFloorProven(subject string, partition equation.Partition) int64 {
-	prefix := heapLengthFloorPrefix + subject + "/"
+func subjectLengthFloorProven(subject factkey.Part, partition equation.Partition) int64 {
 	floor, proofPoint := int64(0), ""
-	for _, fact := range partition.Values() {
-		if !strings.HasPrefix(fact.Key, prefix) {
-			continue
+	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapLengthFloor, []factkey.Part{subject}, ""))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
 		}
-		bound, err := strconv.ParseInt(string(fact.Value), 10, 64)
+		bound, err := strconv.ParseInt(string(fact.Payload), 10, 64)
 		if err != nil || bound <= floor {
 			continue
 		}
-		floor, proofPoint = bound, fact.Key
+		floor, proofPoint = bound, fact.Occurrence
 	}
 	if floor == 0 {
 		return 0
 	}
-	if revocation := subjectLatestRevocation(subject, partition); revocation != "" && factOperation(proofPoint) <= factOperation(revocation) {
+	if revocation := subjectLatestRevocation(subject, partition); revocation != "" && proofPoint <= revocation {
 		return 0
 	}
 	return floor
 }
 
-func subjectLatestRevocation(subject string, partition equation.Partition) string {
-	prefix := heapIndexRevokePrefix + subject + "/"
+func subjectLatestRevocation(subject factkey.Part, partition equation.Partition) string {
 	revocation := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "revoked" && fact.Key > revocation {
-			revocation = fact.Key
+	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapIndexRevoke, []factkey.Part{subject}, ""))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "revoked" && fact.Occurrence > revocation {
+			revocation = fact.Occurrence
 		}
 	}
 	return revocation
@@ -19595,8 +19614,8 @@ func opaqueEscapeRevocations(operation equation.BoundEquation, arguments [][]byt
 				continue
 			}
 			facts = append(facts,
-				equation.Fact{Key: heapIndexRevokePrefix + subject + "/" + operation.Target.Name, Value: []byte("revoked")},
-				equation.Fact{Key: heapTableEscapePrefix + subject + "/" + operation.Target.Name, Value: []byte("escaped")},
+				equation.Fact{Key: factkey.BuildKey(factkey.HeapIndexRevoke, []factkey.Part{subject}, operation.Target.Name).String(), Value: []byte("revoked")},
+				equation.Fact{Key: factkey.BuildKey(factkey.HeapTableEscape, []factkey.Part{subject}, operation.Target.Name).String(), Value: []byte("escaped")},
 			)
 		}
 	}
@@ -19629,8 +19648,8 @@ func immutableEscapeArgument(argument []byte, partition equation.Partition) bool
 // whole graph beneath it, so a proof about a nested sequence goes as stale as
 // one about the root. Every published member identity counts, not just the
 // current one, because an earlier binding remains a reference the graph holds.
-func escapeReachableSubjects(container []byte, partition equation.Partition) []string {
-	subjects := []string{heapIndexSubject(container, partition)}
+func escapeReachableSubjects(container []byte, partition equation.Partition) []factkey.Part {
+	subjects := []factkey.Part{heapIndexSubject(container, partition)}
 	identity, found := tableIdentityForTerm(container, partition)
 	if !found {
 		return subjects
@@ -19639,14 +19658,20 @@ func escapeReachableSubjects(container []byte, partition equation.Partition) []s
 	for queue := [][]byte{identity}; len(queue) != 0; {
 		current := queue[0]
 		queue = queue[1:]
-		prefix := heapMemberIdentityPrefix + base64.RawURLEncoding.EncodeToString(current) + "/"
-		for _, fact := range partition.ValuesPrefix(prefix) {
-			if len(fact.Value) == 0 || visited[string(fact.Value)] {
+		values := partition.FamilyValues(factkey.BuildKey(
+			factkey.HeapMemberIdentity, []factkey.Part{factkey.IdentityPart(current)}, "",
+		))
+		for {
+			fact, ok := values.Next()
+			if !ok {
+				break
+			}
+			if len(fact.Payload) == 0 || visited[string(fact.Payload)] {
 				continue
 			}
-			visited[string(fact.Value)] = true
-			queue = append(queue, fact.Value)
-			subjects = append(subjects, "identity/"+base64.RawURLEncoding.EncodeToString(fact.Value))
+			visited[string(fact.Payload)] = true
+			queue = append(queue, fact.Payload)
+			subjects = append(subjects, factkey.TaggedIdentityPart(fact.Payload))
 		}
 	}
 	return subjects
@@ -19657,9 +19682,15 @@ func escapeReachableSubjects(container []byte, partition equation.Partition) []s
 // identity subject the revocation publishes, so a member cell, a length floor
 // and an index presence proof all observe one transition.
 func heapIdentityEscapedAfter(identity []byte, publication string, partition equation.Partition) bool {
-	prefix := heapTableEscapePrefix + heapSubjectIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	for _, fact := range partition.ValuesPrefix(prefix) {
-		if string(fact.Value) == "escaped" && factOperation(fact.Key) >= publication {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapTableEscape, []factkey.Part{factkey.TaggedIdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "escaped" && fact.Occurrence >= publication {
 			return true
 		}
 	}
@@ -19671,9 +19702,15 @@ func heapIdentityEscapedAfter(identity []byte, publication string, partition equ
 // escape marker by term, as heapIdentityEscapedAfter reads it by identity; a
 // plain dynamic write publishes no such marker.
 func containerTableEscaped(container []byte, partition equation.Partition) bool {
-	prefix := heapTableEscapePrefix + heapIndexSubject(container, partition) + "/"
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "escaped" {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapTableEscape, []factkey.Part{heapIndexSubject(container, partition)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "escaped" {
 			return true
 		}
 	}
@@ -19687,15 +19724,18 @@ func heapContainerHasIndexProof(container []byte, partition equation.Partition) 
 	return subjectHasIndexProof(heapIndexSubject(container, partition), partition)
 }
 
-func subjectHasIndexProof(subject string, partition equation.Partition) bool {
+func subjectHasIndexProof(subject factkey.Part, partition equation.Partition) bool {
 	if subjectLengthFloorProven(subject, partition) > 0 {
 		return true
 	}
-	presencePrefix := heapIndexPresencePrefix + subject + "/"
 	revocation := subjectLatestRevocation(subject, partition)
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, presencePrefix) && string(fact.Value) == "proven" &&
-			(revocation == "" || factOperation(fact.Key) > factOperation(revocation)) {
+	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapIndexPresence, []factkey.Part{subject}, ""))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "proven" && (revocation == "" || fact.Occurrence > revocation) {
 			return true
 		}
 	}
@@ -19918,7 +19958,9 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 	floors = append(floors, densityLengthFloorProofs(relations, predicates)...)
 	for _, item := range floors {
 		closure.Values = append(closure.Values, equation.Fact{
-			Key:   heapLengthFloorPrefix + heapIndexSubject([]byte("path/"+item.path), partition) + "/" + operation.Target.Name,
+			Key: factkey.BuildKey(factkey.HeapLengthFloor, []factkey.Part{
+				heapIndexSubject([]byte("path/"+item.path), partition),
+			}, operation.Target.Name).String(),
 			Value: []byte(strconv.FormatInt(item.floor, 10)), Guards: []equation.Guard{guard},
 		})
 	}
@@ -19936,7 +19978,12 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 				continue
 			}
 			lower[encodedIndex] = index
-			closure.Values = append(closure.Values, equation.Fact{Key: heapIndexLowerPrefix + encodedIndex + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
+			closure.Values = append(closure.Values, equation.Fact{
+				Key: factkey.BuildKey(factkey.HeapIndexLower, []factkey.Part{
+					factkey.EncodedTermPart(index),
+				}, operation.Target.Name).String(),
+				Value: []byte("proven"), Guards: []equation.Guard{guard},
+			})
 		case "index-in-range":
 			if predicate.OtherPath == "" {
 				continue
@@ -19944,7 +19991,12 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			container := []byte("path/" + predicate.OtherPath)
 			encodedContainer := base64.RawURLEncoding.EncodeToString(container)
 			upper[encodedIndex+"/"+encodedContainer] = struct{ index, container []byte }{index, container}
-			closure.Values = append(closure.Values, equation.Fact{Key: heapIndexUpperPrefix + encodedIndex + "/" + encodedContainer + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
+			closure.Values = append(closure.Values, equation.Fact{
+				Key: factkey.BuildKey(factkey.HeapIndexUpper, []factkey.Part{
+					factkey.EncodedTermPart(index), factkey.EncodedTermPart(container),
+				}, operation.Target.Name).String(),
+				Value: []byte("proven"), Guards: []equation.Guard{guard},
+			})
 		}
 	}
 	// A carrier this body proved monotone holds at least the constant it
@@ -19962,7 +20014,12 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			continue
 		}
 		lower[encodedIndex] = carrier
-		closure.Values = append(closure.Values, equation.Fact{Key: heapIndexLowerPrefix + encodedIndex + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
+		closure.Values = append(closure.Values, equation.Fact{
+			Key: factkey.BuildKey(factkey.HeapIndexLower, []factkey.Part{
+				factkey.EncodedTermPart(carrier),
+			}, operation.Target.Name).String(),
+			Value: []byte("proven"), Guards: []equation.Guard{guard},
+		})
 	}
 	// A constant index ceiling and a container length floor state the same
 	// in-range relation a direct index-in-range predicate states, with no path
@@ -19982,7 +20039,12 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 				continue
 			}
 			upper[encodedIndex+"/"+encodedContainer] = struct{ index, container []byte }{index, container}
-			closure.Values = append(closure.Values, equation.Fact{Key: heapIndexUpperPrefix + encodedIndex + "/" + encodedContainer + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
+			closure.Values = append(closure.Values, equation.Fact{
+				Key: factkey.BuildKey(factkey.HeapIndexUpper, []factkey.Part{
+					factkey.EncodedTermPart(index), factkey.EncodedTermPart(container),
+				}, operation.Target.Name).String(),
+				Value: []byte("proven"), Guards: []equation.Guard{guard},
+			})
 		}
 	}
 	// The branch's difference descriptors are the same guard evidence in
@@ -19999,7 +20061,12 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			continue
 		}
 		upper[encodedIndex+"/"+encodedContainer] = struct{ index, container []byte }{index, container}
-		closure.Values = append(closure.Values, equation.Fact{Key: heapIndexUpperPrefix + encodedIndex + "/" + encodedContainer + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
+		closure.Values = append(closure.Values, equation.Fact{
+			Key: factkey.BuildKey(factkey.HeapIndexUpper, []factkey.Part{
+				factkey.EncodedTermPart(index), factkey.EncodedTermPart(container),
+			}, operation.Target.Name).String(),
+			Value: []byte("proven"), Guards: []equation.Guard{guard},
+		})
 	}
 	for relation, pair := range upper {
 		encodedIndex, _, _ := strings.Cut(relation, "/")
@@ -20007,7 +20074,9 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			continue
 		}
 		closure.Values = append(closure.Values, equation.Fact{
-			Key:   heapIndexPresencePrefix + heapIndexSubject(pair.container, partition) + "/" + encodedIndex + "/" + operation.Target.Name,
+			Key: factkey.BuildKey(factkey.HeapIndexPresence, []factkey.Part{
+				heapIndexSubject(pair.container, partition), factkey.EncodedTermPart(pair.index),
+			}, operation.Target.Name).String(),
 			Value: []byte("proven"), Guards: []equation.Guard{guard},
 		})
 	}
@@ -20114,29 +20183,37 @@ func monotoneCarrierWrapFree(carrier []byte, partition equation.Partition) bool 
 func publishedIndexRelations(partition equation.Partition) (map[string][]byte, map[string]struct{ index, container []byte }) {
 	lower := make(map[string][]byte)
 	upper := make(map[string]struct{ index, container []byte })
-	for _, fact := range partition.Values() {
-		if string(fact.Value) != "proven" {
+	lowerValues := partition.FamilyValues(factkey.BuildKey(factkey.HeapIndexLower, nil, ""))
+	for {
+		fact, ok := lowerValues.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) != "proven" {
 			continue
 		}
-		if rest, found := strings.CutPrefix(fact.Key, heapIndexLowerPrefix); found {
-			index, _, valid := strings.Cut(rest, "/")
-			if decoded, err := base64.RawURLEncoding.DecodeString(index); valid && err == nil {
-				lower[index] = decoded
-			}
+		decoded, valid := fact.Subject.Decode(nil)
+		if valid {
+			lower[fact.Subject.Encoded()] = decoded
+		}
+	}
+	upperValues := partition.FamilyValues(factkey.BuildKey(factkey.HeapIndexUpper, nil, ""))
+	for {
+		fact, ok := upperValues.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) != "proven" {
 			continue
 		}
-		rest, found := strings.CutPrefix(fact.Key, heapIndexUpperPrefix)
-		if !found {
+		qualifier, present := fact.Qualifier(0)
+		if !present {
 			continue
 		}
-		parts := strings.Split(rest, "/")
-		if len(parts) < 3 {
-			continue
-		}
-		index, indexErr := base64.RawURLEncoding.DecodeString(parts[0])
-		container, containerErr := base64.RawURLEncoding.DecodeString(parts[1])
-		if indexErr == nil && containerErr == nil {
-			upper[parts[0]+"/"+parts[1]] = struct{ index, container []byte }{index, container}
+		index, indexOK := fact.Subject.Decode(nil)
+		container, containerOK := qualifier.Decode(nil)
+		if indexOK && containerOK {
+			upper[fact.Subject.Encoded()+"/"+qualifier.Encoded()] = struct{ index, container []byte }{index, container}
 		}
 	}
 	return lower, upper
@@ -20488,8 +20565,7 @@ func callDecisionEdges(operands directCallOperands, hasCallee bool, partition eq
 		if !found {
 			continue
 		}
-		prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-		for _, family := range factFamilies(prefix, partition) {
+		for _, family := range memberCellFamilies(identity, partition) {
 			edges, split := partition.DecisionEdges(family)
 			if split && familyBindingDiffers(family, edges) {
 				return edges, true
@@ -20502,16 +20578,28 @@ func callDecisionEdges(operands directCallOperands, hasCallee bool, partition eq
 // factFamilies names the distinct per-cell families published under prefix, in
 // canonical order. A family is one cell's publication history; the rows inside
 // it are that cell's successive writes.
-func factFamilies(prefix string, partition equation.Partition) []string {
+func memberCellFamilies(identity []byte, partition equation.Partition) []string {
 	seen := make(map[string]bool)
 	var out []string
-	for _, fact := range partition.ValuesPrefix(prefix) {
-		rest := fact.Key[len(prefix):]
-		cut := strings.LastIndexByte(rest, '/')
-		if cut <= 0 {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapMemberCell, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		qualifier, present := fact.Qualifier(0)
+		if !present {
 			continue
 		}
-		family := prefix + rest[:cut+1]
+		suffix, valid := qualifier.Decode(nil)
+		if !valid {
+			continue
+		}
+		family := factkey.BuildKey(factkey.HeapMemberCell, []factkey.Part{
+			factkey.IdentityPart(identity), factkey.EncodedOpaquePart(string(suffix)),
+		}, "").String()
 		if seen[family] {
 			continue
 		}
@@ -20678,7 +20766,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			metatableFacts = append(metatableFacts, heapMetaAttachedFact(object, operation.Target.Name))
 			if metatable, found := tableIdentityForTerm(operands.arguments[1], partition); found {
 				metatableFacts = append(metatableFacts, heapMetaIdentityFact(object, operation.Target.Name, metatable))
-				if target, found := heapMemberCurrent(heapMemberIdentityPrefix, metatable, ".__newindex", partition); found {
+				if target, found := heapMemberCurrent(factkey.HeapMemberIdentity, metatable, ".__newindex", partition); found {
 					metatableFacts = append(metatableFacts, heapMetaNewIndexFact(object, operation.Target.Name, target))
 				}
 			}
@@ -21580,17 +21668,20 @@ func tableInsertEpoch(operation equation.BoundEquation, operands directCallOpera
 		return equation.OutputClosure{}, true
 	}
 	next := 1
-	prefix := heapMemberPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	for _, fact := range partition.Values() {
-		if !strings.HasPrefix(fact.Key, prefix) {
+	members := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapMember, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := members.Next()
+		if !ok {
+			break
+		}
+		qualifier, present := fact.Qualifier(0)
+		if !present {
 			continue
 		}
-		parts := strings.Split(strings.TrimPrefix(fact.Key, prefix), "/")
-		if len(parts) != 2 {
-			continue
-		}
-		suffixBytes, decodeErr := base64.RawURLEncoding.DecodeString(parts[0])
-		if decodeErr != nil {
+		suffixBytes, decoded := qualifier.Decode(nil)
+		if !decoded {
 			continue
 		}
 		segments, valid := segment.ParseFormattedSegments(string(suffixBytes))
@@ -22151,6 +22242,18 @@ func currentEpochFact(prefix string, term []byte, partition equation.Partition) 
 	return nil, false
 }
 
+func currentFamilyEpochFact(family factkey.Family, term []byte, partition equation.Partition) ([]byte, bool) {
+	operation, ok := currentEpoch(term, partition)
+	if !ok {
+		return nil, false
+	}
+	key := factkey.BuildKey(family, []factkey.Part{factkey.TermPart(string(term))}, operation)
+	if fact, found := partition.Value(key.String()); found {
+		return fact.Value, true
+	}
+	return nil, false
+}
+
 // reconvergedEpochFact is the version-current read of one fact family at a
 // control-flow join.  currentEpochFact answers what a single visible row
 // states, and past a branch the visible row is the one the decision consumed:
@@ -22180,6 +22283,42 @@ func reconvergedEpochFact(prefix string, term []byte, partition equation.Partiti
 					continue
 				}
 				published[strings.TrimPrefix(candidate.Key, familyPrefix)] = candidate.Value
+			}
+			current, selected := latestPublication(epochs)
+			if !selected {
+				return equation.Fact{}, false
+			}
+			value, states := published[strings.TrimPrefix(current.Key, epochPrefix)]
+			if !states {
+				return equation.Fact{}, false
+			}
+			current.Value = value
+			return current, true
+		},
+		Join: join,
+	})
+	if !found {
+		return nil, false
+	}
+	return fact.Value, true
+}
+
+func reconvergedFamilyEpochFact(family factkey.Family, term []byte, partition equation.Partition, join func(left, right []byte) ([]byte, bool)) ([]byte, bool) {
+	epochPrefix := epochFactPrefix + string(term) + "/"
+	familyPrefix := factkey.BuildKey(family, []factkey.Part{factkey.TermPart(string(term))}, "").String()
+	fact, found := partition.Reconverged(epochPrefix, equation.Reconvergence{
+		Support: []string{familyPrefix},
+		Current: func(candidates []equation.Fact) (equation.Fact, bool) {
+			epochs := make([]equation.Fact, 0, len(candidates))
+			published := make(map[string][]byte, len(candidates))
+			for _, candidate := range candidates {
+				if strings.HasPrefix(candidate.Key, epochPrefix) {
+					epochs = append(epochs, candidate)
+					continue
+				}
+				if parsed, ok := family.ParseKey(candidate.Key); ok && parsed.Subject.Spelling() == string(term) {
+					published[parsed.Occurrence] = candidate.Value
+				}
 			}
 			current, selected := latestPublication(epochs)
 			if !selected {
@@ -22242,7 +22381,10 @@ func sealedTableIdentity(operation equation.BoundEquation) []byte {
 }
 
 func heapIdentityFact(term, operation string, identity []byte) equation.Fact {
-	return equation.Fact{Key: heapTableIdentityPrefix + string(term) + "/" + operation, Value: append([]byte(nil), identity...)}
+	return equation.Fact{
+		Key:   factkey.BuildKey(factkey.HeapTableIdentity, []factkey.Part{factkey.TermPart(term)}, operation).String(),
+		Value: append([]byte(nil), identity...),
+	}
 }
 
 func operationOperand(operands []equation.BoundOperand, role string) ([]byte, bool) {
@@ -22255,23 +22397,34 @@ func operationOperand(operands []equation.BoundOperand, role string) ([]byte, bo
 }
 
 func heapClosedFact(identity []byte, operation string) equation.Fact {
-	return equation.Fact{Key: heapTableClosedPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("closed")}
-}
-
-func heapFactKey(prefix string, identity []byte, suffix, operation string) string {
-	return prefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/" + operation
+	return equation.Fact{
+		Key:   factkey.BuildKey(factkey.HeapTableClosed, []factkey.Part{factkey.IdentityPart(identity)}, operation).String(),
+		Value: []byte("closed"),
+	}
 }
 
 func heapMemberFact(identity []byte, suffix, operation string, value []byte) equation.Fact {
-	return equation.Fact{Key: heapFactKey(heapMemberPrefix, identity, suffix, operation), Value: append([]byte(nil), value...)}
+	return equation.Fact{
+		Key: factkey.BuildKey(factkey.HeapMember, []factkey.Part{
+			factkey.IdentityPart(identity), factkey.EncodedOpaquePart(suffix),
+		}, operation).String(),
+		Value: append([]byte(nil), value...),
+	}
 }
 
 func heapMemberIdentityFact(identity []byte, suffix, operation string, memberIdentity []byte) equation.Fact {
-	return equation.Fact{Key: heapFactKey(heapMemberIdentityPrefix, identity, suffix, operation), Value: append([]byte(nil), memberIdentity...)}
+	return equation.Fact{
+		Key: factkey.BuildKey(factkey.HeapMemberIdentity, []factkey.Part{
+			factkey.IdentityPart(identity), factkey.EncodedOpaquePart(suffix),
+		}, operation).String(),
+		Value: append([]byte(nil), memberIdentity...),
+	}
 }
 
 func memberCellFactKey(identity []byte, suffix, operation string) string {
-	return heapFactKey(memberCellPrefix, identity, suffix, operation)
+	return factkey.BuildKey(factkey.HeapMemberCell, []factkey.Part{
+		factkey.IdentityPart(identity), factkey.EncodedOpaquePart(suffix),
+	}, operation).String()
 }
 
 // memberCellFactWithIdentity publishes a slot cell whose value is its own
@@ -22306,12 +22459,19 @@ func memberCellFactWithSource(identity []byte, suffix, operation string, value, 
 }
 
 func currentMemberCell(identity []byte, suffix string, partition equation.Partition) (memberCellWire, bool) {
-	prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/"
+	prefix := factkey.BuildKey(factkey.HeapMemberCell, []factkey.Part{
+		factkey.IdentityPart(identity), factkey.EncodedOpaquePart(suffix),
+	}, "")
 	var encoded []byte
 	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (encoded == nil || fact.Key > latest) {
-			encoded, latest = fact.Value, fact.Key
+	values := partition.FamilyValues(prefix)
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if encoded == nil || fact.Occurrence > latest {
+			encoded, latest = fact.Payload, fact.Occurrence
 		}
 	}
 	if encoded == nil {
@@ -22411,16 +22571,22 @@ func childMemberWritebacks(identities [][]byte, childPartition equation.Partitio
 			}
 			facts = append(facts, opaqueWrite)
 		}
-		prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 		clear(latest)
-		for _, fact := range childPartition.ValuesPrefix(prefix) {
-			rest := strings.TrimPrefix(fact.Key, prefix)
-			cut := strings.LastIndexByte(rest, '/')
-			if cut <= 0 || cut == len(rest)-1 {
+		values := childPartition.FamilyValues(factkey.BuildKey(
+			factkey.HeapMemberCell, []factkey.Part{factkey.IdentityPart(identity)}, "",
+		))
+		for {
+			fact, ok := values.Next()
+			if !ok {
+				break
+			}
+			qualifier, present := fact.Qualifier(0)
+			if !present {
 				continue
 			}
-			if prior, exists := latest[rest[:cut]]; !exists || rest[cut+1:] > prior.author {
-				latest[rest[:cut]] = authoredCell{author: rest[cut+1:], encoded: fact.Value}
+			encodedSuffix := qualifier.Spelling()
+			if prior, exists := latest[encodedSuffix]; !exists || fact.Occurrence > prior.author {
+				latest[encodedSuffix] = authoredCell{author: fact.Occurrence, encoded: fact.Payload}
 			}
 		}
 		encodedSuffixes := make([]string, 0, len(latest))
@@ -22471,18 +22637,20 @@ func memberCellSeedsForEntry(seeds []entrySeed, sources map[string][]byte, parti
 			continue
 		}
 		seenIdentity[string(identity)] = true
-		prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-		for _, fact := range partition.Values() {
-			if !strings.HasPrefix(fact.Key, prefix) {
+		values := partition.FamilyValues(factkey.BuildKey(
+			factkey.HeapMemberCell, []factkey.Part{factkey.IdentityPart(identity)}, "",
+		))
+		for {
+			fact, ok := values.Next()
+			if !ok {
+				break
+			}
+			qualifier, present := fact.Qualifier(0)
+			if !present {
 				continue
 			}
-			rest := strings.TrimPrefix(fact.Key, prefix)
-			cut := strings.LastIndexByte(rest, '/')
-			if cut <= 0 || cut == len(rest)-1 {
-				continue
-			}
-			suffixBytes, err := base64.RawURLEncoding.DecodeString(rest[:cut])
-			if err != nil || !segment.ValidFormattedSegments(string(suffixBytes)) {
+			suffixBytes, decoded := qualifier.Decode(nil)
+			if !decoded || !segment.ValidFormattedSegments(string(suffixBytes)) {
 				continue
 			}
 			cell, found := currentMemberCell(identity, string(suffixBytes), partition)
@@ -22583,16 +22751,21 @@ func liveMemberOrigins(term []byte, partition equation.Partition) []memberOrigin
 	if len(term) == 0 {
 		return nil
 	}
-	prefix := heapMemberOriginPrefix + string(term) + "/"
 	suffixes := make(map[string]bool)
-	for _, fact := range partition.ValuesPrefix(prefix) {
-		rest := strings.TrimPrefix(fact.Key, prefix)
-		cut := strings.LastIndexByte(rest, '/')
-		if cut <= 0 || cut == len(rest)-1 {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapMemberOrigin, []factkey.Part{factkey.TermPart(string(term))}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		qualifier, present := fact.Qualifier(0)
+		if !present {
 			continue
 		}
-		decoded, err := base64.RawURLEncoding.DecodeString(rest[:cut])
-		if err != nil || !segment.ValidFormattedSegments(string(decoded)) {
+		decoded, valid := qualifier.Decode(nil)
+		if !valid || !segment.ValidFormattedSegments(string(decoded)) {
 			continue
 		}
 		suffixes[string(decoded)] = true
@@ -22614,33 +22787,56 @@ func liveMemberOrigins(term []byte, partition equation.Partition) []memberOrigin
 }
 
 func heapMemberOriginFact(term, suffix, operation string, source []byte) equation.Fact {
-	return equation.Fact{Key: heapMemberOriginPrefix + term + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/" + operation, Value: append([]byte(nil), source...)}
+	return equation.Fact{
+		Key: factkey.BuildKey(factkey.HeapMemberOrigin, []factkey.Part{
+			factkey.TermPart(term), factkey.EncodedOpaquePart(suffix),
+		}, operation).String(),
+		Value: append([]byte(nil), source...),
+	}
 }
 
 func heapMemberOriginCurrent(term []byte, suffix string, partition equation.Partition) ([]byte, bool) {
-	prefix := heapMemberOriginPrefix + string(term) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/"
 	var value []byte
 	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latest) {
-			value, latest = fact.Value, fact.Key
+	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapMemberOrigin, []factkey.Part{
+		factkey.TermPart(string(term)), factkey.EncodedOpaquePart(suffix),
+	}, ""))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if value == nil || fact.Occurrence > latest {
+			value, latest = fact.Payload, fact.Occurrence
 		}
 	}
 	return append([]byte(nil), value...), value != nil
 }
 
 func heapMetaNewIndexFact(identity []byte, operation string, target []byte) equation.Fact {
-	return equation.Fact{Key: heapMetaNewIndexPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: append([]byte(nil), target...)}
+	return equation.Fact{
+		Key:   factkey.BuildKey(factkey.HeapMetaNewIndex, []factkey.Part{factkey.IdentityPart(identity)}, operation).String(),
+		Value: append([]byte(nil), target...),
+	}
 }
 
 func heapMetaAttachedFact(identity []byte, operation string) equation.Fact {
-	return equation.Fact{Key: heapMetaAttachedPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("attached")}
+	return equation.Fact{
+		Key:   factkey.BuildKey(factkey.HeapMetaAttached, []factkey.Part{factkey.IdentityPart(identity)}, operation).String(),
+		Value: []byte("attached"),
+	}
 }
 
 func heapMetaAttached(identity []byte, partition equation.Partition) bool {
-	prefix := heapMetaAttachedPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "attached" {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapMetaAttached, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "attached" {
 			return true
 		}
 	}
@@ -22653,19 +22849,28 @@ func heapMetaAttached(identity []byte, partition equation.Partition) bool {
 // composes with it, so an inherited read resolves against a named allocation
 // rather than an assumption.
 func heapMetaIdentityFact(identity []byte, operation string, metatable []byte) equation.Fact {
-	return equation.Fact{Key: heapMetaIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: append([]byte(nil), metatable...)}
+	return equation.Fact{
+		Key:   factkey.BuildKey(factkey.HeapMetaIdentity, []factkey.Part{factkey.IdentityPart(identity)}, operation).String(),
+		Value: append([]byte(nil), metatable...),
+	}
 }
 
 // heapMetaIdentityCurrent is the metatable in force at this point. A second
 // `setmetatable` publishes a later operation coordinate, so the latest row is
 // the installation the read resolves through and the earlier one is revoked.
 func heapMetaIdentityCurrent(identity []byte, partition equation.Partition) ([]byte, bool) {
-	prefix := heapMetaIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	var value []byte
 	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latest) {
-			value, latest = fact.Value, fact.Key
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapMetaIdentity, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if value == nil || fact.Occurrence > latest {
+			value, latest = fact.Payload, fact.Occurrence
 		}
 	}
 	if value == nil {
@@ -22683,7 +22888,7 @@ const metatableIndexChainDepth = 8
 // object's own surface, nearest first.
 //
 // The walk is a composition of already-published allocations, never a guess.
-// Each link must name its metatable (`heap/meta-identity/`), and that
+// Each link must name its metatable through HeapMetaIdentity, and that
 // metatable's `__index` entry must name another allocation. complete reports
 // that every link is a proven closed allocation, which is what makes a member
 // absent from all of them absent at runtime. A link with no named metatable and
@@ -22712,13 +22917,13 @@ func metatableIndexChainFrom(metatable []byte, visited map[string]bool, partitio
 			// the delegation this walk would read is no longer current.
 			return chain, false
 		}
-		index, delegates := heapMemberCurrent(heapMemberIdentityPrefix, metatable, ".__index", partition)
+		index, delegates := heapMemberCurrent(factkey.HeapMemberIdentity, metatable, ".__index", partition)
 		if !delegates {
 			// The metatable names no `__index` allocation. A closed metatable
 			// with no such entry ends the chain, which decides absence; an entry
 			// holding a value with no allocation identity is a function or an
 			// opaque delegate and decides nothing.
-			if _, present := heapMemberCurrent(heapMemberPrefix, metatable, ".__index", partition); present {
+			if _, present := heapMemberCurrent(factkey.HeapMember, metatable, ".__index", partition); present {
 				return chain, false
 			}
 			return chain, heapTableClosed(metatable, partition)
@@ -22750,7 +22955,7 @@ func metatableIndexChainFrom(metatable []byte, visited map[string]bool, partitio
 func inheritedMemberValue(identity []byte, suffix string, partition equation.Partition) (value []byte, found, decided bool) {
 	chain, complete := metatableIndexChain(identity, partition)
 	for _, link := range chain {
-		if member, present := heapMemberCurrent(heapMemberPrefix, link, suffix, partition); present && string(member) != "scalar/nil" {
+		if member, present := heapMemberCurrent(factkey.HeapMember, link, suffix, partition); present && string(member) != "scalar/nil" {
 			return member, true, true
 		}
 	}
@@ -22875,25 +23080,35 @@ func sealedIndexChain(lexical *lexicalEvaluator, operation equation.BoundEquatio
 // heapMemberInventory is the current member publication of one allocation,
 // keyed by static suffix.
 func heapMemberInventory(identity []byte, partition equation.Partition) map[string]string {
-	prefix := heapMemberPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	latest := make(map[string]equation.Fact)
-	for _, fact := range partition.ValuesPrefix(prefix) {
-		encodedSuffix, _, ok := strings.Cut(strings.TrimPrefix(fact.Key, prefix), "/")
+	type publication struct {
+		occurrence string
+		payload    []byte
+	}
+	latest := make(map[string]publication)
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapMember, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
 		if !ok {
+			break
+		}
+		qualifier, present := fact.Qualifier(0)
+		if !present {
 			continue
 		}
-		decoded, err := base64.RawURLEncoding.DecodeString(encodedSuffix)
-		if err != nil || !segment.ValidFormattedSegments(string(decoded)) {
+		decoded, valid := qualifier.Decode(nil)
+		if !valid || !segment.ValidFormattedSegments(string(decoded)) {
 			continue
 		}
 		suffix := string(decoded)
-		if prior, exists := latest[suffix]; !exists || fact.Key > prior.Key {
-			latest[suffix] = fact
+		if prior, exists := latest[suffix]; !exists || fact.Occurrence > prior.occurrence {
+			latest[suffix] = publication{occurrence: fact.Occurrence, payload: fact.Payload}
 		}
 	}
 	inventory := make(map[string]string, len(latest))
 	for suffix, fact := range latest {
-		inventory[suffix] = string(fact.Value)
+		inventory[suffix] = string(fact.payload)
 	}
 	return inventory
 }
@@ -22903,13 +23118,22 @@ func heapMemberInventory(identity []byte, partition equation.Partition) map[stri
 // invalidates only the closed-literal absence proof; it never invents a member
 // value or an execution order.
 func heapExternalCallbackFact(identity []byte, operation string) equation.Fact {
-	return equation.Fact{Key: heapExternalCallbackPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("may-mutate")}
+	return equation.Fact{
+		Key:   factkey.BuildKey(factkey.HeapExternalCallback, []factkey.Part{factkey.IdentityPart(identity)}, operation).String(),
+		Value: []byte("may-mutate"),
+	}
 }
 
 func heapHasExternalCallback(identity []byte, partition equation.Partition) bool {
-	prefix := heapExternalCallbackPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	for _, fact := range partition.ValuesPrefix(prefix) {
-		if string(fact.Value) == "may-mutate" {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapExternalCallback, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "may-mutate" {
 			return true
 		}
 	}
@@ -22917,12 +23141,18 @@ func heapHasExternalCallback(identity []byte, partition equation.Partition) bool
 }
 
 func heapMetaNewIndexCurrent(identity []byte, partition equation.Partition) ([]byte, bool) {
-	prefix := heapMetaNewIndexPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	var value []byte
 	latest := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latest) {
-			value, latest = fact.Value, fact.Key
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapMetaNewIndex, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if value == nil || fact.Occurrence > latest {
+			value, latest = fact.Payload, fact.Occurrence
 		}
 	}
 	return append([]byte(nil), value...), value != nil
@@ -22934,8 +23164,8 @@ func heapMetaNewIndexCurrent(identity []byte, partition equation.Partition) ([]b
 // The member-identity lane joins by agreement only -- an allocation identity is
 // a name, not a lattice, so edges naming different objects publish no identity
 // at all rather than a widened one.
-func heapMemberCurrent(prefix string, identity []byte, suffix string, partition equation.Partition) ([]byte, bool) {
-	value, _, found := heapMemberCurrentPublication(prefix, identity, suffix, partition)
+func heapMemberCurrent(family factkey.Family, identity []byte, suffix string, partition equation.Partition) ([]byte, bool) {
+	value, _, found := heapMemberCurrentPublication(family, identity, suffix, partition)
 	return value, found
 }
 
@@ -22943,10 +23173,12 @@ func heapMemberCurrent(prefix string, identity []byte, suffix string, partition 
 // coordinate of the publication it selected. A reader that must order this cell
 // against a later revocation needs that coordinate; one that only needs the
 // value reads through heapMemberCurrent.
-func heapMemberCurrentPublication(prefix string, identity []byte, suffix string, partition equation.Partition) ([]byte, string, bool) {
-	want := prefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/"
+func heapMemberCurrentPublication(family factkey.Family, identity []byte, suffix string, partition equation.Partition) ([]byte, string, bool) {
+	want := factkey.BuildKey(family, []factkey.Part{
+		factkey.IdentityPart(identity), factkey.EncodedOpaquePart(suffix),
+	}, "").String()
 	join := joinPublishedValues
-	if prefix == heapMemberIdentityPrefix {
+	if family.ID == factkey.FamilyHeapMemberIdentity {
 		join = joinAgreedValues
 	}
 	fact, found := partition.Reconverged(want, equation.Reconvergence{Current: latestPublication, Join: join})
@@ -22981,9 +23213,15 @@ func joinAgreedValues(left, right []byte) ([]byte, bool) {
 }
 
 func heapTableClosed(identity []byte, partition equation.Partition) bool {
-	prefix := heapTableClosedPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "closed" {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapTableClosed, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "closed" {
 			return true
 		}
 	}
@@ -22991,13 +23229,22 @@ func heapTableClosed(identity []byte, partition equation.Partition) bool {
 }
 
 func heapStaticReplacementFact(identity []byte, operation string) equation.Fact {
-	return equation.Fact{Key: heapStaticReplacePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("static")}
+	return equation.Fact{
+		Key:   factkey.BuildKey(factkey.HeapStaticReplace, []factkey.Part{factkey.IdentityPart(identity)}, operation).String(),
+		Value: []byte("static"),
+	}
 }
 
 func heapStaticReplacement(identity []byte, partition equation.Partition) bool {
-	prefix := heapStaticReplacePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "static" {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapStaticReplace, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "static" {
 			return true
 		}
 	}
@@ -23092,14 +23339,14 @@ func fieldCanonicalTableSuffix(suffix string) string {
 }
 
 func tableIdentityForTerm(term []byte, partition equation.Partition) ([]byte, bool) {
-	if identity, ok := currentEpochFact(heapTableIdentityPrefix, term, partition); ok {
+	if identity, ok := currentFamilyEpochFact(factkey.HeapTableIdentity, term, partition); ok {
 		return identity, true
 	}
 	root, suffix, ok := heapTableAddress(term)
 	if !ok || suffix == "" {
 		return nil, false
 	}
-	identity, ok := currentEpochFact(heapTableIdentityPrefix, root, partition)
+	identity, ok := currentFamilyEpochFact(factkey.HeapTableIdentity, root, partition)
 	if !ok {
 		return nil, false
 	}
@@ -23111,7 +23358,7 @@ func tableIdentityForTerm(term []byte, partition equation.Partition) ([]byte, bo
 		matched := false
 		for count := 1; count <= len(segments); count++ {
 			prefix := segment.FormatSegments(segments[:count])
-			next, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, prefix, partition)
+			next, found := heapMemberCurrent(factkey.HeapMemberIdentity, identity, prefix, partition)
 			if !found {
 				continue
 			}
@@ -23154,7 +23401,7 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		matched := false
 		for count := 1; count <= len(segments); count++ {
 			prefix := segment.FormatSegments(segments[:count])
-			next, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, prefix, partition)
+			next, found := heapMemberCurrent(factkey.HeapMemberIdentity, identity, prefix, partition)
 			if !found {
 				continue
 			}
@@ -23168,7 +23415,7 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 			// concrete member value. Retain that sealed receiver so a later
 			// absent member can be reported as a missing-member fact, rather
 			// than being conflated with Lua's untyped nil fallback.
-			if member, present := heapMemberCurrent(heapMemberPrefix, identity, prefix, partition); present && !indexedPath {
+			if member, present := heapMemberCurrent(factkey.HeapMember, identity, prefix, partition); present && !indexedPath {
 				if receiver, decoded := sealedShapeReceiverType(member); decoded {
 					sealedReceiver = receiver
 				} else {
@@ -23188,7 +23435,7 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		// slot: the callee reaches every member of the table it received and may
 		// clear it. The read falls through to the container's own element
 		// contract, which is what every surviving slot still satisfies.
-		if value, point, found := heapMemberCurrentPublication(heapMemberPrefix, identity, whole, partition); found && !heapIdentityEscapedAfter(identity, point, partition) {
+		if value, point, found := heapMemberCurrentPublication(factkey.HeapMember, identity, whole, partition); found && !heapIdentityEscapedAfter(identity, point, partition) {
 			return value, true
 		}
 		if heapMetaAttached(identity, partition) {
@@ -23366,13 +23613,19 @@ func closedUnmutatedHeapRead(term []byte, partition equation.Partition) bool {
 	if !found || !heapTableClosed(identity, partition) || heapMetaAttached(identity, partition) {
 		return false
 	}
-	prefix := heapIndexRevokePrefix + heapSubjectIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "revoked" {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapIndexRevoke, []factkey.Part{factkey.TaggedIdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		if string(fact.Payload) == "revoked" {
 			return false
 		}
 	}
-	value, found := heapMemberCurrent(heapMemberPrefix, identity, last, partition)
+	value, found := heapMemberCurrent(factkey.HeapMember, identity, last, partition)
 	return found && string(value) != "scalar/nil" && !isUnknownScalar(value)
 }
 
@@ -23472,7 +23725,7 @@ func nestedHeapMemberAddress(identity []byte, suffix string, partition equation.
 	}
 	for count := 1; count < len(segments); count++ {
 		prefix := segment.FormatSegments(segments[:count])
-		next, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, prefix, partition)
+		next, found := heapMemberCurrent(factkey.HeapMemberIdentity, identity, prefix, partition)
 		if !found || len(next) == 0 {
 			return nil, "", false
 		}
@@ -24682,17 +24935,22 @@ func containerCellCallbacks(term []byte, partition equation.Partition) []closure
 // publishedMemberSuffixes lists, in a stable order, the member slots one
 // identity has published a cell for.
 func publishedMemberSuffixes(identity []byte, partition equation.Partition) []string {
-	prefix := memberCellPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
 	seen := map[string]bool{}
 	suffixes := make([]string, 0)
-	for _, fact := range partition.ValuesPrefix(prefix) {
-		rest := strings.TrimPrefix(fact.Key, prefix)
-		cut := strings.LastIndexByte(rest, '/')
-		if cut <= 0 || cut == len(rest)-1 {
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapMemberCell, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			break
+		}
+		qualifier, present := fact.Qualifier(0)
+		if !present {
 			continue
 		}
-		decoded, err := base64.RawURLEncoding.DecodeString(rest[:cut])
-		if err != nil || !segment.ValidFormattedSegments(string(decoded)) || seen[string(decoded)] {
+		decoded, valid := qualifier.Decode(nil)
+		if !valid || !segment.ValidFormattedSegments(string(decoded)) || seen[string(decoded)] {
 			continue
 		}
 		seen[string(decoded)] = true
@@ -24747,7 +25005,7 @@ func opaqueCallbackMemberJoins(child front.Compilation, capture string, identity
 	}
 	facts := make([]equation.Fact, 0, len(order))
 	for _, suffix := range order {
-		current, found := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition)
+		current, found := heapMemberCurrent(factkey.HeapMember, identity, suffix, partition)
 		if !found {
 			continue
 		}
@@ -27043,11 +27301,15 @@ func reachedUnaccountedCallee(term, identity []byte, partition equation.Partitio
 	if !found {
 		return false
 	}
-	encodedIdentity := base64.RawURLEncoding.EncodeToString(identity)
 	accounted := make(map[string]bool)
-	for _, family := range []string{heapMemberPrefix, memberCellPrefix} {
-		for _, fact := range partition.ValuesPrefix(family + encodedIdentity + "/") {
-			accounted[factOperation(fact.Key)] = true
+	for _, family := range []factkey.Family{factkey.HeapMember, factkey.HeapMemberCell} {
+		values := partition.FamilyValues(factkey.BuildKey(family, []factkey.Part{factkey.IdentityPart(identity)}, ""))
+		for {
+			fact, ok := values.Next()
+			if !ok {
+				break
+			}
+			accounted[fact.Occurrence] = true
 		}
 	}
 	encodedAllocation := base64.RawURLEncoding.EncodeToString([]byte(allocation.Identity))
@@ -27116,21 +27378,30 @@ func heapMemberSurfaceForIdentity(identity, value []byte, partition equation.Par
 	if len(identity) == 0 || heapHasExternalCallback(identity, partition) {
 		return value
 	}
-	prefix := heapMemberPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
-	latest := make(map[string]equation.Fact)
-	for _, fact := range partition.ValuesPrefix(prefix) {
-		rest := strings.TrimPrefix(fact.Key, prefix)
-		encodedSuffix, _, ok := strings.Cut(rest, "/")
+	type publication struct {
+		occurrence string
+		payload    []byte
+	}
+	latest := make(map[string]publication)
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.HeapMember, []factkey.Part{factkey.IdentityPart(identity)}, "",
+	))
+	for {
+		fact, ok := values.Next()
 		if !ok {
+			break
+		}
+		qualifier, present := fact.Qualifier(0)
+		if !present {
 			continue
 		}
-		suffixBytes, err := base64.RawURLEncoding.DecodeString(encodedSuffix)
-		if err != nil || !segment.ValidFormattedSegments(string(suffixBytes)) {
+		suffixBytes, decoded := qualifier.Decode(nil)
+		if !decoded || !segment.ValidFormattedSegments(string(suffixBytes)) {
 			continue
 		}
 		suffix := string(suffixBytes)
-		if prior, exists := latest[suffix]; !exists || fact.Key > prior.Key {
-			latest[suffix] = fact
+		if prior, exists := latest[suffix]; !exists || fact.Occurrence > prior.occurrence {
+			latest[suffix] = publication{occurrence: fact.Occurrence, payload: fact.Payload}
 		}
 	}
 	if len(latest) == 0 {
@@ -27141,7 +27412,7 @@ func heapMemberSurfaceForIdentity(identity, value []byte, partition equation.Par
 		members[member.Suffix] = member
 	}
 	for suffix, fact := range latest {
-		members[suffix] = shapefact.Member{Suffix: suffix, Present: string(fact.Value) != "scalar/nil", Value: string(fact.Value)}
+		members[suffix] = shapefact.Member{Suffix: suffix, Present: string(fact.payload) != "scalar/nil", Value: string(fact.payload)}
 	}
 	table.Members = table.Members[:0]
 	for _, member := range members {
@@ -29132,7 +29403,7 @@ func possibleMemberValue(identity []byte, suffix string, value []byte, partition
 		return value
 	}
 	incoming := []byte("scalar/nil")
-	if current, published := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); published && len(current) != 0 {
+	if current, published := heapMemberCurrent(factkey.HeapMember, identity, suffix, partition); published && len(current) != 0 {
 		incoming = current
 	}
 	joined, ok := joinPublishedValues(value, incoming)
@@ -29186,10 +29457,11 @@ func mergeRecurrentFact(lane equation.FactLane, key string, left, right []byte, 
 	if lane != equation.LaneValue {
 		return nil, false
 	}
+	family, declared := factkey.Lookup(key)
 	switch {
-	case strings.HasPrefix(key, "value/"), strings.HasPrefix(key, heapMemberPrefix), strings.HasPrefix(key, claimBoundPrefix):
+	case strings.HasPrefix(key, "value/"), declared && family.ID == factkey.FamilyHeapMember, strings.HasPrefix(key, claimBoundPrefix):
 		return values(left, right)
-	case strings.HasPrefix(key, memberCellPrefix):
+	case declared && family.ID == factkey.FamilyHeapMemberCell:
 		return mergeRecurrentMemberCell(left, right, values)
 	default:
 		return nil, false

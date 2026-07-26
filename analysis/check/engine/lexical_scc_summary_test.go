@@ -1,10 +1,10 @@
 package engine
 
 import (
-	"encoding/base64"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
@@ -36,7 +36,7 @@ func summaryKeys(closure equation.OutputClosure) map[string]bool {
 func TestRecursiveSummaryCarriesEveryBoundaryAnchoredFamily(t *testing.T) {
 	term := boundaryTerm(2)
 	families := []string{
-		"value/", "closure/", "declared-type/", epochFactPrefix, heapTableIdentityPrefix,
+		"value/", "closure/", "declared-type/", epochFactPrefix,
 		indexReadDisplayPrefix, indexReadScalarPrefix, affineIndexPrefix, booleanResultPrefix,
 		summaryTypePrefix, methodReturnSummaryPrefix,
 	}
@@ -44,12 +44,19 @@ func TestRecursiveSummaryCarriesEveryBoundaryAnchoredFamily(t *testing.T) {
 	for _, family := range families {
 		closure.Values = append(closure.Values, equation.Fact{Key: family + term + "/op-00000001", Value: []byte("x")})
 	}
+	tableIdentityKey := factkey.BuildKey(
+		factkey.HeapTableIdentity, []factkey.Part{factkey.TermPart(term)}, "op-00000001",
+	).String()
+	closure.Values = append(closure.Values, equation.Fact{Key: tableIdentityKey, Value: []byte("x")})
 	kept := summaryKeys(lexicalSCCSummary(sccBoundary(2), closure))
 	for _, family := range families {
 		key := family + term + "/op-00000001"
 		if !kept[key] {
 			t.Errorf("recursive summary dropped %q, a fact about its own boundary term", key)
 		}
+	}
+	if !kept[tableIdentityKey] {
+		t.Errorf("recursive summary dropped %q, a fact about its own boundary term", tableIdentityKey)
 	}
 }
 
@@ -75,16 +82,29 @@ func TestRecursiveSummaryRefusesForeignSubjects(t *testing.T) {
 func TestRecursiveSummaryFollowsEveryHeapFamily(t *testing.T) {
 	term := boundaryTerm(2)
 	identity := []byte("sealed-table/test/op-00000001")
-	encoded := base64.RawURLEncoding.EncodeToString(identity)
 	closure := equation.OutputClosure{Values: []equation.Fact{
-		{Key: heapTableIdentityPrefix + term + "/op-00000001", Value: identity},
-		{Key: heapTableClosedPrefix + encoded + "/op-00000001", Value: []byte("closed")},
-		{Key: heapMemberPrefix + encoded + "/LmE/op-00000001", Value: []byte("scalar/number/1")},
-		{Key: heapTableEscapePrefix + heapSubjectIdentityPrefix + encoded + "/op-00000001", Value: []byte("escaped")},
-		{Key: heapLengthFloorPrefix + heapSubjectIdentityPrefix + encoded + "/op-00000001", Value: []byte("2")},
-		{Key: heapIndexPresencePrefix + heapSubjectIdentityPrefix + encoded + "/cGF0aC9zeW0z/op-00000001", Value: []byte("proven")},
-		{Key: heapKeyPresencePrefix + heapSubjectIdentityPrefix + encoded + "/LmE/op-00000001", Value: []byte("proven")},
+		{Key: factkey.BuildKey(factkey.HeapTableIdentity, []factkey.Part{factkey.TermPart(term)}, "op-00000001").String(), Value: identity},
+		{Key: factkey.BuildKey(factkey.HeapTableClosed, []factkey.Part{factkey.IdentityPart(identity)}, "op-00000001").String(), Value: []byte("closed")},
+		{Key: factkey.BuildKey(factkey.HeapMember, []factkey.Part{factkey.IdentityPart(identity), factkey.EncodedOpaquePart(".a")}, "op-00000001").String(), Value: []byte("scalar/number/1")},
 	}}
+	closure.Values = append(closure.Values,
+		equation.Fact{
+			Key: factkey.BuildKey(factkey.HeapTableEscape, []factkey.Part{factkey.TaggedIdentityPart(identity)}, "op-00000001").String(), Value: []byte("escaped"),
+		},
+		equation.Fact{
+			Key: factkey.BuildKey(factkey.HeapLengthFloor, []factkey.Part{factkey.TaggedIdentityPart(identity)}, "op-00000001").String(), Value: []byte("2"),
+		},
+		equation.Fact{
+			Key: factkey.BuildKey(factkey.HeapIndexPresence, []factkey.Part{
+				factkey.TaggedIdentityPart(identity), factkey.EncodedTermPart([]byte("path/sym3")),
+			}, "op-00000001").String(), Value: []byte("proven"),
+		},
+		equation.Fact{
+			Key: factkey.BuildKey(factkey.HeapKeyPresence, []factkey.Part{
+				factkey.TaggedIdentityPart(identity), factkey.EncodedTermPart([]byte(".a")),
+			}, "op-00000001").String(), Value: []byte("proven"),
+		},
+	)
 	kept := summaryKeys(lexicalSCCSummary(sccBoundary(2), closure))
 	for _, fact := range closure.Values {
 		if !kept[fact.Key] {
@@ -99,18 +119,23 @@ func TestRecursiveSummaryFollowsEveryHeapFamily(t *testing.T) {
 func TestRecursiveSummaryRefusesForeignAllocations(t *testing.T) {
 	term := boundaryTerm(2)
 	identity := []byte("sealed-table/test/op-00000001")
-	other := base64.RawURLEncoding.EncodeToString([]byte("sealed-table/test/op-00000009"))
-	foreignTerm := base64.RawURLEncoding.EncodeToString([]byte(boundaryTerm(9)))
+	foreignTerm := []byte(boundaryTerm(9))
+	foreignClosed := factkey.BuildKey(
+		factkey.HeapTableClosed, []factkey.Part{factkey.IdentityPart([]byte("sealed-table/test/op-00000009"))}, "op-00000001",
+	).String()
 	closure := equation.OutputClosure{Values: []equation.Fact{
-		{Key: heapTableIdentityPrefix + term + "/op-00000001", Value: identity},
-		{Key: heapTableClosedPrefix + other + "/op-00000001", Value: []byte("closed")},
-		{Key: heapLengthFloorPrefix + heapSubjectTermPrefix + foreignTerm + "/op-00000001", Value: []byte("2")},
+		{Key: factkey.BuildKey(factkey.HeapTableIdentity, []factkey.Part{factkey.TermPart(term)}, "op-00000001").String(), Value: identity},
+		{Key: foreignClosed, Value: []byte("closed")},
+		{Key: factkey.BuildKey(factkey.HeapLengthFloor, []factkey.Part{factkey.TaggedTermPart(foreignTerm)}, "op-00000001").String(), Value: []byte("2")},
 	}}
 	kept := summaryKeys(lexicalSCCSummary(sccBoundary(2), closure))
-	if kept[heapTableClosedPrefix+other+"/op-00000001"] {
+	if kept[foreignClosed] {
 		t.Error("recursive summary carried a fact about an allocation it never reached")
 	}
-	if kept[heapLengthFloorPrefix+heapSubjectTermPrefix+foreignTerm+"/op-00000001"] {
+	foreignFloor := factkey.BuildKey(
+		factkey.HeapLengthFloor, []factkey.Part{factkey.TaggedTermPart(foreignTerm)}, "op-00000001",
+	).String()
+	if kept[foreignFloor] {
 		t.Error("recursive summary followed a term-spelled subject as if it named an allocation")
 	}
 }
