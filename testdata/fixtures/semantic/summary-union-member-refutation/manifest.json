@@ -1,0 +1,131 @@
+{
+  "description": "A call-result summary enumerates every result the call can produce, so a member no arm carries is refuted on the whole result, a member some arms carry is an optional read, and a call whose return sites cannot all be enumerated publishes no summary to decide against.",
+  "files": [
+    "provider.lua",
+    "main.lua"
+  ],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 4,
+        "column": 24,
+        "severity": "error",
+        "code": "type.member.missing",
+        "message_contains": [
+          "has no member \"duration\"",
+          "{elapsed: 1, kind: \"timer\"} | {kind: \"event\", name: \"a\"}"
+        ],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 4,
+            "column": 24,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "refuted.duration reads member \"duration\" from receiver type {elapsed: 1, kind: \"timer\"} | {kind: \"event\", name: \"a\"}"
+            ]
+          }
+        ],
+        "help_contains": [
+          "Narrow the receiver before reading `duration`"
+        ],
+        "label_contains": [
+          "member read"
+        ],
+        "render_ordered_contains": [
+          "error[type.member.missing]: {elapsed: 1, kind: \"timer\"} | {kind: \"event\", name: \"a\"} has no member \"duration\"",
+          "--> main.lua:4:24",
+          "local absent: number = refuted.duration",
+          "because:",
+          "proven: refuted.duration reads member \"duration\" from receiver type {elapsed: 1, kind: \"timer\"} | {kind: \"event\", name: \"a\"}",
+          "help: Narrow the receiver before reading `duration`, or add `duration` to every reachable receiver shape."
+        ],
+        "render_contains": [
+          "error[type.member.missing]",
+          "refuted.duration",
+          "has no member \"duration\""
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 7,
+        "column": 25,
+        "severity": "error",
+        "code": "type.assignment",
+        "message_contains": [
+          "cannot assign partial.elapsed because it may be nil"
+        ],
+        "min_evidence": 5,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 7,
+            "column": 25,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "partial.elapsed can be 1 or nil here"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 7,
+            "column": 25,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": [
+              "partial.elapsed is declared by union arm {elapsed: 1, kind: \"timer\"} and omitted by arm {kind: \"event\", name: \"a\"}"
+            ]
+          },
+          {
+            "file": "main.lua",
+            "line": 7,
+            "column": 25,
+            "kind": "missing proof",
+            "trust": "unknown",
+            "contains": [
+              "no guard on this path proves partial.elapsed is non-nil"
+            ]
+          }
+        ],
+        "help_contains": [
+          "Guard `partial.elapsed` with a nil check"
+        ],
+        "label_contains": [
+          "assigned value may be nil"
+        ],
+        "render_contains": [
+          "error[type.assignment]",
+          "partial.elapsed",
+          "because it may be nil",
+          "is declared by union arm"
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 10,
+        "column": 25,
+        "severity": "error",
+        "code": "lint.claim.unproven",
+        "message_contains": [
+          "claim \"number\" is not proven"
+        ],
+        "label_contains": [
+          "unproven claim"
+        ],
+        "allow_empty_evidence": true,
+        "render_contains": [
+          "error[lint.claim.unproven]",
+          "unenumerable.duration",
+          "claim \"number\" is not proven"
+        ],
+        "help_contains": [
+          "Prove the claim by narrowing the value to the claimed type"
+        ]
+      }
+    ]
+  }
+}

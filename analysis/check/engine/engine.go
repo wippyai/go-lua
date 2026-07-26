@@ -27179,17 +27179,22 @@ func typedPathValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		summaryUnion = summary && summaryUnion
 		// A member some arms of the refusing receiver carry and others omit is
 		// an optional read: indexing an arm that omits it yields nil. A summary
-		// union is likewise a contract over several possible results rather than
-		// proof that every member path exists. The arm-wise projection retains
-		// that absence as nil, while FieldAtPath refuses a partial member so
-		// branch dispatch decides against the whole surface.
+		// union states the same relation over the results a call can produce.
+		// The arm-wise projection retains that absence as nil, while FieldAtPath
+		// refuses a partial member so branch dispatch decides against the whole
+		// surface.
 		_, _, partialUnion := unionMemberArms(receiver, refused)
 		if summaryUnion || refutable && partialUnion {
 			if projected, projectedFound := luatypeprojection.ApplySegments(source, suffix); projectedFound {
 				return shapefact.EncodeTarget(projected)
 			}
 		}
-		if summaryUnion || !refutable || !closedMemberSurface(receiver) {
+		// A summary enumerates every result its call can produce: a declared
+		// return is the callee's contract, and an inferred one is withheld in
+		// full unless every return site is already a sealed closed literal. A
+		// member no arm of a closed summary union carries is therefore absent
+		// from the whole result, exactly as it is for a declared receiver.
+		if !refutable || !closedMemberSurface(receiver) {
 			return []byte("scalar/top"), true
 		}
 		return memberMissingValue(receiver)

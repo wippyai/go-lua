@@ -687,6 +687,74 @@ end
 	t.Fatalf("member carried by no arm was accepted: %#v", result.PublishedDiagnostics)
 }
 
+// summaryUnionResultSource returns a program whose callee publishes a declared
+// union return, so the caller's member read decides against a call-result
+// summary rather than against a declared receiver of its own.
+func summaryUnionResultSource(read string) string {
+	return `
+type Event = {kind: "event", name: string}
+type Timer = {kind: "timer", elapsed: number}
+type Result = Event | Timer
+local function get(flag: boolean): Result
+    if flag then
+        return {kind = "event", name = "a"}
+    end
+    return {kind = "timer", elapsed = 1}
+end
+local r = get(true)
+` + read + `
+`
+}
+
+// TestCheckRefutesSummaryUnionMemberNoArmCarries holds a call-result summary to
+// the same rule as a declared receiver. A summary enumerates every result its
+// call can produce: a declared return is the callee's contract, and an inferred
+// return is withheld in full unless every return site is already a sealed
+// closed literal. A member no arm of that union carries is therefore absent
+// from the whole result and is refuted rather than left unproven.
+func TestCheckRefutesSummaryUnionMemberNoArmCarries(t *testing.T) {
+	result, err := engine.Check(summaryUnionResultSource(`local absent: number = r.duration`))
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code != "type.member.missing" || diagnostic.Span.StartLine != 12 {
+			continue
+		}
+		if !strings.Contains(diagnostic.Message, `has no member "duration"`) {
+			t.Fatalf("summary-union refutation message = %q", diagnostic.Message)
+		}
+		return
+	}
+	t.Fatalf("member carried by no summary arm was accepted: %#v", result.PublishedDiagnostics)
+}
+
+// TestCheckReadsSummaryUnionPartialMemberAsOptional keeps both encodings apart
+// on one summary: elapsed is declared by one arm and omitted by the other, so
+// that read stays an optional read rather than a refutation.
+func TestCheckReadsSummaryUnionPartialMemberAsOptional(t *testing.T) {
+	result, err := engine.Check(summaryUnionResultSource(`local carried: number = r.elapsed`))
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, diagnostic := range result.PublishedDiagnostics {
+		if diagnostic.Code == "type.member.missing" {
+			t.Fatalf("partial summary member was refuted: %#v", diagnostic)
+		}
+		if diagnostic.Code != "type.assignment" || diagnostic.Span.StartLine != 12 {
+			continue
+		}
+		if diagnostic.Message != "cannot assign r.elapsed because it may be nil" {
+			t.Fatalf("partial summary member message = %q", diagnostic.Message)
+		}
+		if !hasEvidence(diagnostic, `r.elapsed is declared by union arm {elapsed: number, kind: "timer"} and omitted by arm {kind: "event", name: string}`) {
+			t.Fatalf("partial summary member lost its arm evidence: %#v", diagnostic.Evidence)
+		}
+		return
+	}
+	t.Fatalf("partial summary member read was accepted: %#v", result.PublishedDiagnostics)
+}
+
 func hasEvidence(diagnostic engine.PublishedDiagnostic, message string) bool {
 	for _, evidence := range diagnostic.Evidence {
 		if evidence.Message == message {
