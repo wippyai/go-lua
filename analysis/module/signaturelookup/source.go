@@ -172,6 +172,29 @@ func StdlibConditionalResultSlots(name string) []StdlibResultSlotCondition {
 	return out
 }
 
+// StdlibPositionalResultSlot is a length-bounded position condition declared by
+// the Lua standard-library contract for one optional result slot.
+type StdlibPositionalResultSlot struct {
+	ResultIndex      int
+	SubjectArgument  int
+	PositionArgument int
+	DefaultPosition  int64
+}
+
+// StdlibPositionalResultSlots exposes the declarative positional conditions for
+// one standard-library provider.
+func StdlibPositionalResultSlots(name string) []StdlibPositionalResultSlot {
+	items := stdlib.PositionalResultSlots(name)
+	out := make([]StdlibPositionalResultSlot, len(items))
+	for index, item := range items {
+		out[index] = StdlibPositionalResultSlot{
+			ResultIndex: item.ResultIndex, SubjectArgument: item.SubjectArgument,
+			PositionArgument: item.PositionArgument, DefaultPosition: item.DefaultPosition,
+		}
+	}
+	return out
+}
+
 // StdlibMethodProvider returns the canonical global name of a typed standard
 // library method.  The decision is owned by the standard-library contract
 // table, rather than by call-site name matching.

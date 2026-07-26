@@ -2413,10 +2413,15 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 	}
 	if nilable {
 		display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]
-		if display == "" {
+		// An argument the front gave no source spelling -- a call expression
+		// written straight into the argument list -- is named by its position
+		// alone, so the position is not restated after that name.
+		item.Message = fmt.Sprintf("cannot pass %s because it may be nil", argument)
+		if display != "" {
+			item.Message = fmt.Sprintf("cannot pass %s as argument %d because it may be nil", display, argumentIndex)
+		} else {
 			display = argument
 		}
-		item.Message = fmt.Sprintf("cannot pass %s as argument %d because it may be nil", display, argumentIndex)
 		item.Evidence = []DiagnosticEvidence{
 			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s can be %s or nil here", argument, expected)},
 			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d expects %s", callee, argumentIndex, expected)},
@@ -6772,7 +6777,16 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 				return nil, false
 			}
 			hasResultCall = true
-		case "branch-relations", "dynamic-index-read", "channel-select":
+		case "branch-relations":
+			// A length floor on a declared formal is decided by nothing a caller
+			// supplies: the declaration seeds the formal, the guard stays
+			// undecided here exactly as it does at every call site, and both arms
+			// are evaluated under the same entry. Any other condition can be
+			// refined by a caller value and keeps this body demand-driven.
+			if !uncalledDeclaredFormalLengthBranch(child, operation) {
+				return nil, false
+			}
+		case "dynamic-index-read", "channel-select":
 			return nil, false
 		}
 	}
@@ -6780,6 +6794,33 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 		return nil, false
 	}
 	return declaredFormalSeeds(child)
+}
+
+// uncalledDeclaredFormalLengthBranch reports a branch whose entire condition is
+// a length floor on one of this body's declared formals. The branch's own
+// predicate must be that floor, and every further piece of evidence it carries
+// must state the same kind of floor on the same class of term, so no conjunct
+// the declaration does not close can reach the arms.
+func uncalledDeclaredFormalLengthBranch(child front.Compilation, operation equation.Equation) bool {
+	formals := make(map[string]bool, len(child.Boundary.Parameters))
+	for _, parameter := range child.Boundary.Parameters {
+		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type == 0 {
+			return false
+		}
+		formals[boundaryTerm(parameter.Symbol)] = true
+	}
+	stated := false
+	for _, operand := range operation.Operands {
+		predicate, _, recognized := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
+		if !recognized {
+			continue
+		}
+		if predicate.Kind != "len-ge" || predicate.Path == "" || !formals["path/"+predicate.Path] {
+			return false
+		}
+		stated = stated || operand.Role == "predicate"
+	}
+	return stated
 }
 
 // uncalledStaticCapturedReturnBoundary admits one parameter-free return
@@ -7313,6 +7354,11 @@ func uncalledDeclaredProviderResultDiagnostic(child front.Compilation, key strin
 	return false
 }
 
+// uncalledPublishedResultPaths names every term holding one of the given
+// applications' published results: the result slots themselves and the locals
+// written from them. A result consumed straight out of its slot carries the
+// same published contract as one bound to a local first, so both spellings of
+// the same value answer this question identically.
 func uncalledPublishedResultPaths(operations []equation.Equation, applications map[string]bool) map[string]bool {
 	results := make(map[string]bool)
 	for _, operation := range operations {
@@ -7329,7 +7375,10 @@ func uncalledPublishedResultPaths(operations []equation.Equation, applications m
 			}
 		}
 	}
-	paths := make(map[string]bool)
+	paths := make(map[string]bool, len(results))
+	for term := range results {
+		paths[term] = true
+	}
 	for _, operation := range operations {
 		if operation.Occurrence.Kind != "environment-write" {
 			continue
@@ -11709,6 +11758,59 @@ func heapOpaqueMemberWriteFact(identity []byte, operation string) equation.Fact 
 	return equation.Fact{Key: heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: []byte("unresolved-key")}
 }
 
+// borderIndexPresenceProven reports that a read at a container's own length
+// lands on an occupied slot. Lua's `#` returns a border: a non-negative n with
+// (n == 0 or t[n] ~= nil) and t[n + 1] == nil. When slot 1 of a complete
+// inventory holds a value, 0 is not a border of that table, so every border the
+// operator may return names a written slot and the read cannot be nil whatever
+// holes lie above it. Without that first slot the empty border remains
+// available and t[0] is nil, which is exactly the opaque array's case.
+func borderIndexPresenceProven(container, key []byte, partition equation.Partition) bool {
+	named, ok := publishedLengthTerm(key, partition)
+	if !ok || named != string(container) {
+		return false
+	}
+	// An escaped container may have had its border moved by the callee, so the
+	// inventory this proof reads is no longer the live one.
+	if containerTableEscaped(container, partition) {
+		return false
+	}
+	shape, complete := heapSequenceShape(container, partition)
+	return complete && sequenceFirstSlotPresent(shape)
+}
+
+// borderMemberValue is the value a read at the container's own length has. The
+// border proof establishes that the slot is occupied; the element contract the
+// container already publishes is the type every one of its slots satisfies, so
+// a holey inventory is read exactly as a dense one is.
+func borderMemberValue(container, key []byte, partition equation.Partition) ([]byte, bool) {
+	if !borderIndexPresenceProven(container, key, partition) {
+		return nil, false
+	}
+	element, found := containerArrayElement(container, partition)
+	if !found || element == nil {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(element)
+}
+
+// sequenceFirstSlotPresent reports that the inventory proves slot 1 occupied.
+// Closure is what makes the answer decidable: an omitted member is absent, so
+// the recorded members name every live slot of the container.
+func sequenceFirstSlotPresent(table shapefact.Table) bool {
+	if !table.Closed {
+		return false
+	}
+	for _, member := range table.Members {
+		segments, parsed := segment.ParseFormattedSegments(member.Suffix)
+		if !parsed || len(segments) != 1 || segments[0].Kind != segment.SegmentIndexInt || segments[0].Index != 1 {
+			continue
+		}
+		return member.Present
+	}
+	return false
+}
+
 // sealedSequenceLength proves an exact Lua length only for a closed, present,
 // contiguous top-level integer sequence. A named key, nested member, hole, or
 // zero index keeps the result broad because it has no border-free sequence
@@ -12417,6 +12519,14 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 			if memberIdentity, found := heapMemberCurrent(heapMemberIdentityPrefix, identity, suffix, partition); found {
 				values = append(values, heapIdentityFact(target, operation.Target.Name, memberIdentity))
 			}
+		}
+	}
+	// Reading a container at its own length is the border read. The inventory
+	// decides whether that border can be the empty one, and the container's
+	// element contract is what every occupied slot satisfies.
+	if string(values[0].Value) == "scalar/top" {
+		if border, found := borderMemberValue(operands["container"], operands["key"], partition); found {
+			values[0].Value = border
 		}
 	}
 	// A sealed type witness is a separate, already-published authority from a
@@ -17665,6 +17775,11 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if typedMethodContract {
 		signature, signatureKnown = typedMethodSignature, true
 	}
+	if signatureKnown && operands.spread && hasCallee {
+		if result, refuted := spreadOptionalArgumentRefutation(operation, operands, signature, partition); refuted {
+			return result, nil
+		}
+	}
 	if !signatureKnown || operands.spread {
 		if string(callee) == "scalar/function" {
 			// An unshaped callable includes generic and otherwise uninstantiated
@@ -20471,6 +20586,28 @@ func callArgumentIndex(role string) (int, error) {
 	return strconv.Atoi(text)
 }
 
+// spreadOptionalArgumentRefutation refutes a spread call whose argument holds a
+// provider's declared optional result. A spread argument list has no proven
+// arity, so the positional contracts below stay dormant; this obligation does
+// not depend on that arity. The spread expands at the position its own argument
+// already occupies, and its first result is the value that lands there, so a
+// parameter refusing nil refutes that declared optional exactly as it does when
+// the same result is bound to a local first.
+func spreadOptionalArgumentRefutation(operation equation.BoundEquation, operands directCallOperands, signature callableShape, partition equation.Partition) (equation.TransactionResult, bool) {
+	if !declaredEntryBoundary(operation.Target.Body, partition) {
+		return equation.TransactionResult{}, false
+	}
+	for index, term := range operands.arguments {
+		expected, accepts := callableParameterAt(signature, index)
+		if !accepts || !callableParameterRejectsNil(expected) || !optionalProviderArgumentMayBeNil(term, partition) {
+			continue
+		}
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index),
+			fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))), true
+	}
+	return equation.TransactionResult{}, false
+}
+
 func callDiagnostic(operation equation.BoundEquation, code, subject, message string) equation.TransactionResult {
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
 		Key: "type.call.direct." + code + "/" + operation.Target.Name + "/" + subject, Value: []byte(message),
@@ -21348,6 +21485,28 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				}
 			}
 		}
+		// A standard-library slot whose declared optionality is positional is
+		// discharged where a guard has already bounded the subject. The proof is
+		// read once here so the published value and the optional-result contract
+		// below state the same conclusion.
+		positionalResult := false
+		if index, err := strconv.Atoi(key); err == nil {
+			positionalProvider := providerName(provider)
+			positionalArguments := argumentTerms
+			// A colon call names its receiver where the global form names the
+			// provider, so the method contract and its receiver-first argument
+			// list are taken together or not at all.
+			if hasMethodProvider && receiver != nil && method != nil {
+				positionalProvider = methodProvider
+				positionalArguments = methodArgumentTerms(receiver, argumentTerms)
+			}
+			positionalResult = providerPositionalResultProven(positionalProvider, index, positionalArguments, partition)
+		}
+		if positionalResult {
+			if present, ok := presentResultValue(value); ok {
+				value = present
+			}
+		}
 		values = append(values,
 			equation.Fact{Key: "value/" + string(result) + "/" + operation.Target.Name, Value: value},
 			equation.Fact{Key: epochFactPrefix + string(result) + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)},
@@ -21454,7 +21613,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if !hasOptional {
 				optional, hasOptional = optionalCallableResultValue(callee, resultIndex, partition)
 			}
-			if hasOptional {
+			if hasOptional && !positionalResult {
 				values = append(values, equation.Fact{
 					Key:   "optional-provider-result/" + string(result) + "/" + operation.Target.Name,
 					Value: optional,
@@ -23712,6 +23871,67 @@ func optionalResultOrigin(operation equation.BoundEquation, index int) (string, 
 		return fmt.Sprintf("%s return %d", callee, index+1), true
 	}
 	return "", false
+}
+
+// providerPositionalResultProven discharges a standard-library result slot whose
+// declared optionality is positional. The contract states which argument holds
+// the position and which holds the subject that bounds it; the position must be
+// a constant at or above one, and a guard must already have proved the subject
+// at least that long. A computed position, a position past the proven floor, or
+// an unguarded subject leaves the declared optional exactly as it stands.
+func providerPositionalResultProven(provider string, index int, arguments map[int][]byte, partition equation.Partition) bool {
+	for _, slot := range signaturelookup.StdlibPositionalResultSlots(provider) {
+		if slot.ResultIndex != index {
+			continue
+		}
+		subject, stated := arguments[slot.SubjectArgument]
+		if !stated {
+			continue
+		}
+		position := slot.DefaultPosition
+		if term, supplied := arguments[slot.PositionArgument]; supplied {
+			value, err := resolveCurrentValue(term, partition)
+			if err != nil {
+				continue
+			}
+			constant, exact := scalarIntegerConstant(value)
+			if !exact {
+				continue
+			}
+			position = constant
+		}
+		if position >= 1 && position <= lengthFloorProven(subject, partition) {
+			return true
+		}
+	}
+	return false
+}
+
+// methodArgumentTerms restates a colon call's arguments in the standard-library
+// contract's own numbering. A method binds its receiver as the first operand of
+// the same signature the global form takes, so both spellings of one call
+// present the identical argument list to a contract lookup.
+func methodArgumentTerms(receiver []byte, arguments map[int][]byte) map[int][]byte {
+	shifted := make(map[int][]byte, len(arguments)+1)
+	shifted[0] = receiver
+	for index, term := range arguments {
+		shifted[index+1] = term
+	}
+	return shifted
+}
+
+// presentResultValue removes the nil a discharged optional result no longer
+// admits, leaving the slot's declared payload.
+func presentResultValue(value []byte) ([]byte, bool) {
+	target, decoded := shapefact.DecodeTarget(value)
+	if !decoded || target == nil {
+		return nil, false
+	}
+	present := proof.ProjectionWithoutNil(target)
+	if present == nil {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(present)
 }
 
 func optionalProviderResultValue(provider string, index int) ([]byte, bool) {

@@ -577,6 +577,40 @@ var conditionalResultSlots = map[string][]ResultSlotCondition{
 	}},
 }
 
+// PositionalResultSlot declares that a result slot is optional only because a
+// position argument may fall outside the subject argument's length. It is part
+// of the Lua library contract: a caller that has already proved the subject at
+// least as long as the position has discharged that optionality, and nothing
+// else about the slot changes. PositionArgument is the argument holding the
+// position; when the call omits it the contract's own default position applies.
+type PositionalResultSlot struct {
+	ResultIndex      int
+	SubjectArgument  int
+	PositionArgument int
+	DefaultPosition  int64
+}
+
+// string.byte reads one character of its subject at a position, so its result
+// is absent exactly when that position lies past the subject's end. Omitting
+// the position reads the first character.
+var positionalResultSlots = map[string][]PositionalResultSlot{
+	"string.byte": {{
+		ResultIndex:      0,
+		SubjectArgument:  0,
+		PositionArgument: 1,
+		DefaultPosition:  1,
+	}},
+}
+
+// PositionalResultSlots returns a copied view of the positional conditions the
+// Lua standard-library contract declares for one provider.
+func PositionalResultSlots(name string) []PositionalResultSlot {
+	items := positionalResultSlots[name]
+	out := make([]PositionalResultSlot, len(items))
+	copy(out, items)
+	return out
+}
+
 // Lookup returns a cloned effect signature for a known stdlib function name.
 // init registers the string-library methods from the canonical type/stringlib
 // table as string.<name> global signatures, so the global call and the colon
