@@ -1,0 +1,4 @@
+{
+  "description": "A keyed iteration enumerates the slots a table holds, so the variable it binds each key to names a present slot and the map read at that key is the declared element without Lua's missing-slot nil. The relation is exact in every direction: another key of the same map, another map of the same key type, a key the body rebinds, a dynamic write that can clear the enumerated slot, and a static write whose named slot may be that same key all leave the read optional.",
+  "files": ["main.lua"]
+}

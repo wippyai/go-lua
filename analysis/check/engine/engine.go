@@ -120,9 +120,22 @@ const (
 	heapMetaNewIndexPrefix     = "heap/meta-newindex/"
 	heapExternalCallbackPrefix = "heap/external-callback/"
 	heapIndexPresencePrefix    = "heap/index-presence/"
-	heapIndexRevokePrefix      = "heap/index-revoke/"
-	heapIndexLowerPrefix       = "heap/index-lower/"
-	heapIndexUpperPrefix       = "heap/index-upper/"
+	// heapKeyPresencePrefix carries the presence a keyed iteration establishes:
+	// the loop's key variable names a slot the iteration itself enumerated, so
+	// the container holds a value there. It is a distinct evidence family from
+	// the guard-derived in-range presence because it answers to a different
+	// invalidation. A guard bounds an index against a border; an enumeration
+	// names slots, so every later publication through the same identity --
+	// static as well as dynamic -- leaves it stale.
+	heapKeyPresencePrefix = "heap/key-presence/"
+	// iteratorKeySourcePrefix names the container an active keyed iteration
+	// enumerates. The key/element witnesses transport the iteration's types;
+	// this row transports the term those types were read from, so the loop
+	// header can bind its key variable to that same container.
+	iteratorKeySourcePrefix = "iterator-key-source/"
+	heapIndexRevokePrefix   = "heap/index-revoke/"
+	heapIndexLowerPrefix    = "heap/index-lower/"
+	heapIndexUpperPrefix    = "heap/index-upper/"
 	// heapIndexRelationPrefix carries a branch's true-edge relations forward in
 	// their normalized form. The boolean index pairs name only the terms the
 	// branch itself mentioned; an index term computed inside the arm is
@@ -12593,6 +12606,13 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	if !ok {
 		containerType, ok = typedPathType(container, partition)
 	}
+	// A declared map is the one container whose element the key domain decides
+	// for every key alike, so a computed key reads the same declared element a
+	// spelled one does. Other declared shapes select their members by name and
+	// keep no such answer for a key this read cannot resolve.
+	if !ok {
+		containerType, ok = declaredMapContainerType(container, partition)
+	}
 	// A published type witness may have unrelated open members. RuntimeIndex
 	// still derives only the selected member, so an exact selected member stays
 	// available without treating the container itself as a closed return value.
@@ -12628,6 +12648,28 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	}
 	_, scalar := optionalEvidenceDisplay(result)
 	return encoded, typeformat.Short(proof.ProjectionWithoutNil(result)), scalar, optionalConcreteWitnessType(result), true
+}
+
+// declaredMapContainerType reads a container's own declaration when it is a
+// map. A map's declaration types every slot uniformly, so it answers a read at
+// a key the analysis cannot resolve exactly -- which is the read a spelled key
+// already receives through the member ancestor projection. The answer stays
+// the declared element with Lua's missing-slot nil; only a presence proof
+// removes that nil.
+func declaredMapContainerType(container []byte, partition equation.Partition) (typ.Type, bool) {
+	declared, found := declaredTypeForTerm(container, partition)
+	if !found || declared == nil {
+		return nil, false
+	}
+	base := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(declared)))
+	if base == nil {
+		return nil, false
+	}
+	switch base.Kind() {
+	case kind.Map, kind.ReadonlyMap:
+		return declared, true
+	}
+	return nil, false
 }
 
 func castTargetWitness(term []byte, partition equation.Partition) (typ.Type, bool) {
@@ -12669,7 +12711,8 @@ func indexPresenceProven(container, index []byte, partition equation.Partition) 
 		}
 	}
 	if proof == "" {
-		return affineIndexPresenceProven(container, index, partition)
+		return affineIndexPresenceProven(container, index, partition) ||
+			keyIterationPresenceProven(container, index, partition)
 	}
 	// A bound proves nothing about a value the body has since replaced. The
 	// index term's current epoch is exactly that replacement event, so a proof
@@ -12681,6 +12724,120 @@ func indexPresenceProven(container, index []byte, partition equation.Partition) 
 		return false
 	}
 	return true
+}
+
+// keyIterationPresenceFacts states the presence a keyed iteration establishes
+// between the container it enumerates and the variable it binds each key to.
+// Lua's keyed iteration visits exactly the slots the table holds, so the
+// container holds a value at the bound key.
+//
+// The relation is stated only against a resolved heap identity. That identity
+// is the subject every write -- through this term or through any alias of it --
+// already publishes its revocation under, so binding the proof to it is what
+// makes a later mutation reach this proof at all. A container the analysis
+// cannot name that way, or one whose reads may be answered by a metatable or
+// mutated by a callback it handed out, establishes nothing.
+func keyIterationPresenceFacts(source []byte, key, operation string, partition equation.Partition) []equation.Fact {
+	if len(source) == 0 || len(key) == 0 {
+		return nil
+	}
+	identity, found := tableIdentityForTerm(source, partition)
+	if !found || heapMetaAttached(identity, partition) || heapHasExternalCallback(identity, partition) {
+		return nil
+	}
+	return []equation.Fact{{
+		Key: heapKeyPresencePrefix + heapIndexSubject(source, partition) + "/" +
+			base64.RawURLEncoding.EncodeToString([]byte(key)) + "/" + operation,
+		Value: []byte("proven"),
+	}}
+}
+
+// keyIterationPresenceProven decides a read whose key came from a keyed
+// iteration of the same container. The enumeration named a live slot, so the
+// read is present for as long as both the key and the enumerated inventory are
+// the ones the iteration observed.
+//
+// Everything that can move a slot after the proof drops it. A rebound key
+// variable carries a later epoch. A dynamic write publishes the shared
+// revocation. A static member write publishes no revocation because it names
+// its slot exactly, but that named slot may be the enumerated key itself, so
+// any member publication through the identity after the proof is equally
+// disqualifying -- as is a store whose key never resolved, which leaves the
+// inventory unaccounted for. A callee that received the table without being
+// evaluated leaves its own blocker; the writes it may have made were never
+// projected back, so the enumerated inventory is no longer accounted for
+// either.
+func keyIterationPresenceProven(container, index []byte, partition equation.Partition) bool {
+	identity, found := tableIdentityForTerm(container, partition)
+	if !found {
+		return false
+	}
+	subject := heapIndexSubject(container, partition)
+	prefix := heapKeyPresencePrefix + subject + "/" + base64.RawURLEncoding.EncodeToString(index) + "/"
+	proof := ""
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		if string(fact.Value) == "proven" && fact.Key > proof {
+			proof = fact.Key
+		}
+	}
+	if proof == "" {
+		return false
+	}
+	provenAt := factOperation(proof)
+	if epoch, versioned := currentEpoch(index, partition); versioned && epoch > provenAt {
+		return false
+	}
+	if revoked(subject, provenAt, partition) {
+		return false
+	}
+	if heapMetaAttached(identity, partition) || heapHasExternalCallback(identity, partition) {
+		return false
+	}
+	if heapInventoryChangedAfter(identity, provenAt, partition) {
+		return false
+	}
+	return !unverifiedCallAfter(container, provenAt, partition)
+}
+
+// unverifiedCallAfter reports that this container reached a callee whose body
+// the analysis never evaluated after the given operation. The opaque-call
+// blocker is that callee's own record of not having been read; a call the
+// evaluator did complete discharges it at the same coordinate.
+func unverifiedCallAfter(container []byte, operation string, partition equation.Partition) bool {
+	allocation, found := placementAllocationForTerm(container, partition)
+	if !found {
+		return false
+	}
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(allocation.Identity))
+	blocked := placementBlockerPrefix + encoded + "/opaque-call/"
+	discharged := placementContractPrefix + encoded + "/local/"
+	for _, fact := range partition.ValuesPrefix(blocked) {
+		point := factOperation(fact.Key)
+		if string(fact.Value) != "proven" || point <= operation {
+			continue
+		}
+		if _, complete := partition.Value(discharged + point); !complete {
+			return true
+		}
+	}
+	return false
+}
+
+// heapInventoryChangedAfter reports that the slots of this identity were
+// published again after the given operation. It reads the member, member-cell,
+// static-replacement and unresolved-key families together because each of them
+// is a way the live inventory can differ from the one an earlier enumeration
+// observed.
+func heapInventoryChangedAfter(identity []byte, operation string, partition equation.Partition) bool {
+	encoded := base64.RawURLEncoding.EncodeToString(identity)
+	for _, family := range []string{heapMemberPrefix, memberCellPrefix, heapStaticReplacePrefix, heapOpaqueMemberWritePrefix} {
+		for _, fact := range partition.ValuesPrefix(family + encoded + "/") {
+			if factOperation(fact.Key) > operation {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // revoked reports that a dynamic write through this heap identity followed the
@@ -15101,6 +15258,7 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 	}
 	iteratorElement, indexedIterator := currentEpochFact(iteratorElementPrefix, operands["iterator"], partition)
 	iteratorKey, keyedIterator := currentEpochFact(iteratorKeyPrefix, operands["iterator"], partition)
+	keySource, enumeratedSource := currentEpochFact(iteratorKeySourcePrefix, operands["iterator"], partition)
 	// A generic iterator that is an exact callable publishes its own result
 	// contract. Lua binds the loop variables to that callable's results in
 	// order, so the declared tuple types every bound variable; the pairs/ipairs
@@ -15128,6 +15286,9 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 			}
 			if index == 0 {
 				resultValue = iteratorKey
+				if enumeratedSource {
+					values = append(values, keyIterationPresenceFacts(keySource, result, operation.Target.Name, partition)...)
+				}
 			} else if index == 1 {
 				resultValue = iteratorElement
 			}
@@ -21630,6 +21791,14 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			values = append(values, equation.Fact{Key: iteratorElementPrefix + string(result) + "/" + operation.Target.Name, Value: element})
 			if len(key) != 0 {
 				values = append(values, equation.Fact{Key: iteratorKeyPrefix + string(result) + "/" + operation.Target.Name, Value: key})
+				// A key witness exists only for a keyed iteration, so the same
+				// provider effect that produced it names the container being
+				// enumerated. Carrying that term forward lets the loop header
+				// state the presence relation between that container and the
+				// variable it binds the key to.
+				if source, found := iteratorSourceTerm(provider, argumentTerms); found && len(source) != 0 {
+					values = append(values, equation.Fact{Key: iteratorKeySourcePrefix + string(result) + "/" + operation.Target.Name, Value: append([]byte(nil), source...)})
+				}
 			}
 		}
 		if source, found := iteratorSourceTerm(provider, argumentTerms); found {
