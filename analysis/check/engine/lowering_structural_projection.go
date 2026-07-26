@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -24,114 +23,12 @@ func structuralRow(compilation front.Compilation, family, occurrence, subject, v
 	}
 }
 
-func typedProducerNativeFacts(compilation front.Compilation) []NativeFact {
-	body := compilation.WIR
-	if body == nil {
-		return nil
-	}
-	var rows []NativeFact
-	for index := 0; index < body.Len(); index++ {
-		instruction := body.Instr(index)
-		if instruction.Op != wir.OpClaim || instruction.Claim != wir.ClaimAnnotation || instruction.Dst.Kind != wir.OperandPath {
-			continue
-		}
-		declared := unwrap.Alias(body.Type(instruction.Type))
-		if declared == nil || declared.Kind() == kind.Unknown {
-			continue
-		}
-		value := "classification=compile_time_only"
-		if nativeLayoutRelevant(declared) {
-			value = "classification=runtime_relevant requires_native_operation_contract=true"
-		} else if declared.Kind() != kind.Any {
-			value += " value_bit_identity=true"
-		}
-		occurrence := fmt.Sprintf("op-%08d", index)
-		rows = append(rows, structuralRow(compilation, "typed_producer", occurrence, body.Path(wir.PathRef(instruction.Dst.Ref)).String(), value))
-	}
-	return rows
-}
-
-func nativeLayoutRelevant(value typ.Type) bool {
-	switch value.Kind() {
-	case kind.Record, kind.Array, kind.Map, kind.ReadonlyMap, kind.Tuple:
-		return true
-	default:
-		return false
-	}
-}
-
-func tableConstructionBoundFacts(compilation front.Compilation) []NativeFact {
-	body := compilation.WIR
-	if body == nil {
-		return nil
-	}
-	var rows []NativeFact
-	for index := 0; index < body.Len(); index++ {
-		instruction := body.Instr(index)
-		if instruction.Op != wir.OpMakeTable || !isRecordType(body.Type(instruction.Type)) {
-			continue
-		}
-		count, inLoop, exact := constructorOccurrences(body, index)
-		if !exact {
-			continue
-		}
-		mode := "once_only"
-		if inLoop {
-			mode = "repeatable"
-		}
-		occurrence := fmt.Sprintf("op-%08d", index)
-		rows = append(rows, structuralRow(compilation, "table_construction_bound", occurrence, "", "max_occurrences="+strconv.FormatInt(count, 10)+" occurrence_mode="+mode))
-	}
-	return rows
-}
-
-func isRecordType(value typ.Type) bool {
-	value = unwrap.Alias(value)
-	return value != nil && value.Kind() == kind.Record
-}
-
-func constructorOccurrences(body *wir.Body, constructor int) (int64, bool, bool) {
-	for index := constructor - 1; index >= 0; index-- {
-		instruction := body.Instr(index)
-		if instruction.Op != wir.OpIterate || instruction.Iter != wir.IterNumeric {
-			continue
-		}
-		operands := body.Operands(instruction.List)
-		if len(operands) != 3 {
-			return 0, true, false
-		}
-		start, startOK := integerConst(body, operands[0])
-		limit, limitOK := integerConst(body, operands[1])
-		step, stepOK := integerConst(body, operands[2])
-		if !startOK || !limitOK || !stepOK || step == 0 {
-			return 0, true, false
-		}
-		if step > 0 {
-			if start > limit {
-				return 0, true, true
-			}
-			return (limit-start)/step + 1, true, true
-		}
-		if start < limit {
-			return 0, true, true
-		}
-		return (start-limit)/(-step) + 1, true, true
-	}
-	return 1, false, true
-}
-
-func integerConst(body *wir.Body, operand wir.Operand) (int64, bool) {
-	if operand.Kind != wir.OperandConst {
-		return 0, false
-	}
-	constant := body.Const(wir.ConstRef(operand.Ref))
-	if constant.Kind != wir.ConstNumber {
-		return 0, false
-	}
-	value, err := strconv.ParseInt(constant.Number, 10, 64)
-	return value, err == nil
-}
-
+// N7 residual — host_global_binding cannot be licensed from globals' typ.Type
+// input alone. A sound kernel publication still needs the host's stable binding
+// identity plus managed ownership, rooting, release, write.global, and
+// load.dynamic epoch capabilities. Until the host boundary supplies them, this
+// scan remains.
+//
 // A resolved host call has a native binding exactly when the project supplied
 // the root global and lowering resolved a non-top result contract. This is the
 // same authority the call-results kernel consumes; publishing it before solve

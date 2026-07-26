@@ -15,6 +15,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
+// N7 residual — nilability needs point-local publications not only for branch
+// refinements but also assertions, writes, captured-call invalidation, and loop
+// backedge widening. The solve does not yet publish one complete epoch/capture/
+// backedge invalidation class for those coordinates, so this scan remains.
+//
 // nilabilityNativeFacts projects only refinements that the lowered body has
 // already made explicit: a nil-capable path, plus a normalized branch or
 // assertion that establishes its non-nil (or nil) arm. It consults the

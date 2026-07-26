@@ -318,9 +318,6 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 	}
 	evaluateStarted := time.Now()
 	projectionRows := loweringNativeProjectionRows(compilation, globals)
-	projectionRows = append(projectionRows,
-		nativeKernelProjectionRows(compilation, publishedNestedConstantValues(compilation))...,
-	)
 	compilation, err = front.AppendNativeProjections(compilation, projectionRows)
 	if err != nil {
 		return Result{}, err
@@ -2997,7 +2994,12 @@ func (l *lexicalEvaluator) recordNativeKernelFacts(values []equation.Fact) {
 			continue
 		}
 		switch family.ID {
-		case factkey.FamilyNativeBranchPartition, factkey.FamilyNativeTruthinessClass, factkey.FamilyNativeConcatSite, factkey.FamilyNativeBuiltinCall, factkey.FamilyNativeAliasDisjoint, factkey.FamilyNativeCaptureEpochRoot, factkey.FamilyNativeCaptureTransport:
+		case factkey.FamilyNativeConstantValue,
+			factkey.FamilyNativeBranchPartition, factkey.FamilyNativeTruthinessClass,
+			factkey.FamilyNativeConcatSite, factkey.FamilyNativeBuiltinCall,
+			factkey.FamilyNativeAliasDisjoint, factkey.FamilyNativeCaptureEpochRoot,
+			factkey.FamilyNativeCaptureTransport, factkey.FamilyNativeTypedProducer,
+			factkey.FamilyNativeTableConstructionBound:
 		default:
 			continue
 		}
@@ -3020,10 +3022,12 @@ func nativeKernelProjectionFacts(child front.Compilation, occurrence string, val
 			continue
 		}
 		switch family.ID {
-		case factkey.FamilyNativeBranchPartition, factkey.FamilyNativeTruthinessClass,
+		case factkey.FamilyNativeConstantValue,
+			factkey.FamilyNativeBranchPartition, factkey.FamilyNativeTruthinessClass,
 			factkey.FamilyNativeConcatSite, factkey.FamilyNativeBuiltinCall,
 			factkey.FamilyNativeAliasDisjoint, factkey.FamilyNativeCaptureEpochRoot,
-			factkey.FamilyNativeCaptureTransport:
+			factkey.FamilyNativeCaptureTransport, factkey.FamilyNativeTypedProducer,
+			factkey.FamilyNativeTableConstructionBound:
 			projection := nativeProjectionFromFact(anchors.project(NativeLaneValues, fact))
 			encoded, err := front.EncodeNativeProjection(projection)
 			if err != nil {
@@ -10397,6 +10401,20 @@ func allocationTemplateKernel(operation equation.BoundEquation, partition equati
 			})
 		}
 	}
+	if encoded, published := operationOperand(operation.Operands, "native-table-construction-bound"); published {
+		occurrence, content, valid := strings.Cut(string(encoded), "\x00")
+		if !valid || occurrence == "" || content == "" {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed native table construction bound")
+		}
+		values = append(values, equation.Fact{
+			Key: factkey.BuildKey(
+				factkey.NativeTableConstructionBound,
+				[]factkey.Part{factkey.OpaquePart(fmt.Sprintf("%x", operation.Target.Body))},
+				occurrence,
+			).String(),
+			Value: []byte(content),
+		})
+	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
@@ -14906,6 +14924,9 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 				closure.Diagnostics = []equation.Fact{{Key: diagnosticFamilyPrefix(DiagnosticFamilyRedundantClaim) + operation.Target.Name, Value: []byte("proven runtime claim")}}
 			}
 		}
+		if fact, published := nativeTypedProducerFact(operation, kind, target, shapeTarget); published {
+			closure.Values = append(closure.Values, fact)
+		}
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	refined := claimPayload(kind, targetType)
@@ -15057,7 +15078,40 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			Kind: diagnosticClaimUnproven, Required: strings.TrimPrefix(targetType, "claim-type/"),
 		})}
 	}
+	if fact, published := nativeTypedProducerFact(operation, kind, target, shapeTarget); published {
+		closure.Values = append(closure.Values, fact)
+	}
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
+}
+
+func nativeTypedProducerFact(operation equation.BoundEquation, kindValue, target string, shape []byte) (equation.Fact, bool) {
+	if kindValue != "claim-kind/3" || target == "" {
+		return equation.Fact{}, false
+	}
+	declared, ok := shapefact.DecodeTarget(shape)
+	if !ok {
+		return equation.Fact{}, false
+	}
+	declared = unwrap.Alias(declared)
+	if declared == nil || declared.Kind() == kind.Unknown {
+		return equation.Fact{}, false
+	}
+	content := "classification=compile_time_only"
+	switch declared.Kind() {
+	case kind.Record, kind.Array, kind.Map, kind.ReadonlyMap, kind.Tuple:
+		content = "classification=runtime_relevant requires_native_operation_contract=true"
+	case kind.Any:
+	default:
+		content += " value_bit_identity=true"
+	}
+	return equation.Fact{
+		Key: factkey.BuildKey(
+			factkey.NativeTypedProducer,
+			[]factkey.Part{factkey.OpaquePart(fmt.Sprintf("%x", operation.Target.Body))},
+			operation.Target.Name,
+		).String(),
+		Value: []byte(content),
+	}, true
 }
 
 // claimAssertThrowTemplate publishes the terminal behavior that the existing

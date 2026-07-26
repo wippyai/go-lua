@@ -195,8 +195,8 @@ func TestTerminalTermSubjectOwnsNestedTermSyntax(t *testing.T) {
 }
 
 func TestFamiliesAreCompleteRecords(t *testing.T) {
-	if len(families) != 47 {
-		t.Fatalf("declared families = %d, want 47", len(families))
+	if len(families) != 49 {
+		t.Fatalf("declared families = %d, want 49", len(families))
 	}
 	for _, family := range families {
 		if family.ID == 0 || family.Prefix == "" || family.RevocationSet == nil ||

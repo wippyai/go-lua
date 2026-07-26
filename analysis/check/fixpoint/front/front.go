@@ -1009,6 +1009,12 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 		effects := effectSpans(proto.Body, artifact)
 		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, proto.Body, artifact, mergeSpans(claimSpans, effectValueSpans(proto.Body, artifact)), mergeSpans(claimTargetSpans, effectTargetSpans(proto.Body, artifact)), callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effects, expressionSpans(proto.Body, artifact))
 		child.Graph = proto.Graph
+		child.NativeContracts = nativeConstantPublications(child)
+		artifact, err = appendNativeContractPublications(child.Artifact, child.NativeContracts)
+		if err != nil {
+			return nil, fmt.Errorf("front: nested body %q native constants: %w", proto.Name, err)
+		}
+		child.Artifact = artifact
 		cyclic, err := freezeCyclicArtifact(artifact, proto.Body, proto.Graph)
 		if err != nil {
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
@@ -1695,6 +1701,9 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			if operation.family == "allocation-template" {
 				draft.Operands = terms.template
+				if bound, published := nativeTableConstructionBoundOperand(body, instruction, operation.sourceIndex, operation.sourceOccurrence); published {
+					draft.Operands = append(draft.Operands, bound)
+				}
 			} else {
 				draft.Operands = terms.materialization
 				draft.Operands = append(draft.Operands, nativeCaptureEpochRootOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
@@ -3525,6 +3534,68 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 		return allocationOperandSets{}, fmt.Errorf("instruction %d does not allocate an object", instruction.Op)
 	}
 	return sets, nil
+}
+
+// nativeTableConstructionBoundOperand lowers the finite occurrence descriptor
+// owned by one record allocation. The allocation kernel publishes it under the
+// allocation's guards; an unresolved loop bound is absence, never an estimate.
+func nativeTableConstructionBoundOperand(body *wir.Body, instruction wir.Instruction, constructor int, occurrence string) (equation.Operand, bool) {
+	declared := unwrap.Alias(body.Type(instruction.Type))
+	if instruction.Op != wir.OpMakeTable || declared == nil || declared.Kind() != kind.Record || occurrence == "" {
+		return equation.Operand{}, false
+	}
+	count, mode, exact := int64(1), "once_only", true
+	for index := constructor - 1; index >= 0; index-- {
+		iterate := body.Instr(index)
+		if iterate.Op != wir.OpIterate || iterate.Iter != wir.IterNumeric {
+			continue
+		}
+		mode = "repeatable"
+		operands := body.Operands(iterate.List)
+		if len(operands) != 3 {
+			exact = false
+			break
+		}
+		start, startOK := nativeIntegerConstant(body, operands[0])
+		limit, limitOK := nativeIntegerConstant(body, operands[1])
+		step, stepOK := nativeIntegerConstant(body, operands[2])
+		if !startOK || !limitOK || !stepOK || step == 0 {
+			exact = false
+			break
+		}
+		if step > 0 {
+			if start > limit {
+				count = 0
+			} else {
+				count = (limit-start)/step + 1
+			}
+		} else if start < limit {
+			count = 0
+		} else {
+			count = (start-limit)/(-step) + 1
+		}
+		break
+	}
+	if !exact {
+		return equation.Operand{}, false
+	}
+	return equation.Operand{
+		Role: "native-table-construction-bound",
+		Term: equation.ClosedTerm([]byte(occurrence + "\x00max_occurrences=" +
+			strconv.FormatInt(count, 10) + " occurrence_mode=" + mode)),
+	}, true
+}
+
+func nativeIntegerConstant(body *wir.Body, operand wir.Operand) (int64, bool) {
+	if operand.Kind != wir.OperandConst {
+		return 0, false
+	}
+	constant := body.Const(wir.ConstRef(operand.Ref))
+	if constant.Kind != wir.ConstNumber {
+		return 0, false
+	}
+	value, err := strconv.ParseInt(constant.Number, 10, 64)
+	return value, err == nil
 }
 
 // An alias conclusion is anchored to the authored WIR occurrence, while the

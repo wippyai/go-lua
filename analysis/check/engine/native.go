@@ -279,8 +279,6 @@ func loweringNativeProjectionRows(root front.Compilation, globals map[string]typ
 	rows = append(rows, summaryNativeFacts(root)...)
 	var visit func(front.Compilation)
 	visit = func(compilation front.Compilation) {
-		rows = append(rows, typedProducerNativeFacts(compilation)...)
-		rows = append(rows, tableConstructionBoundFacts(compilation)...)
 		rows = append(rows, hostGlobalBindingFactsFromGlobals(compilation, globals)...)
 		for _, child := range compilation.Nested {
 			visit(child)

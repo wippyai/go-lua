@@ -11,6 +11,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
 
+// N7 residual — list_construction still needs ordered entry/capacity/spread and
+// duplicate-child metadata from the allocation kernel; table_growth needs one
+// guarded publication joining preallocation, recurrence count, escape, and
+// alias closure; table_length needs the length kernel's dense/hole disposition
+// and complete meta/call invalidation class. Those solve inputs do not yet
+// coexist at their owning coordinates, so these scans remain.
+//
 // tableNativeFacts projects the resolved table topology the front already
 // publishes. It never reconstructs a table from source text: a missing maker,
 // exact member window, loop iterator, or call operand leaves the native row

@@ -9,6 +9,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
 
+// N7 residual — metatable_seal needs a guarded heap/meta publication that joins
+// the receiver identity, installed __index identity, aliases, all later meta
+// writes, and opaque-call invalidation. That closed topology is not available
+// to one solve kernel yet, so this scan remains.
+//
 // metatableNativeFacts publishes the metatable seal of every table binding the
 // module builds. A binding is a lexical symbol, so the analysis spans every
 // lexical body of the module at once: a literal built in the enclosing body and

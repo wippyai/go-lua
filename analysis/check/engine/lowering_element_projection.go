@@ -32,6 +32,11 @@ type nativeElementOrigin struct {
 	constructor int
 }
 
+// N7 residual — table_element needs a solve-owned consumer descriptor joining
+// allocation origin, density/presence, index bounds, producer class, escape,
+// suspension, and mutation closure at the dynamic-read coordinate. No owning
+// kernel currently receives that complete input set, so this scan remains.
+//
 // elementNativeFacts projects the element domain of the containers the resolved
 // WIR already establishes. It publishes three contracts, each anchored at the
 // operation that establishes it and each carrying the deopt classes that end

@@ -126,6 +126,8 @@ const (
 	FamilyNativeAliasDisjoint
 	FamilyNativeCaptureEpochRoot
 	FamilyNativeCaptureTransport
+	FamilyNativeTypedProducer
+	FamilyNativeTableConstructionBound
 	FamilyNativeProjection
 )
 
@@ -377,6 +379,14 @@ var (
 		Qualifiers:  []Kind{Opaque},
 		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{},
 	}
+	NativeTypedProducer = Family{
+		ID: FamilyNativeTypedProducer, Prefix: "typed_producer/", Subject: Opaque,
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{},
+	}
+	NativeTableConstructionBound = Family{
+		ID: FamilyNativeTableConstructionBound, Prefix: "table_construction_bound/", Subject: Opaque,
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{},
+	}
 	// NativeProjection is the typed transport for a native row whose public
 	// key does not itself carry enough information to recover its subject,
 	// occurrence, and validity interval. The payload is the authority; this
@@ -438,6 +448,8 @@ var families = []Family{
 	NativeAliasDisjoint,
 	NativeCaptureEpochRoot,
 	NativeCaptureTransport,
+	NativeTypedProducer,
+	NativeTableConstructionBound,
 	NativeProjection,
 }
 
