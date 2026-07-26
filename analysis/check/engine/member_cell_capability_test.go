@@ -50,7 +50,7 @@ func TestApplicationRecursesReportsOnlyBodiesOnTheStack(t *testing.T) {
 func TestOpaqueMemberWriteRowCarriesTheStoredCallable(t *testing.T) {
 	identity := []byte("sealed-table/abc/op-00000001")
 	handle := closureHandle{Prototype: "proto/stored", Captures: []string{"path/sym1"}}
-	fact, err := heapOpaqueMemberWriteFact(identity, "op-00000002", []closureHandle{handle, handle})
+	fact, err := heapOpaqueMemberWriteFact(identity, "op-00000002", []closureHandle{handle, handle}, keyedStoreTypes{})
 	if err != nil {
 		t.Fatalf("publishing the unresolved-key row: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestOpaqueMemberWriteRowCarriesTheStoredCallable(t *testing.T) {
 // entered the container, so nothing callable leaves it.
 func TestOpaqueMemberWriteRowWithoutACallableStaysAMarker(t *testing.T) {
 	identity := []byte("sealed-table/def/op-00000001")
-	fact, err := heapOpaqueMemberWriteFact(identity, "op-00000002", nil)
+	fact, err := heapOpaqueMemberWriteFact(identity, "op-00000002", nil, keyedStoreTypes{})
 	if err != nil {
 		t.Fatalf("publishing the unresolved-key row: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestOpaqueMemberWriteRowWithoutACallableStaysAMarker(t *testing.T) {
 // the incomplete-inventory record it travels with survives.
 func TestOpaqueMemberWriteRowRejectsAMalformedHandle(t *testing.T) {
 	identity := []byte("sealed-table/ghi/op-00000001")
-	fact, err := heapOpaqueMemberWriteFact(identity, "op-00000002", []closureHandle{{Prototype: "proto/stored", Captures: []string{"not-a-term"}}})
+	fact, err := heapOpaqueMemberWriteFact(identity, "op-00000002", []closureHandle{{Prototype: "proto/stored", Captures: []string{"not-a-term"}}}, keyedStoreTypes{})
 	if err != nil {
 		t.Fatalf("publishing the unresolved-key row: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestContainerCellCallbacksReachesTheUnnamedSlot(t *testing.T) {
 	if err != nil || !published {
 		t.Fatalf("publishing the named cell: published=%v err=%v", published, err)
 	}
-	opaque, err := heapOpaqueMemberWriteFact(identity, "op-00000003", []closureHandle{unnamed})
+	opaque, err := heapOpaqueMemberWriteFact(identity, "op-00000003", []closureHandle{unnamed}, keyedStoreTypes{})
 	if err != nil {
 		t.Fatalf("publishing the unresolved-key row: %v", err)
 	}

@@ -1,0 +1,258 @@
+package engine_test
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/check/engine"
+)
+
+// TestClosedInventoryWithoutOpaqueStoreStillProvesAbsence pins the control: a
+// closed constructor that was never stored through at an unresolved key keeps
+// its closure, so an omitted member is proven absent.
+func TestClosedInventoryWithoutOpaqueStoreStillProvesAbsence(t *testing.T) {
+	diagnostics := checkSource(t, `local sealed = { present = 1 }
+local missing: nil = sealed.absent
+local wrong: number = sealed.absent
+`)
+	summary := diagnosticSummaries(diagnostics)
+	if strings.Contains(summary, "main.lua:2") {
+		t.Fatalf("a closed constructor stopped proving an omitted member absent:\n%s", summary)
+	}
+	if !strings.Contains(summary, "main.lua:3") {
+		t.Fatalf("a proven-absent member was accepted as number:\n%s", summary)
+	}
+}
+
+// TestOpaqueKeyStoreRemovesComputedReadAbsence pins the hole the store opens.
+// The loop stores at a key drawn from a string array, so "x" is one of the
+// slots it can have written and the read is not nil.
+func TestOpaqueKeyStoreRemovesComputedReadAbsence(t *testing.T) {
+	diagnostics := checkSource(t, `local keys: {string} = {}
+local suites = {}
+for _, key in ipairs(keys) do suites[key] = 1 end
+local probe = tostring(1)
+local absent: nil = suites[probe]
+`)
+	if len(diagnostics) == 0 {
+		t.Fatal("a table stored through at an unresolved key was still proven empty at a computed read")
+	}
+}
+
+// TestOpaqueKeyStoreRemovesSpelledReadAbsence pins the same obligation for a
+// spelled read: Lua indexes a dotted name by its string key, so the store's
+// key can be exactly that name.
+func TestOpaqueKeyStoreRemovesSpelledReadAbsence(t *testing.T) {
+	for _, item := range []struct{ name, read string }{
+		{"static string index", `suites["x"]`},
+		{"dotted member", `suites.y`},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			diagnostics := checkSource(t, `local keys: {string} = {}
+local suites = {}
+for _, key in ipairs(keys) do suites[key] = 1 end
+local absent: nil = `+item.read+`
+`)
+			if len(diagnostics) == 0 {
+				t.Fatalf("a table stored through at an unresolved key was still proven empty at %s", item.read)
+			}
+		})
+	}
+}
+
+// TestOpaqueKeyStoreRemovesAbsenceAcrossTheCallBoundary pins the same shape
+// where the container is produced by a callee: the store belongs to the return
+// authority, so the caller reads the answer the producing body reads.
+func TestOpaqueKeyStoreRemovesAbsenceAcrossTheCallBoundary(t *testing.T) {
+	diagnostics := checkSource(t, `local function build(source: {string})
+    local out = {}
+    for _, key in ipairs(source) do out[key] = 1 end
+    return out
+end
+local keys: {string} = {}
+local returned = build(keys)
+local computed: nil = returned["x"]
+local spelled: nil = returned.y
+`)
+	summary := diagnosticSummaries(diagnostics)
+	for _, line := range []string{"main.lua:8", "main.lua:9"} {
+		if !strings.Contains(summary, line) {
+			t.Fatalf("a returned table stored through at an unresolved key was still proven empty at %s:\n%s", line, summary)
+		}
+	}
+}
+
+// TestOpaqueKeyStoreRemovesAbsenceThroughTransportedContainers pins the two
+// remaining routes a callee reaches the caller's table by. Both republish the
+// store, so the caller's own read stops proving absence.
+func TestOpaqueKeyStoreRemovesAbsenceThroughTransportedContainers(t *testing.T) {
+	for _, item := range []struct{ name, source string }{
+		{"captured container", `local acc = {}
+local function fill(keys: {string})
+    for _, key in ipairs(keys) do acc[key] = 1 end
+end
+local ks: {string} = {}
+fill(ks)
+local absent: nil = acc["x"]
+`},
+		{"argument container", `local function fill(acc, keys: {string})
+    for _, key in ipairs(keys) do acc[key] = 1 end
+end
+local target = {}
+local ks: {string} = {}
+fill(target, ks)
+local absent: nil = target["x"]
+`},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			if len(checkSource(t, item.source)) == 0 {
+				t.Fatal("a callee's unresolved-key store did not reach the caller's inventory")
+			}
+		})
+	}
+}
+
+// TestKeyedComponentTypesTheUnnamedSlots pins the component the stores
+// establish: their key type is the key domain and their value type is what
+// every unnamed slot holds. Presence is not among what it states.
+func TestKeyedComponentTypesTheUnnamedSlots(t *testing.T) {
+	for _, item := range []struct{ name, read, want string }{
+		{"computed key element", `local element: integer? = suites[probe]`, ""},
+		{"spelled key element", `local element: integer? = suites["x"]`, ""},
+		{"dotted key element", `local element: integer? = suites.y`, ""},
+		{"presence is not proven", `local present: integer = suites[probe]`, "may be nil"},
+		{"presence is not proven at a spelled key", `local present: integer = suites["x"]`, "may be nil"},
+		{"another element is refuted", `local other: string? = suites[probe]`, "not string?"},
+		{"another element is refuted at a spelled key", `local other: string? = suites["x"]`, "not string?"},
+		{"another element is refuted at a dotted key", `local other: string? = suites.y`, "not string?"},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			summary := diagnosticSummaries(checkSource(t, `local keys: {string} = {}
+local suites = {}
+for _, key in ipairs(keys) do suites[key] = 1 end
+local probe = tostring(1)
+`+item.read+"\n"))
+			if item.want == "" {
+				if summary != "" {
+					t.Fatalf("the keyed component did not type the read:\n%s", summary)
+				}
+				return
+			}
+			if !strings.Contains(summary, item.want) {
+				t.Fatalf("expected %q in:\n%s", item.want, summary)
+			}
+		})
+	}
+}
+
+// TestKeyedComponentCrossesTheCallBoundary pins the component as part of the
+// return authority, not merely as a local read answer.
+func TestKeyedComponentCrossesTheCallBoundary(t *testing.T) {
+	summary := diagnosticSummaries(checkSource(t, `local function build(source: {string})
+    local out = {}
+    for _, key in ipairs(source) do out[key] = 1 end
+    return out
+end
+local keys: {string} = {}
+local returned = build(keys)
+local element: integer? = returned["x"]
+`))
+	if summary != "" {
+		t.Fatalf("the keyed component did not cross the return boundary:\n%s", summary)
+	}
+}
+
+// TestKeyedComponentJoinsEveryRecordedStore pins the join: two stores of
+// different literal integers widen to their primitive, and a store of another
+// primitive keeps both arms.
+func TestKeyedComponentJoinsEveryRecordedStore(t *testing.T) {
+	uniform := diagnosticSummaries(checkSource(t, `local keys: {string} = {}
+local suites = {}
+for _, key in ipairs(keys) do
+    suites[key] = 1
+    suites[key] = 2
+end
+local element: integer? = suites["x"]
+`))
+	if uniform != "" {
+		t.Fatalf("a homogeneous literal family did not widen to its primitive:\n%s", uniform)
+	}
+	mixed := diagnosticSummaries(checkSource(t, `local keys: {string} = {}
+local suites = {}
+for _, key in ipairs(keys) do
+    suites[key] = 1
+    suites[key] = "two"
+end
+local element: (integer | string)? = suites["x"]
+`))
+	if mixed != "" {
+		t.Fatalf("stores of different primitives did not join:\n%s", mixed)
+	}
+}
+
+// TestKeyedComponentIsWithheldWhereItWouldNotDescribeTheContainer pins the
+// fail-closed side. Each case leaves the container without a component while
+// the lost closure still stands, so the read is unknown rather than absent or
+// typed.
+func TestKeyedComponentIsWithheldWhereItWouldNotDescribeTheContainer(t *testing.T) {
+	for _, item := range []struct{ name, source string }{
+		{"key outside the key domain", `local tables = { {}, {} }
+local sink = {}
+for _, key in ipairs(tables) do sink[key] = 1 end
+`},
+		{"value is gradual", `local keys: {string} = {}
+local sink = {}
+local opaque: any = 1
+for _, key in ipairs(keys) do sink[key] = opaque end
+`},
+		{"container also holds a named slot", `local keys: {string} = {}
+local sink = { named = "a" }
+for _, key in ipairs(keys) do sink[key] = 1 end
+`},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			absent := diagnosticSummaries(checkSource(t, item.source+"local absent: nil = sink[\"x\"]\n"))
+			if absent == "" {
+				t.Fatal("the container was still proven empty")
+			}
+			typed := diagnosticSummaries(checkSource(t, item.source+"local element: integer? = sink[\"x\"]\n"))
+			if typed == "" {
+				t.Fatal("a component was synthesized from stores that do not describe the container")
+			}
+		})
+	}
+}
+
+// TestOpaqueMemberWriteRecordsItsKeyAndValueTypes pins the fact vocabulary.
+// The marker is one row per unresolved store, and the row carries the store's
+// own key and value publications.
+func TestOpaqueMemberWriteRecordsItsKeyAndValueTypes(t *testing.T) {
+	result, err := engine.Check(`local keys: {string} = {}
+local suites = {}
+for _, key in ipairs(keys) do suites[key] = 1 end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	rows := 0
+	for _, fact := range result.ValueFacts {
+		if !strings.HasPrefix(fact.Key, "heap/opaque-member-write/") {
+			continue
+		}
+		rows++
+		var wire struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		}
+		if err := json.Unmarshal(fact.Value, &wire); err != nil {
+			t.Fatalf("unresolved-store payload does not decode: %v", err)
+		}
+		if !strings.HasPrefix(wire.Key, "shape/target/v1/") || !strings.HasPrefix(wire.Value, "shape/target/v1/") {
+			t.Fatalf("unresolved store recorded no key/value publication: %#v", wire)
+		}
+	}
+	if rows != 1 {
+		t.Fatalf("expected exactly one unresolved-store row, got %d; facts = %#v", rows, result.ValueFacts)
+	}
+}

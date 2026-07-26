@@ -1,0 +1,5 @@
+{
+  "description": "A store at a key the analysis never resolved lands on an unknown slot, so the container's closed constructor stops proving an omitted slot absent -- locally and across the call boundary that returns it. The keyed component the stores establish types the read in the closure's place, and states nothing about presence; a store whose value carries no type leaves no component while the lost closure still stands.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

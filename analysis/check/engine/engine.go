@@ -12131,11 +12131,21 @@ func heapSequenceShape(term []byte, partition equation.Partition) (shapefact.Tab
 // container. The marker is the incomplete-inventory record. The handles name
 // the callables those stores placed in it: no member coordinate can carry them,
 // because the stores never resolved to one, yet the container holds them and
-// whatever reaches the container reaches them too.
+// whatever reaches the container reaches them too. Key and Value carry the
+// published types of the stores' key and value terms, which is the only thing
+// known about the slots they addressed; an empty field states that side carried
+// no witness and withholds every answer derived from it.
 type opaqueMemberWriteWire struct {
 	Marker  string          `json:"marker"`
 	Handles []closureHandle `json:"handles,omitempty"`
+	Key     string          `json:"key,omitempty"`
+	Value   string          `json:"value,omitempty"`
 }
+
+// keyedStoreTypes is the classification one unresolved-key store carries: the
+// encoded published types of its key and value terms. Either field empty means
+// the store is unclassified.
+type keyedStoreTypes struct{ Key, Value string }
 
 const opaqueMemberWriteMarker = "unresolved-key"
 
@@ -12193,8 +12203,8 @@ func heapOpaqueMemberWriteRows(identity []byte, partition equation.Partition) []
 	return rows
 }
 
-func heapOpaqueMemberWriteFact(identity []byte, operation string, handles []closureHandle) (equation.Fact, error) {
-	wire := opaqueMemberWriteWire{Marker: opaqueMemberWriteMarker}
+func heapOpaqueMemberWriteFact(identity []byte, operation string, handles []closureHandle, keyed keyedStoreTypes) (equation.Fact, error) {
+	wire := opaqueMemberWriteWire{Marker: opaqueMemberWriteMarker, Key: keyed.Key, Value: keyed.Value}
 	seen := make(map[string]bool, len(handles))
 	for _, handle := range handles {
 		if !validClosureHandle(handle) {
@@ -12212,6 +12222,198 @@ func heapOpaqueMemberWriteFact(identity []byte, operation string, handles []clos
 		return equation.Fact{}, err
 	}
 	return equation.Fact{Key: heapOpaqueMemberWritePrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: encoded}, nil
+}
+
+// keyedStoreClassification records what a store at an unresolved key does
+// state: the published types of its own key and value terms. A term carrying
+// no type witness leaves its field empty, which withholds the keyed component
+// the joined stores would otherwise produce.
+func keyedStoreClassification(key, value []byte, partition equation.Partition) keyedStoreTypes {
+	classified := keyedStoreTypes{}
+	if resolved, err := resolveCurrentValue(key, partition); err == nil {
+		if keyType, known := sealedShapeReceiverType(resolved); known {
+			if encoded, ok := shapefact.EncodeTarget(keyType); ok {
+				classified.Key = string(encoded)
+			}
+		}
+	}
+	if resolved, err := resolveCurrentValue(value, partition); err == nil {
+		if valueType, known := sealedShapeReceiverType(resolved); known {
+			if encoded, ok := shapefact.EncodeTarget(valueType); ok {
+				classified.Value = string(encoded)
+			}
+		}
+	}
+	return classified
+}
+
+// joinedKeyedStore merges the classification of several stores into the single
+// row that carries them across a boundary. Every consumer joins the rows it
+// finds, so a pre-joined row states the same contract; a row that classified
+// nothing withholds the whole merge, exactly as it would withhold that join.
+func joinedKeyedStore(rows []opaqueMemberWriteWire) keyedStoreTypes {
+	keys, values, classified := keyedStoreWitnesses(rows)
+	if !classified {
+		return keyedStoreTypes{}
+	}
+	keyType, keyJoined := joinedKeyedComponentType(keys)
+	valueType, valueJoined := joinedKeyedComponentType(values)
+	if !keyJoined || !valueJoined {
+		return keyedStoreTypes{}
+	}
+	keyEncoded, keyEncodable := shapefact.EncodeTarget(keyType)
+	valueEncoded, valueEncodable := shapefact.EncodeTarget(valueType)
+	if !keyEncodable || !valueEncodable {
+		return keyedStoreTypes{}
+	}
+	return keyedStoreTypes{Key: string(keyEncoded), Value: string(valueEncoded)}
+}
+
+// keyedStoreWitnesses decodes both sides of every recorded store. One store
+// that classified nothing leaves the whole set unclassified: the container
+// received a slot no witness describes.
+func keyedStoreWitnesses(rows []opaqueMemberWriteWire) ([]typ.Type, []typ.Type, bool) {
+	keys := make([]typ.Type, 0, len(rows))
+	values := make([]typ.Type, 0, len(rows))
+	for _, row := range rows {
+		keyType, keyKnown := shapefact.DecodeTarget([]byte(row.Key))
+		valueType, valueKnown := shapefact.DecodeTarget([]byte(row.Value))
+		if !keyKnown || !valueKnown || keyType == nil || valueType == nil {
+			return nil, nil, false
+		}
+		keys, values = append(keys, keyType), append(values, valueType)
+	}
+	return keys, values, len(rows) != 0
+}
+
+// heapKeyedComponent is the map component a container's unresolved-key stores
+// establish. Each such store writes a value of its own value type at a key of
+// its own key type, so the join over every recorded store is the contract that
+// types every slot this analysis cannot name.
+//
+// The component describes the whole container only where nothing else can
+// occupy a slot, so it is withheld for a store whose key or value carried no
+// type, for a metatable or external callback that can route or replace a slot,
+// for a container that is not a closed allocation, and for any named slot in
+// the constructor or the current inventory: a uniform keyed element states
+// nothing about a slot addressed by name.
+func heapKeyedComponent(identity, value []byte, partition equation.Partition) (typ.Type, bool) {
+	if heapMetaAttached(identity, partition) || heapHasExternalCallback(identity, partition) {
+		return nil, false
+	}
+	table, sealed := shapefact.DecodeTable(value)
+	if !sealed || !table.Closed || len(table.Members) != 0 || len(heapMemberInventory(identity, partition)) != 0 {
+		return nil, false
+	}
+	keys, values, classified := keyedStoreWitnesses(heapOpaqueMemberWriteRows(identity, partition))
+	if !classified {
+		return nil, false
+	}
+	keyType, keyJoined := joinedKeyedComponentType(keys)
+	valueType, valueJoined := joinedKeyedComponentType(values)
+	if !keyJoined || !valueJoined || !keyedComponentKeyDomain(keyType) || !keyedComponentValue(valueType) {
+		return nil, false
+	}
+	return typ.NewMap(keyType, valueType), true
+}
+
+// joinedKeyedComponentType joins the witnesses one side of the recorded stores
+// carries. A homogeneous literal family widens to its primitive exactly as an
+// inferred array element does: the stores prove membership of that primitive,
+// and the literal set is not the contract of a slot the container may hold at
+// another key.
+func joinedKeyedComponentType(witnesses []typ.Type) (typ.Type, bool) {
+	if len(witnesses) == 0 {
+		return nil, false
+	}
+	if base, uniform := uniformLiteralBase(witnesses); uniform {
+		return base, true
+	}
+	joined := typ.MaterializeUnion(witnesses)
+	return joined, joined != nil
+}
+
+// keyedComponentKeyDomain accepts only a key domain every slot of the map is
+// addressed by: a concrete primitive, a literal of one, or a union of those. A
+// nilable, gradual, or structural key states no domain a read can be decided
+// against, so the component is withheld instead.
+func keyedComponentKeyDomain(key typ.Type) bool {
+	base := unwrap.Alias(subst.ExpandInstantiated(key))
+	if base == nil {
+		return false
+	}
+	if union, joined := base.(*typ.Union); joined {
+		if len(union.Members) == 0 {
+			return false
+		}
+		for _, member := range union.Members {
+			if !keyedComponentKeyDomain(member) {
+				return false
+			}
+		}
+		return true
+	}
+	if literal, ok := base.(*typ.Literal); ok {
+		return keyedComponentPrimitive(literal.Base)
+	}
+	return keyedComponentPrimitive(base.Kind())
+}
+
+func keyedComponentPrimitive(base kind.Kind) bool {
+	switch base {
+	case kind.String, kind.Integer, kind.Number, kind.Boolean:
+		return true
+	}
+	return false
+}
+
+// keyedComponentValue rejects a join that carries a gradual or unknown arm.
+// Such a value would let the component answer a read with a type no store
+// established, so the container keeps no keyed component at all.
+func keyedComponentValue(value typ.Type) bool {
+	base := unwrap.Alias(subst.ExpandInstantiated(value))
+	if base == nil {
+		return false
+	}
+	if union, joined := base.(*typ.Union); joined {
+		for _, member := range union.Members {
+			if !keyedComponentValue(member) {
+				return false
+			}
+		}
+		return len(union.Members) != 0
+	}
+	switch base.Kind() {
+	case kind.Any, kind.Unknown, kind.Never, kind.TypeParam, kind.Self, kind.Ref:
+		return false
+	}
+	return true
+}
+
+// keyedContainerSurface is the value a container carries out of the partition
+// that stored through it at a key this analysis never named. Such a store
+// leaves the identity's member publication incomplete, so the closed literal
+// no longer proves an omitted slot absent nor a recorded slot current, and the
+// transported value drops both. The keyed component the stores do establish
+// replaces it where every one of them is classified.
+func keyedContainerSurface(term, value []byte, partition equation.Partition) []byte {
+	identity, found := tableIdentityForTerm(term, partition)
+	if !found || !heapOpaqueMemberWrite(identity, partition) {
+		return value
+	}
+	if component, synthesized := heapKeyedComponent(identity, value, partition); synthesized {
+		if encoded, ok := shapefact.EncodeTarget(component); ok {
+			return encoded
+		}
+	}
+	if _, sealed := shapefact.DecodeTable(value); !sealed {
+		return value
+	}
+	opened, ok := shapefact.EncodeTable(shapefact.Table{})
+	if !ok {
+		return []byte("scalar/top")
+	}
+	return opened
 }
 
 // borderIndexPresenceProven reports that a read at a container's own length
@@ -12973,7 +13175,11 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	values := []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: value}, {Key: epochFactPrefix + target + "/" + operation.Target.Name, Value: []byte(operation.Target.Name)}}
 	if identity, found := tableIdentityForTerm(operands["container"], partition); found {
 		key, keyErr := resolveCurrentValue(operands["key"], partition)
-		if suffix, exact := tableMemberSuffix(key, []byte("suffix/")); keyErr == nil && exact {
+		// A store this partition could not name may have landed on the very slot
+		// this read selects, so neither the recorded member value nor the
+		// closure of the constructor decides the read while that marker stands.
+		opaque := heapOpaqueMemberWrite(identity, partition)
+		if suffix, exact := tableMemberSuffix(key, []byte("suffix/")); keyErr == nil && exact && !opaque {
 			if member, found := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); found {
 				values[0].Value = member
 			} else if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) && !heapHasExternalCallback(identity, partition) {
@@ -13063,6 +13269,13 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	if !ok {
 		containerType, ok = declaredMapContainerType(container, partition)
 	}
+	// A container the body only ever stored through at unresolved keys has the
+	// keyed component those stores establish. It is the same uniform-element
+	// answer a declared map gives, derived from the stores instead of from a
+	// declaration.
+	if !ok {
+		containerType, ok = keyedComponentContainerType(container, partition)
+	}
 	// A published type witness may have unrelated open members. RuntimeIndex
 	// still derives only the selected member, so an exact selected member stays
 	// available without treating the container itself as a closed return value.
@@ -13120,6 +13333,22 @@ func declaredMapContainerType(container []byte, partition equation.Partition) (t
 		return declared, true
 	}
 	return nil, false
+}
+
+// keyedComponentContainerType reads the map component a container's own
+// unresolved-key stores established. The container still holds its allocation
+// value here, so the component is derived from the identity the stores were
+// published under rather than from a transported type witness.
+func keyedComponentContainerType(container []byte, partition equation.Partition) (typ.Type, bool) {
+	identity, found := tableIdentityForTerm(container, partition)
+	if !found {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(container, partition)
+	if err != nil {
+		return nil, false
+	}
+	return heapKeyedComponent(identity, value, partition)
 }
 
 func castTargetWitness(term []byte, partition equation.Partition) (typ.Type, bool) {
@@ -15381,12 +15610,15 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 			// A reader that needs the whole slot set consults this marker. The
 			// written term still carries its callable capability, and the
 			// container now holds it: the row records it, because the unnamed
-			// slot gives no coordinate that could.
+			// slot gives no coordinate that could. The key and value the store
+			// did carry are recorded with it as well: they are the one thing
+			// known about the unnamed slot, and the container's keyed component
+			// is derived from their join.
 			var stored []closureHandle
 			if handle, found := closureHandleFor(operands["value"], partition); found {
 				stored = append(stored, handle)
 			}
-			opaqueWrite, opaqueErr := heapOpaqueMemberWriteFact(identity, operation.Target.Name, stored)
+			opaqueWrite, opaqueErr := heapOpaqueMemberWriteFact(identity, operation.Target.Name, stored, keyedStoreClassification(operands["key"], operands["value"], partition))
 			if opaqueErr != nil {
 				return equation.TransactionResult{}, opaqueErr
 			}
@@ -19851,7 +20083,7 @@ func childMemberWritebacks(identities [][]byte, childPartition equation.Partitio
 			for _, row := range rows {
 				handles = append(handles, row.Handles...)
 			}
-			opaqueWrite, err := heapOpaqueMemberWriteFact(identity, operation, handles)
+			opaqueWrite, err := heapOpaqueMemberWriteFact(identity, operation, handles, joinedKeyedStore(rows))
 			if err != nil {
 				return nil, err
 			}
@@ -20586,7 +20818,16 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 	}
 	var sealedReceiver typ.Type
 	indexedPath := false
+	container := root
 	for len(segments) != 0 {
+		// A store at a key this partition never named can have addressed any
+		// slot of this identity, including the one spelled here: Lua indexes a
+		// dotted name by its string key like any other. Neither the recorded
+		// members nor the closure decides this read while that store stands;
+		// the keyed component those stores establish is what does.
+		if heapOpaqueMemberWrite(identity, partition) {
+			return keyedComponentPathValue(identity, container, segments, partition)
+		}
 		matched := false
 		for count := 1; count <= len(segments); count++ {
 			prefix := segment.FormatSegments(segments[:count])
@@ -20659,6 +20900,48 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 			return []byte("scalar/nil"), true
 		}
 		return nil, false
+	}
+	return nil, false
+}
+
+// keyedComponentPathValue answers a spelled member read from the keyed
+// component the container's unresolved-key stores established. The spelled
+// slot is one of the slots that component types, so the answer is its element
+// with Lua's missing-slot nil: the stores named no key, so none of them proves
+// this slot occupied. Only the container's own root is answered here, because
+// only its value is resolvable without re-entering this walk.
+func keyedComponentPathValue(identity, container []byte, segments []segment.Segment, partition equation.Partition) ([]byte, bool) {
+	if len(container) == 0 || len(segments) != 1 {
+		return nil, false
+	}
+	key, spelled := keyedComponentSegmentKey(segments[0])
+	if !spelled {
+		return nil, false
+	}
+	value, err := resolveCurrentValue(container, partition)
+	if err != nil {
+		return nil, false
+	}
+	component, synthesized := heapKeyedComponent(identity, value, partition)
+	if !synthesized {
+		return nil, false
+	}
+	element, indexed := access.RuntimeIndex(component, key)
+	if !indexed || element == nil {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(element)
+}
+
+// keyedComponentSegmentKey is the key a spelled path segment denotes. Lua
+// indexes a dotted name by its string key, so a field and a static string
+// index name the same slot; an integer index names its own.
+func keyedComponentSegmentKey(item segment.Segment) (typ.Type, bool) {
+	switch item.Kind {
+	case segment.SegmentField, segment.SegmentIndexString:
+		return typ.LiteralString(item.Name), true
+	case segment.SegmentIndexInt:
+		return typ.LiteralInt(int64(item.Index)), true
 	}
 	return nil, false
 }
@@ -25105,7 +25388,11 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		// A return leaves the partition that owns this body's member writes, so
 		// the returned value consumes the heap member authority here rather than
 		// handing the caller the allocation-time template.
-		values[index] = heapMemberSurface(operand.Value, value, partition)
+		// A store at a key this body never named is part of that authority: it
+		// decides the keyed component the caller reads, and where it cannot be
+		// classified it is what removes the closure the caller would otherwise
+		// read absence from.
+		values[index] = keyedContainerSurface(operand.Value, heapMemberSurface(operand.Value, value, partition), partition)
 		sources[index] = operand.Value
 	}
 	for index, value := range values {
@@ -25934,7 +26221,12 @@ func shapeMemberValue(term []byte, partition equation.Partition) ([]byte, bool) 
 		if !ok {
 			continue
 		}
-		if identity, tracked := tableIdentityForTerm([]byte("path/"+ancestor), partition); tracked && heapHasExternalCallback(identity, partition) {
+		if identity, tracked := tableIdentityForTerm([]byte("path/"+ancestor), partition); tracked &&
+			(heapHasExternalCallback(identity, partition) || heapOpaqueMemberWrite(identity, partition)) {
+			// A store at an unresolved key can address this very field: Lua
+			// indexes a dotted name by its string key like any other. The
+			// literal therefore proves neither this member's value nor its
+			// absence while that store stands.
 			return nil, false
 		}
 		member, found := table.Lookup(suffix)
