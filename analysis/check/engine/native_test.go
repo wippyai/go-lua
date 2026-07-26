@@ -36,7 +36,7 @@ func TestNativeContractBridgeProjectsOnlyPublishedSubstrate(t *testing.T) {
 		{Lane: NativeLaneValues, Key: factkey.BuildKey(factkey.HeapMember, []factkey.Part{factkey.IdentityPart(changed), factkey.EncodedOpaquePart(".added")}, "op-00000009").String(), Value: "scalar/number/2", Occurrence: "op-00000009"},
 	})
 
-	var deep, element, branch bool
+	var deep, element bool
 	for _, row := range rows {
 		if row.Family == "sealed_table" && row.Subject == "changed" {
 			t.Fatalf("new-member table projected as sealed: %#v", row)
@@ -46,12 +46,12 @@ func TestNativeContractBridgeProjectsOnlyPublishedSubstrate(t *testing.T) {
 			deep = true
 		case row.Family == "table_element" && row.Value == "presence=proven result_nilability=non_nil":
 			element = true
-		case row.Family == "branch_partition" && row.Value == "partition=always_taken dead_arm=else dead_arm_reachable=false":
-			branch = true
+		case row.Family == "branch_partition":
+			t.Fatalf("native bridge re-derived branch partition from proof row: %#v", row)
 		}
 	}
-	if !deep || !element || !branch {
-		t.Fatalf("deep=%v element=%v branch=%v, want every directly witnessed contract row", deep, element, branch)
+	if !deep || !element {
+		t.Fatalf("deep=%v element=%v, want every directly witnessed contract row", deep, element)
 	}
 }
 

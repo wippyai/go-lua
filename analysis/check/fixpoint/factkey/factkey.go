@@ -101,6 +101,13 @@ const (
 	FamilyHeapIndexRelation
 	FamilyNativeConstantValue
 	FamilyNativePublicationIdentity
+	FamilyNativeBranchPartition
+	FamilyNativeTruthinessClass
+	FamilyBranchResidueClass
+	FamilyNativeConcatSite
+	FamilyNativeBuiltinCall
+	FamilyHeapAllocationDisplay
+	FamilyNativeAliasDisjoint
 )
 
 // RevocationSet names the fact families whose publications can invalidate a
@@ -259,6 +266,36 @@ var (
 		ID: FamilyNativePublicationIdentity, Prefix: "publication_identity/", Subject: Opaque,
 		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{},
 	}
+	NativeBranchPartition = Family{
+		ID: FamilyNativeBranchPartition, Prefix: "branch_partition/", Subject: Opaque,
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{},
+	}
+	NativeTruthinessClass = Family{
+		ID: FamilyNativeTruthinessClass, Prefix: "truthiness_class/", Subject: Opaque,
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{},
+	}
+	BranchResidueClass = Family{
+		ID: FamilyBranchResidueClass, Prefix: "branch-residue-class/", Subject: EncodedTerm,
+		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{},
+	}
+	NativeConcatSite = Family{
+		ID: FamilyNativeConcatSite, Prefix: "concat_site/", Subject: Opaque,
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{},
+	}
+	NativeBuiltinCall = Family{
+		ID: FamilyNativeBuiltinCall, Prefix: "builtin_call/", Subject: Opaque,
+		Qualifiers:  []Kind{Opaque, Opaque},
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{},
+	}
+	HeapAllocationDisplay = Family{
+		ID: FamilyHeapAllocationDisplay, Prefix: "heap/allocation-display/", Subject: Identity,
+		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{},
+	}
+	NativeAliasDisjoint = Family{
+		ID: FamilyNativeAliasDisjoint, Prefix: "alias_disjoint/", Subject: Term,
+		Qualifiers:  []Kind{Identity},
+		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{},
+	}
 )
 
 // families declares every family whose keys are built or read structurally.
@@ -290,6 +327,13 @@ var families = []Family{
 	HeapIndexRelation,
 	NativeConstantValue,
 	NativePublicationIdentity,
+	NativeBranchPartition,
+	NativeTruthinessClass,
+	BranchResidueClass,
+	NativeConcatSite,
+	NativeBuiltinCall,
+	HeapAllocationDisplay,
+	NativeAliasDisjoint,
 }
 
 // byPrefix indexes the declarations so a key is matched without scanning them.

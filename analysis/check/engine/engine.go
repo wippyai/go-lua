@@ -424,6 +424,7 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	artifact := semanticArtifact(compilation.Artifact)
 	transactions -= len(compilation.Artifact.Equations) - len(artifact.Equations)
 	closure.Values = append(closure.Values, publishedNestedConstantValues(compilation)...)
+	closure.Values = append(closure.Values, publishedNestedNativeKernelFacts(compilation, lexical)...)
 	// An unbound annotation has a direct lexical diagnostic. Its unresolved
 	// reference must not also be presented as an ordinary failed type claim:
 	// no declared type witness exists to validate in the first place.
@@ -531,6 +532,37 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		Transactions:               transactions,
 		Timings:                    Timings{ParseBindLower: parseElapsed, Evaluate: evaluateElapsed},
 	}
+}
+
+// publishedNestedNativeKernelFacts evaluates each admitted lexical body in its
+// own equation partition and retains only declared native kernel families.
+// Nested bodies are not part of the root execution partition until called, but
+// their compile-time descriptors still belong to Result.Native. Running their
+// kernels with the closed entry preserves that separation: declared entry
+// types and local facts are visible, caller-owned values are not invented, and
+// no serializer re-walks WIR to recover the result.
+func publishedNestedNativeKernelFacts(root front.Compilation, lexical *lexicalEvaluator) []equation.Fact {
+	var visit func(front.Compilation)
+	visit = func(compilation front.Compilation) {
+		_, _, _ = lexical.evaluate(compilation, []byte(entryValue))
+		for _, child := range compilation.Nested {
+			visit(child)
+		}
+	}
+	for _, child := range root.Nested {
+		visit(child)
+	}
+	out := make([]equation.Fact, 0, len(lexical.nativeKernelFacts))
+	for _, fact := range lexical.nativeKernelFacts {
+		out = append(out, fact)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Key != out[j].Key {
+			return out[i].Key < out[j].Key
+		}
+		return string(out[i].Value) < string(out[j].Value)
+	})
+	return out
 }
 
 // semanticArtifact retains the public source-operation surface while native
@@ -2930,6 +2962,7 @@ type lexicalEvaluator struct {
 	lifecycleEvidence map[string][]DiagnosticEvidence
 	selectEvidence    map[string][]DiagnosticEvidence
 	childPublished    map[string]PublishedDiagnostic
+	nativeKernelFacts map[string]equation.Fact
 	ctx               context.Context
 	table             *interproc.ProjectedTable
 	coordinator       *interproc.RecursionCoordinator
@@ -3583,6 +3616,7 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 		if err != nil {
 			return equation.OutputClosure{}, 0, err
 		}
+		l.recordNativeKernelFacts(evaluation.Closure.Values)
 		return evaluation.Closure, evaluation.Transactions, nil
 	}
 	bound, err := equation.BindCyclicEntry(*compilation.Cyclic, binding)
@@ -3605,7 +3639,29 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 	if err != nil {
 		return equation.OutputClosure{}, 0, err
 	}
+	l.recordNativeKernelFacts(evaluation.Closure.Values)
 	return evaluation.Closure, evaluation.Transactions, nil
+}
+
+func (l *lexicalEvaluator) recordNativeKernelFacts(values []equation.Fact) {
+	if l == nil {
+		return
+	}
+	for _, fact := range values {
+		family, declared := factkey.Lookup(fact.Key)
+		if !declared {
+			continue
+		}
+		switch family.ID {
+		case factkey.FamilyNativeBranchPartition, factkey.FamilyNativeTruthinessClass, factkey.FamilyNativeConcatSite, factkey.FamilyNativeBuiltinCall, factkey.FamilyNativeAliasDisjoint:
+		default:
+			continue
+		}
+		if l.nativeKernelFacts == nil {
+			l.nativeKernelFacts = make(map[string]equation.Fact)
+		}
+		l.nativeKernelFacts[fact.Key+"\x00"+string(fact.Value)] = fact
+	}
 }
 
 func encodeChildEntry(seeds []entrySeed, closureSeeds ...entryClosureSeed) ([]byte, error) {
@@ -10748,9 +10804,126 @@ func allocationTemplateKernel(operation equation.BoundEquation, partition equati
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
-		Key: placementAllocationFactKey(placementAllocationIdentity(operation)), Value: fact,
-	}}}}, nil
+	identity := placementAllocationIdentity(operation)
+	values := []equation.Fact{{
+		Key: placementAllocationFactKey(identity), Value: fact,
+	}}
+	if subject, hasSubject := operationOperand(operation.Operands, "allocation-subject"); hasSubject {
+		if display, hasDisplay := operationOperand(operation.Operands, "allocation-subject-display"); hasDisplay {
+			wire, encodeErr := json.Marshal(allocationDisplayWire{
+				Version: 1, Term: string(subject), Display: string(display), Kind: kind,
+			})
+			if encodeErr != nil {
+				return equation.TransactionResult{}, encodeErr
+			}
+			values = append(values, equation.Fact{
+				Key: factkey.BuildKey(
+					factkey.HeapAllocationDisplay,
+					[]factkey.Part{factkey.IdentityPart([]byte(identity))},
+					operation.Target.Name,
+				).String(),
+				Value: wire,
+			})
+		}
+	}
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+type allocationDisplayWire struct {
+	Version uint8  `json:"version"`
+	Term    string `json:"term"`
+	Display string `json:"display"`
+	Kind    string `json:"kind"`
+}
+
+func decodeAllocationDisplay(value []byte) (allocationDisplayWire, bool) {
+	var wire allocationDisplayWire
+	if json.Unmarshal(value, &wire) != nil || wire.Version != 1 || wire.Term == "" || wire.Display == "" || wire.Kind == "" {
+		return allocationDisplayWire{}, false
+	}
+	return wire, true
+}
+
+type nativeAliasDisjointWire struct {
+	Version uint8    `json:"version"`
+	Subject string   `json:"subject"`
+	Content string   `json:"content"`
+	Events  []string `json:"events,omitempty"`
+}
+
+func nativeAliasDisjointFact(occurrence []byte, term, identity []byte, subject, content string, events ...string) (equation.Fact, bool) {
+	if len(occurrence) == 0 || len(term) == 0 || len(identity) == 0 || subject == "" || content == "" {
+		return equation.Fact{}, false
+	}
+	wire, err := json.Marshal(nativeAliasDisjointWire{Version: 1, Subject: subject, Content: content, Events: events})
+	if err != nil {
+		return equation.Fact{}, false
+	}
+	key := factkey.BuildKey(
+		factkey.NativeAliasDisjoint,
+		[]factkey.Part{factkey.TermPart(string(term)), factkey.IdentityPart(identity)},
+		string(occurrence),
+	)
+	return equation.Fact{Key: key.String(), Value: wire}, true
+}
+
+func decodeNativeAliasDisjoint(value []byte) (nativeAliasDisjointWire, bool) {
+	var wire nativeAliasDisjointWire
+	if json.Unmarshal(value, &wire) != nil || wire.Version != 1 || wire.Subject == "" || wire.Content == "" {
+		return nativeAliasDisjointWire{}, false
+	}
+	for _, event := range wire.Events {
+		if event == "" || strings.Contains(event, "/") {
+			return nativeAliasDisjointWire{}, false
+		}
+	}
+	return wire, true
+}
+
+// Two live allocation templates with distinct identities cannot denote the
+// same table. The conclusion is published at the second allocation coordinate;
+// a prior escape withholds it, while a later escape is the contract's deopt.
+func nativeAllocationAliasFacts(operation equation.BoundEquation, partition equation.Partition) []equation.Fact {
+	occurrence, hasOccurrence := operationOperand(operation.Operands, "native-alias-occurrence")
+	subject, hasSubject := operationOperand(operation.Operands, "alias-subject")
+	subjectDisplay, hasSubjectDisplay := operationOperand(operation.Operands, "alias-subject-display")
+	if !hasOccurrence || !hasSubject || !hasSubjectDisplay {
+		return nil
+	}
+	current, found := placementAllocationForTerm(subject, partition)
+	if !found {
+		return nil
+	}
+	var out []equation.Fact
+	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapAllocationDisplay, nil, ""))
+	for {
+		row, ok := values.Next()
+		if !ok {
+			break
+		}
+		identity, decoded := row.Subject.Decode(nil)
+		display, valid := decodeAllocationDisplay(row.Payload)
+		if !decoded || !valid || display.Kind != "table" || string(identity) == current.Identity || display.Term == string(subject) {
+			continue
+		}
+		heapIdentity, materialized := tableIdentityForTerm([]byte(display.Term), partition)
+		if !materialized || heapIdentityEscapedAfter(heapIdentity, "", partition) {
+			continue
+		}
+		fact, encoded := nativeAliasDisjointFact(
+			occurrence,
+			subject,
+			heapIdentity,
+			string(subjectDisplay),
+			"against="+display.Display+" basis=distinct_fresh_allocations disjoint=true",
+			"escape",
+		)
+		if encoded {
+			out = append(out, fact)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return string(out[i].Value) < string(out[j].Value) })
+	return out
 }
 
 // objectMaterializationKernel runs only after its template dependency.  The
@@ -10796,6 +10969,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		memberOrigins = append(memberOrigins, heapMemberOriginFact(result, suffix, operation.Target.Name, source))
 	}
 	if prototype == "" {
+		memberOrigins = append(memberOrigins, nativeAllocationAliasFacts(operation, partition)...)
 		return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: memberOrigins}}, nil
 	}
 	if result == "" || (!strings.HasPrefix(result, "path/") && !strings.HasPrefix(result, "temp/")) {
@@ -12150,7 +12324,56 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		return equation.TransactionResult{}, err
 	}
 	values = append(values, literalMemberClosures...)
+	if alias, published := nativeWriteAliasFact(operation, partition); published {
+		values = append(values, alias)
+	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
+}
+
+// A root copy denotes the source allocation by the assignment's own value
+// transport. A static member read denotes the root allocation visible before
+// this write. Both conclusions require a published identity and no prior
+// escape; future stores/escapes/calls are carried as the member row's deopts.
+func nativeWriteAliasFact(operation equation.BoundEquation, partition equation.Partition) (equation.Fact, bool) {
+	occurrence, hasOccurrence := operationOperand(operation.Operands, "native-alias-occurrence")
+	subject, hasSubject := operationOperand(operation.Operands, "alias-subject")
+	subjectDisplay, hasSubjectDisplay := operationOperand(operation.Operands, "alias-subject-display")
+	if !hasOccurrence || !hasSubject || !hasSubjectDisplay {
+		return equation.Fact{}, false
+	}
+	if against, copy := operationOperand(operation.Operands, "alias-against"); copy {
+		display, hasDisplay := operationOperand(operation.Operands, "alias-against-display")
+		identity, identified := tableIdentityForTerm(against, partition)
+		if !hasDisplay || !identified || heapIdentityEscapedAfter(identity, "", partition) {
+			return equation.Fact{}, false
+		}
+		return nativeAliasDisjointFact(
+			occurrence,
+			subject,
+			identity,
+			string(subjectDisplay),
+			"against="+string(display)+" basis=copy_of_same_binding disjoint=false",
+		)
+	}
+	root, suffix, member := tableAddress(subject)
+	if !member || suffix == "" {
+		return equation.Fact{}, false
+	}
+	if _, allocated := placementAllocationForTerm(root, partition); !allocated {
+		return equation.Fact{}, false
+	}
+	identity, identified := tableIdentityForTerm(root, partition)
+	if !identified || heapIdentityEscapedAfter(identity, "", partition) {
+		return equation.Fact{}, false
+	}
+	return nativeAliasDisjointFact(
+		occurrence,
+		subject,
+		identity,
+		string(subjectDisplay),
+		"basis=no_intervening_store disjoint=true",
+		"write.field", "escape", "call.opaque",
+	)
 }
 
 // projectReturnTupleWriteRelation follows the same explicit assignment chain
@@ -12779,6 +13002,9 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				break
 			}
 		}
+		if publication, ok := nativeConcatSitePublication(operation, by, partition); ok {
+			values = append(values, publication)
+		}
 	}
 	// A comparison's result kind is fixed by the operator: Lua yields a boolean
 	// whatever the operands hold. Unknown operands leave that boolean's value
@@ -12811,6 +13037,93 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
+}
+
+// nativeConcatSitePublication classifies the ordered operands from the exact
+// values the expression kernel consumed. Primitive concatenation is licensed
+// only when every operand is a non-nil string or number carrier; any other
+// value withholds the row because a metamethod may participate.
+func nativeConcatSitePublication(operation equation.BoundEquation, operands map[string][]byte, partition equation.Partition) (equation.Fact, bool) {
+	key := operands["native-concat-site-key"]
+	if len(key) == 0 {
+		return equation.Fact{}, false
+	}
+	classes := make([]string, 0)
+	formatting := "not_applicable"
+	for index := 0; ; index++ {
+		term, found := operands[fmt.Sprintf("value-%08d", index)]
+		if !found {
+			break
+		}
+		if declaredExplicitAny(term, partition) || sourceHasAnyBoundary(term, partition.Values()) {
+			return equation.Fact{}, false
+		}
+		value, err := resolveCurrentValue(term, partition)
+		if err != nil {
+			return equation.Fact{}, false
+		}
+		carrier, ok := nativeConcatOperandCarrier(value)
+		if !ok {
+			if declared, found := declaredTypeForTerm(term, partition); found {
+				carrier, ok = nativeConcatDeclaredCarrier(declared)
+			}
+		}
+		if !ok {
+			return equation.Fact{}, false
+		}
+		classes = append(classes, carrier)
+		switch carrier {
+		case "integer":
+			formatting = "lua_integer"
+		case "number":
+			formatting = "lua_number"
+		}
+	}
+	if len(classes) < 2 {
+		return equation.Fact{}, false
+	}
+	return equation.Fact{
+		Key: string(key),
+		Value: []byte(
+			"dispatch=primitive formatting=" + formatting +
+				" metamethod=proved_absent operand_classes=[" + strings.Join(classes, ",") +
+				"] operand_list=ordered operands=" + strconv.Itoa(len(classes)),
+		),
+	}, true
+}
+
+func nativeConcatOperandCarrier(value []byte) (string, bool) {
+	switch {
+	case strings.HasPrefix(string(value), "scalar/string/"):
+		return "string", true
+	case strings.HasPrefix(string(value), "scalar/number/"):
+		if numericLiteralIsInteger(strings.TrimPrefix(string(value), "scalar/number/")) {
+			return "integer", true
+		}
+		return "number", true
+	}
+	declared, ok := shapefact.DecodeTarget(value)
+	if !ok || declared == nil {
+		return "", false
+	}
+	return nativeConcatDeclaredCarrier(declared)
+}
+
+func nativeConcatDeclaredCarrier(declared typ.Type) (string, bool) {
+	declared = unwrap.Alias(declared)
+	if _, optional := declared.(*typ.Optional); optional {
+		return "", false
+	}
+	switch {
+	case typ.TypeEquals(declared, typ.String):
+		return "string", true
+	case typ.IsIntegerIndexType(declared):
+		return "integer", true
+	case typ.TypeEquals(declared, typ.Number):
+		return "number", true
+	default:
+		return "", false
+	}
 }
 
 // comparisonOperator names the binary operators whose result kind is a boolean
@@ -17920,12 +18233,139 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	result.Closure.Values = append(result.Closure.Values, cone...)
 	result.Closure.Values = append(result.Closure.Values, pathEqualityFacts(operation, partition)...)
 	result.Closure.Values = append(result.Closure.Values, recurrenceExitFacts(operation)...)
+	result.Closure.Values = append(result.Closure.Values, residueClassBranchFacts(operation)...)
 	bypass, err := shortCircuitBypassFacts(operation, partition)
 	if err != nil {
 		return equation.TransactionResult{}, err
 	}
 	result.Closure.Values = append(result.Closure.Values, bypass...)
+	result.Closure.Values = append(result.Closure.Values, nativeBranchPublicationFacts(operation, partition, result.Closure.Values)...)
 	return result, nil
+}
+
+// residueClassBranchFacts states the exact residue class established on this
+// branch's true edge. The row is guarded to that edge, so a later branch sees
+// it only in the partition where the predicate held. Rebinding the subject is
+// checked by the reader against the ordinary epoch row.
+func residueClassBranchFacts(operation equation.BoundEquation) []equation.Fact {
+	for _, operand := range operation.Operands {
+		if operand.Role != "predicate" {
+			continue
+		}
+		predicate, ok := decodeBranchPredicateWire(operand.Value)
+		if !ok || predicate.Kind != "mod-residue" || predicate.Path == "" || predicate.Modulus <= 0 {
+			return nil
+		}
+		payload, err := json.Marshal(branchResidueClassWire{
+			Modulus: predicate.Modulus,
+			Residue: predicate.Residue,
+			Negated: predicate.Negated,
+		})
+		if err != nil {
+			return nil
+		}
+		guard := equation.Guard{
+			Body:     operation.Target.Body,
+			Encoding: []byte("front/branch/" + operation.Target.Name + "/true"),
+		}
+		return []equation.Fact{{
+			Key: factkey.BuildKey(
+				factkey.BranchResidueClass,
+				[]factkey.Part{factkey.EncodedTermPart([]byte("path/" + predicate.Path))},
+				operation.Target.Name,
+			).String(),
+			Value:  payload,
+			Guards: []equation.Guard{guard},
+		}}
+	}
+	return nil
+}
+
+// nativeBranchPublicationFacts publishes the native disposition from the same
+// branch-proof closure the branch kernel just selected. A branch without one
+// proven edge is dynamic; a proven edge makes the opposite arm unreachable.
+// This is the complete partition rule, so no later WIR walk may reinterpret
+// constants, types, residue constraints, or CFG reachability.
+func nativeBranchPublicationFacts(operation equation.BoundEquation, partition equation.Partition, values []equation.Fact) []equation.Fact {
+	var partitionKey, truthinessKey []byte
+	var predicate branchPredicateWire
+	hasTruthinessPredicate := false
+	for _, operand := range operation.Operands {
+		switch operand.Role {
+		case "native-branch-partition-key":
+			partitionKey = operand.Value
+		case "native-truthiness-key":
+			truthinessKey = operand.Value
+		case "predicate":
+			predicate, hasTruthinessPredicate = decodeBranchPredicateWire(operand.Value)
+			hasTruthinessPredicate = hasTruthinessPredicate && (predicate.Kind == "truthy" || predicate.Kind == "falsy")
+		}
+	}
+	if len(partitionKey) == 0 {
+		return nil
+	}
+	edge := ""
+	prefix := "branch-proof/" + fmt.Sprintf("%x", operation.Target.Body) + "/" + operation.Target.Name + "/"
+	for _, fact := range values {
+		if fact.Value == nil || string(fact.Value) != "proven" || !strings.HasPrefix(fact.Key, prefix) {
+			continue
+		}
+		candidate := strings.TrimPrefix(fact.Key, prefix)
+		if candidate == "true" || candidate == "false" {
+			edge = candidate
+			break
+		}
+	}
+	class := "dynamic_nil_or_false"
+	if hasTruthinessPredicate {
+		if edge != "" {
+			truthy := edge == "true"
+			if predicate.Kind == "falsy" {
+				truthy = !truthy
+			}
+			if predicate.Negated {
+				truthy = !truthy
+			}
+			if truthy {
+				class = "always_truthy"
+			} else {
+				class = "always_falsy"
+			}
+		} else if declared, found := declaredTypeForTerm([]byte("path/"+predicate.Path), partition); found {
+			truthy, falsy, _ := proof.TruthinessSplit(declared)
+			switch {
+			case truthy != nil && !typ.IsNever(truthy) && (falsy == nil || typ.IsNever(falsy)):
+				class = "always_truthy"
+			case falsy != nil && !typ.IsNever(falsy) && (truthy == nil || typ.IsNever(truthy)):
+				class = "always_falsy"
+			}
+			if class != "dynamic_nil_or_false" {
+				holds := class == "always_truthy"
+				if predicate.Kind == "falsy" {
+					holds = !holds
+				}
+				if predicate.Negated {
+					holds = !holds
+				}
+				if holds {
+					edge = "true"
+				} else {
+					edge = "false"
+				}
+			}
+		}
+	}
+	descriptor := "partition=dynamic"
+	if edge == "true" {
+		descriptor = "dead_arm=else dead_arm_reachable=false partition=always_taken"
+	} else if edge == "false" {
+		descriptor = "dead_arm=then dead_arm_reachable=false partition=always_not_taken"
+	}
+	facts := []equation.Fact{{Key: string(partitionKey), Value: []byte(descriptor)}}
+	if len(truthinessKey) == 0 || !hasTruthinessPredicate {
+		return facts
+	}
+	return append(facts, equation.Fact{Key: string(truthinessKey), Value: []byte("class=" + class)})
 }
 
 // shortCircuitBypassFacts states what a value-position short-circuit yields on
@@ -24896,6 +25336,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	var callee []byte
 	var receiver []byte
 	var method []byte
+	var nativeBuiltinKey []byte
 	var typePredicateErrorTarget []byte
 	for _, operand := range operation.Operands {
 		switch {
@@ -24940,6 +25381,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			// Source display is descriptive only. It is emitted by the front
 			// alongside this exact call-result publication and is never used as
 			// a provider or value authority.
+		case operand.Role == "native-builtin-call-key":
+			if nativeBuiltinKey != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: duplicate native builtin call key")
+			}
+			nativeBuiltinKey = operand.Value
 		case strings.HasPrefix(operand.Role, "result-"):
 			resultTerms[strings.TrimPrefix(operand.Role, "result-")] = operand.Value
 		case strings.HasPrefix(operand.Role, "target-"):
@@ -25468,7 +25914,41 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 		}
 	}
 	values = append(values, importedReturnTupleFacts(lexical, provider, resultTerms, argumentTerms)...)
+	if fact, ok := nativeBuiltinCallPublication(nativeBuiltinKey, callee, resultTerms, argumentTerms, partition); ok {
+		values = append(values, fact)
+	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
+}
+
+// nativeBuiltinCallPublication binds the descriptor to the provider and global
+// epoch consumed by this call-result transaction. A prior write ends the
+// canonical binding; a later write is encoded as the row's declared revocation
+// class by lowering and does not erase the call that already happened.
+func nativeBuiltinCallPublication(key, callee []byte, results map[string][]byte, arguments map[int][]byte, partition equation.Partition) (equation.Fact, bool) {
+	if len(key) == 0 || len(results) != 1 || results["00000000"] == nil || callee == nil {
+		return equation.Fact{}, false
+	}
+	if epoch, versioned := currentEpoch(callee, partition); versioned && epoch != "entry" {
+		return equation.Fact{}, false
+	}
+	content := "binding=canonical builtin=tostring callee=tostring cardinality=1 completeness=complete joined_to_call_site=true results={'exact': True, 'count': 1}"
+	if argument := arguments[0]; argument != nil {
+		if !declaredExplicitAny(argument, partition) && !sourceHasAnyBoundary(argument, partition.Values()) {
+			value, err := resolveCurrentValue(argument, partition)
+			if err == nil {
+				carrier, known := nativeConcatOperandCarrier(value)
+				if !known {
+					if declared, found := declaredTypeForTerm(argument, partition); found {
+						carrier, known = nativeConcatDeclaredCarrier(declared)
+					}
+				}
+				if known {
+					content += " input_carrier=" + carrier
+				}
+			}
+		}
+	}
+	return equation.Fact{Key: string(key), Value: []byte(content)}, true
 }
 
 // returnTupleClass names a set of trigger values one correlation is stated over.
@@ -28578,7 +29058,7 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 			// the arm that leaves one, and the cell a short-circuit result
 			// occupies are closed branch metadata. They are intentionally not
 			// alternate selectors.
-			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") && !strings.HasPrefix(operand.Role, "monotone-floor-") && !strings.HasPrefix(operand.Role, "density-relation-") && !strings.HasPrefix(operand.Role, "short-circuit-") {
+			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") && !strings.HasPrefix(operand.Role, "monotone-floor-") && !strings.HasPrefix(operand.Role, "density-relation-") && !strings.HasPrefix(operand.Role, "short-circuit-") && !strings.HasPrefix(operand.Role, "native-") {
 				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}

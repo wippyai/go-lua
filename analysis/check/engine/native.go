@@ -151,27 +151,11 @@ func publishedNativeFactsForCompilation(compilation front.Compilation, values, o
 	index.derived = append(numericNativeFacts(compilation), tableNativeFacts(compilation)...)
 	index.derived = append(index.derived, elementNativeFacts(compilation)...)
 	index.derived = append(index.derived, nilabilityNativeFacts(compilation)...)
-	index.derived = append(index.derived, aliasNativeFacts(compilation)...)
-	index.derived = append(index.derived, branchNativeFacts(compilation, closedBranchCoordinates(values))...)
 	index.derived = append(index.derived, frozenBodyNativeFacts(compilation)...)
 	index.derived = append(index.derived, metatableNativeFacts(compilation)...)
 	index.derived = append(index.derived, shapeEpochNativeFacts(compilation)...)
 	index.derived = append(index.derived, summaryNativeFacts(compilation)...)
 	return index
-}
-
-// closedBranchCoordinates names every branch the value closure already
-// partitioned. The WIR projection defers to those coordinates so one branch
-// never carries two verdicts.
-func closedBranchCoordinates(values []equation.Fact) map[string]bool {
-	closed := make(map[string]bool)
-	for _, fact := range values {
-		body, occurrence, _, ok := nativeBranchProof(fact.Key)
-		if ok {
-			closed[body+"/"+occurrence] = true
-		}
-	}
-	return closed
 }
 
 // Facts returns every published row in a deterministic order: lane, then key,
@@ -197,6 +181,12 @@ func (index *NativeFactIndex) build() {
 		{NativeLaneDiagnostics, index.diagnostics},
 	} {
 		for _, fact := range lane.facts {
+			if family, declared := factkey.Lookup(fact.Key); declared && family.ID == factkey.FamilyHeapAllocationDisplay {
+				// Allocation displays are typed kernel input, not a native
+				// contract family. Their consumer publishes the source-facing
+				// alias row at the guarded allocation coordinate.
+				continue
+			}
 			facts = append(facts, anchors.project(lane.name, fact))
 		}
 	}
@@ -278,7 +268,6 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 	const (
 		callArgumentPrefix = "call-argument/"
 		freezePrefix       = "effect.freeze/"
-		branchProofPrefix  = "branch-proof/"
 	)
 	type identityAnchor struct{ term, subject string }
 	type memberRead struct{ identity, member, occurrence string }
@@ -464,24 +453,6 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 			Trust: NativeTrustProven,
 		})
 	}
-	for _, fact := range facts {
-		if fact.Lane != NativeLaneValues || !strings.HasPrefix(fact.Key, branchProofPrefix) || fact.Value != "proven" {
-			continue
-		}
-		body, occurrence, edge, ok := nativeBranchProof(fact.Key)
-		if !ok {
-			continue
-		}
-		value := "partition=always_not_taken dead_arm=then dead_arm_reachable=false"
-		if edge == "true" {
-			value = "partition=always_taken dead_arm=else dead_arm_reachable=false"
-		}
-		rows = append(rows, NativeFact{
-			Lane: NativeLaneValues, Family: "branch_partition",
-			Key:   "branch_partition/" + body + "/" + occurrence,
-			Value: value, Occurrence: occurrence, Trust: NativeTrustProven,
-		})
-	}
 	return coalesceNativeContractRevocations(rows)
 }
 
@@ -561,14 +532,6 @@ func nativeFreezeTerm(key, prefix string) (term, occurrence string, ok bool) {
 		return "", "", false
 	}
 	return "path/" + term, occurrence, true
-}
-
-func nativeBranchProof(key string) (body, occurrence, edge string, ok bool) {
-	proof, ok := factkey.ParseBranchProof(key)
-	if !ok {
-		return "", "", "", false
-	}
-	return proof.Body, proof.Name, proof.Edge, true
 }
 
 func nativeDecodedIdentity(encoded string) string {
@@ -726,6 +689,23 @@ func (a *nativeAnchors) project(lane string, fact equation.Fact) NativeFact {
 	projected := factkey.Project(fact.Key, a.terms, a.operations, a.longest)
 	row.Family, row.Term, row.Occurrence = projected.Family, projected.Term, projected.Occurrence
 	row.Subject = a.terms[row.Term]
+	if family, declared := factkey.Lookup(fact.Key); declared && family.ID == factkey.FamilyNativeAliasDisjoint {
+		if wire, valid := decodeNativeAliasDisjoint(fact.Value); valid {
+			row.Value = wire.Content
+			row.Subject = wire.Subject
+			row.Revocations = make([]NativeRevocation, 0, len(wire.Events))
+			for _, event := range wire.Events {
+				row.Revocations = append(row.Revocations, NativeRevocation{
+					Established: "contract", Revoked: "contract/" + event, Event: event,
+				})
+			}
+			if len(row.Revocations) != 0 {
+				row.Established = row.Revocations[0].Established
+				row.Revoked = row.Revocations[0].Revoked
+				row.Event = row.Revocations[0].Event
+			}
+		}
+	}
 	if lane == NativeLaneValues {
 		if _, claimed := a.claimed[row.Term]; claimed {
 			row.Trust = NativeTrustClaimed

@@ -51,6 +51,12 @@ type branchDiffWire struct {
 	Edge     bool   `json:"edge,omitempty"`
 }
 
+type branchResidueClassWire struct {
+	Modulus int64 `json:"modulus"`
+	Residue int64 `json:"residue"`
+	Negated bool  `json:"negated,omitempty"`
+}
+
 // decodeBranchDiff reads one published difference descriptor. A descriptor with
 // an empty operand names no relation and is dropped.
 func decodeBranchDiff(encoded []byte) (branchDiffWire, bool) {
@@ -289,6 +295,9 @@ func numericEdgeSatisfiable(predicates []branchPredicateWire, differences []bran
 		if predicate.Kind != "mod-residue" {
 			continue
 		}
+		if branchResidueClassRefutes(predicate, partition) {
+			return false
+		}
 		window, published := publishedResidueWindow([]byte("path/"+predicate.Path), partition)
 		if !published {
 			continue
@@ -321,6 +330,43 @@ func numericEdgeSatisfiable(predicates []branchPredicateWire, differences []bran
 		return true
 	}
 	return solver.AffineSatisfiable(asserted)
+}
+
+// branchResidueClassRefutes consumes only guarded class rows visible in this
+// partition. One exact class modulo m is disjoint from every other class
+// modulo m; the current predicate is therefore refuted exactly when its truth
+// value on that established class is false. A later epoch names a different
+// subject value and invalidates the row.
+func branchResidueClassRefutes(predicate branchPredicateWire, partition equation.Partition) bool {
+	term := []byte("path/" + predicate.Path)
+	values := partition.FamilyValues(factkey.BuildKey(
+		factkey.BranchResidueClass,
+		[]factkey.Part{factkey.EncodedTermPart(term)},
+		"",
+	))
+	for {
+		fact, ok := values.Next()
+		if !ok {
+			return false
+		}
+		if epoch, versioned := currentEpoch(term, partition); versioned && epoch > fact.Occurrence {
+			continue
+		}
+		var established branchResidueClassWire
+		if json.Unmarshal(fact.Payload, &established) != nil || established.Modulus <= 0 || established.Negated {
+			continue
+		}
+		if established.Modulus != predicate.Modulus {
+			continue
+		}
+		holds := established.Residue == predicate.Residue
+		if predicate.Negated {
+			holds = !holds
+		}
+		if !holds {
+			return true
+		}
+	}
 }
 
 // numericPredicateConstraints lowers one normalized check into the affine

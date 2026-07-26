@@ -123,6 +123,13 @@ func TestBuildKeyOwnsDeclaredFamilySpellings(t *testing.T) {
 		{HeapIndexUpper, []Part{EncodedTermPart([]byte("path/sym7")), EncodedTermPart([]byte("path/sym2"))}, "heap/index-upper/" + encode("path/sym7") + "/" + encode("path/sym2") + "/op-1"},
 		{NativeConstantValue, []Part{OpaquePart("2f2f")}, "constant_value/2f2f/op-1"},
 		{NativePublicationIdentity, []Part{OpaquePart("2f2f")}, "publication_identity/2f2f/op-1"},
+		{NativeBranchPartition, []Part{OpaquePart("2f2f")}, "branch_partition/2f2f/op-1"},
+		{NativeTruthinessClass, []Part{OpaquePart("2f2f")}, "truthiness_class/2f2f/op-1"},
+		{BranchResidueClass, []Part{EncodedTermPart([]byte("path/sym2"))}, "branch-residue-class/" + encode("path/sym2") + "/op-1"},
+		{NativeConcatSite, []Part{OpaquePart("2f2f")}, "concat_site/2f2f/op-1"},
+		{NativeBuiltinCall, []Part{OpaquePart("2f2f"), OpaquePart("op-7"), OpaquePart("contract-revocation")}, "builtin_call/2f2f/op-7/contract-revocation/op-1"},
+		{HeapAllocationDisplay, []Part{IdentityPart(identity)}, "heap/allocation-display/" + encode(string(identity)) + "/op-1"},
+		{NativeAliasDisjoint, []Part{TermPart("path/sym2"), IdentityPart(identity)}, "alias_disjoint/path/sym2/" + encode(string(identity)) + "/op-1"},
 	} {
 		key := BuildKey(test.family, test.parts, "op-1")
 		if key.String() != test.want {
@@ -160,8 +167,8 @@ func TestBuildKeyProducesTypedPrefixes(t *testing.T) {
 }
 
 func TestFamiliesAreCompleteRecords(t *testing.T) {
-	if len(families) != 25 {
-		t.Fatalf("declared families = %d, want 25", len(families))
+	if len(families) != 32 {
+		t.Fatalf("declared families = %d, want 32", len(families))
 	}
 	for _, family := range families {
 		if family.ID == 0 || family.Prefix == "" || family.RevocationSet == nil ||

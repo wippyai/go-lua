@@ -8,10 +8,30 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
+
+func nativeOperandKey(body *wir.Body, operand wir.Operand) string {
+	switch operand.Kind {
+	case wir.OperandPath:
+		item := body.Path(wir.PathRef(operand.Ref))
+		return nativePathKey(item.Symbol, item.Key())
+	case wir.OperandTemp:
+		return fmt.Sprintf("temp/%d", operand.Ref)
+	default:
+		return ""
+	}
+}
+
+func nativePathKey(symbol wir.SymbolID, key path.PathKey) string {
+	if symbol != 0 {
+		return fmt.Sprintf("sym%d", symbol)
+	}
+	return string(key)
+}
 
 // numericNativeFacts is intentionally a projection, not another abstract
 // interpreter. Its inputs are the lowering-owned instruction topology and the
@@ -21,194 +41,8 @@ func numericNativeFacts(root front.Compilation) []NativeFact {
 	var rows []NativeFact
 	forEachNativeBody(root, func(compilation front.Compilation) {
 		rows = append(rows, numericBodyFacts(compilation)...)
-		rows = append(rows, concatBuiltinBodyFacts(compilation)...)
 	})
 	return rows
-}
-
-// concatBuiltinBodyFacts projects scalar operand and canonical-builtin facts
-// directly from resolved WIR.  It deliberately withholds a row if lowering did
-// not preserve every operand's scalar carrier, or if an earlier write replaced
-// the global binding used by a builtin call.
-func concatBuiltinBodyFacts(compilation front.Compilation) []NativeFact {
-	body := compilation.WIR
-	if body == nil {
-		return nil
-	}
-	type scalarValue struct {
-		carrier string
-		nilable bool
-	}
-	key := func(operand wir.Operand) string { return nativeOperandKey(body, operand) }
-	values := make(map[string]scalarValue)
-	set := func(operand wir.Operand, value scalarValue) {
-		if name := key(operand); name != "" {
-			values[name] = value
-		}
-	}
-	typeValue := func(value typ.Type) (scalarValue, bool) {
-		nilable := false
-		unaliased := unwrap.Alias(value)
-		if _, ok := unaliased.(*typ.Optional); ok {
-			nilable = true
-			unaliased = unwrap.Optional(unaliased)
-		}
-		switch {
-		case typ.TypeEquals(unaliased, typ.String):
-			return scalarValue{carrier: "string", nilable: nilable}, true
-		case typ.IsIntegerIndexType(unaliased):
-			return scalarValue{carrier: "integer", nilable: nilable}, true
-		case typ.TypeEquals(unaliased, typ.Number):
-			return scalarValue{carrier: "number", nilable: nilable}, true
-		default:
-			return scalarValue{}, false
-		}
-	}
-	for _, parameter := range compilation.Boundary.Parameters {
-		if parameter.Symbol == 0 {
-			continue
-		}
-		if value, ok := typeValue(body.Type(parameter.Type)); ok {
-			values[fmt.Sprintf("sym%d", parameter.Symbol)] = value
-		}
-	}
-	for _, root := range body.RootTypes() {
-		if value, ok := typeValue(body.Type(root.Type)); ok {
-			if root.Path.Symbol != 0 {
-				values[fmt.Sprintf("sym%d", root.Path.Symbol)] = value
-			} else {
-				values[string(root.Path.Key())] = value
-			}
-		}
-	}
-	value := func(operand wir.Operand) (scalarValue, bool) {
-		if operand.Kind == wir.OperandConst {
-			constant := body.Const(wir.ConstRef(operand.Ref))
-			switch constant.Kind {
-			case wir.ConstString:
-				return scalarValue{carrier: "string"}, true
-			case wir.ConstNumber:
-				if numericLiteralIsInteger(constant.Number) {
-					return scalarValue{carrier: "integer"}, true
-				}
-				return scalarValue{carrier: "number"}, true
-			}
-		}
-		item, ok := values[key(operand)]
-		return item, ok
-	}
-	row := func(family, occurrence, content string) NativeFact {
-		return NativeFact{
-			Lane: NativeLaneValues, Family: family,
-			Key:   family + "/" + fmt.Sprintf("%x", compilation.Body) + "/" + occurrence,
-			Value: content, Occurrence: occurrence, Trust: NativeTrustProven,
-		}
-	}
-	globalWrites := make(map[uint32]bool)
-	globalWriteIndices := make(map[uint32][]int)
-	for index := 0; index < body.Len(); index++ {
-		instruction := body.Instr(index)
-		if instruction.Dst.Kind != wir.OperandPath {
-			continue
-		}
-		path := body.Path(wir.PathRef(instruction.Dst.Ref))
-		if body.SymbolResolvesToGlobal(path.Symbol, "tostring") {
-			globalWriteIndices[uint32(path.Symbol)] = append(globalWriteIndices[uint32(path.Symbol)], index)
-		}
-	}
-	hasLaterGlobalWrite := func(symbol uint32, index int) bool {
-		for _, candidate := range globalWriteIndices[symbol] {
-			if candidate > index {
-				return true
-			}
-		}
-		return false
-	}
-	var out []NativeFact
-	for index := 0; index < body.Len(); index++ {
-		instruction := body.Instr(index)
-		occurrence := fmt.Sprintf("op-%08d", index)
-		if instruction.Dst.Kind == wir.OperandPath {
-			path := body.Path(wir.PathRef(instruction.Dst.Ref))
-			if body.SymbolResolvesToGlobal(path.Symbol, "tostring") {
-				globalWrites[uint32(path.Symbol)] = true
-			}
-		}
-		switch instruction.Op {
-		case wir.OpAssign:
-			if item, ok := value(instruction.A); ok {
-				set(instruction.Dst, item)
-			}
-		case wir.OpClaim:
-			if item, ok := typeValue(body.Type(instruction.Type)); ok {
-				set(instruction.Dst, item)
-			}
-		case wir.OpLogical:
-			left, leftOK := value(instruction.A)
-			right, rightOK := value(instruction.B)
-			if !leftOK || !rightOK || left.carrier != right.carrier {
-				continue
-			}
-			if instruction.Operator == wir.LogOr && !right.nilable {
-				set(instruction.Dst, scalarValue{carrier: left.carrier})
-				continue
-			}
-			if !left.nilable && !right.nilable {
-				set(instruction.Dst, scalarValue{carrier: left.carrier})
-			}
-		case wir.OpConcat:
-			operands := body.Operands(instruction.List)
-			if len(operands) < 2 {
-				continue
-			}
-			classes := make([]string, 0, len(operands))
-			formatting := "not_applicable"
-			for _, operand := range operands {
-				item, ok := value(operand)
-				if !ok || item.nilable {
-					classes = nil
-					break
-				}
-				classes = append(classes, item.carrier)
-				switch item.carrier {
-				case "integer":
-					formatting = "lua_integer"
-				case "number":
-					formatting = "lua_number"
-				}
-			}
-			if len(classes) != len(operands) {
-				continue
-			}
-			out = append(out, row("concat_site", occurrence,
-				"dispatch=primitive formatting="+formatting+" metamethod=proved_absent operand_classes=["+strings.Join(classes, ",")+"] operand_list=ordered operands="+strconv.Itoa(len(classes))))
-			set(instruction.Dst, scalarValue{carrier: "string"})
-		case wir.OpCall:
-			callee := instruction.Call.Callee
-			if callee.Kind != wir.OperandPath || len(body.Operands(instruction.Results)) != 1 || instruction.CallOpenTail {
-				continue
-			}
-			path := body.Path(wir.PathRef(callee.Ref))
-			if !body.SymbolResolvesToGlobal(path.Symbol, "tostring") || globalWrites[uint32(path.Symbol)] {
-				continue
-			}
-			content := "binding=canonical builtin=tostring callee=tostring cardinality=1 completeness=complete joined_to_call_site=true results={'exact': True, 'count': 1}"
-			if args := body.Operands(instruction.List); len(args) == 1 {
-				if item, ok := value(args[0]); ok && !item.nilable {
-					content += " input_carrier=" + item.carrier
-				}
-			}
-			contractEvents := "write.global,call.opaque,call.effectful,load.dynamic"
-			if hasLaterGlobalWrite(uint32(path.Symbol), index) {
-				contractEvents = "write.global,load.dynamic"
-			}
-			fact := row("builtin_call", occurrence, content)
-			fact.Key += "/contract-revocation/" + contractEvents
-			out = append(out, fact)
-			set(body.Operands(instruction.Results)[0], scalarValue{carrier: "string"})
-		}
-	}
-	return out
 }
 
 type numericValue struct {

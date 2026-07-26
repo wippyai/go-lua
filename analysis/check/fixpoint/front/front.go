@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/path"
@@ -1429,14 +1430,16 @@ func CompileBody(source string) (equation.Artifact, error) {
 }
 
 type operation struct {
-	instruction     wir.Instruction
-	target          equation.Coordinate
-	family          string
-	allocationSite  string
-	allocationEntry *wir.TableEntry
-	callResults     bool
-	callApply       equation.Coordinate
-	external        equation.Term
+	instruction      wir.Instruction
+	target           equation.Coordinate
+	sourceIndex      int
+	sourceOccurrence string
+	family           string
+	allocationSite   string
+	allocationEntry  *wir.TableEntry
+	callResults      bool
+	callApply        equation.Coordinate
+	external         equation.Term
 }
 
 func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cfg.Point]cfg.Point) (equation.Artifact, error) {
@@ -1466,6 +1469,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 	}
 	shortCircuitBypasses := shortCircuitBypassGuards(body)
 	operations := make([]operation, 0, body.Len())
+	nativeAliasEligible := true
 	// instructionOrder maps each WIR instruction to the first operation it
 	// contributes. An instruction with several occurrences owns a contiguous
 	// run, so this index orders instructions against operations exactly.
@@ -1476,6 +1480,9 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 		instructionOrder[index] = len(operations)
 		switch instruction.Op {
 		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpBranch, wir.OpClaim, wir.OpSelect, wir.OpBinOp, wir.OpConcat, wir.OpLogical:
+			if instruction.Op == wir.OpBranch || instruction.Op == wir.OpSelect {
+				nativeAliasEligible = false
+			}
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 			if instruction.Op == wir.OpEntry {
 				entries++
@@ -1491,6 +1498,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			}
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
 		case wir.OpIterate:
+			nativeAliasEligible = false
 			if instruction.Iter == wir.IterGeneric && len(loopBindings[instruction.Point]) == 0 {
 				return equation.Artifact{}, fmt.Errorf("front: generic-for at point %d has no bound variables", instruction.Point)
 			}
@@ -1508,6 +1516,9 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations) + 1)}, family: "index-mutation"},
 			)
 		case wir.OpMakeTable, wir.OpClosure:
+			if instruction.Op == wir.OpClosure {
+				nativeAliasEligible = false
+			}
 			site := operationName(len(operations))
 			operations = append(operations,
 				operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: site}, family: "allocation-template", allocationSite: site},
@@ -1537,6 +1548,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}, family: "eval-node"})
 			}
 		case wir.OpCall:
+			nativeAliasEligible = false
 			// Calls exclusively own their application/result pair.  An external
 			// provider contributes one sealed boundary factor between those two
 			// occurrences; it never manufactures or owns result slots.
@@ -1554,6 +1566,10 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			// structure, so retaining them as equations would invent semantics.
 		default:
 			return equation.Artifact{}, fmt.Errorf("%w: %d at instruction %d", ErrUnsupportedInstruction, instruction.Op, index)
+		}
+		for operationIndex := instructionOrder[index]; operationIndex < len(operations); operationIndex++ {
+			operations[operationIndex].sourceIndex = index
+			operations[operationIndex].sourceOccurrence = operationName(index)
 		}
 	}
 	if entries != 1 {
@@ -1612,6 +1628,9 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				draft.Operands = terms.template
 			} else {
 				draft.Operands = terms.materialization
+				if nativeAliasEligible {
+					draft.Operands = append(draft.Operands, nativeAllocationAliasOperands(body, instruction, operation.sourceOccurrence)...)
+				}
 			}
 		case operation.family == "allocation-write":
 			operands, err := allocationWriteOperands(body, instruction, operation, operations)
@@ -1729,6 +1748,9 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(sourceDisplay))})
 				}
 			}
+			if nativeAliasEligible {
+				draft.Operands = append(draft.Operands, nativeAssignmentAliasOperands(body, instruction, operation.sourceOccurrence)...)
+			}
 		case instruction.Op == wir.OpStaticMemberWrite:
 			target, display, err := memberPathTerm(body, instruction.Dst)
 			if err != nil {
@@ -1836,6 +1858,16 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: expression %s: %w", operation.target.Name, err)
 			}
+			if instruction.Op == wir.OpConcat {
+				operands = append(operands, equation.Operand{
+					Role: "native-concat-site-key",
+					Term: equation.ClosedTerm([]byte(factkey.BuildKey(
+						factkey.NativeConcatSite,
+						[]factkey.Part{factkey.OpaquePart(fmt.Sprintf("%x", bodyID))},
+						operation.sourceOccurrence,
+					).String())),
+				})
+			}
 			draft.Occurrence, draft.Guards, draft.Operands = occurrence("expression"), guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets), operands
 		case instruction.Op == wir.OpBranch:
 			draft.Occurrence = occurrence("branch-relations")
@@ -1857,6 +1889,26 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			// it.
 			if exitEdge, controls := guardReachability.naturalLoopExit(instruction.Point); controls {
 				operands = append(operands, equation.Operand{Role: "recurrence-exit", Term: equation.ClosedTerm([]byte(strconv.FormatBool(exitEdge)))})
+			}
+			nativeBody := fmt.Sprintf("%x", bodyID)
+			operands = append(operands, equation.Operand{
+				Role: "native-branch-partition-key",
+				Term: equation.ClosedTerm([]byte(factkey.BuildKey(
+					factkey.NativeBranchPartition,
+					[]factkey.Part{factkey.OpaquePart(nativeBody)},
+					operation.sourceOccurrence,
+				).String())),
+			})
+			check := body.Check(instruction.Check)
+			if check.Kind == wir.CheckTruthy || check.Kind == wir.CheckFalsy {
+				operands = append(operands, equation.Operand{
+					Role: "native-truthiness-key",
+					Term: equation.ClosedTerm([]byte(factkey.BuildKey(
+						factkey.NativeTruthinessClass,
+						[]factkey.Part{factkey.OpaquePart(nativeBody)},
+						operation.sourceOccurrence,
+					).String())),
+				})
 			}
 			draft.Operands = operands
 		case instruction.Op == wir.OpCall:
@@ -1886,6 +1938,12 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				operands, err := callResultOperands(body, instruction, operation.callApply, operation.external)
 				if err != nil {
 					return equation.Artifact{}, fmt.Errorf("front: call results %s: %w", operation.target.Name, err)
+				}
+				if key := nativeBuiltinCallKey(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence); key != "" {
+					operands = append(operands, equation.Operand{
+						Role: "native-builtin-call-key",
+						Term: equation.ClosedTerm([]byte(key)),
+					})
 				}
 				draft.Occurrence = occurrence("call-results")
 				draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
@@ -2069,6 +2127,42 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 		return equation.Artifact{}, fmt.Errorf("front: compile equations: %w", err)
 	}
 	return artifact, nil
+}
+
+// nativeBuiltinCallKey records the lowering-owned global-binding proof and the
+// contract's closed revocation vocabulary. The call-result kernel still
+// decides whether that binding is current from the visible epoch facts; this
+// metadata never authorizes a call after a preceding write.
+func nativeBuiltinCallKey(bodyID equation.BodyID, body *wir.Body, instruction wir.Instruction, index int, occurrence string) string {
+	if body == nil || instruction.Call.Method != 0 || instruction.Call.Callee.Kind != wir.OperandPath ||
+		len(body.Operands(instruction.Results)) != 1 || instruction.CallOpenTail {
+		return ""
+	}
+	callee := body.Path(wir.PathRef(instruction.Call.Callee.Ref))
+	if !body.SymbolResolvesToGlobal(callee.Symbol, "tostring") {
+		return ""
+	}
+	events := "write.global,call.opaque,call.effectful,load.dynamic"
+	for candidate := index + 1; candidate < body.Len(); candidate++ {
+		destination := body.Instr(candidate).Dst
+		if destination.Kind != wir.OperandPath {
+			continue
+		}
+		path := body.Path(wir.PathRef(destination.Ref))
+		if body.SymbolResolvesToGlobal(path.Symbol, "tostring") {
+			events = "write.global,load.dynamic"
+			break
+		}
+	}
+	return factkey.BuildKey(
+		factkey.NativeBuiltinCall,
+		[]factkey.Part{
+			factkey.OpaquePart(fmt.Sprintf("%x", bodyID)),
+			factkey.OpaquePart(occurrence),
+			factkey.OpaquePart("contract-revocation"),
+		},
+		events,
+	).String()
 }
 
 // assignmentSnapshotStarts maps each ordinary/local assignment point to the
@@ -3252,6 +3346,20 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 			{Role: "result", Term: result},
 		},
 	}
+	if instruction.Dst.Kind == wir.OperandPath {
+		target := body.Path(wir.PathRef(instruction.Dst.Ref))
+		if target.String() != "" {
+			display := equation.ClosedTerm([]byte(target.String()))
+			sets.template = append(sets.template,
+				equation.Operand{Role: "allocation-subject", Term: result},
+				equation.Operand{Role: "allocation-subject-display", Term: display},
+			)
+			sets.materialization = append(sets.materialization,
+				equation.Operand{Role: "allocation-subject", Term: result},
+				equation.Operand{Role: "allocation-subject-display", Term: display},
+			)
+		}
+	}
 	switch instruction.Op {
 	case wir.OpMakeTable:
 		if !instruction.StaticStringKeysComplete {
@@ -3346,6 +3454,57 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 		return allocationOperandSets{}, fmt.Errorf("instruction %d does not allocate an object", instruction.Op)
 	}
 	return sets, nil
+}
+
+// An alias conclusion is anchored to the authored WIR occurrence, while the
+// kernel that proves it may be one of several equations emitted for that
+// instruction. These helpers carry only the typed coordinate and displays;
+// allocation identity and escape state remain kernel-owned decisions.
+func nativeAllocationAliasOperands(body *wir.Body, instruction wir.Instruction, occurrence string) []equation.Operand {
+	if body == nil || instruction.Op != wir.OpMakeTable || instruction.Dst.Kind != wir.OperandPath {
+		return nil
+	}
+	target := body.Path(wir.PathRef(instruction.Dst.Ref))
+	if target.IsEmpty() || len(target.Segments) != 0 || target.String() == "" {
+		return nil
+	}
+	term := []byte("path/" + target.Key())
+	return []equation.Operand{
+		{Role: "native-alias-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: "alias-subject", Term: equation.ClosedTerm(term)},
+		{Role: "alias-subject-display", Term: equation.ClosedTerm([]byte(target.String()))},
+	}
+}
+
+func nativeAssignmentAliasOperands(body *wir.Body, instruction wir.Instruction, occurrence string) []equation.Operand {
+	if body == nil || instruction.Op != wir.OpAssign || instruction.Dst.Kind != wir.OperandPath || instruction.A.Kind != wir.OperandPath {
+		return nil
+	}
+	target := body.Path(wir.PathRef(instruction.Dst.Ref))
+	source := body.Path(wir.PathRef(instruction.A.Ref))
+	if target.IsEmpty() || source.IsEmpty() || source.String() == "" {
+		return nil
+	}
+	subject := source
+	copy := len(target.Segments) == 0 && len(source.Segments) == 0 && target.Key() != source.Key()
+	if copy {
+		subject = target
+	} else if len(source.Segments) == 0 {
+		return nil
+	}
+	term := []byte("path/" + subject.Key())
+	operands := []equation.Operand{
+		{Role: "native-alias-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: "alias-subject", Term: equation.ClosedTerm(term)},
+		{Role: "alias-subject-display", Term: equation.ClosedTerm([]byte(subject.String()))},
+	}
+	if copy {
+		operands = append(operands,
+			equation.Operand{Role: "alias-against", Term: equation.ClosedTerm([]byte("path/" + source.Key()))},
+			equation.Operand{Role: "alias-against-display", Term: equation.ClosedTerm([]byte(source.String()))},
+		)
+	}
+	return operands
 }
 
 func allocationValueTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {

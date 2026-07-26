@@ -123,6 +123,16 @@ func assertDeadThenArm(t *testing.T, source string) {
 	t.Fatalf("no branch was decided false:\n%s", source)
 }
 
+func assertDeadElseArm(t *testing.T, source string) {
+	t.Helper()
+	for _, value := range branchPartitions(t, source) {
+		if strings.Contains(value, "always_taken") {
+			return
+		}
+	}
+	t.Fatalf("no branch was decided true:\n%s", source)
+}
+
 func TestResidueContradictionDecidesOnlyADominatedArm(t *testing.T) {
 	assertDeadThenArm(t, `
 local function classify(x: integer): string
@@ -200,8 +210,10 @@ return classify
 `)
 }
 
-func TestResidueContradictionRejectsTheSameResidue(t *testing.T) {
-	assertNoDeadArm(t, `
+func TestResidueClassProvesTheSameDominatedResidue(t *testing.T) {
+	// The outer true edge publishes x = 0 (mod 2), so the identical dominated
+	// predicate is true on every execution that reaches it.
+	assertDeadElseArm(t, `
 local function classify(x: integer): string
     if x % 2 == 0 then
         if x % 2 == 0 then
