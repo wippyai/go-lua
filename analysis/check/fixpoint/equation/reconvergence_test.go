@@ -363,3 +363,32 @@ func TestDecisionWithNoPublishedExitStaysExclusive(t *testing.T) {
 		t.Fatalf("decided value = %q, want seed -- an arm reached its own alternative", fact.Value)
 	}
 }
+
+// TestJoinCurrentContributesOnlyThroughAJoin pins the join-only selector. A
+// joined value describes several edges at once and is no edge's own
+// publication, so a cube may contribute a witness there that it may not state
+// alone. A read the cube already decides keeps exactly what Current selects.
+func TestJoinCurrentContributesOnlyThroughAJoin(t *testing.T) {
+	lattice := setLattice()
+	lattice.JoinCurrent = func(candidates []Fact) (Fact, bool) {
+		chosen, selected := lattice.Current(candidates)
+		if selected && string(chosen.Value) == "marker" {
+			chosen.Value = []byte("bound")
+		}
+		return chosen, selected
+	}
+	facts := []Fact{
+		{Key: "value/x/op-00000001", Value: []byte("before")},
+		{Key: "value/x/op-00000003", Value: []byte("marker"), Guards: []Guard{edgeGuard("op-00000002", "true")}},
+	}
+	joined := reconvergencePartition(t, nil, facts...)
+	fact, found := joined.Reconverged("value/x/", lattice)
+	if !found || string(fact.Value) != "before|bound" {
+		t.Fatalf("joined value = %q / %v, want before|bound", fact.Value, found)
+	}
+	decided := reconvergencePartition(t, []Guard{edgeGuard("op-00000002", "true")}, facts...)
+	fact, found = decided.Reconverged("value/x/", lattice)
+	if !found || string(fact.Value) != "marker" {
+		t.Fatalf("decided value = %q / %v, want marker -- a join contribution replaced an edge's own publication", fact.Value, found)
+	}
+}

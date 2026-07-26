@@ -15026,6 +15026,17 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	refined := []byte("scalar/claim/" + kind + "/" + targetType)
 	closure := equation.OutputClosure{Values: []equation.Fact{{Key: "value/" + target + "/" + operation.Target.Name, Value: refined}}}
+	// A refuted claim still binds its cell: the assignment happens and the cell
+	// holds the value the source carried, not the type the claim named. The
+	// refutation is published as this transaction's diagnostic, so the value
+	// lane keeps the claim marker -- no consumer may read an unproven claim as a
+	// proof of anything -- and records the bound value beside it for the one
+	// consumer that cannot use the marker: a control-flow join, whose result
+	// describes several edges at once and is therefore never this cell's own
+	// publication.
+	if witness, records := claimBoundValue(operation, kind, targetType, value, available); records {
+		closure.Values = append(closure.Values, equation.Fact{Key: claimBoundPrefix + target + "/" + operation.Target.Name, Value: witness})
+	}
 	if throwTemplate.Key != "" {
 		closure.Values = append(closure.Values, throwTemplate)
 	}
@@ -28103,18 +28114,41 @@ func correlationConeEpochsCurrent(epochs []correlationConeEpoch, partition equat
 // value with the same timing rule.
 func reconvergedValue(term []byte, cutoff string, partition equation.Partition) ([]byte, bool) {
 	prefix := "value/" + string(term) + "/"
-	fact, found := partition.Reconverged(prefix, equation.Reconvergence{
-		Current: func(candidates []equation.Fact) (equation.Fact, bool) {
-			if cutoff == "" {
-				return latestPublication(candidates)
+	boundPrefix := claimBoundPrefix + string(term) + "/"
+	publication := func(candidates []equation.Fact) (equation.Fact, bool) {
+		values := make([]equation.Fact, 0, len(candidates))
+		for _, candidate := range candidates {
+			if !strings.HasPrefix(candidate.Key, prefix) {
+				continue
 			}
-			bounded := make([]equation.Fact, 0, len(candidates))
+			if cutoff != "" && strings.TrimPrefix(candidate.Key, prefix) > cutoff {
+				continue
+			}
+			values = append(values, candidate)
+		}
+		return latestPublication(values)
+	}
+	fact, found := partition.Reconverged(prefix, equation.Reconvergence{
+		Support: []string{boundPrefix},
+		Current: publication,
+		// An edge whose current publication is an unproven claim still bound its
+		// cell, and the join describes every edge at once rather than restating
+		// this one. It therefore contributes the value the assignment bound; the
+		// edge's own publication is untouched, so no reader of that edge alone
+		// can take an unproven claim for a proof.
+		JoinCurrent: func(candidates []equation.Fact) (equation.Fact, bool) {
+			chosen, selected := publication(candidates)
+			if !selected || !strings.HasPrefix(string(chosen.Value), "scalar/claim/") {
+				return chosen, selected
+			}
+			occurrence := strings.TrimPrefix(chosen.Key, prefix)
 			for _, candidate := range candidates {
-				if strings.TrimPrefix(candidate.Key, prefix) <= cutoff {
-					bounded = append(bounded, candidate)
+				if candidate.Key == boundPrefix+occurrence {
+					chosen.Value = append([]byte(nil), candidate.Value...)
+					return chosen, true
 				}
 			}
-			return latestPublication(bounded)
+			return chosen, true
 		},
 		Join: joinPublishedValues,
 	})
@@ -28295,8 +28329,9 @@ func widenRecurrentFact(lane equation.FactLane, key string, left, right []byte) 
 
 // mergeRecurrentFact routes a disagreement to the domain its fact family owns.
 // The value lane's payload carriers -- a term's publication, a heap member's
-// current value, and the write-owned member cell -- all hold the same encoded
-// witness, so they share one operator. Every other family is withdrawn.
+// current value, the value a refuted claim bound, and the write-owned member
+// cell -- all hold the same encoded witness, so they share one operator. Every
+// other family is withdrawn.
 func mergeRecurrentFact(lane equation.FactLane, key string, left, right []byte, values func(left, right []byte) ([]byte, bool)) ([]byte, bool) {
 	if lane == equation.LaneDiagnostic {
 		return recurrentDiagnosticPayload(left, right), true
@@ -28305,7 +28340,7 @@ func mergeRecurrentFact(lane equation.FactLane, key string, left, right []byte, 
 		return nil, false
 	}
 	switch {
-	case strings.HasPrefix(key, "value/"), strings.HasPrefix(key, heapMemberPrefix):
+	case strings.HasPrefix(key, "value/"), strings.HasPrefix(key, heapMemberPrefix), strings.HasPrefix(key, claimBoundPrefix):
 		return values(left, right)
 	case strings.HasPrefix(key, memberCellPrefix):
 		return mergeRecurrentMemberCell(left, right, values)
@@ -28472,6 +28507,33 @@ func joinPublishedValues(left, right []byte) ([]byte, bool) {
 		return []byte("scalar/top"), true
 	}
 	return encoded, true
+}
+
+// claimBoundPrefix roots the value a refuted claim leaves in its cell. It is a
+// separate family from the cell's own publication because the two say different
+// things: the publication states that this cell carries an unproven claim, and
+// this family states what the assignment that carried it bound.
+const claimBoundPrefix = "claim-bound/"
+
+// claimBoundValue is the value a refuted assignment claim binds. Only an
+// assignment binds a cell -- a cast and an assertion retype a binding another
+// operation owns -- and only a source value this partition resolved to a type
+// describes what was bound. A claim over an any or unknown boundary records
+// nothing: there is no value there to state, and the marker alone is the honest
+// answer.
+//
+// An assignment inside a cycle binds its cell once per trip and each trip binds
+// a different iterate, so what it records is the carrier the recurrence reaches
+// rather than the iterate one trip produced.
+func claimBoundValue(operation equation.BoundEquation, kind, targetType string, value []byte, available bool) ([]byte, bool) {
+	if kind != "claim-kind/3" || !available || claimTypeIsAny(targetType) || isUnvalidatedAnyValue(value) || isUnknownScalar(value) {
+		return nil, false
+	}
+	bound := reportedRecurrentValue(value, boundOperandRoles(operation.Operands))
+	if _, known := joinedValueWitness(bound); !known || isUnknownScalar(bound) {
+		return nil, false
+	}
+	return append([]byte(nil), bound...), true
 }
 
 // joinedValueWitness is the type a published payload contributes to a join. A

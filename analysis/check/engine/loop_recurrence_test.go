@@ -155,3 +155,70 @@ print(done)
 		t.Fatalf("the loop exit lost the condition that ended the loop:\n%s", diagnosticSummaries(narrowed))
 	}
 }
+
+// TestRefutedClaimBindsItsCellForTheJoin pins what a refuted assignment leaves
+// behind. The assignment happens: the cell holds the value the source carried,
+// not the type the claim named, so a later join over the arm that refuted and
+// the arm that did not states the carrier both produce. Taking the claimed type
+// instead would let an unproven claim decide the join in its own favour.
+func TestRefutedClaimBindsItsCellForTheJoin(t *testing.T) {
+	drifted := checkSource(t, `local function drift(more: () -> boolean, halve: () -> boolean): integer
+    local i: integer = 7
+    while more() do
+        if halve() then
+            i = i / 2
+        else
+            i = i + 1
+        end
+    end
+    local j: integer = i
+    return j
+end
+return drift
+`)
+	if !strings.Contains(diagnosticSummaries(drifted), "main.lua:10") {
+		t.Fatalf("the arm that refuted its declaration contributed nothing to the join:\n%s", diagnosticSummaries(drifted))
+	}
+	if !strings.Contains(diagnosticSummaries(drifted), "it is number, not integer") {
+		t.Fatalf("the join reported a carrier neither arm produces:\n%s", diagnosticSummaries(drifted))
+	}
+	// An arm whose assignment satisfies its declaration keeps deciding the join
+	// exactly as before: nothing here depends on a claim having been refuted.
+	kept := checkSource(t, `local function kept(more: () -> boolean, twice: () -> boolean): integer
+    local i: integer = 7
+    while more() do
+        if twice() then
+            i = i + 2
+        else
+            i = i + 1
+        end
+    end
+    local j: integer = i
+    return j
+end
+return kept
+`)
+	if summaries := diagnosticSummaries(kept); summaries != "" {
+		t.Fatalf("a loop whose every arm keeps its declaration was refuted anyway:\n%s", summaries)
+	}
+}
+
+// TestUnprovenClaimStaysUnprovenWhereItIsRead is the trust guardrail for the
+// same publication. A cell whose current value is an unproven claim still reads
+// as one: only a join, which is no single edge's statement, consumes the value
+// the claim bound.
+func TestUnprovenClaimStaysUnprovenWhereItIsRead(t *testing.T) {
+	direct := checkSource(t, `local function direct(): string
+    local i: integer = "text"
+    local j: string = i
+    return j
+end
+return direct
+`)
+	if !strings.Contains(diagnosticSummaries(direct), "cannot assign i") {
+		t.Fatalf("a refuted declaration stopped reporting:\n%s", diagnosticSummaries(direct))
+	}
+	if strings.Contains(diagnosticSummaries(direct), "cannot assign j") {
+		t.Fatalf("a read took the value an unproven claim bound as a proof:\n%s", diagnosticSummaries(direct))
+	}
+}

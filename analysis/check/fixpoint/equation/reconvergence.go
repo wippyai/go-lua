@@ -29,6 +29,12 @@ type Reconvergence struct {
 	Current func(candidates []Fact) (Fact, bool)
 	// Join is the value lattice.  Reporting false withholds the whole join.
 	Join func(left, right []byte) ([]byte, bool)
+	// JoinCurrent selects the fact a cube contributes to a join, when that
+	// differs from the fact the cube publishes.  A joined value describes several
+	// edges at once and is therefore no edge's own publication, which lets a
+	// consumer contribute a witness it may not state on its own.  Leaving it nil
+	// makes every cube contribute exactly what Current selects.
+	JoinCurrent func(candidates []Fact) (Fact, bool)
 	// Support names further fact families whose rows Current needs in order to
 	// decide one cube's value.  They are collected and guard-filtered exactly
 	// like the primary family, so Current observes only the support rows the
@@ -192,7 +198,7 @@ func (p Partition) Reconverged(prefix string, lattice Reconvergence) (Fact, bool
 	budget := reconvergenceBudget
 	active := resolvedBranchGuards(p.closure.Values, p.guards)
 	active = activePastRecurrence(p.closure.Values, candidates, active, lattice)
-	return reconverge(candidates, active, lattice, &budget)
+	return reconverge(candidates, active, lattice, &budget, false)
 }
 
 // activePastRecurrence removes the arm through which this cube left a loop, when
@@ -382,7 +388,7 @@ func reconvergenceFamily(key, prefix string, support []string) bool {
 	return false
 }
 
-func reconverge(candidates []Fact, active []Guard, lattice Reconvergence, budget *int) (Fact, bool) {
+func reconverge(candidates []Fact, active []Guard, lattice Reconvergence, budget *int, joining bool) (Fact, bool) {
 	if *budget <= 0 {
 		return Fact{}, false
 	}
@@ -393,7 +399,11 @@ func reconverge(candidates []Fact, active []Guard, lattice Reconvergence, budget
 			compatible = append(compatible, fact)
 		}
 	}
-	chosen, found := lattice.Current(compatible)
+	current := lattice.Current
+	if joining && lattice.JoinCurrent != nil {
+		current = lattice.JoinCurrent
+	}
+	chosen, found := current(compatible)
 	if !found {
 		return Fact{}, false
 	}
@@ -412,7 +422,7 @@ func reconverge(candidates []Fact, active []Guard, lattice Reconvergence, budget
 	merged := false
 	for _, taken := range [2]bool{true, false} {
 		edge := canonicalGuards(append(cloneGuards(active), decision.edge(taken)))
-		side, ok := reconverge(candidates, edge, lattice, budget)
+		side, ok := reconverge(candidates, edge, lattice, budget, true)
 		if !ok || len(side.Value) == 0 {
 			return Fact{}, false
 		}
