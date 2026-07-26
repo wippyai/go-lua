@@ -6235,7 +6235,7 @@ func uncalledDeclaredLocalUnionReadBoundary(child front.Compilation) ([]entrySee
 		case "entry", "apply", "call-results", "environment-write", "claim", "expression", "publication":
 			continue
 		case "branch-relations":
-			if !uncalledDeclaredLocalUnionBranch(operation, paths, formals) && !uncalledDeclaredLocalUnionExpressionBranch(operation, formals, derived) {
+			if !uncalledDeclaredLocalUnionBranch(operation, paths, formals, derived) {
 				return nil, false
 			}
 			continue
@@ -6315,58 +6315,43 @@ func uncalledDeclaredLocalUnionExpressionTerms(child front.Compilation, formals 
 	return known
 }
 
-// uncalledDeclaredLocalUnionBranch accepts the branch relation that is
-// already justified by the child entry: one returned union member is compared
-// with one exact declared formal. It rejects negation, compound evidence, and
-// any relation not rooted in the admitted call result, so a declaration-only
-// entry cannot import arbitrary caller control flow.
-func uncalledDeclaredLocalUnionBranch(operation equation.Equation, results map[string]bool, formals map[string]entrySeed) bool {
-	if operation.Occurrence.Kind != "branch-relations" || len(operation.Guards) != 0 {
-		return false
-	}
-	predicate, found := artifactOperand(operation.Operands, "predicate")
-	if !found || !strings.HasPrefix(string(predicate), branchPredicatePrefix) {
-		return false
-	}
-	var relation branchPredicateWire
-	if json.Unmarshal(predicate[len(branchPredicatePrefix):], &relation) != nil || relation.Kind != "path-equal" || relation.Negated || relation.Path == "" || relation.OtherPath == "" {
-		return false
-	}
-	left, right := "path/"+relation.Path, "path/"+relation.OtherPath
-	rootedInResult := func(path string) bool {
-		for result := range results {
-			if strings.HasPrefix(path, result+".") || strings.HasPrefix(path, result+"[") {
-				return true
-			}
-		}
-		return false
-	}
-	_, leftFormal := formals[left]
-	_, rightFormal := formals[right]
-	return (rootedInResult(left) && rightFormal) || (rootedInResult(right) && leftFormal)
-}
-
-// uncalledDeclaredLocalUnionExpressionBranch accepts only the control edges
-// emitted for a finite expression temporary or a declared boolean formal. The
-// expression remains an unknown selector at the local call boundary; this
-// helper admits evaluation so its result union is retained for the later read.
-func uncalledDeclaredLocalUnionExpressionBranch(operation equation.Equation, formals map[string]entrySeed, derived map[string]bool) bool {
+// uncalledDeclaredLocalUnionBranch reports a branch this boundary's own entry
+// decides. That entry establishes two roots and no others: each declared formal,
+// seeded with the declared type that joins every argument the declaration
+// admits, and each local path bound to the admitted call's single result, whose
+// union the published call capability and declared return supply. A branch whose
+// evidence names only those roots therefore partitions exactly the space this
+// entry admits, so each arm it selects is reached by some admissible call and a
+// claim left unproven inside the arm is this declaration's own obligation,
+// whatever the predicate's family. A branch naming any other root imports caller
+// control flow this entry cannot justify. A branch that states a condition term
+// instead of path evidence is admitted only for the closed expression
+// temporaries, which remain unknown selectors here.
+func uncalledDeclaredLocalUnionBranch(operation equation.Equation, results map[string]bool, formals map[string]entrySeed, derived map[string]bool) bool {
 	if operation.Occurrence.Kind != "branch-relations" || len(operation.Guards) != 0 {
 		return false
 	}
 	if condition, found := artifactOperand(operation.Operands, "condition"); found {
 		return derived[string(condition)]
 	}
-	predicate, found := artifactOperand(operation.Operands, "predicate")
-	if !found || !strings.HasPrefix(string(predicate), branchPredicatePrefix) {
-		return false
+	return branchDecidedByRoots(operation, func(term string) bool {
+		return localUnionEntryRoot(term, results, formals)
+	})
+}
+
+// localUnionEntryRoot reports whether one branch path is rooted in something the
+// local union entry establishes: an exact declared formal, or a local path bound
+// to the admitted call result, alone or through a member suffix.
+func localUnionEntryRoot(term string, results map[string]bool, formals map[string]entrySeed) bool {
+	if _, formal := formals[term]; formal {
+		return true
 	}
-	var relation branchPredicateWire
-	if json.Unmarshal(predicate[len(branchPredicatePrefix):], &relation) != nil || relation.Kind != "truthy" || relation.Negated || relation.Path == "" {
-		return false
+	for result := range results {
+		if term == result || strings.HasPrefix(term, result+".") || strings.HasPrefix(term, result+"[") {
+			return true
+		}
 	}
-	_, formal := formals["path/"+relation.Path]
-	return formal
+	return false
 }
 
 // uncalledLocalUnionReadEntry carries the exact direct-call capability already
@@ -7319,12 +7304,15 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 			}
 			hasResultCall = true
 		case "branch-relations":
-			// A length floor on a declared formal is decided by nothing a caller
-			// supplies: the declaration seeds the formal, the guard stays
-			// undecided here exactly as it does at every call site, and both arms
-			// are evaluated under the same entry. Any other condition can be
-			// refined by a caller value and keeps this body demand-driven.
-			if !uncalledDeclaredFormalLengthBranch(child, operation) {
+			// A condition stated over this body's declared formals is decided by
+			// nothing a caller supplies: the declaration seeds each formal, the
+			// guard stays undecided here exactly as it does at every call site,
+			// and both arms are evaluated under the same entry. A condition
+			// naming any other root can be refined by a caller value and keeps
+			// this body demand-driven. A local is not such a root here: this
+			// boundary admits captured and standard-library calls, so a local can
+			// hold a call result whose value the entry does not determine.
+			if !uncalledDeclaredFormalBranch(child, operation) {
 				return nil, false
 			}
 		case "dynamic-index-read", "channel-select":
@@ -7337,31 +7325,49 @@ func uncalledStaticAssignmentBoundary(child front.Compilation) ([]entrySeed, boo
 	return declaredFormalSeeds(child)
 }
 
-// uncalledDeclaredFormalLengthBranch reports a branch whose entire condition is
-// a length floor on one of this body's declared formals. The branch's own
-// predicate must be that floor, and every further piece of evidence it carries
-// must state the same kind of floor on the same class of term, so no conjunct
-// the declaration does not close can reach the arms.
-func uncalledDeclaredFormalLengthBranch(child front.Compilation, operation equation.Equation) bool {
-	formals := make(map[string]bool, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
-		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type == 0 {
-			return false
-		}
-		formals[boundaryTerm(parameter.Symbol)] = true
+// uncalledDeclaredFormalBranch reports a branch whose entire condition is stated
+// over the seeds this boundary itself publishes. Those seeds are the declared
+// formals, whose declared types join every argument the declaration admits, so a
+// branch whose published evidence names only formal-rooted paths partitions
+// exactly that admitted space and each arm it selects is reached by some
+// admissible call, whatever the predicate's family. A branch naming any other
+// root, or carrying no path evidence at all, rests on an authority this entry
+// does not establish.
+func uncalledDeclaredFormalBranch(child front.Compilation, operation equation.Equation) bool {
+	seeds, declared := declaredFormalSeeds(child)
+	if !declared {
+		return false
 	}
-	stated := false
+	formals := make(map[string]bool, len(seeds))
+	for _, seed := range seeds {
+		formals[seed.Term] = true
+	}
+	return branchDecidedByRoots(operation, func(term string) bool { return formals[term] })
+}
+
+// branchDecidedByRoots reports whether one branch of an uncalled body is decided
+// by roots the admitting boundary establishes on its own. Every path the
+// branch's published evidence names must be one that boundary admits, and at
+// least one must be named: a branch stating no path at all, or naming a root the
+// entry never establishes, rests on an authority this evaluation does not have
+// and leaves the body dormant. Which roots a boundary establishes is that
+// boundary's own question — a lane that refuses every call closes its locals,
+// while a lane that admits one does not — so each passes its own test here.
+func branchDecidedByRoots(operation equation.Equation, admits func(term string) bool) bool {
+	rooted := false
 	for _, operand := range operation.Operands {
-		predicate, _, recognized := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
-		if !recognized {
+		paths, evidence := branchEvidencePaths(operand.Role, operand.Term.Encoding)
+		if !evidence {
 			continue
 		}
-		if predicate.Kind != "len-ge" || predicate.Path == "" || !formals["path/"+predicate.Path] {
-			return false
+		for _, item := range paths {
+			if !admits("path/" + item) {
+				return false
+			}
+			rooted = true
 		}
-		stated = stated || operand.Role == "predicate"
 	}
-	return stated
+	return rooted
 }
 
 // uncalledStaticCapturedReturnBoundary admits one parameter-free return

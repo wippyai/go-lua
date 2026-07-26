@@ -349,10 +349,21 @@ func nativeHasLengthRead(body *wir.Body, table path.Path, from int) bool {
 	return false
 }
 
+// nativeCallName names the base-library binding a call targets. A source
+// spelling does not name it on its own: a local of the same spelling renders
+// identically, so the callee's root must carry the global binding the front
+// recorded for that root's name. A call through any other binding names nothing
+// here, which leaves a shadowed helper outside every contract the base library's
+// own semantics license.
 func nativeCallName(body *wir.Body, instruction wir.Instruction) string {
 	if instruction.Call.Method != 0 || instruction.Call.Callee.Kind != wir.OperandPath {
 		return ""
 	}
-	name := body.Path(wir.PathRef(instruction.Call.Callee.Ref)).String()
-	return strings.TrimPrefix(name, "_G.")
+	callee := body.Path(wir.PathRef(instruction.Call.Callee.Ref))
+	spelling := callee.String()
+	root, _, _ := strings.Cut(spelling, ".")
+	if !body.SymbolResolvesToGlobal(callee.Symbol, root) {
+		return ""
+	}
+	return strings.TrimPrefix(spelling, "_G.")
 }
