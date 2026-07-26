@@ -424,3 +424,70 @@ local group: %s = groups["alpha"]
 		t.Fatal("a mismatched element claim was admitted against the write-back idiom")
 	}
 }
+
+// TestEnumerationBindsTheKeyedComponentItsStoresEstablished pins the authority
+// an enumeration reads. The container carries no declaration, so the component
+// its own unresolved-key stores establish is its key domain and element -- the
+// same answer an index read of it already consumes.
+func TestEnumerationBindsTheKeyedComponentItsStoresEstablished(t *testing.T) {
+	const source = `type Entry = {id: string}
+local entries: {Entry} = {}
+local suites = {}
+for _, entry in ipairs(entries) do
+    suites[entry.id] = suites[entry.id] or {}
+    table.insert(suites[entry.id], entry)
+end
+for key in pairs(suites) do
+    local bound: %s = %s
+end
+`
+	if diagnostics := checkSource(t, fmt.Sprintf(source, "{Entry}", "suites[key]")); len(diagnostics) != 0 {
+		t.Fatalf("a read inside the enumeration lost the component the same read outside it consumes:\n%s", diagnosticSummaries(diagnostics))
+	}
+	if diagnostics := checkSource(t, fmt.Sprintf(source, "string", "key")); len(diagnostics) != 0 {
+		t.Fatalf("the enumeration bound no key domain:\n%s", diagnosticSummaries(diagnostics))
+	}
+	// Both sides are the component's own, not permissive stand-ins.
+	for _, mismatch := range [][2]string{{"number", "key"}, {"{string}", "suites[key]"}} {
+		if len(checkSource(t, fmt.Sprintf(source, mismatch[0], mismatch[1]))) == 0 {
+			t.Fatalf("claim %q on %s was admitted against the component", mismatch[0], mismatch[1])
+		}
+	}
+}
+
+// TestEnumerationOfAComponentlessContainerBindsNothing pins the fail-closed
+// half: a container whose stores establish no component states nothing about
+// its slots, so its enumeration binds an unknown key.
+func TestEnumerationOfAComponentlessContainerBindsNothing(t *testing.T) {
+	summary := diagnosticSummaries(checkSource(t, `type Entry = {id: string}
+local entries: {Entry} = {}
+local untyped = {}
+for _, entry in ipairs(entries) do
+    untyped[entry.id] = unresolved_source()
+end
+for key in pairs(untyped) do
+    local spelled: string = key
+end
+`))
+	if !strings.Contains(summary, "is not proven") {
+		t.Fatalf("an enumeration bound a key domain no store established:\n%s", summary)
+	}
+}
+
+// TestEnumeratedKeyOfAnInferredComponentProvesItsRead pins that the presence
+// the enumeration establishes and the element the component states reach the
+// same read: the slot the loop visits is occupied.
+func TestEnumeratedKeyOfAnInferredComponentProvesItsRead(t *testing.T) {
+	diagnostics := checkSource(t, `local keys: {string} = {}
+local counts = {}
+for _, key in ipairs(keys) do
+    counts[key] = 1
+end
+for key in pairs(counts) do
+    local hit: integer = counts[key]
+end
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("the enumerated slot of an inferred component was not proven occupied:\n%s", diagnosticSummaries(diagnostics))
+	}
+}

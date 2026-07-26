@@ -1,0 +1,5 @@
+{
+  "description": "An enumeration of a container whose slots were only ever addressed at unresolved keys binds the key domain and element of the keyed component those stores established, so the read at the bound key answers exactly as a read outside the loop does. A container whose stores establish no component binds an unknown key, and a declared container keeps its declaration.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

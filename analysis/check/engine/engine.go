@@ -17357,6 +17357,15 @@ func iteratorElementWitness(provider []byte, arguments map[int][]byte, partition
 	if !decoded {
 		source, decoded = declaredTypeForTerm(argument, partition)
 	}
+	// A container whose slots were only ever addressed at keys this analysis
+	// never resolved carries no declaration and no type witness, and its
+	// allocation value states nothing about those slots. The keyed component
+	// its own stores established is that container's key domain and element,
+	// which is the same authority an index read of it already consumes; an
+	// enumeration of it binds exactly what that component describes.
+	if !decoded {
+		source, decoded = keyedComponentContainerType(argument, partition)
+	}
 	if !decoded || source == nil {
 		return nil, nil, false
 	}
