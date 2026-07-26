@@ -111,3 +111,42 @@ func TestDiagnosticFamilyPrefixesAreRegistryOwned(t *testing.T) {
 		}
 	}
 }
+
+// TestDiagnosticNarrationHasNoFreestandingEnrichDispatch is the narration
+// displacement guard. A registered family has exactly one narration authority:
+// its Narrate entry. A freestanding enrich function or call would recreate the
+// second dispatch surface this registry displaced.
+func TestDiagnosticNarrationHasNoFreestandingEnrichDispatch(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate engine source")
+	}
+	files, err := filepath.Glob(filepath.Join(filepath.Dir(filename), "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			t.Errorf("parse %s: %v", path, err)
+			continue
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch typed := node.(type) {
+			case *ast.FuncDecl:
+				if strings.HasPrefix(typed.Name.Name, "enrich") {
+					t.Errorf("%s declares freestanding narration %s; use the diagnostic family's Narrate entry", path, typed.Name.Name)
+				}
+			case *ast.CallExpr:
+				identifier, calledDirectly := typed.Fun.(*ast.Ident)
+				if calledDirectly && strings.HasPrefix(identifier.Name, "enrich") {
+					t.Errorf("%s dispatches through %s; use the diagnostic family's Narrate entry", path, identifier.Name)
+				}
+			}
+			return true
+		})
+	}
+}
