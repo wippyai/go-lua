@@ -9,6 +9,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/check/lint"
 	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
@@ -87,6 +88,128 @@ local kept: %s = got
 	}
 	if !mismatch {
 		t.Fatalf("mismatched element claim was admitted: %#v", refuted.PublishedDiagnostics)
+	}
+}
+
+// callResultTableElements collects the member values of every exported call
+// result that is a table. It reads the same published facts a module exporter
+// reads, so it discriminates the transported element from Top without
+// re-analysing anything.
+func callResultTableElements(facts []equation.Fact) [][]byte {
+	var elements [][]byte
+	for _, fact := range facts {
+		if !strings.HasPrefix(fact.Key, "call-result/") {
+			continue
+		}
+		table, decoded := shapefact.DecodeTable(fact.Value)
+		if !decoded {
+			continue
+		}
+		for _, member := range table.Members {
+			elements = append(elements, []byte(member.Value))
+		}
+	}
+	return elements
+}
+
+// TestCheckUntypedFormalResultExportsInstantiatedElement pins the exported call
+// result of a callee whose formal carries no declaration of its own. The call
+// site instantiates that formal with the caller's published argument type, so
+// the array the body accumulates the argument's keys into exports the element
+// the body derived rather than Top.
+func TestCheckUntypedFormalResultExportsInstantiatedElement(t *testing.T) {
+	const source = `
+local function sorted_keys(t)
+    local out = {}
+    for k in pairs(t) do
+        table.insert(out, k)
+    end
+    return out
+end
+local by_name: %s = {}
+local names = sorted_keys(by_name)
+`
+	stringTarget, ok := shapefact.EncodeTarget(typ.String)
+	if !ok {
+		t.Fatal("encode string target")
+	}
+	result, err := engine.Check(fmt.Sprintf(source, "{[string]: number}"))
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	elements := callResultTableElements(result.ValueFacts)
+	if len(elements) == 0 {
+		t.Fatalf("no exported table call result: %#v", result.ValueFacts)
+	}
+	for _, element := range elements {
+		if string(element) != string(stringTarget) {
+			t.Fatalf("exported element = %q, want the argument key type %q", element, stringTarget)
+		}
+	}
+	// The instantiation follows the argument this application binds: the same
+	// body answers a differently typed argument with that argument's key type.
+	numberTarget, ok := shapefact.EncodeTarget(typ.Number)
+	if !ok {
+		t.Fatal("encode number target")
+	}
+	numeric, err := engine.Check(fmt.Sprintf(source, "{[number]: string}"))
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	elements = callResultTableElements(numeric.ValueFacts)
+	if len(elements) == 0 {
+		t.Fatalf("no exported table call result: %#v", numeric.ValueFacts)
+	}
+	for _, element := range elements {
+		if string(element) != string(numberTarget) {
+			t.Fatalf("exported element = %q, want the argument key type %q", element, numberTarget)
+		}
+	}
+}
+
+// TestCheckUntypedFormalResultWithholdsElementWithoutArgumentType pins the
+// fail-closed half of the same boundary. An argument whose type the caller
+// never published instantiates nothing, and a formal the body assigns is no
+// longer the argument past that assignment; both export Top.
+func TestCheckUntypedFormalResultWithholdsElementWithoutArgumentType(t *testing.T) {
+	for name, source := range map[string]string{
+		"unpublished-argument-type": `
+local function sorted_keys(t)
+    local out = {}
+    for k in pairs(t) do
+        table.insert(out, k)
+    end
+    return out
+end
+local function opaque() end
+local names = sorted_keys(opaque())
+`,
+		"reassigned-formal": `
+local function sorted_keys(t, replace)
+    if replace then
+        t = {}
+    end
+    local out = {}
+    for k in pairs(t) do
+        table.insert(out, k)
+    end
+    return out
+end
+local by_name: {[string]: number} = {}
+local names = sorted_keys(by_name, false)
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := engine.Check(source)
+			if err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			for _, element := range callResultTableElements(result.ValueFacts) {
+				if string(element) != "scalar/top" {
+					t.Fatalf("exported element = %q, want Top without an instantiating argument type", element)
+				}
+			}
+		})
 	}
 }
 

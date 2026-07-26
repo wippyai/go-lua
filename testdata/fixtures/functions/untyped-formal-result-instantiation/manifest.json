@@ -1,0 +1,5 @@
+{
+  "description": "A call instantiates an undeclared formal with the caller's published argument type, so the array a body accumulates from that argument exports the element the body derived. An unpublished argument type and a reassigned formal both leave the result unconstrained.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

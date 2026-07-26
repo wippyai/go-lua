@@ -3208,6 +3208,11 @@ type childEntryWire struct {
 type entrySeed struct {
 	Term  string `json:"term"`
 	Value []byte `json:"value"`
+	// Type is the caller-side static type of the argument this seed binds. It
+	// exists only for a formal the callee itself leaves undeclared: the entry
+	// then owns the instance description that formal has at this call, and the
+	// same seed value stays the value authority.
+	Type []byte `json:"type,omitempty"`
 }
 
 // entryClosureSeed carries an already-published lexical capability across a
@@ -3999,7 +4004,7 @@ func encodeChildEntryWithPlacementCapabilities(seeds []entrySeed, closureSeeds [
 	for _, supplied := range gradualAnyTerms {
 		terms = append(terms, supplied...)
 	}
-	return encodeChildEntryWire(childEntryWire{Version: 6, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), TableIdentitySeeds: append([]entryTableIdentitySeed(nil), tableIdentitySeeds...), MemberCellSeeds: append([]entryMemberCellSeed(nil), memberCellSeeds...), PlacementSeeds: append([]entryPlacementSeed(nil), placementSeeds...), GradualAnyTerms: terms})
+	return encodeChildEntryWire(childEntryWire{Version: 7, Seeds: append([]entrySeed(nil), seeds...), ClosureSeeds: append([]entryClosureSeed(nil), closureSeeds...), MemberClosureSeeds: append([]entryMemberClosureSeed(nil), memberClosureSeeds...), TableIdentitySeeds: append([]entryTableIdentitySeed(nil), tableIdentitySeeds...), MemberCellSeeds: append([]entryMemberCellSeed(nil), memberCellSeeds...), PlacementSeeds: append([]entryPlacementSeed(nil), placementSeeds...), GradualAnyTerms: terms})
 }
 
 func encodeChildEntryWire(wire childEntryWire) ([]byte, error) {
@@ -4017,15 +4022,24 @@ func validateChildEntryWire(wire *childEntryWire) error {
 	if wire == nil {
 		return fmt.Errorf("engine: malformed child entry wire")
 	}
-	if wire.Version < 1 || wire.Version > 6 || (wire.DeclaredBoundary && wire.Version != 5) {
+	if wire.Version < 1 || wire.Version > 7 || (wire.DeclaredBoundary && wire.Version != 5) {
 		return fmt.Errorf("engine: malformed child entry version")
 	}
 	// Capability fields were introduced as one closed packet in v4; placement
-	// is v6-only.  Rejecting fields from another schema is essential: accepting
-	// a future lane under an older prefix would let a decoder reinterpret it.
+	// enters at v6 and the per-seed instance type at v7.  Rejecting fields from
+	// another schema is essential: accepting a future lane under an older
+	// prefix would let a decoder reinterpret it.
+	instanceTypes := false
+	for _, seed := range wire.Seeds {
+		if len(seed.Type) != 0 {
+			instanceTypes = true
+			break
+		}
+	}
 	if wire.Version < 4 && (len(wire.ClosureSeeds) != 0 || len(wire.MemberClosureSeeds) != 0 || len(wire.TableIdentitySeeds) != 0 || len(wire.MemberCellSeeds) != 0 || len(wire.GradualAnyTerms) != 0) ||
-		wire.Version != 6 && len(wire.PlacementSeeds) != 0 ||
-		wire.Version == 5 && len(wire.GradualAnyTerms) != 0 {
+		wire.Version < 6 && len(wire.PlacementSeeds) != 0 ||
+		wire.Version == 5 && len(wire.GradualAnyTerms) != 0 ||
+		wire.Version < 7 && instanceTypes {
 		return fmt.Errorf("engine: malformed child entry version schema")
 	}
 	sort.Slice(wire.Seeds, func(i, j int) bool { return wire.Seeds[i].Term < wire.Seeds[j].Term })
@@ -4115,7 +4129,7 @@ func validateChildEntryWire(wire *childEntryWire) error {
 }
 
 func decodeChildEntryWire(value []byte) (childEntryWire, error) {
-	for version := uint8(1); version <= 6; version++ {
+	for version := uint8(1); version <= 7; version++ {
 		prefix := fmt.Sprintf("front/child-entry/v%d/", version)
 		if !strings.HasPrefix(string(value), prefix) {
 			continue
@@ -4209,6 +4223,10 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 	if wire.DeclaredBoundary {
 		values = append(values, equation.Fact{Key: declaredEntryBoundaryKey(operation.Target.Body), Value: []byte("declared")})
 	}
+	declaredRootTerms := make(map[string]bool, len(declaredRoots))
+	for _, root := range declaredRoots {
+		declaredRootTerms[string(root)] = true
+	}
 	seen := make(map[string]bool, len(wire.Seeds))
 	seedValues := make(map[string][]byte, len(wire.Seeds))
 	for _, seed := range wire.Seeds {
@@ -4221,6 +4239,19 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 			equation.Fact{Key: "value/" + seed.Term + "/entry", Value: append([]byte(nil), seed.Value...)},
 			equation.Fact{Key: epochFactPrefix + seed.Term + "/entry", Value: []byte("entry")},
 		)
+		if len(seed.Type) == 0 {
+			continue
+		}
+		if _, decodable := shapefact.DecodeTarget(seed.Type); !decodable {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry seed type")
+		}
+		// A root the boundary itself declares owns its type; the entry states
+		// that declaration below and nothing here competes with it. A root the
+		// boundary leaves undeclared holds, at this entry, exactly the type the
+		// caller published for the argument bound to it.
+		if !declaredRootTerms[seed.Term] {
+			values = append(values, equation.Fact{Key: "type/" + seed.Term + "/entry", Value: append([]byte(nil), seed.Type...)})
+		}
 	}
 	for _, term := range wire.GradualAnyTerms {
 		if !seen[term] {
@@ -8759,7 +8790,17 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		}
 		value = validatedBoundaryValue(arguments[index], value, partition)
 		term := boundaryTerm(parameter.Symbol)
-		seeds = append(seeds, entrySeed{Term: term, Value: value})
+		seed := entrySeed{Term: term, Value: value}
+		// An undeclared formal has no contract of its own to defend, so the
+		// caller's published argument type is the description it holds for this
+		// instance. A declared formal keeps its declaration as the sole boundary
+		// authority.
+		if declared == nil && !boundaryFormalRebound(child, parameter.Symbol) {
+			if instance, instantiated := instantiatedFormalType(arguments[index], value, partition); instantiated {
+				seed.Type = instance
+			}
+		}
+		seeds = append(seeds, seed)
 		if (declared != nil && declared.Kind() == kind.Any) || sourceHasAnyBoundary(arguments[index], partition.Values()) {
 			gradualAnyTerms = append(gradualAnyTerms, term)
 		}
@@ -20098,6 +20139,44 @@ func declaredTypeForTerm(term []byte, partition equation.Partition) (typ.Type, b
 		return nil, false
 	}
 	return shapefact.DecodeTarget(encoded)
+}
+
+// boundaryFormalRebound reports whether the callee, or a body nested inside it
+// that names the same symbol, assigns the formal. The entry states one type for
+// the whole body, while an assignment to an undeclared formal may leave it
+// holding an unrelated type, so a rebound formal takes no instantiation.
+func boundaryFormalRebound(child front.Compilation, symbol wir.SymbolID) bool {
+	if child.WIR != nil && child.WIR.SymbolHasWrite(symbol) {
+		return true
+	}
+	for _, nested := range child.Nested {
+		if boundaryFormalRebound(nested, symbol) {
+			return true
+		}
+	}
+	return false
+}
+
+// instantiatedFormalType is the caller-side type of an argument term, encoded
+// for transport into a child entry that binds it to an undeclared formal. A
+// gradual boundary publishes no closed description, and neither does a
+// top-like one, so both withhold the instantiation and leave the formal
+// unconstrained.
+func instantiatedFormalType(term []byte, value []byte, partition equation.Partition) ([]byte, bool) {
+	if isExplicitAnyValue(value) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition) {
+		return nil, false
+	}
+	resolved, found := typedPathType(term, partition)
+	if !found || resolved == nil {
+		resolved, found = declaredTypeForTerm(term, partition)
+	}
+	if !found || resolved == nil {
+		return nil, false
+	}
+	if typ.AbsentOrTopLike(unwrap.Alias(subst.ExpandInstantiated(resolved))) {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(resolved)
 }
 
 func channelPayloadSummaryFacts(root, operation string, value typ.Type) []equation.Fact {
