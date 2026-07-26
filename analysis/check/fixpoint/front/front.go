@@ -1362,6 +1362,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 	for point := range numericForBindingPoints(body) {
 		loopBindingPoints[point] = true
 	}
+	shortCircuitBypasses := shortCircuitBypassGuards(body)
 	operations := make([]operation, 0, body.Len())
 	entries := 0
 	for index := 0; index < body.Len(); index++ {
@@ -1731,7 +1732,8 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 		case instruction.Op == wir.OpBranch:
 			draft.Occurrence = occurrence("branch-relations")
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
-			operands, err := branchOperands(body, instruction)
+			bypass, isShortCircuit := shortCircuitBypasses[instruction.Point]
+			operands, err := branchOperands(body, instruction, bypass, isShortCircuit)
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: branch %s: %w", operation.target.Name, err)
 			}

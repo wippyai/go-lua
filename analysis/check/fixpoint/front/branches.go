@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -53,10 +54,51 @@ type branchDiffWire struct {
 	Edge     bool   `json:"edge,omitempty"`
 }
 
+// shortCircuitBypass names the value-position short-circuit whose guard a
+// branch is. result carries value on the bypass edge, which is the edge that
+// does not evaluate the right operand: false for and, true for or. On that edge
+// Lua yields the left operand, so result holds exactly the projection of value
+// which the edge admits.
+type shortCircuitBypass struct {
+	result wir.Operand
+	value  wir.Operand
+	edge   bool
+}
+
+// shortCircuitBypassGuards indexes the value-position short-circuit regions by
+// the guard point that decides them. A point owning two regions names no single
+// result, so it is withheld rather than resolved by insertion order.
+func shortCircuitBypassGuards(body *wir.Body) map[cfg.Point]shortCircuitBypass {
+	guards := make(map[cfg.Point]shortCircuitBypass)
+	ambiguous := make(map[cfg.Point]bool)
+	body.ForEachStructuralExpressionRegion(func(owner wir.StructuralExpressionOwner, region wir.StructuralExpressionRegion) bool {
+		if !owner.HasTemp || region.BypassValue.Kind == wir.OperandNone {
+			return true
+		}
+		if _, seen := guards[region.Guard]; seen {
+			ambiguous[region.Guard] = true
+			return true
+		}
+		guards[region.Guard] = shortCircuitBypass{
+			result: wir.Operand{Kind: wir.OperandTemp, Ref: owner.Temp},
+			value:  region.BypassValue,
+			edge:   !region.RHSOnTrue,
+		}
+		return true
+	})
+	for point := range ambiguous {
+		delete(guards, point)
+	}
+	if len(guards) == 0 {
+		return nil
+	}
+	return guards
+}
+
 // branchOperands lowers every branch-owned WIR descriptor.  In particular,
 // compound-condition evidence and difference constraints are retained instead
 // of being silently dropped when this front has no consumer for them yet.
-func branchOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Operand, error) {
+func branchOperands(body *wir.Body, instruction wir.Instruction, bypass shortCircuitBypass, isShortCircuit bool) ([]equation.Operand, error) {
 	check := body.Check(instruction.Check)
 	operands := make([]equation.Operand, 0, 1+int(instruction.ImpliedChecks.Len)+int(instruction.SufficientChecks.Len)+int(instruction.DiffConstraints.Len))
 	if instruction.A.Kind != wir.OperandNone {
@@ -115,6 +157,21 @@ func branchOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Ope
 			return nil, fmt.Errorf("difference constraint %d: %w", index, err)
 		}
 		operands = append(operands, equation.Operand{Role: fmt.Sprintf("difference-%08d", index), Term: term})
+	}
+	if isShortCircuit {
+		result, err := scalarTerm(body, bypass.result)
+		if err != nil {
+			return nil, fmt.Errorf("short-circuit result: %w", err)
+		}
+		value, err := scalarTerm(body, bypass.value)
+		if err != nil {
+			return nil, fmt.Errorf("short-circuit operand: %w", err)
+		}
+		operands = append(operands,
+			equation.Operand{Role: "short-circuit-result", Term: result},
+			equation.Operand{Role: "short-circuit-operand", Term: value},
+			equation.Operand{Role: "short-circuit-bypass", Term: equation.ClosedTerm([]byte("scalar/bool/" + strconv.FormatBool(bypass.edge)))},
+		)
 	}
 	return operands, nil
 }

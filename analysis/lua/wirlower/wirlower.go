@@ -2093,7 +2093,7 @@ func (b *builder) lowerExpr(e ast.Expr) wir.Operand {
 			t := b.newTemp()
 			b.emitLogicalGuard(e)
 			b.emit(wir.Instruction{Op: wir.OpLogical, Dst: t, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
-			b.recordStructuralExpressionRegion(e, t, b.curPoint)
+			b.recordStructuralExpressionRegion(e, t, b.curPoint, wir.Operand{})
 			b.logicalValues[e] = t
 			return t
 		}
@@ -2184,7 +2184,7 @@ func (b *builder) lowerLogicalInto(dst wir.Operand, e *ast.LogicalOpExpr) {
 			return
 		}
 		b.emit(wir.Instruction{Op: wir.OpLogical, Dst: dst, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
-		b.recordStructuralExpressionRegion(e, dst, b.curPoint)
+		b.recordStructuralExpressionRegion(e, dst, b.curPoint, wir.Operand{})
 		b.logicalValues[e] = dst
 		return
 	}
@@ -2196,7 +2196,8 @@ func (b *builder) lowerLogicalInto(dst wir.Operand, e *ast.LogicalOpExpr) {
 // left operand and branches on it; the taken edge (the RHS-eval or last RHS call
 // point) overwrites the temp with the right operand; the CFG join merges. The
 // bypass edge carries no point, so retaining the left operand's assignment before
-// the branch models effect gating without a phi.
+// the branch models effect gating without a phi; the region records that operand
+// so a consumer can attribute the pre-branch row to the one edge that carries it.
 func (b *builder) lowerLogicalValue(e *ast.LogicalOpExpr) wir.Operand {
 	guard, hasGuard := b.guardByCond[e.Lhs]
 	anchor, hasAnchor := b.rhsAnchorPoint(e.Rhs)
@@ -2205,7 +2206,7 @@ func (b *builder) lowerLogicalValue(e *ast.LogicalOpExpr) wir.Operand {
 		// rejected): fall back to the value form so the result is still bound.
 		t := b.newTemp()
 		b.emit(wir.Instruction{Op: wir.OpLogical, Dst: t, A: b.lowerExpr(e.Lhs), B: b.lowerExpr(e.Rhs), Operator: logicalOperator(e)})
-		b.recordStructuralExpressionRegion(e, t, b.curPoint)
+		b.recordStructuralExpressionRegion(e, t, b.curPoint, wir.Operand{})
 		return t
 	}
 	result := b.newTemp()
@@ -2221,11 +2222,15 @@ func (b *builder) lowerLogicalValue(e *ast.LogicalOpExpr) wir.Operand {
 
 	b.curPoint = prev
 	b.logicalValues[e] = result
-	b.recordStructuralExpressionRegion(e, result, prev)
+	b.recordStructuralExpressionRegion(e, result, prev, left)
 	return result
 }
 
-func (b *builder) recordStructuralExpressionRegion(e *ast.LogicalOpExpr, result wir.Operand, point cfg.Point) {
+// recordStructuralExpressionRegion records the region owning e under its result
+// producer. bypass names the left operand the result carries on the bypass edge;
+// the point-local value form keeps both operands in one instruction and passes
+// none.
+func (b *builder) recordStructuralExpressionRegion(e *ast.LogicalOpExpr, result wir.Operand, point cfg.Point, bypass wir.Operand) {
 	if e == nil {
 		return
 	}
@@ -2239,6 +2244,7 @@ func (b *builder) recordStructuralExpressionRegion(e *ast.LogicalOpExpr, result 
 			TrueTarget: region.TrueTarget, FalseTarget: region.FalseTarget,
 			Join: region.Join, RHSOnTrue: region.RHSOnTrue,
 			OwnedRHSPoints: region.OwnedRHSPoints,
+			BypassValue:    bypass,
 		})
 	}
 }

@@ -213,6 +213,13 @@ type IfChainBranch struct {
 // under the result temporary which transfer lowering turns into an ExprRef.
 // OwnedRHSPoints is complete effect ownership: every point conditionally
 // executed as part of the RHS is included, regardless of its current opcode.
+//
+// BypassValue is the left operand the result temporary carries on the bypass
+// edge, where Lua's short-circuit yields the left operand itself. The bypass
+// edge is the join, so that edge owns no point of its own and the assignment
+// stands before the guard; naming the operand here is what lets a consumer
+// attribute the pre-guard row to the one edge it describes. It is set only by
+// the branch-topology lowering; the point-local value form carries none.
 type StructuralExpressionRegion struct {
 	Guard          cfg.Point
 	TrueTarget     cfg.Point
@@ -220,6 +227,7 @@ type StructuralExpressionRegion struct {
 	Join           cfg.Point
 	RHSOnTrue      bool
 	OwnedRHSPoints []cfg.Point
+	BypassValue    Operand
 }
 
 // StructuralExpressionOwner identifies the exact WIR producer whose ExprRef

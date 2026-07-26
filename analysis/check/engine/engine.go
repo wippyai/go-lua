@@ -13852,8 +13852,20 @@ func basicBinary(op wir.Operator, a, b []byte) ([]byte, error) {
 		if (optionalConcreteWitness(a) && string(b) == "scalar/nil") || (optionalConcreteWitness(b) && string(a) == "scalar/nil") {
 			return []byte(optionalNilComparison), nil
 		}
+		if abstractEqualityOperand(a) || abstractEqualityOperand(b) {
+			if disjointPublishedValues(a, b) {
+				return []byte("scalar/bool/false"), nil
+			}
+			return []byte("scalar/top"), nil
+		}
 		return []byte("scalar/bool/" + strconv.FormatBool(bytes.Equal(a, b))), nil
 	case wir.BinNe:
+		if abstractEqualityOperand(a) || abstractEqualityOperand(b) {
+			if disjointPublishedValues(a, b) {
+				return []byte("scalar/bool/true"), nil
+			}
+			return []byte("scalar/top"), nil
+		}
 		return []byte("scalar/bool/" + strconv.FormatBool(!bytes.Equal(a, b))), nil
 	}
 	x, e := scalarNumber(a)
@@ -13890,6 +13902,46 @@ func basicBinary(op wir.Operator, a, b []byte) ([]byte, error) {
 	default:
 		return []byte("scalar/top"), nil
 	}
+}
+
+// abstractEqualityOperand reports whether a published operand is a type witness
+// that admits more than one Lua value. Such a witness is not a value: two runs
+// reaching it can carry different values, so the encoding it was published under
+// decides no equality by itself.
+func abstractEqualityOperand(value []byte) bool {
+	witness, ok := shapefact.DecodeTarget(value)
+	if !ok || witness == nil {
+		return false
+	}
+	return !singletonValueType(witness)
+}
+
+// singletonValueType reports whether t admits exactly one Lua value. Only such a
+// type stands for the value it describes; every wider type keeps at least two
+// runs apart.
+func singletonValueType(t typ.Type) bool {
+	unwrapped := unwrap.Alias(unwrap.Annotated(t))
+	if unwrapped == nil {
+		return false
+	}
+	switch unwrapped.Kind() {
+	case kind.Nil, kind.Literal:
+		return true
+	default:
+		return false
+	}
+}
+
+// disjointPublishedValues reports whether two published operands describe value
+// sets with no common inhabitant. Equality between them is refuted; anything
+// else leaves both outcomes reachable, so only the refutation is stated here.
+func disjointPublishedValues(a, b []byte) bool {
+	left, leftKnown := scalarWitnessType(a)
+	right, rightKnown := scalarWitnessType(b)
+	if !leftKnown || !rightKnown || left == nil || right == nil {
+		return false
+	}
+	return typ.IsNever(normalize.IntersectionForMeet(left, right))
 }
 
 func optionalConcreteWitness(value []byte) bool {
@@ -17600,7 +17652,71 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 	result.Closure.Values = append(result.Closure.Values, cone...)
 	result.Closure.Values = append(result.Closure.Values, pathEqualityFacts(operation, partition)...)
 	result.Closure.Values = append(result.Closure.Values, recurrenceExitFacts(operation)...)
+	bypass, err := shortCircuitBypassFacts(operation, partition)
+	if err != nil {
+		return equation.TransactionResult{}, err
+	}
+	result.Closure.Values = append(result.Closure.Values, bypass...)
 	return result, nil
+}
+
+// shortCircuitBypassFacts states what a value-position short-circuit yields on
+// the edge that does not evaluate the right operand. Lua yields the left operand
+// there, and that edge is exactly the one which admits one side of the operand's
+// truthiness partition: `a and b` bypasses when a is falsy, `a or b` when a is
+// truthy. The result cell is assigned before the guard because the bypass edge is
+// the join and owns no point, so this decision is where the arm which the row
+// describes becomes stateable; the projection under that arm's guard supersedes
+// the whole operand the pre-guard row carried.
+//
+// A left operand with no type witness leaves the pre-guard row standing: the
+// whole operand is the widest answer, never a wrong one. An empty projection
+// means this decision selects the other edge, and the arm rule owns that.
+func shortCircuitBypassFacts(operation equation.BoundEquation, partition equation.Partition) ([]equation.Fact, error) {
+	var result, operand []byte
+	edge, edgeKnown := false, false
+	for _, item := range operation.Operands {
+		switch item.Role {
+		case "short-circuit-result":
+			result = item.Value
+		case "short-circuit-operand":
+			operand = item.Value
+		case "short-circuit-bypass":
+			edge, edgeKnown = string(item.Value) == "scalar/bool/true", true
+		}
+	}
+	if len(result) == 0 || len(operand) == 0 || !edgeKnown {
+		return nil, nil
+	}
+	value, err := resolveCurrentValue(operand, partition)
+	if err != nil {
+		return nil, err
+	}
+	witness, decoded := scalarWitnessType(value)
+	if !decoded {
+		return nil, nil
+	}
+	truthy, falsy, split := proof.TruthinessSplit(witness)
+	if !split {
+		return nil, nil
+	}
+	projection := falsy
+	if edge {
+		projection = truthy
+	}
+	if projection == nil || typ.IsNever(projection) {
+		return nil, nil
+	}
+	encoded, ok := shapefact.EncodeTarget(projection)
+	if !ok {
+		return nil, nil
+	}
+	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/" + strconv.FormatBool(edge))}
+	return []equation.Fact{{
+		Key:    "value/" + string(result) + "/" + operation.Target.Name,
+		Value:  encoded,
+		Guards: []equation.Guard{guard},
+	}}, nil
 }
 
 // recurrenceExitFacts restates the front's loop-exit relation for this decision
@@ -27507,9 +27623,10 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 			predicate = operand.Value
 		default:
 			// Evidence, arm boundaries, difference constraints, the carriers a
-			// cycle proved monotone, and the arm that leaves one are closed
-			// branch metadata. They are intentionally not alternate selectors.
-			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") && !strings.HasPrefix(operand.Role, "monotone-floor-") {
+			// cycle proved monotone, the arm that leaves one, and the cell a
+			// short-circuit result occupies are closed branch metadata. They are
+			// intentionally not alternate selectors.
+			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") && !strings.HasPrefix(operand.Role, "monotone-floor-") && !strings.HasPrefix(operand.Role, "short-circuit-") {
 				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}

@@ -1,0 +1,5 @@
+{
+  "description": "A short-circuit result is the projection of its left operand which the bypass edge admits, joined with the right operand: falsy(a) | b for and, truthy(a) | b for or. The operand's other side is refuted by the edge that carries it, so it never enters the result. false stays in the falsy projection of a boolean, the record side of an optional record never reaches an and-chain's result, and the nil side of an optional never reaches an or-chain's. The acyclic and the recurrent form state the same type.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}
