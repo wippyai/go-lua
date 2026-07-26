@@ -159,22 +159,13 @@ func scalarIntegerConstant(term []byte) (int64, bool) {
 // Only an integer dividend has an integer residue, and only an integer index
 // addresses an array slot.
 func integerTypedTerm(term []byte, partition equation.Partition) bool {
-	for _, candidate := range []func() (typ.Type, bool){
-		func() (typ.Type, bool) {
-			value, err := resolveCurrentValue(term, partition)
-			if err != nil {
-				return nil, false
-			}
-			return shapefact.DecodeExactWitnessType(value)
-		},
-		func() (typ.Type, bool) { return typedPathType(term, partition) },
-		func() (typ.Type, bool) { return declaredTypeForTerm(term, partition) },
-	} {
-		if value, known := candidate(); known && value != nil {
-			return typ.TypeEquals(unwrap.Alias(value), typ.Integer)
-		}
+	value, known, err := resolveAuthorityType(integerTermTypeAuthorities, typeAuthorityContext{
+		Term: term, Partition: partition,
+	})
+	if err != nil || !known || value == nil {
+		return false
 	}
-	return false
+	return typ.TypeEquals(unwrap.Alias(value), typ.Integer)
 }
 
 // luaFloorModulo is Lua's `%` operator: a - floor(a/b)*b. For a positive

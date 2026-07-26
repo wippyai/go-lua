@@ -12999,7 +12999,7 @@ func keyedContainerSurface(term, value []byte, partition equation.Partition) []b
 // derived from those stores would replace an exact contract by the weaker
 // uniform one they happen to witness. A record is excluded: it names its slots,
 // so an unresolved key is not decided by it. This is the precedence the read
-// lane already applies through declaredMapContainerType, stated for the value a
+// lane already applies through the declared-map authority, stated for the value a
 // container transports.
 func uniformSlotDeclaredContainer(term []byte, partition equation.Partition) (typ.Type, bool) {
 	declared, found := declaredTypeForTerm(term, partition)
@@ -13937,56 +13937,13 @@ func typedRuntimeIndexResult(container, key []byte, consumer string, partition e
 	if err != nil {
 		return nil, "", false, false, false
 	}
-	containerType, ok := shapefact.DecodeTarget(containerValue)
-	if !ok && isUnknownScalar(containerValue) {
-		// A local declared union return remains Top as a runtime value until a
-		// guard selects an arm. Its guarded, epoch-current summary is still an
-		// existing type publication: RuntimeIndex can use it to retain Lua's
-		// nilability for an unguarded member read, without fabricating a table
-		// shape or granting either union arm as a value proof.
-		if encoded, found := currentFamilyEpochFact(factkey.SummaryType, container, partition); found {
-			containerType, err = typ.DecodeCanonical(context.Background(), encoded)
-			ok = err == nil && containerType != nil
-		}
-	}
-	if !ok {
-		if claim, claimed := shapefact.DecodeClaim(containerValue); claimed && claim.Kind == wir.ClaimCast {
-			containerType, ok = castTargetWitness(container, partition)
-		}
-	}
-	// A conservative current scalar is not a structural refutation. When the
-	// exact path already has a published type summary, retain that independent
-	// authority for this one RuntimeIndex projection. The summary is produced
-	// by the normal import/call transport; absent such a publication, the read
-	// remains Top.
-	if !ok {
-		containerType, ok = typedPathType(container, partition)
-	}
-	// A declared map is the one container whose element the key domain decides
-	// for every key alike, so a computed key reads the same declared element a
-	// spelled one does. Other declared shapes select their members by name and
-	// keep no such answer for a key this read cannot resolve.
-	if !ok {
-		containerType, ok = declaredMapContainerType(container, partition)
-	}
-	// A declared array types every slot of its sequence alike, so a computed
-	// index reads that same element. It states no slot occupied, which is what
-	// leaves Lua's missing-slot nil on the result until a presence proof below
-	// removes it.
-	if !ok {
-		containerType, ok = declaredArrayContainerType(container, partition)
-	}
-	// A container the body only ever stored through at unresolved keys has the
-	// keyed component those stores establish. It is the same uniform-element
-	// answer a declared map gives, derived from the stores instead of from a
-	// declaration.
-	if !ok {
-		containerType, ok = keyedComponentContainerType(container, partition)
-	}
+	containerType, ok, authorityErr := resolveAuthorityType(runtimeIndexContainerTypeAuthorities, typeAuthorityContext{
+		Term: container, CurrentValue: containerValue, Partition: partition,
+	})
 	// A published type witness may have unrelated open members. RuntimeIndex
 	// still derives only the selected member, so an exact selected member stays
 	// available without treating the container itself as a closed return value.
-	if !ok || containerType == nil {
+	if authorityErr != nil || !ok || containerType == nil {
 		return nil, "", false, false, false
 	}
 	keyValue, err := resolveCurrentValue(key, partition)
@@ -14018,47 +13975,6 @@ func typedRuntimeIndexResult(container, key []byte, consumer string, partition e
 	}
 	_, scalar := optionalEvidenceDisplay(result)
 	return encoded, typeformat.Short(proof.ProjectionWithoutNil(result)), scalar, optionalConcreteWitnessType(result), true
-}
-
-// declaredMapContainerType reads a container's own declaration when it is a
-// map. A map's declaration types every slot uniformly, so it answers a read at
-// a key the analysis cannot resolve exactly -- which is the read a spelled key
-// already receives through the member ancestor projection. The answer stays
-// the declared element with Lua's missing-slot nil; only a presence proof
-// removes that nil.
-func declaredMapContainerType(container []byte, partition equation.Partition) (typ.Type, bool) {
-	declared, found := declaredTypeForTerm(container, partition)
-	if !found || declared == nil {
-		return nil, false
-	}
-	base := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(declared)))
-	if base == nil {
-		return nil, false
-	}
-	switch base.Kind() {
-	case kind.Map, kind.ReadonlyMap:
-		return declared, true
-	}
-	return nil, false
-}
-
-// declaredArrayContainerType reads a container's own declaration when it is an
-// array. A sequence's declaration types every slot uniformly, exactly as a
-// map's does, so it answers a read at an index the analysis cannot resolve. It
-// remains a separate authority from the map lane because a heap value that
-// still decodes for itself, a keyed component the stores established, and a
-// sealed shape each decide such a read on their own terms; this states only
-// what the declaration alone supports, which is the element and no occupancy.
-func declaredArrayContainerType(container []byte, partition equation.Partition) (typ.Type, bool) {
-	declared, found := declaredTypeForTerm(container, partition)
-	if !found || declared == nil {
-		return nil, false
-	}
-	base := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(declared)))
-	if base == nil || base.Kind() != kind.Array {
-		return nil, false
-	}
-	return declared, true
 }
 
 // keyedComponentContainerType reads the map component a container's own
@@ -17154,23 +17070,10 @@ func iteratorElementWitness(provider []byte, arguments map[int][]byte, partition
 			return nil, element, true
 		}
 	}
-	source, decoded := shapefact.DecodeTarget(value)
-	if !decoded {
-		source, decoded = typedPathType(argument, partition)
-	}
-	if !decoded {
-		source, decoded = declaredTypeForTerm(argument, partition)
-	}
-	// A container whose slots were only ever addressed at keys this analysis
-	// never resolved carries no declaration and no type witness, and its
-	// allocation value states nothing about those slots. The keyed component
-	// its own stores established is that container's key domain and element,
-	// which is the same authority an index read of it already consumes; an
-	// enumeration of it binds exactly what that component describes.
-	if !decoded {
-		source, decoded = keyedComponentContainerType(argument, partition)
-	}
-	if !decoded || source == nil {
+	source, decoded, authorityErr := resolveAuthorityType(iteratorElementTypeAuthorities, typeAuthorityContext{
+		Term: argument, CurrentValue: value, Partition: partition,
+	})
+	if authorityErr != nil || !decoded || source == nil {
 		return nil, nil, false
 	}
 	switch iterator.Kind {
@@ -21499,13 +21402,10 @@ func typedPathType(term []byte, partition equation.Partition) (typ.Type, bool) {
 // batch.count) never descends into a sibling table child; only a genuine table
 // member reaches an allocation.
 func placementDescentTargetsTable(term []byte, partition equation.Partition) bool {
-	if value, err := resolveCurrentValue(term, partition); err == nil && shapefact.IsTable(value) {
-		return true
-	}
-	if projected, ok := typedPathType(term, partition); ok {
-		return isTableTypeForPlacement(projected)
-	}
-	return false
+	answer, found, err := resolveAuthorityPredicate(placementDescentTableAuthorities, predicateAuthorityContext{
+		Term: term, Partition: partition,
+	})
+	return err == nil && found && answer
 }
 
 func isTableTypeForPlacement(t typ.Type) bool {
@@ -21564,18 +21464,10 @@ func instantiatedFormalType(term []byte, value []byte, partition equation.Partit
 	if isExplicitAnyValue(value) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition) {
 		return nil, false
 	}
-	resolved, found := typedPathType(term, partition)
-	if !found || resolved == nil {
-		resolved, found = declaredTypeForTerm(term, partition)
-	}
-	// A container addressed only at keys this analysis never resolved publishes
-	// no declaration and no type witness; the keyed component its own stores
-	// established is what describes it, here exactly as it does at a read or an
-	// enumeration of the same container.
-	if !found || resolved == nil {
-		resolved, found = keyedComponentContainerType(term, partition)
-	}
-	if !found || resolved == nil {
+	resolved, found, authorityErr := resolveAuthorityType(instantiatedFormalTypeAuthorities, typeAuthorityContext{
+		Term: term, CurrentValue: value, Partition: partition,
+	})
+	if authorityErr != nil || !found || resolved == nil {
 		return nil, false
 	}
 	if typ.AbsentOrTopLike(unwrap.Alias(subst.ExpandInstantiated(resolved))) {
@@ -27890,7 +27782,7 @@ func hasValue(partition equation.Partition, key string) bool {
 // was checked against. A declaration types every write to the cell it binds, so
 // it is the honest summary of what leaves the body; the sealed shape the
 // constructor happened to produce is an implementation detail of one path
-// through it. This is the precedence declaredMapContainerType already applies
+// through it. This is the precedence the declared-map authority already applies
 // to a container read, stated at the boundary where the container leaves its
 // body.
 //
@@ -28683,28 +28575,13 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	if cutoff == "" {
 		return nil, fmt.Errorf("engine: empty assignment read boundary")
 	}
-	if value, found := selectPayloadValue(term, partition); found {
-		return value, nil
+	value, found, err := resolveAuthorityValue(valueAtReadAuthorities, valueAuthorityContext{
+		Term: term, ReadBound: cutoff, Partition: partition,
+	})
+	if err != nil {
+		return nil, err
 	}
-	if value, found := declaredOptionalMapReadValue(term, partition); found {
-		return value, nil
-	}
-	if value, found := heapMemberValue(term, partition); found {
-		return value, nil
-	}
-	if value, found := assertionNarrowedValue(term, cutoff, partition); found {
-		return value, nil
-	}
-	if value, found := provenSequenceIndexValue(term, partition); found {
-		return value, nil
-	}
-	if value, found := typedPathValue(term, partition); found {
-		return value, nil
-	}
-	if value, found := reconvergedValue(term, cutoff, partition); found {
-		return value, nil
-	}
-	if value, found := declaredSequenceIndexValue(term, partition); found {
+	if found {
 		return value, nil
 	}
 	switch string(absence) {
@@ -28754,6 +28631,10 @@ func assertionNarrowedValue(term []byte, before string, partition equation.Parti
 // their read timing. Environment-write deliberately does not use it: every
 // assignment read carries an explicit pre-write boundary instead.
 func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, error) {
+	return resolveCurrentValueWithAuthorities(term, partition, currentValueAuthorities)
+}
+
+func resolveCurrentValueWithAuthorities(term []byte, partition equation.Partition, authorities authorityView) ([]byte, error) {
 	if shapefact.IsScalar(term) {
 		return append([]byte(nil), term...), nil
 	}
@@ -28763,34 +28644,11 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
 		return nil, fmt.Errorf("engine: unsupported scalar term %q", term)
 	}
-	if value, found := selectPayloadValue(term, partition); found {
-		return value, nil
+	value, found, err := resolveAuthorityValue(authorities, valueAuthorityContext{Term: term, Partition: partition})
+	if err != nil {
+		return nil, err
 	}
-	if value, found := correlationConeCurrentValue(term, partition); found {
-		return value, nil
-	}
-	if value, found := declaredOptionalMapReadValue(term, partition); found {
-		return value, nil
-	}
-	if value, found := heapMemberValue(term, partition); found {
-		return value, nil
-	}
-	if value, found := assertionNarrowedValue(term, "", partition); found {
-		return value, nil
-	}
-	if value, found := provenSequenceIndexValue(term, partition); found {
-		return value, nil
-	}
-	if value, found := reconvergedValue(term, "", partition); found {
-		return value, nil
-	}
-	if value, found := typedPathValue(term, partition); found {
-		return value, nil
-	}
-	if member, found := shapeMemberValue(term, partition); found {
-		return member, nil
-	}
-	if value, found := declaredSequenceIndexValue(term, partition); found {
+	if found {
 		return value, nil
 	}
 	// A member/index path has a concrete Lua source but its heap write can
