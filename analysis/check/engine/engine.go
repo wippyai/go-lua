@@ -146,6 +146,17 @@ const (
 	// time: the row names the write's operation, so a write the relation never
 	// accounted for is what withholds it.
 	heapKeysOfPrefix = "heap/keys-of/"
+	// heapKeyedReadPrefix names the container a term was read from at a key this
+	// analysis never resolved. The read answers with the container's keyed
+	// component, so a write through the term reaches a slot only that component
+	// describes, and the row is what carries the write back to it.
+	heapKeyedReadPrefix = "heap/keyed-read/"
+	// heapKeyedElementPrefix carries an element written into whatever a
+	// container holds at an unresolved key. The keyed component's value is the
+	// array those elements prove, so a write leaving no type here withholds the
+	// component rather than leaving it at the store's own empty literal.
+	heapKeyedElementPrefix   = "heap/keyed-element/"
+	keyedElementUnclassified = "unclassified"
 	// callKeysOfPrefix carries the relation across one application: the callee
 	// states it against a formal, and this row states it against the argument
 	// the caller bound to that formal.
@@ -12858,6 +12869,140 @@ func keyedStoreWitnesses(rows []opaqueMemberWriteWire) ([]typ.Type, []typ.Type, 
 	return keys, values, len(rows) != 0
 }
 
+// keyedReadContainer names the container a term was read from at a key this
+// analysis never resolved. A term rebound after that read holds some other
+// value, so its origin no longer describes it.
+func keyedReadContainer(term []byte, partition equation.Partition) ([]byte, bool) {
+	prefix := heapKeyedReadPrefix + base64.RawURLEncoding.EncodeToString(term) + "/"
+	latest, identity := "", []byte(nil)
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		if fact.Key > latest {
+			latest, identity = fact.Key, fact.Value
+		}
+	}
+	if latest == "" || len(identity) == 0 {
+		return nil, false
+	}
+	if epoch, versioned := currentEpoch(term, partition); versioned && epoch > factOperation(latest) {
+		return nil, false
+	}
+	return identity, true
+}
+
+// keyedElementFact records the type of one element written into whatever a
+// container holds at an unresolved key. A written term carrying no type states
+// nothing about that slot, and the marker it leaves is what withholds the
+// component instead of leaving it at the store's own value.
+func keyedElementFact(identity []byte, operation string, element []byte, partition equation.Partition) equation.Fact {
+	fact := equation.Fact{
+		Key:   heapKeyedElementPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation,
+		Value: []byte(keyedElementUnclassified),
+	}
+	resolved, err := resolveCurrentValue(element, partition)
+	if err != nil {
+		return fact
+	}
+	elementType, known := sealedShapeReceiverType(resolved)
+	if !known || elementType == nil {
+		return fact
+	}
+	encoded, encodable := shapefact.EncodeTarget(elementType)
+	if !encodable {
+		return fact
+	}
+	fact.Value = encoded
+	return fact
+}
+
+// keyedElementWrites decodes the elements written into the container's
+// unresolved-key slots. One write that carried no type leaves the whole set
+// unclassified: the slot holds a value nothing describes.
+func keyedElementWrites(identity []byte, partition equation.Partition) ([]typ.Type, bool, bool) {
+	rows := partition.ValuesPrefix(heapKeyedElementPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/")
+	if len(rows) == 0 {
+		return nil, true, false
+	}
+	elements := make([]typ.Type, 0, len(rows))
+	for _, fact := range rows {
+		elementType, known := shapefact.DecodeTarget(fact.Value)
+		if !known || elementType == nil {
+			return nil, false, true
+		}
+		elements = append(elements, elementType)
+	}
+	return elements, true, true
+}
+
+// keyedReadReachedUnaccountedCall reports that a value read from one of this
+// container's unresolved-key slots was handed to a call that left no account of
+// what it put there. An accounted append publishes its element at the same
+// operation; a call that publishes none may have placed anything in the slot,
+// which leaves every store's own value no longer describing it.
+func keyedReadReachedUnaccountedCall(identity []byte, partition equation.Partition) bool {
+	encoded := base64.RawURLEncoding.EncodeToString(identity)
+	reads := make(map[string]bool)
+	for _, fact := range partition.ValuesPrefix(heapKeyedReadPrefix) {
+		if !bytes.Equal(fact.Value, identity) {
+			continue
+		}
+		term, _, ok := strings.Cut(strings.TrimPrefix(fact.Key, heapKeyedReadPrefix), "/")
+		decoded, err := base64.RawURLEncoding.DecodeString(term)
+		if !ok || err != nil {
+			continue
+		}
+		reads[string(decoded)] = true
+	}
+	if len(reads) == 0 {
+		return false
+	}
+	accounted := make(map[string]bool)
+	for _, fact := range partition.ValuesPrefix(heapKeyedElementPrefix + encoded + "/") {
+		accounted[factOperation(fact.Key)] = true
+	}
+	for _, fact := range partition.ValuesPrefix("call-argument/") {
+		if !reads[string(fact.Value)] {
+			continue
+		}
+		// The row is keyed by application and position, so the operation is the
+		// first segment; factOperation would carry the position with it.
+		point, _, named := strings.Cut(strings.TrimPrefix(fact.Key, "call-argument/"), "/")
+		if !named || accounted[point] {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// refinedKeyedStoreValues re-reads a store's own value as the array the element
+// writes proved it to be. An empty table literal is an empty array as much as
+// an empty record, and the elements appended through the slot are what decide
+// which; an array already carrying a contract widens to hold both. A store of
+// anything else leaves no slot those elements could have reached, so the whole
+// component is withheld rather than described by one of two disagreeing writes.
+func refinedKeyedStoreValues(values []typ.Type, element typ.Type) ([]typ.Type, bool) {
+	refined := make([]typ.Type, 0, len(values))
+	for _, value := range values {
+		base := unwrap.Alias(subst.ExpandInstantiated(value))
+		switch container := base.(type) {
+		case *typ.Array:
+			joined, ok := joinedKeyedComponentType([]typ.Type{container.Element, element})
+			if !ok {
+				return nil, false
+			}
+			refined = append(refined, typ.NewArray(joined))
+		case *typ.Record:
+			if container == nil || len(container.Fields) != 0 || len(container.StaticMembers) != 0 || container.MapKey != nil || container.Open {
+				return nil, false
+			}
+			refined = append(refined, typ.NewArray(element))
+		default:
+			return nil, false
+		}
+	}
+	return refined, true
+}
+
 // heapKeyedComponent is the map component a container's unresolved-key stores
 // establish. Each such store writes a value of its own value type at a key of
 // its own key type, so the join over every recorded store is the contract that
@@ -12880,6 +13025,27 @@ func heapKeyedComponent(identity, value []byte, partition equation.Partition) (t
 	keys, values, classified := keyedStoreWitnesses(heapOpaqueMemberWriteRows(identity, partition))
 	if !classified {
 		return nil, false
+	}
+	// A write through a read at one of these unresolved keys reaches the slot
+	// this component describes and nothing else, so its element belongs to the
+	// component's own value.
+	if keyedReadReachedUnaccountedCall(identity, partition) {
+		return nil, false
+	}
+	elements, complete, written := keyedElementWrites(identity, partition)
+	if written {
+		if !complete {
+			return nil, false
+		}
+		element, joined := joinedKeyedComponentType(elements)
+		if !joined {
+			return nil, false
+		}
+		refined, refinable := refinedKeyedStoreValues(values, element)
+		if !refinable {
+			return nil, false
+		}
+		values = refined
 	}
 	keyType, keyJoined := joinedKeyedComponentType(keys)
 	valueType, valueJoined := joinedKeyedComponentType(values)
@@ -13763,7 +13929,17 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 		// this read selects, so neither the recorded member value nor the
 		// closure of the constructor decides the read while that marker stands.
 		opaque := heapOpaqueMemberWrite(identity, partition)
-		if suffix, exact := tableMemberSuffix(key, []byte("suffix/")); keyErr == nil && exact && !opaque {
+		suffix, exact := tableMemberSuffix(key, []byte("suffix/"))
+		if keyErr != nil || !exact {
+			// The read selects a slot no coordinate names, so its answer is the
+			// container's keyed component and a write through the result reaches
+			// that component alone.
+			values = append(values, equation.Fact{
+				Key:   heapKeyedReadPrefix + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
+				Value: append([]byte(nil), identity...),
+			})
+		}
+		if keyErr == nil && exact && !opaque {
 			if member, found := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); found {
 				values[0].Value = member
 			} else if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) && !heapHasExternalCallback(identity, partition) {
@@ -14152,6 +14328,12 @@ func arrayElementKeyPresenceFacts(array []byte, element, operation string, parti
 	}
 	origin, related := arrayKeysOfContainer(identity, partition)
 	if !related || !keysOfContainerCurrent(origin, partition) {
+		return nil
+	}
+	// The array is as much a subject of the relation as the container is: a
+	// callee this analysis never read may have put an element in it that no
+	// enumeration produced.
+	if reachedUnaccountedCallee(array, identity, partition) {
 		return nil
 	}
 	facts := keyIterationPresenceFacts(origin.Container, element, operation, partition)
@@ -16848,6 +17030,7 @@ func iteratorElementWitness(provider []byte, arguments map[int][]byte, partition
 	if err != nil {
 		return nil, nil, false
 	}
+	value = accumulatedContainerSurface(argument, value, partition)
 	// An unannotated, sealed array literal is already a published finite value
 	// shape.  Its indexed entries may carry an explicit-any boundary, which
 	// must remain authoritative after ipairs transports that exact element into
@@ -20318,6 +20501,14 @@ func tableInsertEpoch(operation equation.BoundEquation, operands directCallOpera
 	}
 	identity, found := tableIdentityForTerm(operands.arguments[0], partition)
 	if !found {
+		// The appended-to container may be a read at a key this analysis never
+		// resolved. The element then belongs to whatever the enclosing container
+		// holds at that key, which only its keyed component describes.
+		if container, keyed := keyedReadContainer(operands.arguments[0], partition); keyed {
+			return equation.OutputClosure{Values: []equation.Fact{
+				keyedElementFact(container, operation.Target.Name, operands.arguments[1], partition),
+			}}, true
+		}
 		return equation.OutputClosure{}, true
 	}
 	value, err := resolveCurrentValue(operands.arguments[1], partition)
@@ -25304,6 +25495,72 @@ func importedParameterSurface(term, value []byte, partition equation.Partition) 
 		return value
 	}
 	return heapMemberSurface(term, value, partition)
+}
+
+// accumulatedContainerSurface is the aggregate a container carries at a read
+// inside the body that filled it. An append advances the member cells rather
+// than the aggregate value fact, so the allocation shape a local reader sees
+// states nothing about the slots the body put there. The rebuild is the one the
+// return boundary already performs, under the refusals that boundary's own
+// authority rests on: a metatable answers reads the member set does not, and a
+// store at a key this analysis never resolved leaves that set short of the
+// container's slots.
+func accumulatedContainerSurface(term, value []byte, partition equation.Partition) []byte {
+	identity, found := tableIdentityForTerm(term, partition)
+	if !found || heapMetaAttached(identity, partition) || heapOpaqueMemberWrite(identity, partition) {
+		return value
+	}
+	if reachedUnaccountedCallee(term, identity, partition) {
+		return value
+	}
+	return heapMemberSurface(term, value, partition)
+}
+
+// reachedUnaccountedCallee reports that this container was handed to a callee
+// whose body the analysis never read, at an operation that neither the call's
+// own effect row discharges nor the container's own member publications account
+// for. An append is both: it is the call that receives the container and the
+// write whose result the reader consumes, so the slot it published is exactly
+// what that call did. A call that published no slot and discharged no effect
+// row may have put anything in the container, which leaves the member set no
+// longer describing it.
+func reachedUnaccountedCallee(term, identity []byte, partition equation.Partition) bool {
+	allocation, found := placementAllocationForTerm(term, partition)
+	if !found {
+		return false
+	}
+	encodedIdentity := base64.RawURLEncoding.EncodeToString(identity)
+	accounted := make(map[string]bool)
+	for _, family := range []string{heapMemberPrefix, memberCellPrefix} {
+		for _, fact := range partition.ValuesPrefix(family + encodedIdentity + "/") {
+			accounted[factOperation(fact.Key)] = true
+		}
+	}
+	encodedAllocation := base64.RawURLEncoding.EncodeToString([]byte(allocation.Identity))
+	for _, fact := range partition.ValuesPrefix(placementBlockerPrefix + encodedAllocation + "/opaque-call/") {
+		point := factOperation(fact.Key)
+		if string(fact.Value) != "proven" || accounted[point] {
+			continue
+		}
+		if !placementContractDischarged(encodedAllocation, point, partition) {
+			return true
+		}
+	}
+	return false
+}
+
+// placementContractDischarged reports that some effect row states what a call
+// did with the allocation it received. The row's role is the statement -- an
+// iteration, a borrow, a body this evaluator read -- and any of them accounts
+// for the call the blocker records.
+func placementContractDischarged(encodedAllocation, point string, partition equation.Partition) bool {
+	prefix := placementContractPrefix + encodedAllocation + "/"
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		if factOperation(fact.Key) == point {
+			return true
+		}
+	}
+	return false
 }
 
 // heapMemberSurface republishes a sealed table value with the current member

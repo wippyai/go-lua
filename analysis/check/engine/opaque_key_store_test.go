@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -254,5 +255,91 @@ for _, key in ipairs(keys) do suites[key] = 1 end
 	}
 	if rows != 1 {
 		t.Fatalf("expected exactly one unresolved-store row, got %d; facts = %#v", rows, result.ValueFacts)
+	}
+}
+
+// TestKeyedComponentValueFollowsElementsAppendedThroughIt pins the feedback the
+// component's value rests on. The store places an empty literal at an
+// unresolved key; the appends through a read of that same slot are what decide
+// the literal is an array and what it holds.
+func TestKeyedComponentValueFollowsElementsAppendedThroughIt(t *testing.T) {
+	const source = `type Entry = {id: string}
+local entries: {Entry} = {}
+local groups = {}
+for _, entry in ipairs(entries) do
+    groups[entry.id] = groups[entry.id] or {}
+    table.insert(groups[entry.id], entry)
+end
+local group: %s = groups["alpha"]
+`
+	if diagnostics := checkSource(t, fmt.Sprintf(source, "{Entry}?")); len(diagnostics) != 0 {
+		t.Fatalf("the appended element did not reach the component's value:\n%s", diagnosticSummaries(diagnostics))
+	}
+	// The value is the element the appends proved, not a permissive stand-in:
+	// another element on the same slot is refuted against it.
+	wrong := diagnosticSummaries(checkSource(t, fmt.Sprintf(source, "{string}?")))
+	if !strings.Contains(wrong, "not string[]?") {
+		t.Fatalf("a mismatched element claim was admitted against the component:\n%s", wrong)
+	}
+	// The empty literal the store placed there is no longer the answer.
+	absent := diagnosticSummaries(checkSource(t, fmt.Sprintf(source, "nil")))
+	if !strings.Contains(absent, "{id: string}[]?") {
+		t.Fatalf("the component still answers with the store's own empty literal:\n%s", absent)
+	}
+}
+
+// TestKeyedComponentValueCrossesTheCallBoundaryItWasBuiltIn pins that the
+// refined component is the authority the producing body's return carries, not a
+// fact only its own partition holds.
+func TestKeyedComponentValueCrossesTheCallBoundaryItWasBuiltIn(t *testing.T) {
+	const source = `type Entry = {id: string}
+local entries: {Entry} = {}
+local function group_by_id(items: {Entry})
+    local built = {}
+    for _, entry in ipairs(items) do
+        built[entry.id] = built[entry.id] or {}
+        table.insert(built[entry.id], entry)
+    end
+    return built
+end
+local returned = group_by_id(entries)
+local group: %s = returned["alpha"]
+`
+	if diagnostics := checkSource(t, fmt.Sprintf(source, "{Entry}?")); len(diagnostics) != 0 {
+		t.Fatalf("the component's refined value did not cross the return boundary:\n%s", diagnosticSummaries(diagnostics))
+	}
+	wrong := diagnosticSummaries(checkSource(t, fmt.Sprintf(source, "{number}?")))
+	if !strings.Contains(wrong, "not number[]?") {
+		t.Fatalf("a mismatched element claim was admitted across the boundary:\n%s", wrong)
+	}
+}
+
+// TestKeyedComponentWithholdsWhatTheAppendsCannotAccount pins the fail-closed
+// edges. Each source keeps the same store and the same read; only the account
+// of what reached the slot changes, and none of them may leave the component
+// standing on the store's own empty literal.
+func TestKeyedComponentWithholdsWhatTheAppendsCannotAccount(t *testing.T) {
+	for name, body := range map[string]string{
+		"element-with-no-published-type": `    groups[entry.id] = groups[entry.id] or {}
+    table.insert(groups[entry.id], unresolved_source())`,
+		"slot-reached-an-unread-callee": `    groups[entry.id] = groups[entry.id] or {}
+    table.insert(groups[entry.id], entry)
+    unresolved_sink(groups[entry.id])`,
+		"store-nothing-could-append-to": `    groups[entry.id] = 1
+    table.insert(groups[entry.id], entry)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			summary := diagnosticSummaries(checkSource(t, `type Entry = {id: string}
+local entries: {Entry} = {}
+local groups = {}
+for _, entry in ipairs(entries) do
+`+body+`
+end
+local group: {Entry}? = groups["alpha"]
+`))
+			if !strings.Contains(summary, "is not proven") {
+				t.Fatalf("the component survived an append it cannot account for:\n%s", summary)
+			}
+		})
 	}
 }

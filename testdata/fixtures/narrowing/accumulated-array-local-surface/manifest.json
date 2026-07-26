@@ -1,0 +1,5 @@
+{
+  "description": "A locally accumulated array carries its appended members at a local read through the same aggregate rebuild the return boundary performs, so an iteration over it binds the appended element and the enumerated key proves its own read present. The rebuild is withheld for a container an unread callee received and for one holding a store at a key the analysis never resolved.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

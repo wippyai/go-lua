@@ -1,0 +1,5 @@
+{
+  "description": "An element written through a read at a container's unresolved key joins into that container's keyed component: the store's empty literal is re-read as the array the appends prove, locally and across the call boundary that returns it. An element with no published type, a slot handed to an unread callee, and a store nothing could be appended to each withhold the component instead.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

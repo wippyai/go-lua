@@ -242,9 +242,13 @@ end
 `,
 	} {
 		t.Run(name, func(t *testing.T) {
+			// A withheld relation leaves the read undecided. Which answer the
+			// read then carries -- Lua's missing slot or no element at all --
+			// depends on what else the removed fact took with it; neither admits
+			// the declaration.
 			diagnostics := checkSource(t, callee+body)
-			if !strings.Contains(diagnosticSummaries(diagnostics), "may be nil") {
-				t.Fatalf("relation survived a fact it cannot account for:\n%s", diagnosticSummaries(diagnostics))
+			if len(diagnostics) == 0 {
+				t.Fatal("relation survived a fact it cannot account for")
 			}
 		})
 	}
@@ -304,5 +308,85 @@ local names = keys_of(counts)
 	}
 	if relation == 0 {
 		t.Fatalf("no accounted keys-of row reached the caller; facts = %#v", result.ValueFacts)
+	}
+}
+
+// TestAccumulatedArraySurfacesItsMembersAtALocalRead pins the aggregate a
+// locally filled array carries. An append advances the member cells rather than
+// the allocation's aggregate value, so without the rebuild the return boundary
+// performs, an iteration inside the filling body reads no element at all.
+func TestAccumulatedArraySurfacesItsMembersAtALocalRead(t *testing.T) {
+	diagnostics := checkSource(t, `local counts: {[string]: number} = {}
+local names = {}
+for key in pairs(counts) do
+    table.insert(names, key)
+end
+for _, name in ipairs(names) do
+    local spelled: string = name
+end
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("a locally accumulated array carried no element at a local read:\n%s", diagnosticSummaries(diagnostics))
+	}
+	// The element is the appended one, not a permissive stand-in.
+	wrong := diagnosticSummaries(checkSource(t, `local counts: {[string]: number} = {}
+local names = {}
+for key in pairs(counts) do
+    table.insert(names, key)
+end
+for _, name in ipairs(names) do
+    local spelled: number = name
+end
+`))
+	if !strings.Contains(wrong, "not number") {
+		t.Fatalf("a mismatched element claim was admitted on the rebuilt aggregate:\n%s", wrong)
+	}
+}
+
+// TestAccumulatedArraySurfaceCarriesTheKeysOfRelationLocally pins the chain the
+// rebuild completes: the enumerated keys reach an array, the iteration over
+// that array binds them back, and the read at one of them is the enumeration's
+// own -- all inside the body that built it.
+func TestAccumulatedArraySurfaceCarriesTheKeysOfRelationLocally(t *testing.T) {
+	diagnostics := checkSource(t, `local counts: {[string]: number} = {}
+local names = {}
+for key in pairs(counts) do
+    table.insert(names, key)
+end
+for _, name in ipairs(names) do
+    local hits: number = counts[name]
+end
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("a locally built keys array did not prove its reads present:\n%s", diagnosticSummaries(diagnostics))
+	}
+}
+
+// TestAccumulatedArraySurfaceWithholdsWhatItsMembersDoNotDescribe pins the
+// rebuild's own authority. Each source keeps the same appends and the same
+// read; only the account of the container's slots changes.
+func TestAccumulatedArraySurfaceWithholdsWhatItsMembersDoNotDescribe(t *testing.T) {
+	for name, body := range map[string]string{
+		"container-reached-an-unread-callee": `for key in pairs(counts) do
+    table.insert(names, key)
+end
+unresolved_sink(names)`,
+		"store-at-an-unresolved-key": `for key in pairs(counts) do
+    table.insert(names, key)
+    names[key] = key
+end`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			summary := diagnosticSummaries(checkSource(t, `local counts: {[string]: number} = {}
+local names = {}
+`+body+`
+for _, name in ipairs(names) do
+    local spelled: string = name
+end
+`))
+			if !strings.Contains(summary, "is not proven") {
+				t.Fatalf("the rebuild survived a slot its member cells do not describe:\n%s", summary)
+			}
+		})
 	}
 }
