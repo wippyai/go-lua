@@ -38,7 +38,7 @@ func TestRecursiveSummaryCarriesEveryBoundaryAnchoredFamily(t *testing.T) {
 	families := []string{
 		"value/", "closure/", "declared-type/", epochFactPrefix,
 		indexReadDisplayPrefix, indexReadScalarPrefix, affineIndexPrefix, booleanResultPrefix,
-		summaryTypePrefix, methodReturnSummaryPrefix,
+		factkey.SummaryType.Prefix, factkey.MethodReturnSummary.Prefix,
 	}
 	closure := equation.OutputClosure{}
 	for _, family := range families {

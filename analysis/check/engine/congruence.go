@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -53,7 +54,9 @@ func pathEqualityFacts(operation equation.BoundEquation, partition equation.Part
 		}
 		facts = append(facts, equation.Fact{
 			Key: key, Value: []byte("proven"),
-			Guards: []equation.Guard{{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/" + guardEdge)}},
+			Guards: equation.GuardSet(equation.NewBranchGuard(
+				operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: guardEdge},
+			)),
 		})
 	}
 	return facts
@@ -153,7 +156,7 @@ func persistentCongruenceConeFacts(operation equation.BoundEquation, partition e
 		return nil, nil
 	}
 	equal = mergeEqualityClasses(equal, congruenceClasses(operation, partition))
-	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
+	guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.TrueEdge})
 	facts, err := correlationConeFacts(equal, nonNil, operation, partition, guard)
 	if err != nil {
 		return nil, err

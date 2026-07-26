@@ -106,7 +106,8 @@ func relationVariable(pathKey string, isLength bool) pathdom.PathKey {
 	if isLength {
 		return pathdom.PathKey("len/" + pathKey)
 	}
-	return pathdom.PathKey("value/" + pathKey)
+	const valueAxis = "value"
+	return pathdom.PathKey(valueAxis + "/" + pathKey)
 }
 
 // relationAssertions lowers the bound evidence a branch proves on its true edge

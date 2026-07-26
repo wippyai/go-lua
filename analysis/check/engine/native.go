@@ -266,8 +266,7 @@ func coalesceNativeContractRevocations(facts []NativeFact) []NativeFact {
 // only when every fact it names was published by this evaluation.
 func projectNativeContracts(facts []NativeFact) []NativeFact {
 	const (
-		callArgumentPrefix = "call-argument/"
-		freezePrefix       = "effect.freeze/"
+		freezePrefix = "effect.freeze/"
 	)
 	type identityAnchor struct{ term, subject string }
 	type memberRead struct{ identity, member, occurrence string }
@@ -331,10 +330,10 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 					children[parsed.Subject.Encoded()], base64.RawURLEncoding.EncodeToString([]byte(fact.Value)),
 				)
 			}
-		case strings.HasPrefix(fact.Key, callArgumentPrefix):
-			occurrence, position, found := strings.Cut(strings.TrimPrefix(fact.Key, callArgumentPrefix), "/")
-			if found && occurrence != "" && position != "" && !strings.Contains(position, "/") && fact.Value != "" {
-				callArguments[occurrence] = append(callArguments[occurrence], fact.Value)
+		case heapFact && parsedHeapFact && family.ID == factkey.FamilyCallArgument:
+			application, position := parsed.Subject.Spelling(), parsed.Occurrence
+			if application != "" && position != "" && fact.Value != "" {
+				callArguments[application] = append(callArguments[application], fact.Value)
 			}
 		case strings.HasPrefix(fact.Key, freezePrefix):
 			term, _, ok := nativeFreezeTerm(fact.Key, freezePrefix)

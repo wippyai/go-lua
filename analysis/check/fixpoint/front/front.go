@@ -4263,7 +4263,7 @@ func guardsForPoint(graph cfg.Graph, reachability *reachabilityCache, point cfg.
 		if trueReach {
 			edge = "true"
 		}
-		guards = append(guards, equation.Guard{Body: body, Encoding: []byte("front/branch/" + target.target.Name + "/" + edge)})
+		guards = append(guards, equation.NewBranchGuard(body, factkey.BranchGuard{Name: target.target.Name, Edge: edge}))
 	}
 	return guards
 }

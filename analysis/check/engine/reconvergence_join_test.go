@@ -315,7 +315,7 @@ func TestJoinedSurfaceKeepsWhatEachEdgeProved(t *testing.T) {
 		equation.Fact{Key: "value/path/tree/op-00000001", Value: []byte("scalar/nil")},
 		equation.Fact{Key: "value/path/tree/op-00000003", Value: literal, Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 		equation.Fact{Key: "value/path/tree/op-00000004", Value: []byte("scalar/top"), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
-		equation.Fact{Key: summaryTypePrefix + "path/tree/op-00000004", Value: mustCanonicalType(group), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
+		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "path/tree", "op-00000004").String(), Value: mustCanonicalType(group), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
 	)
 	// The value lane alone still reports the honest unknown: one edge published
 	// no value witness at all.
@@ -388,7 +388,7 @@ func TestJoinedSurfaceStaysPrivateInsideAnEdge(t *testing.T) {
 		{Key: "value/path/tree/op-00000001", Value: []byte("scalar/nil")},
 		{Key: "value/path/tree/op-00000003", Value: literal, Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 		{Key: "value/path/tree/op-00000004", Value: []byte("scalar/top"), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
-		{Key: summaryTypePrefix + "path/tree/op-00000004", Value: mustCanonicalType(group), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
+		{Key: termFamilyKey(factkey.SummaryType, "path/tree", "op-00000004").String(), Value: mustCanonicalType(group), Guards: []equation.Guard{joinTestGuard("op-00000002", "false")}},
 	}
 	inside := joinTestPartition(t, []equation.Guard{joinTestGuard("op-00000002", "true")}, facts...)
 	_, _, source, resolved := typedAncestor([]byte("path/tree.kind"), inside)
@@ -408,11 +408,11 @@ func TestInheritedSummaryJoinsBothEdges(t *testing.T) {
 	left, right := typ.MaterializeOptional(typ.String), typ.MaterializeOptional(typ.Number)
 	partition := joinTestPartition(t, nil,
 		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
-		equation.Fact{Key: summaryTypePrefix + "temp/1/op-00000001", Value: mustCanonicalType(left)},
+		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "temp/1", "op-00000001").String(), Value: mustCanonicalType(left)},
 		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
-		equation.Fact{Key: summaryTypePrefix + "temp/1/op-00000003", Value: mustCanonicalType(right), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "temp/1", "op-00000003").String(), Value: mustCanonicalType(right), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 	)
-	encoded, found := reconvergedEpochFact(summaryTypePrefix, []byte("temp/1"), partition, joinSummaryTypes)
+	encoded, found := reconvergedFamilyEpochFact(factkey.SummaryType, []byte("temp/1"), partition, joinSummaryTypes)
 	if !found {
 		t.Fatal("the joined point inherited no summary")
 	}
@@ -427,11 +427,11 @@ func TestInheritedSummaryJoinsBothEdges(t *testing.T) {
 	// join belongs to the point both edges reach, not to either of them.
 	inside := joinTestPartition(t, []equation.Guard{joinTestGuard("op-00000002", "true")},
 		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
-		equation.Fact{Key: summaryTypePrefix + "temp/1/op-00000001", Value: mustCanonicalType(left)},
+		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "temp/1", "op-00000001").String(), Value: mustCanonicalType(left)},
 		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
-		equation.Fact{Key: summaryTypePrefix + "temp/1/op-00000003", Value: mustCanonicalType(right), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "temp/1", "op-00000003").String(), Value: mustCanonicalType(right), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 	)
-	armEncoded, armFound := reconvergedEpochFact(summaryTypePrefix, []byte("temp/1"), inside, joinSummaryTypes)
+	armEncoded, armFound := reconvergedFamilyEpochFact(factkey.SummaryType, []byte("temp/1"), inside, joinSummaryTypes)
 	if !armFound {
 		t.Fatal("the taken edge inherited no summary")
 	}
@@ -452,9 +452,9 @@ func TestInheritedSummaryWithholdsWhenAnEdgeProvedNothing(t *testing.T) {
 	partition := joinTestPartition(t, nil,
 		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
 		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
-		equation.Fact{Key: summaryTypePrefix + "temp/1/op-00000003", Value: mustCanonicalType(typ.String), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "temp/1", "op-00000003").String(), Value: mustCanonicalType(typ.String), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 	)
-	if encoded, found := reconvergedEpochFact(summaryTypePrefix, []byte("temp/1"), partition, joinSummaryTypes); found {
+	if encoded, found := reconvergedFamilyEpochFact(factkey.SummaryType, []byte("temp/1"), partition, joinSummaryTypes); found {
 		t.Fatalf("an edge that published no summary still inherited %q", encoded)
 	}
 }
@@ -465,10 +465,10 @@ func TestInheritedSummaryWithholdsWhenAnEdgeProvedNothing(t *testing.T) {
 func TestInheritedSummaryKeepsEpochAuthority(t *testing.T) {
 	partition := joinTestPartition(t, nil,
 		equation.Fact{Key: epochFactPrefix + "path/x/op-00000001", Value: []byte("op-00000001")},
-		equation.Fact{Key: summaryTypePrefix + "path/x/op-00000001", Value: mustCanonicalType(typ.String)},
+		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "path/x", "op-00000001").String(), Value: mustCanonicalType(typ.String)},
 		equation.Fact{Key: epochFactPrefix + "path/x/op-00000002", Value: []byte("op-00000002")},
 	)
-	if encoded, found := reconvergedEpochFact(summaryTypePrefix, []byte("path/x"), partition, joinSummaryTypes); found {
+	if encoded, found := reconvergedFamilyEpochFact(factkey.SummaryType, []byte("path/x"), partition, joinSummaryTypes); found {
 		t.Fatalf("a retired summary was inherited as %q", encoded)
 	}
 }

@@ -26,7 +26,7 @@ func (r SubjectRef) TaggedTerm() bool { return r.kind == Tagged && r.tag == tagg
 // terms and opaque discriminators append their spelling unchanged.
 func (r SubjectRef) Decode(dst []byte) ([]byte, bool) {
 	switch r.kind {
-	case Opaque, Term:
+	case Opaque, Term, Coordinate:
 		return append(dst, r.spelling...), r.spelling != ""
 	case EncodedOpaque, Identity, EncodedTerm, Tagged:
 		if !validRawURL(r.encoded) {
@@ -66,6 +66,23 @@ func (f Family) ParseKey(key string) (ParsedKey, bool) {
 	rest, ok := strings.CutPrefix(key, f.Prefix)
 	if !ok || rest == "" || len(f.Qualifiers) > 2 {
 		return ParsedKey{}, false
+	}
+	// A terminal term subject owns every segment before the occurrence. Terms
+	// such as scalar claims carry their own slash-delimited syntax, and with no
+	// qualifier following there is no competing boundary to infer.
+	if f.Subject == Term && len(f.Qualifiers) == 0 {
+		cut := strings.LastIndexByte(rest, '/')
+		if cut <= 0 || cut == len(rest)-1 {
+			return ParsedKey{}, false
+		}
+		subject := rest[:cut]
+		if !validPart(TermPart(subject), true) {
+			return ParsedKey{}, false
+		}
+		return ParsedKey{
+			Subject:    SubjectRef{kind: Term, spelling: subject},
+			Occurrence: rest[cut+1:],
+		}, true
 	}
 	var parsed ParsedKey
 	at := 0
@@ -112,7 +129,7 @@ func parseRef(rest string, at int, kind Kind) (SubjectRef, int, bool) {
 			return SubjectRef{}, at, false
 		}
 		return SubjectRef{kind: kind, spelling: first, encoded: first}, next, true
-	case Opaque:
+	case Opaque, Coordinate:
 		return SubjectRef{kind: kind, spelling: first}, next, true
 	default:
 		return SubjectRef{}, at, false

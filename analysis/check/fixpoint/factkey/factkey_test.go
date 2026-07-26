@@ -63,7 +63,7 @@ func TestTermSubjectIsNoAllocation(t *testing.T) {
 // read as something they are not.
 func TestUndeclaredAndMalformedKeysReportNothing(t *testing.T) {
 	for _, key := range []string{
-		"value/path/sym2/op-00000001",
+		"unknown/path/sym2/op-00000001",
 		"heap/table-closed/op-00000001",
 		"heap/member/" + encode("x") + "/op-00000001",
 		"heap/index-presence/other/" + encode("x") + "/" + encode("y") + "/op-1",
@@ -87,6 +87,9 @@ func TestBranchGuardAndProofShareOneDeclaration(t *testing.T) {
 	}
 	if proof.Body != "2f2f" || proof.Name != "op-00000003" || !proof.TrueEdged() {
 		t.Fatalf("branch proof resolved to %+v", proof)
+	}
+	if got, want := proof.Key().String(), "branch-proof/2f2f/op-00000003/true"; got != want {
+		t.Fatalf("branch proof key = %q, want %q", got, want)
 	}
 	guard, ok := ParseBranchGuard(proof.Encoding())
 	if !ok || guard != proof.BranchGuard {
@@ -121,6 +124,17 @@ func TestBuildKeyOwnsDeclaredFamilySpellings(t *testing.T) {
 		{HeapMember, []Part{IdentityPart(identity), EncodedOpaquePart(".a")}, "heap/member/" + encode(string(identity)) + "/LmE/op-1"},
 		{HeapIndexPresence, []Part{TaggedTermPart([]byte("path/sym2")), EncodedTermPart([]byte("path/sym7"))}, "heap/index-presence/term/" + encode("path/sym2") + "/" + encode("path/sym7") + "/op-1"},
 		{HeapIndexUpper, []Part{EncodedTermPart([]byte("path/sym7")), EncodedTermPart([]byte("path/sym2"))}, "heap/index-upper/" + encode("path/sym7") + "/" + encode("path/sym2") + "/op-1"},
+		{Value, []Part{TermPart("path/sym2")}, "value/path/sym2/op-1"},
+		{CallResult, []Part{CoordinatePart("op-1")}, "call-result/op-1/op-1"},
+		{CallArgument, []Part{CoordinatePart("op-1")}, "call-argument/op-1/op-1"},
+		{LocalCallResult, []Part{TermPart("path/sym2")}, "local-call-result/path/sym2/op-1"},
+		{Type, []Part{TermPart("path/sym2")}, "type/path/sym2/op-1"},
+		{DeclaredType, []Part{TermPart("path/sym2")}, "declared-type/path/sym2/op-1"},
+		{SummaryType, []Part{TermPart("path/sym2")}, "summary-type/path/sym2/op-1"},
+		{MethodReturnSummary, []Part{TermPart("path/sym2")}, "method-return-summary/path/sym2/op-1"},
+		{IteratorElement, []Part{TermPart("path/sym2")}, "iterator-element/path/sym2/op-1"},
+		{IteratorKey, []Part{TermPart("path/sym2")}, "iterator-key/path/sym2/op-1"},
+		{IteratorKeySource, []Part{TermPart("path/sym2")}, "iterator-key-source/path/sym2/op-1"},
 		{NativeConstantValue, []Part{OpaquePart("2f2f")}, "constant_value/2f2f/op-1"},
 		{NativePublicationIdentity, []Part{OpaquePart("2f2f")}, "publication_identity/2f2f/op-1"},
 		{NativeBranchPartition, []Part{OpaquePart("2f2f")}, "branch_partition/2f2f/op-1"},
@@ -166,9 +180,20 @@ func TestBuildKeyProducesTypedPrefixes(t *testing.T) {
 	}
 }
 
+func TestTerminalTermSubjectOwnsNestedTermSyntax(t *testing.T) {
+	key := BuildKey(Value, []Part{TermPart(`scalar/claim/claim-kind/3/"any"`)}, "op-1")
+	if got, want := key.String(), `value/scalar/claim/claim-kind/3/"any"/op-1`; got != want {
+		t.Fatalf("key = %q, want %q", got, want)
+	}
+	parsed, ok := Value.ParseKey(key.String())
+	if !ok || parsed.Subject.Spelling() != `scalar/claim/claim-kind/3/"any"` || parsed.Occurrence != "op-1" {
+		t.Fatalf("parsed = %+v, %v", parsed, ok)
+	}
+}
+
 func TestFamiliesAreCompleteRecords(t *testing.T) {
-	if len(families) != 32 {
-		t.Fatalf("declared families = %d, want 32", len(families))
+	if len(families) != 44 {
+		t.Fatalf("declared families = %d, want 44", len(families))
 	}
 	for _, family := range families {
 		if family.ID == 0 || family.Prefix == "" || family.RevocationSet == nil ||

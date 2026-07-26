@@ -11,6 +11,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
@@ -466,21 +467,20 @@ func overlayStaticWrites(fields map[fieldKey]typ.Type, root, candidate string, v
 		value []byte
 	}
 	latestByField := make(map[fieldKey]latest)
-	prefix := "value/" + root
 	for _, fact := range values {
-		if !strings.HasPrefix(fact.Key, prefix) {
+		parsed, ok := factkey.Value.ParseKey(fact.Key)
+		if !ok {
 			continue
 		}
-		rest := strings.TrimPrefix(fact.Key, prefix)
-		cut := strings.LastIndexByte(rest, '/')
-		if cut <= 0 {
+		rest, descendant := strings.CutPrefix(parsed.Subject.Spelling(), root)
+		if !descendant || rest == "" {
 			continue
 		}
-		segments, ok := segment.ParseFormattedSegments(rest[:cut])
+		segments, ok := segment.ParseFormattedSegments(rest)
 		if !ok || len(segments) != 1 {
 			continue
 		}
-		writeOrder, exists := order[rest[cut+1:]]
+		writeOrder, exists := order[parsed.Occurrence]
 		if !exists || writeOrder >= returnOrder {
 			continue
 		}

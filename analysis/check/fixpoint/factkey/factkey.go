@@ -40,6 +40,10 @@ const (
 	EncodedTerm
 	// Term names a term written literally. A term is itself two segments.
 	Term
+	// Coordinate names one equation application coordinate. The body owning the
+	// coordinate is carried by the closed equation artifact; the key records
+	// its body-local name.
+	Coordinate
 	// Tagged names either an allocation or a term and says which, so the same
 	// family can state a fact about a container it has an identity for and about
 	// one it can only name by path.
@@ -99,6 +103,18 @@ const (
 	FamilyHeapIndexLower
 	FamilyHeapIndexUpper
 	FamilyHeapIndexRelation
+	FamilyValue
+	FamilyCallResult
+	FamilyCallArgument
+	FamilyLocalCallResult
+	FamilyType
+	FamilyDeclaredType
+	FamilySummaryType
+	FamilyMethodReturnSummary
+	FamilyBranchProof
+	FamilyIteratorElement
+	FamilyIteratorKey
+	FamilyIteratorKeySource
 	FamilyNativeConstantValue
 	FamilyNativePublicationIdentity
 	FamilyNativeBranchPartition
@@ -258,6 +274,54 @@ var (
 		ID: FamilyHeapIndexRelation, Prefix: "heap/index-relation/", Subject: Opaque,
 		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{FamilyHeapIndexRelation},
 	}
+	Value = Family{
+		ID: FamilyValue, Prefix: "value/", Subject: Term,
+		PayloadKind: PayloadValue, RevocationSet: RevocationSet{FamilyValue},
+	}
+	CallResult = Family{
+		ID: FamilyCallResult, Prefix: "call-result/", Subject: Coordinate,
+		PayloadKind: PayloadValue, RevocationSet: RevocationSet{FamilyCallResult},
+	}
+	CallArgument = Family{
+		ID: FamilyCallArgument, Prefix: "call-argument/", Subject: Coordinate,
+		PayloadKind: PayloadTerm, RevocationSet: RevocationSet{FamilyCallArgument},
+	}
+	LocalCallResult = Family{
+		ID: FamilyLocalCallResult, Prefix: "local-call-result/", Subject: Term,
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyLocalCallResult},
+	}
+	Type = Family{
+		ID: FamilyType, Prefix: "type/", Subject: Term,
+		PayloadKind: PayloadType, RevocationSet: RevocationSet{FamilyType},
+	}
+	DeclaredType = Family{
+		ID: FamilyDeclaredType, Prefix: "declared-type/", Subject: Term,
+		PayloadKind: PayloadType, RevocationSet: RevocationSet{FamilyDeclaredType},
+	}
+	SummaryType = Family{
+		ID: FamilySummaryType, Prefix: "summary-type/", Subject: Term,
+		PayloadKind: PayloadType, RevocationSet: RevocationSet{FamilySummaryType},
+	}
+	MethodReturnSummary = Family{
+		ID: FamilyMethodReturnSummary, Prefix: "method-return-summary/", Subject: Term,
+		PayloadKind: PayloadType, RevocationSet: RevocationSet{FamilyMethodReturnSummary},
+	}
+	BranchProofFamily = Family{
+		ID: FamilyBranchProof, Prefix: "branch-proof/", Subject: Opaque, Qualifiers: []Kind{Coordinate},
+		PayloadKind: PayloadMarker, RevocationSet: RevocationSet{FamilyBranchProof},
+	}
+	IteratorElement = Family{
+		ID: FamilyIteratorElement, Prefix: "iterator-element/", Subject: Term,
+		PayloadKind: PayloadType, RevocationSet: RevocationSet{FamilyIteratorElement},
+	}
+	IteratorKey = Family{
+		ID: FamilyIteratorKey, Prefix: "iterator-key/", Subject: Term,
+		PayloadKind: PayloadType, RevocationSet: RevocationSet{FamilyIteratorKey},
+	}
+	IteratorKeySource = Family{
+		ID: FamilyIteratorKeySource, Prefix: "iterator-key-source/", Subject: Term,
+		PayloadKind: PayloadTerm, RevocationSet: RevocationSet{FamilyIteratorKeySource},
+	}
 	NativeConstantValue = Family{
 		ID: FamilyNativeConstantValue, Prefix: "constant_value/", Subject: Opaque,
 		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{},
@@ -325,6 +389,18 @@ var families = []Family{
 	HeapIndexLower,
 	HeapIndexUpper,
 	HeapIndexRelation,
+	Value,
+	CallResult,
+	CallArgument,
+	LocalCallResult,
+	Type,
+	DeclaredType,
+	SummaryType,
+	MethodReturnSummary,
+	BranchProofFamily,
+	IteratorElement,
+	IteratorKey,
+	IteratorKeySource,
 	NativeConstantValue,
 	NativePublicationIdentity,
 	NativeBranchPartition,
@@ -391,6 +467,13 @@ func segmentPrefix(key string, width int) (string, bool) {
 // when the key does not have the declared shape, which keeps a malformed or
 // foreign key from being read as though it named something.
 func (f Family) Parse(key string) ([]Position, bool) {
+	if f.Subject == Term && len(f.Qualifiers) == 0 {
+		parsed, ok := f.ParseKey(key)
+		if !ok {
+			return nil, false
+		}
+		return []Position{{Kind: Term, Term: parsed.Subject.Spelling()}}, true
+	}
 	rest, ok := strings.CutPrefix(key, f.Prefix)
 	if !ok {
 		return nil, false
@@ -569,11 +652,6 @@ func Project(key string, terms map[string]string, occurrences map[string]string,
 // which is what lets a consumer treat them as alternatives of each other.
 const BranchGuardPrefix = "front/branch/"
 
-// BranchProofPrefix roots the fact family that re-states a branch decision as a
-// published fact, so a consumer downstream of the deciding body can recover the
-// guard the decision carried.
-const BranchProofPrefix = "branch-proof/"
-
 // RecurrenceExitPrefix roots the fact family that names, for one decision, the
 // edge through which control leaves a loop that decision continues. The loop's
 // back edge re-evaluates that decision, so a publication on the opposite edge
@@ -601,11 +679,25 @@ func (g BranchGuard) TrueEdged() bool { return g.Edge == TrueEdge }
 // Encoding writes the guard encoding for this edge.
 func (g BranchGuard) Encoding() string { return BranchGuardPrefix + g.Name + "/" + g.Edge }
 
+// AppendEncoding appends the guard encoding to dst. The equation bridge uses
+// this form so the sealed []byte representation is built in one allocation.
+func (g BranchGuard) AppendEncoding(dst []byte) []byte {
+	dst = append(dst, BranchGuardPrefix...)
+	dst = append(dst, g.Name...)
+	dst = append(dst, '/')
+	return append(dst, g.Edge...)
+}
+
 // BranchProof is the body-qualified statement of one branch decision.
 type BranchProof struct {
 	// Body is the deciding body, hex-encoded as the key spells it.
 	Body string
 	BranchGuard
+}
+
+// Key builds the fact key that publishes this body-qualified branch decision.
+func (p BranchProof) Key() Key {
+	return BuildKey(BranchProofFamily, []Part{OpaquePart(p.Body), CoordinatePart(p.Name)}, p.Edge)
 }
 
 // ParseBranchGuard reads one guard encoding. The name is whatever the encoding
@@ -621,19 +713,19 @@ func ParseBranchGuard(encoding string) (BranchGuard, bool) {
 // ParseBranchProof reads one branch-proof key: the deciding body, the decision,
 // and the edge, each one segment.
 func ParseBranchProof(key string) (BranchProof, bool) {
-	rest, ok := strings.CutPrefix(key, BranchProofPrefix)
+	parsed, ok := BranchProofFamily.ParseKey(key)
 	if !ok {
 		return BranchProof{}, false
 	}
-	body, rest, found := strings.Cut(rest, "/")
-	if !found || body == "" {
+	decision, present := parsed.Qualifier(0)
+	if !present {
 		return BranchProof{}, false
 	}
-	guard, valid := cutEdge(rest)
-	if !valid || strings.Contains(guard.Name, "/") {
+	guard := BranchGuard{Name: decision.Spelling(), Edge: parsed.Occurrence}
+	if guard.Name == "" || (guard.Edge != TrueEdge && guard.Edge != FalseEdge) {
 		return BranchProof{}, false
 	}
-	return BranchProof{Body: body, BranchGuard: guard}, true
+	return BranchProof{Body: parsed.Subject.Spelling(), BranchGuard: guard}, true
 }
 
 // cutEdge splits a decision's name from the edge it ends with.

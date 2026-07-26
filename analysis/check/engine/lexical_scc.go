@@ -222,7 +222,9 @@ func (l *lexicalEvaluator) runSCCBody(ctx context.Context, admission lexicalSCCA
 func lexicalSCCTopClosure(operands directCallOperands, target string) equation.OutputClosure {
 	closure := equation.OutputClosure{}
 	for index := 0; index < operands.resultArity; index++ {
-		closure.Values = append(closure.Values, equation.Fact{Key: fmt.Sprintf("call-result/%s/%08d", target, index), Value: []byte("scalar/top")})
+		closure.Values = append(closure.Values, equation.Fact{
+			Key: coordinateFamilyKey(factkey.CallResult, target, fmt.Sprintf("%08d", index)).String(), Value: []byte("scalar/top"),
+		})
 	}
 	return closure
 }
