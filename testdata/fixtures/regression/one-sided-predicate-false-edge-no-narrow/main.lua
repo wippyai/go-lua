@@ -9,7 +9,7 @@ local function run(value: any): number
         return value
     end
     local n: number = value -- expect-error
-    return n
+    return n -- expect-error
 end
 
 return run

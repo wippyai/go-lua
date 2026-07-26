@@ -2487,6 +2487,17 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 	if display != "" {
 		operands = append(operands, equation.Operand{Role: "display", Term: equation.ClosedTerm([]byte(display))})
 	}
+	// A comparison in value position carries the same normalized descriptor a
+	// branch condition carries. The sealed lowering erases the type() call the
+	// comparison owns, so without this operand the expression states two opaque
+	// scalars and the path the predicate names is unrecoverable downstream.
+	if check := body.Check(instruction.Check); check.Kind != wir.CheckNone {
+		predicate, err := branchPredicateTerm(check)
+		if err != nil {
+			return nil, fmt.Errorf("predicate: %w", err)
+		}
+		operands = append(operands, equation.Operand{Role: "predicate", Term: predicate})
+	}
 	appendOperand := func(role string, value wir.Operand) error {
 		if value.Kind == wir.OperandNone {
 			// This is an unrepresentable source operand, not Lua nil. Keep the

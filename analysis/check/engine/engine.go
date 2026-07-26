@@ -200,6 +200,10 @@ const (
 	typePredicatePairPrefix     = "type-predicate-pair/"
 	typePredicateValuePrefix    = "type-predicate-value/"
 	callTypePredicatePrefix     = "call-type-predicate/"
+	// typePredicateRelationPrefix names the result term of a call to a body that
+	// exports a one-sided type predicate. The value is the normalized descriptor
+	// a branch reads, instantiated at the argument that call passed.
+	typePredicateRelationPrefix = "type-predicate-relation/"
 	// optionalResultOriginPrefix names the callee slot whose declared optional
 	// result established a value's nil possibility. It is presentation
 	// provenance for that same published witness, never a second proof.
@@ -4917,24 +4921,47 @@ func capturelessFormalBody(child front.Compilation) bool {
 // capture-free one: it takes no argument a caller could refine, and its free
 // cells all carry an authority every invocation observes.
 func uncalledSealedCaptureBoundary(lexical *lexicalEvaluator, child front.Compilation, allocation lexicalAllocationSite, partition equation.Partition) bool {
-	return len(child.Boundary.Parameters) == 0 && lexical.sealedCaptureEnvironment(child, allocation, partition)
+	if child.Cyclic != nil || len(child.Boundary.Parameters) != 0 {
+		return false
+	}
+	return lexical.sealedCaptureEnvironment(child, allocation, partition, false)
+}
+
+// uncalledClosedAnyCaptureBoundary states that same closedness for a body whose
+// formals are all declared any. Neither half of such a boundary can be refined
+// by a call: any is the top of the value lattice, so no argument is more precise
+// than the declaration already is, and a sealed capture environment holds the
+// same values at every later invocation. The body is therefore decided at
+// allocation exactly like the capture-free explicit-any boundary, including a
+// recurrence in its own control flow: a loop belongs to the body this allocation
+// closes, not to a refinement a caller could supply.
+func uncalledClosedAnyCaptureBoundary(lexical *lexicalEvaluator, child front.Compilation, allocation lexicalAllocationSite, partition equation.Partition) bool {
+	if lexical == nil || child.WIR == nil || len(child.Boundary.Captures) == 0 {
+		return false
+	}
+	if _, closedAny := uncalledExplicitAnyBoundary(child); !closedAny {
+		return false
+	}
+	return lexical.sealedCaptureEnvironment(child, allocation, partition, true)
 }
 
 // sealedCaptureEnvironment reports that every free cell of this body carries an
 // authority no later execution can change. WIR's immutability bit proves no
 // lexical write can rebind a capture cell between allocation and any later call,
 // so each cell resolves here to what every invocation observes; the cell's
-// authority is then one of three:
+// authority is then one of four:
 //
 //   - a lexical callable whose own environment is sealed by this same relation,
 //   - a table allocation whose member surface is final at this allocation site,
 //   - a declared container, whose declaration is an invariant of the cell rather
-//     than a snapshot of it and therefore needs no finality.
+//     than a snapshot of it and therefore needs no finality,
+//   - a require binding whose published export authority admitImported lets the
+//     caller transport into the child entry.
 //
 // A mutable cell, or a cell with none of those authorities, leaves the body
 // dormant.
-func (l *lexicalEvaluator) sealedCaptureEnvironment(child front.Compilation, allocation lexicalAllocationSite, partition equation.Partition) bool {
-	if l == nil || child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) == 0 {
+func (l *lexicalEvaluator) sealedCaptureEnvironment(child front.Compilation, allocation lexicalAllocationSite, partition equation.Partition, admitImported bool) bool {
+	if l == nil || child.WIR == nil || len(child.Boundary.Captures) == 0 {
 		return false
 	}
 	sealedTerms := make(map[string]bool, len(child.Boundary.Captures))
@@ -4953,6 +4980,11 @@ func (l *lexicalEvaluator) sealedCaptureEnvironment(child front.Compilation, all
 		}
 		handle, found := closureHandleFor(term, partition)
 		if !found {
+			if admitImported {
+				if _, imported := l.importedAuthority(allocation.body, string(term)); imported {
+					continue
+				}
+			}
 			if !declaredIndexableContainer(declared[string(term)]) && !l.sealedTableCapture(term, value, allocation, partition) {
 				return false
 			}
@@ -5773,7 +5805,7 @@ func (l *lexicalEvaluator) uncalledDeclaredFormalCallBoundary(child front.Compil
 	if child.WIR == nil || len(child.Boundary.Parameters) == 0 {
 		return nil, false
 	}
-	if len(child.Boundary.Captures) != 0 && !l.sealedCaptureEnvironment(child, allocation, partition) {
+	if len(child.Boundary.Captures) != 0 && (child.Cyclic != nil || !l.sealedCaptureEnvironment(child, allocation, partition, false)) {
 		return nil, false
 	}
 	formals := make(map[string]bool, len(child.Boundary.Parameters))
@@ -8443,9 +8475,9 @@ func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.C
 			// exact authority was published when require's result was written.
 			// It is admitted only on the typed static paths that already require
 			// a complete capture entry.
-			if imported, found := l.importedAuthority(body, term); allowImportedCaptures {
+			if imported, found := l.importedAuthority(body, term); allowImportedCaptures && found {
 				encoded, encodedOK := shapefact.EncodeTarget(imported)
-				if !found || !encodedOK {
+				if !encodedOK {
 					return nil, nil, nil, nil, nil, false
 				}
 				seeds = append(seeds, entrySeed{Term: term, Value: encoded})
@@ -8601,6 +8633,211 @@ func (l *lexicalEvaluator) uncalledTypePredicateCaptureBoundary(child front.Comp
 		}
 	}
 	return application != "" && valueResult != "" && errorResult != "" && valuePath != "" && errorPath != "" && branch != ""
+}
+
+// typePredicateSummary is the one-sided relation a callee body exports: its
+// single returned value is truthy only where a normalized type-equal check on
+// the formal at Parameter held, so a caller's true edge proves the argument it
+// passed carries TypeName. Nothing is exported for the false edge: the body may
+// be a conjunction, and a false result refutes some conjunct rather than the
+// type test.
+type typePredicateSummary struct {
+	Parameter int
+	TypeName  string
+}
+
+// typePredicateBodySummary derives that relation from the callee's own closed
+// equation artifact. Each condition below is what makes the relation hold on
+// every path: one return whose term has one recognized definition, a body that
+// never rebinds its own boundary, and a type-equal check the language decides
+// by runtime tag. A body meeting none of them exports no summary, so a caller
+// narrows nothing.
+func typePredicateBodySummary(child front.Compilation) (typePredicateSummary, bool) {
+	if child.WIR == nil || child.Cyclic != nil || child.RebindsBoundary || len(child.Boundary.Parameters) == 0 {
+		return typePredicateSummary{}, false
+	}
+	returned, found := singleReturnedTerm(child.Artifact)
+	if !found {
+		return typePredicateSummary{}, false
+	}
+	// A returned local is the cell one write bound to the predicate term. More
+	// than one write leaves the returned value undecided by the check, so the
+	// chase stops rather than choosing a definition.
+	for depth := 0; depth < 4; depth++ {
+		predicate, recognized := truthyImpliedTypePredicate(child.Artifact, returned)
+		if recognized {
+			for index, parameter := range child.Boundary.Parameters {
+				if parameter.Vararg || boundaryTerm(parameter.Symbol) != "path/"+predicate.Path {
+					continue
+				}
+				return typePredicateSummary{Parameter: index, TypeName: predicate.TypeName}, true
+			}
+			return typePredicateSummary{}, false
+		}
+		source, bound := singleBoundSource(child.Artifact, returned)
+		if !bound {
+			return typePredicateSummary{}, false
+		}
+		returned = source
+	}
+	return typePredicateSummary{}, false
+}
+
+// typePredicateCallRelation instantiates the callee's exported predicate at the
+// argument this call passed. The callee is resolved through the closure handle
+// its cell currently holds, so a rebound binding names whatever body it now
+// holds and a cell carrying a claim rather than an allocation names none.
+func (l *lexicalEvaluator) typePredicateCallRelation(callee []byte, arguments map[int][]byte, partition equation.Partition) (branchPredicateWire, bool) {
+	if l == nil || len(callee) == 0 {
+		return branchPredicateWire{}, false
+	}
+	handle, local := closureHandleFor(callee, partition)
+	if !local {
+		return branchPredicateWire{}, false
+	}
+	child, admitted := l.byPrototype[handle.Prototype]
+	if !admitted {
+		return branchPredicateWire{}, false
+	}
+	summary, exported := typePredicateBodySummary(child)
+	if !exported {
+		return branchPredicateWire{}, false
+	}
+	argument, passed := arguments[summary.Parameter]
+	if !passed {
+		return branchPredicateWire{}, false
+	}
+	path, rooted := strings.CutPrefix(string(argument), "path/")
+	if !rooted || path == "" {
+		return branchPredicateWire{}, false
+	}
+	return branchPredicateWire{Kind: "type-equal", Path: path, TypeName: summary.TypeName}, true
+}
+
+// singleReturnedTerm names the term a body returns when it has exactly one
+// return of exactly one value. Several returns state several relations, and the
+// summary must hold on every path this body can take.
+func singleReturnedTerm(artifact equation.Artifact) (string, bool) {
+	term := ""
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "publication" {
+			continue
+		}
+		value, found := artifactOperand(operation.Operands, "return-value-00000000")
+		if term != "" || !found {
+			return "", false
+		}
+		if _, more := artifactOperand(operation.Operands, "return-value-00000001"); more {
+			return "", false
+		}
+		term = string(value)
+	}
+	return term, term != ""
+}
+
+// truthyImpliedTypePredicate reads the type-equal check a term's truth proves.
+// A comparison term holds exactly the check's own truth. An `and` result holds
+// the left operand on the bypass edge, which is the edge where that same check
+// failed, so a truthy result is only reachable through the edge on which it
+// held. Both shapes require the term to have that single definition; a term any
+// other operation also defines states nothing here.
+func truthyImpliedTypePredicate(artifact equation.Artifact, term string) (branchPredicateWire, bool) {
+	predicate, definitions := branchPredicateWire{}, 0
+	for _, operation := range artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "expression":
+			result, found := artifactOperand(operation.Operands, "result")
+			if !found || string(result) != term {
+				continue
+			}
+			definitions++
+			if wire, ok := runtimeTypeEqualPredicate(operation.Operands, "predicate"); ok {
+				predicate = wire
+			}
+		case "branch-relations":
+			result, found := artifactOperand(operation.Operands, "short-circuit-result")
+			if !found || string(result) != term {
+				continue
+			}
+			bypass, hasBypass := artifactOperand(operation.Operands, "short-circuit-bypass")
+			if !hasBypass || string(bypass) != "scalar/bool/false" {
+				return branchPredicateWire{}, false
+			}
+			wire, ok := runtimeTypeEqualPredicate(operation.Operands, "predicate")
+			if !ok {
+				return branchPredicateWire{}, false
+			}
+			// The bypass edge carries the guard's own false value, so the arms
+			// this region writes into the result cell are reachable only on the
+			// edge the guard proved. They are definitions of the same term and
+			// are exactly what the relation already accounts for.
+			return wire, true
+		default:
+			continue
+		}
+	}
+	return predicate, definitions == 1 && predicate.Kind != ""
+}
+
+// runtimeTypeEqualPredicate reads one operand as an un-negated type-equal check
+// against a name Lua's type() reports. A comparison against another path names
+// no static kind, and a negated check states what the value is not.
+func runtimeTypeEqualPredicate(operands []equation.Operand, role string) (branchPredicateWire, bool) {
+	encoded, found := artifactOperand(operands, role)
+	if !found {
+		return branchPredicateWire{}, false
+	}
+	wire, ok := decodeBranchPredicateWire(encoded)
+	if !ok || wire.Kind != "type-equal" || wire.Negated || wire.Path == "" || wire.OtherPath != "" {
+		return branchPredicateWire{}, false
+	}
+	if !runtimeTypeProofName(wire.TypeName) {
+		return branchPredicateWire{}, false
+	}
+	return wire, true
+}
+
+// runtimeTypeProofName names the kinds Lua's type() reports that a proof fact
+// can certify. It is the single authority both the in-body branch proofs and
+// the interprocedural summary read.
+func runtimeTypeProofName(name string) bool {
+	switch name {
+	case "nil", "boolean", "number", "string", "table", "function":
+		return true
+	default:
+		return false
+	}
+}
+
+// singleBoundSource names the value a term's only ordinary write binds. A term
+// several writes define, or one an operation of any other family also defines,
+// leaves the chase without a definition to follow.
+func singleBoundSource(artifact equation.Artifact, term string) (string, bool) {
+	source, writes := "", 0
+	for _, operation := range artifact.Equations {
+		switch operation.Occurrence.Kind {
+		case "environment-write":
+			target, found := artifactOperand(operation.Operands, "target")
+			if !found || string(target) != term {
+				continue
+			}
+			writes++
+			value, hasValue := artifactOperand(operation.Operands, "value")
+			if !hasValue {
+				return "", false
+			}
+			source = string(value)
+		case "expression", "branch-relations", "publication", "entry":
+			continue
+		default:
+			for _, operand := range operation.Operands {
+				if strings.HasPrefix(operand.Role, "result") && string(operand.Term.Encoding) == term {
+					return "", false
+				}
+			}
+		}
+	}
+	return source, writes == 1 && source != ""
 }
 
 func uncalledTypePredicateHelper(child front.Compilation) bool {
@@ -10979,12 +11216,21 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			contextualCallbackBoundary = true
 		}
 	}
+	// A closed-any body over a sealed capture environment is decided at this
+	// allocation whatever its own control flow looks like, so its entry carries
+	// the same capture authorities the sealed lanes transport.
+	closedAnyCaptureBoundary := explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
+		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary && !declaredFormalCallBoundary &&
+		!importedCaptureBoundary && !sealedCaptureBoundary && !contextualCallbackBoundary &&
+		uncalledClosedAnyCaptureBoundary(lexical, child, lexicalAllocationSite{body: operation.Target.Body, operation: operation.Target.Name}, partition)
 	if closedBoundary || sealedCaptureBoundary || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary || importedCaptureBoundary {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
 		} else if importedCaptureBoundary {
 			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, false, true, false, false)
+		} else if closedAnyCaptureBoundary {
+			entry, admitted, entryErr = lexical.uncalledChildEntry(operation.Target.Body, child, uncalledSeeds, partition, true, true, false, false)
 		} else if sealedEnvironmentBoundary {
 			// A sealed environment is reconstructed by the capability transport,
 			// not by the declaration alone: the entry carries the capture values
@@ -18023,7 +18269,7 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 		closure.Outcomes = append(closure.Outcomes, equation.Fact{Key: "frozen-branch/" + operation.Target.Name, Value: []byte("proven")})
 	}
 	if truth {
-		for _, proof := range runtimeTypeBranchProofs(operation) {
+		for _, proof := range runtimeTypeBranchProofs(operation, partition) {
 			guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
 			closure.Values = append(closure.Values, equation.Fact{Key: runtimeTypeProofKey(proof.path, proof.typeName), Value: []byte("proven"), Guards: []equation.Guard{guard}})
 		}
@@ -18158,7 +18404,7 @@ func undecidedBranchOutcome(operation equation.BoundEquation, partition equation
 // that edge reachable publishes exactly this set.
 func trueEdgeRefinements(operation equation.BoundEquation, partition equation.Partition, guard equation.Guard) []equation.Fact {
 	facts := make([]equation.Fact, 0)
-	for _, item := range runtimeTypeBranchProofs(operation) {
+	for _, item := range runtimeTypeBranchProofs(operation, partition) {
 		facts = append(facts, equation.Fact{
 			Key: runtimeTypeProofKey(item.path, item.typeName), Value: []byte("proven"), Guards: []equation.Guard{guard},
 		})
@@ -18261,9 +18507,8 @@ func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equat
 		}
 		return shapefact.DecodeTarget(value)
 	}
-	for _, operand := range operation.Operands {
-		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
-		if !recognized || !trueEdge || predicate.Path == "" {
+	for _, predicate := range branchTrueEdgePredicates(operation, partition) {
+		if predicate.Path == "" {
 			continue
 		}
 		switch predicate.Kind {
@@ -19016,27 +19261,56 @@ func correlationConeEpochs(source, target string, partition equation.Partition) 
 
 type runtimeTypeBranchProof struct{ path, typeName string }
 
-func runtimeTypeBranchProofs(operation equation.BoundEquation) []runtimeTypeBranchProof {
+func runtimeTypeBranchProofs(operation equation.BoundEquation, partition equation.Partition) []runtimeTypeBranchProof {
 	seen := make(map[string]bool)
 	proofs := make([]runtimeTypeBranchProof, 0)
+	for _, predicate := range branchTrueEdgePredicates(operation, partition) {
+		if predicate.Kind != "type-equal" || predicate.Negated || predicate.Path == "" || !runtimeTypeProofName(predicate.TypeName) {
+			continue
+		}
+		key := predicate.Path + "\x00" + predicate.TypeName
+		if !seen[key] {
+			seen[key] = true
+			proofs = append(proofs, runtimeTypeBranchProof{path: predicate.Path, typeName: predicate.TypeName})
+		}
+	}
+	return proofs
+}
+
+// branchTrueEdgePredicates lists the normalized checks a branch's true edge
+// proves: the evidence its own operands carry, then the interprocedural
+// relation its condition term carries when that condition is the result of a
+// call to an exported one-sided type predicate. Both are the same closed
+// descriptor, so every true-edge consumer reads one list.
+func branchTrueEdgePredicates(operation equation.BoundEquation, partition equation.Partition) []branchPredicateWire {
+	predicates := make([]branchPredicateWire, 0, len(operation.Operands)+1)
 	for _, operand := range operation.Operands {
 		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
 		if !recognized || !trueEdge {
 			continue
 		}
-		if predicate.Kind != "type-equal" || predicate.Path == "" || predicate.TypeName == "" {
-			continue
-		}
-		switch predicate.TypeName {
-		case "nil", "boolean", "number", "string", "table", "function":
-			key := predicate.Path + "\x00" + predicate.TypeName
-			if !seen[key] {
-				seen[key] = true
-				proofs = append(proofs, runtimeTypeBranchProof{path: predicate.Path, typeName: predicate.TypeName})
-			}
-		}
+		predicates = append(predicates, predicate)
 	}
-	return proofs
+	if predicate, carried := branchConditionTypePredicate(operation, partition); carried {
+		predicates = append(predicates, predicate)
+	}
+	return predicates
+}
+
+// branchConditionTypePredicate reads the relation the branch's condition term
+// carries. call-results published it against the exact argument the call
+// passed, so the descriptor names a path in this body and the true edge decides
+// it exactly as an in-body check does.
+func branchConditionTypePredicate(operation equation.BoundEquation, partition equation.Partition) (branchPredicateWire, bool) {
+	condition := boundOperandValue(operation.Operands, "condition")
+	if len(condition) == 0 {
+		return branchPredicateWire{}, false
+	}
+	encoded, found := currentEpochFact(typePredicateRelationPrefix, condition, partition)
+	if !found {
+		return branchPredicateWire{}, false
+	}
+	return decodeBranchPredicateWire(encoded)
 }
 
 func runtimeTypeProofKey(path, typeName string) string {
@@ -20998,6 +21272,24 @@ func anyBoundarySource(term []byte, value []byte, known bool, partition equation
 // be applied.
 func anyBoundaryCallee(term []byte, value []byte, known bool, partition equation.Partition) bool {
 	return anyBoundarySource(term, value, known, partition) && !runtimeTypeProven(term, "function", partition)
+}
+
+// callBoundaryAnyResult reports that an application resolves its callee through
+// an any/unknown boundary: either the applied value itself, or the receiver a
+// colon call indexes to reach the method. A type() proof of callability decides
+// that the value can be applied, never what it returns, so it does not clear
+// this boundary.
+func callBoundaryAnyResult(callee, receiver []byte, partition equation.Partition) bool {
+	for _, term := range [][]byte{callee, receiver} {
+		if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
+			continue
+		}
+		value, known := resolveKnownCurrentValue(term, partition)
+		if anyBoundarySource(term, value, known, partition) {
+			return true
+		}
+	}
+	return false
 }
 
 // anyBoundaryRuntimeValidated reports whether a runtime type test already
@@ -24691,6 +24983,14 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					}
 				}
 			}
+			// No contract resolves this slot and the application dispatches through
+			// an any/unknown boundary, so what the callee returns carries that same
+			// boundary. Top would state absence of information where the boundary is
+			// itself a published fact, and every obligation any owes would then be
+			// discharged by that absence.
+			if string(value) == "scalar/top" && callBoundaryAnyResult(callee, receiver, partition) {
+				value = []byte("scalar/claim/claim-kind/3/\"any\"")
+			}
 		}
 		// A standard-library slot whose declared optionality is positional is
 		// discharged where a guard has already bounded the subject. The proof is
@@ -24749,6 +25049,23 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					values = append(values, placementBindingFact(string(targetTerm), operation.Target.Name, string(fact.Value)))
 				}
 				break
+			}
+		}
+		// A callee body that exports a one-sided type predicate decides, through
+		// this result, what its caller's true edge proves about the argument this
+		// call passed. The relation rides the result term in the same normalized
+		// descriptor an in-body check publishes, so the guard consuming it needs
+		// no second narrowing vocabulary.
+		if key == "00000000" {
+			if wire, carried := lexical.typePredicateCallRelation(callee, argumentTerms, partition); carried {
+				encoded, encodeErr := json.Marshal(wire)
+				if encodeErr != nil {
+					return equation.TransactionResult{}, fmt.Errorf("engine: encode type predicate relation: %w", encodeErr)
+				}
+				values = append(values, equation.Fact{
+					Key:   typePredicateRelationPrefix + string(result) + "/" + operation.Target.Name,
+					Value: append([]byte(branchPredicatePrefix), encoded...),
+				})
 			}
 		}
 		if typePredicateErrorTarget != nil && key == "00000000" {

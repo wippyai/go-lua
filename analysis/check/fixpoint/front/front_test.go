@@ -944,3 +944,47 @@ end
 		t.Fatalf("selected-arm write = %#v guards=%#v", selected, byKind["environment-write"][1].Guards)
 	}
 }
+
+// TestCompileBodyLowersValuePositionTypePredicate pins that a comparison in
+// value position carries the same normalized descriptor a branch condition
+// carries. The sealed lowering owns the type() call the comparison names, so
+// without this operand the expression states two opaque scalars and the path
+// under test is unrecoverable by any later consumer.
+func TestCompileBodyLowersValuePositionTypePredicate(t *testing.T) {
+	artifact, err := front.CompileBody(`
+local value = 1
+local ok = type(value) == "number"
+`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	byKind := equationsByKind(artifact)
+	if len(byKind["expression"]) != 1 {
+		t.Fatalf("value-position comparison lowering = %#v", byKind["expression"])
+	}
+	predicate := operands(byKind["expression"][0])["predicate"]
+	if !strings.HasPrefix(predicate, "front/branch-predicate/v1/") ||
+		!strings.Contains(predicate, `"kind":"type-equal"`) ||
+		!strings.Contains(predicate, `"type_name":"number"`) {
+		t.Fatalf("value-position predicate = %q", predicate)
+	}
+}
+
+// TestCompileBodyOmitsPredicateForOrdinaryComparison pins that the operand is
+// the normalized descriptor and nothing else: a comparison the front does not
+// normalize publishes no predicate rather than an invented one.
+func TestCompileBodyOmitsPredicateForOrdinaryComparison(t *testing.T) {
+	artifact, err := front.CompileBody(`
+local left = 1
+local right = 2
+local ok = left <= right
+`)
+	if err != nil {
+		t.Fatalf("CompileBody: %v", err)
+	}
+	for _, operation := range equationsByKind(artifact)["expression"] {
+		if predicate := operands(operation)["predicate"]; strings.Contains(predicate, "type-equal") {
+			t.Fatalf("ordinary comparison published a type predicate: %q", predicate)
+		}
+	}
+}

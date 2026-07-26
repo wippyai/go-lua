@@ -103,3 +103,84 @@ need(x)`)
 		t.Fatalf("an unvalidated any argument stays refuted against string?: %#v", unvalidated.PublishedDiagnostics)
 	}
 }
+
+// TestClosedAnyCaptureBodyIsDecidedAtAllocation pins the closed-any capture
+// boundary: a body whose every formal is declared any takes no argument a
+// caller can refine, and a sealed capture environment holds the same values at
+// every later invocation, so its contracts are decided where it is allocated.
+// A recurrence in its own control flow belongs to that body, not to a caller.
+func TestClosedAnyCaptureBodyIsDecidedAtAllocation(t *testing.T) {
+	result, err := engine.Check(`local helper = {}
+function helper.count(): number
+    return 1
+end
+type Report = { status: string, message: string }
+local function run(options: any?): Report
+    for index = 1, helper.count() do
+        return { status = "error", message = index }
+    end
+    return { status = "ok", message = "done" }
+end
+return { run = run }`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if !hasPublished(result, "type.return.contract", "returned value 1 is table, not") {
+		t.Fatalf("a closed-any capture body owes its return contract: %#v", result.PublishedDiagnostics)
+	}
+}
+
+// TestMutableCaptureLeavesClosedAnyBodyDormant pins the other half: a capture a
+// later write can rebind is not sealed, so the value resolved at allocation is
+// not the value every invocation observes and the body stays dormant.
+func TestMutableCaptureLeavesClosedAnyBodyDormant(t *testing.T) {
+	result, err := engine.Check(`local limit = 1
+type Report = { status: string, message: string }
+local function run(options: any?): Report
+    return { status = "error", message = limit }
+end
+limit = 2
+return { run = run }`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if hasPublished(result, "type.return.contract", "returned value 1") {
+		t.Fatalf("an unsealed environment leaves the body dormant: %#v", result.PublishedDiagnostics)
+	}
+}
+
+// TestCallThroughAnyBoundaryReturnsTheBoundary pins that a call no contract
+// resolves, dispatched through an any/unknown value, publishes that boundary as
+// its result. Top would state absence of information where the boundary is the
+// published fact, and every obligation any owes would be discharged by it.
+func TestCallThroughAnyBoundaryReturnsTheBoundary(t *testing.T) {
+	method, err := engine.Check(`type Report = { status: string, message: string }
+local function run(source: any): Report
+    local result = source:load()
+    return { status = "error", message = result.detail }
+end
+return run`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if !hasPublished(method, "type.return.contract", "returned value 1.message comes from any/unknown") {
+		t.Fatalf("a method dispatched through any returns any: %#v", method.PublishedDiagnostics)
+	}
+
+	// A callee with a resolved contract keeps that contract: the boundary rule
+	// completes an unresolved slot and never displaces a published one.
+	resolved, err := engine.Check(`type Report = { status: string, message: string }
+local function detail(): string
+    return "text"
+end
+local function run(source: any): Report
+    return { status = "error", message = detail() }
+end
+return run`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if hasPublished(resolved, "type.return.contract", "comes from any/unknown") {
+		t.Fatalf("a resolved callee contract survives the boundary rule: %#v", resolved.PublishedDiagnostics)
+	}
+}
