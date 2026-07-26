@@ -8,7 +8,7 @@ import (
 
 // declaredChildBoundary compiles one source and returns its single nested body
 // together with the formal terms that body's declaration seeds.
-func declaredChildBoundary(t *testing.T, source string) (front.Compilation, map[string]bool) {
+func declaredChildBoundary(t *testing.T, source string) (front.Compilation, admissionBoundarySet) {
 	t.Helper()
 	compilation, err := front.Compile(source)
 	if err != nil {
@@ -18,16 +18,16 @@ func declaredChildBoundary(t *testing.T, source string) (front.Compilation, map[
 		t.Fatalf("nested bodies = %d, want 1", len(compilation.Nested))
 	}
 	child := compilation.Nested[0]
-	formals := make(map[string]bool, len(child.Boundary.Parameters))
+	formals := make(admissionBoundarySet, 0, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
-		formals[boundaryTerm(parameter.Symbol)] = true
+		formals = append(formals, boundaryTerm(parameter.Symbol))
 	}
 	return child, formals
 }
 
 // declaredAssignmentClaims names the annotation claims a declaration-only entry
 // owns, keyed by the display the claim states.
-func declaredAssignmentClaims(t *testing.T, child front.Compilation, formals map[string]bool) map[string]bool {
+func declaredAssignmentClaims(t *testing.T, child front.Compilation, formals admissionBoundarySet) map[string]bool {
 	t.Helper()
 	index := indexAdmissionBody(child)
 	derived := index.declaredFormalDerivedCells(formals)
