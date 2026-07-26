@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -1476,6 +1477,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 	}
 	guardReachability := newReachabilityCache(graph)
 	recurrentPoints := recurrentGraphPoints(graph, guardReachability, operations)
+	monotoneCarriers := monotoneFloorCarriers(body, operations, recurrentPoints)
 	suspensionLives := suspensionLiveAllocations(body, graph, guardReachability)
 	for index, operation := range operations {
 		instruction := operation.instruction
@@ -1843,8 +1845,25 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 		// that topology to the transaction, which is the only place that knows
 		// whether the write lands on a member and therefore what remains
 		// possible rather than established.
-		if recurrentPoints[instruction.Point] && (draft.Occurrence.Kind == "environment-write" || draft.Occurrence.Kind == "index-mutation" || draft.Occurrence.Kind == "path-replacement" || draft.Occurrence.Kind == "branch-relations") {
+		//
+		// A claim and a publication carry it for a second reason: each states a
+		// value in the text it reports, and an operation evaluated once per trip
+		// produces one such text per trip. Only the fixed point is the body's
+		// answer, so the reporter needs to know it is describing a carrier.
+		if recurrentPoints[instruction.Point] && (draft.Occurrence.Kind == "environment-write" || draft.Occurrence.Kind == "index-mutation" || draft.Occurrence.Kind == "path-replacement" || draft.Occurrence.Kind == "branch-relations" || draft.Occurrence.Kind == "claim" || draft.Occurrence.Kind == "publication") {
 			draft.Operands = append(draft.Operands, equation.Operand{Role: "recurrence", Term: equation.ClosedTerm([]byte("recurrence/cyclic"))})
+		}
+		// A decision inside the cycle carries the carriers this body proved
+		// never fall below the constant they entered it with. The proof is the
+		// body's own write set, not any value the fixed point holds, so it is
+		// stated once here and consumed identically on every trip.
+		if recurrentPoints[instruction.Point] && draft.Occurrence.Kind == "branch-relations" {
+			for carrierIndex, carrier := range monotoneCarriers {
+				draft.Operands = append(draft.Operands, equation.Operand{
+					Role: "monotone-floor-" + fmt.Sprintf("%08d", carrierIndex),
+					Term: equation.ClosedTerm([]byte(carrier)),
+				})
+			}
 		}
 		drafts = append(drafts, draft)
 	}
@@ -3511,6 +3530,177 @@ func recurrentGraphPoints(graph cfg.Graph, reachability *reachabilityCache, oper
 		}
 	}
 	return points
+}
+
+// monotoneFloorCarriers names the paths this body writes only in ways that
+// cannot lower them: a constant at least one before the cycle, and inside the
+// cycle nothing but the path itself plus a non-negative constant. Such a path
+// holds at least its entry constant at every arrival at the loop header, so a
+// consumer that needs its lower bound has one without reading any value the
+// fixed point carries -- which is what makes the bound survive widening, and
+// what keeps it out of reach of a first-trip value that a later trip lowers.
+//
+// The proof is over the complete write set, so one unrecognized write to a
+// carrier withdraws it entirely: a decrement, a step this body cannot name as a
+// constant, a store through a member or index path, a call result, an iterator
+// binding, and a capture handed to a closure all leave the path outside the
+// fragment. Wrap-freedom is not decided here -- it belongs to the carrier's
+// representation, which the transaction reads.
+func monotoneFloorCarriers(body *wir.Body, operations []operation, recurrentPoints map[cfg.Point]bool) []string {
+	if body == nil {
+		return nil
+	}
+	type carrier struct{ seeds, steps int }
+	candidates := make(map[string]*carrier)
+	disqualified := make(map[string]bool)
+	at := func(term string) *carrier {
+		if candidates[term] == nil {
+			candidates[term] = &carrier{}
+		}
+		return candidates[term]
+	}
+	for _, item := range operations {
+		instruction := item.instruction
+		for _, term := range writtenRootTerms(body, instruction) {
+			recurrent := recurrentPoints[instruction.Point]
+			switch {
+			case monotoneRefinement(body, instruction, term):
+			case recurrent && monotoneStep(body, instruction, term):
+				at(term).steps++
+			case !recurrent && monotoneSeed(body, instruction, term):
+				at(term).seeds++
+			default:
+				disqualified[term] = true
+			}
+		}
+		// A closure allocation hands its captures a cell this body no longer
+		// owns: the callee may write the carrier at any later point, including
+		// one inside the cycle, so the write set here is no longer complete.
+		if instruction.Op == wir.OpClosure {
+			for _, capture := range body.Operands(instruction.List) {
+				if capture.Kind != wir.OperandPath {
+					continue
+				}
+				if path := body.Path(wir.PathRef(capture.Ref)); !path.IsEmpty() && path.Key() != "" {
+					disqualified["path/"+string(path.Key())] = true
+				}
+			}
+		}
+	}
+	carriers := make([]string, 0, len(candidates))
+	for term, counts := range candidates {
+		if disqualified[term] || counts.seeds == 0 || counts.steps == 0 {
+			continue
+		}
+		carriers = append(carriers, term)
+	}
+	sort.Strings(carriers)
+	return carriers
+}
+
+// writtenRootTerms names the root paths one instruction writes. A write whose
+// destination is not a bare root names no carrier and is reported as the root
+// it lands under, so a member or index store withdraws that root rather than
+// passing unseen.
+func writtenRootTerms(body *wir.Body, instruction wir.Instruction) []string {
+	destinations := []wir.Operand{instruction.Dst}
+	if instruction.Op == wir.OpIterate || instruction.Op == wir.OpCall {
+		destinations = append(destinations, body.Operands(instruction.Results)...)
+	}
+	var terms []string
+	for _, destination := range destinations {
+		if destination.Kind != wir.OperandPath {
+			continue
+		}
+		path := body.Path(wir.PathRef(destination.Ref))
+		if path.IsEmpty() || path.Key() == "" {
+			continue
+		}
+		root := path
+		root.Segments = nil
+		root.Version = 0
+		terms = append(terms, "path/"+string(root.Key()))
+	}
+	return terms
+}
+
+// monotoneRefinement accepts a claim that states a fact about the very path it
+// binds. Such a claim narrows the value already there to a subset of itself, so
+// it can produce nothing below what the path held and leaves the carrier's
+// fragment intact. A claim that binds one path from another is an ordinary
+// write and is classified as one.
+func monotoneRefinement(body *wir.Body, instruction wir.Instruction, term string) bool {
+	return instruction.Op == wir.OpClaim &&
+		exactRootPathOperand(body, instruction.Dst, term) &&
+		exactRootPathOperand(body, instruction.A, term)
+}
+
+// monotoneStep accepts exactly `carrier = carrier + c` with c a non-negative
+// integer constant, in either operand order. Addition is the only operator that
+// keeps the fragment closed: every other arithmetic operation on a carrier can
+// produce a value below the one it read, and a non-constant step is a value
+// this body does not know the sign of.
+func monotoneStep(body *wir.Body, instruction wir.Instruction, term string) bool {
+	if instruction.Op != wir.OpBinOp || wir.Operator(instruction.Operator) != wir.BinAdd {
+		return false
+	}
+	if !exactRootPathOperand(body, instruction.Dst, term) {
+		return false
+	}
+	if exactRootPathOperand(body, instruction.A, term) {
+		return nonNegativeNumericConstant(body, instruction.B)
+	}
+	if exactRootPathOperand(body, instruction.B, term) {
+		return nonNegativeNumericConstant(body, instruction.A)
+	}
+	return false
+}
+
+// monotoneSeed accepts a plain assignment of a constant of at least one. The
+// bound the carriers state is `>= 1`, which is the bound an index consumer
+// needs, so a seed below it establishes nothing this operand may claim.
+func monotoneSeed(body *wir.Body, instruction wir.Instruction, term string) bool {
+	if instruction.Op != wir.OpAssign || !exactRootPathOperand(body, instruction.Dst, term) {
+		return false
+	}
+	value, numeric := numericConstantOperand(body, instruction.A)
+	return numeric && value >= 1
+}
+
+func exactRootPathOperand(body *wir.Body, operand wir.Operand, term string) bool {
+	if operand.Kind != wir.OperandPath {
+		return false
+	}
+	path := body.Path(wir.PathRef(operand.Ref))
+	if path.IsEmpty() || path.Key() == "" || len(path.Segments) != 0 {
+		return false
+	}
+	root := path
+	root.Version = 0
+	return "path/"+string(root.Key()) == term
+}
+
+func nonNegativeNumericConstant(body *wir.Body, operand wir.Operand) bool {
+	value, numeric := numericConstantOperand(body, operand)
+	return numeric && value >= 0
+}
+
+// numericConstantOperand reads a constant the body spells exactly. A value the
+// lowering did not fix -- a path, a temporary, a call result -- carries no sign,
+// and a spelling this reader cannot parse is treated the same way.
+func numericConstantOperand(body *wir.Body, operand wir.Operand) (float64, bool) {
+	if operand.Kind != wir.OperandConst {
+		return 0, false
+	}
+	constant := body.Const(wir.ConstRef(operand.Ref))
+	if constant.Kind != wir.ConstNumber {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(constant.Number, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, false
+	}
+	return value, true
 }
 
 // literalLoopDiscriminant recognizes the only literal relation whose selected

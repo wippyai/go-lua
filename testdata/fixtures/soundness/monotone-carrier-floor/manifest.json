@@ -1,0 +1,5 @@
+{
+  "description": "A loop-carried counter's lower bound is a property of the body's write set rather than of any value the fixed point holds: widening collapses the counter to its primitive, so a bound read off one trip states nothing about the others. The bound this body can state is that the counter never falls below the constant it entered the cycle with, and it holds only when every write inside the cycle is the counter plus a non-negative constant and the representation does not wrap. A decrement, a step the body cannot name as a constant, an integer carrier that wraps, and a second seed below one each leave the read unbounded from below.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

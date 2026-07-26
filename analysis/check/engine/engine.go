@@ -1094,6 +1094,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			}
 		}
 		value, available := claimDiagnosticValue(operands["value"], operation, closure)
+		value = reportedRecurrentValue(value, operation.Operands)
 		resultDisplay, callResultOperation, hasResultDisplay := callResultDisplay(artifact, operands["value"])
 		hasResultDisplay = hasResultDisplay && (hasImportedRelationResult(closure.Values, operands["value"]) || hasCurrentSummaryFact(methodReturnSummaryPrefix, operands["value"], closure.Values) || isUnvalidatedAnyValue(value))
 		if hasResultDisplay {
@@ -4900,10 +4901,13 @@ func uncalledGradualLogicalCallBoundary(child front.Compilation) ([]entrySeed, [
 }
 
 // capturelessFormalBody is the shared entry condition of the declaration-only
-// boundaries: a lowered, non-recursive body that closes over nothing and takes
-// at least one formal. A caller supplies its own withholding value.
+// boundaries: a lowered body that closes over nothing and takes at least one
+// formal. A caller supplies its own withholding value. A body with a cycle is
+// admitted on the same terms: the cyclic evaluator solves its recurrence
+// against the recurrence lattice, so what the entry seeds decides that body's
+// surface exactly as it decides a straight-line one's.
 func capturelessFormalBody(child front.Compilation) bool {
-	return child.WIR != nil && child.Cyclic == nil && len(child.Boundary.Captures) == 0 && len(child.Boundary.Parameters) != 0
+	return child.WIR != nil && len(child.Boundary.Captures) == 0 && len(child.Boundary.Parameters) != 0
 }
 
 // uncalledSealedCaptureBoundary admits a parameter-free body whose entire free
@@ -5752,7 +5756,7 @@ func (l *lexicalEvaluator) callbackCompositionCall(operands directCallOperands, 
 // from any root, or a call through a value with none of those authorities keeps
 // the body dormant.
 func (l *lexicalEvaluator) uncalledDeclaredFormalCallBoundary(child front.Compilation, allocation lexicalAllocationSite, partition equation.Partition) ([]entrySeed, bool) {
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) == 0 {
+	if child.WIR == nil || len(child.Boundary.Parameters) == 0 {
 		return nil, false
 	}
 	if len(child.Boundary.Captures) != 0 && !l.sealedCaptureEnvironment(child, allocation, partition) {
@@ -10854,7 +10858,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			contextualCallbackBoundary = true
 		}
 	}
-	if (child.Cyclic == nil || importedCaptureBoundary) && (closedBoundary || sealedCaptureBoundary || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary || importedCaptureBoundary) {
+	if closedBoundary || sealedCaptureBoundary || len(uncalledSeeds) != 0 || staticCapturedReturnBoundary || arithmeticBoundary || typedChannelSendBoundary || staticMemberReadBoundary || gradualLogicalBoundary || importedCaptureBoundary {
 		entry, admitted, entryErr := []byte(nil), true, error(nil)
 		if localUnionReadBoundary {
 			entry, admitted, entryErr = lexical.uncalledLocalUnionReadEntry(child, uncalledSeeds, partition)
@@ -13210,6 +13214,11 @@ func keyedContainerSurface(term, value []byte, partition equation.Partition) []b
 	if !found || !heapOpaqueMemberWrite(identity, partition) {
 		return value
 	}
+	if declared, carried := uniformSlotDeclaredContainer(term, partition); carried {
+		if encoded, ok := shapefact.EncodeTarget(declared); ok {
+			return encoded
+		}
+	}
 	if component, synthesized := heapKeyedComponent(identity, value, partition); synthesized {
 		if encoded, ok := shapefact.EncodeTarget(component); ok {
 			return encoded
@@ -13223,6 +13232,33 @@ func keyedContainerSurface(term, value []byte, partition equation.Partition) []b
 		return []byte("scalar/top")
 	}
 	return opened
+}
+
+// uniformSlotDeclaredContainer is a container's own declaration where that
+// declaration types every slot by key domain rather than by name: an array and
+// a map state one element contract for every key alike, and neither proves any
+// slot occupied. A store at a key this analysis never named was checked against
+// that contract before it was recorded, so it holds a value the declaration
+// already admits and removes no closedness the declaration carried; a component
+// derived from those stores would replace an exact contract by the weaker
+// uniform one they happen to witness. A record is excluded: it names its slots,
+// so an unresolved key is not decided by it. This is the precedence the read
+// lane already applies through declaredMapContainerType, stated for the value a
+// container transports.
+func uniformSlotDeclaredContainer(term []byte, partition equation.Partition) (typ.Type, bool) {
+	declared, found := declaredTypeForTerm(term, partition)
+	if !found || declared == nil {
+		return nil, false
+	}
+	base := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(declared)))
+	if base == nil {
+		return nil, false
+	}
+	switch base.Kind() {
+	case kind.Array, kind.Map, kind.ReadonlyMap:
+		return declared, true
+	}
+	return nil, false
 }
 
 // borderIndexPresenceProven reports that a read at a container's own length
@@ -14074,7 +14110,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	// slot nilability, and providerReturnTypeValue rejects open, generic, and
 	// any-shaped answers before they can reach this result slot.
 	if string(values[0].Value) == "scalar/top" {
-		if projected, display, scalar, optional, ok := typedRuntimeIndexResult(operands["container"], operands["key"], partition); ok {
+		if projected, display, scalar, optional, ok := typedRuntimeIndexResult(operands["container"], operands["key"], operation.Target.Name, partition); ok {
 			values[0].Value = projected
 			values = append(values, equation.Fact{Key: indexReadDisplayPrefix + target + "/" + operation.Target.Name, Value: []byte(display)})
 			if scalar {
@@ -14104,7 +14140,7 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
-func typedRuntimeIndexResult(container, key []byte, partition equation.Partition) ([]byte, string, bool, bool, bool) {
+func typedRuntimeIndexResult(container, key []byte, consumer string, partition equation.Partition) ([]byte, string, bool, bool, bool) {
 	containerValue, err := resolveCurrentValue(container, partition)
 	if err != nil {
 		return nil, "", false, false, false
@@ -14170,7 +14206,7 @@ func typedRuntimeIndexResult(container, key []byte, partition equation.Partition
 	if !ok {
 		return nil, "", false, false, false
 	}
-	if indexPresenceProven(container, key, partition) || residueIndexPresenceProven(container, key, partition) {
+	if indexPresenceProven(container, key, consumer, partition) || residueIndexPresenceProven(container, key, partition) {
 		if present := typetable.PresentReadonlyEntryValue(result); present != nil {
 			result = present
 		}
@@ -14250,7 +14286,7 @@ func heapIndexSubject(container []byte, partition equation.Partition) string {
 // and key. Any later dynamic write through the same heap identity revokes it.
 // An index term the guard never named itself is decided by its affine identity
 // against the same guard's relations.
-func indexPresenceProven(container, index []byte, partition equation.Partition) bool {
+func indexPresenceProven(container, index []byte, consumer string, partition equation.Partition) bool {
 	subject := heapIndexSubject(container, partition)
 	prefix := heapIndexPresencePrefix + subject + "/" + base64.RawURLEncoding.EncodeToString(index) + "/"
 	proof := ""
@@ -14266,7 +14302,15 @@ func indexPresenceProven(container, index []byte, partition equation.Partition) 
 	// A bound proves nothing about a value the body has since replaced. The
 	// index term's current epoch is exactly that replacement event, so a proof
 	// established before it belongs to an earlier value of the same term.
-	if epoch, versioned := currentEpoch(index, partition); versioned && epoch > factOperation(proof) {
+	//
+	// The replacement has to lie between the proof and this read to reach it.
+	// A straight-line partition holds only the operations already executed, so
+	// every later epoch is one this read never observes and the window is the
+	// whole partition. A recurrent partition also holds the operations past
+	// this read that a previous trip performed: those run before the proof is
+	// established again, not after it, and the proof this read consumes is the
+	// one the current trip re-published.
+	if epoch, versioned := currentEpoch(index, partition); versioned && epoch > factOperation(proof) && (consumer == "" || epoch <= consumer) {
 		return false
 	}
 	if revoked(subject, factOperation(proof), partition) {
@@ -14926,10 +14970,14 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// nil is a value the analysis derived, and the declaration is refuted by
 		// it exactly as a separately spelled source refutes one.
 	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil" || !declarationSlotIsItsOwnDefault(lexical, operation, target, partition)) && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted || publishedOptionalAssignmentWitness(source, shapeTarget, partition) || mapReadMissing) {
-		message := assignmentMismatchMessage(sourceDisplay, value, targetType)
+		// The refutation is decided on the value this trip carries; the text
+		// reports the fixed point the carrier reaches, so an intermediate
+		// iterate never names itself in a message that describes the loop.
+		reported := reportedRecurrentValue(value, boundOperandRoles(operation.Operands))
+		message := assignmentMismatchMessage(sourceDisplay, reported, targetType)
 		optionalSource := optionalAssignmentSource(value, targetType) || closedLiteralDeclaredOptionalMemberSource(source, value, shapeTarget, partition) || publishedOptionalAssignmentWitness(source, shapeTarget, partition)
 		if declared := boundClaimDeclaredDisplay(operation, targetType); declared != "" {
-			actual := assignmentValueType(value)
+			actual := assignmentValueType(reported)
 			// A table snapshot has no spelling of its own. When the source path
 			// carries a declared type, that declaration is what the assignment
 			// publishes and what the refutation was decided against, so it is
@@ -14940,7 +14988,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 				}
 			}
 			if literal, found := literalDiagnosticValue(source, partition); found {
-				actual = assignmentEvidenceValue(literal)
+				actual = assignmentEvidenceValue(reportedRecurrentValue(literal, boundOperandRoles(operation.Operands)))
 			}
 			message = "cannot assign " + sourceDisplay + " because it is " + actual + ", not " + declared
 		}
@@ -19092,6 +19140,23 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			closure.Values = append(closure.Values, equation.Fact{Key: heapIndexUpperPrefix + encodedIndex + "/" + encodedContainer + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
 		}
 	}
+	// A carrier this body proved monotone holds at least the constant it
+	// entered the cycle with at every arrival at this decision. The bound is
+	// the body's own write set rather than a value the fixed point carries, so
+	// it survives the widening that collapses the carrier to its primitive and
+	// it is the same bound on every trip. Its representation decides whether
+	// the arithmetic keeps it.
+	for _, carrier := range monotoneFloorOperands(operation.Operands) {
+		if !monotoneCarrierWrapFree(carrier, partition) {
+			continue
+		}
+		encodedIndex := base64.RawURLEncoding.EncodeToString(carrier)
+		if _, found := lower[encodedIndex]; found {
+			continue
+		}
+		lower[encodedIndex] = carrier
+		closure.Values = append(closure.Values, equation.Fact{Key: heapIndexLowerPrefix + encodedIndex + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
+	}
 	// A constant index ceiling and a container length floor state the same
 	// in-range relation a direct index-in-range predicate states, with no path
 	// relating the two: i <= ceiling and #c >= floor with 1 <= ceiling <= floor
@@ -19153,6 +19218,37 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 		})
 	}
 	return closure, true, nil
+}
+
+// monotoneFloorOperands reads the carriers the front proved never fall below
+// the constant they entered the cycle with. The role is closed metadata: this
+// reader states no relation of its own and derives nothing from the operand
+// beyond the term it names.
+func monotoneFloorOperands(operands []equation.BoundOperand) [][]byte {
+	var carriers [][]byte
+	for _, operand := range operands {
+		if !strings.HasPrefix(operand.Role, "monotone-floor-") || !strings.HasPrefix(string(operand.Value), "path/") {
+			continue
+		}
+		carriers = append(carriers, append([]byte(nil), operand.Value...))
+	}
+	return carriers
+}
+
+// monotoneCarrierWrapFree reports that a proven-monotone carrier's own
+// representation preserves the bound its increments state. Lua's integer
+// arithmetic is closed: adding at the maximum integer wraps to the minimum, so
+// however many non-negative increments an integer carrier takes, its value is
+// not bounded below by its seed. A number carrier is not closed that way and
+// keeps the seed. The representation is the carrier's declared contract, so a
+// carrier the body never declared keeps no floor.
+func monotoneCarrierWrapFree(carrier []byte, partition equation.Partition) bool {
+	declared, found := declaredTypeForTerm(carrier, partition)
+	if !found || declared == nil {
+		return false
+	}
+	base := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(declared)))
+	return base != nil && base.Kind() == kind.Number
 }
 
 func publishedIndexRelations(partition equation.Partition) (map[string][]byte, map[string]struct{ index, container []byte }) {
@@ -27017,9 +27113,10 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 			}
 			predicate = operand.Value
 		default:
-			// Evidence, arm boundaries, and difference constraints are closed
-			// branch metadata. They are intentionally not alternate selectors.
-			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") {
+			// Evidence, arm boundaries, difference constraints, and the
+			// carriers a cycle proved monotone are closed branch metadata. They
+			// are intentionally not alternate selectors.
+			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") && !strings.HasPrefix(operand.Role, "monotone-floor-") {
 				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}
@@ -27703,6 +27800,48 @@ func reconvergedSurfaceValue(term []byte, partition equation.Partition) ([]byte,
 
 // recurrentOperation reports that the front placed this transaction at a CFG
 // point an execution can arrive at more than once.
+// reportedRecurrentValue is the value an operation inside a cycle reports. The
+// operation runs once per trip and states a value each time, but the body's
+// answer is the fixed point, not any one trip's iterate. Rendering the value at
+// the primitive the recurrence lattice reaches is what makes the reported text
+// describe that fixed point: the collapse is idempotent, so a trip that already
+// carries the converged carrier renders it unchanged, and a trip that carries
+// an intermediate one renders the primitive it is ascending towards rather than
+// the partial union it happens to hold.
+//
+// An operation outside every cycle states its value once and keeps it.
+func reportedRecurrentValue(value []byte, operands []equation.Operand) []byte {
+	if len(value) == 0 || !recurrentArtifactOperation(operands) {
+		return value
+	}
+	widened := widenRecurrentValue(value)
+	if len(widened) == 0 || isUnknownScalar(widened) {
+		return value
+	}
+	return widened
+}
+
+// boundOperandRoles projects a bound row onto the artifact row the reporter
+// reads, so one recurrence test answers for both.
+func boundOperandRoles(operands []equation.BoundOperand) []equation.Operand {
+	out := make([]equation.Operand, 0, len(operands))
+	for _, operand := range operands {
+		out = append(out, equation.Operand{Role: operand.Role, Term: equation.ClosedTerm(operand.Value)})
+	}
+	return out
+}
+
+// recurrentArtifactOperation reads the recurrence marker from an artifact
+// operation's own operands, which is where the reporter sees them.
+func recurrentArtifactOperation(operands []equation.Operand) bool {
+	for _, operand := range operands {
+		if operand.Role == "recurrence" {
+			return string(operand.Term.Encoding) == "recurrence/cyclic"
+		}
+	}
+	return false
+}
+
 func recurrentOperation(operands []equation.BoundOperand) bool {
 	for _, operand := range operands {
 		if operand.Role == "recurrence" {

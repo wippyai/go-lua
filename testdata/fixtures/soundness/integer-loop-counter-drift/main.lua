@@ -45,13 +45,13 @@ local function unbounded_ceiling(xs: {string}, more: () -> boolean): string
     return ""
 end
 
--- Division is the drift: it yields a float on every operand pair, so the join at
--- the loop head carries number and number is not an integer.
+-- Division is the drift: the arm that divides writes a number back into a local
+-- declared integer, and the join at the loop head carries number as well.
 local function float_arm(more: () -> boolean, halve: () -> boolean): integer
     local i: integer = 7
     while more() do
         if halve() then
-            i = i / 2
+            i = i / 2 -- expect-error
         else
             i = i + 1
         end
