@@ -23,6 +23,13 @@ local function into_argument(): number
     return need(raw) -- expect-error: argument 1 (raw) is any, not string
 end
 
+-- The result reaches that parameter unbound as well: a call in the final
+-- argument position expands at the position it occupies, and its leading result
+-- is the value that lands there.
+local function into_spread_argument(): number
+    return need(decode()) -- expect-error: argument 1 is any, not string
+end
+
 -- A declared return type is refuted by the boundary it was handed.
 local function into_return(): string
     return decode() -- expect-error: comes from any/unknown
@@ -37,6 +44,12 @@ end
 local function into_concat(): string
     local raw = decode()
     return "e: " .. raw -- expect-error: comes from any/unknown
+end
+
+-- The operand carries that boundary in its own value, so an unbound result
+-- taints the concatenation exactly as the bound one does.
+local function into_spread_concat(): string
+    return "e: " .. decode() -- expect-error: comes from any/unknown
 end
 
 -- A runtime type test is the boundary's own validator.
@@ -125,5 +138,5 @@ local function into_inferred(): number
     return 1
 end
 
-return into_local, into_argument, into_return, into_field, into_concat, validated, into_member, into_declared,
+return into_local, into_argument, into_spread_argument, into_return, into_field, into_concat, into_spread_concat, validated, into_member, into_declared,
     into_surface_field(surface), into_surface_method(surface), into_pair, into_inferred

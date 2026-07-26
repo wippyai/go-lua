@@ -1,0 +1,5 @@
+{
+  "description": "A call in the final argument position supplies the positions the argument list already names, so those parameter contracts are decided exactly as an ordinary argument's are; the arity a spread adds beyond them is unproven, so no count is claimed and no position past the named ones is decided.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

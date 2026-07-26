@@ -12981,6 +12981,15 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				s, er = scalarString(v)
 			} else if strings.HasPrefix(string(v), "scalar/number/") {
 				s = strings.TrimPrefix(string(v), "scalar/number/")
+			} else if isUnvalidatedAnyValue(v) {
+				// The operand carries the boundary in its own value. A __concat
+				// metamethod may answer with anything and an operand with no concat
+				// behavior raises, so the operator discharges nothing the operand
+				// owed: the result carries that same boundary. Top would state absence
+				// of information where the boundary is a published fact, and the
+				// gradual relay below reaches only operands rooted at a path.
+				value = []byte("scalar/claim/claim-kind/3/\"any\"")
+				break
 			} else {
 				value = []byte("scalar/top")
 				break
@@ -20998,7 +21007,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		signature, signatureKnown = typedMethodSignature, true
 	}
 	if signatureKnown && operands.spread && hasCallee {
-		if result, refuted := spreadOptionalArgumentRefutation(operation, operands, signature, partition); refuted {
+		if result, refuted := spreadArgumentRefutation(operation, operands, signature, partition); refuted {
 			return result, nil
 		}
 	}
@@ -21034,43 +21043,13 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		return callDiagnostic(operation, "too_many_args", "call", fmt.Sprintf("%s expects %d arguments, got %d", operands.display, len(signature.Params), len(operands.arguments))), nil
 	}
 	for index, term := range operands.arguments {
-		expected, accepts := callableParameterAt(signature, index)
-		if !accepts {
+		outcome, refuted, ended := positionalArgumentContract(operation, signature, hasCallee, parameterOffset, index, term, partition)
+		if refuted {
+			return outcome, nil
+		}
+		if ended {
 			break
 		}
-		// A method contract from a published receiver keeps its canonical
-		// parameter type even when the selected argument's runtime value is
-		// intentionally Top.  Reuse that existing pair of publications to
-		// reject only the proven nilability conflict; neither an annotation nor
-		// an unknown scalar is treated as evidence for this boundary.
-		if callableParameterRejectsNil(expected) && ((!hasCallee && optionalArgumentMayBeNil(term, partition)) ||
-			(declaredEntryBoundary(operation.Target.Body, partition) && optionalProviderArgumentMayBeNil(term, partition))) {
-			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))), nil
-		}
-		argument, known := resolveKnownCurrentValue(term, partition)
-		// An explicit any is a published precision boundary, not a proof of a
-		// typed parameter contract.  The argument may retain a concrete shape
-		// from its allocation, but that shape crossed the boundary without
-		// validation and cannot discharge this call's declared requirement.
-		if known && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && callableParameterRequiresProof(expected) &&
-			!callableParameterRuntimeValidated(term, signature, index+parameterOffset, expected, partition) {
-			expectedType := callableParameterType(expected)
-			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, expectedType)), nil
-		}
-		if known && genericConstraintRefuted(argument, expected) {
-			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), strings.TrimSpace(strings.SplitN(expected, ":", 2)[1]))), nil
-		}
-		if !known || numericForInductionSatisfies(term, argument, expected, partition) {
-			continue
-		}
-		if !provenValueNotSubtype(argument, expected) {
-			if contract, published := callableParameterContract(signature, index+parameterOffset); published && !genericCallableSignature(signature) &&
-				!refinement.ContainsFreeTypeParam(contract) && structuralArgumentWitness(argument) && valueAgainstType(argument, contract) == shapeRefuted {
-				return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), typeformat.Short(contract))), nil
-			}
-			continue
-		}
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), expected)), nil
 	}
 	// The per-position checks above read one declared spelling at a time, so a
 	// contract that mentions a type parameter is left to the instantiation. That
@@ -24112,26 +24091,75 @@ func callArgumentIndex(role string) (int, error) {
 	return strconv.Atoi(text)
 }
 
-// spreadOptionalArgumentRefutation refutes a spread call whose argument holds a
-// provider's declared optional result. A spread argument list has no proven
-// arity, so the positional contracts below stay dormant; this obligation does
-// not depend on that arity. The spread expands at the position its own argument
-// already occupies, and its first result is the value that lands there, so a
-// parameter refusing nil refutes that declared optional exactly as it does when
-// the same result is bound to a local first.
-func spreadOptionalArgumentRefutation(operation equation.BoundEquation, operands directCallOperands, signature callableShape, partition equation.Partition) (equation.TransactionResult, bool) {
-	if !declaredEntryBoundary(operation.Target.Body, partition) {
-		return equation.TransactionResult{}, false
-	}
+// spreadArgumentRefutation decides the positions a spread call already names.
+// A spread argument list has no proven arity, so no count is claimed here and
+// the positional contracts below stay dormant; what the list does state is
+// exact. Every argument ahead of the spread occupies its own position, and the
+// spread expands at the position its own argument occupies, so its leading
+// result is the value that lands there — the same value the parameter would
+// receive if the call were bound to a local first. Positions past the ones the
+// list names are filled by results this call binds no term for, and end the
+// walk undecided.
+func spreadArgumentRefutation(operation equation.BoundEquation, operands directCallOperands, signature callableShape, partition equation.Partition) (equation.TransactionResult, bool) {
 	for index, term := range operands.arguments {
-		expected, accepts := callableParameterAt(signature, index)
-		if !accepts || !callableParameterRejectsNil(expected) || !optionalProviderArgumentMayBeNil(term, partition) {
-			continue
+		outcome, refuted, ended := positionalArgumentContract(operation, signature, true, 0, index, term, partition)
+		if refuted {
+			return outcome, true
 		}
-		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index),
-			fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))), true
+		if ended {
+			break
+		}
 	}
 	return equation.TransactionResult{}, false
+}
+
+// positionalArgumentContract decides one argument position against the
+// parameter contract that position states: a declared optional landing in a
+// slot refusing nil, a value that crossed an any boundary against a slot
+// requiring proof, a refuted generic constraint, and a proven value/contract
+// mismatch. The decision reads only the value the term already holds, so it is
+// the same obligation whether an exact argument list names the position or a
+// spread supplies it. It reports the walk ended when the signature states no
+// parameter here: nothing later in the list is decided by a contract that
+// already ran out.
+func positionalArgumentContract(operation equation.BoundEquation, signature callableShape, hasCallee bool, parameterOffset, index int, term []byte, partition equation.Partition) (equation.TransactionResult, bool, bool) {
+	expected, accepts := callableParameterAt(signature, index)
+	if !accepts {
+		return equation.TransactionResult{}, false, true
+	}
+	// A method contract from a published receiver keeps its canonical
+	// parameter type even when the selected argument's runtime value is
+	// intentionally Top.  Reuse that existing pair of publications to
+	// reject only the proven nilability conflict; neither an annotation nor
+	// an unknown scalar is treated as evidence for this boundary.
+	if callableParameterRejectsNil(expected) && ((!hasCallee && optionalArgumentMayBeNil(term, partition)) ||
+		(declaredEntryBoundary(operation.Target.Body, partition) && optionalProviderArgumentMayBeNil(term, partition))) {
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d may be nil, not %s", index+1, callableParameterType(expected))), true, false
+	}
+	argument, known := resolveKnownCurrentValue(term, partition)
+	// An explicit any is a published precision boundary, not a proof of a
+	// typed parameter contract.  The argument may retain a concrete shape
+	// from its allocation, but that shape crossed the boundary without
+	// validation and cannot discharge this call's declared requirement.
+	if known && (isExplicitAnyValue(argument) || sourceHasAnyBoundary(term, partition.Values()) || declaredExplicitAny(term, partition)) && callableParameterRequiresProof(expected) &&
+		!callableParameterRuntimeValidated(term, signature, index+parameterOffset, expected, partition) {
+		expectedType := callableParameterType(expected)
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is any, not %s", index+1, expectedType)), true, false
+	}
+	if known && genericConstraintRefuted(argument, expected) {
+		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), strings.TrimSpace(strings.SplitN(expected, ":", 2)[1]))), true, false
+	}
+	if !known || numericForInductionSatisfies(term, argument, expected, partition) {
+		return equation.TransactionResult{}, false, false
+	}
+	if !provenValueNotSubtype(argument, expected) {
+		if contract, published := callableParameterContract(signature, index+parameterOffset); published && !genericCallableSignature(signature) &&
+			!refinement.ContainsFreeTypeParam(contract) && structuralArgumentWitness(argument) && valueAgainstType(argument, contract) == shapeRefuted {
+			return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), typeformat.Short(contract))), true, false
+		}
+		return equation.TransactionResult{}, false, false
+	}
+	return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), expected)), true, false
 }
 
 func callDiagnostic(operation equation.BoundEquation, code, subject, message string) equation.TransactionResult {
