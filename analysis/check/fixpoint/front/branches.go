@@ -17,6 +17,7 @@ const (
 	branchEvidencePrefix  = "front/branch-evidence/v1/"
 	branchArmEncoding     = "front/branch-arm/v1"
 	branchDiffPrefix      = "front/branch-diff/v1/"
+	densityRelationPrefix = "front/density-relation/v1/"
 )
 
 // branchPredicateWire is the closed branch predicate vocabulary shared with

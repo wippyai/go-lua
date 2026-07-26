@@ -53,4 +53,74 @@ local function sparse(src: {string}): string
     return ""
 end
 
-return collect, past_last, sparse
+-- A step of two skips the slots the count still names: after one iteration n is
+-- 2 and only buf[2] is written, so buf[1] is a hole.
+local function striding(src: {string}): string
+    local n: integer = 0
+    local buf: {string} = {}
+    for _, s in ipairs(src) do
+        n = n + 2
+        buf[n] = s
+    end
+
+    if n >= 1 then
+        local first: string = buf[1] -- expect-error
+        return first
+    end
+    return ""
+end
+
+-- The counter enters the loop at one while the container enters it empty, so
+-- the first write lands at buf[2] and the count stays one ahead of the length.
+local function offset_seed(src: {string}): string
+    local n: integer = 1
+    local buf: {string} = {}
+    for _, s in ipairs(src) do
+        n = n + 1
+        buf[n] = s
+    end
+
+    if n >= 1 then
+        local first: string = buf[1] -- expect-error
+        return first
+    end
+    return ""
+end
+
+-- A write to the counter outside the pair raises the count with no write
+-- reaching the sequence, so n >= 1 no longer states that buf holds a slot.
+local function counted_twice(src: {string}): string
+    local n: integer = 0
+    local buf: {string} = {}
+    for _, s in ipairs(src) do
+        n = n + 1
+        buf[n] = s
+    end
+    n = n + 1
+
+    if n >= 1 then
+        local first: string = buf[1] -- expect-error
+        return first
+    end
+    return ""
+end
+
+-- A write into the sequence outside the pair lands at a slot the count does not
+-- name, so the count no longer states the sequence's length.
+local function extra_slot(src: {string}, at: integer): string
+    local n: integer = 0
+    local buf: {string} = {}
+    for _, s in ipairs(src) do
+        n = n + 1
+        buf[n] = s
+    end
+    buf[at] = "extra"
+
+    if n >= 1 then
+        local first: string = buf[1] -- expect-error
+        return first
+    end
+    return ""
+end
+
+return collect, past_last, sparse, striding, offset_seed, counted_twice, extra_slot

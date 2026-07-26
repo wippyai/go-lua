@@ -1364,9 +1364,14 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 	}
 	shortCircuitBypasses := shortCircuitBypassGuards(body)
 	operations := make([]operation, 0, body.Len())
+	// instructionOrder maps each WIR instruction to the first operation it
+	// contributes. An instruction with several occurrences owns a contiguous
+	// run, so this index orders instructions against operations exactly.
+	instructionOrder := make([]int, body.Len())
 	entries := 0
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
+		instructionOrder[index] = len(operations)
 		switch instruction.Op {
 		case wir.OpEntry, wir.OpStaticMemberWrite, wir.OpBranch, wir.OpClaim, wir.OpSelect, wir.OpBinOp, wir.OpConcat, wir.OpLogical:
 			operations = append(operations, operation{instruction: instruction, target: equation.Coordinate{Body: bodyID, Name: operationName(len(operations))}})
@@ -1469,6 +1474,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 	guardReachability := newReachabilityCache(graph)
 	recurrentPoints := recurrentGraphPoints(graph, guardReachability, operations)
 	monotoneCarriers := monotoneFloorCarriers(body, operations, recurrentPoints)
+	densityCarriers := densitySequenceCarriers(body, instructionOrder, recurrentPoints, graph, guardReachability, bodyID, branchTargets)
 	suspensionLives := suspensionLiveAllocations(body, graph, guardReachability)
 	for index, operation := range operations {
 		instruction := operation.instruction
@@ -1864,6 +1870,21 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				draft.Operands = append(draft.Operands, equation.Operand{
 					Role: "monotone-floor-" + fmt.Sprintf("%08d", carrierIndex),
 					Term: equation.ClosedTerm([]byte(carrier)),
+				})
+			}
+		}
+		// A decision carries the counter/sequence pairs this body proved advance
+		// together. The relation holds wherever both halves are bound, which is
+		// every point past the two seeds; a decision before them reaches an
+		// unbound half and receives nothing.
+		if draft.Occurrence.Kind == "branch-relations" {
+			for carrierIndex, carrier := range densityCarriers {
+				if index <= carrier.seedOrder {
+					continue
+				}
+				draft.Operands = append(draft.Operands, equation.Operand{
+					Role: "density-relation-" + fmt.Sprintf("%08d", carrierIndex),
+					Term: equation.ClosedTerm(densityRelationTerm(carrier)),
 				})
 			}
 		}
@@ -3666,6 +3687,232 @@ func monotoneSeed(body *wir.Body, instruction wir.Instruction, term string) bool
 	}
 	value, numeric := numericConstantOperand(body, instruction.A)
 	return numeric && value >= 1
+}
+
+// densitySequenceCarrier is one counter paired with the sequence its own
+// increments fill. The relation the pair states is `counter == #container`.
+type densitySequenceCarrier struct {
+	counter   string
+	container string
+	// seedOrder is the last operation index at which either half is still
+	// unbound. A decision before it states nothing about the pair.
+	seedOrder int
+}
+
+// densitySequenceCarriers names the counter/sequence pairs this body advances
+// together, so that the count a decision bounds from below also bounds the
+// sequence's length. The relation is discharged inductively over the body's own
+// write set: it holds on entry, because the counter enters the cycle at zero
+// and the container enters it as an empty constructor, and every arrival back
+// at the header preserves it, because the single increment `counter = counter +
+// 1` and the single append `container[counter] = value` sit under the same
+// guards and therefore run together on every path through the cycle.
+//
+// The proof is over the complete write set, so one unrecognized write to either
+// half withdraws the pair: a second seed, a step other than one, an append at
+// any other key, a store under guards the increment does not share, a store
+// through a suffix, a store of nil, a call result, an iterator binding, and a
+// capture handed to a closure all leave the pair outside the fragment. A
+// conditional append is exactly the guard mismatch: the count and the writes
+// can then disagree, and the relation states nothing.
+func densitySequenceCarriers(body *wir.Body, instructionOrder []int, recurrentPoints map[cfg.Point]bool, graph cfg.Graph, reachability *reachabilityCache, bodyID equation.BodyID, branches map[cfg.Point]branchGuardTarget) []densitySequenceCarrier {
+	if body == nil || len(instructionOrder) != body.Len() {
+		return nil
+	}
+	type role struct {
+		seeds, steps, stores int
+		seedOrder, stepOrder int
+		counterSeed          bool
+		containerSeed        bool
+		stepPoint            cfg.Point
+		storeOrder           int
+		storePoint           cfg.Point
+		storeKey             string
+	}
+	candidates := make(map[string]*role)
+	disqualified := make(map[string]bool)
+	at := func(term string) *role {
+		if candidates[term] == nil {
+			candidates[term] = &role{}
+		}
+		return candidates[term]
+	}
+	for position := 0; position < body.Len(); position++ {
+		instruction := body.Instr(position)
+		index := instructionOrder[position]
+		recurrent := recurrentPoints[instruction.Point]
+		for _, term := range writtenRootTerms(body, instruction) {
+			entry := at(term)
+			switch {
+			case monotoneRefinement(body, instruction, term):
+			case recurrent && densityStep(body, instruction, term):
+				entry.steps, entry.stepOrder, entry.stepPoint = entry.steps+1, index, instruction.Point
+			case recurrent && densityAppendKey(body, instruction, term) != "":
+				entry.stores, entry.storeOrder, entry.storePoint = entry.stores+1, index, instruction.Point
+				entry.storeKey = densityAppendKey(body, instruction, term)
+			case !recurrent && densityCounterSeed(body, instruction, term):
+				entry.seeds, entry.seedOrder, entry.counterSeed = entry.seeds+1, index, true
+			case !recurrent && densityContainerSeed(body, instruction, term):
+				entry.seeds, entry.seedOrder, entry.containerSeed = entry.seeds+1, index, true
+			default:
+				disqualified[term] = true
+			}
+			if !recurrent && (entry.counterSeed || entry.containerSeed) && len(guardsForPoint(graph, reachability, instruction.Point, bodyID, branches)) != 0 {
+				disqualified[term] = true
+			}
+		}
+		if instruction.Op == wir.OpClosure {
+			for _, capture := range body.Operands(instruction.List) {
+				if capture.Kind != wir.OperandPath {
+					continue
+				}
+				if path := body.Path(wir.PathRef(capture.Ref)); !path.IsEmpty() && path.Key() != "" {
+					disqualified["path/"+string(path.Key())] = true
+				}
+			}
+		}
+	}
+	carriers := make([]densitySequenceCarrier, 0, len(candidates))
+	for container, sequence := range candidates {
+		if disqualified[container] || !sequence.containerSeed || sequence.seeds != 1 || sequence.stores != 1 || sequence.steps != 0 {
+			continue
+		}
+		counter := candidates[sequence.storeKey]
+		if counter == nil || disqualified[sequence.storeKey] || !counter.counterSeed ||
+			counter.seeds != 1 || counter.steps != 1 || counter.stores != 0 {
+			continue
+		}
+		// The append reads the counter the increment just raised, so it lands at
+		// the slot one past the prefix the previous trip filled. An append that
+		// precedes the increment reads the previous trip's count and overwrites
+		// that slot instead.
+		if sequence.storeOrder <= counter.stepOrder {
+			continue
+		}
+		if !sameGuardSet(graph, reachability, counter.stepPoint, sequence.storePoint, bodyID, branches) {
+			continue
+		}
+		seedOrder := sequence.seedOrder
+		if counter.seedOrder > seedOrder {
+			seedOrder = counter.seedOrder
+		}
+		carriers = append(carriers, densitySequenceCarrier{counter: sequence.storeKey, container: container, seedOrder: seedOrder})
+	}
+	sort.Slice(carriers, func(i, j int) bool {
+		if carriers[i].container != carriers[j].container {
+			return carriers[i].container < carriers[j].container
+		}
+		return carriers[i].counter < carriers[j].counter
+	})
+	return carriers
+}
+
+// densityStep accepts exactly `counter = counter + 1`, in either operand order.
+// One is the only step that keeps the written prefix dense: a larger step skips
+// slots the count still names, and a smaller one rewrites a slot already filled.
+func densityStep(body *wir.Body, instruction wir.Instruction, term string) bool {
+	if instruction.Op != wir.OpBinOp || wir.Operator(instruction.Operator) != wir.BinAdd {
+		return false
+	}
+	if !exactRootPathOperand(body, instruction.Dst, term) {
+		return false
+	}
+	unit := func(operand wir.Operand) bool {
+		value, numeric := numericConstantOperand(body, operand)
+		return numeric && value == 1
+	}
+	if exactRootPathOperand(body, instruction.A, term) {
+		return unit(instruction.B)
+	}
+	if exactRootPathOperand(body, instruction.B, term) {
+		return unit(instruction.A)
+	}
+	return false
+}
+
+// densityAppendKey returns the root term of the counter one append addresses,
+// or the empty string when this write is not an append into term. The write
+// must land on the container itself at a bare counter path: a suffix addresses
+// a slot's member rather than the slot, and a nil value clears the slot the
+// count claims is occupied.
+func densityAppendKey(body *wir.Body, instruction wir.Instruction, term string) string {
+	if instruction.Op != wir.OpDynamicIndexWrite || !exactRootPathOperand(body, instruction.Dst, term) {
+		return ""
+	}
+	if len(body.Segments(instruction.DynamicSuffix)) != 0 {
+		return ""
+	}
+	if instruction.B.Kind == wir.OperandNone {
+		return ""
+	}
+	if instruction.B.Kind == wir.OperandConst && body.Const(wir.ConstRef(instruction.B.Ref)).Kind == wir.ConstNil {
+		return ""
+	}
+	if instruction.A.Kind != wir.OperandPath {
+		return ""
+	}
+	key := body.Path(wir.PathRef(instruction.A.Ref))
+	if key.IsEmpty() || key.Key() == "" || len(key.Segments) != 0 {
+		return ""
+	}
+	return "path/" + string(key.Key())
+}
+
+// densityCounterSeed accepts a plain assignment of zero. The relation the pair
+// states is an equality with the container's length, and an empty constructor
+// has length zero, so a seed at any other value states an inequality on entry.
+func densityCounterSeed(body *wir.Body, instruction wir.Instruction, term string) bool {
+	if instruction.Op != wir.OpAssign || !exactRootPathOperand(body, instruction.Dst, term) {
+		return false
+	}
+	value, numeric := numericConstantOperand(body, instruction.A)
+	return numeric && value == 0
+}
+
+// densityContainerSeed accepts a constructor with no entries. A constructor
+// that already carries entries enters the cycle at a length the counter's zero
+// does not match.
+func densityContainerSeed(body *wir.Body, instruction wir.Instruction, term string) bool {
+	return instruction.Op == wir.OpMakeTable &&
+		exactRootPathOperand(body, instruction.Dst, term) &&
+		len(body.Operands(instruction.List)) == 0 &&
+		len(body.TableEntries(instruction.TableEntries)) == 0
+}
+
+// sameGuardSet reports that two points are reached under exactly the same
+// decisions. Two operations that share a guard set run together: no decision
+// between them selects one without the other.
+func sameGuardSet(graph cfg.Graph, reachability *reachabilityCache, left, right cfg.Point, bodyID equation.BodyID, branches map[cfg.Point]branchGuardTarget) bool {
+	encode := func(point cfg.Point) []string {
+		guards := guardsForPoint(graph, reachability, point, bodyID, branches)
+		encoded := make([]string, 0, len(guards))
+		for _, guard := range guards {
+			encoded = append(encoded, string(guard.Encoding))
+		}
+		sort.Strings(encoded)
+		return encoded
+	}
+	first, second := encode(left), encode(right)
+	if len(first) != len(second) {
+		return false
+	}
+	for index := range first {
+		if first[index] != second[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// densityRelationTerm is the closed spelling of one proven pair. It names the
+// two paths and states nothing else: the consumer derives the relation from the
+// pair, never from this encoding.
+func densityRelationTerm(carrier densitySequenceCarrier) []byte {
+	counter := strings.TrimPrefix(carrier.counter, "path/")
+	container := strings.TrimPrefix(carrier.container, "path/")
+	return []byte(densityRelationPrefix +
+		base64.RawURLEncoding.EncodeToString([]byte(counter)) + "/" +
+		base64.RawURLEncoding.EncodeToString([]byte(container)))
 }
 
 func exactRootPathOperand(body *wir.Body, operand wir.Operand, term string) bool {

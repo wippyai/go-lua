@@ -65,6 +65,7 @@ var ErrInternalPanic = errors.New("engine: internal panic")
 
 const branchPredicatePrefix = "front/branch-predicate/v1/"
 const branchEvidencePrefix = "front/branch-evidence/v1/"
+const densityRelationPrefix = "front/density-relation/v1/"
 
 const memberMissingPrefix = "shape/member-missing/v1/"
 const literalDiagnosticPrefix = "diagnostic/literal-source/"
@@ -5464,6 +5465,7 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 	}
 	hasBranch, hasDeclaredMemberRead, hasDeclaredMemberCall, hasDeclaredAssignment, hasDeclaredMemberWrite := false, false, false, false, false
 	hasDeclaredArithmeticAssignment, hasArithmeticReturnCandidate := false, false
+	localTables := bodyLocalTableTerms(child)
 	assertionOperations := make(map[string]bool)
 	for _, operation := range child.Artifact.Equations {
 		switch operation.Occurrence.Kind {
@@ -5477,7 +5479,18 @@ func uncalledDeclaredBoundary(child front.Compilation) declaredBoundaryAdmission
 			if !found || !memberCalls[string(application)] {
 				return declaredBoundaryAdmission{}
 			}
-		case "dynamic-index-read", "channel-select":
+		case "dynamic-index-read":
+			// A read at a key this body cannot resolve is decided by the container
+			// it reads. A table this body allocated is named by no argument and
+			// reached by no capture, so every write that establishes which of its
+			// slots are occupied is here and the read's outcome is this
+			// declaration's own. Any other container rests on a caller-owned heap
+			// entry and keeps the body dormant.
+			container, found := artifactOperand(operation.Operands, "container")
+			if !found || !localTables[string(container)] {
+				return declaredBoundaryAdmission{}
+			}
+		case "channel-select":
 			return declaredBoundaryAdmission{}
 		case "branch-relations":
 			hasBranch = true
@@ -7228,8 +7241,8 @@ func uncalledDeclaredFormalMemberRead(child front.Compilation, operation equatio
 // The lane it opens carries proven conflicts only. A slot the body leaves
 // unproven states no conflict and keeps the demand-driven path, where a
 // call-specific refinement can still discharge it.
-func uncalledDeclaredLocalAllocationAssignment(operation equation.Equation, allocations map[string]bool) bool {
-	if operation.Occurrence.Kind != "claim" || len(allocations) == 0 {
+func uncalledDeclaredLocalAllocationAssignment(operation equation.Equation, allocations map[string]bool, allocationReads map[string]bool) bool {
+	if operation.Occurrence.Kind != "claim" || (len(allocations) == 0 && len(allocationReads) == 0) {
 		return false
 	}
 	assignment, hasKind := artifactOperand(operation.Operands, "kind")
@@ -7237,8 +7250,37 @@ func uncalledDeclaredLocalAllocationAssignment(operation equation.Equation, allo
 	if !hasKind || !hasValue || string(assignment) != "claim-kind/3" {
 		return false
 	}
+	// A read at a key this body cannot spell selects a slot of the same table
+	// and carries the same authority: the container is still this body's own
+	// allocation, so the conflict its result proves is this declaration's.
+	if allocationReads[string(value)] {
+		return true
+	}
 	root, suffix, member := tableAddress(value)
 	return member && allocations[string(root)] && len(suffix) != 0
+}
+
+// bodyLocalAllocationReadTargets names the results of this body's own dynamic
+// index reads into tables it allocated itself. They are the unspelled
+// counterpart of a static slot read: the same container, selected at a key no
+// coordinate names.
+func bodyLocalAllocationReadTargets(child front.Compilation, allocations map[string]bool) map[string]bool {
+	if len(allocations) == 0 {
+		return nil
+	}
+	targets := make(map[string]bool)
+	for _, operation := range child.Artifact.Equations {
+		if operation.Occurrence.Kind != "dynamic-index-read" {
+			continue
+		}
+		container, hasContainer := artifactOperand(operation.Operands, "container")
+		target, hasTarget := artifactOperand(operation.Operands, "target")
+		if !hasContainer || !hasTarget || !allocations[string(container)] {
+			continue
+		}
+		targets[string(target)] = true
+	}
+	return targets
 }
 
 // uncalledDeclaredFormalValue accepts only an exact, non-gradual boundary
@@ -10819,10 +10861,11 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			formals[boundaryTerm(parameter.Symbol)] = true
 		}
 		allocations := bodyLocalTableTerms(child)
+		allocationReads := bodyLocalAllocationReadTargets(child, allocations)
 		for _, childOperation := range child.Artifact.Equations {
 			declaredAssignmentBoundary = declaredAssignmentBoundary ||
 				uncalledDeclaredFormalAssignment(child, childOperation, formals) ||
-				uncalledDeclaredLocalAllocationAssignment(childOperation, allocations)
+				uncalledDeclaredLocalAllocationAssignment(childOperation, allocations, allocationReads)
 		}
 	}
 	if staticSeeds, admitted := uncalledStaticAssignmentBoundary(child); admitted && lexical.uncalledStaticCapturedCallsAreGuardedValidation(child, partition) {
@@ -14340,6 +14383,13 @@ func typedRuntimeIndexResult(container, key []byte, consumer string, partition e
 	if !ok {
 		containerType, ok = declaredMapContainerType(container, partition)
 	}
+	// A declared array types every slot of its sequence alike, so a computed
+	// index reads that same element. It states no slot occupied, which is what
+	// leaves Lua's missing-slot nil on the result until a presence proof below
+	// removes it.
+	if !ok {
+		containerType, ok = declaredArrayContainerType(container, partition)
+	}
 	// A container the body only ever stored through at unresolved keys has the
 	// keyed component those stores establish. It is the same uniform-element
 	// answer a declared map gives, derived from the stores instead of from a
@@ -14404,6 +14454,25 @@ func declaredMapContainerType(container []byte, partition equation.Partition) (t
 		return declared, true
 	}
 	return nil, false
+}
+
+// declaredArrayContainerType reads a container's own declaration when it is an
+// array. A sequence's declaration types every slot uniformly, exactly as a
+// map's does, so it answers a read at an index the analysis cannot resolve. It
+// remains a separate authority from the map lane because a heap value that
+// still decodes for itself, a keyed component the stores established, and a
+// sealed shape each decide such a read on their own terms; this states only
+// what the declaration alone supports, which is the element and no occupancy.
+func declaredArrayContainerType(container []byte, partition equation.Partition) (typ.Type, bool) {
+	declared, found := declaredTypeForTerm(container, partition)
+	if !found || declared == nil {
+		return nil, false
+	}
+	base := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(declared)))
+	if base == nil || base.Kind() != kind.Array {
+		return nil, false
+	}
+	return declared, true
 }
 
 // keyedComponentContainerType reads the map component a container's own
@@ -14889,6 +14958,18 @@ func claimIsWriteContract(operation equation.BoundEquation) bool {
 	return false
 }
 
+// declarationSlotDefaultValue reports that a self-bound declaration is reading
+// the slot it declares rather than a value something assigned into it: Lua's
+// own nil, or this same claim's marker, which a declaration inside a cycle
+// reads back from an earlier trip. The marker is the contract this claim
+// states, so it can neither refute the declaration nor leave it unproven.
+func declarationSlotDefaultValue(kind, targetType, target string, source, value []byte) bool {
+	if kind != "claim-kind/3" || string(source) != target {
+		return false
+	}
+	return string(value) == "scalar/nil" || string(value) == "scalar/claim/"+kind+"/"+targetType
+}
+
 // declarationSlotIsItsOwnDefault reports that the nil a claim reads from its own
 // target is the cell's Lua default rather than an initializer's result. The
 // front emits the declaration's slot init as a write into that same cell, so the
@@ -15145,7 +15226,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		// lowered into that same cell shares the shape and is not that case: its
 		// nil is a value the analysis derived, and the declaration is refuted by
 		// it exactly as a separately spelled source refutes one.
-	} else if kind == "claim-kind/3" && (string(source) != target || string(value) != "scalar/nil" || !declarationSlotIsItsOwnDefault(lexical, operation, target, partition)) && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted || publishedOptionalAssignmentWitness(source, shapeTarget, partition) || mapReadMissing) {
+	} else if kind == "claim-kind/3" && (!declarationSlotDefaultValue(kind, targetType, target, source, value) || !declarationSlotIsItsOwnDefault(lexical, operation, target, partition)) && available && (anySource && assignmentTargetRequiresProof(targetType) || assignmentMismatchProven(value, targetType) || shapeRelation == shapeRefuted || publishedOptionalAssignmentWitness(source, shapeTarget, partition) || mapReadMissing) {
 		// The refutation is decided on the value this trip carries; the text
 		// reports the fixed point the carrier reaches, so an intermediate
 		// iterate never names itself in a message that describes the loop.
@@ -15209,7 +15290,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if memberSurface != nil {
 			closure.Values = append(closure.Values, equation.Fact{Key: "assignment-member-surface/" + operation.Target.Name, Value: memberSurface})
 		}
-	} else if (!isUnknownScalar(value) || !importedResultPath(string(source), imported) || targetType != "claim-type/\"string\"") && !claimTypeIsAny(targetType) && !callableRecordShape && !(kind == "claim-kind/3" && string(source) == target && string(value) == "scalar/nil") && !guardedLocalCallResultClaim(lexical, operation, source) {
+	} else if (!isUnknownScalar(value) || !importedResultPath(string(source), imported) || targetType != "claim-type/\"string\"") && !claimTypeIsAny(targetType) && !callableRecordShape && !declarationSlotDefaultValue(kind, targetType, target, source, value) && !guardedLocalCallResultClaim(lexical, operation, source) {
 		// The closure keys facts by identity, so separate unproven claims must
 		// retain their operation identity.
 		closure.Diagnostics = []equation.Fact{{Key: "claim/unproven/" + operation.Target.Name, Value: []byte("claim " + strings.TrimPrefix(targetType, "claim-type/") + " is not proven")}}
@@ -19225,19 +19306,10 @@ func provenSequenceIndexValue(term []byte, partition equation.Partition) ([]byte
 	}
 	container := append(append([]byte(nil), root...), []byte(segment.FormatSegments(segments[:len(segments)-1]))...)
 	if int64(last.Index) <= lengthFloorProven(container, partition) {
-		value, err := resolveCurrentValue(container, partition)
-		if err != nil {
-			return nil, false
+		if element, ok := containerArrayElement(container, partition); ok {
+			return shapefact.EncodeTarget(element)
 		}
-		witness, decoded := shapefact.DecodeTarget(value)
-		if !decoded {
-			return nil, false
-		}
-		array, ok := unwrap.Alias(subst.ExpandInstantiated(witness)).(*typ.Array)
-		if !ok || array == nil || array.Element == nil {
-			return nil, false
-		}
-		return shapefact.EncodeTarget(array.Element)
+		return nil, false
 	}
 	if containerTableEscaped(container, partition) {
 		if element, ok := containerArrayElement(container, partition); ok {
@@ -19245,6 +19317,41 @@ func provenSequenceIndexValue(term []byte, partition equation.Partition) ([]byte
 		}
 	}
 	return nil, false
+}
+
+// declaredSequenceIndexValue reads a constant sequence index whose occupancy
+// nothing here proves, against the container's own declared array contract. The
+// declaration types every occupied slot and states no slot occupied, so the
+// read is that element with Lua's missing-slot nil. It is the fallback of the
+// index lanes: a heap cell, a presence proof, and a length floor each decide
+// the same read more precisely and are consulted before it, and a container
+// with no declaration keeps its existing absence policy.
+func declaredSequenceIndexValue(term []byte, partition equation.Partition) ([]byte, bool) {
+	root, suffix, valid := tableAddress(term)
+	if !valid || suffix == "" {
+		return nil, false
+	}
+	segments, parsed := segment.ParseFormattedSegments(suffix)
+	if !parsed || len(segments) == 0 {
+		return nil, false
+	}
+	last := segments[len(segments)-1]
+	if last.Kind != segment.SegmentIndexInt || last.Index < 1 {
+		return nil, false
+	}
+	container := append(append([]byte(nil), root...), []byte(segment.FormatSegments(segments[:len(segments)-1]))...)
+	if int64(last.Index) <= lengthFloorProven(container, partition) {
+		return nil, false
+	}
+	declared, found := declaredTypeForTerm(container, partition)
+	if !found || declared == nil {
+		return nil, false
+	}
+	array, ok := unwrap.Alias(subst.ExpandInstantiated(proof.ProjectionWithoutNil(declared))).(*typ.Array)
+	if !ok || array == nil || array.Element == nil {
+		return nil, false
+	}
+	return shapefact.EncodeTarget(typ.MaterializeOptional(array.Element))
 }
 
 // containerArrayElement resolves the array element type of a container from its
@@ -19365,11 +19472,12 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 		}
 	}
 	differences := trueEdgeBranchDifferences(operation)
+	relations := densityBranchRelations(operation.Operands)
 	hasIndexBound := false
 	for _, predicate := range predicates {
 		hasIndexBound = hasIndexBound || predicate.Kind == "index-in-range"
 	}
-	if !hasIndexBound && !hasConsumer {
+	if !hasIndexBound && !hasConsumer && len(relations) == 0 {
 		return equation.OutputClosure{}, false, nil
 	}
 	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
@@ -19384,6 +19492,10 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 	// state, so this closure publishes them exactly as the undecided branch
 	// outcome does rather than leaving the container unbounded here.
 	floors := lengthFloorBranchProofs(operation)
+	// A proven density relation is the container-side reading of the counter's
+	// own bound: the pair advances together on every trip, so the count this
+	// edge bounds from below is the sequence's length.
+	floors = append(floors, densityLengthFloorProofs(relations, predicates)...)
 	for _, item := range floors {
 		closure.Values = append(closure.Values, equation.Fact{
 			Key:   heapLengthFloorPrefix + heapIndexSubject([]byte("path/"+item.path), partition) + "/" + operation.Target.Name,
@@ -19493,6 +19605,59 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 		})
 	}
 	return closure, true, nil
+}
+
+// densityBranchRelation is one counter/sequence pair the front proved advance
+// together, so that the counter's value is the sequence's length.
+type densityBranchRelation struct{ counter, container string }
+
+// densityBranchRelations reads the pairs the front discharged inductively over
+// this body's write set. The role is closed metadata: this reader states no
+// relation of its own and derives nothing beyond the two paths it names.
+func densityBranchRelations(operands []equation.BoundOperand) []densityBranchRelation {
+	relations := make([]densityBranchRelation, 0, len(operands))
+	for _, operand := range operands {
+		if !strings.HasPrefix(operand.Role, "density-relation-") {
+			continue
+		}
+		rest, stated := strings.CutPrefix(string(operand.Value), densityRelationPrefix)
+		if !stated {
+			continue
+		}
+		counter, container, split := strings.Cut(rest, "/")
+		if !split {
+			continue
+		}
+		counterPath, counterErr := base64.RawURLEncoding.DecodeString(counter)
+		containerPath, containerErr := base64.RawURLEncoding.DecodeString(container)
+		if counterErr != nil || containerErr != nil || len(counterPath) == 0 || len(containerPath) == 0 {
+			continue
+		}
+		relations = append(relations, densityBranchRelation{counter: string(counterPath), container: string(containerPath)})
+	}
+	return relations
+}
+
+// densityLengthFloorProofs states each paired sequence's length lower bound
+// from the floor this edge proves for its counter. The relation is an equality,
+// so the counter's floor is the container's floor; an edge that bounds no
+// counter states no length.
+func densityLengthFloorProofs(relations []densityBranchRelation, predicates []branchPredicateWire) []lengthFloorBranchProof {
+	proofs := make([]lengthFloorBranchProof, 0, len(relations))
+	for _, relation := range relations {
+		floor := int64(0)
+		for _, predicate := range predicates {
+			if predicate.Negated || predicate.Kind != "num-ge" || predicate.Path != relation.counter || predicate.NumFloor <= floor {
+				continue
+			}
+			floor = predicate.NumFloor
+		}
+		if floor < 1 {
+			continue
+		}
+		proofs = append(proofs, lengthFloorBranchProof{path: relation.container, floor: floor})
+	}
+	return proofs
 }
 
 // monotoneFloorOperands reads the carriers the front proved never fall below
@@ -22618,7 +22783,8 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		// members nor the closure decides this read while that store stands;
 		// the keyed component those stores establish is what does.
 		if heapOpaqueMemberWrite(identity, partition) {
-			return keyedComponentPathValue(identity, container, segments, partition)
+			v, f := keyedComponentPathValue(identity, container, segments, partition)
+			return v, f
 		}
 		matched := false
 		for count := 1; count <= len(segments); count++ {
@@ -27623,10 +27789,11 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 			predicate = operand.Value
 		default:
 			// Evidence, arm boundaries, difference constraints, the carriers a
-			// cycle proved monotone, the arm that leaves one, and the cell a
-			// short-circuit result occupies are closed branch metadata. They are
-			// intentionally not alternate selectors.
-			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") && !strings.HasPrefix(operand.Role, "monotone-floor-") && !strings.HasPrefix(operand.Role, "short-circuit-") {
+			// cycle proved monotone, the counter/sequence pairs it proved dense,
+			// the arm that leaves one, and the cell a short-circuit result
+			// occupies are closed branch metadata. They are intentionally not
+			// alternate selectors.
+			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") && !strings.HasPrefix(operand.Role, "monotone-floor-") && !strings.HasPrefix(operand.Role, "density-relation-") && !strings.HasPrefix(operand.Role, "short-circuit-") {
 				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}
@@ -28083,6 +28250,9 @@ func resolveValue(term, readBefore, absence []byte, partition equation.Partition
 	if value, found := reconvergedValue(term, cutoff, partition); found {
 		return value, nil
 	}
+	if value, found := declaredSequenceIndexValue(term, partition); found {
+		return value, nil
+	}
 	switch string(absence) {
 	case "front/absence/nil":
 		return []byte("scalar/nil"), nil
@@ -28165,6 +28335,9 @@ func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, err
 	}
 	if member, found := shapeMemberValue(term, partition); found {
 		return member, nil
+	}
+	if value, found := declaredSequenceIndexValue(term, partition); found {
+		return value, nil
 	}
 	// A member/index path has a concrete Lua source but its heap write can
 	// be outside this scalar model. Root paths remain strict so an absent
