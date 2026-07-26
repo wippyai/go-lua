@@ -1,0 +1,5 @@
+{
+  "description": "A declared function type fixes a callee's signature, never its body. A fun(...)-typed local, formal or capture the analysis cannot resolve to a body therefore has the same unmodeled effect on a table it receives that an any-typed callee has: it may clear a slot or move the sequence border, so the length-floor, in-bounds and member-cell proofs established before the call prove nothing after it. The exception is a published contract: a read-only borrow, an iterator source and an append-only length change each keep the argument's proofs, and the same discharge answers for a nested container the argument carries.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

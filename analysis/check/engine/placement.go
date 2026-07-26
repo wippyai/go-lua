@@ -11,7 +11,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
@@ -809,6 +811,105 @@ func placementImportedBorrowFacts(lexical *lexicalEvaluator, operation equation.
 		facts = append(facts, placementContractFact(allocation.Identity, "borrow", application))
 	}
 	return facts
+}
+
+// providerArgumentProofsSurvive reports that this provider's published contract
+// proves the application leaves the argument at this position holding the index
+// proofs and member cells an escape revokes. Both authorities are the ones the
+// placement contracts already consume: the imported wrapper relation's Borrow
+// list, which the module exporter admits only for a parameter the evaluated body
+// never mutates or lets escape, and the named provider's closed effect row. An
+// unknown provider, an open row, and a position no discharging label reaches all
+// stay unproven.
+func providerArgumentProofsSurvive(lexical *lexicalEvaluator, operation equation.BoundEquation, provider []byte, arguments [][]byte, index int) bool {
+	if function, _, ok := importedCallRelation(lexical, operation, provider, len(arguments)); ok {
+		for _, borrowed := range function.Borrow {
+			if borrowed == index {
+				return true
+			}
+		}
+	}
+	return signatureArgumentProofsSurvive(provider, len(arguments), index)
+}
+
+// signatureArgumentProofsSurvive reads the published effect row of a named
+// provider and decides the position against it. Two dispositions discharge the
+// escape. A borrow, a borrow-all and an iterator source read the argument for
+// the duration of the call and publish no write at all. A row that reaches the
+// position through a non-negative length change, together with the writes that
+// perform it, states an append: the border can only rise and no proven slot is
+// emptied, so the length-floor and in-bounds proofs stand. Every other label --
+// a shape mutation, a shrinking length change, a bare store, a retention, a
+// transfer -- leaves the position writable. A row that names a callback
+// parameter states nothing about any position, because the provider applies that
+// callee and the applied body's effect is not this row.
+func signatureArgumentProofsSurvive(provider []byte, arity, index int) bool {
+	name, found := placementGlobalProviderName(provider)
+	if !found {
+		return false
+	}
+	signature, found := (signaturelookup.Source{IncludeStdlib: true}).LookupView(name)
+	if !found || !signature.Effect.IsClosed() {
+		return false
+	}
+	names := func(ref effect.ParamRef) bool {
+		position, resolved := effect.ResolveParamIndex(ref, arity)
+		return resolved && position == index
+	}
+	read, grows, writes := false, false, false
+	for _, label := range signature.Effect.Labels {
+		switch value := effect.NormalizeLabel(label).(type) {
+		case ownership.BorrowAll:
+			read = true
+		case ownership.Borrow:
+			read = read || names(value.Param)
+		case iteration.Iterator:
+			read = read || names(value.Source)
+		case ownership.Retain:
+			if names(value.Param) {
+				return false
+			}
+		case ownership.Store:
+			writes = writes || names(value.Into)
+		case ownership.Send:
+			if value.FromParam <= index {
+				return false
+			}
+		case ownership.SendParam:
+			if position, resolved := effect.ResolveParamIndex(value.Param, arity); resolved && position <= index {
+				return false
+			}
+		case mutation.Mutate:
+			if names(value.Target) {
+				return false
+			}
+		case mutation.LengthChange:
+			if names(value.Target) {
+				if value.Delta < 0 {
+					return false
+				}
+				grows = true
+			}
+		case mutation.TableMutator:
+			writes = writes || names(value.Target)
+		case returns.Return:
+			if callbackReturnParameter(value.Transform) {
+				return false
+			}
+		}
+	}
+	return grows || (read && !writes)
+}
+
+// callbackReturnParameter reports that a return transform derives its type by
+// applying one of the call's own arguments. The applied body is the effect the
+// row does not carry, so no position it could reach counts as read-only.
+func callbackReturnParameter(transform returns.ReturnType) bool {
+	switch returns.KindOfReturnType(transform) {
+	case returns.ReturnTypeCallbackReturn, returns.ReturnTypeArrayOfCallbackReturn:
+		return true
+	}
+	return false
 }
 
 // typedChannelReceiver admits the channel send placement boundary only when

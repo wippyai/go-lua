@@ -17232,7 +17232,13 @@ func lengthFloorBranchProofs(operation equation.BoundEquation) []lengthFloorBran
 // exactly as it revokes an index presence proof: a write can move the sequence
 // border, so a bound established before it proves nothing after it.
 func lengthFloorProven(container []byte, partition equation.Partition) int64 {
-	subject := heapIndexSubject(container, partition)
+	return subjectLengthFloorProven(heapIndexSubject(container, partition), partition)
+}
+
+// subjectLengthFloorProven is the length-floor reader over an already-resolved
+// revocation subject. A container reached only through an escape has a subject
+// but no term of its own, so the proof and its revocation are answered here.
+func subjectLengthFloorProven(subject string, partition equation.Partition) int64 {
 	prefix := heapLengthFloorPrefix + subject + "/"
 	floor, proofPoint := int64(0), ""
 	for _, fact := range partition.Values() {
@@ -17248,59 +17254,141 @@ func lengthFloorProven(container []byte, partition equation.Partition) int64 {
 	if floor == 0 {
 		return 0
 	}
-	revokePrefix := heapIndexRevokePrefix + subject + "/"
-	revocation := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, revokePrefix) && string(fact.Value) == "revoked" && fact.Key > revocation {
-			revocation = fact.Key
-		}
-	}
-	if revocation != "" && factOperation(proofPoint) <= factOperation(revocation) {
+	if revocation := subjectLatestRevocation(subject, partition); revocation != "" && factOperation(proofPoint) <= factOperation(revocation) {
 		return 0
 	}
 	return floor
 }
 
-// opaqueCalleeEffect reports that the callee's effect on its arguments is not
-// proven read-only: an any/unknown-typed callee has no body or contract this
-// analysis can read, so a table it receives may be mutated or shrunk. A callee
-// with a concrete declared type keeps its argument proofs; only the top-like
-// contract admits an unmodeled effect.
+func subjectLatestRevocation(subject string, partition equation.Partition) string {
+	prefix := heapIndexRevokePrefix + subject + "/"
+	revocation := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && string(fact.Value) == "revoked" && fact.Key > revocation {
+			revocation = fact.Key
+		}
+	}
+	return revocation
+}
+
+// opaqueCalleeEffect reports that this application's effect on the tables it
+// receives is not proven read-only. It answers for the callee values the call
+// kernel resolves at a site that evaluates no body: a top-like value carries no
+// contract at all, and a function contract fixes the signature but never the
+// body, so a fun(...)-typed local, formal or capture may mutate or shrink a
+// table it receives exactly as an any-typed one may. A callee with no current
+// value here is a provider application, whose published effect row the external
+// boundary reads instead.
 func opaqueCalleeEffect(callee []byte, partition equation.Partition) bool {
-	declared, found := declaredTypeForTerm(callee, partition)
-	return found && typ.IsTopLike(declared)
+	value, known := resolveKnownCurrentValue(callee, partition)
+	if !known {
+		return false
+	}
+	if declared, found := declaredTypeForTerm(callee, partition); found && typ.IsTopLike(declared) {
+		return true
+	}
+	return isUnknownScalar(value) || isCallableValue(value) || optionalCallableValue(value)
 }
 
 // opaqueEscapeRevocations invalidates the length-floor and in-bounds element
-// proofs each table argument still carries when it escapes into an opaque
-// callee. The index revocation reuses the identity a dynamic write publishes,
-// so both the length-floor and the presence proof drop and aliases observe the
-// same transition. The distinct escape marker records that the sequence border
-// may have moved rather than merely been overwritten: a constant read past the
-// now-stale floor reflects the array's optional element, where a plain write
-// only leaves the border unproven. It emits nothing for an argument that holds
-// no such proof to revoke.
-func opaqueEscapeRevocations(operation equation.BoundEquation, arguments [][]byte, partition equation.Partition) []equation.Fact {
+// proofs each table argument still carries when it escapes into a callee whose
+// effect on it nothing discharges. The index revocation reuses the identity a
+// dynamic write publishes, so both the length-floor and the presence proof drop
+// and aliases observe the same transition. The distinct escape marker records
+// that the sequence border may have moved rather than merely been overwritten:
+// a constant read past the now-stale floor reflects the array's optional
+// element, where a plain write only leaves the border unproven. An argument
+// position the caller discharges keeps its proofs, and an argument that holds no
+// such proof emits nothing.
+func opaqueEscapeRevocations(operation equation.BoundEquation, arguments [][]byte, partition equation.Partition, discharged func(int) bool) []equation.Fact {
 	var facts []equation.Fact
-	for _, argument := range arguments {
-		if !strings.HasPrefix(string(argument), "path/") {
+	for index, argument := range arguments {
+		if !strings.HasPrefix(string(argument), "path/") || immutableEscapeArgument(argument, partition) {
 			continue
 		}
-		if !heapContainerHasIndexProof(argument, partition) {
+		if discharged != nil && discharged(index) {
 			continue
 		}
-		subject := heapIndexSubject(argument, partition)
-		facts = append(facts,
-			equation.Fact{Key: heapIndexRevokePrefix + subject + "/" + operation.Target.Name, Value: []byte("revoked")},
-			equation.Fact{Key: heapTableEscapePrefix + subject + "/" + operation.Target.Name, Value: []byte("escaped")},
-		)
+		for _, subject := range escapeReachableSubjects(argument, partition) {
+			if !subjectHasIndexProof(subject, partition) {
+				continue
+			}
+			facts = append(facts,
+				equation.Fact{Key: heapIndexRevokePrefix + subject + "/" + operation.Target.Name, Value: []byte("revoked")},
+				equation.Fact{Key: heapTableEscapePrefix + subject + "/" + operation.Target.Name, Value: []byte("escaped")},
+			)
+		}
 	}
 	return facts
 }
 
+// immutableEscapeArgument reports that no callee can change what this argument
+// proves. The length-floor family carries both a sequence border and a Lua
+// string's position bound, and a string is immutable: passing one into any
+// callee leaves every position it already covers covered.
+func immutableEscapeArgument(argument []byte, partition equation.Partition) bool {
+	value, known := resolveKnownCurrentValue(argument, partition)
+	if !known {
+		return false
+	}
+	if strings.HasPrefix(string(value), "scalar/string") {
+		return true
+	}
+	witness, decoded := shapefact.DecodeTarget(value)
+	if !decoded {
+		return false
+	}
+	target := unwrap.Alias(subst.ExpandInstantiated(witness))
+	return target != nil && target.Kind() == kind.String
+}
+
+// escapeReachableSubjects lists the revocation subjects an argument carries
+// into a call: the container itself, and every table reachable from it through
+// a published member identity. A callee that receives a container reaches the
+// whole graph beneath it, so a proof about a nested sequence goes as stale as
+// one about the root. Every published member identity counts, not just the
+// current one, because an earlier binding remains a reference the graph holds.
+func escapeReachableSubjects(container []byte, partition equation.Partition) []string {
+	subjects := []string{heapIndexSubject(container, partition)}
+	identity, found := tableIdentityForTerm(container, partition)
+	if !found {
+		return subjects
+	}
+	visited := map[string]bool{string(identity): true}
+	for queue := [][]byte{identity}; len(queue) != 0; {
+		current := queue[0]
+		queue = queue[1:]
+		prefix := heapMemberIdentityPrefix + base64.RawURLEncoding.EncodeToString(current) + "/"
+		for _, fact := range partition.ValuesPrefix(prefix) {
+			if len(fact.Value) == 0 || visited[string(fact.Value)] {
+				continue
+			}
+			visited[string(fact.Value)] = true
+			queue = append(queue, fact.Value)
+			subjects = append(subjects, "identity/"+base64.RawURLEncoding.EncodeToString(fact.Value))
+		}
+	}
+	return subjects
+}
+
+// heapIdentityEscapedAfter reports that an opaque callee received this table at
+// or after the given publication. It reads the escape marker under the same
+// identity subject the revocation publishes, so a member cell, a length floor
+// and an index presence proof all observe one transition.
+func heapIdentityEscapedAfter(identity []byte, publication string, partition equation.Partition) bool {
+	prefix := heapTableEscapePrefix + "identity/" + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		if string(fact.Value) == "escaped" && factOperation(fact.Key) >= publication {
+			return true
+		}
+	}
+	return false
+}
+
 // containerTableEscaped reports that an opaque callee received this container,
-// so a length-floor proof no longer bounds its live sequence. It is the single
-// reader of the escape marker; a plain dynamic write publishes no such marker.
+// so a length-floor proof no longer bounds its live sequence. It reads the
+// escape marker by term, as heapIdentityEscapedAfter reads it by identity; a
+// plain dynamic write publishes no such marker.
 func containerTableEscaped(container []byte, partition equation.Partition) bool {
 	prefix := heapTableEscapePrefix + heapIndexSubject(container, partition) + "/"
 	for _, fact := range partition.Values() {
@@ -17315,18 +17403,15 @@ func containerTableEscaped(container []byte, partition equation.Partition) bool 
 // length-floor or in-bounds element presence proof that a later escape would
 // leave stale. Both proof families share the same revocation subject.
 func heapContainerHasIndexProof(container []byte, partition equation.Partition) bool {
-	if lengthFloorProven(container, partition) > 0 {
+	return subjectHasIndexProof(heapIndexSubject(container, partition), partition)
+}
+
+func subjectHasIndexProof(subject string, partition equation.Partition) bool {
+	if subjectLengthFloorProven(subject, partition) > 0 {
 		return true
 	}
-	subject := heapIndexSubject(container, partition)
 	presencePrefix := heapIndexPresencePrefix + subject + "/"
-	revokePrefix := heapIndexRevokePrefix + subject + "/"
-	revocation := ""
-	for _, fact := range partition.Values() {
-		if strings.HasPrefix(fact.Key, revokePrefix) && string(fact.Value) == "revoked" && fact.Key > revocation {
-			revocation = fact.Key
-		}
-	}
+	revocation := subjectLatestRevocation(subject, partition)
 	for _, fact := range partition.Values() {
 		if strings.HasPrefix(fact.Key, presencePrefix) && string(fact.Value) == "proven" &&
 			(revocation == "" || factOperation(fact.Key) > factOperation(revocation)) {
@@ -18318,7 +18403,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	if hasCallee && !localCallable && opaqueCalleeEffect(operands.callee, partition) {
-		escapeRevocations = opaqueEscapeRevocations(operation, operands.arguments, partition)
+		escapeRevocations = opaqueEscapeRevocations(operation, operands.arguments, partition, nil)
 	}
 	parameterOffset := 0
 	if !hasCallee {
@@ -20296,6 +20381,15 @@ func heapMetaNewIndexCurrent(identity []byte, partition equation.Partition) ([]b
 // a name, not a lattice, so edges naming different objects publish no identity
 // at all rather than a widened one.
 func heapMemberCurrent(prefix string, identity []byte, suffix string, partition equation.Partition) ([]byte, bool) {
+	value, _, found := heapMemberCurrentPublication(prefix, identity, suffix, partition)
+	return value, found
+}
+
+// heapMemberCurrentPublication is heapMemberCurrent together with the operation
+// coordinate of the publication it selected. A reader that must order this cell
+// against a later revocation needs that coordinate; one that only needs the
+// value reads through heapMemberCurrent.
+func heapMemberCurrentPublication(prefix string, identity []byte, suffix string, partition equation.Partition) ([]byte, string, bool) {
 	want := prefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + base64.RawURLEncoding.EncodeToString([]byte(suffix)) + "/"
 	join := joinPublishedValues
 	if prefix == heapMemberIdentityPrefix {
@@ -20303,9 +20397,9 @@ func heapMemberCurrent(prefix string, identity []byte, suffix string, partition 
 	}
 	fact, found := partition.Reconverged(want, equation.Reconvergence{Current: latestPublication, Join: join})
 	if !found {
-		return nil, false
+		return nil, "", false
 	}
-	return fact.Value, true
+	return fact.Value, factOperation(fact.Key), true
 }
 
 // latestPublication is the current row inside one fully decided guard cube.
@@ -20526,7 +20620,11 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 			continue
 		}
 		whole := segment.FormatSegments(segments)
-		if value, found := heapMemberCurrent(heapMemberPrefix, identity, whole, partition); found {
+		// A cell an opaque callee could have rewritten is no longer the live
+		// slot: the callee reaches every member of the table it received and may
+		// clear it. The read falls through to the container's own element
+		// contract, which is what every surviving slot still satisfies.
+		if value, point, found := heapMemberCurrentPublication(heapMemberPrefix, identity, whole, partition); found && !heapIdentityEscapedAfter(identity, point, partition) {
 			return value, true
 		}
 		if heapMetaAttached(identity, partition) {
@@ -21811,6 +21909,13 @@ func externalCallKernel(lexical *lexicalEvaluator, operation equation.BoundEquat
 	values = append(values, placementImportedStoreFacts(lexical, operation, operands["provider"], arguments, partition)...)
 	values = append(values, placementImportedBorrowFacts(lexical, operation, operands["provider"], arguments, partition)...)
 	values = append(values, opaqueCallbackCaptureEffects(lexical, operands["provider"], arguments, operation.Target.Name, partition)...)
+	// A provider body is never evaluated here, so the same escape revocation the
+	// call kernel publishes for an opaque callee applies to every argument this
+	// boundary cannot discharge. The published contract is the whole exception:
+	// a position it proves unchanged keeps its length-floor and in-bounds proofs.
+	values = append(values, opaqueEscapeRevocations(operation, arguments, partition, func(index int) bool {
+		return providerArgumentProofsSurvive(lexical, operation, operands["provider"], arguments, index)
+	})...)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{
 		Values: values,
 	}}, nil
