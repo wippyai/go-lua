@@ -18,14 +18,14 @@ package engine_test
 //
 // Baseline (minimum of 10 reps, the least load-contaminated sample):
 //
-//	CheckSmall                    6.658ms   5.477Mi   51.54k allocs
-//	CheckBranchy                  61.84ms   55.03Mi   611.4k allocs
-//	CheckLoopy                    25.30ms   22.88Mi   140.5k allocs
-//	CheckTableHeavy               841.3µs   807.8Ki   6.418k allocs
-//	FullFixture_EdgeMatrix        3.013s    3.824Gi   46.61M allocs
-//	FullFixture_PluginSupervisor  899.8ms   1.436Gi   5.000M allocs
+//	CheckSmall                    7.958ms   6.964Mi   51.281k allocs
+//	CheckBranchy                  65.901ms  51.853Mi  516.182k allocs
+//	CheckLoopy                    22.826ms  20.354Mi  122.468k allocs
+//	CheckTableHeavy               744.3µs   802.9Ki   6.361k allocs
+//	FullFixture_EdgeMatrix        2.521s    3.367Gi   42.176M allocs
+//	FullFixture_PluginSupervisor  769.358ms 1.217Gi   4.578M allocs
 //
-// EdgeMatrix still allocates 3.82GiB / 46.6M allocs to check one 48KB source
+// EdgeMatrix still allocates 3.37GiB / 42.2M allocs to check one 48KB source
 // file. The persistent partition view took the per-read fact copy out of that
 // figure, which is what the halved B/op measures; the remaining allocation
 // count is dominated by engine-side fact construction, not by the partition

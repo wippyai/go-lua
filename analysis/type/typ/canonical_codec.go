@@ -8,6 +8,7 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"sync"
 )
 
 // CanonicalDigest is the full collision-resistant digest of one framed
@@ -20,18 +21,28 @@ const (
 	canonicalTypeVersion = uint64(1)
 )
 
+var canonicalEncoderPool = sync.Pool{
+	New: func() any { return &CanonicalEncoder{} },
+}
+
 // EncodeCanonical encodes the TypeEquals semantic graph without consulting
 // node addresses, recursive IDs, cached hashes, revisions, or String output.
 // Unsupported or malformed graphs fail closed and return no bytes.
 func EncodeCanonical(ctx context.Context, t Type) ([]byte, error) {
-	var encoder CanonicalEncoder
-	return encoder.Encode(ctx, t)
+	encoder := canonicalEncoderPool.Get().(*CanonicalEncoder)
+	out, err := encoder.Encode(ctx, t)
+	encoder.release()
+	canonicalEncoderPool.Put(encoder)
+	return out, err
 }
 
 // DigestCanonical returns the typed full digest of EncodeCanonical.
 func DigestCanonical(ctx context.Context, t Type) (CanonicalDigest, error) {
-	var encoder CanonicalEncoder
-	return encoder.Digest(ctx, t)
+	encoder := canonicalEncoderPool.Get().(*CanonicalEncoder)
+	digest, err := encoder.Digest(ctx, t)
+	encoder.release()
+	canonicalEncoderPool.Put(encoder)
+	return digest, err
 }
 
 // CanonicalEncoder retains traversal scratch across calls. It is not safe for
@@ -45,6 +56,13 @@ type CanonicalEncoder struct {
 	classes         []int
 	representatives []int
 	out             []byte
+	ordinals        map[int]uint64
+	acyclicClasses  map[string]int
+	sccIndices      []int
+	sccLow          []int
+	sccOnStack      []bool
+	sccStack        []int
+	sccComponents   []int
 	steps           uint64
 	ctx             context.Context
 }
@@ -72,8 +90,11 @@ func (e *CanonicalEncoder) Encode(ctx context.Context, t Type) ([]byte, error) {
 	e.out = e.out[:0]
 	e.out = appendFrameString(e.out, canonicalTypeDomain)
 	e.out = binary.AppendUvarint(e.out, canonicalTypeVersion)
-	ordinals := make(map[int]uint64, len(e.nodes))
-	if err := e.emitClass(rootClass, ordinals); err != nil {
+	clear(e.ordinals)
+	if e.ordinals == nil {
+		e.ordinals = make(map[int]uint64, len(e.nodes))
+	}
+	if err := e.emitClass(rootClass, e.ordinals); err != nil {
 		e.abort()
 		return nil, err
 	}
@@ -146,6 +167,29 @@ func (e *CanonicalEncoder) reset(ctx context.Context) {
 
 func (e *CanonicalEncoder) abort() {
 	e.out = e.out[:0]
+	e.ctx = nil
+}
+
+// release drops references to caller-owned type graphs before the reusable
+// scratch is returned to the package pool. Capacities remain reusable, but no
+// Type or per-call classification key is retained between encodes.
+func (e *CanonicalEncoder) release() {
+	clear(e.nodes)
+	e.nodes = e.nodes[:0]
+	clear(e.seen)
+	clear(e.transparent)
+	clear(e.recursiveID)
+	clear(e.ordinals)
+	clear(e.acyclicClasses)
+	e.classes = e.classes[:0]
+	e.representatives = e.representatives[:0]
+	e.sccIndices = e.sccIndices[:0]
+	e.sccLow = e.sccLow[:0]
+	e.sccOnStack = e.sccOnStack[:0]
+	e.sccStack = e.sccStack[:0]
+	e.sccComponents = e.sccComponents[:0]
+	e.out = e.out[:0]
+	e.steps = 0
 	e.ctx = nil
 }
 
@@ -488,6 +532,11 @@ func canonicalFunctionParts(function *Function) ([]byte, []Type) {
 func (e *CanonicalEncoder) refine() error {
 	finder := newCanonicalSCCFinder(e)
 	components, cyclic, err := finder.find()
+	e.sccIndices = finder.indices
+	e.sccLow = finder.low
+	e.sccOnStack = finder.onStack
+	e.sccStack = finder.stack
+	e.sccComponents = finder.components
 	if err != nil {
 		return err
 	}
@@ -519,25 +568,30 @@ type canonicalSCCFinder struct {
 	low        []int
 	onStack    []bool
 	stack      []int
-	components [][]int
+	components []int
+	cyclic     bool
 }
 
-func newCanonicalSCCFinder(encoder *CanonicalEncoder) *canonicalSCCFinder {
+func newCanonicalSCCFinder(encoder *CanonicalEncoder) canonicalSCCFinder {
 	count := len(encoder.nodes)
-	indices := make([]int, count)
+	indices := growInts(encoder.sccIndices, count)
 	for index := range indices {
 		indices[index] = -1
 	}
-	return &canonicalSCCFinder{
-		encoder: encoder,
-		indices: indices,
-		low:     make([]int, count),
-		onStack: make([]bool, count),
-		stack:   make([]int, 0, count),
+	low := growInts(encoder.sccLow, count)
+	onStack := growBools(encoder.sccOnStack, count)
+	clear(onStack)
+	return canonicalSCCFinder{
+		encoder:    encoder,
+		indices:    indices,
+		low:        low,
+		onStack:    onStack,
+		stack:      encoder.sccStack[:0],
+		components: encoder.sccComponents[:0],
 	}
 }
 
-func (f *canonicalSCCFinder) find() ([][]int, bool, error) {
+func (f *canonicalSCCFinder) find() ([]int, bool, error) {
 	for node := range f.encoder.nodes {
 		if f.indices[node] >= 0 {
 			continue
@@ -546,24 +600,20 @@ func (f *canonicalSCCFinder) find() ([][]int, bool, error) {
 			return nil, false, err
 		}
 	}
-	cyclic := false
-	for _, component := range f.components {
-		if len(component) > 1 {
-			cyclic = true
-			break
-		}
-		node := component[0]
-		for _, edge := range f.encoder.nodes[node].edges {
-			if edge == node {
-				cyclic = true
+	if !f.cyclic {
+		for _, node := range f.components {
+			for _, edge := range f.encoder.nodes[node].edges {
+				if edge == node {
+					f.cyclic = true
+					break
+				}
+			}
+			if f.cyclic {
 				break
 			}
 		}
-		if cyclic {
-			break
-		}
 	}
-	return f.components, cyclic, nil
+	return f.components, f.cyclic, nil
 }
 
 func (f *canonicalSCCFinder) visit(node int) error {
@@ -590,35 +640,39 @@ func (f *canonicalSCCFinder) visit(node int) error {
 	if f.low[node] != f.indices[node] {
 		return nil
 	}
-	component := make([]int, 0, 1)
+	members := 0
+	component := -1
 	for {
 		last := len(f.stack) - 1
 		member := f.stack[last]
 		f.stack = f.stack[:last]
 		f.onStack[member] = false
-		component = append(component, member)
+		component = member
+		members++
 		if member == node {
 			break
 		}
+	}
+	if members > 1 {
+		f.cyclic = true
 	}
 	f.components = append(f.components, component)
 	return nil
 }
 
-func (e *CanonicalEncoder) classifyAcyclic(components [][]int) error {
+func (e *CanonicalEncoder) classifyAcyclic(components []int) error {
 	e.classes = growInts(e.classes, len(e.nodes))
 	for index := range e.classes {
 		e.classes[index] = -1
 	}
-	classes := make(map[string]int, len(e.nodes))
-	for _, component := range components {
+	clear(e.acyclicClasses)
+	if e.acyclicClasses == nil {
+		e.acyclicClasses = make(map[string]int, len(e.nodes))
+	}
+	for _, nodeIndex := range components {
 		if err := e.checkpoint(); err != nil {
 			return err
 		}
-		if len(component) != 1 {
-			return fmt.Errorf("typ: cyclic component reached acyclic classifier")
-		}
-		nodeIndex := component[0]
 		node := e.nodes[nodeIndex]
 		key := appendFrameBytes(nil, node.scalar)
 		key = appendCount(key, len(node.edges))
@@ -628,10 +682,10 @@ func (e *CanonicalEncoder) classifyAcyclic(components [][]int) error {
 			}
 			key = binary.AppendUvarint(key, uint64(e.classes[edge]))
 		}
-		class, exists := classes[string(key)]
+		class, exists := e.acyclicClasses[string(key)]
 		if !exists {
-			class = len(classes)
-			classes[string(key)] = class
+			class = len(e.acyclicClasses)
+			e.acyclicClasses[string(key)] = class
 		}
 		e.classes[nodeIndex] = class
 	}
@@ -819,6 +873,13 @@ func appendFrameBytes(out, value []byte) []byte {
 func growInts(in []int, size int) []int {
 	if cap(in) < size {
 		return make([]int, size)
+	}
+	return in[:size]
+}
+
+func growBools(in []bool, size int) []bool {
+	if cap(in) < size {
+		return make([]bool, size)
 	}
 	return in[:size]
 }

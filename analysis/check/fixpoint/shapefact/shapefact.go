@@ -124,8 +124,11 @@ func DecodeTarget(value []byte) (typ.Type, bool) {
 	if err != nil || target == nil {
 		return nil, false
 	}
-	canonical, ok := EncodeTarget(target)
-	if !ok || string(canonical) != string(value) {
+	// DecodeCanonicalStructural already rejects a graph whose reconstructed
+	// type does not encode to these exact wire bytes. Only the outer base64
+	// spelling remains to validate here; re-encoding the entire type graph a
+	// second time made every successful target read pay for duplicate work.
+	if base64.RawURLEncoding.EncodeToString(wire) != encoded {
 		return nil, false
 	}
 	return target, true
