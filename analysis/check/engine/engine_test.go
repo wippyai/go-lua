@@ -2880,3 +2880,69 @@ return casted
 		t.Fatalf("published diagnostics = %#v, want exactly one any-boundary assignment violation", result.PublishedDiagnostics)
 	}
 }
+
+func TestCheckRefutesGenericCallWithConflictingTypeArgumentBindings(t *testing.T) {
+	result, err := engine.Check(`
+type Event = { kind: "event", id: string }
+type Timer = { kind: "timer", elapsed: number }
+type Decoder<T> = (any) -> T
+type Options<T> = { channel: Channel<T>, decode: Decoder<T> }
+
+local function run(primary: Channel<Event>)
+    local function decode_timer(raw: any): Timer
+        return { kind = "timer", elapsed = 1 }
+    end
+    local function listen<T>(topic: string, options: Options<T>): Channel<T>
+        return options.channel
+    end
+    listen("events", {
+        channel = primary,
+        decode = decode_timer,
+    })
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range result.PublishedDiagnostics {
+		if item.Code != "type.call.direct.argument_type" {
+			continue
+		}
+		if item.Message != `argument 2.decode requires T to be {elapsed: number, kind: "timer"}, but argument 2.channel requires T to be {id: string, kind: "event"}` {
+			t.Fatalf("conflict message = %q", item.Message)
+		}
+		if item.Span.StartLine != 16 || item.Span.StartCol != 18 {
+			t.Fatalf("conflict span = %#v, want the decode member value", item.Span)
+		}
+		if len(item.Evidence) != 4 ||
+			item.Evidence[0].Message != `argument 2.decode has type {elapsed: number, kind: "timer"}` ||
+			item.Evidence[2].Message != `argument 2.channel already binds T to {id: string, kind: "event"}` ||
+			item.Evidence[3].Trust != "refuted" || item.Evidence[3].Message != "no binding of T satisfies both members" {
+			t.Fatalf("conflict evidence = %#v", item.Evidence)
+		}
+		if len(item.Labels) != 1 || item.Labels[0].Message != "conflicting T binding" || !strings.Contains(item.Help, "agree on T") {
+			t.Fatalf("conflict labels/help = %#v / %q", item.Labels, item.Help)
+		}
+		return
+	}
+	t.Fatalf("conflicting type-argument bindings were accepted: %#v", result.PublishedDiagnostics)
+}
+
+func TestCheckAdmitsGenericCallWhoseArgumentsShareATypeArgumentSupertype(t *testing.T) {
+	result, err := engine.Check(`
+local function run(seed: number)
+    local function pair<T>(first: T, second: T): T
+        return first
+    end
+    pair(seed, "two")
+end
+`)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	for _, item := range result.PublishedDiagnostics {
+		if item.Code == "type.call.direct.argument_type" {
+			t.Fatalf("two covariant witnesses with a common supertype were refuted: %q", item.Message)
+		}
+	}
+}

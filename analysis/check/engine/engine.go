@@ -2391,6 +2391,17 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 		return item
 	}
 	message := item.Message
+	if conflict, refuted := genericBindingConflictMessage(message); refuted {
+		item.Evidence = []DiagnosticEvidence{
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s has type %s", conflict.demandedAt, conflict.demanded)},
+			{Kind: "user assertion", Trust: "claimed", Message: fmt.Sprintf("%s parameter %d%s states %s at both members", callee, argumentIndex, suffix, conflict.parameter)},
+			{Span: item.Span, Kind: "abstract fact", Trust: "proven", Message: fmt.Sprintf("%s already binds %s to %s", conflict.boundAt, conflict.parameter, conflict.bound)},
+			{Span: item.Span, Kind: "missing proof", Trust: "refuted", Message: fmt.Sprintf("no binding of %s satisfies both members", conflict.parameter)},
+		}
+		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "conflicting " + conflict.parameter + " binding"}}
+		item.Help = fmt.Sprintf("Pass members that agree on %s, or split the call so each %s binding has its own call site.", conflict.parameter, conflict.parameter)
+		return item
+	}
 	value, expected, nilable := "", "", false
 	if before, after, found := strings.Cut(message, " may be nil, not "); found && before == fmt.Sprintf("argument %d%s", argumentIndex, suffix) && after != "" {
 		value, expected, nilable = "may be nil", after, true
@@ -2472,6 +2483,42 @@ func enrichCallArgumentDiagnostic(item PublishedDiagnostic, callee, subject stri
 		item.Help = fmt.Sprintf("Pass a value for argument %d that satisfies the parameter type, or change the callee signature if that argument is valid.", argumentIndex)
 	}
 	return item
+}
+
+// genericBindingConflictParts names the two demands a refuted instantiation
+// published. The message is the fact, exactly as the arity and argument
+// messages are, so the surface reads the demands back from it rather than
+// carrying them on a second channel.
+type genericBindingConflictParts struct {
+	parameter  string
+	bound      string
+	boundAt    string
+	demanded   string
+	demandedAt string
+}
+
+func genericBindingConflictMessage(message string) (genericBindingConflictParts, bool) {
+	demandedPart, boundPart, split := strings.Cut(message, ", but ")
+	if !split {
+		return genericBindingConflictParts{}, false
+	}
+	demandedAt, demandedRest, stated := strings.Cut(demandedPart, " requires ")
+	if !stated {
+		return genericBindingConflictParts{}, false
+	}
+	parameter, demanded, named := strings.Cut(demandedRest, " to be ")
+	if !named {
+		return genericBindingConflictParts{}, false
+	}
+	boundAt, boundRest, restated := strings.Cut(boundPart, " requires ")
+	if !restated {
+		return genericBindingConflictParts{}, false
+	}
+	boundParameter, bound, rebound := strings.Cut(boundRest, " to be ")
+	if !rebound || boundParameter != parameter || parameter == "" || demanded == "" || bound == "" {
+		return genericBindingConflictParts{}, false
+	}
+	return genericBindingConflictParts{parameter: parameter, bound: bound, boundAt: boundAt, demanded: demanded, demandedAt: demandedAt}, true
 }
 
 func directCallDiagnosticParts(key string) (code, operation, subject string, ok bool) {
@@ -10289,6 +10336,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 func selectChildDiagnostic(key string) bool {
 	return strings.HasPrefix(key, "type.assignment/") ||
 		strings.HasPrefix(key, "type.member.missing/") ||
+		strings.HasPrefix(key, "type.call.direct.argument_type/") ||
 		strings.HasPrefix(key, "type.operator.concat_operand/") ||
 		strings.HasPrefix(key, "type.operator.comparison_operand/")
 }
@@ -17866,7 +17914,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if payload, channel := typedChannelPayload(operands.receiver, partition); channel && operands.method == "send" && !operands.spread && len(operands.arguments) == 1 {
 			if argument, available := resolveKnownCurrentValue(operands.arguments[0], partition); available {
 				if subject, actual, expected, mismatch := firstChannelPayloadMismatch(argument, payload, "argument-00000000"); mismatch {
-					return callDiagnostic(operation, "argument_type", subject, fmt.Sprintf("%s is %s, not %s", channelPayloadDisplay(subject), actual, expected)), nil
+					return callDiagnostic(operation, "argument_type", subject, fmt.Sprintf("%s is %s, not %s", callSubjectDisplay(subject), actual, expected)), nil
 				}
 			}
 			return equation.TransactionResult{Complete: true}, nil
@@ -18009,6 +18057,13 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			continue
 		}
 		return callDiagnostic(operation, "argument_type", indexedCallSubject("argument", index), fmt.Sprintf("argument %d is %s, not %s", index+1, callDisplayValueForTerm(term, argument, partition), expected)), nil
+	}
+	// The per-position checks above read one declared spelling at a time, so a
+	// contract that mentions a type parameter is left to the instantiation. That
+	// is the whole argument obligation for a generic callee: the arguments must
+	// admit one binding of every parameter the declaration names.
+	if refutation, refuted := genericArgumentRefutation(operation, operands, signature, parameterOffset, partition); refuted {
+		return refutation, nil
 	}
 	if genericCallableSignature(signature) {
 		var instantiated bool
@@ -18923,14 +18978,6 @@ func firstChannelPayloadMismatch(value []byte, target typ.Type, subject string) 
 		return subject, assignmentEvidenceValue(value), typeformat.Short(target), true
 	}
 	return "", "", "", false
-}
-
-func channelPayloadDisplay(subject string) string {
-	base, suffix, found := strings.Cut(subject, ".")
-	if !found {
-		return strings.Replace(base, "argument-00000000", "argument 1", 1)
-	}
-	return strings.Replace(base, "argument-00000000", "argument 1", 1) + "." + suffix
 }
 
 func typedPathType(term []byte, partition equation.Partition) (typ.Type, bool) {
@@ -20845,8 +20892,12 @@ func structuralArgumentWitness(value []byte) bool {
 	return complete
 }
 
-func callableParameterContract(signature callableShape, index int) (typ.Type, bool) {
-	if signature.Canonical == "" || index < 0 {
+// canonicalCallableFunction decodes the front-published function type a
+// callable signature carries beside its spelling fields. The spellings remain
+// the arity and display authority; this graph is what structural parameter
+// contracts and type-parameter binders are read from.
+func canonicalCallableFunction(signature callableShape) (*typ.Function, bool) {
+	if signature.Canonical == "" {
 		return nil, false
 	}
 	wire, err := base64.RawURLEncoding.DecodeString(signature.Canonical)
@@ -20858,7 +20909,12 @@ func callableParameterContract(signature callableShape, index int) (typ.Type, bo
 		return nil, false
 	}
 	function, ok := unwrap.Alias(decoded).(*typ.Function)
-	if !ok || function == nil || index >= len(function.Params) || function.Params[index].Type == nil {
+	return function, ok && function != nil
+}
+
+func callableParameterContract(signature callableShape, index int) (typ.Type, bool) {
+	function, ok := canonicalCallableFunction(signature)
+	if !ok || index < 0 || index >= len(function.Params) || function.Params[index].Type == nil {
 		return nil, false
 	}
 	return function.Params[index].Type, true
@@ -20967,6 +21023,87 @@ func instantiateCallableSignature(signature callableShape, arguments [][]byte, p
 	}
 	signature.TypeParams = nil
 	return signature, true
+}
+
+// genericArgumentRefutation proves that a generic callee has no instantiation
+// admitting this call's arguments. Every declared parameter type is unified
+// member-wise against the closed type its argument already published, so a
+// type parameter named by two members is bound once and then challenged by the
+// next member that names it. A disagreement alone is not yet a refutation: at a
+// covariant position a member only requires the parameter to be some supertype
+// of its witness, and the union of two such witnesses would satisfy both. The
+// verdict is published once one of the two members states its binding
+// invariantly — inside the arguments of a nominal application, where the
+// parameter is pinned to exactly that witness — and the other witness does not
+// inhabit it. That proof is independent of the order the members were walked
+// in, so the diagnostic reports a conflict the declaration really has.
+func genericArgumentRefutation(operation equation.BoundEquation, operands directCallOperands, signature callableShape, parameterOffset int, partition equation.Partition) (equation.TransactionResult, bool) {
+	if operands.spread || len(operands.arguments) == 0 {
+		return equation.TransactionResult{}, false
+	}
+	function, ok := canonicalCallableFunction(signature)
+	if !ok || len(function.TypeParams) == 0 {
+		return equation.TransactionResult{}, false
+	}
+	params := make(map[string]bool, len(function.TypeParams))
+	for _, parameter := range function.TypeParams {
+		if parameter == nil || parameter.Name == "" {
+			return equation.TransactionResult{}, false
+		}
+		params[parameter.Name] = true
+	}
+	declared := make([]typ.Type, len(operands.arguments))
+	actuals := make([]typ.Type, len(operands.arguments))
+	for index, term := range operands.arguments {
+		position := index + parameterOffset
+		if position >= len(function.Params) || function.Params[position].Type == nil {
+			return equation.TransactionResult{}, false
+		}
+		actual, decoded := publishedProviderArgumentType(term, partition)
+		if !decoded || !resolvedTypeGraph(actual, 0, true) {
+			return equation.TransactionResult{}, false
+		}
+		declared[index], actuals[index] = function.Params[position].Type, actual
+	}
+	session := newTypeArgSession()
+	bindings := make(map[string]typ.Type, len(params))
+	for index := range declared {
+		if !session.unify(indexedCallSubject("argument", index), declared[index], actuals[index], params, bindings) {
+			break
+		}
+	}
+	conflict := session.conflict
+	// Both witnesses have to be resolved graphs of their own. A binding that
+	// still carries a precision boundary states no exact requirement, so a
+	// disagreement with it is no proof that the parameter has no inhabitant.
+	if conflict == nil || conflict.boundAt == "" || conflict.demandedAt == "" ||
+		!closedProviderArgumentType(conflict.bound, 0) || !closedProviderArgumentType(conflict.demanded, 0) {
+		return equation.TransactionResult{}, false
+	}
+	// The invariant member pins the parameter. When it is the earlier one, the
+	// disagreement already proved the later witness does not inhabit it; when it
+	// is the later one, the earlier witness still has to be checked against it in
+	// that direction before the two are proven to have no common binding.
+	pinned := conflict.boundInvariant ||
+		(conflict.demandedInvariant && !subtype.IsSubtype(conflict.bound, conflict.demanded))
+	if !pinned {
+		return equation.TransactionResult{}, false
+	}
+	message := fmt.Sprintf("%s requires %s to be %s, but %s requires %s to be %s",
+		callSubjectDisplay(conflict.demandedAt), conflict.parameter, typeformat.Short(conflict.demanded),
+		callSubjectDisplay(conflict.boundAt), conflict.parameter, typeformat.Short(conflict.bound))
+	return callDiagnostic(operation, "argument_type", conflict.demandedAt, message), true
+}
+
+// callSubjectDisplay renders an argument subject the way a source reader states
+// it: the one-based argument position followed by the member path, when the
+// subject names one.
+func callSubjectDisplay(subject string) string {
+	index, suffix, ok := callArgumentSubject(subject)
+	if !ok {
+		return subject
+	}
+	return "argument " + strconv.Itoa(index) + suffix
 }
 
 func callableTypeParameterName(parameter string, parameters []callableTypeParam) (string, bool) {
@@ -23625,6 +23762,16 @@ func currentPublishedTermFact(prefix string, term []byte, partition equation.Par
 // finite generic-call witness: the bounded walk fails closed rather than
 // attempting to reconstitute a recursive type argument from an import edge.
 func closedProviderArgumentType(value typ.Type, depth int) bool {
+	return resolvedTypeGraph(value, depth, false)
+}
+
+// resolvedTypeGraph reports that every position of a carried graph is a
+// resolved type. An unknown, an uninhabited slot, an unresolved binder, or a
+// graph deeper than the bounded walk is never a finite witness. An explicit
+// any is a declared precision boundary rather than an unresolved one: a
+// provider argument may not carry one, while a graph that is only being
+// compared against a declaration may.
+func resolvedTypeGraph(value typ.Type, depth int, allowAny bool) bool {
 	if value == nil || depth > 64 {
 		return false
 	}
@@ -23633,11 +23780,15 @@ func closedProviderArgumentType(value typ.Type, depth int) bool {
 		return false
 	}
 	switch value.Kind() {
-	case kind.Any, kind.Unknown, kind.Never, kind.TypeParam, kind.Generic, kind.Ref:
+	case kind.Any:
+		if !allowAny {
+			return false
+		}
+	case kind.Unknown, kind.Never, kind.TypeParam, kind.Generic, kind.Ref:
 		return false
 	}
 	return !typ.WalkChildren(value, func(child typ.Type) bool {
-		return !closedProviderArgumentType(child, depth+1)
+		return !resolvedTypeGraph(child, depth+1, allowAny)
 	})
 }
 
@@ -23755,25 +23906,97 @@ type typeArgPair struct {
 	actual   typ.Type
 }
 
+// typeArgConflict names the disagreement two positions of one call state about
+// a single type parameter: the binding an earlier position proved, the binding
+// this position demands, the argument members that state each, and whether
+// either member states its binding invariantly. It is a candidate refutation
+// rather than a verdict, because a member walked at a covariant position only
+// requires the parameter to be some supertype of its witness.
+type typeArgConflict struct {
+	parameter         string
+	bound             typ.Type
+	boundAt           string
+	boundInvariant    bool
+	demanded          typ.Type
+	demandedAt        string
+	demandedInvariant bool
+}
+
+// typeArgOrigin records where one parameter was bound and whether that
+// position states the binding exactly.
+type typeArgOrigin struct {
+	at        string
+	invariant bool
+}
+
+// typeArgSession carries the state one instantiation shares across the
+// positions it decides: the pairs currently on its walk, the argument member
+// path it has descended, how deep inside nominal type arguments that path
+// currently is, where each parameter was bound, and the first conflict it
+// proved. A speculative union-arm trial suspends recording, because a rejected
+// arm is a search step and not a disagreement.
+type typeArgSession struct {
+	deciding    map[typeArgPair]bool
+	origin      map[string]typeArgOrigin
+	path        []string
+	invariant   int
+	conflict    *typeArgConflict
+	speculating int
+}
+
+func newTypeArgSession() *typeArgSession {
+	return &typeArgSession{deciding: make(map[typeArgPair]bool), origin: make(map[string]typeArgOrigin)}
+}
+
+// unify decides one top-level position under the subject that names it. The
+// coinductive path set belongs to that single position; the bindings, their
+// origins, and the conflict belong to the whole call.
+func (s *typeArgSession) unify(subject string, expected, actual typ.Type, params map[string]bool, bindings map[string]typ.Type) bool {
+	clear(s.deciding)
+	s.path = append(s.path[:0], subject)
+	return s.decide(expected, actual, params, bindings)
+}
+
+func (s *typeArgSession) at() string { return strings.Join(s.path, "") }
+
+func (s *typeArgSession) bind(name string, actual typ.Type, bindings map[string]typ.Type) {
+	bindings[name] = actual
+	if s.speculating == 0 {
+		s.origin[name] = typeArgOrigin{at: s.at(), invariant: s.invariant > 0}
+	}
+}
+
+func (s *typeArgSession) refuteBinding(name string, bound, demanded typ.Type) {
+	if s.speculating != 0 || s.conflict != nil {
+		return
+	}
+	origin := s.origin[name]
+	s.conflict = &typeArgConflict{
+		parameter: name,
+		bound:     bound, boundAt: origin.at, boundInvariant: origin.invariant,
+		demanded: demanded, demandedAt: s.at(), demandedInvariant: s.invariant > 0,
+	}
+}
+
 // inferImportedTypeArgs unifies a declared parameter position against the
 // closed type an argument already published, binding every generic parameter
 // the declaration names.
 func inferImportedTypeArgs(expected, actual typ.Type, params map[string]bool, bindings map[string]typ.Type) bool {
-	return inferTypeArgsDeciding(expected, actual, params, bindings, map[typeArgPair]bool{})
+	return newTypeArgSession().unify("", expected, actual, params, bindings)
 }
 
-func inferTypeArgsDeciding(expected, actual typ.Type, params map[string]bool, bindings map[string]typ.Type, deciding map[typeArgPair]bool) bool {
+func (s *typeArgSession) decide(expected, actual typ.Type, params map[string]bool, bindings map[string]typ.Type) bool {
 	expected = unwrap.Alias(expected)
 	actual = unwrap.Alias(actual)
 	if expected == nil || actual == nil {
 		return false
 	}
 	pair := typeArgPair{expected: expected, actual: actual}
-	if deciding[pair] {
+	if s.deciding[pair] {
 		return true
 	}
-	deciding[pair] = true
-	defer delete(deciding, pair)
+	s.deciding[pair] = true
+	defer delete(s.deciding, pair)
 	// Reduce both sides to the surface one of the structural cases below can
 	// decide. A generic application states its type arguments in the
 	// application itself and not necessarily in the generic's body — the
@@ -23792,19 +24015,29 @@ func inferTypeArgsDeciding(expected, actual typ.Type, params map[string]bool, bi
 				// it or manufacture a result witness.  This is needed for ordinary
 				// reducers whose callback fixes A as number while their literal seed
 				// is an integer.
-				return typ.TypeEquals(prior, actual) || subtype.IsSubtype(actual, prior)
+				if typ.TypeEquals(prior, actual) || subtype.IsSubtype(actual, prior) {
+					return true
+				}
+				s.refuteBinding(parameter.Name, prior, actual)
+				return false
 			}
-			bindings[parameter.Name] = actual
+			s.bind(parameter.Name, actual, bindings)
 			return true
 		}
 		want, wantApplied := expected.(*typ.Instantiated)
 		got, gotApplied := actual.(*typ.Instantiated)
 		if wantApplied && gotApplied && len(want.TypeArgs) == len(got.TypeArgs) && typ.TypeEquals(want.Generic, got.Generic) {
+			// A nominal application states its arguments invariantly: the marker
+			// generic carries the payload nowhere else, so a parameter bound here
+			// is pinned to exactly this argument rather than to some supertype.
+			s.invariant++
 			for index := range want.TypeArgs {
-				if !inferTypeArgsDeciding(want.TypeArgs[index], got.TypeArgs[index], params, bindings, deciding) {
+				if !s.decide(want.TypeArgs[index], got.TypeArgs[index], params, bindings) {
+					s.invariant--
 					return false
 				}
 			}
+			s.invariant--
 			return true
 		}
 		peeledExpected, peeledActual := expected, actual
@@ -23830,7 +24063,13 @@ func inferTypeArgsDeciding(expected, actual typ.Type, params map[string]bool, bi
 		}
 		for _, field := range want.Fields {
 			actualField := got.GetField(field.Name)
-			if actualField == nil || field.Type == nil || !inferTypeArgsDeciding(field.Type, actualField.Type, params, bindings, deciding) {
+			if actualField == nil || field.Type == nil {
+				return false
+			}
+			s.path = append(s.path, "."+field.Name)
+			decided := s.decide(field.Type, actualField.Type, params, bindings)
+			s.path = s.path[:len(s.path)-1]
+			if !decided {
 				return false
 			}
 		}
@@ -23852,25 +24091,25 @@ func inferTypeArgsDeciding(expected, actual typ.Type, params map[string]bool, bi
 					continue
 				}
 			}
-			if !inferTypeArgsDeciding(want.Params[i].Type, got.Params[i].Type, params, bindings, deciding) {
+			if !s.decide(want.Params[i].Type, got.Params[i].Type, params, bindings) {
 				return false
 			}
 		}
 		for i := range want.Returns {
-			if !inferTypeArgsDeciding(want.Returns[i], got.Returns[i], params, bindings, deciding) {
+			if !s.decide(want.Returns[i], got.Returns[i], params, bindings) {
 				return false
 			}
 		}
 		return true
 	case *typ.Array:
 		got, ok := actual.(*typ.Array)
-		return ok && inferTypeArgsDeciding(want.Element, got.Element, params, bindings, deciding)
+		return ok && s.decide(want.Element, got.Element, params, bindings)
 	case *typ.Optional:
 		got, ok := actual.(*typ.Optional)
-		return ok && inferTypeArgsDeciding(want.Inner, got.Inner, params, bindings, deciding)
+		return ok && s.decide(want.Inner, got.Inner, params, bindings)
 	case *typ.Union:
 		got, ok := actual.(*typ.Union)
-		return ok && inferUnionTypeArgs(want, got, params, bindings, deciding)
+		return ok && s.decideUnion(want, got, params, bindings)
 	default:
 		// No parameter position remains reachable here, so the two sides only
 		// have to describe the same type. Nominal identity settles the paired
@@ -23881,13 +24120,13 @@ func inferTypeArgsDeciding(expected, actual typ.Type, params map[string]bool, bi
 	}
 }
 
-// inferUnionTypeArgs pairs the arms of a generic union parameter with the arms
-// of the argument union it is unified against. Union members are unordered, so
-// a positional walk would bind a type parameter from whichever arm happened to
-// be declared first. Instead an arm is committed only while exactly one
-// unmatched actual arm unifies with it; an ambiguous or unmatched arm leaves
-// every binding untouched and the instantiation fail-closed.
-func inferUnionTypeArgs(want, got *typ.Union, params map[string]bool, bindings map[string]typ.Type, deciding map[typeArgPair]bool) bool {
+// decideUnion pairs the arms of a generic union parameter with the arms of the
+// argument union it is unified against. Union members are unordered, so a
+// positional walk would bind a type parameter from whichever arm happened to be
+// declared first. Instead an arm is committed only while exactly one unmatched
+// actual arm unifies with it; an ambiguous or unmatched arm leaves every
+// binding untouched and the instantiation fail-closed.
+func (s *typeArgSession) decideUnion(want, got *typ.Union, params map[string]bool, bindings map[string]typ.Type) bool {
 	if len(want.Members) != len(got.Members) {
 		return false
 	}
@@ -23906,7 +24145,10 @@ func inferUnionTypeArgs(want, got *typ.Union, params map[string]bool, bindings m
 				for name, bound := range bindings {
 					trial[name] = bound
 				}
-				if !inferTypeArgsDeciding(member, arm, params, trial, deciding) {
+				s.speculating++
+				accepted := s.decide(member, arm, params, trial)
+				s.speculating--
+				if !accepted {
 					continue
 				}
 				if selected >= 0 {
@@ -23922,6 +24164,10 @@ func inferUnionTypeArgs(want, got *typ.Union, params map[string]bool, bindings m
 			}
 			matched[selected] = true
 			for name, bound := range proven {
+				if bindings[name] == nil {
+					s.bind(name, bound, bindings)
+					continue
+				}
 				bindings[name] = bound
 			}
 			pending = append(pending[:index], pending[index+1:]...)

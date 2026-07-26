@@ -203,3 +203,52 @@ func TestProviderArgumentTypeRefusesOpenKeyedLiteral(t *testing.T) {
 		t.Fatal("an open literal published an argument witness")
 	}
 }
+
+func TestTypeArgSessionRecordsInvariantApplicationConflict(t *testing.T) {
+	parameter := typ.NewTypeParam("T", nil)
+	timer := typetable.NewRecord().Field("elapsed", typ.Number).Build()
+	expected := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), parameter)).
+		Field("decode", typ.Func().Param("raw", typ.Any).Returns(parameter).Build()).
+		Build()
+	actual := typetable.NewRecord().
+		Field("channel", typ.Instantiate(ambient.ChannelGeneric(), rawRecordType())).
+		Field("decode", typ.Func().Param("raw", typ.Any).Returns(timer).Build()).
+		Build()
+
+	session := newTypeArgSession()
+	if session.unify("argument-00000001", expected, actual, map[string]bool{"T": true}, map[string]typ.Type{}) {
+		t.Fatal("disagreeing channel and witness payloads produced a binding")
+	}
+	conflict := session.conflict
+	if conflict == nil {
+		t.Fatal("the disagreement recorded no conflict")
+	}
+	if conflict.parameter != "T" || conflict.boundAt != "argument-00000001.channel" || conflict.demandedAt != "argument-00000001.decode" {
+		t.Fatalf("conflict located at %q/%q for %q", conflict.boundAt, conflict.demandedAt, conflict.parameter)
+	}
+	if !conflict.boundInvariant || conflict.demandedInvariant {
+		t.Fatalf("variance recorded as bound=%v demanded=%v, want the channel application invariant and the decode return covariant", conflict.boundInvariant, conflict.demandedInvariant)
+	}
+	if !typ.TypeEquals(conflict.bound, rawRecordType()) || !typ.TypeEquals(conflict.demanded, timer) {
+		t.Fatalf("conflict witnesses = %v / %v", conflict.bound, conflict.demanded)
+	}
+}
+
+func TestTypeArgSessionLeavesCovariantConflictWithoutAnInvariantWitness(t *testing.T) {
+	parameter := typ.NewTypeParam("T", nil)
+	expected := typetable.NewRecord().Field("first", parameter).Field("second", parameter).Build()
+	actual := typetable.NewRecord().Field("first", typ.Number).Field("second", typ.String).Build()
+
+	session := newTypeArgSession()
+	if session.unify("argument-00000000", expected, actual, map[string]bool{"T": true}, map[string]typ.Type{}) {
+		t.Fatal("number and string bound the same parameter")
+	}
+	conflict := session.conflict
+	if conflict == nil {
+		t.Fatal("the disagreement recorded no conflict")
+	}
+	if conflict.boundInvariant || conflict.demandedInvariant {
+		t.Fatalf("variance recorded as bound=%v demanded=%v, want both members covariant", conflict.boundInvariant, conflict.demandedInvariant)
+	}
+}

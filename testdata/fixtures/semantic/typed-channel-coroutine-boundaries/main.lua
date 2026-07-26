@@ -108,8 +108,8 @@ local function consume_source(source: protocol.EventSource): string
     end
 
     local wrong_typed_events: Channel<protocol.Event> = listen("events", {
-        channel = source.primary, -- expect-error
-        decode = decode_timer,
+        channel = source.primary,
+        decode = decode_timer, -- expect-error
     })
 
     return direct .. selected .. handler(event)
