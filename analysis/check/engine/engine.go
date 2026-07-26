@@ -10245,7 +10245,12 @@ func projectReturnKeysOf(operation equation.BoundEquation, child front.Compilati
 				continue
 			}
 			origin, related := arrayKeysOfContainer(identity, childPartition)
-			if !related || unverifiedCallAfter(operand.Term.Encoding, origin.Established, childPartition) {
+			// The array's own accounting decides whether a call the body made
+			// with it left the relation intact: an append accounts for itself,
+			// a stated shape-preserving effect accounts for itself, and a callee
+			// that accounts for neither may have put an element in the array
+			// that no enumeration produced.
+			if !related || reachedUnaccountedCallee(operand.Term.Encoding, identity, childPartition) {
 				continue
 			}
 			formal, isFormal := formals[string(origin.Container)]
@@ -13082,6 +13087,23 @@ func keyedStoreWitnesses(rows []opaqueMemberWriteWire) ([]typ.Type, []typ.Type, 
 	return keys, values, len(rows) != 0
 }
 
+// publishedRowsPrefix walks every row this closure published under a prefix,
+// not the rows one guard cube admits. The keyed-store families are may-facts:
+// the arm that stored, read, or appended is one of the executions arriving at
+// every point past its decision, so a row published inside an arm describes the
+// container there as much as an unguarded one does. Reading them through the
+// cube would let a guarded append leave the component stating the store's own
+// empty literal.
+func publishedRowsPrefix(prefix string, partition equation.Partition) []equation.Fact {
+	rows := make([]equation.Fact, 0)
+	for _, fact := range partition.AllValues() {
+		if strings.HasPrefix(fact.Key, prefix) {
+			rows = append(rows, fact)
+		}
+	}
+	return rows
+}
+
 // keyedReadFact records that a term holds a value read from a container at a key
 // this analysis never resolved.
 func keyedReadFact(term []byte, operation string, identity []byte) equation.Fact {
@@ -13140,7 +13162,7 @@ func keyedElementFact(identity []byte, operation string, element []byte, partiti
 // unresolved-key slots. One write that carried no type leaves the whole set
 // unclassified: the slot holds a value nothing describes.
 func keyedElementWrites(identity []byte, partition equation.Partition) ([]typ.Type, bool, bool) {
-	rows := partition.ValuesPrefix(heapKeyedElementPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/")
+	rows := publishedRowsPrefix(heapKeyedElementPrefix+base64.RawURLEncoding.EncodeToString(identity)+"/", partition)
 	if len(rows) == 0 {
 		return nil, true, false
 	}
@@ -13163,7 +13185,7 @@ func keyedElementWrites(identity []byte, partition equation.Partition) ([]typ.Ty
 func keyedReadReachedUnaccountedCall(identity []byte, partition equation.Partition) bool {
 	encoded := base64.RawURLEncoding.EncodeToString(identity)
 	reads := make(map[string]bool)
-	for _, fact := range partition.ValuesPrefix(heapKeyedReadPrefix) {
+	for _, fact := range publishedRowsPrefix(heapKeyedReadPrefix, partition) {
 		if !bytes.Equal(fact.Value, identity) {
 			continue
 		}
@@ -13178,10 +13200,10 @@ func keyedReadReachedUnaccountedCall(identity []byte, partition equation.Partiti
 		return false
 	}
 	accounted := make(map[string]bool)
-	for _, fact := range partition.ValuesPrefix(heapKeyedElementPrefix + encoded + "/") {
+	for _, fact := range publishedRowsPrefix(heapKeyedElementPrefix+encoded+"/", partition) {
 		accounted[factOperation(fact.Key)] = true
 	}
-	for _, fact := range partition.ValuesPrefix("call-argument/") {
+	for _, fact := range publishedRowsPrefix("call-argument/", partition) {
 		if !reads[string(fact.Value)] {
 			continue
 		}
@@ -14663,7 +14685,34 @@ func keysOfContainerCurrent(origin keysOfOrigin, partition equation.Partition) b
 	if revoked(heapIndexSubject(origin.Container, partition), origin.Established, partition) {
 		return false
 	}
-	return !unverifiedCallAfter(origin.Container, origin.Established, partition)
+	if unverifiedCallAfter(origin.Container, origin.Established, partition) {
+		return false
+	}
+	return !containerReachedUnstatedCallAfter(origin.Container, origin.Established, partition)
+}
+
+// containerReachedUnstatedCallAfter reports that the container was handed to a
+// call after the relation was established, at an operation whose effect on it
+// nothing states. A container the caller received from another call carries no
+// allocation of its own, so the placement blocker route cannot see such a call;
+// the application's own argument rows can, and an effect row published for that
+// application is what accounts for it.
+func containerReachedUnstatedCallAfter(container []byte, established string, partition equation.Partition) bool {
+	for _, fact := range publishedRowsPrefix("call-argument/", partition) {
+		if !bytes.Equal(fact.Value, container) {
+			continue
+		}
+		point, _, named := strings.Cut(strings.TrimPrefix(fact.Key, "call-argument/"), "/")
+		if !named || point <= established {
+			continue
+		}
+		if allocation, found := placementAllocationForTerm(container, partition); found &&
+			placementContractDischarged(base64.RawURLEncoding.EncodeToString([]byte(allocation.Identity)), point, partition) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // heapKeysOfOrigin is the container every accounted write into this identity
@@ -21679,6 +21728,13 @@ func instantiatedFormalType(term []byte, value []byte, partition equation.Partit
 	if !found || resolved == nil {
 		resolved, found = declaredTypeForTerm(term, partition)
 	}
+	// A container addressed only at keys this analysis never resolved publishes
+	// no declaration and no type witness; the keyed component its own stores
+	// established is what describes it, here exactly as it does at a read or an
+	// enumeration of the same container.
+	if !found || resolved == nil {
+		resolved, found = keyedComponentContainerType(term, partition)
+	}
 	if !found || resolved == nil {
 		return nil, false
 	}
@@ -24843,6 +24899,21 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				values = append(values, heapIdentityFact(string(result), operation.Target.Name, resultIdentity))
 			}
 			values = append(values, heapKeysOfFact(resultIdentity, keysOf.Value, operation.Target.Name))
+		}
+		// A returned container whose value is the keyed component its producing
+		// body established has no allocation of its own here, and the presence
+		// lane names a container only by a heap identity: that identity is the
+		// subject every later write publishes its revocation under, so without
+		// one no proof about this container's slots could ever be withdrawn. The
+		// minted identity names this exact call and result slot.
+		if !hasResultIdentity {
+			if witness, decoded := shapefact.DecodeTarget(value); decoded {
+				if base := unwrap.Alias(subst.ExpandInstantiated(witness)); base != nil && base.Kind() == kind.Map {
+					resultIdentity = []byte("call-result-table/" + strings.TrimPrefix(string(application), "call/") + "/" + key)
+					hasResultIdentity = true
+					values = append(values, heapIdentityFact(string(result), operation.Target.Name, resultIdentity))
+				}
+			}
 		}
 		// A container the callee returned carrying one of the caller's own tables
 		// needs an identity of its own before that member link can be stated. The

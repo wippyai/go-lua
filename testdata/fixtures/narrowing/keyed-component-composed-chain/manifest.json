@@ -1,0 +1,5 @@
+{
+  "description": "A grouped container filled at unresolved keys inside a decision arm, returned, enumerated by a helper with an undeclared formal, and read back at one of the enumerated keys: the element the appends established and the presence the enumeration established both reach that read. A store into the container, an element no enumeration produced, and a container handed to an unread callee each withhold the relation.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

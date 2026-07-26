@@ -229,6 +229,22 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 			boundary = "borrow"
 		case ownership.BorrowAll:
 			from, trailing, boundary = 0, true, "borrow"
+		case mutation.Mutate:
+			// A mutation that changes neither the type-level shape nor the
+			// length rewrites the container in place: the callee is named, it
+			// retains nothing, and it leaves the slot set it received. That is a
+			// stated boundary, so the opaque-call fallback it would otherwise
+			// fall under is discharged. A transform or a length change states a
+			// different effect and publishes no contract here.
+			if !shapePreservingMutation(value) {
+				continue
+			}
+			var resolved bool
+			from, resolved = effect.ResolveParamIndex(value.Target, len(arguments))
+			if !resolved {
+				continue
+			}
+			boundary = "mutate"
 		case iteration.Iterator:
 			// An iterator reads its source for the duration of the caller's loop
 			// and publishes no retention of it, so the source keeps whatever
@@ -264,6 +280,24 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 		}
 	}
 	return facts
+}
+
+// shapePreservingMutation reports that a mutation label leaves the container's
+// type-level shape and its length exactly as the callee received them. Such a
+// call rewrites slots in place; it adds none, removes none, and changes no
+// element type.
+func shapePreservingMutation(label mutation.Mutate) bool {
+	if label.LengthDelta != nil {
+		return false
+	}
+	switch transform := label.Transform.(type) {
+	case mutation.Unchanged:
+		return true
+	case *mutation.Unchanged:
+		return transform != nil
+	default:
+		return false
+	}
 }
 
 func placementGlobalProviderName(provider []byte) (string, bool) {

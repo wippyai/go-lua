@@ -491,3 +491,118 @@ end
 		t.Fatalf("the enumerated slot of an inferred component was not proven occupied:\n%s", diagnosticSummaries(diagnostics))
 	}
 }
+
+// TestGuardedAppendReachesTheKeyedComponent pins the keyed-store families as
+// may-facts. An append through a read at an unresolved key belongs to the
+// container's component wherever it stands, so an arm of a decision states it
+// as much as an unguarded point does.
+func TestGuardedAppendReachesTheKeyedComponent(t *testing.T) {
+	const source = `type Entry = {id: string}
+local entries: {Entry} = {}
+local groups = {}
+for _, entry in ipairs(entries) do
+    local key = entry.id
+    if key ~= "" then
+        groups[key] = groups[key] or {}
+        table.insert(groups[key], entry)
+    end
+end
+local group: %s = groups["alpha"]
+`
+	if diagnostics := checkSource(t, fmt.Sprintf(source, "{Entry}?")); len(diagnostics) != 0 {
+		t.Fatalf("an append inside an arm did not reach the component:\n%s", diagnosticSummaries(diagnostics))
+	}
+	if len(checkSource(t, fmt.Sprintf(source, "{string}?"))) == 0 {
+		t.Fatal("a mismatched element claim was admitted against the component the arm established")
+	}
+}
+
+// TestShapePreservingMutationAccountsForItself pins the effect row a permuting
+// call publishes. table.sort states a mutation that changes neither shape nor
+// length, so it introduces no element the enumeration did not produce and the
+// keys-of relation survives it.
+func TestShapePreservingMutationAccountsForItself(t *testing.T) {
+	diagnostics := checkSource(t, `local function keys_of(source: {[string]: number})
+    local out = {}
+    for key in pairs(source) do table.insert(out, key) end
+    table.sort(out)
+    return out
+end
+local counts: {[string]: number} = {}
+local names = keys_of(counts)
+for _, name in ipairs(names) do
+    local hits: number = counts[name]
+end
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("a shape-preserving mutation withdrew the relation:\n%s", diagnosticSummaries(diagnostics))
+	}
+}
+
+// TestUndeclaredFormalHoldsTheArgumentsKeyedComponent pins the instance a call
+// seeds. The argument publishes no declaration and no type witness, so the
+// component its own stores established is what the formal holds.
+func TestUndeclaredFormalHoldsTheArgumentsKeyedComponent(t *testing.T) {
+	diagnostics := checkSource(t, `type Entry = {id: string}
+local entries: {Entry} = {}
+local groups = {}
+for _, entry in ipairs(entries) do
+    groups[entry.id] = groups[entry.id] or {}
+    table.insert(groups[entry.id], entry)
+end
+local function keys_of(t)
+    local out = {}
+    for key in pairs(t) do table.insert(out, key) end
+    return out
+end
+local names = keys_of(groups)
+for _, name in ipairs(names) do
+    local tests: {Entry} = groups[name]
+end
+`)
+	if len(diagnostics) != 0 {
+		t.Fatalf("an undeclared formal lost the argument's component:\n%s", diagnosticSummaries(diagnostics))
+	}
+}
+
+// TestReturnedKeyedContainerCarriesARevocableIdentity pins why the returned
+// container needs an identity: the presence lane names a container only by one,
+// and that identity is what every later write publishes its revocation under.
+func TestReturnedKeyedContainerCarriesARevocableIdentity(t *testing.T) {
+	const source = `type Entry = {id: string}
+local function group(items: {Entry})
+    local out = {}
+    for _, item in ipairs(items) do
+        out[item.id] = out[item.id] or {}
+        table.insert(out[item.id], item)
+    end
+    return out
+end
+local function keys_of(t)
+    local out = {}
+    for key in pairs(t) do table.insert(out, key) end
+    return out
+end
+local entries: {Entry} = {}
+local groups = group(entries)
+local names = keys_of(groups)
+%s
+for _, name in ipairs(names) do
+    local tests: {Entry} = groups[name]
+end
+`
+	if diagnostics := checkSource(t, fmt.Sprintf(source, "")); len(diagnostics) != 0 {
+		t.Fatalf("the returned container carried no relation to its keys:\n%s", diagnosticSummaries(diagnostics))
+	}
+	for name, intervening := range map[string]string{
+		"store-into-the-container":    `groups["added"] = {}`,
+		"container-to-unread-callee":  `unresolved_sink(groups)`,
+		"element-no-enumeration-made": `table.insert(names, "literal")`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if len(checkSource(t, fmt.Sprintf(source, intervening))) == 0 {
+				t.Fatal("the relation survived a change its identity must revoke")
+			}
+		})
+	}
+}
