@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -29,6 +30,8 @@ func nativeWIRContracts(root Compilation) []NativeContract {
 	var contracts []NativeContract
 	var visit func(Compilation)
 	visit = func(compilation Compilation) {
+		contracts = append(contracts, nativeConstantPublications(compilation)...)
+		contracts = append(contracts, nativePublicationIdentityContracts(compilation)...)
 		contracts = append(contracts, nativeShapeContracts(compilation)...)
 		contracts = append(contracts, nativeDiscriminantContracts(compilation.WIR)...)
 		contracts = append(contracts, nativeRecursiveIdentityContracts(compilation.WIR, compilation.TypeDefinitions)...)
@@ -47,9 +50,125 @@ func nativeWIRContracts(root Compilation) []NativeContract {
 		if contracts[i].Subject != contracts[j].Subject {
 			return contracts[i].Subject < contracts[j].Subject
 		}
-		return strings.Join(contracts[i].Revocations, "/") < strings.Join(contracts[j].Revocations, "/")
+		if left, right := strings.Join(contracts[i].Revocations, "/"), strings.Join(contracts[j].Revocations, "/"); left != right {
+			return left < right
+		}
+		return contracts[i].Key.String() < contracts[j].Key.String()
 	})
 	return contracts
+}
+
+// nativeConstantPublications lowers only constant provenance and write
+// uniqueness. Exact evaluation stays with the equation value lattice: the
+// publication kernel reads Source after the body closes and emits no row when
+// that lattice does not hold one exact machine word.
+func nativeConstantPublications(compilation Compilation) []NativeContract {
+	body := compilation.WIR
+	if body == nil {
+		return nil
+	}
+	key := func(operand wir.Operand) string {
+		switch operand.Kind {
+		case wir.OperandPath:
+			return string(body.Path(wir.PathRef(operand.Ref)).Key())
+		case wir.OperandTemp:
+			return fmt.Sprintf("temp/%d", operand.Ref)
+		default:
+			return ""
+		}
+	}
+	writes := make(map[string]int)
+	captured := make(map[string]bool)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		count := func(operand wir.Operand) {
+			if name := key(operand); name != "" {
+				writes[name]++
+			}
+		}
+		switch instruction.Op {
+		case wir.OpClaim:
+		case wir.OpCall, wir.OpIterate:
+			for _, result := range body.Operands(instruction.Results) {
+				count(result)
+			}
+		default:
+			if instruction.WritesAssignmentPoint() {
+				count(instruction.Dst)
+			}
+		}
+		if instruction.Op == wir.OpClosure {
+			for _, capture := range body.Operands(instruction.List) {
+				if name := key(capture); name != "" {
+					captured[name] = true
+				}
+			}
+		}
+	}
+	known := make(map[string]bool)
+	origin := func(operand wir.Operand) bool {
+		return operand.Kind == wir.OperandConst || known[key(operand)]
+	}
+	var rows []NativeContract
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		constant := false
+		switch instruction.Op {
+		case wir.OpAssign:
+			constant = origin(instruction.A)
+		case wir.OpUnOp:
+			constant = wir.Operator(instruction.Operator) == wir.UnNeg && origin(instruction.A)
+		case wir.OpBinOp:
+			switch wir.Operator(instruction.Operator) {
+			case wir.BinAdd, wir.BinSub, wir.BinMul, wir.BinIDiv, wir.BinMod:
+				constant = origin(instruction.A) && origin(instruction.B)
+			}
+		}
+		name := key(instruction.Dst)
+		if !constant || name == "" || writes[name] != 1 || captured[name] {
+			continue
+		}
+		known[name] = true
+		source, err := scalarTerm(body, instruction.Dst)
+		if err != nil {
+			continue
+		}
+		rows = append(rows, NativeContract{
+			Family: "constant_value",
+			Key: factkey.BuildKey(factkey.NativeConstantValue, []factkey.Part{
+				factkey.OpaquePart(fmt.Sprintf("%x", compilation.Body)),
+			}, operationName(index)),
+			Source: string(source.Encoding),
+		})
+	}
+	return rows
+}
+
+// nativePublicationIdentityContracts lowers source-anchored executable WIR
+// coordinates into exact-key publication drafts. The publication kernel, not
+// Result projection, decides their visibility and carries them through cyclic
+// closure just like any other value fact.
+func nativePublicationIdentityContracts(compilation Compilation) []NativeContract {
+	body := compilation.WIR
+	if body == nil {
+		return nil
+	}
+	const value = "executable_body=present function_generation=present identity=stable_cross_module point=present publication_order=deterministic site_ordinal=present source_span=present"
+	var rows []NativeContract
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op == wir.OpEntry || instruction.Op == wir.OpExit || instruction.Op == wir.OpNoop || !instruction.ExprSpan.Valid() {
+			continue
+		}
+		rows = append(rows, NativeContract{
+			Family: "publication_identity",
+			Key: factkey.BuildKey(factkey.NativePublicationIdentity, []factkey.Part{
+				factkey.OpaquePart(fmt.Sprintf("%x", compilation.Body)),
+			}, operationName(index)),
+			Value: value,
+		})
+	}
+	return rows
 }
 
 func nativeShapeContracts(compilation Compilation) []NativeContract {

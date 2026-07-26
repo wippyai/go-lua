@@ -166,7 +166,7 @@ func publishedNativeFactsForCompilation(compilation front.Compilation, values, o
 func closedBranchCoordinates(values []equation.Fact) map[string]bool {
 	closed := make(map[string]bool)
 	for _, fact := range values {
-		body, occurrence, _, ok := nativeBranchProof(fact.Key, "branch-proof/")
+		body, occurrence, _, ok := nativeBranchProof(fact.Key)
 		if ok {
 			closed[body+"/"+occurrence] = true
 		}
@@ -468,7 +468,7 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 		if fact.Lane != NativeLaneValues || !strings.HasPrefix(fact.Key, branchProofPrefix) || fact.Value != "proven" {
 			continue
 		}
-		body, occurrence, edge, ok := nativeBranchProof(fact.Key, branchProofPrefix)
+		body, occurrence, edge, ok := nativeBranchProof(fact.Key)
 		if !ok {
 			continue
 		}
@@ -563,16 +563,12 @@ func nativeFreezeTerm(key, prefix string) (term, occurrence string, ok bool) {
 	return "path/" + term, occurrence, true
 }
 
-func nativeBranchProof(key, prefix string) (body, occurrence, edge string, ok bool) {
-	rest, found := strings.CutPrefix(key, prefix)
-	if !found {
+func nativeBranchProof(key string) (body, occurrence, edge string, ok bool) {
+	proof, ok := factkey.ParseBranchProof(key)
+	if !ok {
 		return "", "", "", false
 	}
-	parts := strings.Split(rest, "/")
-	if len(parts) != 3 || (parts[2] != "true" && parts[2] != "false") {
-		return "", "", "", false
-	}
-	return parts[0], parts[1], parts[2], true
+	return proof.Body, proof.Name, proof.Edge, true
 }
 
 func nativeDecodedIdentity(encoded string) string {
@@ -681,7 +677,7 @@ func newNativeAnchors(artifact equation.Artifact) *nativeAnchors {
 		anchors.operations[operation.Target.Name] = operation.Occurrence.Kind
 		byRole := make(map[string][]byte, len(operation.Operands))
 		for _, operand := range operation.Operands {
-			if operand.Term.Entry || len(operand.Term.Encoding) == 0 {
+			if operand.Term.Entry || len(operand.Term.Encoding) == 0 || strings.HasPrefix(operand.Role, "native-") {
 				continue
 			}
 			byRole[operand.Role] = operand.Term.Encoding
@@ -727,45 +723,9 @@ func (a *nativeAnchors) name(term, display string) {
 
 func (a *nativeAnchors) project(lane string, fact equation.Fact) NativeFact {
 	row := NativeFact{Lane: lane, Key: fact.Key, Value: nativeFactValue(fact.Value), Trust: nativeFactTrust(lane, fact.Value)}
-	// Segment boundaries stay as offsets into the key, so every candidate run
-	// below is a substring of the published key rather than a rebuilt string.
-	starts := make([]int, 1, 8)
-	for index := 0; index < len(fact.Key); index++ {
-		if fact.Key[index] == '/' {
-			starts = append(starts, index+1)
-		}
-	}
-	end := func(segment int) int {
-		if segment+1 < len(starts) {
-			return starts[segment+1] - 1
-		}
-		return len(fact.Key)
-	}
-	row.Family = fact.Key[:end(0)]
-	for segment := len(starts) - 1; segment >= 0; segment-- {
-		if _, coordinate := a.operations[fact.Key[starts[segment]:end(segment)]]; coordinate {
-			row.Occurrence = fact.Key[starts[segment]:end(segment)]
-			break
-		}
-	}
-	// The longest segment-aligned run that the artifact published as a term is
-	// the subject of the key. Longest wins so a term never loses to one of its
-	// own prefixes; the leftmost of equal-length runs wins so the choice does
-	// not depend on iteration order.
-	best := 0
-	for first := 0; first < len(starts); first++ {
-		last := first + a.longest
-		if last > len(starts) {
-			last = len(starts)
-		}
-		for count := last - first; count > best; count-- {
-			candidate := fact.Key[starts[first]:end(first+count-1)]
-			if display, known := a.terms[candidate]; known {
-				best, row.Term, row.Subject = count, candidate, display
-				break
-			}
-		}
-	}
+	projected := factkey.Project(fact.Key, a.terms, a.operations, a.longest)
+	row.Family, row.Term, row.Occurrence = projected.Family, projected.Term, projected.Occurrence
+	row.Subject = a.terms[row.Term]
 	if lane == NativeLaneValues {
 		if _, claimed := a.claimed[row.Term]; claimed {
 			row.Trust = NativeTrustClaimed

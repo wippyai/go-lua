@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -419,10 +420,9 @@ func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding,
 }
 
 func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, closure equation.OutputClosure, transactions int, parseElapsed, evaluateElapsed time.Duration) Result {
-	artifact := compilation.Artifact
-	closure.Values = append(closure.Values, publishedNativeContracts(compilation)...)
-	closure.Values = append(closure.Values, publishedPublicationIdentities(compilation)...)
-	closure.Values = append(closure.Values, publishedConstantValues(compilation)...)
+	artifact := semanticArtifact(compilation.Artifact)
+	transactions -= len(compilation.Artifact.Equations) - len(artifact.Equations)
+	closure.Values = append(closure.Values, publishedNestedConstantValues(compilation)...)
 	// An unbound annotation has a direct lexical diagnostic. Its unresolved
 	// reference must not also be presented as an ordinary failed type claim:
 	// no declared type witness exists to validate in the first place.
@@ -532,44 +532,20 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	}
 }
 
-// publishedNativeContracts is deliberately a closure publisher, not a side
-// channel. The descriptors were derived by front from binder/WIR topology and
-// become visible to every existing consumer only once the same evaluation has
-// closed successfully.
-func publishedNativeContracts(compilation front.Compilation) []equation.Fact {
-	if len(compilation.NativeContracts) == 0 {
-		return nil
-	}
-	values := make([]equation.Fact, 0, len(compilation.NativeContracts))
-	for index, contract := range compilation.NativeContracts {
-		if contract.Family == "" || contract.Value == "" {
+// semanticArtifact retains the public source-operation surface while native
+// descriptor transactions remain part of the evaluated fixpoint artifact.
+// They are publication plumbing, not additional authored operations, so
+// existing coordinate consumers and transaction accounting keep their
+// source-semantic view.
+func semanticArtifact(artifact equation.Artifact) equation.Artifact {
+	for index, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "publication" || len(operation.Operands) != 1 ||
+			operation.Operands[0].Role != "native-publications" {
 			continue
 		}
-		key := fmt.Sprintf("%s/contract/%08d", contract.Family, index)
-		// The subject stays a key segment so the ordinary anchor scan recovers
-		// the term and its source display name from published data alone.
-		if contract.Subject != "" {
-			key += "/" + contract.Subject
-		}
-		// A contract with several invalidators is one grant with a set of deopt
-		// points, so its whole class set travels in one key suffix. Emitting a
-		// fact per event would publish the same grant several times over.
-		if events := nativeContractEvents(contract.Revocations); events != "" {
-			key += "/contract-revocation/" + events
-		}
-		values = append(values, equation.Fact{Key: key, Value: []byte(contract.Value)})
+		return equation.Artifact{Equations: append([]equation.Equation(nil), artifact.Equations[:index]...)}
 	}
-	return values
-}
-
-func nativeContractEvents(revocations []string) string {
-	events := make([]string, 0, len(revocations))
-	for _, event := range revocations {
-		if event != "" {
-			events = append(events, event)
-		}
-	}
-	return strings.Join(events, ",")
+	return artifact
 }
 
 func publishedPolicyDiagnostics(diagnostics []front.ControlDiagnostic) []PublishedDiagnostic {
@@ -28499,6 +28475,105 @@ func tableFamilyValue(value []byte) bool {
 func publicationKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
+	}
+	if encoded := boundOperandValue(operation.Operands, "native-publications"); len(encoded) != 0 {
+		if len(encoded) < 4 {
+			return equation.TransactionResult{}, fmt.Errorf("engine: truncated native publication count")
+		}
+		count := int(binary.BigEndian.Uint32(encoded))
+		encoded = encoded[4:]
+		values := make([]equation.Fact, 0, count)
+		processed := 0
+		for len(encoded) != 0 {
+			if len(encoded) < 9 {
+				return equation.TransactionResult{}, fmt.Errorf("engine: truncated native publication")
+			}
+			kind := encoded[0]
+			keyLength := int(binary.BigEndian.Uint32(encoded[1:5]))
+			valueLength := int(binary.BigEndian.Uint32(encoded[5:9]))
+			encoded = encoded[9:]
+			if keyLength == 0 || valueLength == 0 || keyLength > len(encoded) || valueLength > len(encoded)-keyLength {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed native publication lengths")
+			}
+			key := encoded[:keyLength]
+			publication := encoded[keyLength : keyLength+valueLength]
+			encoded = encoded[keyLength+valueLength:]
+			processed++
+			var value []byte
+			switch kind {
+			case 1:
+				source := publication
+				published := source
+				if !strings.HasPrefix(string(source), "scalar/") {
+					fact, found := partition.LatestValuePrefix("value/" + string(source) + "/")
+					if !found {
+						continue
+					}
+					published = fact.Value
+				}
+				word, ok := nativePublishedConstantWord(published)
+				if !ok {
+					continue
+				}
+				value = []byte("representation=" + word.representation + " value=" + word.text)
+			case 0:
+				// The closure join below the kernel copies every value into its
+				// canonical byte arena. Keep the compiled operand view until that
+				// ownership boundary instead of allocating an identical
+				// transaction-local copy first.
+				value = publication
+			default:
+				return equation.TransactionResult{}, fmt.Errorf("engine: unknown native publication kind %d", kind)
+			}
+			values = append(values, equation.Fact{
+				Key: string(key), Value: value,
+			})
+		}
+		if processed != count {
+			return equation.TransactionResult{}, fmt.Errorf("engine: native publication count %d, want %d", processed, count)
+		}
+		return equation.TransactionResult{
+			Complete: true,
+			Closure:  equation.OutputClosure{Values: values},
+		}, nil
+	}
+	if key, source := boundOperandValue(operation.Operands, "native-key"), boundOperandValue(operation.Operands, "native-source"); len(source) != 0 {
+		if len(operation.Operands) != 2 || len(key) == 0 {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed native constant publication")
+		}
+		value := append([]byte(nil), source...)
+		if !strings.HasPrefix(string(source), "scalar/") {
+			published, found := partition.LatestValuePrefix("value/" + string(source) + "/")
+			if found {
+				value = published.Value
+			} else {
+				// A guarded or recurrent write can have no single visible value at
+				// the body exit. That is a withheld constant, not an incomplete
+				// semantic transaction.
+				return equation.TransactionResult{Complete: true}, nil
+			}
+		}
+		word, ok := nativePublishedConstantWord(value)
+		if !ok {
+			return equation.TransactionResult{Complete: true}, nil
+		}
+		return equation.TransactionResult{
+			Complete: true,
+			Closure: equation.OutputClosure{Values: []equation.Fact{{
+				Key: string(key), Value: []byte("representation=" + word.representation + " value=" + word.text),
+			}}},
+		}, nil
+	}
+	if key, value := boundOperandValue(operation.Operands, "native-key"), boundOperandValue(operation.Operands, "native-value"); len(key) != 0 || len(value) != 0 {
+		if len(operation.Operands) != 2 || len(key) == 0 || len(value) == 0 {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed native publication")
+		}
+		return equation.TransactionResult{
+			Complete: true,
+			Closure: equation.OutputClosure{Values: []equation.Fact{{
+				Key: string(key), Value: append([]byte(nil), value...),
+			}}},
+		}, nil
 	}
 	values := make([][]byte, 0, len(operation.Operands))
 	relationSurfaces := make([][]byte, 0, len(operation.Operands))

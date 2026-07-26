@@ -109,7 +109,7 @@ func TestBranchGuardAndProofShareOneDeclaration(t *testing.T) {
 	}
 }
 
-func TestBuildKeyOwnsEveryHeapSpelling(t *testing.T) {
+func TestBuildKeyOwnsDeclaredFamilySpellings(t *testing.T) {
 	identity := []byte("sealed-table/m/op-00000001")
 	for _, test := range []struct {
 		family Family
@@ -121,6 +121,8 @@ func TestBuildKeyOwnsEveryHeapSpelling(t *testing.T) {
 		{HeapMember, []Part{IdentityPart(identity), EncodedOpaquePart(".a")}, "heap/member/" + encode(string(identity)) + "/LmE/op-1"},
 		{HeapIndexPresence, []Part{TaggedTermPart([]byte("path/sym2")), EncodedTermPart([]byte("path/sym7"))}, "heap/index-presence/term/" + encode("path/sym2") + "/" + encode("path/sym7") + "/op-1"},
 		{HeapIndexUpper, []Part{EncodedTermPart([]byte("path/sym7")), EncodedTermPart([]byte("path/sym2"))}, "heap/index-upper/" + encode("path/sym7") + "/" + encode("path/sym2") + "/op-1"},
+		{NativeConstantValue, []Part{OpaquePart("2f2f")}, "constant_value/2f2f/op-1"},
+		{NativePublicationIdentity, []Part{OpaquePart("2f2f")}, "publication_identity/2f2f/op-1"},
 	} {
 		key := BuildKey(test.family, test.parts, "op-1")
 		if key.String() != test.want {
@@ -157,12 +159,12 @@ func TestBuildKeyProducesTypedPrefixes(t *testing.T) {
 	}
 }
 
-func TestHeapFamiliesAreCompleteRecords(t *testing.T) {
-	if len(families) != 23 {
-		t.Fatalf("declared heap families = %d, want 23", len(families))
+func TestFamiliesAreCompleteRecords(t *testing.T) {
+	if len(families) != 25 {
+		t.Fatalf("declared families = %d, want 25", len(families))
 	}
 	for _, family := range families {
-		if family.ID == 0 || family.Prefix == "" || len(family.RevocationSet) == 0 ||
+		if family.ID == 0 || family.Prefix == "" || family.RevocationSet == nil ||
 			family.PayloadKind > PayloadRelation {
 			t.Errorf("incomplete family record: %+v", family)
 		}

@@ -11,12 +11,22 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 type NativeContract struct {
 	Family string
+	// Key is an exact lowering-owned publication key. Ordinary descriptors
+	// leave it empty and receive the stable family/contract ordinal spelling.
+	// Coordinate-keyed native families use the canonical factkey record and
+	// BuildKey path before entering the publication transport.
+	Key factkey.Key
+	// Source asks the publication kernel to read this term from the closed
+	// partition and render its exact constant word. It is empty for static
+	// descriptor values.
+	Source string
 	Value  string
 	// Subject is the closed term encoding of the binding the contract concerns,
 	// in the same spelling the equations publish an operand term in. Publication

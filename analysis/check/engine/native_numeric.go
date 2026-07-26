@@ -421,13 +421,37 @@ func numericBodyFacts(compilation front.Compilation) []NativeFact {
 	return out
 }
 
-// publishedConstantValues publishes the exact machine word a single-assignment
-// write installs. It belongs to the ordinary value closure: `42` and `42.0` are
-// different machine words, so the constant is a conclusion every consumer reads
-// at the same public cut, not a native side channel. The word comes from the
-// body's constant lattice, so a literal reaches through the bindings it is
-// copied and computed into rather than stopping at the first one.
-func publishedConstantValues(root front.Compilation) []equation.Fact {
+// nativePublishedConstantWord renders an exact value-lattice scalar in the
+// native machine-word vocabulary. Provenance and write uniqueness are lowered
+// by front; arithmetic itself is never repeated here.
+func nativePublishedConstantWord(value []byte) (nativeConstantWord, bool) {
+	text := string(value)
+	switch {
+	case strings.HasPrefix(text, "scalar/number/"):
+		number := strings.TrimPrefix(text, "scalar/number/")
+		if numericLiteralIsInteger(number) {
+			parsed, err := strconv.ParseInt(number, 10, 64)
+			return nativeConstantWord{representation: "integer", text: number, integer: parsed, hasInteger: err == nil}, err == nil
+		}
+		parsed, err := strconv.ParseFloat(number, 64)
+		return nativeConstantWord{representation: "float", text: number, float: parsed, hasFloat: err == nil}, err == nil && !math.IsInf(parsed, 0) && !math.IsNaN(parsed)
+	case strings.HasPrefix(text, "scalar/string/"):
+		return nativeConstantWord{representation: "string", text: strings.TrimPrefix(text, "scalar/string/")}, true
+	case strings.HasPrefix(text, "scalar/bool/"):
+		return nativeConstantWord{representation: "boolean", text: strings.TrimPrefix(text, "scalar/bool/")}, true
+	default:
+		return nativeConstantWord{}, false
+	}
+}
+
+// publishedNestedConstantValues is the one residual constant scan. Nested
+// lexical bodies are admitted but not evaluated by the root fixpoint, so their
+// value partitions do not exist for a publication kernel to read. Until child
+// admission evaluates those artifacts, retaining their exact constant rows
+// requires reading the independently admitted child WIR. The root body is
+// deliberately excluded: its constants are ordinary native-source publication
+// equations and never pass through this residual.
+func publishedNestedConstantValues(root front.Compilation) []equation.Fact {
 	var rows []equation.Fact
 	var visit func(front.Compilation)
 	visit = func(compilation front.Compilation) {
@@ -448,7 +472,9 @@ func publishedConstantValues(root front.Compilation) []equation.Fact {
 			visit(child)
 		}
 	}
-	visit(root)
+	for _, child := range root.Nested {
+		visit(child)
+	}
 	return rows
 }
 

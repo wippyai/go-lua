@@ -99,6 +99,8 @@ const (
 	FamilyHeapIndexLower
 	FamilyHeapIndexUpper
 	FamilyHeapIndexRelation
+	FamilyNativeConstantValue
+	FamilyNativePublicationIdentity
 )
 
 // RevocationSet names the fact families whose publications can invalidate a
@@ -125,6 +127,17 @@ type Position struct {
 	Term string
 	// Identity is the allocation this position names, nil when it names none.
 	Identity []byte
+}
+
+// Projection is the generic publication-key coordinate recovered for a
+// serializer. Family is the first path segment; Term and Occurrence are
+// selected only from vocabularies the caller supplies from its artifact.
+// Keeping this segment walk here prevents output adapters from growing a
+// second, implicitly different key-kind system.
+type Projection struct {
+	Family     string
+	Term       string
+	Occurrence string
 }
 
 // tagged subject spellings. A subject that states its own kind uses them.
@@ -238,11 +251,19 @@ var (
 		ID: FamilyHeapIndexRelation, Prefix: "heap/index-relation/", Subject: Opaque,
 		PayloadKind: PayloadRelation, RevocationSet: RevocationSet{FamilyHeapIndexRelation},
 	}
+	NativeConstantValue = Family{
+		ID: FamilyNativeConstantValue, Prefix: "constant_value/", Subject: Opaque,
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{},
+	}
+	NativePublicationIdentity = Family{
+		ID: FamilyNativePublicationIdentity, Prefix: "publication_identity/", Subject: Opaque,
+		PayloadKind: PayloadBytes, RevocationSet: RevocationSet{},
+	}
 )
 
-// families declares every family whose keys are read structurally. Heap facts
-// about unresolved keyed reads/writes are included as first-class records too;
-// they were the two live heap families missing from the old parse-only table.
+// families declares every family whose keys are built or read structurally.
+// Heap facts about unresolved keyed reads/writes and the native coordinate
+// publications are first-class records rather than producer-local spellings.
 var families = []Family{
 	HeapTableIdentity,
 	HeapTableClosed,
@@ -267,6 +288,8 @@ var families = []Family{
 	HeapIndexLower,
 	HeapIndexUpper,
 	HeapIndexRelation,
+	NativeConstantValue,
+	NativePublicationIdentity,
 }
 
 // byPrefix indexes the declarations so a key is matched without scanning them.
@@ -450,6 +473,51 @@ func positionsOf(key string) ([]Position, bool) {
 		return nil, false
 	}
 	return positions, true
+}
+
+// Project recovers the family, longest known term, and last known occurrence
+// from a published key. Known terms and occurrences come from the equation
+// artifact, so this function only parses key structure; it does not infer a
+// subject or coordinate the artifact did not publish.
+func Project(key string, terms map[string]string, occurrences map[string]string, longest int) Projection {
+	var out Projection
+	if key == "" {
+		return out
+	}
+	starts := make([]int, 1, 8)
+	for index := 0; index < len(key); index++ {
+		if key[index] == '/' {
+			starts = append(starts, index+1)
+		}
+	}
+	end := func(segment int) int {
+		if segment+1 < len(starts) {
+			return starts[segment+1] - 1
+		}
+		return len(key)
+	}
+	out.Family = key[:end(0)]
+	for segment := len(starts) - 1; segment >= 0; segment-- {
+		if _, coordinate := occurrences[key[starts[segment]:end(segment)]]; coordinate {
+			out.Occurrence = key[starts[segment]:end(segment)]
+			break
+		}
+	}
+	best := 0
+	for first := 0; first < len(starts); first++ {
+		last := first + longest
+		if last > len(starts) {
+			last = len(starts)
+		}
+		for count := last - first; count > best; count-- {
+			candidate := key[starts[first]:end(first+count-1)]
+			if _, known := terms[candidate]; known {
+				best, out.Term = count, candidate
+				break
+			}
+		}
+	}
+	return out
 }
 
 // BranchGuardPrefix roots the encoding every certified CFG branch guard carries.

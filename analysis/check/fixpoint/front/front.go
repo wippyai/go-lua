@@ -273,14 +273,6 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	effects := effectSpans(body, artifact)
 	compilation := newCompilation(rootBody, 0, "", body.LexicalPath(), body.Boundary(), body, artifact, mergeSpans(claimSpans, effectValueSpans(body, artifact)), mergeSpans(claimTargetSpans, effectTargetSpans(body, artifact)), callSpans(body, artifact), branchSpans(body, artifact), effects, expressionSpans(body, artifact))
 	compilation.Graph = built.Graph
-	cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
-	if err != nil {
-		return Compilation{}, err
-	}
-	compilation.Frozen = cyclic
-	if graphHasCycle(built.Graph) {
-		compilation.Cyclic = &cyclic
-	}
 	nested, err := compileNestedBodies(body, rootBody)
 	if err != nil {
 		return Compilation{}, err
@@ -292,17 +284,123 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 		compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, child.ControlDiagnostics...)
 		compilation.PolicyDiagnostics = append(compilation.PolicyDiagnostics, child.PolicyDiagnostics...)
 	}
-	catalog, err := catalogBodies(compilation)
-	if err != nil {
-		return Compilation{}, err
-	}
-	compilation.Catalog = catalog
 	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, controlDiagnostics...)
 	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
 	compilation.TypeDefinitions = typeDefinitions
 	compilation.TypeFieldSpans = recordFieldNameSpans(stmts)
 	compilation.NativeContracts = append(nativeContracts(stmts, bindings), nativeWIRContracts(compilation)...)
+	artifact, err = appendNativeContractPublications(compilation.Artifact, compilation.NativeContracts)
+	if err != nil {
+		return Compilation{}, err
+	}
+	compilation.Artifact = artifact
+	cyclic, err := freezeCyclicArtifact(artifact, body, built.Graph)
+	if err != nil {
+		return Compilation{}, err
+	}
+	compilation.Frozen = cyclic
+	if graphHasCycle(built.Graph) {
+		compilation.Cyclic = &cyclic
+	}
+	catalog, err := catalogBodies(compilation)
+	if err != nil {
+		return Compilation{}, err
+	}
+	compilation.Catalog = catalog
 	return compilation, nil
+}
+
+// appendNativeContractPublications lowers front-owned native descriptors into
+// ordinary publication equations. The existing publication kernel executes
+// them after the semantic body has closed, so the rows travel through the same
+// guard stamping, cyclic merge, and output closure as every other fact.
+func appendNativeContractPublications(artifact equation.Artifact, contracts []NativeContract) (equation.Artifact, error) {
+	if len(contracts) == 0 {
+		return artifact, nil
+	}
+	if len(artifact.Equations) == 0 {
+		return equation.Artifact{}, fmt.Errorf("front: native publications require an admitted body")
+	}
+	body := artifact.Equations[0].Target.Body
+	entry := artifact.Equations[0].Entry
+	semanticTail := artifact.Equations[len(artifact.Equations)-1].Target
+	encodedPublications := make([]byte, 4, 4+len(contracts)*64)
+	publicationCount := uint32(0)
+	ordinal := 0
+	for _, contract := range contracts {
+		if contract.Family == "" || contract.Value == "" && contract.Source == "" {
+			continue
+		}
+		recordStart := len(encodedPublications)
+		encodedPublications = append(encodedPublications, make([]byte, 9)...)
+		keyStart := len(encodedPublications)
+		if key := contract.Key.String(); key != "" {
+			encodedPublications = append(encodedPublications, key...)
+		} else {
+			encodedPublications = append(encodedPublications, contract.Family...)
+			encodedPublications = append(encodedPublications, "/contract/"...)
+			encodedPublications = appendNativePublicationOrdinal(encodedPublications, ordinal)
+			ordinal++
+			if contract.Subject != "" {
+				encodedPublications = append(encodedPublications, '/')
+				encodedPublications = append(encodedPublications, contract.Subject...)
+			}
+			eventCount := 0
+			for _, event := range contract.Revocations {
+				if event == "" {
+					continue
+				}
+				if eventCount == 0 {
+					encodedPublications = append(encodedPublications, "/contract-revocation/"...)
+				} else {
+					encodedPublications = append(encodedPublications, ',')
+				}
+				encodedPublications = append(encodedPublications, event...)
+				eventCount++
+			}
+		}
+		keyLength := len(encodedPublications) - keyStart
+		kind := byte(0)
+		payload := contract.Value
+		if contract.Source != "" {
+			kind = 1
+			payload = contract.Source
+		}
+		encodedPublications = append(encodedPublications, payload...)
+		encodedPublications[recordStart] = kind
+		binary.BigEndian.PutUint32(encodedPublications[recordStart+1:recordStart+5], uint32(keyLength))
+		binary.BigEndian.PutUint32(encodedPublications[recordStart+5:recordStart+9], uint32(len(payload)))
+		publicationCount++
+	}
+	if publicationCount == 0 {
+		return artifact, nil
+	}
+	binary.BigEndian.PutUint32(encodedPublications, publicationCount)
+	publication := equation.Equation{
+		Target:       equation.Coordinate{Body: body, Name: operationName(len(artifact.Equations))},
+		Entry:        entry,
+		Dependencies: []equation.Coordinate{semanticTail},
+		Occurrence:   occurrence("publication"),
+		Operands: []equation.Operand{{
+			Role: "native-publications",
+			Term: equation.ClosedTerm(encodedPublications),
+		}},
+		KernelID: publicationKernel,
+	}
+	artifact.Equations = append(artifact.Equations, publication)
+	return artifact, nil
+}
+
+func appendNativePublicationOrdinal(out []byte, ordinal int) []byte {
+	if ordinal >= 100000000 {
+		return strconv.AppendInt(out, int64(ordinal), 10)
+	}
+	var digits [8]byte
+	for index := len(digits) - 1; index >= 0; index-- {
+		digits[index] = byte('0' + ordinal%10)
+		ordinal /= 10
+	}
+	return append(out, digits[:]...)
 }
 
 // resolveTopLevelTypeDefinitions resolves each provider declaration before WIR
@@ -4301,8 +4399,16 @@ func cyclicOperationCells(artifact equation.Artifact, body *wir.Body, graph cfg.
 			return nil, err
 		}
 	}
-	if index != len(artifact.Equations) {
-		return nil, fmt.Errorf("front: cyclic operation map has %d cells, want %d", index, len(artifact.Equations))
+	// Native descriptor publications are equation-owned tail transactions, not
+	// WIR operations with CFG points. Their explicit dependency chain already
+	// places them after the semantic body, so the point map intentionally ends
+	// before them.
+	for ; index < len(artifact.Equations); index++ {
+		operation := artifact.Equations[index]
+		if operation.Occurrence.Kind != "publication" || len(operation.Operands) != 1 ||
+			operation.Operands[0].Role != "native-publications" {
+			return nil, fmt.Errorf("front: cyclic operation map has unexpected non-WIR cell %s", operation.Target.Name)
+		}
 	}
 	return points, nil
 }
