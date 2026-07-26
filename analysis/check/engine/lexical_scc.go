@@ -318,7 +318,7 @@ func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClo
 // closed heap fact schemas.  It is deliberately schema-driven: a source path
 // or a declared type cannot enter a recursive summary as a heap capability.
 func lexicalSCCHeapFactIdentity(key string) ([]byte, bool) {
-	for _, prefix := range []string{heapTableClosedPrefix, heapMemberPrefix, heapMemberIdentityPrefix, memberCellPrefix, heapMetaAttachedPrefix, heapMetaNewIndexPrefix} {
+	for _, prefix := range []string{heapTableClosedPrefix, heapMemberPrefix, heapMemberIdentityPrefix, memberCellPrefix, heapMetaAttachedPrefix, heapMetaIdentityPrefix, heapMetaNewIndexPrefix} {
 		rest, found := strings.CutPrefix(key, prefix)
 		if !found {
 			continue

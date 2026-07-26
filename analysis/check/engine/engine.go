@@ -116,6 +116,7 @@ const (
 	memberCellPrefix           = "heap/member-cell/"
 	heapMemberOriginPrefix     = "heap/member-origin/"
 	heapMetaAttachedPrefix     = "heap/meta-attached/"
+	heapMetaIdentityPrefix     = "heap/meta-identity/"
 	heapMetaNewIndexPrefix     = "heap/meta-newindex/"
 	heapExternalCallbackPrefix = "heap/external-callback/"
 	heapIndexPresencePrefix    = "heap/index-presence/"
@@ -3880,6 +3881,14 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		}
 		tableIdentityTerms[seed.Term] = true
 		values = append(values, heapIdentityFact(seed.Term, "entry", seed.Identity))
+		// The seed value is the allocation's own literal shape. A closed one
+		// already states that its omitted static fields are absent, so the
+		// closedness that statement rests on travels with it: without the row,
+		// the child would hold the same members and yet be unable to conclude
+		// anything from their absence.
+		if table, decoded := shapefact.DecodeTable(seedValues[seed.Term]); decoded && table.Closed {
+			values = append(values, heapClosedFact(seed.Identity, "entry"))
+		}
 	}
 	placementTerms := make(map[string]bool, len(wire.PlacementSeeds))
 	for _, seed := range wire.PlacementSeeds {
@@ -4384,15 +4393,15 @@ func capturelessFormalBody(child front.Compilation) bool {
 }
 
 // uncalledSealedCaptureBoundary admits a parameter-free body whose entire free
-// environment is a set of never-reassigned lexical functions. Such a body is
-// closed at allocation time exactly like a capture-free one: it takes no
-// argument a caller could refine, and WIR's immutability bit proves no lexical
-// write can rebind a capture cell between allocation and any later call, so the
-// callable resolved here is the callable every invocation observes. A mutable
-// cell, a non-callable capture (whose contents a later member write could
-// change), or a capture whose own closure environment is not scalar leaves the
-// body dormant.
-func uncalledSealedCaptureBoundary(lexical *lexicalEvaluator, child front.Compilation, partition equation.Partition) bool {
+// environment is sealed: never-reassigned lexical functions, and the sealed
+// table allocations an object model is built from. Such a body is closed at
+// allocation time exactly like a capture-free one: it takes no argument a
+// caller could refine, and WIR's immutability bit proves no lexical write can
+// rebind a capture cell between allocation and any later call, so the value
+// resolved here is the value every invocation observes. A mutable cell, a
+// callable capture whose own closure environment is not scalar, and a table
+// capture whose surface is not yet final all leave the body dormant.
+func uncalledSealedCaptureBoundary(lexical *lexicalEvaluator, child front.Compilation, allocation lexicalAllocationSite, partition equation.Partition) bool {
 	if lexical == nil || child.WIR == nil || child.Cyclic != nil ||
 		len(child.Boundary.Parameters) != 0 || len(child.Boundary.Captures) == 0 {
 		return false
@@ -4403,11 +4412,17 @@ func uncalledSealedCaptureBoundary(lexical *lexicalEvaluator, child front.Compil
 		}
 		term := []byte(boundaryTerm(capture.Symbol))
 		value, known := resolveKnownCurrentValue(term, partition)
-		if !known || isUnknownScalar(value) || !isCallableValue(value) {
+		if !known || isUnknownScalar(value) {
 			return false
 		}
 		handle, found := closureHandleFor(term, partition)
 		if !found {
+			if !lexical.sealedTableCapture(term, value, allocation, partition) {
+				return false
+			}
+			continue
+		}
+		if !isCallableValue(value) {
 			return false
 		}
 		if _, admitted := lexical.byPrototype[handle.Prototype]; !admitted {
@@ -4423,6 +4438,54 @@ func uncalledSealedCaptureBoundary(lexical *lexicalEvaluator, child front.Compil
 		}
 	}
 	return true
+}
+
+// sealedTableCapture extends the sealed-capture environment from callables to
+// the prototype tables an object model is built from. A closed table literal is
+// a value in exactly the sense this boundary needs, provided nothing can still
+// change it: the binding is never reassigned, the allocation is closed, no
+// opaque callee holds it, and its member surface is already final at this
+// allocation site.
+//
+// Finality is what separates a proof from a stale copy. A member write that
+// reaches the same binding from another body, or from a later operation of the
+// allocating one, means the entry this allocation would seed is not the surface
+// a later call observes, so the body stays dormant instead.
+func (l *lexicalEvaluator) sealedTableCapture(term, value []byte, allocation lexicalAllocationSite, partition equation.Partition) bool {
+	if l == nil || !uncalledSealedTableCapture(term, value, partition) {
+		return false
+	}
+	identity, identified := tableIdentityForTerm(term, partition)
+	if !identified || !heapTableClosed(identity, partition) || heapHasExternalCallback(identity, partition) {
+		return false
+	}
+	for body, compilation := range l.byBody {
+		for _, item := range compilation.Artifact.Equations {
+			if item.Occurrence.Kind != "path-replacement" && item.Occurrence.Kind != "environment-write" {
+				continue
+			}
+			target, found := artifactOperand(item.Operands, "target")
+			if !found {
+				continue
+			}
+			root, suffix, addressed := heapTableAddress(target)
+			if !addressed || suffix == "" || string(root) != string(term) {
+				continue
+			}
+			if body != allocation.body || item.Target.Name >= allocation.operation {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// lexicalAllocationSite is the coordinate a closure literal is materialized at.
+// It orders a capture's member writes against the snapshot this allocation
+// seeds: writes before it are part of the surface, writes after it are not.
+type lexicalAllocationSite struct {
+	body      equation.BodyID
+	operation string
 }
 
 // declaredFormalSeeds encodes every declared, non-variadic formal of a body as
@@ -9561,7 +9624,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	if !closedBoundary && !explicitAnyBoundary && !declaredBoundary && !staticAssignmentBoundary && !indexedReadBoundary &&
 		!localUnionReadBoundary && !gradualLogicalBoundary && !staticMemberReadBoundary && !declaredFormalCallBoundary &&
 		!importedCaptureBoundary && !staticCapturedReturnBoundary && !arithmeticBoundary && !typedChannelSendBoundary {
-		sealedCaptureBoundary = uncalledSealedCaptureBoundary(lexical, child, partition)
+		sealedCaptureBoundary = uncalledSealedCaptureBoundary(lexical, child, lexicalAllocationSite{body: operation.Target.Body, operation: operation.Target.Name}, partition)
 	}
 	// A function literal passed straight into a generic callee has no root of
 	// its own: its formals are unannotated and every lane above states a
@@ -16622,6 +16685,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if object, found := tableIdentityForTerm(operands.arguments[0], partition); found {
 			metatableFacts = append(metatableFacts, heapMetaAttachedFact(object, operation.Target.Name))
 			if metatable, found := tableIdentityForTerm(operands.arguments[1], partition); found {
+				metatableFacts = append(metatableFacts, heapMetaIdentityFact(object, operation.Target.Name, metatable))
 				if target, found := heapMemberCurrent(heapMemberIdentityPrefix, metatable, ".__newindex", partition); found {
 					metatableFacts = append(metatableFacts, heapMetaNewIndexFact(object, operation.Target.Name, target))
 				}
@@ -18427,6 +18491,257 @@ func heapMetaAttached(identity []byte, partition equation.Partition) bool {
 	return false
 }
 
+// heapMetaIdentityFact names the exact table a `setmetatable` call installed as
+// an object's metatable. The attachment bit alone states that the object's
+// member surface is no longer its own literal; this row states which surface
+// composes with it, so an inherited read resolves against a named allocation
+// rather than an assumption.
+func heapMetaIdentityFact(identity []byte, operation string, metatable []byte) equation.Fact {
+	return equation.Fact{Key: heapMetaIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/" + operation, Value: append([]byte(nil), metatable...)}
+}
+
+// heapMetaIdentityCurrent is the metatable in force at this point. A second
+// `setmetatable` publishes a later operation coordinate, so the latest row is
+// the installation the read resolves through and the earlier one is revoked.
+func heapMetaIdentityCurrent(identity []byte, partition equation.Partition) ([]byte, bool) {
+	prefix := heapMetaIdentityPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	var value []byte
+	latest := ""
+	for _, fact := range partition.Values() {
+		if strings.HasPrefix(fact.Key, prefix) && (value == nil || fact.Key > latest) {
+			value, latest = fact.Value, fact.Key
+		}
+	}
+	if value == nil {
+		return nil, false
+	}
+	return append([]byte(nil), value...), true
+}
+
+// metatableIndexChainDepth bounds the `__index` walk. A prototype chain is a
+// finite list of allocations this module builds; a longer one is not a proof
+// this walk can complete, so it withholds rather than widening.
+const metatableIndexChainDepth = 8
+
+// metatableIndexChain lists the allocations a read resolves through after an
+// object's own surface, nearest first.
+//
+// The walk is a composition of already-published allocations, never a guess.
+// Each link must name its metatable (`heap/meta-identity/`), and that
+// metatable's `__index` entry must name another allocation. complete reports
+// that every link is a proven closed allocation, which is what makes a member
+// absent from all of them absent at runtime. A link with no named metatable and
+// no attachment ends the chain; a metatable an opaque callee may still mutate, a
+// non-table `__index` (a function metamethod is opaque by the same discipline
+// that keeps dynamic dispatch out of the value lattice), an unclosed link, or a
+// cycle ends it incomplete.
+func metatableIndexChain(identity []byte, partition equation.Partition) (chain [][]byte, complete bool) {
+	visited := make(map[string]bool, metatableIndexChainDepth)
+	visited[string(identity)] = true
+	metatable, named := heapMetaIdentityCurrent(identity, partition)
+	if !named {
+		return nil, !heapMetaAttached(identity, partition) && heapTableClosed(identity, partition) && !heapHasExternalCallback(identity, partition)
+	}
+	return metatableIndexChainFrom(metatable, visited, partition)
+}
+
+// metatableIndexChainFrom walks an installed metatable's `__index` delegation.
+// It is the same walk metatableIndexChain performs, entered at a named
+// metatable so a `setmetatable` result can compose its own surface before the
+// attachment row for that call is published.
+func metatableIndexChainFrom(metatable []byte, visited map[string]bool, partition equation.Partition) (chain [][]byte, complete bool) {
+	for depth := 0; depth < metatableIndexChainDepth; depth++ {
+		if heapHasExternalCallback(metatable, partition) {
+			// An opaque callee holding the metatable may repoint `__index`, so
+			// the delegation this walk would read is no longer current.
+			return chain, false
+		}
+		index, delegates := heapMemberCurrent(heapMemberIdentityPrefix, metatable, ".__index", partition)
+		if !delegates {
+			// The metatable names no `__index` allocation. A closed metatable
+			// with no such entry ends the chain, which decides absence; an entry
+			// holding a value with no allocation identity is a function or an
+			// opaque delegate and decides nothing.
+			if _, present := heapMemberCurrent(heapMemberPrefix, metatable, ".__index", partition); present {
+				return chain, false
+			}
+			return chain, heapTableClosed(metatable, partition)
+		}
+		if visited[string(index)] {
+			return chain, false
+		}
+		visited[string(index)] = true
+		chain = append(chain, index)
+		if !heapTableClosed(index, partition) || heapHasExternalCallback(index, partition) {
+			return chain, false
+		}
+		next, named := heapMetaIdentityCurrent(index, partition)
+		if !named {
+			// The link carries no installed metatable, so the chain ends here.
+			// Absence is decided when that last link is a closed allocation no
+			// attachment shadows.
+			return chain, !heapMetaAttached(index, partition)
+		}
+		metatable = next
+	}
+	return chain, false
+}
+
+// inheritedMemberValue resolves one member through the `__index` chain of a
+// table whose own surface does not define it. found reports a concrete
+// inherited value; decided reports that the chain is proven, which is what
+// makes a miss an absence proof rather than an unknown.
+func inheritedMemberValue(identity []byte, suffix string, partition equation.Partition) (value []byte, found, decided bool) {
+	chain, complete := metatableIndexChain(identity, partition)
+	for _, link := range chain {
+		if member, present := heapMemberCurrent(heapMemberPrefix, link, suffix, partition); present && string(member) != "scalar/nil" {
+			return member, true, true
+		}
+	}
+	return nil, false, complete
+}
+
+// composedMetatableSurface folds the members a proven `__index` chain supplies
+// onto a table's own closed literal shape. The result is the surface a runtime
+// read observes: an own member shadows an inherited one, and a nearer link
+// shadows a farther one. It is withheld unless the whole chain is proven, since
+// a partial chain cannot state that the composed shape is closed.
+func composedMetatableSurface(chain [][]byte, own shapefact.Table, partition equation.Partition) (shapefact.Table, bool) {
+	if len(chain) == 0 {
+		return shapefact.Table{}, false
+	}
+	members := make(map[string]shapefact.Member, len(own.Members))
+	for _, member := range own.Members {
+		members[member.Suffix] = member
+	}
+	for _, link := range chain {
+		for suffix, value := range heapMemberInventory(link, partition) {
+			if _, shadowed := members[suffix]; shadowed || value == "scalar/nil" {
+				continue
+			}
+			members[suffix] = shapefact.Member{Suffix: suffix, Present: true, Value: value}
+		}
+	}
+	composed := shapefact.Table{Closed: own.Closed, Members: make([]shapefact.Member, 0, len(members))}
+	for _, member := range members {
+		composed.Members = append(composed.Members, member)
+	}
+	sort.Slice(composed.Members, func(i, j int) bool { return composed.Members[i].Suffix < composed.Members[j].Suffix })
+	return composed, true
+}
+
+// composedSetMetatableValue is the value a `setmetatable` call publishes for its
+// result. The call returns its first argument unchanged, so the result is that
+// receiver's own closed literal widened by the read-only members its new
+// `__index` chain supplies. It is withheld unless the receiver is a closed
+// allocation and every link of the installed chain is proven, which keeps an
+// unproven metatable from turning an object into an open surface.
+func composedSetMetatableValue(lexical *lexicalEvaluator, operation equation.BoundEquation, receiver, metatable []byte, partition equation.Partition) ([]byte, bool) {
+	own, err := resolveCurrentValue(receiver, partition)
+	if err != nil {
+		return nil, false
+	}
+	table, sealed := shapefact.DecodeTable(own)
+	if !sealed || !table.Closed {
+		return nil, false
+	}
+	identity, identified := tableIdentityForTerm(receiver, partition)
+	if !identified || heapHasExternalCallback(identity, partition) {
+		return nil, false
+	}
+	installed, named := tableIdentityForTerm(metatable, partition)
+	if !named {
+		return nil, false
+	}
+	visited := map[string]bool{string(identity): true}
+	chain, complete := metatableIndexChainFrom(installed, visited, partition)
+	if !complete {
+		return nil, false
+	}
+	if !sealedIndexChain(lexical, operation, append([][]byte{installed}, chain...), partition) {
+		return nil, false
+	}
+	composed, composedOK := composedMetatableSurface(chain, table, partition)
+	if !composedOK {
+		return nil, false
+	}
+	return shapefact.EncodeTable(composed)
+}
+
+// sealedIndexChain reports whether the chain this composition rests on is still
+// the chain a later read resolves through.
+//
+// The composed value is a statement about one point in the body, while the
+// binding it composes lives on. A member write this body performs after the
+// installation can repoint `__index`, and the surface that write establishes is
+// the one every later read observes, so the earlier composition would be a copy
+// of a surface that no longer exists. Any such write leaves the result at its
+// broad value, and the member lane -- which resolves the chain at each read --
+// keeps stating the truth about the object.
+//
+// A write whose target allocation this partition cannot name is treated as
+// reaching the chain: an unnameable cell is not evidence of separation.
+func sealedIndexChain(lexical *lexicalEvaluator, operation equation.BoundEquation, chain [][]byte, partition equation.Partition) bool {
+	if lexical == nil {
+		return false
+	}
+	compilation, known := lexical.byBody[operation.Target.Body]
+	if !known {
+		return false
+	}
+	linked := make(map[string]bool, len(chain))
+	for _, link := range chain {
+		linked[string(link)] = true
+	}
+	for _, item := range compilation.Artifact.Equations {
+		if item.Occurrence.Kind != "path-replacement" && item.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		if item.Target.Name < operation.Target.Name {
+			continue
+		}
+		target, found := artifactOperand(item.Operands, "target")
+		if !found {
+			continue
+		}
+		root, suffix, addressed := heapTableAddress(target)
+		if !addressed || suffix == "" {
+			continue
+		}
+		written, resolved := tableIdentityForTerm(root, partition)
+		if !resolved || linked[string(written)] {
+			return false
+		}
+	}
+	return true
+}
+
+// heapMemberInventory is the current member publication of one allocation,
+// keyed by static suffix.
+func heapMemberInventory(identity []byte, partition equation.Partition) map[string]string {
+	prefix := heapMemberPrefix + base64.RawURLEncoding.EncodeToString(identity) + "/"
+	latest := make(map[string]equation.Fact)
+	for _, fact := range partition.ValuesPrefix(prefix) {
+		encodedSuffix, _, ok := strings.Cut(strings.TrimPrefix(fact.Key, prefix), "/")
+		if !ok {
+			continue
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(encodedSuffix)
+		if err != nil || !segment.ValidFormattedSegments(string(decoded)) {
+			continue
+		}
+		suffix := string(decoded)
+		if prior, exists := latest[suffix]; !exists || fact.Key > prior.Key {
+			latest[suffix] = fact
+		}
+	}
+	inventory := make(map[string]string, len(latest))
+	for suffix, fact := range latest {
+		inventory[suffix] = string(fact.Value)
+	}
+	return inventory
+}
+
 // heapExternalCallbackFact records that an opaque provider received a local
 // callback which may mutate this captured table after the call returns. It
 // invalidates only the closed-literal absence proof; it never invents a member
@@ -18697,7 +19012,22 @@ func heapMemberValue(term []byte, partition equation.Partition) ([]byte, bool) {
 		if value, found := heapMemberCurrent(heapMemberPrefix, identity, whole, partition); found {
 			return value, true
 		}
-		if heapTableClosed(identity, partition) && !heapMetaAttached(identity, partition) && !heapHasExternalCallback(identity, partition) {
+		if heapMetaAttached(identity, partition) {
+			// The object's own surface does not define this member, so the read
+			// resolves through the installed `__index` chain. A composed chain is
+			// typing, not laundering: the member it supplies is this member's
+			// value, and a member no link defines is absent. An unproven chain
+			// leaves the read with no member fact at all rather than a top value
+			// the object's own closed literal would otherwise have refuted.
+			inherited, found, decided := inheritedMemberValue(identity, whole, partition)
+			if found {
+				return inherited, true
+			}
+			if !decided {
+				return nil, false
+			}
+		}
+		if heapTableClosed(identity, partition) && !heapHasExternalCallback(identity, partition) {
 			// A closed literal establishes that this member is absent at runtime,
 			// but an existing declaration on its owning path can still describe a
 			// wider optional member surface. Preserve that published nilability
@@ -20195,12 +20525,21 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 					}
 				}
 			}
-			// setmetatable returns its first argument unchanged. Preserve only the
-			// existing value and heap identity; the metatable's effects are modeled
-			// independently by applyKernel and never fabricated from its shape.
+			// setmetatable returns its first argument unchanged, so the result
+			// denotes the receiver's own allocation. Its heap identity is
+			// preserved below; its value is the receiver's closed literal
+			// composed with the read-only members the installed `__index` chain
+			// supplies. Nothing is fabricated from the metatable's shape: the
+			// composition is withheld unless every link of that chain is a proven
+			// closed allocation.
 			if string(value) == "scalar/top" && providerName(provider) == "setmetatable" {
 				if receiver, found := argumentTerms[0]; found {
 					setMetatableReceiver = receiver
+					if installed, stated := argumentTerms[1]; stated && index == 0 {
+						if composed, ok := composedSetMetatableValue(lexical, operation, receiver, installed, partition); ok {
+							value = composed
+						}
+					}
 				}
 			}
 		}

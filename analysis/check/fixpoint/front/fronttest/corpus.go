@@ -61,23 +61,26 @@ func StarterCorpus() []Case {
 			Expect: Expectation{Published: []PublishedOutcome{value("result", "unknown")}},
 		},
 		{
-			Name: "adversarial/metatable-index-chain-read-is-conservative",
+			Name: "adversarial/metatable-index-chain-read-resolves-sealed-chain",
 			Source: `
 local fallback = { answer = 42 }
 local middle = setmetatable({}, { __index = fallback })
 local object = setmetatable({}, { __index = middle })
 local result = object.answer
 `,
-			Expect: Expectation{Published: []PublishedOutcome{value("middle", "unknown"), value("object", "unknown"), value("result", "unknown")}},
+			// Every link of this chain is a closed allocation this body builds
+			// and never repoints, so the read resolves through the same
+			// delegation the runtime walks and lands on the base's literal.
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "42")}},
 		},
 		{
-			Name: "adversarial/metatable-index-read-is-conservative",
+			Name: "adversarial/metatable-index-read-resolves-sealed-chain",
 			Source: `
 local fallback = { answer = 42 }
 local object = setmetatable({}, { __index = fallback })
 local result = object.answer
 `,
-			Expect: Expectation{Published: []PublishedOutcome{value("object", "unknown"), value("result", "unknown")}},
+			Expect: Expectation{Published: []PublishedOutcome{value("result", "42")}},
 		},
 		{
 			Name: "adversarial/metatable-newindex-write-routing-is-conservative",
