@@ -1,0 +1,9 @@
+{
+  "description": "A control derived from modulo and affine arithmetic is decided by the facts those lanes already published. The shifted window carries the modulo result's interval through the constant offset and refutes a ceiling below it; the residue-class control is refuted by intersecting the class with the window its subject occupies, which is the same class/interval intersection the element lane reads. Both are proofs about one binding's value, so the class the window does contain leaves its arm reachable.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 2
+  }
+}

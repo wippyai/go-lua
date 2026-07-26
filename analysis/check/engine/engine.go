@@ -16827,6 +16827,16 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 }
 
 func branchSelectionKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	// The numeric authorities answer first when they refute the true edge.
+	// Refuting an arm is a withdrawal and it dominates every refinement the
+	// closures below could carry into it: no execution enters an arm whose
+	// guard has no model, so nothing published there describes a run. A proven
+	// true edge is an addition rather than a withdrawal, so it stays at the
+	// point where no other rule decides the selector and a richer closure keeps
+	// the arm it owns.
+	if proven, decided := branchNumericTruth(operation, partition); decided && !proven {
+		return equation.TransactionResult{Complete: true, Closure: numericBranchOutcome(operation, partition, false)}, nil
+	}
 	if closure, recognized := typePredicateBranchClosure(operation, partition); recognized {
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
@@ -16925,6 +16935,13 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 		} else if recognized {
 			return equation.TransactionResult{Complete: true, Closure: closure}, nil
 		}
+		// The value lane says nothing about this selector, which is exactly the
+		// point where the numeric authorities still hold facts that decide it.
+		// Their verdict is a proof or nothing at all, so an undecided answer
+		// keeps both arms.
+		if proven, decided := branchNumericTruth(operation, partition); decided {
+			return equation.TransactionResult{Complete: true, Closure: numericBranchOutcome(operation, partition, proven)}, nil
+		}
 		return equation.TransactionResult{Complete: true, Closure: undecidedBranchOutcome(operation, partition)}, nil
 	}
 	truth, frozenGuard := true, false
@@ -16933,6 +16950,9 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 		truth, frozenGuard, err = branchTruth(operation.Operands, partition)
 	}
 	if errors.Is(err, errUnknownScalar) {
+		if proven, decided := branchNumericTruth(operation, partition); decided {
+			return equation.TransactionResult{Complete: true, Closure: numericBranchOutcome(operation, partition, proven)}, nil
+		}
 		return equation.TransactionResult{Complete: true, Closure: undecidedBranchOutcome(operation, partition)}, nil
 	}
 	if err != nil {
@@ -17085,15 +17105,26 @@ func undecidedBranchOutcome(operation equation.BoundEquation, partition equation
 			equation.Fact{Key: "narrowing/" + operation.Target.Name, Value: []byte("undecided/" + edge), Guards: []equation.Guard{guard}},
 		)
 	}
+	closure.Values = append(closure.Values, trueEdgeRefinements(operation, partition, trueGuard)...)
+	return closure
+}
+
+// trueEdgeRefinements are the facts a branch's own true-edge evidence
+// establishes wherever that edge is taken: the runtime type proofs, the
+// container length floors, and the narrowed path values its normalized checks
+// carry. They are guarded to the true edge, so every branch outcome that keeps
+// that edge reachable publishes exactly this set.
+func trueEdgeRefinements(operation equation.BoundEquation, partition equation.Partition, guard equation.Guard) []equation.Fact {
+	facts := make([]equation.Fact, 0)
 	for _, item := range runtimeTypeBranchProofs(operation) {
-		closure.Values = append(closure.Values, equation.Fact{
-			Key: runtimeTypeProofKey(item.path, item.typeName), Value: []byte("proven"), Guards: []equation.Guard{trueGuard},
+		facts = append(facts, equation.Fact{
+			Key: runtimeTypeProofKey(item.path, item.typeName), Value: []byte("proven"), Guards: []equation.Guard{guard},
 		})
 	}
 	for _, item := range lengthFloorBranchProofs(operation) {
-		closure.Values = append(closure.Values, equation.Fact{
+		facts = append(facts, equation.Fact{
 			Key:   heapLengthFloorPrefix + heapIndexSubject([]byte("path/"+item.path), partition) + "/" + operation.Target.Name,
-			Value: []byte(strconv.FormatInt(item.floor, 10)), Guards: []equation.Guard{trueGuard},
+			Value: []byte(strconv.FormatInt(item.floor, 10)), Guards: []equation.Guard{guard},
 		})
 	}
 	for _, item := range impliedTrueEdgeNarrowings(operation, partition) {
@@ -17101,10 +17132,26 @@ func undecidedBranchOutcome(operation equation.BoundEquation, partition equation
 		if !ok {
 			continue
 		}
-		closure.Values = append(closure.Values, equation.Fact{
-			Key: "value/" + item.term + "/" + operation.Target.Name, Value: encoded, Guards: []equation.Guard{trueGuard},
+		facts = append(facts, equation.Fact{
+			Key: "value/" + item.term + "/" + operation.Target.Name, Value: encoded, Guards: []equation.Guard{guard},
 		})
 	}
+	return facts
+}
+
+// numericBranchOutcome selects the single arm the numeric authorities proved.
+// The dead arm's guard cannot hold against an unguarded edge outcome, so every
+// equation it owns withholds its publications and its diagnostics exactly as it
+// does for an arm refuted anywhere else. The surviving arm keeps the branch's
+// own true-edge refinements, so it is analyzed with the guard's evidence rather
+// than merely reached.
+func numericBranchOutcome(operation equation.BoundEquation, partition equation.Partition, truth bool) equation.OutputClosure {
+	closure := compoundBranchOutcome(operation, truth)
+	if !truth {
+		return closure
+	}
+	guard := equation.Guard{Body: operation.Target.Body, Encoding: []byte("front/branch/" + operation.Target.Name + "/true")}
+	closure.Values = append(closure.Values, trueEdgeRefinements(operation, partition, guard)...)
 	return closure
 }
 

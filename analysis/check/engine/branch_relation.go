@@ -209,6 +209,225 @@ func relationalIndexUpperBounds(predicates []branchPredicateWire, differences []
 	return proven
 }
 
+// branchNumericTruth asks the numeric authorities whether a branch's own
+// evidence already decides which arm runs. It answers from proven facts only:
+// the residue windows the arithmetic lane published for the paths under test,
+// the bound descriptors the front normalized onto this branch's edges, and the
+// exact affine backend that refutes their conjunction. A path those authorities
+// say nothing about leaves the branch undecided, so an abstract value never
+// decides an arm.
+//
+// The two verdicts are separate proofs. The true edge is refuted when the
+// conjunction it asserts has no model. The false edge is refuted only for a
+// branch whose selector is a single normalized check, because only there is the
+// false edge exactly that check's negation.
+func branchNumericTruth(operation equation.BoundEquation, partition equation.Partition) (truth, decided bool) {
+	predicates := trueEdgeNumericPredicates(operation)
+	differences := trueEdgeBranchDifferences(operation)
+	if len(predicates) == 0 && len(differences) == 0 {
+		return false, false
+	}
+	if !numericEdgeSatisfiable(predicates, differences, partition) {
+		return false, true
+	}
+	if predicate, single := negatableBranchSelector(operation); single {
+		predicate.Negated = !predicate.Negated
+		if !numericEdgeSatisfiable([]branchPredicateWire{predicate}, nil, partition) {
+			return true, true
+		}
+	}
+	return false, false
+}
+
+// trueEdgeNumericPredicates collects the normalized checks the branch's true
+// edge asserts. Only the selector itself and the implied checks state that. A
+// sufficient check is the converse relation - taking the edge follows from it,
+// not it from the edge - so a disjunction publishes every arm's sufficient
+// check on the same edge and their conjunction describes no execution at all.
+// A refutation reads necessary conditions only, so those roles, and any role
+// this vocabulary does not name, stay out of the assertion set.
+func trueEdgeNumericPredicates(operation equation.BoundEquation) []branchPredicateWire {
+	predicates := make([]branchPredicateWire, 0, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		if operand.Role != "predicate" && !strings.HasPrefix(operand.Role, "implied-") {
+			continue
+		}
+		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		if !recognized || !trueEdge || predicate.Path == "" {
+			continue
+		}
+		predicates = append(predicates, predicate)
+	}
+	return predicates
+}
+
+// negatableBranchSelector returns the normalized check whose negation is
+// exactly the branch's false edge. A branch that also carries a scalar
+// condition is selected by that condition, and a compound condition's false
+// edge refutes no individual conjunct, so neither form yields one.
+func negatableBranchSelector(operation equation.BoundEquation) (branchPredicateWire, bool) {
+	for _, operand := range operation.Operands {
+		if operand.Role == "condition" {
+			return branchPredicateWire{}, false
+		}
+	}
+	predicate, found, err := soleBranchPredicate(operation)
+	if err != nil || !found || predicate.Path == "" {
+		return branchPredicateWire{}, false
+	}
+	return predicate, true
+}
+
+// numericEdgeSatisfiable reports that the numeric authorities admit a model for
+// an edge that asserts these predicates and difference relations. It is the
+// refutation seam: a false answer is a proof that the edge is never taken, and
+// every path the authorities carry no fact about simply contributes no
+// constraint, so an unconstrained edge always remains satisfiable.
+func numericEdgeSatisfiable(predicates []branchPredicateWire, differences []branchDiffWire, partition equation.Partition) bool {
+	for _, predicate := range predicates {
+		if predicate.Kind != "mod-residue" {
+			continue
+		}
+		window, published := publishedResidueWindow([]byte("path/"+predicate.Path), partition)
+		if !published {
+			continue
+		}
+		holds, class := residueClassWindowVerdict(window, predicate.Modulus, predicate.Residue)
+		if class && holds == predicate.Negated {
+			return false
+		}
+	}
+	asserted := relationAssertions(nil, differences)
+	paths := make(map[string]bool, len(predicates))
+	for _, predicate := range predicates {
+		asserted = append(asserted, numericPredicateConstraints(predicate)...)
+		paths[predicate.Path] = true
+		if predicate.OtherPath != "" {
+			paths[predicate.OtherPath] = true
+		}
+	}
+	names := make([]string, 0, len(paths))
+	for name := range paths {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		asserted = append(asserted, residueWindowConstraints(name, partition)...)
+	}
+	// One constraint over unbounded variables always has a model, so the exact
+	// backend is asked only where two of them can conflict.
+	if len(asserted) < 2 {
+		return true
+	}
+	return solver.AffineSatisfiable(asserted)
+}
+
+// numericPredicateConstraints lowers one normalized check into the affine
+// constraints it states while it holds. The lowering follows the predicate
+// evaluator exactly: a floor predicate holds when `value >= NumFloor` differs
+// from Negated, so its negated form states `value < NumFloor` and is carried as
+// `value <= NumFloor`. That is a relaxation, never a tightening, so a
+// refutation over the relaxed set refutes the exact one. A check outside the
+// affine fragment - a disequality, a residue class - states nothing here and is
+// answered by its own authority.
+func numericPredicateConstraints(predicate branchPredicateWire) []numeric.NumericConstraint {
+	value := relationVariable(predicate.Path, false)
+	switch predicate.Kind {
+	case "num-ge":
+		if predicate.Negated {
+			return []numeric.NumericConstraint{numeric.LeConst{X: value, C: predicate.NumFloor}}
+		}
+		return []numeric.NumericConstraint{numeric.GeConst{X: value, C: predicate.NumFloor}}
+	case "num-le":
+		if !predicate.HasNumCeil {
+			return nil
+		}
+		if predicate.Negated {
+			return []numeric.NumericConstraint{numeric.GeConst{X: value, C: predicate.NumCeil}}
+		}
+		return []numeric.NumericConstraint{numeric.LeConst{X: value, C: predicate.NumCeil}}
+	case "len-ge":
+		length := relationVariable(predicate.Path, true)
+		if predicate.Negated {
+			return []numeric.NumericConstraint{numeric.LeConst{X: length, C: predicate.LenFloor}}
+		}
+		return []numeric.NumericConstraint{numeric.GeConst{X: length, C: predicate.LenFloor}}
+	case "index-in-range":
+		if predicate.Negated || predicate.OtherPath == "" {
+			return nil
+		}
+		return []numeric.NumericConstraint{numeric.Le{X: value, Y: relationVariable(predicate.OtherPath, true), C: 0}}
+	case "literal-equal":
+		if predicate.Negated {
+			return nil
+		}
+		constant, integral := scalarIntegerConstant([]byte(predicate.Literal))
+		if !integral {
+			return nil
+		}
+		return []numeric.NumericConstraint{
+			numeric.GeConst{X: value, C: constant},
+			numeric.LeConst{X: value, C: constant},
+		}
+	default:
+		return nil
+	}
+}
+
+// residueWindowConstraints states the interval a path's published residue
+// window pins it to. A window measured against a container's length is carried
+// as the relation it is - the length is a solver variable like any other - so
+// no numeric relation between the two is invented here.
+func residueWindowConstraints(name string, partition equation.Partition) []numeric.NumericConstraint {
+	window, published := publishedResidueWindow([]byte("path/"+name), partition)
+	if !published {
+		return nil
+	}
+	value := relationVariable(name, false)
+	constraints := []numeric.NumericConstraint{numeric.GeConst{X: value, C: window.Low}}
+	if window.Container == "" {
+		return append(constraints, numeric.LeConst{X: value, C: window.High})
+	}
+	container, rooted := strings.CutPrefix(window.Container, "path/")
+	if !rooted || container == "" {
+		return constraints
+	}
+	return append(constraints, numeric.Le{X: value, Y: relationVariable(container, true), C: window.High})
+}
+
+// residueClassWindowVerdict intersects a residue class with the window its path
+// occupies. Both are closed integer facts, so the intersection is the whole
+// answer: a class with no member inside the window refutes the check, and a
+// window every member of which lies in the class proves it. A window measured
+// against a container's length has no constant bounds to intersect and decides
+// nothing.
+//
+// The residue is consumed exactly as the normalized check carries it. The front
+// admits only a positive modulus and a residue already inside [0, modulus-1],
+// so a residue outside that range is not this check's class and is answered by
+// no verdict rather than reduced into a class the source never named.
+func residueClassWindowVerdict(window residueWindow, modulus, residue int64) (holds, decided bool) {
+	if window.Container != "" || modulus <= 0 || residue < 0 || residue >= modulus || window.Low > window.High {
+		return false, false
+	}
+	largest, representable := residueClassCeiling(window.High, modulus, residue)
+	if !representable {
+		return false, false
+	}
+	if largest < window.Low {
+		return false, true
+	}
+	// Consecutive integers occupy different classes of any modulus above one,
+	// so only a window pinned to a single value lies wholly inside a class.
+	if modulus == 1 {
+		return true, true
+	}
+	if window.Low == window.High {
+		return largest == window.Low, true
+	}
+	return false, false
+}
+
 // encodeAffineTerm renders one affine identity. The offset leads so the base
 // term, which contains the separator itself, stays the undivided tail.
 func encodeAffineTerm(base []byte, offset int64) []byte {

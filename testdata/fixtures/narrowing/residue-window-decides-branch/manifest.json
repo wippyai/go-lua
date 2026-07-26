@@ -1,0 +1,9 @@
+{
+  "description": "The residue window a modulo publishes for its result reaches the branch that tests it. A branch partition asks the residue domain for the interval its subject occupies and hands that interval to the same exact backend the branch's own bounds go to, so an equality against a value outside the window refutes the arm and the arm withholds everything it would publish. The window is the whole proof: a value it admits leaves both arms reachable, exactly as a subject with no window at all does.",
+  "files": [
+    "main.lua"
+  ],
+  "check": {
+    "errors": 1
+  }
+}
