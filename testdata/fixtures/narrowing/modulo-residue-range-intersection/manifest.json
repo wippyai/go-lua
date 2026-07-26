@@ -1,5 +1,5 @@
 {
-  "description": "A residue guard is index information: intersecting i % 2 == 1 with 1 <= i <= 2 leaves the single value 1, which a length floor of one already covers, so the element read publishes presence. The intersection is the whole proof, so a residue class that still leaves a value above the floor, or a range with no residue guard at all, leaves the read optional.",
+  "description": "A residue guard is index information: intersecting i % 2 == 1 with 1 <= i <= 2 leaves the single value 1, which a length floor of one already covers, so the element read publishes presence. The intersection is the whole proof, so a residue class that still leaves a value above the floor, or a range with no residue guard at all, leaves the read optional and refutes a declaration that admits no nil.",
   "files": [
     "main.lua"
   ],

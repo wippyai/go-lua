@@ -1,0 +1,4 @@
+{
+  "description": "A guarded arm publishes its obligations whatever the guard's predicate family. A branch over declared formals partitions the space the declaration already admits, so an arm reached under a length guard, an index floor, or a literal comparison is analyzed and its unproven element read is refuted. Only the guard that bounds the index both below and above discharges the read.",
+  "files": ["main.lua"]
+}

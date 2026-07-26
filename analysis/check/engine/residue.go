@@ -233,6 +233,34 @@ func selfLengthWindow(container string) residueWindow {
 	return residueWindow{Low: 0, High: -1, Container: container}
 }
 
+// indexResidueClass is the residue class a guard states for an index term. An
+// unstated class leaves that index's ceiling untightened.
+type indexResidueClass struct {
+	stated  bool
+	modulus int64
+	residue int64
+}
+
+// indexCeilingWithinLengthFloor reports that a numeric ceiling on an index puts
+// that index at or below a container's length. The proven length floor is what
+// the ceiling is measured against: 1 <= i <= ceiling <= floor <= #c places i
+// inside c's sequence. A stated residue class first tightens the ceiling to the
+// largest member of the class the range still admits. It is the single decision
+// the native element lane and the branch relation closure both ask.
+func indexCeilingWithinLengthFloor(ceiling, lengthFloor int64, residue indexResidueClass) bool {
+	if lengthFloor < 1 {
+		return false
+	}
+	if residue.stated {
+		tightened, ok := residueClassCeiling(ceiling, residue.modulus, residue.residue)
+		if !ok {
+			return false
+		}
+		ceiling = tightened
+	}
+	return ceiling >= 1 && ceiling <= lengthFloor
+}
+
 // residueClassCeiling is the largest value at or below ceiling that lies in the
 // residue class `residue (mod modulus)`. It is the tightening a residue guard
 // applies to an already-proven upper bound: within the range, no member of the

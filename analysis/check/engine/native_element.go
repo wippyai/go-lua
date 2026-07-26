@@ -482,18 +482,10 @@ func (b nativeGuardBounds) provesUpperBound() bool {
 	if b.inRange {
 		return true
 	}
-	if !b.hasCeiling || b.lengthFloor < 1 {
+	if !b.hasCeiling {
 		return false
 	}
-	ceiling := b.ceiling
-	if b.hasResidue {
-		tightened, ok := residueClassCeiling(ceiling, b.modulus, b.residue)
-		if !ok {
-			return false
-		}
-		ceiling = tightened
-	}
-	return ceiling >= 1 && ceiling <= b.lengthFloor
+	return indexCeilingWithinLengthFloor(b.ceiling, b.lengthFloor, indexResidueClass{stated: b.hasResidue, modulus: b.modulus, residue: b.residue})
 }
 
 func nativeGuardBoundsFor(body *wir.Body, container, key path.Path, read int) (nativeGuardBounds, bool) {

@@ -7970,7 +7970,7 @@ func uncalledDeclaredIndexedReadBoundary(child front.Compilation) ([]entrySeed, 
 			}
 			hasIndexedRead = true
 		case "branch-relations":
-			if !uncalledDeclaredIndexedBranch(operation) {
+			if !uncalledDeclaredIndexedBranch(operation, formals) {
 				return nil, false
 			}
 		case "apply", "external-call", "channel-select", "generic-for":
@@ -7987,26 +7987,70 @@ func uncalledDeclaredIndexedReadBoundary(child front.Compilation) ([]entrySeed, 
 	return seeds, true
 }
 
-// uncalledDeclaredIndexedBranch admits only the numeric bound evidence that
-// typedIndexBranchClosure already carries as guarded publications: a normalized
-// floor or index-in-range predicate, or a difference descriptor relating an
-// operand to an array length, which that same closure discharges through the
-// solver portfolio. Other branch families can refine arbitrary values, so they
-// remain caller-owned.
-func uncalledDeclaredIndexedBranch(operation equation.Equation) bool {
+// uncalledDeclaredIndexedBranch reports whether a branch of this body is decided
+// by the declaration alone. The entry seeds every formal with its declared type,
+// which is the join of every argument the declaration admits, so a branch whose
+// published evidence names only formal-rooted paths partitions exactly that
+// admitted space: each arm it selects is reached by some admissible call, and a
+// claim left unproven inside the arm is the declaration's own obligation
+// whatever the predicate's family. A branch naming any other root, or carrying
+// no path evidence at all, rests on an authority this entry does not establish
+// and leaves the body dormant.
+func uncalledDeclaredIndexedBranch(operation equation.Equation, formals map[string]entrySeed) bool {
+	rooted := false
 	for _, operand := range operation.Operands {
-		if artifactTrueEdgeLengthRelation(operand.Role, operand.Term.Encoding) {
-			return true
-		}
-		predicate, trueEdge, ok := branchEvidencePredicate(equation.BoundOperand{Role: operand.Role, Value: operand.Term.Encoding})
-		if !ok || !trueEdge || predicate.Negated {
+		paths, evidence := branchEvidencePaths(operand.Role, operand.Term.Encoding)
+		if !evidence {
 			continue
 		}
-		if predicate.Kind == "num-ge" || predicate.Kind == "index-in-range" {
-			return true
+		for _, path := range paths {
+			root, _, _ := strings.Cut(path, "/")
+			if _, formal := formals["path/"+root]; !formal {
+				return false
+			}
+			rooted = true
 		}
 	}
-	return false
+	return rooted
+}
+
+// branchEvidencePaths names every path one branch operand's published evidence
+// mentions, on either edge. A predicate descriptor names its subject and its
+// relatum; a difference descriptor names its normalized operands. Every other
+// operand carries a term, an arm marker, or display text and states no path.
+func branchEvidencePaths(role string, encoding []byte) ([]string, bool) {
+	if strings.HasPrefix(role, "difference-") {
+		wire, ok := decodeBranchDiff(encoding)
+		if !ok {
+			return nil, false
+		}
+		paths := []string{wire.HiPath, wire.LoPath}
+		if wire.HasHi2 {
+			paths = append(paths, wire.Hi2Path)
+		}
+		return paths, true
+	}
+	if strings.HasPrefix(string(encoding), branchEvidencePrefix) {
+		parts := strings.SplitN(strings.TrimPrefix(string(encoding), branchEvidencePrefix), "/", 3)
+		if len(parts) != 3 {
+			return nil, false
+		}
+		encoding = []byte(parts[2])
+	} else if role != "predicate" {
+		return nil, false
+	}
+	predicate, ok := decodeBranchPredicateWire(encoding)
+	if !ok {
+		return nil, false
+	}
+	var paths []string
+	if predicate.Path != "" {
+		paths = append(paths, predicate.Path)
+	}
+	if predicate.OtherPath != "" {
+		paths = append(paths, predicate.OtherPath)
+	}
+	return paths, len(paths) != 0
 }
 
 func artifactOperand(operands []equation.Operand, role string) ([]byte, bool) {
@@ -12842,6 +12886,11 @@ func keyedContainerSurface(term, value []byte, partition equation.Partition) []b
 // operator may return names a written slot and the read cannot be nil whatever
 // holes lie above it. Without that first slot the empty border remains
 // available and t[0] is nil, which is exactly the opaque array's case.
+//
+// A guard's proven length floor of at least one states the same thing about a
+// container with no inventory of its own: the border it returns is positive, so
+// it names a written slot. The floor is revoked by any write that could move
+// that border, so the proof answers only where the guard still holds.
 func borderIndexPresenceProven(container, key []byte, partition equation.Partition) bool {
 	named, ok := publishedLengthTerm(key, partition)
 	if !ok || named != string(container) {
@@ -12851,6 +12900,9 @@ func borderIndexPresenceProven(container, key []byte, partition equation.Partiti
 	// inventory this proof reads is no longer the live one.
 	if containerTableEscaped(container, partition) {
 		return false
+	}
+	if lengthFloorProven(container, partition) >= 1 {
+		return true
 	}
 	shape, complete := heapSequenceShape(container, partition)
 	return complete && sequenceFirstSlotPresent(shape)
@@ -17918,6 +17970,66 @@ func lengthFloorBranchProofs(operation equation.BoundEquation) []lengthFloorBran
 	return proofs
 }
 
+// indexCeilingBranchBound is the tightest constant upper bound a branch's true
+// edge states for one index path, together with the residue class that same
+// edge states for it.
+type indexCeilingBranchBound struct {
+	path    string
+	ceiling int64
+	stated  bool
+	residue indexResidueClass
+}
+
+// indexCeilingBranchBounds returns the constant index ceilings a branch's true
+// edge establishes. A normalized comparison carries its ceiling on the same
+// descriptor that carries its floor, and the ceiling's own edge flag decides
+// which edge owns it: `i <= 2` proves the ceiling on the true edge, while the
+// ceiling `i >= 3` carries is the false edge's. A residue check on the same
+// path joins the class it states to that path's bound.
+func indexCeilingBranchBounds(operation equation.BoundEquation) []indexCeilingBranchBound {
+	bounds := make([]indexCeilingBranchBound, 0)
+	position := make(map[string]int)
+	at := func(path string) int {
+		if index, found := position[path]; found {
+			return index
+		}
+		position[path] = len(bounds)
+		bounds = append(bounds, indexCeilingBranchBound{path: path})
+		return position[path]
+	}
+	for _, operand := range operation.Operands {
+		predicate, trueEdge, recognized := branchEvidencePredicate(operand)
+		if !recognized || !trueEdge || predicate.Path == "" {
+			continue
+		}
+		switch predicate.Kind {
+		case "num-ge", "num-le":
+			if !predicate.HasNumCeil || predicate.NumCeilNegated {
+				continue
+			}
+			index := at(predicate.Path)
+			if !bounds[index].stated || predicate.NumCeil < bounds[index].ceiling {
+				bounds[index].ceiling, bounds[index].stated = predicate.NumCeil, true
+			}
+		case "mod-residue":
+			if predicate.Negated || predicate.Modulus <= 0 {
+				continue
+			}
+			index := at(predicate.Path)
+			if !bounds[index].residue.stated {
+				bounds[index].residue = indexResidueClass{stated: true, modulus: predicate.Modulus, residue: predicate.Residue}
+			}
+		}
+	}
+	ceilings := bounds[:0]
+	for _, bound := range bounds {
+		if bound.stated {
+			ceilings = append(ceilings, bound)
+		}
+	}
+	return ceilings
+}
+
 // lengthFloorProven returns the largest currently proven length lower bound for
 // container. A dynamic write through the same heap identity revokes the bound
 // exactly as it revokes an index presence proof: a write can move the sequence
@@ -18294,7 +18406,8 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 	// They are the container-side half of the same relation the index bounds
 	// state, so this closure publishes them exactly as the undecided branch
 	// outcome does rather than leaving the container unbounded here.
-	for _, item := range lengthFloorBranchProofs(operation) {
+	floors := lengthFloorBranchProofs(operation)
+	for _, item := range floors {
 		closure.Values = append(closure.Values, equation.Fact{
 			Key:   heapLengthFloorPrefix + heapIndexSubject([]byte("path/"+item.path), partition) + "/" + operation.Target.Name,
 			Value: []byte(strconv.FormatInt(item.floor, 10)), Guards: []equation.Guard{guard},
@@ -18321,6 +18434,27 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			}
 			container := []byte("path/" + predicate.OtherPath)
 			encodedContainer := base64.RawURLEncoding.EncodeToString(container)
+			upper[encodedIndex+"/"+encodedContainer] = struct{ index, container []byte }{index, container}
+			closure.Values = append(closure.Values, equation.Fact{Key: heapIndexUpperPrefix + encodedIndex + "/" + encodedContainer + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
+		}
+	}
+	// A constant index ceiling and a container length floor state the same
+	// in-range relation a direct index-in-range predicate states, with no path
+	// relating the two: i <= ceiling and #c >= floor with 1 <= ceiling <= floor
+	// puts i inside c's sequence. The native element lane already answers a
+	// guarded read this way; the shared decision keeps both lanes on one rule.
+	for _, bound := range indexCeilingBranchBounds(operation) {
+		index := []byte("path/" + bound.path)
+		encodedIndex := base64.RawURLEncoding.EncodeToString(index)
+		for _, item := range floors {
+			if !indexCeilingWithinLengthFloor(bound.ceiling, item.floor, bound.residue) {
+				continue
+			}
+			container := []byte("path/" + item.path)
+			encodedContainer := base64.RawURLEncoding.EncodeToString(container)
+			if _, found := upper[encodedIndex+"/"+encodedContainer]; found {
+				continue
+			}
 			upper[encodedIndex+"/"+encodedContainer] = struct{ index, container []byte }{index, container}
 			closure.Values = append(closure.Values, equation.Fact{Key: heapIndexUpperPrefix + encodedIndex + "/" + encodedContainer + "/" + operation.Target.Name, Value: []byte("proven"), Guards: []equation.Guard{guard}})
 		}
