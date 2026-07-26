@@ -8,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -259,20 +260,24 @@ func numericBodyFacts(compilation front.Compilation) []NativeFact {
 // native machine-word vocabulary. Provenance and write uniqueness are lowered
 // by front; arithmetic itself is never repeated here.
 func nativePublishedConstantWord(value []byte) (nativeConstantWord, bool) {
-	text := string(value)
-	switch {
-	case strings.HasPrefix(text, "scalar/number/"):
-		number := strings.TrimPrefix(text, "scalar/number/")
+	scalar, ok := shapefact.DecodeScalar(value)
+	if !ok {
+		return nativeConstantWord{}, false
+	}
+	switch scalar.Kind {
+	case shapefact.ScalarNumber:
+		number := string(scalar.Data)
 		if numericLiteralIsInteger(number) {
 			parsed, err := strconv.ParseInt(number, 10, 64)
 			return nativeConstantWord{representation: "integer", text: number, integer: parsed, hasInteger: err == nil}, err == nil
 		}
 		parsed, err := strconv.ParseFloat(number, 64)
 		return nativeConstantWord{representation: "float", text: number, float: parsed, hasFloat: err == nil}, err == nil && !math.IsInf(parsed, 0) && !math.IsNaN(parsed)
-	case strings.HasPrefix(text, "scalar/string/"):
-		return nativeConstantWord{representation: "string", text: strings.TrimPrefix(text, "scalar/string/")}, true
-	case strings.HasPrefix(text, "scalar/bool/"):
-		return nativeConstantWord{representation: "boolean", text: strings.TrimPrefix(text, "scalar/bool/")}, true
+	case shapefact.ScalarString:
+		return nativeConstantWord{representation: "string", text: string(scalar.Data)}, true
+	case shapefact.ScalarBool, shapefact.ScalarOptionalNilComparison:
+		text, _ := scalar.BooleanText()
+		return nativeConstantWord{representation: "boolean", text: text}, true
 	default:
 		return nativeConstantWord{}, false
 	}

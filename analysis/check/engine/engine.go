@@ -69,7 +69,6 @@ const branchPredicatePrefix = "front/branch-predicate/v1/"
 const branchEvidencePrefix = "front/branch-evidence/v1/"
 const densityRelationPrefix = "front/density-relation/v1/"
 
-const memberMissingPrefix = "shape/member-missing/v1/"
 const literalDiagnosticPrefix = "diagnostic/literal-source/"
 
 // epochFactPrefix keys the sole current-version publication of a term.  Every
@@ -1206,7 +1205,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 				{Span: targetSpan, Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed, Message: fmt.Sprintf("%s is declared as %s", display, declared)},
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
-		} else if _, typed := shapefact.DecodeTarget(value); typed || string(value) == "scalar/nil" {
+		} else if shapefact.IsForm(value, shapefact.PayloadShapeTarget) || string(value) == "scalar/nil" {
 			targetSpan := claimTargetSpans[name]
 			if !targetSpan.Valid() {
 				targetSpan = item.Span
@@ -1227,7 +1226,7 @@ func publishedDiagnostics(artifact equation.Artifact, closure equation.OutputClo
 			}
 			item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "assigned value " + valueDescription}, {Span: targetSpan, Message: "declared type " + declared}}
 		}
-		if hasResultDisplay && strings.HasPrefix(string(value), "scalar/") && string(value) != "scalar/nil" {
+		if hasResultDisplay && shapefact.IsScalar(value) && string(value) != "scalar/nil" {
 			item.Message = fmt.Sprintf("cannot assign %s because it is %s, not %s", sourceDisplay, valueDescription, declared)
 		}
 		item.Help = "Use a value compatible with the expected type, or change the target type if `" + sourceDisplay + "` is valid."
@@ -1743,7 +1742,7 @@ func childDiagnosticKey(key string) (string, bool) {
 }
 
 func claimDiagnosticValue(term []byte, operation equation.Equation, closure equation.OutputClosure) ([]byte, bool) {
-	if strings.HasPrefix(string(term), "scalar/") {
+	if shapefact.IsScalar(term) {
 		return append([]byte(nil), term...), true
 	}
 	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
@@ -3262,7 +3261,7 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 		if len(seed.Type) == 0 {
 			continue
 		}
-		if _, decodable := shapefact.DecodeTarget(seed.Type); !decodable {
+		if !shapefact.IsForm(seed.Type, shapefact.PayloadShapeTarget) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child entry seed type")
 		}
 		// A root the boundary itself declares owns its type; the entry states
@@ -3537,7 +3536,7 @@ func validClosureHandle(handle closureHandle) bool {
 		return false
 	}
 	for _, capture := range handle.Captures {
-		if !strings.HasPrefix(capture, "path/") && !strings.HasPrefix(capture, "temp/") && !strings.HasPrefix(capture, "scalar/") {
+		if !strings.HasPrefix(capture, "path/") && !strings.HasPrefix(capture, "temp/") && !shapefact.IsScalar([]byte(capture)) {
 			return false
 		}
 	}
@@ -3983,7 +3982,7 @@ func (l *lexicalEvaluator) sealedCaptureEnvironment(child front.Compilation, all
 		// scalar needs no cell; a cell this same boundary seals is reconstructed
 		// by the same entry, so the callable's environment stays exact.
 		for _, nested := range handle.Captures {
-			if !strings.HasPrefix(nested, "scalar/") && !sealedTerms[nested] {
+			if !shapefact.IsScalar([]byte(nested)) && !sealedTerms[nested] {
 				return false
 			}
 		}
@@ -5317,7 +5316,7 @@ func uncalledDeclaredLocalUnionReadBoundary(child front.Compilation) ([]entrySee
 			container, hasContainer := artifactOperand(operation.Operands, "container")
 			key, hasKey := artifactOperand(operation.Operands, "key")
 			target, hasTarget := artifactOperand(operation.Operands, "target")
-			if !hasContainer || !paths[string(container)] || !hasKey || !strings.HasPrefix(string(key), "scalar/string/") || !hasTarget {
+			if !hasContainer || !paths[string(container)] || !hasKey || !shapefact.IsScalarKind(key, shapefact.ScalarString) || !hasTarget {
 				return nil, false
 			}
 			reads[string(target)] = true
@@ -5974,8 +5973,8 @@ func uncalledDeclaredFormalOrderedComparisonOperations(child front.Compilation, 
 		}
 		leftFormal := formals[string(left)] && uncalledDeclaredFormalValue(child, left)
 		rightFormal := formals[string(right)] && uncalledDeclaredFormalValue(child, right)
-		leftNumber := strings.HasPrefix(string(left), "scalar/number/")
-		rightNumber := strings.HasPrefix(string(right), "scalar/number/")
+		leftNumber := shapefact.IsScalarKind(left, shapefact.ScalarNumber)
+		rightNumber := shapefact.IsScalarKind(right, shapefact.ScalarNumber)
 		if leftFormal && rightNumber || rightFormal && leftNumber {
 			allowed[operation.Target.Name] = true
 		}
@@ -6030,7 +6029,7 @@ func uncalledDeclaredFormalArithmeticTerms(child front.Compilation, formals map[
 		if formals[string(term)] {
 			return uncalledDeclaredFormalValue(child, term)
 		}
-		return strings.HasPrefix(string(term), "scalar/number/")
+		return shapefact.IsScalarKind(term, shapefact.ScalarNumber)
 	}
 	for {
 		added := false
@@ -6220,7 +6219,7 @@ func uncalledDeclaredFormalDerivedCells(child front.Compilation, formals map[str
 		if len(term) == 0 {
 			return false
 		}
-		if derived[string(term)] || strings.HasPrefix(string(term), "scalar/") {
+		if derived[string(term)] || shapefact.IsScalar(term) {
 			return true
 		}
 		if formals[string(term)] {
@@ -7355,7 +7354,7 @@ func declaredEntryClosedTerms(operations []equation.Equation, formals map[string
 		closed[formal] = true
 	}
 	closedTerm := func(term string) bool {
-		if strings.HasPrefix(term, "scalar/") || shapefact.IsTable([]byte(term)) {
+		if shapefact.IsScalar([]byte(term)) || shapefact.IsTable([]byte(term)) {
 			return true
 		}
 		if closed[term] {
@@ -7399,7 +7398,7 @@ func uncalledDeclaredStdlibCall(operations []equation.Equation, apply equation.E
 			continue
 		}
 		argument := string(operand.Term.Encoding)
-		if !closed[argument] && !strings.HasPrefix(argument, "scalar/") {
+		if !closed[argument] && !shapefact.IsScalar([]byte(argument)) {
 			return false
 		}
 	}
@@ -7601,7 +7600,7 @@ func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.C
 		}
 		for index := 0; index < len(closureSeeds); index++ {
 			for _, capture := range closureSeeds[index].Handle.Captures {
-				if strings.HasPrefix(capture, "scalar/") || seen[capture] {
+				if shapefact.IsScalar([]byte(capture)) || seen[capture] {
 					continue
 				}
 				value, known := resolveKnownCurrentValue([]byte(capture), partition)
@@ -7952,7 +7951,7 @@ func uncalledTypePredicateHelper(child front.Compilation) bool {
 			if !found || application == "" || string(candidate) != application || !hasValue || result != "" || !hasTargetOperand {
 				return false
 			}
-			if _, valid := shapefact.DecodeTarget(target); !valid {
+			if !shapefact.IsForm(target, shapefact.PayloadShapeTarget) {
 				return false
 			}
 			result, hasTarget = string(value), true
@@ -8603,7 +8602,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		if !strings.HasPrefix(fact.Key, typePredicateTargetPrefix) {
 			continue
 		}
-		if _, ok := shapefact.DecodeTarget(fact.Value); !ok {
+		if !shapefact.IsForm(fact.Value, shapefact.PayloadShapeTarget) {
 			continue
 		}
 		projected.Values = append(projected.Values, equation.Fact{Key: callTypePredicatePrefix + operation.Target.Name + "/" + strings.TrimPrefix(fact.Key, typePredicateTargetPrefix), Value: append([]byte(nil), fact.Value...)})
@@ -8726,7 +8725,12 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	// A returned lexical closure is a capability, not merely its callable
 	// scalar. Preserve its environment lens under the call boundary so the
 	// caller can rebind it to its result slot.
-	if len(returns) == 1 && strings.HasPrefix(string(returns[0]), "scalar/function/") {
+	returnedFunction, preciseFunction := shapefact.Scalar{}, false
+	if len(returns) == 1 {
+		returnedFunction, preciseFunction = shapefact.DecodeScalarKind(returns[0], shapefact.ScalarFunction)
+		preciseFunction = preciseFunction && len(returnedFunction.Data) != 0
+	}
+	if preciseFunction {
 		for _, fact := range closure.Values {
 			if strings.HasPrefix(fact.Key, "closure/") {
 				var returned closureHandle
@@ -8833,7 +8837,7 @@ func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.Compi
 // boundary and an allocation boundary state the identical refutation.
 func restateDeclaredFalseEdgeNil(claims map[string]declaredNilAssignmentWitness, closure *equation.OutputClosure) {
 	for key, witness := range claims {
-		alternative, known := expressionValueType(witness.alternative)
+		alternative, known := shapefact.DecodeExactWitnessType(witness.alternative)
 		if !known || alternative == nil {
 			continue
 		}
@@ -10033,7 +10037,7 @@ func rebindEscapingClosure(operation equation.BoundEquation, child front.Compila
 				break
 			}
 		}
-		if rebound || strings.HasPrefix(capture, "scalar/") {
+		if rebound || shapefact.IsScalar([]byte(capture)) {
 			continue
 		}
 		// A local cell captured by an escaping closure has no caller spelling.
@@ -10075,7 +10079,7 @@ func allocationTemplateKernel(operation equation.BoundEquation, partition equati
 				complete, decomposable = false, false
 			}
 		case strings.HasPrefix(operand.Role, "value-"):
-			if strings.HasPrefix(string(operand.Value), "scalar/") {
+			if shapefact.IsScalar(operand.Value) {
 				continue
 			}
 			children = append(children, string(operand.Value))
@@ -11115,7 +11119,8 @@ func resourceUnreleasedDiagnostics(child front.Compilation, closure equation.Out
 		if err != nil || !isResourceIdentity(identity) || string(state.Value) != "open" {
 			continue
 		}
-		acquire := strings.TrimPrefix(string(identity), "scalar/resource/")
+		resource, _ := shapefact.DecodeScalarKind(identity, shapefact.ScalarResource)
+		acquire := string(resource.Data)
 		display := resourceDisplay(child, acquire)
 		flags := DiagnosticFlags(0)
 		if childHasResourceClose(child) {
@@ -11604,7 +11609,7 @@ func sealShapeValue(value []byte, partition equation.Partition) ([]byte, error) 
 		// particular, table.insert may append the generic-for element's sealed
 		// target; resolving that encoding as a path would discard it as Top when
 		// the returned table is rebound by the caller.
-		if _, typed := shapefact.DecodeTarget([]byte(member.Value)); typed {
+		if shapefact.IsForm([]byte(member.Value), shapefact.PayloadShapeTarget) {
 			continue
 		}
 		resolved, err := resolveCurrentValue([]byte(member.Value), partition)
@@ -12001,10 +12006,10 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 				break
 			}
 			var s string
-			if strings.HasPrefix(string(v), "scalar/string/") {
+			if shapefact.IsScalarKind(v, shapefact.ScalarString) {
 				s, er = scalarString(v)
-			} else if strings.HasPrefix(string(v), "scalar/number/") {
-				s = strings.TrimPrefix(string(v), "scalar/number/")
+			} else if number, ok := shapefact.DecodeScalarKind(v, shapefact.ScalarNumber); ok {
+				s = string(number.Data)
 			} else if isUnvalidatedAnyValue(v) {
 				// The operand carries the boundary in its own value. A __concat
 				// metamethod may answer with anything and an operand with no concat
@@ -12270,14 +12275,18 @@ func nativeConcatSitePublication(operation equation.BoundEquation, operands map[
 }
 
 func nativeConcatOperandCarrier(value []byte) (string, bool) {
-	switch {
-	case strings.HasPrefix(string(value), "scalar/string/"):
+	scalar, scalarOK := shapefact.DecodeScalar(value)
+	switch scalar.Kind {
+	case shapefact.ScalarString:
 		return "string", true
-	case strings.HasPrefix(string(value), "scalar/number/"):
-		if numericLiteralIsInteger(strings.TrimPrefix(string(value), "scalar/number/")) {
+	case shapefact.ScalarNumber:
+		if numericLiteralIsInteger(string(scalar.Data)) {
 			return "integer", true
 		}
 		return "number", true
+	}
+	if scalarOK {
+		return "", false
 	}
 	declared, ok := shapefact.DecodeTarget(value)
 	if !ok || declared == nil {
@@ -13069,8 +13078,7 @@ func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[stri
 		if err != nil {
 			return false
 		}
-		_, witnessed := shapefact.DecodeTarget(value)
-		return witnessed
+		return shapefact.IsForm(value, shapefact.PayloadShapeTarget)
 	}
 	witnessed := false
 	switch kind {
@@ -13099,7 +13107,7 @@ func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[stri
 		if err != nil {
 			return nil, false
 		}
-		return expressionValueType(value)
+		return shapefact.DecodeExactWitnessType(value)
 	}
 	var result typ.Type
 	var ok bool
@@ -13152,31 +13160,6 @@ func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[stri
 	return shapefact.EncodeTarget(result)
 }
 
-func expressionValueType(value []byte) (typ.Type, bool) {
-	if value, ok := shapefact.DecodeTarget(value); ok {
-		return value, true
-	}
-	switch {
-	case string(value) == "scalar/nil":
-		return typ.Nil, true
-	case strings.HasPrefix(string(value), "scalar/bool/"):
-		parsed, err := strconv.ParseBool(strings.TrimPrefix(string(value), "scalar/bool/"))
-		return typ.LiteralBool(parsed), err == nil
-	case strings.HasPrefix(string(value), "scalar/string/"):
-		parsed, err := strconv.Unquote(strings.TrimPrefix(string(value), "scalar/string/"))
-		return typ.LiteralString(parsed), err == nil
-	case strings.HasPrefix(string(value), "scalar/number/"):
-		parsed := strings.TrimPrefix(string(value), "scalar/number/")
-		if integer, err := strconv.ParseInt(parsed, 10, 64); err == nil {
-			return typ.LiteralInt(integer), true
-		}
-		if number, err := strconv.ParseFloat(parsed, 64); err == nil {
-			return typ.LiteralNumber(number), true
-		}
-	}
-	return nil, false
-}
-
 // orderedComparisonUnionDiagnostic publishes only a runtime failure already
 // established by closed operand witnesses. A broad scalar or gradual type has
 // no such proof and remains silent.
@@ -13190,8 +13173,8 @@ func orderedComparisonUnionDiagnostic(operator wir.Operator, leftTerm, rightTerm
 	if leftErr != nil || rightErr != nil {
 		return "", false
 	}
-	left, leftTyped := expressionValueType(leftValue)
-	right, rightTyped := expressionValueType(rightValue)
+	left, leftTyped := shapefact.DecodeExactWitnessType(leftValue)
+	right, rightTyped := shapefact.DecodeExactWitnessType(rightValue)
 	if !leftTyped || !rightTyped {
 		return "", false
 	}
@@ -13239,7 +13222,7 @@ func unionAdmitsProvenNonNumber(value typ.Type) bool {
 // an independently concrete value. The result therefore explains an absent
 // member without turning an untracked Lua table access into a type proof.
 func sealedShapeReceiverType(value []byte) (typ.Type, bool) {
-	if valueType, known := expressionValueType(value); known {
+	if valueType, known := shapefact.DecodeExactWitnessType(value); known {
 		return valueType, true
 	}
 	table, sealed := shapefact.DecodeTable(value)
@@ -13530,8 +13513,8 @@ func singletonValueType(t typ.Type) bool {
 // sets with no common inhabitant. Equality between them is refuted; anything
 // else leaves both outcomes reachable, so only the refutation is stated here.
 func disjointPublishedValues(a, b []byte) bool {
-	left, leftKnown := scalarWitnessType(a)
-	right, rightKnown := scalarWitnessType(b)
+	left, leftKnown := shapefact.DecodeWitnessType(a)
+	right, rightKnown := shapefact.DecodeWitnessType(b)
 	if !leftKnown || !rightKnown || left == nil || right == nil {
 		return false
 	}
@@ -13779,7 +13762,7 @@ func functionContractWriteRefuted(value []byte, declared typ.Type) bool {
 	if actual, sealed := sealedFunctionType(value); sealed {
 		return !subtype.IsSubtype(actual, function)
 	}
-	if strings.HasPrefix(string(value), "scalar/function") {
+	if shapefact.IsScalarKind(value, shapefact.ScalarFunction) {
 		return false
 	}
 	return knownScalarRelation(value, false) == shapeRefuted
@@ -13917,8 +13900,10 @@ func typedRuntimeIndexResult(container, key []byte, consumer string, partition e
 			ok = err == nil && containerType != nil
 		}
 	}
-	if !ok && strings.HasPrefix(string(containerValue), "scalar/claim/claim-kind/1/") {
-		containerType, ok = castTargetWitness(container, partition)
+	if !ok {
+		if claim, claimed := shapefact.DecodeClaim(containerValue); claimed && claim.Kind == wir.ClaimCast {
+			containerType, ok = castTargetWitness(container, partition)
+		}
 	}
 	// A conservative current scalar is not a structural refutation. When the
 	// exact path already has a published type summary, retain that independent
@@ -13959,7 +13944,7 @@ func typedRuntimeIndexResult(container, key []byte, consumer string, partition e
 	if err != nil {
 		return nil, "", false, false, false
 	}
-	keyType, ok := expressionValueType(keyValue)
+	keyType, ok := shapefact.DecodeExactWitnessType(keyValue)
 	if !ok || keyType == nil {
 		return nil, "", false, false, false
 	}
@@ -14585,7 +14570,9 @@ func declarationSlotDefaultValue(kind, targetType, target string, source, value 
 	if kind != "claim-kind/3" || string(source) != target {
 		return false
 	}
-	return string(value) == "scalar/nil" || string(value) == "scalar/claim/"+kind+"/"+targetType
+	claim, claimed := shapefact.DecodeClaim(value)
+	return string(value) == "scalar/nil" ||
+		(claimed && claim.Kind == wir.ClaimAnnotation && string(claim.Target) == targetType)
 }
 
 // declarationSlotIsItsOwnDefault reports that the nil a claim reads from its own
@@ -15144,7 +15131,7 @@ func assignmentShapeRelation(lexical *lexicalEvaluator, body equation.BodyID, so
 		// content. A published witness that lies inside that contract is a
 		// refinement established after the import -- a guard narrowing it, for
 		// instance -- and it is the type the assignment actually sees.
-		if witness, known := scalarWitnessType(value); known && subtype.IsSubtype(witness, authoritative) {
+		if witness, known := shapefact.DecodeWitnessType(value); known && subtype.IsSubtype(witness, authoritative) {
 			authoritative = witness
 		}
 		if subtype.IsSubtype(authoritative, target) {
@@ -15588,16 +15575,21 @@ func valueAgainstTypeSeen(value []byte, target typ.Type, comparison *shapeCompar
 	case kind.Nil:
 		return scalarRelation(value, func() bool { return string(value) == "scalar/nil" })
 	case kind.Boolean:
-		return scalarRelation(value, func() bool { return strings.HasPrefix(string(value), "scalar/bool/") })
+		return scalarRelation(value, func() bool {
+			scalar, ok := shapefact.DecodeScalar(value)
+			_, boolean := scalar.BooleanText()
+			return ok && boolean
+		})
 	case kind.String:
-		return scalarRelation(value, func() bool { return strings.HasPrefix(string(value), "scalar/string/") })
+		return scalarRelation(value, func() bool { return shapefact.IsScalarKind(value, shapefact.ScalarString) })
 	case kind.Number:
-		return scalarRelation(value, func() bool { return strings.HasPrefix(string(value), "scalar/number/") })
+		return scalarRelation(value, func() bool { return shapefact.IsScalarKind(value, shapefact.ScalarNumber) })
 	case kind.Integer:
-		if !strings.HasPrefix(string(value), "scalar/number/") {
+		number, ok := shapefact.DecodeScalarKind(value, shapefact.ScalarNumber)
+		if !ok {
 			return knownScalarRelation(value, false)
 		}
-		_, err := strconv.ParseInt(strings.TrimPrefix(string(value), "scalar/number/"), 10, 64)
+		_, err := strconv.ParseInt(string(number.Data), 10, 64)
 		return scalarRelation(value, func() bool { return err == nil })
 	case kind.Literal:
 		literal, ok := target.(*typ.Literal)
@@ -15635,36 +15627,11 @@ func (comparison *shapeComparison) againstRecursive(value []byte, target *typ.Re
 // front.functionValue.  The signature text is intentionally not used as a
 // type parser: absent or malformed canonical data is not proof.
 func sealedFunctionType(value []byte) (typ.Type, bool) {
-	encoded := strings.TrimPrefix(string(value), "scalar/function/")
-	if encoded == string(value) || encoded == "" {
+	scalar, ok := shapefact.DecodeScalarKind(value, shapefact.ScalarFunction)
+	if !ok {
 		return nil, false
 	}
-	wire, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return nil, false
-	}
-	var payload struct {
-		Canonical string `json:"canonical,omitempty"`
-	}
-	if err := json.Unmarshal(wire, &payload); err != nil || payload.Canonical == "" {
-		return nil, false
-	}
-	canonical, err := base64.RawURLEncoding.DecodeString(payload.Canonical)
-	if err != nil {
-		return nil, false
-	}
-	// A front function value is a closed publication. Its canonical payload
-	// may contain recursive aliases from its declared signature; structural
-	// decoding restores their graph without pretending to recreate source
-	// declaration identity.
-	function, err := typ.DecodeCanonicalStructural(context.Background(), canonical)
-	if err != nil || function == nil {
-		return nil, false
-	}
-	if _, ok := unwrap.Alias(function).(*typ.Function); !ok {
-		return nil, false
-	}
-	return function, true
+	return (shapefact.Payload{Form: shapefact.PayloadScalar, Scalar: scalar}).FunctionType()
 }
 
 // tableAgainstMap proves the one case that needs no inferred key or value
@@ -16038,7 +16005,7 @@ func scalarRelation(value []byte, compatible func() bool) shapeRelation {
 }
 
 func knownScalarRelation(value []byte, compatible bool) shapeRelation {
-	if shapefact.IsTable(value) || string(value) == "scalar/table" || !strings.HasPrefix(string(value), "scalar/") || isUnknownScalar(value) {
+	if shapefact.IsTable(value) || string(value) == "scalar/table" || !shapefact.IsScalar(value) || isUnknownScalar(value) {
 		return shapeUnknown
 	}
 	if compatible {
@@ -16109,7 +16076,8 @@ func claimTypeIsAny(targetType string) bool {
 // unknown value).  It therefore fails a declared assignment contract only
 // when that contract requires evidence the boundary cannot supply.
 func isExplicitAnyValue(value []byte) bool {
-	return strings.HasSuffix(string(value), "/\"any\"") && strings.HasPrefix(string(value), "scalar/claim/")
+	claim, ok := shapefact.DecodeClaim(value)
+	return ok && bytes.HasSuffix(claim.Target, []byte(`"any"`))
 }
 
 func isUnvalidatedAnyValue(value []byte) bool {
@@ -16381,19 +16349,23 @@ func declaredDisplayFromShape(shape []byte, fallback string) string {
 }
 
 func assignmentValueType(value []byte) string {
+	if target, ok := shapefact.DecodeTarget(value); ok {
+		return typeformat.Short(target)
+	}
 	switch {
-	case func() bool { _, ok := shapefact.DecodeTarget(value); return ok }():
-		valueType, _ := shapefact.DecodeTarget(value)
-		return typeformat.Short(valueType)
 	case shapefact.IsTable(value):
 		return "table"
 	case string(value) == "scalar/nil":
 		return "nil"
-	case strings.HasPrefix(string(value), "scalar/bool/"):
+	case func() bool {
+		scalar, ok := shapefact.DecodeScalar(value)
+		_, boolean := scalar.BooleanText()
+		return ok && boolean
+	}():
 		return "boolean"
-	case strings.HasPrefix(string(value), "scalar/string/"):
+	case shapefact.IsScalarKind(value, shapefact.ScalarString):
 		return "string"
-	case strings.HasPrefix(string(value), "scalar/number/"):
+	case shapefact.IsScalarKind(value, shapefact.ScalarNumber):
 		return "number"
 	case string(value) == "scalar/table":
 		return "table"
@@ -16416,7 +16388,7 @@ func validClaimType(kind, targetType string) bool {
 }
 
 func resolveClaimValue(term []byte, partition equation.Partition) ([]byte, bool, error) {
-	if strings.HasPrefix(string(term), "scalar/") {
+	if shapefact.IsScalar(term) {
 		return append([]byte(nil), term...), true, nil
 	}
 	if shapefact.IsTable(term) {
@@ -16469,7 +16441,7 @@ func valueIsProvablyNil(value []byte) bool {
 }
 
 func claimProven(value []byte, kind, targetType string) bool {
-	if strings.HasPrefix(string(value), "scalar/claim/") || string(value) == "scalar/top" {
+	if _, claimed := shapefact.DecodeClaim(value); claimed || string(value) == "scalar/top" {
 		return false
 	}
 	if kind == "claim-kind/2" {
@@ -16483,16 +16455,19 @@ func claimProven(value []byte, kind, targetType string) bool {
 	case "nil":
 		return string(value) == "scalar/nil"
 	case "boolean":
-		return strings.HasPrefix(string(value), "scalar/bool/") || string(value) == "scalar/boolean"
+		scalar, ok := shapefact.DecodeScalar(value)
+		_, boolean := scalar.BooleanText()
+		return (ok && boolean) || string(value) == "scalar/boolean"
 	case "string":
-		return strings.HasPrefix(string(value), "scalar/string/")
+		return shapefact.IsScalarKind(value, shapefact.ScalarString)
 	case "number":
-		return strings.HasPrefix(string(value), "scalar/number/")
+		return shapefact.IsScalarKind(value, shapefact.ScalarNumber)
 	case "integer":
-		if !strings.HasPrefix(string(value), "scalar/number/") {
+		number, ok := shapefact.DecodeScalarKind(value, shapefact.ScalarNumber)
+		if !ok {
 			return false
 		}
-		_, err := strconv.ParseInt(strings.TrimPrefix(string(value), "scalar/number/"), 10, 64)
+		_, err := strconv.ParseInt(string(number.Data), 10, 64)
 		return err == nil
 	default:
 		return false
@@ -16915,25 +16890,26 @@ func operationIndex(operation string) (int, bool) {
 }
 
 func dynamicKeyIsExact(value []byte) bool {
-	return strings.HasPrefix(string(value), "scalar/string/") || strings.HasPrefix(string(value), "scalar/number/")
+	return shapefact.IsScalarKind(value, shapefact.ScalarString) || shapefact.IsScalarKind(value, shapefact.ScalarNumber)
 }
 
 func literalValueContract(value []byte) (string, bool) {
-	switch {
-	case strings.HasPrefix(string(value), "scalar/string/"):
-		raw := strings.TrimPrefix(string(value), "scalar/string/")
-		text, err := strconv.Unquote(raw)
+	scalar, ok := shapefact.DecodeScalar(value)
+	if !ok {
+		return "", false
+	}
+	switch scalar.Kind {
+	case shapefact.ScalarString:
+		text, err := strconv.Unquote(string(scalar.Data))
 		if err != nil {
 			return "", false
 		}
 		return strconv.Quote(text), true
-	case strings.HasPrefix(string(value), "scalar/number/"):
-		return strings.TrimPrefix(string(value), "scalar/number/"), true
-	case string(value) == "scalar/bool/true":
-		return "true", true
-	case string(value) == "scalar/bool/false":
-		return "false", true
-	case string(value) == "scalar/nil":
+	case shapefact.ScalarNumber:
+		return string(scalar.Data), true
+	case shapefact.ScalarBool:
+		return strconv.FormatBool(scalar.Bool), true
+	case shapefact.ScalarNil:
 		return "nil", true
 	default:
 		return "", false
@@ -17535,7 +17511,7 @@ func shortCircuitBypassFacts(operation equation.BoundEquation, partition equatio
 	if err != nil {
 		return nil, err
 	}
-	witness, decoded := scalarWitnessType(value)
+	witness, decoded := shapefact.DecodeWitnessType(value)
 	if !decoded {
 		return nil, nil
 	}
@@ -18050,7 +18026,7 @@ func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equat
 			}
 			record(term, selected)
 		case "literal-equal", "literal-not":
-			literal, ok := literalType(predicate.Literal)
+			literal, ok := shapefact.DecodeLiteralType([]byte(predicate.Literal))
 			if !ok {
 				continue
 			}
@@ -18335,7 +18311,7 @@ func typePredicateBranchClosure(operation equation.BoundEquation, partition equa
 		if !strings.HasPrefix(fact.Key, typePredicatePairPrefix) || fact.Value == nil {
 			continue
 		}
-		if _, valid := shapefact.DecodeTarget(fact.Value); !valid {
+		if !shapefact.IsForm(fact.Value, shapefact.PayloadShapeTarget) {
 			continue
 		}
 		parts := strings.Split(strings.TrimPrefix(fact.Key, typePredicatePairPrefix), "/")
@@ -18698,7 +18674,7 @@ func correlationPathSuffix(path, prefix string) (string, bool) {
 // versions.  No local source annotation or synthesized alias can enter here.
 func correlationMemberType(term []byte, partition equation.Partition) (typ.Type, bool) {
 	if value, err := resolveCurrentValue(term, partition); err == nil {
-		if valueType, known := expressionValueType(value); known && valueType != nil {
+		if valueType, known := shapefact.DecodeExactWitnessType(value); known && valueType != nil {
 			return valueType, true
 		}
 	}
@@ -19032,7 +19008,7 @@ func immutableEscapeArgument(argument []byte, partition equation.Partition) bool
 	if !known {
 		return false
 	}
-	if strings.HasPrefix(string(value), "scalar/string") {
+	if shapefact.IsScalarKind(value, shapefact.ScalarString) {
 		return true
 	}
 	witness, decoded := shapefact.DecodeTarget(value)
@@ -19679,7 +19655,7 @@ func typedLiteralBranchClosure(operation equation.BoundEquation, partition equat
 			return equation.OutputClosure{}, false, nil
 		}
 		var literalOK bool
-		literal, literalOK = literalType(predicate.Literal)
+		literal, literalOK = shapefact.DecodeLiteralType([]byte(predicate.Literal))
 		if !literalOK {
 			return equation.OutputClosure{}, false, nil
 		}
@@ -20297,7 +20273,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		}
 	}
 	if operands.display == "string" && !operands.spread && len(operands.arguments) == 1 {
-		if argument, known := resolveKnownCurrentValue(operands.arguments[0], partition); known && strings.HasPrefix(string(argument), "scalar/string/") {
+		if argument, known := resolveKnownCurrentValue(operands.arguments[0], partition); known && shapefact.IsScalarKind(argument, shapefact.ScalarString) {
 			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{Key: diagnosticFamilyPrefix(DiagnosticFamilyRedundantClaim) + operation.Target.Name, Value: []byte("proven string cast")}}}}, nil
 		}
 	}
@@ -20689,7 +20665,7 @@ func (l *lexicalEvaluator) boundaryArithmeticOperandRefutation(operation equatio
 			if resolveErr != nil || isUnknownScalar(counterpartValue) {
 				continue
 			}
-			counterpartType, typed := expressionValueType(counterpartValue)
+			counterpartType, typed := shapefact.DecodeExactWitnessType(counterpartValue)
 			if !typed {
 				continue
 			}
@@ -21253,7 +21229,8 @@ func resourceLifecycleEscape(operation equation.BoundEquation, operands directCa
 }
 
 func isResourceIdentity(value []byte) bool {
-	return strings.HasPrefix(string(value), "scalar/resource/op-")
+	resource, ok := shapefact.DecodeScalarKind(value, shapefact.ScalarResource)
+	return ok && bytes.HasPrefix(resource.Data, []byte("op-"))
 }
 
 func resourceLifecycleState(partition equation.Partition, identity []byte) (string, bool) {
@@ -21308,7 +21285,18 @@ func channelLifecycleState(partition equation.Partition, identity []byte) (strin
 }
 
 func isChannelIdentity(value []byte) bool {
-	return strings.HasPrefix(string(value), "scalar/channel/op-") || strings.HasPrefix(string(value), "scalar/channel-entry/") || strings.HasPrefix(string(value), "scalar/channel-summary/")
+	scalar, ok := shapefact.DecodeScalar(value)
+	if !ok {
+		return false
+	}
+	switch scalar.Kind {
+	case shapefact.ScalarChannel:
+		return bytes.HasPrefix(scalar.Data, []byte("op-"))
+	case shapefact.ScalarChannelEntry, shapefact.ScalarChannelSummary:
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveCurrentIdentity uses the same operation-key epoch discipline as
@@ -22699,7 +22687,14 @@ func staticBracketMemberPath(term []byte) bool {
 }
 
 func scalarLiteralDiagnosticValue(value []byte) bool {
-	return strings.HasPrefix(string(value), "scalar/string/") || strings.HasPrefix(string(value), "scalar/number/") || strings.HasPrefix(string(value), "scalar/bool/")
+	scalar, ok := shapefact.DecodeScalar(value)
+	if !ok {
+		return false
+	}
+	if _, boolean := scalar.BooleanText(); boolean {
+		return true
+	}
+	return scalar.Kind == shapefact.ScalarString || scalar.Kind == shapefact.ScalarNumber
 }
 
 func literalDiagnosticValue(term []byte, partition equation.Partition) ([]byte, bool) {
@@ -23300,7 +23295,7 @@ func carriesClosureIdentity(value []byte) bool {
 		return false
 	}
 	for _, member := range table.Members {
-		if member.Present && strings.HasPrefix(member.Value, "scalar/function/") {
+		if function, ok := shapefact.DecodeScalarKind([]byte(member.Value), shapefact.ScalarFunction); member.Present && ok && len(function.Data) != 0 {
 			return true
 		}
 	}
@@ -23345,8 +23340,16 @@ func isIsolatedLiteral(value []byte) bool {
 }
 
 func isTransferScalar(value []byte) bool {
-	return string(value) == "scalar/nil" || strings.HasPrefix(string(value), "scalar/bool/") ||
-		strings.HasPrefix(string(value), "scalar/string/") || strings.HasPrefix(string(value), "scalar/number/")
+	scalar, ok := shapefact.DecodeScalar(value)
+	if !ok {
+		return false
+	}
+	switch scalar.Kind {
+	case shapefact.ScalarNil, shapefact.ScalarBool, shapefact.ScalarOptionalNilComparison, shapefact.ScalarString, shapefact.ScalarNumber:
+		return true
+	default:
+		return false
+	}
 }
 
 type directCallOperands struct {
@@ -23465,7 +23468,7 @@ func assertedPathNarrowingFacts(operation equation.BoundEquation, operands direc
 
 func assertionPathType(term []byte, partition equation.Partition) (typ.Type, bool) {
 	if value, err := resolveCurrentValue(term, partition); err == nil {
-		if source, known := expressionValueType(value); known && source != nil {
+		if source, known := shapefact.DecodeExactWitnessType(value); known && source != nil {
 			return source, true
 		}
 	}
@@ -23582,7 +23585,8 @@ func optionalCallableValue(value []byte) bool {
 }
 
 func isClaimRefinement(value []byte) bool {
-	return strings.HasPrefix(string(value), "scalar/claim/")
+	_, ok := shapefact.DecodeClaim(value)
+	return ok
 }
 
 // priorSealedTableValue follows only a contiguous sequence of claim outputs
@@ -23738,7 +23742,7 @@ func structuralArgumentWitness(value []byte) bool {
 	if shapefact.IsTable(value) {
 		return true
 	}
-	_, complete := scalarWitnessType(value)
+	_, complete := shapefact.DecodeWitnessType(value)
 	return complete
 }
 
@@ -23788,7 +23792,7 @@ type callableTypeParam struct {
 }
 
 func isCallableValue(value []byte) bool {
-	if string(value) == "scalar/function" || strings.HasPrefix(string(value), "scalar/function/") {
+	if shapefact.IsScalarKind(value, shapefact.ScalarFunction) {
 		return true
 	}
 	callee, ok := shapefact.DecodeTarget(value)
@@ -23797,11 +23801,11 @@ func isCallableValue(value []byte) bool {
 }
 
 func callableSignature(value []byte) (callableShape, bool) {
-	encoded := strings.TrimPrefix(string(value), "scalar/function/")
-	if encoded == string(value) || encoded == "" {
+	function, ok := shapefact.DecodeScalarKind(value, shapefact.ScalarFunction)
+	if !ok || len(function.Data) == 0 {
 		return callableShape{}, false
 	}
-	wire, err := base64.RawURLEncoding.DecodeString(encoded)
+	wire, err := base64.RawURLEncoding.DecodeString(string(function.Data))
 	if err != nil {
 		return callableShape{}, false
 	}
@@ -23987,17 +23991,22 @@ func callableTypeParameterName(parameter string, parameters []callableTypeParam)
 }
 
 func callableArgumentType(value []byte) (string, bool) {
-	switch {
-	case strings.HasPrefix(string(value), "scalar/number/"):
-		return "number", true
-	case strings.HasPrefix(string(value), "scalar/string/"):
-		return "string", true
-	case strings.HasPrefix(string(value), "scalar/bool/"):
-		return "boolean", true
-	case string(value) == "scalar/nil":
-		return "nil", true
-	case shapefact.IsTable(value):
+	if shapefact.IsTable(value) {
 		return "table", true
+	}
+	scalar, ok := shapefact.DecodeScalar(value)
+	if !ok {
+		return "", false
+	}
+	switch scalar.Kind {
+	case shapefact.ScalarNumber:
+		return "number", true
+	case shapefact.ScalarString:
+		return "string", true
+	case shapefact.ScalarBool, shapefact.ScalarOptionalNilComparison:
+		return "boolean", true
+	case shapefact.ScalarNil:
+		return "nil", true
 	default:
 		return "", false
 	}
@@ -24021,7 +24030,7 @@ func substituteCallableTypes(types []string, bindings map[string]string) []strin
 }
 
 func resolveKnownCurrentValue(term []byte, partition equation.Partition) ([]byte, bool) {
-	if strings.HasPrefix(string(term), "scalar/") {
+	if shapefact.IsScalar(term) {
 		return append([]byte(nil), term...), true
 	}
 	if !strings.HasPrefix(string(term), "path/") && !strings.HasPrefix(string(term), "temp/") {
@@ -24104,13 +24113,13 @@ func provenValueNotSubtype(value []byte, spelling string) bool {
 	if !resolved {
 		return false
 	}
-	if witness, known := scalarWitnessType(value); known {
+	if witness, known := shapefact.DecodeWitnessType(value); known {
 		return !subtype.IsSubtype(witness, declared)
 	}
 	// A table or a callable carries no scalar witness type, and no primitive
 	// contract admits either of them.
 	return shapefact.IsTable(value) || string(value) == "scalar/table" ||
-		string(value) == "scalar/function" || strings.HasPrefix(string(value), "scalar/function/")
+		shapefact.IsScalarKind(value, shapefact.ScalarFunction)
 }
 
 // primitiveContractType resolves the closed primitive spellings a published
@@ -24367,7 +24376,7 @@ func opaqueCallbackMemberJoins(child front.Compilation, capture string, identity
 			continue
 		}
 		value, hasValue := artifactOperand(item.Operands, "value")
-		if !hasValue || !strings.HasPrefix(string(value), "scalar/") {
+		if !hasValue || !shapefact.IsScalar(value) {
 			value = []byte("scalar/top")
 		}
 		prior, repeated := written[suffix]
@@ -24474,7 +24483,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			}
 			provider = operand.Value
 		case operand.Role == "callee":
-			if callee != nil || (!strings.HasPrefix(string(operand.Value), "path/") && !strings.HasPrefix(string(operand.Value), "temp/") && !strings.HasPrefix(string(operand.Value), "scalar/")) {
+			if callee != nil || (!strings.HasPrefix(string(operand.Value), "path/") && !strings.HasPrefix(string(operand.Value), "temp/") && !shapefact.IsScalar(operand.Value)) {
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result callee")
 			}
 			callee = operand.Value
@@ -24495,7 +24504,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			}
 			method = operand.Value
 		case operand.Role == "type-predicate-error-target":
-			if _, ok := shapefact.DecodeTarget(operand.Value); typePredicateErrorTarget != nil || !ok {
+			if typePredicateErrorTarget != nil || !shapefact.IsForm(operand.Value, shapefact.PayloadShapeTarget) {
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed type predicate error target")
 			}
 			typePredicateErrorTarget = operand.Value
@@ -25276,7 +25285,7 @@ func currentCallTypePredicateTarget(application []byte, partition equation.Parti
 	latest := ""
 	for _, fact := range partition.Values() {
 		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
-			if _, ok := shapefact.DecodeTarget(fact.Value); ok {
+			if shapefact.IsForm(fact.Value, shapefact.PayloadShapeTarget) {
 				target, latest = append([]byte(nil), fact.Value...), fact.Key
 			}
 		}
@@ -25486,7 +25495,7 @@ func consumeCallArgumentFacts(application []byte, arguments map[int][]byte, part
 	for fact, ok := values.Next(); ok; fact, ok = values.Next() {
 		index, err := strconv.Atoi(fact.Occurrence)
 		if err != nil || index < 0 || len(fact.Payload) == 0 ||
-			(!strings.HasPrefix(string(fact.Payload), "path/") && !strings.HasPrefix(string(fact.Payload), "temp/") && !strings.HasPrefix(string(fact.Payload), "scalar/")) {
+			(!strings.HasPrefix(string(fact.Payload), "path/") && !strings.HasPrefix(string(fact.Payload), "temp/") && !shapefact.IsScalar(fact.Payload)) {
 			return fmt.Errorf("engine: malformed call argument transport")
 		}
 		if existing, present := arguments[index]; present && !bytes.Equal(existing, fact.Payload) {
@@ -26320,7 +26329,7 @@ func stdlibMethodProvider(receiver, method []byte, partition equation.Partition)
 		return "", false
 	}
 	receiverType := typ.Type(nil)
-	if strings.HasPrefix(string(value), "scalar/string/") {
+	if shapefact.IsScalarKind(value, shapefact.ScalarString) {
 		receiverType = typ.String
 	} else if decoded, decodedOK := shapefact.DecodeTarget(value); decodedOK {
 		receiverType = decoded
@@ -26355,10 +26364,11 @@ func providerResultValue(provider []byte, index int, arguments map[int][]byte, p
 			continue
 		}
 		value, known := resolveKnownCurrentValue(argument, partition)
-		if !known || !strings.HasPrefix(string(value), "scalar/string/") {
+		scalar, stringValue := shapefact.DecodeScalarKind(value, shapefact.ScalarString)
+		if !known || !stringValue {
 			continue
 		}
-		literal, literalErr := strconv.Unquote(strings.TrimPrefix(string(value), "scalar/string/"))
+		literal, literalErr := strconv.Unquote(string(scalar.Data))
 		if literalErr == nil && literal == condition.ArgumentString {
 			return providerReturnTypeValue(condition.ResultType)
 		}
@@ -26585,15 +26595,19 @@ func importedReturnTemplate(function exportrelation.Function, arguments map[int]
 }
 
 func exactRelationScalar(value []byte) bool {
-	if string(value) == "scalar/bool/true" || string(value) == "scalar/bool/false" || string(value) == "scalar/nil" {
+	scalar, ok := shapefact.DecodeScalar(value)
+	if !ok {
+		return false
+	}
+	if scalar.Kind == shapefact.ScalarBool || scalar.Kind == shapefact.ScalarNil {
 		return true
 	}
-	if strings.HasPrefix(string(value), "scalar/string/") {
-		_, err := strconv.Unquote(strings.TrimPrefix(string(value), "scalar/string/"))
+	if scalar.Kind == shapefact.ScalarString {
+		_, err := strconv.Unquote(string(scalar.Data))
 		return err == nil
 	}
-	if strings.HasPrefix(string(value), "scalar/number/") {
-		_, err := strconv.ParseFloat(strings.TrimPrefix(string(value), "scalar/number/"), 64)
+	if scalar.Kind == shapefact.ScalarNumber {
+		_, err := strconv.ParseFloat(string(scalar.Data), 64)
 		return err == nil
 	}
 	return false
@@ -27176,7 +27190,7 @@ func providerArgumentType(value []byte) (typ.Type, bool) {
 	if function, ok := sealedFunctionType(value); ok {
 		return function, true
 	}
-	if scalar, ok := expressionValueType(value); ok {
+	if scalar, ok := shapefact.DecodeExactWitnessType(value); ok {
 		if literal, literalOK := scalar.(*typ.Literal); literalOK {
 			switch literal.Base {
 			case kind.Boolean:
@@ -27208,7 +27222,7 @@ func providerArgumentType(value []byte) (typ.Type, bool) {
 		if !valid || len(segments) != 1 || segments[0].Kind != segment.SegmentIndexInt || !member.Present {
 			return nil, false
 		}
-		element, known := expressionValueType([]byte(member.Value))
+		element, known := shapefact.DecodeExactWitnessType([]byte(member.Value))
 		if !known {
 			return nil, false
 		}
@@ -27934,7 +27948,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 			case 1:
 				source := publication
 				published := source
-				if !strings.HasPrefix(string(source), "scalar/") {
+				if !shapefact.IsScalar(source) {
 					fact, found := partition.LatestValuePrefix(termFamilyKey(factkey.Value, string(source), "").String())
 					if !found {
 						continue
@@ -27972,7 +27986,7 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed native constant publication")
 		}
 		value := append([]byte(nil), source...)
-		if !strings.HasPrefix(string(source), "scalar/") {
+		if !shapefact.IsScalar(source) {
 			published, found := partition.LatestValuePrefix(termFamilyKey(factkey.Value, string(source), "").String())
 			if found {
 				value = published.Value
@@ -28379,7 +28393,7 @@ func scalarEqualsEncoding(value, other []byte) (bool, error) {
 // value; every wider type denotes more than one and has no single witness.
 func singleValueWitness(value []byte, target typ.Type, isTarget bool) (string, bool) {
 	if !isTarget {
-		if strings.HasPrefix(string(value), "scalar/") && !isUnknownScalar(value) {
+		if shapefact.IsScalar(value) && !isUnknownScalar(value) {
 			return string(value), true
 		}
 		return "", false
@@ -28443,20 +28457,24 @@ func scalarType(value []byte) (string, error) {
 			return "", errUnknownScalar
 		}
 	}
+	scalar, scalarOK := shapefact.DecodeScalar(value)
 	switch {
 	case shapefact.IsTable(value):
 		return "table", nil
-	case string(value) == "scalar/nil":
+	case scalarOK && scalar.Kind == shapefact.ScalarNil:
 		return "nil", nil
-	case strings.HasPrefix(string(value), "scalar/bool/"):
+	case func() bool {
+		_, boolean := scalar.BooleanText()
+		return scalarOK && boolean
+	}():
 		return "boolean", nil
-	case strings.HasPrefix(string(value), "scalar/number/"):
+	case scalarOK && scalar.Kind == shapefact.ScalarNumber:
 		return "number", nil
-	case strings.HasPrefix(string(value), "scalar/string/"):
+	case scalarOK && scalar.Kind == shapefact.ScalarString:
 		return "string", nil
-	case string(value) == "scalar/table":
+	case scalarOK && scalar.Kind == shapefact.ScalarTable:
 		return "table", nil
-	case string(value) == "scalar/function", strings.HasPrefix(string(value), "scalar/function/"):
+	case scalarOK && scalar.Kind == shapefact.ScalarFunction:
 		return "function", nil
 	default:
 		return "", fmt.Errorf("engine: malformed scalar value %q", value)
@@ -28477,10 +28495,11 @@ func scalarString(value []byte) (string, error) {
 		}
 		return "", errUnknownScalar
 	}
-	if !strings.HasPrefix(string(value), "scalar/string/") {
+	scalar, ok := shapefact.DecodeScalarKind(value, shapefact.ScalarString)
+	if !ok {
 		return "", fmt.Errorf("engine: type predicate path is not a string")
 	}
-	decoded, err := strconv.Unquote(strings.TrimPrefix(string(value), "scalar/string/"))
+	decoded, err := strconv.Unquote(string(scalar.Data))
 	if err != nil {
 		return "", err
 	}
@@ -28494,7 +28513,7 @@ func scalarLength(value []byte) (int64, error) {
 		// scalar domain has no table-cardinality value, so an array length is
 		// unavailable here rather than a malformed string.  Keep the branch
 		// fail-closed: callers turn this into an unselected, unproven edge.
-		if !strings.HasPrefix(string(value), "scalar/string/") {
+		if !shapefact.IsScalarKind(value, shapefact.ScalarString) {
 			return 0, errUnknownScalar
 		}
 		return 0, err
@@ -28512,10 +28531,11 @@ func scalarNumber(value []byte) (float64, error) {
 		}
 		return 0, errUnknownScalar
 	}
-	if !strings.HasPrefix(string(value), "scalar/number/") {
+	scalar, ok := shapefact.DecodeScalarKind(value, shapefact.ScalarNumber)
+	if !ok {
 		return 0, fmt.Errorf("engine: numeric predicate path is not a number")
 	}
-	parsed, err := strconv.ParseFloat(strings.TrimPrefix(string(value), "scalar/number/"), 64)
+	parsed, err := strconv.ParseFloat(string(scalar.Data), 64)
 	if err != nil {
 		return 0, fmt.Errorf("engine: decode numeric predicate: %w", err)
 	}
@@ -28597,7 +28617,7 @@ func guardsHold(guards []equation.Guard, partition equation.Partition) bool {
 }
 
 func resolveValue(term, readBefore, absence []byte, partition equation.Partition) ([]byte, error) {
-	if strings.HasPrefix(string(term), "scalar/") {
+	if shapefact.IsScalar(term) {
 		return append([]byte(nil), term...), nil
 	}
 	if shapefact.IsTable(term) {
@@ -28685,7 +28705,7 @@ func assertionNarrowedValue(term []byte, before string, partition equation.Parti
 // their read timing. Environment-write deliberately does not use it: every
 // assignment read carries an explicit pre-write boundary instead.
 func resolveCurrentValue(term []byte, partition equation.Partition) ([]byte, error) {
-	if strings.HasPrefix(string(term), "scalar/") {
+	if shapefact.IsScalar(term) {
 		return append([]byte(nil), term...), nil
 	}
 	if shapefact.IsTable(term) {
@@ -28753,7 +28773,7 @@ func correlationConeCurrentValue(term []byte, partition equation.Partition) ([]b
 		if json.Unmarshal(fact.Value, &wire) != nil || len(wire.Value) == 0 || len(wire.Epochs) == 0 || !correlationConeEpochsCurrent(wire.Epochs, partition) {
 			continue
 		}
-		if _, decoded := shapefact.DecodeTarget(wire.Value); !decoded {
+		if !shapefact.IsForm(wire.Value, shapefact.PayloadShapeTarget) {
 			continue
 		}
 		value, latest = append([]byte(nil), wire.Value...), fact.Key
@@ -28813,7 +28833,7 @@ func reconvergedValue(term []byte, cutoff string, partition equation.Partition) 
 		// can take an unproven claim for a proof.
 		JoinCurrent: func(candidates []equation.Fact) (equation.Fact, bool) {
 			chosen, selected := publication(candidates)
-			if !selected || !strings.HasPrefix(string(chosen.Value), "scalar/claim/") {
+			if _, claimed := shapefact.DecodeClaim(chosen.Value); !selected || !claimed {
 				return chosen, selected
 			}
 			occurrence := strings.TrimPrefix(chosen.Key, prefix)
@@ -28863,7 +28883,7 @@ func reconvergedSurfaceValue(term []byte, partition equation.Partition) ([]byte,
 			if !selected {
 				return equation.Fact{}, false
 			}
-			if _, decoded := shapefact.DecodeTarget(chosen.Value); decoded {
+			if shapefact.IsForm(chosen.Value, shapefact.PayloadShapeTarget) {
 				return chosen, true
 			}
 			summary, published := summaries[strings.TrimPrefix(chosen.Key, valuePrefix)]
@@ -29216,7 +29236,7 @@ func claimBoundValue(operation equation.BoundEquation, kind, targetType string, 
 // sealed literal table contributes its recorded structure, so joining two arm
 // tables keeps their members instead of collapsing the point to a broad table.
 func joinedValueWitness(value []byte) (typ.Type, bool) {
-	if witness, ok := scalarWitnessType(value); ok {
+	if witness, ok := shapefact.DecodeWitnessType(value); ok {
 		return witness, true
 	}
 	return sealedShapeReceiverType(value)
@@ -29822,43 +29842,14 @@ func typedAncestor(term []byte, partition equation.Partition) ([]byte, []segment
 // before a later read. Keeping it unpublished preserves the ordinary value
 // path's fail-closed semantics.
 
-func literalType(value string) (typ.Type, bool) {
-	switch {
-	case strings.HasPrefix(value, "scalar/string/"):
-		decoded, err := strconv.Unquote(strings.TrimPrefix(value, "scalar/string/"))
-		return typ.LiteralString(decoded), err == nil
-	case strings.HasPrefix(value, "scalar/bool/"):
-		decoded, err := strconv.ParseBool(strings.TrimPrefix(value, "scalar/bool/"))
-		if err != nil {
-			return nil, false
-		}
-		return typ.LiteralBool(decoded), true
-	case strings.HasPrefix(value, "scalar/number/"):
-		decoded, err := strconv.ParseInt(strings.TrimPrefix(value, "scalar/number/"), 10, 64)
-		if err != nil {
-			return nil, false
-		}
-		return typ.LiteralInt(decoded), true
-	default:
-		return nil, false
-	}
-}
-
 func memberMissingValue(receiver typ.Type) ([]byte, bool) {
-	encoded, ok := shapefact.EncodeTarget(receiver)
-	if !ok {
-		return nil, false
-	}
-	return append([]byte(memberMissingPrefix), encoded...), true
+	return shapefact.EncodeMemberMissing(receiver)
 }
 
 func memberMissing(value []byte) bool { _, ok := memberMissingReceiver(value); return ok }
 
 func memberMissingReceiver(value []byte) (typ.Type, bool) {
-	if !strings.HasPrefix(string(value), memberMissingPrefix) {
-		return nil, false
-	}
-	return shapefact.DecodeTarget(value[len(memberMissingPrefix):])
+	return shapefact.DecodeMemberMissing(value)
 }
 
 func memberMissingDiagnosticPayload(source string, value []byte) (DiagnosticPayload, bool) {
@@ -29914,50 +29905,12 @@ func luaTruthy(value []byte) (bool, error) {
 	case "scalar/bool/true":
 		return true, nil
 	default:
-		if strings.HasPrefix(string(value), "scalar/number/") || strings.HasPrefix(string(value), "scalar/string/") || string(value) == "scalar/table" || string(value) == "scalar/function" || strings.HasPrefix(string(value), "scalar/function/") {
+		scalar, ok := shapefact.DecodeScalar(value)
+		if ok && (scalar.Kind == shapefact.ScalarNumber || scalar.Kind == shapefact.ScalarString || scalar.Kind == shapefact.ScalarTable || scalar.Kind == shapefact.ScalarFunction) {
 			return true, nil
 		}
 		return false, fmt.Errorf("engine: malformed scalar value %q", value)
 	}
-}
-
-// scalarWitnessType resolves a published engine value to the type whose value
-// set it witnesses. It is the single decoder used wherever a stored value has
-// to be compared in the type domain instead of by its encoding. An unknown
-// scalar, a local claim, and a table shape carry no such type.
-func scalarWitnessType(value []byte) (typ.Type, bool) {
-	if target, ok := shapefact.DecodeTarget(value); ok && target != nil {
-		return target, true
-	}
-	encoded := string(value)
-	switch encoded {
-	case "scalar/nil":
-		return typ.Nil, true
-	case "scalar/boolean":
-		return typ.Boolean, true
-	case "scalar/bool/true":
-		return typ.True, true
-	case "scalar/bool/false":
-		return typ.False, true
-	}
-	switch {
-	case strings.HasPrefix(encoded, "scalar/number/"):
-		text := strings.TrimPrefix(encoded, "scalar/number/")
-		if integer, err := strconv.ParseInt(text, 10, 64); err == nil {
-			return typ.LiteralInt(integer), true
-		}
-		if number, err := strconv.ParseFloat(text, 64); err == nil {
-			return typ.LiteralNumber(number), true
-		}
-		return nil, false
-	case strings.HasPrefix(encoded, "scalar/string/"):
-		text, err := strconv.Unquote(strings.TrimPrefix(encoded, "scalar/string/"))
-		if err != nil {
-			return nil, false
-		}
-		return typ.LiteralString(text), true
-	}
-	return nil, false
 }
 
 // undecidedLogicalValue joins the two outcomes of a short-circuit whose left
@@ -29965,8 +29918,8 @@ func scalarWitnessType(value []byte) (typ.Type, bool) {
 // and the whole right operand. A side with no type witness leaves the result
 // unknown rather than committing the expression to one arm.
 func undecidedLogicalValue(left, right []byte, operator wir.Operator) []byte {
-	leftType, leftKnown := scalarWitnessType(left)
-	rightType, rightKnown := scalarWitnessType(right)
+	leftType, leftKnown := shapefact.DecodeWitnessType(left)
+	rightType, rightKnown := shapefact.DecodeWitnessType(right)
 	if !leftKnown || !rightKnown {
 		return []byte("scalar/top")
 	}
@@ -29990,7 +29943,11 @@ func undecidedLogicalValue(left, right []byte, operator wir.Operator) []byte {
 }
 
 func isUnknownScalar(value []byte) bool {
-	return string(value) == "scalar/top" || strings.HasPrefix(string(value), "scalar/claim/")
+	if shapefact.IsScalarKind(value, shapefact.ScalarTop) {
+		return true
+	}
+	_, claim := shapefact.DecodeClaim(value)
+	return claim
 }
 
 func derivedPathTerm(term []byte) bool {
@@ -30186,26 +30143,34 @@ func artifactOperandsByRole(operands []equation.Operand, roles ...string) (map[s
 }
 
 func displayValue(value []byte) ([]byte, error) {
-	encoded := string(value)
-	switch {
-	case encoded == "scalar/nil":
+	if _, ok := shapefact.DecodeClaim(value); ok {
+		return []byte("unknown"), nil
+	}
+	scalar, ok := shapefact.DecodeScalar(value)
+	if !ok {
+		return nil, fmt.Errorf("engine: invalid stored scalar")
+	}
+	switch scalar.Kind {
+	case shapefact.ScalarNil:
 		return []byte("nil"), nil
-	case strings.HasPrefix(encoded, "scalar/bool/"):
-		return []byte(strings.TrimPrefix(encoded, "scalar/bool/")), nil
-	case strings.HasPrefix(encoded, "scalar/number/"):
-		return []byte(strings.TrimPrefix(encoded, "scalar/number/")), nil
-	case strings.HasPrefix(encoded, "scalar/string/"):
-		stringValue, err := strconv.Unquote(strings.TrimPrefix(encoded, "scalar/string/"))
+	case shapefact.ScalarBool, shapefact.ScalarOptionalNilComparison:
+		text, _ := scalar.BooleanText()
+		return []byte(text), nil
+	case shapefact.ScalarNumber:
+		return append([]byte(nil), scalar.Data...), nil
+	case shapefact.ScalarString:
+		stringValue, err := strconv.Unquote(string(scalar.Data))
 		if err != nil {
 			return nil, err
 		}
 		return []byte(strconv.Quote(stringValue)), nil
-	case encoded == "scalar/table", encoded == "scalar/function":
+	case shapefact.ScalarTable, shapefact.ScalarTop:
 		return []byte("unknown"), nil
-	case strings.HasPrefix(encoded, "scalar/claim/"):
-		return []byte("unknown"), nil
-	case encoded == "scalar/top":
-		return []byte("unknown"), nil
+	case shapefact.ScalarFunction:
+		if len(scalar.Data) == 0 {
+			return []byte("unknown"), nil
+		}
+		return nil, fmt.Errorf("engine: invalid stored scalar")
 	default:
 		return nil, fmt.Errorf("engine: invalid stored scalar")
 	}

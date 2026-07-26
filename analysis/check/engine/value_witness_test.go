@@ -154,15 +154,15 @@ func TestScalarWitnessTypeDecodesTheClosedValueVocabulary(t *testing.T) {
 		{value: `scalar/string/"text"`, want: typ.LiteralString("text")},
 	} {
 		t.Run(testcase.value, func(t *testing.T) {
-			got, ok := scalarWitnessType([]byte(testcase.value))
+			got, ok := shapefact.DecodeWitnessType([]byte(testcase.value))
 			if !ok || !typ.TypeEquals(got, testcase.want) {
-				t.Fatalf("scalarWitnessType(%q) = %v/%v, want %v", testcase.value, got, ok, testcase.want)
+				t.Fatalf("DecodeWitnessType(%q) = %v/%v, want %v", testcase.value, got, ok, testcase.want)
 			}
 		})
 	}
 	for _, value := range []string{"scalar/top", "scalar/claim/1", "scalar/table", "scalar/function", optionalNilComparison} {
-		if _, ok := scalarWitnessType([]byte(value)); ok {
-			t.Fatalf("scalarWitnessType(%q) reported a witness type for a value that carries none", value)
+		if _, ok := shapefact.DecodeWitnessType([]byte(value)); ok {
+			t.Fatalf("DecodeWitnessType(%q) reported a witness type for a value that carries none", value)
 		}
 	}
 }

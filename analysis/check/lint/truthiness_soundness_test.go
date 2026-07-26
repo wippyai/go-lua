@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 )
 
 func checkSingleModule(t *testing.T, source string) ProjectResult {
@@ -127,7 +129,7 @@ return main
 			ownedTable = true
 		}
 		if allocation.Kind == "lua.scalar" && allocation.Placement.String() == "stack" && allocation.FrameLocal &&
-			strings.HasPrefix(allocation.Identity, "scalar/declaration/") {
+			shapefact.IsScalarKind([]byte(allocation.Identity), shapefact.ScalarDeclaration) {
 			scalarDeclaration = true
 		}
 	}

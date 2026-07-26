@@ -542,8 +542,8 @@ func affineCarrier(term, value []byte) bool {
 // A float operand leaves the shifted term off the slot lattice, so it produces
 // no offset rather than a rounded one.
 func integerConstantOperand(value []byte) (int64, bool) {
-	if text, found := strings.CutPrefix(string(value), "scalar/number/"); found {
-		offset, err := strconv.ParseInt(text, 10, 64)
+	if scalar, found := shapefact.DecodeScalarKind(value, shapefact.ScalarNumber); found {
+		offset, err := strconv.ParseInt(string(scalar.Data), 10, 64)
 		return offset, err == nil
 	}
 	if target, ok := shapefact.DecodeTarget(value); ok {

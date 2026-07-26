@@ -8,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 )
 
 // TestClosedInventoryWithoutOpaqueStoreStillProvesAbsence pins the control: a
@@ -251,7 +252,10 @@ for _, key in ipairs(keys) do suites[key] = 1 end
 		if err := json.Unmarshal(fact.Value, &wire); err != nil {
 			t.Fatalf("unresolved-store payload does not decode: %v", err)
 		}
-		if !strings.HasPrefix(wire.Key, "shape/target/v1/") || !strings.HasPrefix(wire.Value, "shape/target/v1/") {
+		if !shapefact.IsForm([]byte(wire.Key), shapefact.PayloadShapeTarget) {
+			t.Fatalf("unresolved store key is not a target payload: %#v", wire)
+		}
+		if !shapefact.IsForm([]byte(wire.Value), shapefact.PayloadShapeTarget) {
 			t.Fatalf("unresolved store recorded no key/value publication: %#v", wire)
 		}
 	}

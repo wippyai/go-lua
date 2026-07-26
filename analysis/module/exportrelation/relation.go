@@ -4,9 +4,7 @@
 package exportrelation
 
 import (
-	"strconv"
-	"strings"
-
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -197,19 +195,19 @@ func (v Value) Closed() bool {
 }
 
 func exactScalar(value string) bool {
-	switch value {
-	case "scalar/bool/true", "scalar/bool/false", "scalar/nil":
+	scalar, ok := shapefact.DecodeScalar([]byte(value))
+	if !ok {
+		return false
+	}
+	switch scalar.Kind {
+	case shapefact.ScalarBool, shapefact.ScalarNil:
 		return true
+	case shapefact.ScalarString, shapefact.ScalarNumber:
+		_, typed := shapefact.DecodeWitnessType([]byte(value))
+		return typed
+	default:
+		return false
 	}
-	if stringValue, found := strings.CutPrefix(value, "scalar/string/"); found {
-		_, err := strconv.Unquote(stringValue)
-		return err == nil
-	}
-	if number, found := strings.CutPrefix(value, "scalar/number/"); found {
-		_, err := strconv.ParseFloat(number, 64)
-		return err == nil
-	}
-	return false
 }
 
 func (v Value) Valid(arity int) bool {

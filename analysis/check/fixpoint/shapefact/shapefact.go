@@ -82,7 +82,7 @@ func DecodeTable(value []byte) (Table, bool) {
 	return out, true
 }
 
-func IsTable(value []byte) bool { _, ok := DecodeTable(value); return ok }
+func IsTable(value []byte) bool { return IsForm(value, PayloadShapeTable) }
 
 // Lookup returns the exact static member state. If a closed shape has no such
 // member, it proves the member absent.

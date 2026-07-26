@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 )
 
 func TestStage1RedUncalledChildDiagnostics(t *testing.T) {
@@ -221,7 +222,8 @@ f(1)`)
 
 func TestStage1RedThreeLevelCaptures(t *testing.T) {
 	r := checkChildAdmission(t, `local x = 1; return function() return function() return function() return x end end end`)
-	if got := valuesByName(r.Diagnostics); len(got) != 0 || valuesByName(r.Outcomes)["return/arity"] != "1" || !strings.HasPrefix(valuesByName(r.Outcomes)["return/0"], "scalar/function/") {
+	function, precise := shapefact.DecodeScalarKind([]byte(valuesByName(r.Outcomes)["return/0"]), shapefact.ScalarFunction)
+	if got := valuesByName(r.Diagnostics); len(got) != 0 || valuesByName(r.Outcomes)["return/arity"] != "1" || !precise || len(function.Data) == 0 {
 		t.Fatalf("three-level closure outcome = diagnostics %#v outcomes %#v", r.Diagnostics, r.Outcomes)
 	}
 }

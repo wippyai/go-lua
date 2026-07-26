@@ -4,15 +4,17 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 )
 
 // FamilyValue is one family-scoped publication. Subject and qualifiers are
 // parsed zero-copy views of the key; Payload aliases the immutable fact value.
 type FamilyValue struct {
-	Subject    factkey.SubjectRef
-	Occurrence string
-	Payload    []byte
-	parsed     factkey.ParsedKey
+	Subject     factkey.SubjectRef
+	Occurrence  string
+	Payload     []byte
+	payloadKind factkey.PayloadKind
+	parsed      factkey.ParsedKey
 }
 
 func (v FamilyValue) Qualifier(index int) (factkey.SubjectRef, bool) {
@@ -20,6 +22,16 @@ func (v FamilyValue) Qualifier(index int) (factkey.SubjectRef, bool) {
 }
 
 func (v FamilyValue) QualifierCount() int { return v.parsed.QualifierCount() }
+
+// DecodedPayload opts a value-payload family into the shared codec. Families
+// whose declarations name another payload kind fail closed; their bytes must
+// be interpreted by the codec named in factkey.Family.PayloadKind.
+func (v FamilyValue) DecodedPayload() (shapefact.Payload, bool) {
+	if v.payloadKind != factkey.PayloadValue {
+		return shapefact.Payload{}, false
+	}
+	return shapefact.Decode(v.Payload)
+}
 
 // FamilyValueIterator walks one binary-searched prefix range without
 // materializing a fact slice or splitting keys. It is a value iterator so
@@ -84,10 +96,11 @@ func (it *FamilyValueIterator) Next() (FamilyValue, bool) {
 			continue
 		}
 		return FamilyValue{
-			Subject:    parsed.Subject,
-			Occurrence: parsed.Occurrence,
-			Payload:    fact.Value,
-			parsed:     parsed,
+			Subject:     parsed.Subject,
+			Occurrence:  parsed.Occurrence,
+			Payload:     fact.Value,
+			payloadKind: it.family.PayloadKind,
+			parsed:      parsed,
 		}, true
 	}
 	return FamilyValue{}, false

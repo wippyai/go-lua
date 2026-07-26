@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 )
 
 func stage3Artifact(t *testing.T) (Artifact, EntryBinding, []ContentID) {
@@ -288,6 +289,40 @@ func TestPartitionFamilyValuesParsesSelectedRowsWithoutAllocation(t *testing.T) 
 	read() // Warm the partition view before measuring the read itself.
 	if allocations := testing.AllocsPerRun(100, read); allocations != 0 {
 		t.Fatalf("FamilyValues allocated %v times per read", allocations)
+	}
+}
+
+func TestFamilyValuesDecodesOnlyDeclaredValuePayloads(t *testing.T) {
+	identity := []byte("heap")
+	memberKey := factkey.BuildKey(factkey.HeapMember, []factkey.Part{
+		factkey.IdentityPart(identity), factkey.EncodedOpaquePart(".a"),
+	}, "op-1")
+	bytesKey := factkey.BuildKey(factkey.HeapMemberCell, []factkey.Part{
+		factkey.IdentityPart(identity), factkey.EncodedOpaquePart(".a"),
+	}, "op-1")
+	partition, err := PartitionFromClosuresWithGuards(nil, OutputClosure{Values: []Fact{
+		{Key: memberKey.String(), Value: []byte("scalar/number/1")},
+		{Key: bytesKey.String(), Value: []byte("scalar/number/1")},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := partition.FamilyValues(factkey.BuildKey(factkey.HeapMember, []factkey.Part{factkey.IdentityPart(identity)}, ""))
+	value, ok := member.Next()
+	if !ok {
+		t.Fatal("missing value-payload family row")
+	}
+	decoded, ok := value.DecodedPayload()
+	if !ok || decoded.Scalar.Kind != shapefact.ScalarNumber {
+		t.Fatalf("decoded family payload = %+v/%v", decoded, ok)
+	}
+	bytes := partition.FamilyValues(factkey.BuildKey(factkey.HeapMemberCell, []factkey.Part{factkey.IdentityPart(identity)}, ""))
+	value, ok = bytes.Next()
+	if !ok {
+		t.Fatal("missing byte-payload family row")
+	}
+	if _, ok := value.DecodedPayload(); ok {
+		t.Fatal("byte-payload family was decoded as a value payload")
 	}
 }
 

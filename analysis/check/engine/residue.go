@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"math"
 	"strconv"
-	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -147,11 +147,11 @@ func publishedLengthTermTaken(term []byte, partition equation.Partition) (string
 
 // scalarIntegerConstant reads the exact integer an operand term denotes.
 func scalarIntegerConstant(term []byte) (int64, bool) {
-	text, found := strings.CutPrefix(string(term), "scalar/number/")
-	if !found || !numericLiteralIsInteger(text) {
+	scalar, found := shapefact.DecodeScalarKind(term, shapefact.ScalarNumber)
+	if !found || !numericLiteralIsInteger(string(scalar.Data)) {
 		return 0, false
 	}
-	value, err := strconv.ParseInt(text, 10, 64)
+	value, err := strconv.ParseInt(string(scalar.Data), 10, 64)
 	return value, err == nil
 }
 
@@ -165,7 +165,7 @@ func integerTypedTerm(term []byte, partition equation.Partition) bool {
 			if err != nil {
 				return nil, false
 			}
-			return expressionValueType(value)
+			return shapefact.DecodeExactWitnessType(value)
 		},
 		func() (typ.Type, bool) { return typedPathType(term, partition) },
 		func() (typ.Type, bool) { return declaredTypeForTerm(term, partition) },

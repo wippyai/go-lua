@@ -3,10 +3,7 @@ package exporter
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
@@ -348,7 +345,7 @@ func deriveValue(value []byte, candidate string, result engine.Result, order map
 		enrichInferredMemberReturns(fields, result.ValueFacts)
 		return buildRecord(fields)
 	}
-	return scalarType(value)
+	return decodeType(value)
 }
 
 // enrichInferredMemberReturns attaches an exported member closure's engine
@@ -518,62 +515,22 @@ func decodeType(value []byte) typ.Type {
 	if shape, ok := shapefact.DecodeTable(value); ok {
 		return buildRecord(decodeTableFields(shape))
 	}
-	return scalarType(value)
-}
-
-func scalarType(value []byte) typ.Type {
-	encoded := string(value)
-	switch {
-	case strings.HasPrefix(encoded, "scalar/function/"):
-		wire, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(encoded, "scalar/function/"))
-		if err != nil {
-			return unknownFunction()
-		}
-		var signature struct {
-			Canonical string `json:"canonical,omitempty"`
-		}
-		if json.Unmarshal(wire, &signature) != nil || signature.Canonical == "" {
-			return unknownFunction()
-		}
-		canonical, err := base64.RawURLEncoding.DecodeString(signature.Canonical)
-		if err != nil {
-			return unknownFunction()
-		}
-		// Decode closed front function publications structurally.
-		function, err := typ.DecodeCanonicalStructural(context.Background(), canonical)
-		if err != nil {
-			return unknownFunction()
-		}
-		if _, ok := unwrap.Alias(function).(*typ.Function); ok {
+	scalar, ok := shapefact.DecodeScalar(value)
+	if !ok {
+		return typ.Unknown
+	}
+	payload := shapefact.Payload{Form: shapefact.PayloadScalar, Scalar: scalar}
+	if scalar.Kind == shapefact.ScalarFunction {
+		if function, ok := payload.FunctionType(); ok {
 			return function
 		}
 		return unknownFunction()
-	case encoded == "scalar/nil":
-		return typ.Nil
-	case encoded == "scalar/bool/true":
-		return typ.True
-	case encoded == "scalar/bool/false":
-		return typ.False
-	case strings.HasPrefix(encoded, "scalar/number/"):
-		number := strings.TrimPrefix(encoded, "scalar/number/")
-		if integer, err := strconv.ParseInt(number, 10, 64); err == nil {
-			return typ.LiteralInt(integer)
-		}
-		if floating, err := strconv.ParseFloat(number, 64); err == nil {
-			return typ.LiteralNumber(floating)
-		}
-		return typ.Unknown
-	case strings.HasPrefix(encoded, "scalar/string/"):
-		text, err := strconv.Unquote(strings.TrimPrefix(encoded, "scalar/string/"))
-		if err != nil {
-			return typ.Unknown
-		}
-		return typ.LiteralString(text)
-	case strings.HasPrefix(encoded, "scalar/function"):
-		return unknownFunction()
-	default:
+	}
+	witness, ok := payload.WitnessType()
+	if !ok {
 		return typ.Unknown
 	}
+	return witness
 }
 
 func unknownFunction() typ.Type {
