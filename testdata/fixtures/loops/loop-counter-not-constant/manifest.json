@@ -1,0 +1,7 @@
+{
+  "description": "A loop-carried counter is the join of its pre-loop value and every value the body carries back, widened to its representation rather than frozen at one peeled iteration. A post-loop guard the counter can satisfy therefore keeps both arms live, while a term the body never writes keeps its exact value and still decides its guard.",
+  "files": ["main.lua"],
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

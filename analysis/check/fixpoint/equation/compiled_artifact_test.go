@@ -96,7 +96,7 @@ func TestCompileCyclicArtifactKeepsFrozenWTOAndTraceOracle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vm, err := NewCyclicVM(registry)
+	vm, err := NewCyclicVM(registry, testRecurrenceLattice())
 	if err != nil {
 		t.Fatal(err)
 	}

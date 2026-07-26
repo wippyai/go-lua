@@ -312,6 +312,31 @@ func placementAllocationForTerm(term []byte, partition equation.Partition) (plac
 	return placementAllocationInFacts(string(term), partition.Values())
 }
 
+// placementAllocationBeforeOperation resolves what a term was bound to on the
+// way into one operation. It is the placement lane's read-before boundary, the
+// same timing rule the value lane already applies: an operation's own binding
+// belongs to the state it establishes, never to the state it observes. In a
+// straight-line body the distinction is invisible because a partition holds
+// only the prefix; around a back edge the operation's own row from the previous
+// trip is present, and reading it would make a member write find the binding it
+// is about to publish already occupying the slot.
+func placementAllocationBeforeOperation(term []byte, operation string, partition equation.Partition) (placementAllocationFact, bool) {
+	if len(term) == 0 || operation == "" {
+		return placementAllocationFact{}, false
+	}
+	facts := partition.Values()
+	before := make([]equation.Fact, 0, len(facts))
+	for _, fact := range facts {
+		if strings.HasPrefix(fact.Key, placementBindingPrefix) {
+			if cut := strings.LastIndexByte(fact.Key, '/'); cut >= 0 && fact.Key[cut+1:] >= operation {
+				continue
+			}
+		}
+		before = append(before, fact)
+	}
+	return placementAllocationInFacts(string(term), before)
+}
+
 // placementAllocationInFacts resolves a term against one already-read partition
 // snapshot. Reading the partition is the dominant cost of a placement lookup, so
 // a caller resolving several terms of the same operation reads it once and every

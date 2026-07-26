@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -416,7 +417,7 @@ func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding,
 	if err != nil {
 		return equation.OutputClosure{}, 0, err
 	}
-	vm, err := equation.NewCyclicVM(kernels)
+	vm, err := equation.NewCyclicVM(kernels, recurrenceLattice())
 	if err != nil {
 		return equation.OutputClosure{}, 0, err
 	}
@@ -3776,7 +3777,7 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 	if err != nil {
 		return equation.OutputClosure{}, 0, err
 	}
-	vm, err := equation.NewCyclicVM(kernelRegistry)
+	vm, err := equation.NewCyclicVM(kernelRegistry, recurrenceLattice())
 	if err != nil {
 		return equation.OutputClosure{}, 0, err
 	}
@@ -11334,7 +11335,11 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	}
 	if root, suffix, ok := heapTableAddress([]byte(target)); ok && suffix != "" {
 		if parent, found := tableIdentityForTerm(root, partition); found {
-			values = append(values, heapMemberFact(parent, suffix, operation.Target.Name, value))
+			memberValue := value
+			if recurrentOperation(operation.Operands) {
+				memberValue = possibleMemberValue(parent, suffix, value, partition)
+			}
+			values = append(values, heapMemberFact(parent, suffix, operation.Target.Name, memberValue))
 			memberIdentity, _ := tableIdentityForTerm(operands["value"], partition)
 			if hasIdentity {
 				memberIdentity = identity
@@ -11343,7 +11348,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			// callable capability: a sealed function value describes a signature
 			// and names no body. The slot therefore records the same handle this
 			// write publishes for its own path.
-			if cell, published, cellErr := memberCellFactWithSource(parent, suffix, operation.Target.Name, value, operands["value"], memberIdentity, partition); cellErr != nil {
+			if cell, published, cellErr := memberCellFactWithSource(parent, suffix, operation.Target.Name, memberValue, operands["value"], memberIdentity, partition); cellErr != nil {
 				return equation.TransactionResult{}, cellErr
 			} else if published {
 				values = append(values, cell)
@@ -11384,12 +11389,12 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		values = append(values, placementBindingFact(target, operation.Target.Name, allocation.Identity))
 	}
 	if _, suffix, member := tableAddress([]byte(target)); member && suffix != "" {
-		if allocation, found := placementAllocationForTerm(allocationResult, partition); found {
+		if allocation, found := placementAllocationBeforeOperation(allocationResult, operation.Target.Name, partition); found {
 			values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "member-store"))
 		}
 		if root, _, ok := tableAddress([]byte(target)); ok {
-			parent, hasParent := placementAllocationForTerm(root, partition)
-			child, hasChild := placementAllocationForTerm(operands["value"], partition)
+			parent, hasParent := placementAllocationBeforeOperation(root, operation.Target.Name, partition)
+			child, hasChild := placementAllocationBeforeOperation(operands["value"], operation.Target.Name, partition)
 			if hasParent && hasChild && parent.Identity != child.Identity {
 				values = append(values, placementContainmentFact(parent.Identity, child.Identity, operation.Target.Name))
 			}
@@ -13056,12 +13061,16 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 					memberSource = value
 				}
 			}
-			result.Closure.Values = append(result.Closure.Values, heapMemberFact(writeIdentity, suffix, operation.Target.Name, value))
+			memberValue := value
+			if recurrentOperation(operation.Operands) {
+				memberValue = possibleMemberValue(writeIdentity, suffix, value, partition)
+			}
+			result.Closure.Values = append(result.Closure.Values, heapMemberFact(writeIdentity, suffix, operation.Target.Name, memberValue))
 			memberIdentity, _ := tableIdentityForTerm(operands["value"], partition)
 			if len(memberIdentity) != 0 {
 				result.Closure.Values = append(result.Closure.Values, heapIdentityFact(string(operands["target"]), operation.Target.Name, memberIdentity))
 			}
-			if cell, published, cellErr := memberCellFactWithSource(writeIdentity, suffix, operation.Target.Name, value, memberSource, memberIdentity, partition); cellErr != nil {
+			if cell, published, cellErr := memberCellFactWithSource(writeIdentity, suffix, operation.Target.Name, memberValue, memberSource, memberIdentity, partition); cellErr != nil {
 				return equation.TransactionResult{}, cellErr
 			} else if published {
 				result.Closure.Values = append(result.Closure.Values, cell)
@@ -26163,6 +26172,234 @@ func reconvergedSurfaceValue(term []byte, partition equation.Partition) ([]byte,
 		return nil, false
 	}
 	return fact.Value, true
+}
+
+// recurrentOperation reports that the front placed this transaction at a CFG
+// point an execution can arrive at more than once.
+func recurrentOperation(operands []equation.BoundOperand) bool {
+	for _, operand := range operands {
+		if operand.Role == "recurrence" {
+			return string(operand.Value) == "recurrence/cyclic"
+		}
+	}
+	return false
+}
+
+// possibleMemberValue is what a member write inside a recurrence establishes
+// about the slot it writes. The trip that performs the write is one of the
+// loop's trips, and running none of them is an execution too, so after the loop
+// the slot holds either the written value or whatever it held on the way in.
+// The publication is therefore their join: a counter raised from a value the
+// slot already had keeps that value's type, while a slot the loop itself
+// introduces admits nil, because not running is exactly the execution in which
+// nothing was stored.
+//
+// An allocation stored into the slot keeps its exact payload. That payload is
+// the heap object's identity as much as its shape, and the object graph the
+// containment, escape, and placement lanes read through it already states which
+// allocation may reach the slot.
+func possibleMemberValue(identity []byte, suffix string, value []byte, partition equation.Partition) []byte {
+	if len(value) == 0 || isUnknownScalar(value) || shapefact.IsTable(value) {
+		return value
+	}
+	incoming := []byte("scalar/nil")
+	if current, published := heapMemberCurrent(heapMemberPrefix, identity, suffix, partition); published && len(current) != 0 {
+		incoming = current
+	}
+	joined, ok := joinPublishedValues(value, incoming)
+	if !ok || len(joined) == 0 {
+		return []byte("scalar/top")
+	}
+	return joined
+}
+
+// recurrenceLattice is the engine's abstract domain for an operation that is
+// evaluated once per trip of a recurrence.  A loop body publishes the same
+// operation's result on every trip, so the fixed point has to state what that
+// operation holds across all of them rather than what one peeled iteration
+// produced.  Join accumulates two trips; Widen is the terminating operator the
+// stabilization loop applies from a cell's second visit on.
+//
+// Only the value lane owns a lattice.  Every other publication is a positive
+// proof about one program point, and two trips that disagree about it have
+// proved nothing that holds for the loop: those rows are withdrawn, which is
+// the same conservative reading an absent publication already carries.
+// Diagnostics are the one lane that is never withdrawn -- silently dropping a
+// report is exactly the failure this domain exists to prevent -- so a
+// disagreement there keeps a deterministic representative.
+func recurrenceLattice() equation.RecurrenceLattice {
+	return equation.RecurrenceLattice{Join: joinRecurrentFact, Widen: widenRecurrentFact}
+}
+
+func joinRecurrentFact(lane equation.FactLane, key string, left, right []byte) ([]byte, bool) {
+	return mergeRecurrentFact(lane, key, left, right, joinPublishedValues)
+}
+
+func widenRecurrentFact(lane equation.FactLane, key string, left, right []byte) ([]byte, bool) {
+	return mergeRecurrentFact(lane, key, left, right, func(left, right []byte) ([]byte, bool) {
+		joined, ok := joinPublishedValues(left, right)
+		if !ok {
+			return []byte("scalar/top"), true
+		}
+		return widenRecurrentValue(joined), true
+	})
+}
+
+// mergeRecurrentFact routes a disagreement to the domain its fact family owns.
+// The value lane's payload carriers -- a term's publication, a heap member's
+// current value, and the write-owned member cell -- all hold the same encoded
+// witness, so they share one operator. Every other family is withdrawn.
+func mergeRecurrentFact(lane equation.FactLane, key string, left, right []byte, values func(left, right []byte) ([]byte, bool)) ([]byte, bool) {
+	if lane == equation.LaneDiagnostic {
+		return recurrentDiagnosticPayload(left, right), true
+	}
+	if lane != equation.LaneValue {
+		return nil, false
+	}
+	switch {
+	case strings.HasPrefix(key, "value/"), strings.HasPrefix(key, heapMemberPrefix):
+		return values(left, right)
+	case strings.HasPrefix(key, memberCellPrefix):
+		return mergeRecurrentMemberCell(left, right, values)
+	default:
+		return nil, false
+	}
+}
+
+// handleCaptureRow is a closure handle flattened to a comparable row: the
+// prototype followed by its capture spelling.
+func handleCaptureRow(handle closureHandle) []string {
+	return append([]string{handle.Prototype}, handle.Captures...)
+}
+
+// mergeRecurrentMemberCell merges two trips' writes of one member cell. The
+// value carrier merges in the value domain. The capability and the child
+// identity do not: a body capability or an allocation identity the two trips
+// disagree about is not this member's, so the cell keeps only what both trips
+// established.
+func mergeRecurrentMemberCell(left, right []byte, values func(left, right []byte) ([]byte, bool)) ([]byte, bool) {
+	var first, second memberCellWire
+	if json.Unmarshal(left, &first) != nil || json.Unmarshal(right, &second) != nil {
+		return nil, false
+	}
+	value, ok := values(first.Value, second.Value)
+	if !ok || len(value) == 0 {
+		return nil, false
+	}
+	merged := memberCellWire{Value: value}
+	if first.Handle != nil && second.Handle != nil && slices.Equal(handleCaptureRow(*first.Handle), handleCaptureRow(*second.Handle)) {
+		handle := closureHandle{Prototype: first.Handle.Prototype, Captures: append([]string(nil), first.Handle.Captures...)}
+		merged.Handle = &handle
+	}
+	if len(first.MemberIdentity) != 0 && bytes.Equal(first.MemberIdentity, second.MemberIdentity) {
+		merged.MemberIdentity = append([]byte(nil), first.MemberIdentity...)
+	}
+	encoded, err := json.Marshal(merged)
+	if err != nil {
+		return nil, false
+	}
+	return encoded, true
+}
+
+// recurrentDiagnosticPayload picks one of two disagreeing reports for the same
+// operation under the same guard cube.  Both describe the same location, so the
+// choice only has to be deterministic and independent of argument order.
+func recurrentDiagnosticPayload(left, right []byte) []byte {
+	if bytes.Compare(left, right) <= 0 {
+		return append([]byte(nil), left...)
+	}
+	return append([]byte(nil), right...)
+}
+
+// recurrenceWidenBudget bounds the payload a widened publication may carry.
+// Together with the collapse of singletons to their primitive it makes the
+// widened domain finite, which is what makes the ascent stationary: a carrier
+// whose witness keeps growing reaches the unknown scalar instead of producing
+// one more distinct iterate on every trip.
+const recurrenceWidenBudget = 4096
+
+// recurrenceWidenDepth bounds how far the collapse descends into a structural
+// witness.  Beyond it the witness is not reproduced at all, so a self-nesting
+// carrier cannot manufacture a taller type on every trip.
+const recurrenceWidenDepth = 8
+
+// widenRecurrentValue is the terminating operator for a value carried around a
+// back edge.  A singleton loses its value and keeps its primitive: an increment
+// whose result differs on every trip stays an integer, and only a carrier that
+// changes representation moves in the type lattice.  Anything the collapse
+// cannot express, and anything that outgrows the budget, becomes the unknown
+// scalar.
+func widenRecurrentValue(joined []byte) []byte {
+	if isUnknownScalar(joined) {
+		return []byte("scalar/top")
+	}
+	witness, known := joinedValueWitness(joined)
+	if !known || witness == nil {
+		return []byte("scalar/top")
+	}
+	widened, ok := widenRecurrentWitness(witness, 0)
+	if !ok || widened == nil {
+		return []byte("scalar/top")
+	}
+	encoded, encodable := shapefact.EncodeTarget(widened)
+	if !encodable || len(encoded) > recurrenceWidenBudget {
+		return []byte("scalar/top")
+	}
+	return encoded
+}
+
+// widenRecurrentWitness replaces every singleton inside a witness by the
+// primitive it inhabits.  The rewrite is confined to the constructors whose
+// members a loop can actually grow -- unions, optionals, and element positions
+// -- so a record or a function witness is carried unchanged rather than
+// rebuilt through a partial reconstruction.
+func widenRecurrentWitness(witness typ.Type, depth int) (typ.Type, bool) {
+	if witness == nil || depth > recurrenceWidenDepth {
+		return nil, false
+	}
+	switch node := witness.(type) {
+	case *typ.Literal:
+		return literalPrimitive(node)
+	case *typ.Optional:
+		inner, ok := widenRecurrentWitness(node.Inner, depth+1)
+		if !ok {
+			return nil, false
+		}
+		return typ.MaterializeOptional(inner), true
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(node.Members))
+		for _, member := range node.Members {
+			widened, ok := widenRecurrentWitness(member, depth+1)
+			if !ok {
+				return nil, false
+			}
+			members = append(members, widened)
+		}
+		return typ.MaterializeUnion(members), true
+	case *typ.Array:
+		element, ok := widenRecurrentWitness(node.Element, depth+1)
+		if !ok {
+			return nil, false
+		}
+		return typ.NewArray(element), true
+	default:
+		return witness, true
+	}
+}
+
+func literalPrimitive(literal *typ.Literal) (typ.Type, bool) {
+	switch literal.Base {
+	case kind.Boolean:
+		return typ.Boolean, true
+	case kind.String:
+		return typ.String, true
+	case kind.Integer:
+		return typ.Integer, true
+	case kind.Number:
+		return typ.Number, true
+	default:
+		return nil, false
+	}
 }
 
 // joinPublishedValues is the value lattice at a reconvergence point.  Edges

@@ -113,6 +113,14 @@ func partitionEqual(left, right GuardedPartition) bool {
 }
 
 func partitionJoin(left, right GuardedPartition) GuardedPartition {
+	return partitionMerge(nil, left, right)
+}
+
+// partitionMerge is the guarded-product lattice operation. Leaves are matched
+// by guard cube, and within a cube the fact owner's merge resolves the rows
+// that one trip of a recurrence and the next disagree about. A nil merge keeps
+// the strict reading, in which such a disagreement is a defect.
+func partitionMerge(merge FactMerge, left, right GuardedPartition) GuardedPartition {
 	byGuard := make(map[string]OutputClosure, len(left.Leaves)+len(right.Leaves))
 	for _, partition := range []GuardedPartition{left, right} {
 		for _, leaf := range partition.Leaves {
@@ -121,7 +129,7 @@ func partitionJoin(left, right GuardedPartition) GuardedPartition {
 				byGuard[leaf.Guard] = leaf.Closure
 				continue
 			}
-			joined, err := joinClosure(current, leaf.Closure)
+			joined, err := mergeClosures(merge, current, leaf.Closure)
 			if err != nil {
 				return GuardedPartition{}
 			}
@@ -338,13 +346,33 @@ func RunCyclicShadow(ctx context.Context, vm *CyclicVM, cases []CyclicShadowCase
 	return report, nil
 }
 
-type CyclicVM struct{ registry *CyclicKernelRegistry }
+// RecurrenceLattice is the fact owner's abstract domain for a body whose
+// operations are evaluated more than once. Join accumulates the publications
+// two trips of a recurrence produced; Widen is the terminating operator the
+// stabilization loop applies from a cell's second visit on and must reach a
+// stationary value along every ascending chain. Both are asked only about
+// rows that share a key and a guard cube and disagree, so an operation whose
+// result does not depend on the recurrence is never approximated.
+type RecurrenceLattice struct {
+	Join  FactMerge
+	Widen FactMerge
+}
 
-func NewCyclicVM(registry *CyclicKernelRegistry) (*CyclicVM, error) {
+func (l RecurrenceLattice) valid() bool { return l.Join != nil && l.Widen != nil }
+
+type CyclicVM struct {
+	registry *CyclicKernelRegistry
+	lattice  RecurrenceLattice
+}
+
+func NewCyclicVM(registry *CyclicKernelRegistry, lattice RecurrenceLattice) (*CyclicVM, error) {
 	if registry == nil {
 		return nil, fmt.Errorf("equation: nil cyclic kernel registry")
 	}
-	return &CyclicVM{registry: registry}, nil
+	if !lattice.valid() {
+		return nil, fmt.Errorf("equation: cyclic VM has no recurrence lattice")
+	}
+	return &CyclicVM{registry: registry, lattice: lattice}, nil
 }
 
 // Evaluate is transactional: every map, trace, and partition belongs to this
@@ -362,19 +390,30 @@ func (vm *CyclicVM) Evaluate(ctx context.Context, bound BoundCyclicArtifact, sel
 		return CyclicEvaluation{}, err
 	}
 	cells := flattenCyclicPlan(plan.Elements())
-	predecessors := make(map[CellID][]CellID, len(cells))
+	planned := make(map[CellID]bool, len(cells))
 	for _, cell := range cells {
-		equation, ok := bound.ByCell[cell]
-		if !ok {
+		if _, ok := bound.ByCell[cell]; !ok {
 			return CyclicEvaluation{}, fmt.Errorf("equation: cyclic plan has no bound concrete cell %q", cell)
 		}
-		for _, target := range equation.Equation.Dependencies {
-			dependency, ok := bound.Artifact.CellForTarget[target]
-			if !ok {
-				return CyclicEvaluation{}, fmt.Errorf("equation: cyclic dependency has no cell for %s", target.Name)
-			}
-			predecessors[cell] = append(predecessors[cell], dependency)
+		planned[cell] = true
+	}
+	// The predecessor relation is the artifact's complete semantic edge set,
+	// not the emission chain alone. Emission order names one straight-line
+	// prefix; the frozen CFG edges additionally name every back edge, so a
+	// consumer inside a loop observes the publications the previous trip
+	// carried rather than the pre-loop state peeled once.
+	predecessors := make(map[CellID][]CellID, len(cells))
+	seenEdge := make(map[[2]CellID]bool, len(cells))
+	for _, edge := range bound.Artifact.Dependencies {
+		if !planned[edge.From] || !planned[edge.To] {
+			continue
 		}
+		key := [2]CellID{edge.To, edge.From}
+		if seenEdge[key] {
+			continue
+		}
+		seenEdge[key] = true
+		predecessors[edge.To] = append(predecessors[edge.To], edge.From)
 	}
 	widenAt := make(map[CellID]bool, len(bound.Artifact.WidenCells))
 	for _, cell := range bound.Artifact.WidenCells {
@@ -383,7 +422,15 @@ func (vm *CyclicVM) Evaluate(ctx context.Context, bound BoundCyclicArtifact, sel
 	var trace []WideningTrace
 	var executionErr error
 	transactions := 0
-	domain := lattice.Lattice[GuardedPartition]{Bottom: func() GuardedPartition { return GuardedPartition{} }, Equal: partitionEqual, LessOrEq: partitionLessOrEqual, Join: partitionJoin, Widen: partitionJoin}
+	domain := lattice.Lattice[GuardedPartition]{
+		Bottom: func() GuardedPartition { return GuardedPartition{} }, Equal: partitionEqual, LessOrEq: partitionLessOrEqual,
+		Join: func(left, right GuardedPartition) GuardedPartition {
+			return partitionMerge(vm.lattice.Join, left, right)
+		},
+		Widen: func(left, right GuardedPartition) GuardedPartition {
+			return partitionMerge(vm.lattice.Widen, left, right)
+		},
+	}
 	values, err := solve.SolveWTOContext(ctx, solve.EquationSystem[CellID, GuardedPartition]{
 		Lattice: domain, Cells: cells, WidenAt: func(cell CellID) bool { return widenAt[cell] },
 		Evaluate: func(cell CellID, read func(CellID) GuardedPartition) GuardedPartition {

@@ -494,3 +494,51 @@ func BenchmarkSolveWTOLinear128(b *testing.B) {
 		}
 	}
 }
+
+// TestSolveWTOAcceptsReadInsideOneComponent pins the read admission a cyclic
+// dataflow client needs. Inside a stabilization component every cell is
+// revisited until the component's head stops changing, so a cell may read the
+// current value of a later-ranked cell of that same component: the read follows
+// declared edges and adds no vertex the frozen decomposition did not schedule.
+// The same read between cells of different components stays uncovered.
+func TestSolveWTOAcceptsReadInsideOneComponent(t *testing.T) {
+	elements := []WTOElement[int]{{Vertex: 0, Body: []WTOElement[int]{{Vertex: 1}, {Vertex: 2}}}, {Vertex: 3}}
+	influences := []WTOInfluence[int]{{From: 0, To: 1}, {From: 1, To: 2}, {From: 2, To: 0}, {From: 0, To: 3}}
+	plan, err := FreezeWTOPlan([]int{0, 1, 2, 3}, elements, influences)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.CoversInfluence(2, 1) {
+		t.Fatalf("a read from a later cell of the same component must be covered")
+	}
+	if plan.CoversInfluence(3, 1) {
+		t.Fatalf("a read from a cell outside the component must stay uncovered")
+	}
+	if !plan.InComponent(1) || plan.InComponent(3) {
+		t.Fatalf("component membership = %v/%v, want inside/outside", plan.InComponent(1), plan.InComponent(3))
+	}
+	// A self read inside a component is the recurrence the component iterates,
+	// so it resolves instead of failing the plan.
+	got, err := SolveWTOContext(context.Background(), EquationSystem[int, int]{
+		Lattice: capLattice{top: 8}.lattice(), Cells: []int{0, 1, 2, 3},
+		WidenAt: func(cell int) bool { return cell != 3 },
+		Evaluate: func(cell int, read func(int) int) int {
+			switch cell {
+			case 0:
+				return read(2) + 1
+			case 1:
+				return read(0)
+			case 2:
+				return read(1)
+			default:
+				return read(0)
+			}
+		},
+	}, plan)
+	if err != nil {
+		t.Fatalf("SolveWTO: %v", err)
+	}
+	if got[0] != 8 || got[3] != 8 {
+		t.Fatalf("solution = %v, want the component to ascend to the lattice cap", got)
+	}
+}

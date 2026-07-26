@@ -1,0 +1,7 @@
+{
+  "description": "A member write reachable around a back edge publishes a possible member, not an established one: the zero-trip execution is one of the loop's executions, so an unconditional body write is as possible as a conditional one. The publication is the join with what the slot held on the way in, so a slot the loop introduces admits nil while a slot a pre-loop write established keeps its type. A straight-line write past no back edge still establishes its slot exactly.",
+  "files": ["main.lua"],
+  "run": {
+    "skip": "diagnostic-only"
+  }
+}

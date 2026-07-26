@@ -128,6 +128,74 @@ type WTOPlan[Cell comparable] struct {
 	rank           map[Cell]int
 	edges          map[edge[Cell]]struct{}
 	componentCount int
+	// component is the outermost stabilization component each cell belongs to,
+	// as the half-open rank span of that component. Cells outside every
+	// component are absent. Two cells that share a span are re-evaluated by the
+	// same stabilization loop, which is what makes a read between them a
+	// chaotic-iteration read rather than an unplanned recurrence.
+	component map[Cell]componentSpan
+}
+
+// componentSpan is the half-open rank interval a stabilization component
+// occupies in the structured order.
+type componentSpan struct{ start, end int }
+
+// componentSpans records, for every cell, the outermost component containing
+// it. Nesting is proper, so equality of the outermost span is exactly the
+// "same stabilization loop" relation.
+func componentSpans[Cell comparable](elements []WTOElement[Cell]) map[Cell]componentSpan {
+	var out map[Cell]componentSpan
+	visited := 0
+	var walk func([]WTOElement[Cell], componentSpan, bool)
+	walk = func(items []WTOElement[Cell], enclosing componentSpan, inside bool) {
+		for _, item := range items {
+			start := visited
+			visited++
+			span, within := enclosing, inside
+			if item.IsComponent() && !within {
+				span, within = componentSpan{start: start, end: start + 1 + countWTOCells(item.Body)}, true
+			}
+			if within {
+				if out == nil {
+					out = make(map[Cell]componentSpan)
+				}
+				out[item.Vertex] = span
+			}
+			walk(item.Body, span, within)
+		}
+	}
+	walk(elements, componentSpan{}, false)
+	return out
+}
+
+func countWTOCells[Cell comparable](items []WTOElement[Cell]) int {
+	total := 0
+	for _, item := range items {
+		total += 1 + countWTOCells(item.Body)
+	}
+	return total
+}
+
+// coIterated reports whether two cells belong to the same outermost
+// stabilization component. Such cells are revisited together until that
+// component's head stops changing, so one may read the other's current value
+// at any point of the ascent without altering the frozen schedule.
+func (p *WTOPlan[Cell]) coIterated(a, b Cell) bool {
+	if p == nil || p.component == nil {
+		return false
+	}
+	left, leftOK := p.component[a]
+	right, rightOK := p.component[b]
+	return leftOK && rightOK && left == right
+}
+
+// InComponent reports whether a cell is revisited by a stabilization loop.
+func (p *WTOPlan[Cell]) InComponent(cell Cell) bool {
+	if p == nil || p.component == nil {
+		return false
+	}
+	_, ok := p.component[cell]
+	return ok
 }
 
 // RestrictWTOPlan selects a demanded subset from an existing frozen plan
@@ -262,7 +330,7 @@ func FreezeWTOPlan[Cell comparable](cells []Cell, elements []WTOElement[Cell], i
 	}
 	return &WTOPlan[Cell]{
 		cells: canonical, elements: frozen, index: index, rank: index, edges: edges,
-		componentCount: componentCount,
+		componentCount: componentCount, component: componentSpans(frozen),
 	}, nil
 }
 
@@ -315,7 +383,7 @@ func NewWTOPlan[Cell comparable](cells []Cell, successors func(Cell) []Cell) *WT
 		}
 	}
 	assign(elements)
-	return &WTOPlan[Cell]{cells: canonical, elements: elements, index: index, rank: rank, edges: edges, componentCount: componentCount}
+	return &WTOPlan[Cell]{cells: canonical, elements: elements, index: index, rank: rank, edges: edges, componentCount: componentCount, component: componentSpans(elements)}
 }
 
 func weakTopologicalOrder[Cell comparable](cells []Cell, declared map[Cell]int, successors func(Cell) []Cell) []WTOElement[Cell] {
@@ -405,10 +473,14 @@ func (p *WTOPlan[Cell]) matches(cells []Cell) bool {
 	return true
 }
 
-// coversInfluence accepts declared graph edges and dynamic forward reads. A
-// forward edge preserves a WTO: its source is stabilized before its reader in
-// every containing-component iteration. A new backward edge can create an
-// unplanned component and therefore requires FIFO fallback.
+// coversInfluence accepts declared graph edges, dynamic forward reads, and
+// reads between two cells of one stabilization component. A forward edge
+// preserves a WTO: its source is stabilized before its reader in every
+// containing-component iteration. A read inside a component is the ordinary
+// chaotic-iteration read the component's own revisit loop already accounts
+// for, and it adds no vertex the frozen decomposition did not schedule. A
+// backward edge that leaves every enclosing component can create an unplanned
+// component and therefore still requires FIFO fallback.
 func (p *WTOPlan[Cell]) coversInfluence(from, to Cell) bool {
 	// A transfer reading its own current input is ubiquitous and does not by
 	// itself create a recurrence; emissions are validated separately below.
@@ -420,7 +492,10 @@ func (p *WTOPlan[Cell]) coversInfluence(from, to Cell) bool {
 	}
 	fromRank, fromOK := p.rank[from]
 	toRank, toOK := p.rank[to]
-	return fromOK && toOK && fromRank < toRank
+	if fromOK && toOK && fromRank < toRank {
+		return true
+	}
+	return p.coIterated(from, to)
 }
 
 // coversEmission reports whether the existing WTO can schedule an observed
@@ -514,7 +589,11 @@ func solveWTOSystem[Cell comparable, State any](sys EquationSystem[Cell, State],
 		if err := cancel.err(0); err != nil {
 			return err
 		}
-		if (s.evaluate != nil && s.activeReadSelf && !plan.stabilizes(cell)) || uncovered {
+		// Reading one's own current value is a recurrence. It is planned when
+		// the frozen graph carries the self edge, and equally when the cell sits
+		// inside a stabilization component: the component's revisit loop is what
+		// re-evaluates the cell until that value stops changing.
+		if (s.evaluate != nil && s.activeReadSelf && !plan.stabilizes(cell) && !plan.InComponent(cell)) || uncovered {
 			return ErrWTOPlanUncovered
 		}
 		s.recordVisit(cell)

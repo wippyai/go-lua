@@ -1475,6 +1475,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 		}
 	}
 	guardReachability := newReachabilityCache(graph)
+	recurrentPoints := recurrentGraphPoints(graph, guardReachability, operations)
 	suspensionLives := suspensionLiveAllocations(body, graph, guardReachability)
 	for index, operation := range operations {
 		instruction := operation.instruction
@@ -1835,6 +1836,15 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			draft.Operands = operands
 		default:
 			return equation.Artifact{}, fmt.Errorf("%w: %d", ErrUnsupportedInstruction, instruction.Op)
+		}
+		// A write the control flow can reach again is a write the control flow
+		// can also skip: the trip that performs it is one of the loop's trips,
+		// and running zero of them is an execution too. This operand carries
+		// that topology to the transaction, which is the only place that knows
+		// whether the write lands on a member and therefore what remains
+		// possible rather than established.
+		if recurrentPoints[instruction.Point] && (draft.Occurrence.Kind == "environment-write" || draft.Occurrence.Kind == "index-mutation" || draft.Occurrence.Kind == "path-replacement") {
+			draft.Operands = append(draft.Operands, equation.Operand{Role: "recurrence", Term: equation.ClosedTerm([]byte("recurrence/cyclic"))})
 		}
 		drafts = append(drafts, draft)
 	}
@@ -3458,6 +3468,30 @@ func exactPositiveIndex(entry wir.TableEntry, index int) bool {
 type branchGuardTarget struct {
 	target              equation.Coordinate
 	literalDiscriminant bool
+}
+
+// recurrentGraphPoints names the CFG points an execution can arrive at more
+// than once: a point one of whose successors reaches it again. That is exactly
+// membership of a loop, expressed on the frozen graph rather than on any source
+// statement shape, so every loop form the lowering produces is covered by the
+// same test.
+func recurrentGraphPoints(graph cfg.Graph, reachability *reachabilityCache, operations []operation) map[cfg.Point]bool {
+	points := make(map[cfg.Point]bool)
+	seen := make(map[cfg.Point]bool, len(operations))
+	for _, item := range operations {
+		point := item.instruction.Point
+		if seen[point] {
+			continue
+		}
+		seen[point] = true
+		for _, successor := range graph.Successors(point) {
+			if reachability.reaches(successor, point) {
+				points[point] = true
+				break
+			}
+		}
+	}
+	return points
 }
 
 // literalLoopDiscriminant recognizes the only literal relation whose selected

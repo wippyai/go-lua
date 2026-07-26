@@ -142,7 +142,35 @@ func (c OutputClosure) bytes() []byte {
 	return out
 }
 
+// FactLane names the publication lane a merge is asked about. A lattice
+// answers differently per lane: a value has a type domain to widen into, an
+// outcome is a proof that can only be withdrawn, and a diagnostic must survive
+// a disagreement because withdrawing it would silently drop a report.
+type FactLane uint8
+
+const (
+	LaneValue FactLane = iota
+	LaneOutcome
+	LaneDiagnostic
+)
+
+// FactMerge is the fact owner's resolution for two publications that share a
+// key and a guard cube but disagree on their payload. It exists only for
+// recurrent evaluation: one trip of a loop and the next trip publish the same
+// operation's result, and the equation layer owns neither the value encoding
+// nor the question of what their union is. Reporting false withdraws the fact,
+// which is the fail-closed answer for a family that has no lattice of its own.
+type FactMerge func(lane FactLane, key string, left, right []byte) ([]byte, bool)
+
 func joinClosure(closures ...OutputClosure) (OutputClosure, error) {
+	return mergeClosures(nil, closures...)
+}
+
+// mergeClosures is joinClosure with a fact-owner resolution for conflicting
+// payloads. A nil merge keeps the strict reading: inside a single evaluation
+// two publications of one key under one guard cube must agree, and a
+// disagreement is a lowering defect rather than a lattice question.
+func mergeClosures(merge FactMerge, closures ...OutputClosure) (OutputClosure, error) {
 	var out OutputClosure
 	for _, closure := range closures {
 		out.Values = append(out.Values, closure.Values...)
@@ -150,7 +178,7 @@ func joinClosure(closures ...OutputClosure) (OutputClosure, error) {
 		out.Diagnostics = append(out.Diagnostics, closure.Diagnostics...)
 		out.AllocationRekeys = append(out.AllocationRekeys, closure.AllocationRekeys...)
 	}
-	canonicalFacts := func(facts []Fact) ([]Fact, error) {
+	canonicalFacts := func(lane FactLane, facts []Fact) ([]Fact, error) {
 		payload := 0
 		for index := range facts {
 			payload += len(facts[index].Value)
@@ -178,25 +206,54 @@ func joinClosure(closures ...OutputClosure) (OutputClosure, error) {
 			return guardsKey(facts[i].Guards) < guardsKey(facts[j].Guards)
 		})
 		unique := facts[:0]
+		// A withdrawn row stays in place until the group is finished so that a
+		// third publication of the same key is compared against the group, not
+		// appended behind it. The whole group is dropped in one compaction pass.
+		dropped := make([]bool, 0, len(facts))
+		withdrawn := false
 		for _, fact := range facts {
-			if len(unique) > 0 && unique[len(unique)-1].Key == fact.Key && sameGuards(unique[len(unique)-1].Guards, fact.Guards) {
-				if !bytes.Equal(unique[len(unique)-1].Value, fact.Value) {
+			if last := len(unique) - 1; last >= 0 && unique[last].Key == fact.Key && sameGuards(unique[last].Guards, fact.Guards) {
+				if dropped[last] || bytes.Equal(unique[last].Value, fact.Value) {
+					continue
+				}
+				if merge == nil {
 					return nil, fmt.Errorf("equation: conflicting output for %q", fact.Key)
 				}
+				resolved, keep := merge(lane, fact.Key, unique[last].Value, fact.Value)
+				if !keep {
+					dropped[last] = true
+					withdrawn = true
+					continue
+				}
+				unique[last].Value = append([]byte(nil), resolved...)
 				continue
 			}
 			unique = append(unique, fact)
+			dropped = append(dropped, false)
+		}
+		if withdrawn {
+			kept := unique[:0]
+			for index, fact := range unique {
+				if dropped[index] {
+					continue
+				}
+				kept = append(kept, fact)
+			}
+			unique = kept
 		}
 		return unique, nil
 	}
 	var err error
-	if out.Values, err = canonicalFacts(out.Values); err != nil {
+	if out.Values, err = canonicalFacts(LaneValue, out.Values); err != nil {
 		return OutputClosure{}, err
 	}
-	if out.Outcomes, err = canonicalFacts(out.Outcomes); err != nil {
+	if merge != nil {
+		out.Values = withdrawContradictoryBranchProofs(out.Values)
+	}
+	if out.Outcomes, err = canonicalFacts(LaneOutcome, out.Outcomes); err != nil {
 		return OutputClosure{}, err
 	}
-	if out.Diagnostics, err = canonicalFacts(out.Diagnostics); err != nil {
+	if out.Diagnostics, err = canonicalFacts(LaneDiagnostic, out.Diagnostics); err != nil {
 		return OutputClosure{}, err
 	}
 	for _, rekey := range out.AllocationRekeys {

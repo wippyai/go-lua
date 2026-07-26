@@ -81,6 +81,66 @@ func (d branchDecision) edge(taken bool) Guard {
 	return Guard{Body: d.body, Encoding: []byte(branchGuardPrefix + d.name + suffix)}
 }
 
+// withdrawContradictoryBranchProofs removes both edge proofs of one decision
+// when a body proved each of them under the same guard cube.  Only a recurrent
+// evaluation can reach that state: one trip of a loop decides the condition and
+// the next decides it the other way, and each trip publishes the proof its own
+// edge carries under a key of its own, so no per-key merge can see the pair.
+//
+// Keeping both would resolve both edges of the decision at once and make every
+// arm-local publication visible together -- the peeled reading that a fixed
+// point over the recurrence exists to replace.  A decision two trips disagree
+// about is simply not decided, so neither proof survives.  Proofs published
+// under different cubes describe different program regions and are untouched:
+// a decision that depends on an enclosing branch legitimately holds one way on
+// one edge and the other way on the other.
+func withdrawContradictoryBranchProofs(facts []Fact) []Fact {
+	type proofKey struct {
+		decision branchDecision
+		cube     string
+	}
+	edges := make(map[proofKey]bool, len(facts))
+	var contradicted map[proofKey]bool
+	classify := func(fact Fact) (proofKey, bool) {
+		guard, ok := branchProofGuard(fact.Key)
+		if !ok || string(fact.Value) != "proven" {
+			return proofKey{}, false
+		}
+		decision, _, peelable := decisionOf(guard)
+		if !peelable {
+			return proofKey{}, false
+		}
+		return proofKey{decision: decision, cube: guardsKey(fact.Guards)}, true
+	}
+	for _, fact := range facts {
+		key, ok := classify(fact)
+		if !ok {
+			continue
+		}
+		guard, _ := branchProofGuard(fact.Key)
+		_, edge, _ := decisionOf(guard)
+		if prior, seen := edges[key]; seen && prior != edge {
+			if contradicted == nil {
+				contradicted = make(map[proofKey]bool, 1)
+			}
+			contradicted[key] = true
+			continue
+		}
+		edges[key] = edge
+	}
+	if len(contradicted) == 0 {
+		return facts
+	}
+	kept := facts[:0]
+	for _, fact := range facts {
+		if key, ok := classify(fact); ok && contradicted[key] {
+			continue
+		}
+		kept = append(kept, fact)
+	}
+	return kept
+}
+
 // guardsConflict reports whether required and active fix opposite edges of the
 // same decision.  Such rows describe disjoint program regions: they are not
 // alternatives to join, they are simply not present together.  Guards for

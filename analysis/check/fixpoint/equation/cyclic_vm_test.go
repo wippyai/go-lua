@@ -9,6 +9,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/solve"
 )
 
+// testRecurrenceLattice is the fail-closed domain: two trips that disagree
+// about a row have proved nothing about it, so the row is withdrawn.
+func testRecurrenceLattice() RecurrenceLattice {
+	withdraw := func(FactLane, string, []byte, []byte) ([]byte, bool) { return nil, false }
+	return RecurrenceLattice{Join: withdraw, Widen: withdraw}
+}
+
 func cyclicVMFixture(t *testing.T) (CyclicArtifact, EntryBinding, []ContentID) {
 	t.Helper()
 	body := testBody(101)
@@ -54,7 +61,7 @@ func TestCyclicVMStabilizesConcretePartitionsAndRecordsWidening(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vm, err := NewCyclicVM(registry)
+	vm, err := NewCyclicVM(registry, testRecurrenceLattice())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +101,7 @@ func TestCyclicVMCancellationPublishesNoPartialResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vm, err := NewCyclicVM(registry)
+	vm, err := NewCyclicVM(registry, testRecurrenceLattice())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +130,7 @@ func TestRunCyclicShadowRejectsClosureAndWideningTraceDifferences(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	vm, err := NewCyclicVM(registry)
+	vm, err := NewCyclicVM(registry, testRecurrenceLattice())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +211,7 @@ func TestCyclicVMStampsPublicationsWithProducerGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vm, err := NewCyclicVM(registry)
+	vm, err := NewCyclicVM(registry, testRecurrenceLattice())
 	if err != nil {
 		t.Fatal(err)
 	}
