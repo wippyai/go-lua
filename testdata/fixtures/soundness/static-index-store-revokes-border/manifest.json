@@ -1,0 +1,5 @@
+{
+  "description": "A store at an integer index occupies a sequence position of its container, so it revokes the length floor and the border presence proof measured before it. A literal key addresses the same position a variable key does. The revocation follows the container the index addresses: a store into another container, and a store at a named slot, both leave the proof standing.",
+  "files": ["main.lua"],
+  "run": { "skip": "diagnostic-only" }
+}

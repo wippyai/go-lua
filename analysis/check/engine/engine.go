@@ -13859,6 +13859,19 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 			result.Closure.Values = append(result.Closure.Values, placementEventFact(child.Identity, operation.Target.Name, placementEventOwned))
 		}
 	}
+	// A store at an integer index occupies a sequence position of its
+	// container, so it may be the write that moves the border a length floor or
+	// an in-range presence proof was measured against. It publishes the
+	// revocation a dynamic store publishes, against the container the index
+	// addresses. The value the store carries does not narrow this: a non-nil
+	// slot still adds a border below an existing floor. A store at a named slot
+	// holds no sequence position and leaves those proofs standing.
+	if container, indexed := staticIndexWriteContainer(operands["target"]); indexed {
+		result.Closure.Values = append(result.Closure.Values, equation.Fact{
+			Key:   heapIndexRevokePrefix + heapIndexSubject(container, partition) + "/" + operation.Target.Name,
+			Value: []byte("revoked"),
+		})
+	}
 	if isChannelIdentity(value) {
 		result.Closure.Values = append(result.Closure.Values, equation.Fact{
 			Key:   "effect.lifecycle.channel.display/" + base64.RawURLEncoding.EncodeToString(operands["target"]) + "/" + operation.Target.Name,
@@ -13866,6 +13879,27 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 		})
 	}
 	return result, nil
+}
+
+// staticIndexWriteContainer is the container a static store addresses a
+// sequence position of: the written path without its final segment, where that
+// segment is an integer index. The container is spelled exactly as its own
+// reads spell it, so the revocation reaches the subject those reads resolve. A
+// path whose final segment names a slot returns nothing.
+func staticIndexWriteContainer(target []byte) ([]byte, bool) {
+	root, suffix, ok := tableAddress(target)
+	if !ok || suffix == "" {
+		return nil, false
+	}
+	segments, valid := segment.ParseFormattedSegments(suffix)
+	if !valid || len(segments) == 0 || segments[len(segments)-1].Kind != segment.SegmentIndexInt {
+		return nil, false
+	}
+	prefix := segments[:len(segments)-1]
+	if len(prefix) == 0 {
+		return root, true
+	}
+	return append(append([]byte(nil), root...), segment.FormatSegments(prefix)...), true
 }
 
 // functionContractWriteRefuted accepts only an exact declared callable and a
