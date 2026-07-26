@@ -3891,9 +3891,10 @@ func indexAdmissionBody(child front.Compilation) admissionBodyIndex {
 		child:          child,
 		ready:          true,
 		operations:     child.Artifact.Equations,
+		formals:        make(admissionBoundarySet, 0, len(child.Boundary.Parameters)),
+		captures:       make(admissionBoundarySet, 0, len(child.Boundary.Captures)),
 		declaredSeeded: child.WIR != nil,
 	}
-	boundary := make(admissionBoundarySet, 0, len(child.Boundary.Parameters)+len(child.Boundary.Captures))
 	for _, operation := range child.Artifact.Equations {
 		index.occurrences.include(operation.Occurrence.Kind)
 	}
@@ -3901,7 +3902,7 @@ func indexAdmissionBody(child front.Compilation) admissionBodyIndex {
 	index.explicitAnySeeded = child.WIR != nil && len(child.Boundary.Parameters) != 0
 	for _, parameter := range child.Boundary.Parameters {
 		term := boundaryTerm(parameter.Symbol)
-		boundary = append(boundary, term)
+		index.formals = append(index.formals, term)
 		if child.WIR == nil || parameter.Vararg || parameter.Type == 0 {
 			index.declaredSeeded = false
 			index.explicitAnySeeded = false
@@ -3924,17 +3925,14 @@ func indexAdmissionBody(child front.Compilation) admissionBodyIndex {
 			}),
 		})
 	}
-	index.formals = boundary
 	index.formalSeedsReady = index.declaredSeeded && len(child.Boundary.Parameters) == 0
 	if len(index.explicitAnySeeds) != len(child.Boundary.Parameters) {
 		index.explicitAnySeeded = false
 	}
 	for _, capture := range child.Boundary.Captures {
 		term := boundaryTerm(capture.Symbol)
-		boundary = append(boundary, term)
+		index.captures = append(index.captures, term)
 	}
-	index.formals = boundary[:len(child.Boundary.Parameters)]
-	index.captures = boundary[len(child.Boundary.Parameters):]
 	return index
 }
 
