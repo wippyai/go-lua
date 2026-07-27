@@ -90,6 +90,31 @@ type Scalar struct {
 	Bool bool
 }
 
+type scalarForm struct {
+	kind        ScalarKind
+	wire        string
+	dataBearing bool
+	emptyWire   string
+}
+
+var scalarForms = [...]scalarForm{
+	{ScalarTop, ScalarTopWire, false, ScalarTopWire},
+	{ScalarNil, ScalarNilWire, false, ScalarNilWire},
+	{ScalarBoolean, ScalarBooleanWire, false, ScalarBooleanWire},
+	{ScalarNumber, scalarNumberPrefix, true, ""},
+	{ScalarString, scalarStringPrefix, true, ""},
+	{ScalarTable, ScalarTableWire, false, ScalarTableWire},
+	{ScalarFunction, scalarFunctionPrefix, true, ScalarFunctionWire},
+	{ScalarOptionalNilComparison, ScalarOptionalNilComparisonWire, false, ScalarOptionalNilComparisonWire},
+	{ScalarExternalCallbackAny, ScalarExternalCallbackAnyWire, false, ScalarExternalCallbackAnyWire},
+	{ScalarChannel, "scalar/channel/", true, ""},
+	{ScalarChannelEntry, "scalar/channel-entry/", true, ""},
+	{ScalarChannelSummary, "scalar/channel-summary/", true, ""},
+	{ScalarDeclaration, "scalar/declaration/", true, ""},
+	{ScalarProvider, "scalar/provider/", true, ""},
+	{ScalarResource, "scalar/resource/", true, ""},
+}
+
 // BooleanText returns the suffix of the scalar/bool/ dialect. Besides exact
 // booleans, that dialect contains the optional-nil comparison sentinel.
 func (scalar Scalar) BooleanText() (string, bool) {
@@ -177,45 +202,19 @@ func decodeClaim(value []byte) (Payload, bool) {
 }
 
 func decodeScalar(value []byte) (Scalar, bool) {
-	switch {
-	case bytes.Equal(value, []byte("scalar/top")):
-		return Scalar{Kind: ScalarTop}, true
-	case bytes.Equal(value, []byte("scalar/nil")):
-		return Scalar{Kind: ScalarNil}, true
-	case bytes.Equal(value, []byte("scalar/boolean")):
-		return Scalar{Kind: ScalarBoolean}, true
-	case bytes.Equal(value, []byte("scalar/bool/true")):
+	if bytes.Equal(value, scalarTrueValue) {
 		return Scalar{Kind: ScalarBool, Bool: true}, true
-	case bytes.Equal(value, []byte("scalar/bool/false")):
-		return Scalar{Kind: ScalarBool}, true
-	case bytes.Equal(value, []byte("scalar/bool/optional-nil-comparison")):
-		return Scalar{Kind: ScalarOptionalNilComparison}, true
-	case bytes.HasPrefix(value, []byte(scalarNumberPrefix)) && len(value) > len(scalarNumberPrefix):
-		return Scalar{Kind: ScalarNumber, Data: value[len(scalarNumberPrefix):]}, true
-	case bytes.HasPrefix(value, []byte(scalarStringPrefix)) && len(value) > len(scalarStringPrefix):
-		return Scalar{Kind: ScalarString, Data: value[len(scalarStringPrefix):]}, true
-	case bytes.Equal(value, []byte("scalar/table")):
-		return Scalar{Kind: ScalarTable}, true
-	case bytes.Equal(value, []byte("scalar/function")):
-		return Scalar{Kind: ScalarFunction}, true
-	case bytes.HasPrefix(value, []byte(scalarFunctionPrefix)) && len(value) > len(scalarFunctionPrefix):
-		return Scalar{Kind: ScalarFunction, Data: value[len(scalarFunctionPrefix):]}, true
-	case bytes.Equal(value, []byte("scalar/external-callback-any")):
-		return Scalar{Kind: ScalarExternalCallbackAny}, true
 	}
-	switch {
-	case bytes.HasPrefix(value, []byte("scalar/channel/")) && len(value) > len("scalar/channel/"):
-		return Scalar{Kind: ScalarChannel, Data: value[len("scalar/channel/"):]}, true
-	case bytes.HasPrefix(value, []byte("scalar/channel-entry/")) && len(value) > len("scalar/channel-entry/"):
-		return Scalar{Kind: ScalarChannelEntry, Data: value[len("scalar/channel-entry/"):]}, true
-	case bytes.HasPrefix(value, []byte("scalar/channel-summary/")) && len(value) > len("scalar/channel-summary/"):
-		return Scalar{Kind: ScalarChannelSummary, Data: value[len("scalar/channel-summary/"):]}, true
-	case bytes.HasPrefix(value, []byte("scalar/declaration/")) && len(value) > len("scalar/declaration/"):
-		return Scalar{Kind: ScalarDeclaration, Data: value[len("scalar/declaration/"):]}, true
-	case bytes.HasPrefix(value, []byte("scalar/provider/")) && len(value) > len("scalar/provider/"):
-		return Scalar{Kind: ScalarProvider, Data: value[len("scalar/provider/"):]}, true
-	case bytes.HasPrefix(value, []byte("scalar/resource/")) && len(value) > len("scalar/resource/"):
-		return Scalar{Kind: ScalarResource, Data: value[len("scalar/resource/"):]}, true
+	if bytes.Equal(value, scalarFalseValue) {
+		return Scalar{Kind: ScalarBool}, true
+	}
+	for _, form := range scalarForms {
+		if form.emptyWire != "" && bytes.Equal(value, []byte(form.emptyWire)) {
+			return Scalar{Kind: form.kind}, true
+		}
+		if form.dataBearing && len(value) > len(form.wire) && bytes.HasPrefix(value, []byte(form.wire)) {
+			return Scalar{Kind: form.kind, Data: value[len(form.wire):]}, true
+		}
 	}
 	return Scalar{}, false
 }
@@ -264,45 +263,26 @@ func Encode(payload Payload) ([]byte, bool) {
 }
 
 func encodeScalar(scalar Scalar) []byte {
-	switch scalar.Kind {
-	case ScalarTop:
-		return []byte(ScalarTopWire)
-	case ScalarNil:
-		return []byte(ScalarNilWire)
-	case ScalarBoolean:
-		return []byte(ScalarBooleanWire)
-	case ScalarBool:
+	if scalar.Kind == ScalarBool {
 		return []byte("scalar/bool/" + strconv.FormatBool(scalar.Bool))
-	case ScalarNumber:
-		return append([]byte(scalarNumberPrefix), scalar.Data...)
-	case ScalarString:
-		return append([]byte(scalarStringPrefix), scalar.Data...)
-	case ScalarTable:
-		return []byte(ScalarTableWire)
-	case ScalarFunction:
-		if len(scalar.Data) == 0 {
-			return []byte(ScalarFunctionWire)
-		}
-		return append([]byte(scalarFunctionPrefix), scalar.Data...)
-	case ScalarOptionalNilComparison:
-		return []byte(ScalarOptionalNilComparisonWire)
-	case ScalarExternalCallbackAny:
-		return []byte(ScalarExternalCallbackAnyWire)
-	case ScalarChannel:
-		return append([]byte("scalar/channel/"), scalar.Data...)
-	case ScalarChannelEntry:
-		return append([]byte("scalar/channel-entry/"), scalar.Data...)
-	case ScalarChannelSummary:
-		return append([]byte("scalar/channel-summary/"), scalar.Data...)
-	case ScalarDeclaration:
-		return append([]byte("scalar/declaration/"), scalar.Data...)
-	case ScalarProvider:
-		return append([]byte("scalar/provider/"), scalar.Data...)
-	case ScalarResource:
-		return append([]byte("scalar/resource/"), scalar.Data...)
-	default:
+	}
+	form, ok := scalarFormForKind(scalar.Kind)
+	if !ok || len(scalar.Data) == 0 && form.emptyWire == "" {
 		return nil
 	}
+	if !form.dataBearing || len(scalar.Data) == 0 {
+		return []byte(form.emptyWire)
+	}
+	return append([]byte(form.wire), scalar.Data...)
+}
+
+func scalarFormForKind(kind ScalarKind) (scalarForm, bool) {
+	for _, form := range scalarForms {
+		if form.kind == kind {
+			return form, true
+		}
+	}
+	return scalarForm{}, false
 }
 
 // ScalarValue is the sole constructor for a parameterized scalar wire value.
@@ -343,65 +323,22 @@ func BooleanValueString(value bool) string {
 // suffix. Kinds without a textual suffix, and empty required suffixes, fail
 // closed. The string form serves carrier fields without a []byte round trip.
 func ScalarTextValue(kind ScalarKind, data string) []byte {
-	if data == "" {
-		if kind == ScalarFunction {
-			return []byte(ScalarFunctionWire)
-		}
+	value := ScalarTextValueString(kind, data)
+	if value == "" {
 		return nil
 	}
-	switch kind {
-	case ScalarNumber:
-		return []byte(scalarNumberPrefix + data)
-	case ScalarString:
-		return []byte(scalarStringPrefix + data)
-	case ScalarFunction:
-		return []byte(scalarFunctionPrefix + data)
-	case ScalarChannel:
-		return []byte("scalar/channel/" + data)
-	case ScalarChannelEntry:
-		return []byte("scalar/channel-entry/" + data)
-	case ScalarChannelSummary:
-		return []byte("scalar/channel-summary/" + data)
-	case ScalarDeclaration:
-		return []byte("scalar/declaration/" + data)
-	case ScalarProvider:
-		return []byte("scalar/provider/" + data)
-	case ScalarResource:
-		return []byte("scalar/resource/" + data)
-	default:
-		return nil
-	}
+	return []byte(value)
 }
 
 func ScalarTextValueString(kind ScalarKind, data string) string {
+	form, ok := scalarFormForKind(kind)
+	if !ok || !form.dataBearing || data == "" && form.emptyWire == "" {
+		return ""
+	}
 	if data == "" {
-		if kind == ScalarFunction {
-			return ScalarFunctionWire
-		}
-		return ""
+		return form.emptyWire
 	}
-	switch kind {
-	case ScalarNumber:
-		return scalarNumberPrefix + data
-	case ScalarString:
-		return scalarStringPrefix + data
-	case ScalarFunction:
-		return scalarFunctionPrefix + data
-	case ScalarChannel:
-		return "scalar/channel/" + data
-	case ScalarChannelEntry:
-		return "scalar/channel-entry/" + data
-	case ScalarChannelSummary:
-		return "scalar/channel-summary/" + data
-	case ScalarDeclaration:
-		return "scalar/declaration/" + data
-	case ScalarProvider:
-		return "scalar/provider/" + data
-	case ScalarResource:
-		return "scalar/resource/" + data
-	default:
-		return ""
-	}
+	return form.wire + data
 }
 
 // BooleanTextValue constructs the exact boolean scalar carried by branch
@@ -437,19 +374,13 @@ func IsScalar(value []byte) bool {
 	if !bytes.HasPrefix(value, []byte(scalarPrefix)) {
 		return false
 	}
-	if bytes.HasPrefix(value, []byte(scalarClaimPrefix)) {
-		_, ok := decodeClaim(value)
-		return ok
-	}
-	_, ok := decodeScalar(value)
-	return ok
+	payload, ok := Decode(value)
+	return ok && (payload.Form == PayloadScalar || payload.Form == PayloadClaim)
 }
 
 func DecodeScalar(value []byte) (Scalar, bool) {
-	if !bytes.HasPrefix(value, []byte(scalarPrefix)) || bytes.HasPrefix(value, []byte(scalarClaimPrefix)) {
-		return Scalar{}, false
-	}
-	return decodeScalar(value)
+	payload, ok := Decode(value)
+	return payload.Scalar, ok && payload.Form == PayloadScalar
 }
 
 func IsScalarKind(value []byte, scalarKind ScalarKind) bool {
@@ -463,42 +394,13 @@ func DecodeScalarKind(value []byte, scalarKind ScalarKind) (Scalar, bool) {
 }
 
 func IsForm(value []byte, form PayloadForm) bool {
-	switch form {
-	case PayloadScalar:
-		_, ok := DecodeScalar(value)
-		return ok
-	case PayloadShapeTable:
-		if !bytes.HasPrefix(value, []byte(tablePrefix)) {
-			return false
-		}
-		_, ok := DecodeTable(value)
-		return ok
-	case PayloadShapeTarget:
-		if !bytes.HasPrefix(value, []byte(targetPrefix)) {
-			return false
-		}
-		_, ok := DecodeTarget(value)
-		return ok
-	case PayloadClaim:
-		_, ok := DecodeClaim(value)
-		return ok
-	case PayloadMemberMissing:
-		if !bytes.HasPrefix(value, []byte(memberMissingPrefix)) {
-			return false
-		}
-		_, ok := DecodeTarget(value[len(memberMissingPrefix):])
-		return ok
-	default:
-		return false
-	}
+	payload, ok := Decode(value)
+	return ok && payload.Form == form
 }
 
 func DecodeClaim(value []byte) (Claim, bool) {
-	if !bytes.HasPrefix(value, []byte(scalarClaimPrefix)) {
-		return Claim{}, false
-	}
-	payload, ok := decodeClaim(value)
-	return payload.Claim, ok
+	payload, ok := Decode(value)
+	return payload.Claim, ok && payload.Form == PayloadClaim
 }
 
 // WitnessType returns the type whose value set this payload witnesses. Top,
@@ -623,8 +525,6 @@ func EncodeMemberMissing(target typ.Type) ([]byte, bool) {
 }
 
 func DecodeMemberMissing(value []byte) (typ.Type, bool) {
-	if !bytes.HasPrefix(value, []byte(memberMissingPrefix)) {
-		return nil, false
-	}
-	return DecodeTarget(value[len(memberMissingPrefix):])
+	payload, ok := Decode(value)
+	return payload.Target, ok && payload.Form == PayloadMemberMissing
 }

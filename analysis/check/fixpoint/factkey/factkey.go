@@ -137,7 +137,7 @@ const (
 
 var (
 	nextFamilyID = FamilyLifecycleResourceState
-	newFamilies  []Family
+	families     []Family
 )
 
 // revocationSet is the declaration-owned closed set of families whose
@@ -378,82 +378,30 @@ var (
 )
 
 func familyRecord(id FamilyID, prefix string, subject Kind, payload PayloadKind, qualifiers ...Kind) Family {
-	return Family{
+	return registerFamily(Family{
 		ID: id, Prefix: prefix, Subject: subject, Qualifiers: qualifiers,
 		PayloadKind: payload, revokers: revocationSet{},
-	}
+	})
 }
 
 func newFamilyRecord(prefix string, subject Kind, payload PayloadKind, qualifiers ...Kind) Family {
 	nextFamilyID++
-	record := familyRecord(nextFamilyID, prefix, subject, payload, qualifiers...)
-	newFamilies = append(newFamilies, record)
-	return record
+	return familyRecord(nextFamilyID, prefix, subject, payload, qualifiers...)
 }
 
 func revokingFamilyRecord(id FamilyID, prefix string, subject Kind, payload PayloadKind, revocations revocationSet, qualifiers ...Kind) Family {
-	record := familyRecord(id, prefix, subject, payload, qualifiers...)
-	record.revokers = revocations
-	return record
+	return registerFamily(Family{
+		ID: id, Prefix: prefix, Subject: subject, Qualifiers: qualifiers,
+		PayloadKind: payload, revokers: revocations,
+	})
 }
 
-// families declares every family whose keys are built or read structurally.
-// Heap facts about unresolved keyed reads/writes and the native coordinate
-// publications are first-class records rather than producer-local spellings.
-var families = append([]Family{
-	HeapTableIdentity,
-	HeapTableClosed,
-	HeapMember,
-	HeapMemberIdentity,
-	HeapMemberCell,
-	HeapMemberOrigin,
-	HeapStaticReplace,
-	HeapMetaAttached,
-	HeapMetaIdentity,
-	HeapMetaNewIndex,
-	HeapExternalCallback,
-	HeapOpaqueMemberWrite,
-	HeapKeysOf,
-	HeapKeyedRead,
-	HeapKeyedElement,
-	HeapIndexPresence,
-	HeapKeyPresence,
-	HeapIndexRevoke,
-	HeapLengthFloor,
-	HeapTableEscape,
-	HeapIndexLower,
-	HeapIndexUpper,
-	HeapIndexRelation,
-	Value,
-	CallResult,
-	CallArgument,
-	LocalCallResult,
-	Type,
-	DeclaredType,
-	SummaryType,
-	MethodReturnSummary,
-	BranchProofFamily,
-	IteratorElement,
-	IteratorKey,
-	IteratorKeySource,
-	NativeConstantValue,
-	NativePublicationIdentity,
-	NativeBranchPartition,
-	NativeTruthinessClass,
-	BranchResidueClass,
-	NativeConcatSite,
-	NativeBuiltinCall,
-	HeapAllocationDisplay,
-	NativeAliasDisjoint,
-	NativeCaptureEpochRoot,
-	NativeCaptureTransport,
-	NativeTypedProducer,
-	NativeTableConstructionBound,
-	NativeProjection,
-	LifecycleChannelState,
-	LifecycleChannelDisplay,
-	LifecycleResourceState,
-}, newFamilies...)
+// Construction and registration are one operation, so an exported family
+// cannot exist outside the lookup domain derived below.
+func registerFamily(record Family) Family {
+	families = append(families, record)
+	return record
+}
 
 // byPrefix indexes the declarations so a key is matched without scanning them.
 // widths are the distinct segment counts the declared prefixes use, longest

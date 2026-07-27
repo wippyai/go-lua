@@ -92,6 +92,47 @@ type diagnosticNarrationContext struct {
 
 type diagnosticNarrate func(PublishedDiagnostic, diagnosticNarrationContext) (PublishedDiagnostic, bool)
 
+type diagnosticNarrationField uint8
+
+const (
+	narrationSource diagnosticNarrationField = iota
+	narrationRequired
+	narrationObserved
+)
+
+type diagnosticNarrationText struct {
+	format string
+	fields []diagnosticNarrationField
+}
+
+type diagnosticNarration struct {
+	evidence        diagnosticNarrationText
+	evidenceKind    diagnostic.EvidenceKind
+	evidenceTrust   diagnostic.TrustKind
+	label           string
+	help            diagnosticNarrationText
+	contextEvidence bool
+}
+
+func (n diagnosticNarration) configured() bool {
+	return n.label != ""
+}
+
+func narrationText(format string, fields ...diagnosticNarrationField) diagnosticNarrationText {
+	return diagnosticNarrationText{format: format, fields: fields}
+}
+
+func narration(kind diagnostic.EvidenceKind, trust diagnostic.TrustKind, evidence diagnosticNarrationText, label string, help diagnosticNarrationText) diagnosticNarration {
+	return diagnosticNarration{
+		evidence: evidence, evidenceKind: kind, evidenceTrust: trust,
+		label: label, help: help,
+	}
+}
+
+func selectNarration(label, help string) diagnosticNarration {
+	return diagnosticNarration{label: label, help: narrationText(help), contextEvidence: true}
+}
+
 // diagnosticExplanationBuilder is the shared construction surface for registry
 // narrations. A narration consumes the structured payload and appends evidence
 // in semantic order; the builder supplies the diagnostic anchor to evidence and
@@ -147,6 +188,7 @@ type diagnosticFamily struct {
 	PayloadKind string
 	AnchorKind  DiagnosticAnchorKind
 	Narrate     diagnosticNarrate
+	Narration   diagnosticNarration
 	Severity    diagnostic.Severity
 }
 
@@ -196,7 +238,7 @@ func init() {
 		},
 		DiagnosticFamilyNilUnsafeUse: {
 			Code: "type.nil.unsafe_use", KeyPrefix: "type.nil.unsafe_use/",
-			AnchorKind: DiagnosticAnchorClaim, Narrate: narrateIdentity, Severity: diagnostic.SeverityError,
+			AnchorKind: DiagnosticAnchorClaim, Severity: diagnostic.SeverityError,
 		},
 		DiagnosticFamilyAssignment: {
 			Code: "type.assignment", KeyPrefix: "type.assignment/", PayloadKind: diagnosticAssignmentMismatch,
@@ -224,7 +266,7 @@ func init() {
 		},
 		DiagnosticFamilyComparisonOperand: {
 			Code: "type.operator.comparison_operand", KeyPrefix: "type.operator.comparison_operand/",
-			AnchorKind: DiagnosticAnchorExpression, Narrate: narrateIdentity, Severity: diagnostic.SeverityError,
+			AnchorKind: DiagnosticAnchorExpression, Severity: diagnostic.SeverityError,
 		},
 		DiagnosticFamilySendIsolation: {
 			Code: "send.isolation", KeyPrefix: "send.isolation/", PayloadKind: diagnosticSendIsolation,
@@ -240,35 +282,43 @@ func init() {
 		},
 		DiagnosticFamilyClosedChannelSend: {
 			Code: "channel.send.closed", KeyPrefix: "channel.send.closed/", PayloadKind: diagnosticChannelLifecycle,
-			AnchorKind: DiagnosticAnchorLifecycle, Narrate: narrateChannelLifecycle, Severity: diagnostic.SeverityError,
+			AnchorKind: DiagnosticAnchorLifecycle, Severity: diagnostic.SeverityError,
+			Narration: narration(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, narrationText("this send call runs after `%s` is proven closed", narrationSource), "channel lifecycle call", narrationText("Send before closing the channel.")),
 		},
 		DiagnosticFamilyClosedChannelClose: {
 			Code: "channel.close.closed", KeyPrefix: "channel.close.closed/", PayloadKind: diagnosticChannelLifecycle,
-			AnchorKind: DiagnosticAnchorLifecycle, Narrate: narrateChannelLifecycle, Severity: diagnostic.SeverityError,
+			AnchorKind: DiagnosticAnchorLifecycle, Severity: diagnostic.SeverityError,
+			Narration: narration(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, narrationText("this close call runs after `%s` is proven closed", narrationSource), "channel lifecycle call", narrationText("Avoid closing the same channel twice.")),
 		},
 		DiagnosticFamilyInvalidTypestateRequirement: {
 			Code: "typestate.invalid_requirement", KeyPrefix: "typestate.invalid_requirement/", PayloadKind: diagnosticTypestateRequirement,
-			AnchorKind: DiagnosticAnchorLifecycle, Narrate: narrateResourceTypestate, Severity: diagnostic.SeverityError,
+			AnchorKind: DiagnosticAnchorLifecycle, Severity: diagnostic.SeverityError,
+			Narration: narration(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, narrationText("this call requires `%s` to be in `%s`, but solved state is `%s`", narrationSource, narrationRequired, narrationObserved), "invalid typestate requirement", narrationText("Call this operation only when `%s` is in `%s` state.", narrationSource, narrationRequired)),
 		},
 		DiagnosticFamilyInvalidTypestateTransition: {
 			Code: "typestate.invalid_transition", KeyPrefix: "typestate.invalid_transition/", PayloadKind: diagnosticTypestateTransition,
-			AnchorKind: DiagnosticAnchorLifecycle, Narrate: narrateResourceTypestate, Severity: diagnostic.SeverityError,
+			AnchorKind: DiagnosticAnchorLifecycle, Severity: diagnostic.SeverityError,
+			Narration: narration(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, narrationText("this transition requires `%s` to be in `%s`, but solved state is `%s`", narrationSource, narrationRequired, narrationObserved), "invalid lifecycle transition", narrationText("Transition `%s` only when it is in `%s` state.", narrationSource, narrationRequired)),
 		},
 		DiagnosticFamilyUnprovenTypestateRequirement: {
 			Code: "typestate.unproven_requirement", KeyPrefix: "typestate.unproven_requirement/", PayloadKind: diagnosticTypestateUnproven,
-			AnchorKind: DiagnosticAnchorLifecycle, Narrate: narrateResourceTypestate, Severity: diagnostic.SeverityWarning,
+			AnchorKind: DiagnosticAnchorLifecycle, Severity: diagnostic.SeverityWarning,
+			Narration: narration(diagnostic.EvidenceMissingProof, diagnostic.TrustRefuted, narrationText("no proof establishes `%s` in `%s` state at this call", narrationSource, narrationRequired), "unproven typestate requirement", narrationText("Establish that `%s` is in `%s` state before this call.", narrationSource, narrationRequired)),
 		},
 		DiagnosticFamilyChannelSelectExhaustiveness: {
 			Code: "channel.select.exhaustiveness", KeyPrefix: "channel.select.exhaustiveness/",
-			AnchorKind: DiagnosticAnchorSelect, Narrate: narrateSelect, Severity: diagnostic.SeverityWarning,
+			AnchorKind: DiagnosticAnchorSelect, Severity: diagnostic.SeverityWarning,
+			Narration: selectNarration("channel case check", "Add an elseif branch for each missing case, or add a default branch when a fallback is valid."),
 		},
 		DiagnosticFamilyUnionExhaustiveness: {
 			Code: "lint.union.exhaustiveness", KeyPrefix: "lint.union.exhaustiveness/",
-			AnchorKind: DiagnosticAnchorSelect, Narrate: narrateSelect, Severity: diagnostic.SeverityWarning,
+			AnchorKind: DiagnosticAnchorSelect, Severity: diagnostic.SeverityWarning,
+			Narration: selectNarration("union case check", "Handle each missing case, or add an else branch when a fallback is valid."),
 		},
 		DiagnosticFamilyUnprovenClaim: {
 			Code: "lint.claim.unproven", KeyPrefix: "claim/unproven/", PayloadKind: diagnosticClaimUnproven,
-			AnchorKind: DiagnosticAnchorClaim, Narrate: narrateUnprovenClaim, Severity: diagnostic.SeverityError,
+			AnchorKind: DiagnosticAnchorClaim, Severity: diagnostic.SeverityError,
+			Narration: diagnosticNarration{label: "unproven claim", help: narrationText("Prove the claim by narrowing the value to the claimed type, or remove the claim.")},
 		},
 		DiagnosticFamilyCallArgumentType: {
 			Code: "type.call.direct.argument_type", KeyPrefix: "type.call.direct.argument_type/", PayloadKind: diagnosticCallArgument,
@@ -288,15 +338,22 @@ func init() {
 		},
 		DiagnosticFamilyUnusedLocal: {
 			Code: "lint.unused.local", KeyPrefix: "lint.unused.local/",
-			AnchorKind: DiagnosticAnchorNone, Narrate: narrateIdentity, Severity: diagnostic.SeverityError,
+			AnchorKind: DiagnosticAnchorNone, Severity: diagnostic.SeverityError,
 		},
 		DiagnosticFamilyDeadAssignment: {
 			Code: "lint.dead.assignment", KeyPrefix: "lint.dead.assignment/",
-			AnchorKind: DiagnosticAnchorNone, Narrate: narrateIdentity, Severity: diagnostic.SeverityError,
+			AnchorKind: DiagnosticAnchorNone, Severity: diagnostic.SeverityError,
 		},
 	}
 	diagnosticFamilyByHead = make(map[string]DiagnosticFamilyID, len(diagnosticFamilies))
-	for id, family := range diagnosticFamilies {
+	for id := range diagnosticFamilies {
+		family := &diagnosticFamilies[id]
+		if family.Narrate == nil {
+			family.Narrate = narrateIdentity
+			if family.Narration.configured() {
+				family.Narrate = narrateData
+			}
+		}
 		diagnosticFamilyByHead[strings.TrimSuffix(family.KeyPrefix, "/")] = DiagnosticFamilyID(id)
 	}
 }
@@ -416,6 +473,40 @@ func narrateIdentity(item PublishedDiagnostic, _ diagnosticNarrationContext) (Pu
 	return item, true
 }
 
+func narrateData(item PublishedDiagnostic, context diagnosticNarrationContext) (PublishedDiagnostic, bool) {
+	spec := context.family.Narration
+	if context.family.PayloadKind != "" && item.Payload.Kind != context.family.PayloadKind {
+		return item, true
+	}
+	builder := explainDiagnostic(item)
+	if spec.contextEvidence {
+		builder.item.Evidence = append([]DiagnosticEvidence(nil), context.selectEvidence[context.fact.Key]...)
+	}
+	if spec.evidence.format != "" {
+		builder.evidence(spec.evidenceKind, spec.evidenceTrust, diagnostic.EvidenceReasonUnspecified, renderNarrationText(spec.evidence, builder.payload))
+	}
+	builder.label(spec.label)
+	return builder.build(renderNarrationText(spec.help, builder.payload))
+}
+
+func renderNarrationText(text diagnosticNarrationText, payload DiagnosticPayload) string {
+	fields := make([]any, len(text.fields))
+	for index, selector := range text.fields {
+		switch selector {
+		case narrationSource:
+			fields[index] = payload.Source
+		case narrationRequired:
+			fields[index] = payload.Required
+		case narrationObserved:
+			fields[index] = payload.Observed
+		}
+	}
+	if len(fields) == 0 {
+		return text.format
+	}
+	return fmt.Sprintf(text.format, fields...)
+}
+
 func narrateAssignment(item PublishedDiagnostic, context diagnosticNarrationContext) (PublishedDiagnostic, bool) {
 	if context.fact.Key != context.key {
 		return item, true
@@ -512,51 +603,6 @@ func narrateAssignment(item PublishedDiagnostic, context diagnosticNarrationCont
 	return item, true
 }
 
-func narrateUnprovenClaim(item PublishedDiagnostic, _ diagnosticNarrationContext) (PublishedDiagnostic, bool) {
-	item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "unproven claim"}}
-	item.Help = "Prove the claim by narrowing the value to the claimed type, or remove the claim."
-	return item, true
-}
-
-func narrateChannelLifecycle(item PublishedDiagnostic, _ diagnosticNarrationContext) (PublishedDiagnostic, bool) {
-	builder := explainDiagnostic(item)
-	display := builder.payload.Source
-	if builder.payload.Kind != diagnosticChannelLifecycle || display == "" {
-		return item, true
-	}
-	if item.Code == diagnosticFamilies[DiagnosticFamilyClosedChannelSend].Code {
-		builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, "this send call runs after `"+display+"` is proven closed")
-		builder.label("channel lifecycle call")
-		return builder.build("Send before closing the channel.")
-	}
-	builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, "this close call runs after `"+display+"` is proven closed")
-	builder.label("channel lifecycle call")
-	return builder.build("Avoid closing the same channel twice.")
-}
-
-func narrateResourceTypestate(item PublishedDiagnostic, _ diagnosticNarrationContext) (PublishedDiagnostic, bool) {
-	builder := explainDiagnostic(item)
-	transition := item.Code == diagnosticFamilies[DiagnosticFamilyInvalidTypestateTransition].Code
-	unproven := item.Code == diagnosticFamilies[DiagnosticFamilyUnprovenTypestateRequirement].Code
-	resource, expected, found := builder.payload.Source, builder.payload.Required, builder.payload.Observed
-	if resource == "" || expected == "" || (!unproven && found == "") {
-		return item, true
-	}
-	if unproven {
-		builder.evidence(diagnostic.EvidenceMissingProof, diagnostic.TrustRefuted, diagnostic.EvidenceReasonUnspecified, fmt.Sprintf("no proof establishes `%s` in `%s` state at this call", resource, expected))
-		builder.label("unproven typestate requirement")
-		return builder.build(fmt.Sprintf("Establish that `%s` is in `%s` state before this call.", resource, expected))
-	}
-	if transition {
-		builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, fmt.Sprintf("this transition requires `%s` to be in `%s`, but solved state is `%s`", resource, expected, found))
-		builder.label("invalid lifecycle transition")
-		return builder.build(fmt.Sprintf("Transition `%s` only when it is in `%s` state.", resource, expected))
-	}
-	builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, fmt.Sprintf("this call requires `%s` to be in `%s`, but solved state is `%s`", resource, expected, found))
-	builder.label("invalid typestate requirement")
-	return builder.build(fmt.Sprintf("Call this operation only when `%s` is in `%s` state.", resource, expected))
-}
-
 func narrateUnreleasedResource(item PublishedDiagnostic, context diagnosticNarrationContext) (PublishedDiagnostic, bool) {
 	builder := explainDiagnostic(item)
 	display := builder.payload.Source
@@ -576,18 +622,6 @@ func narrateUnreleasedResource(item PublishedDiagnostic, context diagnosticNarra
 		builder.labelAt(transition[0].Span, "lifecycle transition")
 	}
 	return builder.build("Transition `" + display + "` to `closed` or escape ownership on every return path.")
-}
-
-func narrateSelect(item PublishedDiagnostic, context diagnosticNarrationContext) (PublishedDiagnostic, bool) {
-	item.Evidence = append([]DiagnosticEvidence(nil), context.selectEvidence[context.fact.Key]...)
-	if context.family.Code == diagnosticFamilies[DiagnosticFamilyUnionExhaustiveness].Code {
-		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "union case check"}}
-		item.Help = "Handle each missing case, or add an else branch when a fallback is valid."
-	} else {
-		item.Labels = []DiagnosticLabel{{Span: item.Span, Message: "channel case check"}}
-		item.Help = "Add an elseif branch for each missing case, or add a default branch when a fallback is valid."
-	}
-	return item, true
 }
 
 func narrateFrozenMutation(item PublishedDiagnostic, context diagnosticNarrationContext) (PublishedDiagnostic, bool) {
