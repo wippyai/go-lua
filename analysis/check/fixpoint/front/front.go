@@ -4936,14 +4936,14 @@ func cyclicReachableOperationCells(graph cfg.Graph, start cfg.Point, points map[
 type reachabilityCache struct {
 	graph      cfg.Graph
 	from       map[cfg.Point]map[cfg.Point]bool
-	without    map[reachabilityExclusion]bool
+	without    map[reachabilityExclusion][]bool
 	loopExits  map[cfg.Point]loopExitArm
 	loops      []naturalLoop
 	dominators *dominance.ImmediateDominators
 }
 
 type reachabilityExclusion struct {
-	from, target, exclude cfg.Point
+	from, exclude cfg.Point
 }
 
 // loopExitArm is one branch's relation to the loop it decides: whether it
@@ -4957,7 +4957,7 @@ func newReachabilityCache(graph cfg.Graph) *reachabilityCache {
 	return &reachabilityCache{
 		graph:     graph,
 		from:      make(map[cfg.Point]map[cfg.Point]bool),
-		without:   make(map[reachabilityExclusion]bool),
+		without:   make(map[reachabilityExclusion][]bool),
 		loopExits: make(map[cfg.Point]loopExitArm),
 	}
 }
@@ -5033,7 +5033,7 @@ func (cache *reachabilityCache) naturalLoopExit(branch cfg.Point) (bool, bool) {
 			continue
 		}
 		inside, leaving, exitEdge := 0, 0, false
-		for _, successor := range cache.graph.Successors(branch) {
+		for _, successor := range cfg.SuccessorsReadOnly(cache.graph, branch) {
 			condition, isBranchEdge := cache.graph.EdgeCond(branch, successor)
 			if !isBranchEdge {
 				continue
@@ -5080,7 +5080,7 @@ func (cache *reachabilityCache) reaches(from, target cfg.Point) bool {
 				continue
 			}
 			reachable[point] = true
-			stack = append(stack, cache.graph.Successors(point)...)
+			stack = append(stack, cfg.SuccessorsReadOnly(cache.graph, point)...)
 		}
 		cache.from[from] = reachable
 	}
@@ -5091,25 +5091,29 @@ func (cache *reachabilityCache) reaches(from, target cfg.Point) bool {
 // back through the branch that selected the arm. This preserves same-iteration
 // branch ownership while retaining ordinary reachability for non-cyclic CFGs.
 func (cache *reachabilityCache) reachesWithout(from, target, exclude cfg.Point) bool {
-	key := reachabilityExclusion{from: from, target: target, exclude: exclude}
-	if reachable, found := cache.without[key]; found {
-		return reachable
-	}
-	seen := make(map[cfg.Point]bool, cache.graph.Size())
-	stack := []cfg.Point{from}
-	for len(stack) != 0 {
-		point := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if point == exclude || seen[point] {
-			continue
+	key := reachabilityExclusion{from: from, exclude: exclude}
+	reachable, found := cache.without[key]
+	if !found {
+		// Excluding one point defines one graph, independent of which target a
+		// caller asks about. Publish its complete reachable set once so every
+		// target query consumes the same walk.
+		reachable = make([]bool, cache.graph.Size())
+		stack := []cfg.Point{from}
+		for len(stack) != 0 {
+			point := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			index := int(point)
+			if point == exclude || index < 0 || index >= len(reachable) || reachable[index] {
+				continue
+			}
+			reachable[index] = true
+			stack = append(stack, cfg.SuccessorsReadOnly(cache.graph, point)...)
 		}
-		if point == target {
-			cache.without[key] = true
-			return true
-		}
-		seen[point] = true
-		stack = append(stack, cache.graph.Successors(point)...)
+		cache.without[key] = reachable
 	}
-	cache.without[key] = false
-	return false
+	index := int(target)
+	if index < 0 || index >= len(reachable) {
+		return false
+	}
+	return reachable[index]
 }

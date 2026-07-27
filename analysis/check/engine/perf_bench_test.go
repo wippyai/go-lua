@@ -19,17 +19,17 @@ package engine_test
 // Baseline (minimum of 10 reps, the least load-contaminated sample):
 //
 //	CheckSmall                    7.958ms   6.964Mi   51.281k allocs
-//	CheckBranchy                  65.901ms  51.853Mi  516.182k allocs
-//	CheckLoopy                    22.826ms  20.354Mi  122.468k allocs
+//	CheckBranchy                  63.722ms  49.526Mi  503.681k allocs
+//	CheckLoopy                    21.203ms  19.282Mi  118.408k allocs
 //	CheckTableHeavy               744.3µs   802.9Ki   6.361k allocs
-//	FullFixture_EdgeMatrix        2.521s    3.367Gi   42.176M allocs
+//	FullFixture_EdgeMatrix        1.351s    855.554Mi 3.991M allocs
 //	FullFixture_PluginSupervisor  769.358ms 1.217Gi   4.578M allocs
 //
-// EdgeMatrix still allocates 3.37GiB / 42.2M allocs to check one 48KB source
-// file. The persistent partition view took the per-read fact copy out of that
-// figure, which is what the halved B/op measures; the remaining allocation
-// count is dominated by engine-side fact construction, not by the partition
-// reads isolated in fixpoint/equation/partition_bench_test.go.
+// EdgeMatrix's former 3.37GiB / 42.1M-allocation outlier was repeated CFG
+// reachability: every target under one (origin, excluded-point) pair rebuilt
+// the same reachable set and copied each successor slice. Sharing that walk
+// reduced the interleaved median by 75.2% B/op and 90.5% allocs/op; closure
+// merging and diagnostic construction now lead its allocation profile.
 
 import (
 	"context"
