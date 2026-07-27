@@ -238,10 +238,6 @@ func decodeEffectLabel(w effectLabelWire) (effect.Label, error) {
 		return nil, inactiveManifestEffectID(capability.ControlIO)
 	case "dispatch.moduleLoad":
 		return dispatch.ModuleLoad{}, nil
-	case "dispatch.variadicTransform":
-		return nil, inactiveManifestEffectID(capability.DispatchVariadicTransform)
-	case "dispatch.typePredicate":
-		return nil, inactiveManifestEffectID(capability.DispatchTypePredicate)
 	case "iteration.iterator":
 		kind, err := decodeIteratorKind(w.IteratorKind)
 		if err != nil {

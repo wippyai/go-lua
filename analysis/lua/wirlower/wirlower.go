@@ -51,6 +51,9 @@ import (
 // construction. WIR stores the resulting metadata; transfer consumers do not
 // read these sidecars.
 type Options struct {
+	Resolver *typeresolve.Resolver
+	Function *ast.FunctionExpr
+
 	MethodReceiverTypes map[symbol.ID]typ.Type
 
 	// SealedLuaTypeChecks proves that the unit's global type binding retains
@@ -84,61 +87,23 @@ type PreparedFunction struct {
 	Graph *cfg.CFG
 }
 
-// Lower lowers a bound statement chunk onto the CFG cfgbuild already built for
-// the same AST. bindings must be the result of binding stmts (e.g.
-// bind.BindChunk) and built must be cfgbuild.BuildChunk over the same stmts.
-// Points in the returned Body index into built.Graph.
-func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) *wir.Body {
-	return LowerWithResolver(name, stmts, bindings, built, typeresolve.New(bindings))
-}
-
-// LowerFunction lowers a bound function body and records function-level syntax
-// metadata such as declared return slots on the returned WIR body.
-func LowerFunction(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result) *wir.Body {
-	return LowerFunctionWithResolver(name, fn, bindings, built, typeresolve.New(bindings))
-}
-
-// LowerFunctionWithOptions lowers a function body with additional WIR metadata
-// inputs.
-func LowerFunctionWithOptions(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result, options Options) *wir.Body {
-	return LowerFunctionWithResolverAndOptions(name, fn, bindings, built, typeresolve.New(bindings), options)
-}
-
-// LowerWithResolver lowers with the caller's canonical type resolver. This is
-// the production entry point when module/export type refs are in scope; WIR
-// TypeRefs must match the resolver used by transfer facts.
-func LowerWithResolver(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
-	return LowerWithResolverAndOptions(name, stmts, bindings, built, resolver, Options{})
-}
-
-// LowerWithResolverAndOptions lowers with the caller's canonical type resolver
-// and additional WIR metadata inputs.
-func LowerWithResolverAndOptions(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver, options Options) *wir.Body {
+// Lower lowers a bound chunk or function onto the CFG already built for the
+// same AST. Function selects function metadata recording; Resolver selects the
+// caller's canonical type namespace. Their zero values retain standalone chunk
+// lowering.
+func Lower(name string, stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result, options Options) *wir.Body {
+	resolver := options.Resolver
 	if resolver == nil {
 		resolver = typeresolve.New(bindings)
 	}
-	return lowerInto(name, stmts, nil, bindings, built, resolver, options)
-}
-
-// LowerFunctionWithResolver is the function-body form of LowerWithResolver. It
-// keeps function-level metadata in WIR instead of requiring later stages to
-// reach back into semantic AST sidecars.
-func LowerFunctionWithResolver(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver) *wir.Body {
-	return LowerFunctionWithResolverAndOptions(name, fn, bindings, built, resolver, Options{})
-}
-
-// LowerFunctionWithResolverAndOptions is the function-body form of
-// LowerWithResolverAndOptions.
-func LowerFunctionWithResolverAndOptions(name string, fn *ast.FunctionExpr, bindings *bind.Result, built *cfgbuild.Result, resolver *typeresolve.Resolver, options Options) *wir.Body {
-	if resolver == nil {
-		resolver = typeresolve.New(bindings)
-	}
-	var stmts []ast.Stmt
+	fn := options.Function
 	if fn != nil {
 		stmts = fn.Stmts
 	}
 	body := lowerInto(name, stmts, fn, bindings, built, resolver, options)
-	recordFunctionBodyMetadata(body, fn, bindings, resolver, options)
+	if fn != nil {
+		recordFunctionBodyMetadata(body, fn, bindings, resolver, options)
+	}
 	return body
 }
 
@@ -454,7 +419,7 @@ func (b *builder) callOrderOptions() callorder.Options {
 func (b *builder) normalizeBranchCondition(expr ast.Expr) branchcond.Check {
 	check := branchcond.Normalize(expr, b.bindings)
 	if !b.options.SealedLuaTypeChecks &&
-		(check.Kind == branchcond.CheckTypeEqual || check.Kind == branchcond.CheckTypeNot) {
+		(check.Kind == wir.CheckTypeEqual || check.Kind == wir.CheckTypeNot) {
 		return branchcond.Check{}
 	}
 	return check
@@ -1378,7 +1343,7 @@ func (b *builder) assertCallCheck(call *ast.FuncCallExpr, meta callMetadata) (br
 		return branchcond.Check{}, false
 	}
 	check := b.normalizeBranchCondition(call.Args[0])
-	if check.Kind == branchcond.CheckNone {
+	if check.Kind == wir.CheckNone {
 		return branchcond.Check{}, false
 	}
 	return check, true
@@ -1571,7 +1536,7 @@ func (b *builder) emitBranch(cond ast.Expr, joinSpan wir.Span) {
 	// calls stay single-source and are never re-evaluated by a second semantic
 	// implementation.
 	_, _, predicateCall := branchcond.PredicateCall(cond)
-	if check.Kind == branchcond.CheckNone || predicateCall {
+	if check.Kind == wir.CheckNone || predicateCall {
 		inst.A = b.lowerExpr(cond)
 	}
 	b.emit(inst)
@@ -2146,7 +2111,7 @@ func (b *builder) emitLogicalGuardAtOperand(e *ast.LogicalOpExpr, guard cfg.Poin
 		ImpliedChecks:   b.body.AppendImpliedChecks(b.lowerImpliedChecks(branchcond.ImpliedChecksOnBothEdges(e.Lhs, b.bindings))),
 		DiffConstraints: b.body.AppendBranchDiffConstraints(lowerBranchDiffConstraints(branchcond.BranchDiffConstraintsOnBothEdges(e.Lhs, b.bindings))),
 	}
-	if check.Kind == branchcond.CheckNone {
+	if check.Kind == wir.CheckNone {
 		if operand.Kind != wir.OperandNone {
 			guardInst.A = operand
 		} else {
@@ -2552,7 +2517,7 @@ func (b *builder) emitRelOp(dst wir.Operand, expr *ast.RelationalOpExpr) {
 	a := b.lowerExpr(expr.Lhs)
 	c := b.lowerExpr(expr.Rhs)
 	inst := wir.Instruction{Op: wir.OpBinOp, Dst: dst, A: a, B: c, Operator: relOperator(expr.Operator)}
-	if check := b.normalizeBranchCondition(expr); check.Kind != branchcond.CheckNone {
+	if check := b.normalizeBranchCondition(expr); check.Kind != wir.CheckNone {
 		inst.Check = b.body.InternCheck(b.lowerCheck(check))
 	}
 	b.emit(inst)

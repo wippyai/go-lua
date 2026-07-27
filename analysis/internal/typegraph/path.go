@@ -1,5 +1,5 @@
 // Package typegraph provides allocation-free traversal state for exact
-// recursive type-graph queries in the value domain.
+// recursive type-graph queries across analysis layers.
 package typegraph
 
 import "github.com/wippyai/go-lua/analysis/type/typ"
@@ -16,6 +16,9 @@ type Path struct {
 }
 
 func (p *Path) Enter(t typ.Type, position int) bool {
+	if t == nil {
+		return true
+	}
 	n := Node{Type: t, Position: position}
 	for i := range p.inlineN {
 		if p.inline[i] == n {
@@ -38,6 +41,9 @@ func (p *Path) Enter(t typ.Type, position int) bool {
 }
 
 func (p *Path) Leave(t typ.Type, position int) {
+	if t == nil {
+		return
+	}
 	n := Node{Type: t, Position: position}
 	if _, ok := p.overflow[n]; ok {
 		delete(p.overflow, n)

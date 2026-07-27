@@ -81,7 +81,7 @@ func TestUnaryOpPrimitives(t *testing.T) {
 		{name: "string length", op: "#", operand: typ.String, want: typ.Integer},
 		{name: "array length", op: "#", operand: typ.NewArray(typ.String), want: typ.Integer},
 		{name: "record length", op: "#", operand: typetable.NewRecord().Field("x", typ.Number).Build(), want: typ.Integer},
-		{name: "builtin table marker length", op: "#", operand: typetable.BuiltinTopMarker(), want: typ.Integer},
+		{name: "builtin table marker length", op: "#", operand: typ.BuiltinTableTopMarker(), want: typ.Integer},
 	}
 
 	for _, tt := range tests {

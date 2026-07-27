@@ -175,22 +175,6 @@ func returnTypeEquals(a, b ReturnType) bool {
 			projection.Equal(aa.Projection, bb.Projection) &&
 			typ.TypeEquals(aa.When, bb.When) &&
 			typ.TypeEquals(aa.Then, bb.Then)
-	case ReturnTypeDeepElementOf:
-		aa, aok := AsDeepElementOf(a)
-		bb, bok := AsDeepElementOf(b)
-		return aok && bok && aa.Source.Index == bb.Source.Index
-	case ReturnTypeStringUnpackValue:
-		aa, aok := AsStringUnpackValue(a)
-		bb, bok := AsStringUnpackValue(b)
-		return aok && bok && aa.Format.Index == bb.Format.Index
-	case ReturnTypeSelectCaseOfParam:
-		aa, aok := AsSelectCaseOfParam(a)
-		bb, bok := AsSelectCaseOfParam(b)
-		return aok && bok && aa.Source.Index == bb.Source.Index
-	case ReturnTypeSelectResultOfCases:
-		aa, aok := AsSelectResultOfCases(a)
-		bb, bok := AsSelectResultOfCases(b)
-		return aok && bok && aa.Cases.Index == bb.Cases.Index && aa.Default.Index == bb.Default.Index
 	default:
 		return false
 	}

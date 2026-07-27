@@ -1619,15 +1619,9 @@ func TestManifestRejectsInactiveEffectLabels(t *testing.T) {
 	}{
 		{"control throw", control.Throw{}},
 		{"control io", control.IO{}},
-		{"dispatch type predicate", dispatch.TypePredicate{}},
-		{"dispatch variadic transform", dispatch.VariadicTransform{}},
 		{"ownership export", ownership.Export{Param: p0}},
 		{"ownership opaque", ownership.Opaque{Param: p1}},
 		{"ownership freeze", ownership.Freeze{Param: p2}},
-		{"return deep element", returns.Return{ReturnIndex: 0, Transform: returns.DeepElementOf{Source: p0}}},
-		{"return string unpack", returns.Return{ReturnIndex: 0, Transform: returns.StringUnpackValue{Format: p2}}},
-		{"return select case", returns.Return{ReturnIndex: 0, Transform: returns.SelectCaseOfParam{Source: p0}}},
-		{"return select result", returns.Return{ReturnIndex: 0, Transform: returns.SelectResultOfCases{Cases: p0, Default: p1}}},
 		{"return length", returns.ReturnLength{ReturnIndex: 0, Length: expr.MinExpr(expr.PL(0), expr.C(3))}},
 		{"correlated return", returns.CorrelatedReturn{Indices: []int{0, 2}}},
 	}
@@ -1651,17 +1645,11 @@ func TestManifestRejectsInactiveDecodedEffectLabels(t *testing.T) {
 	}{
 		{"control throw", effectLabelWire{Kind: "control.throw"}},
 		{"control io", effectLabelWire{Kind: "control.io"}},
-		{"dispatch type predicate", effectLabelWire{Kind: "dispatch.typePredicate"}},
-		{"dispatch variadic transform", effectLabelWire{Kind: "dispatch.variadicTransform"}},
 		{"ownership export", effectLabelWire{Kind: "ownership.export", Param: encodeParamRef(effect.ParamRef{Index: 0})}},
 		{"ownership opaque", effectLabelWire{Kind: "ownership.opaque", Param: encodeParamRef(effect.ParamRef{Index: 0})}},
 		{"ownership freeze", effectLabelWire{Kind: "ownership.freeze", Param: encodeParamRef(effect.ParamRef{Index: 0})}},
 		{"return length", effectLabelWire{Kind: "returns.returnLength", Length: encodeExprForTest(t, expr.C(1))}},
 		{"correlated return", effectLabelWire{Kind: "returns.correlatedReturn", Indices: []int{0, 1}}},
-		{"return deep element", effectLabelWire{Kind: "returns.return", ReturnType: &effectReturnWire{Kind: "returns.deepElementOf"}}},
-		{"return string unpack", effectLabelWire{Kind: "returns.return", ReturnType: &effectReturnWire{Kind: "returns.stringUnpackValue"}}},
-		{"return select case", effectLabelWire{Kind: "returns.return", ReturnType: &effectReturnWire{Kind: "returns.selectCaseOfParam"}}},
-		{"return select result", effectLabelWire{Kind: "returns.return", ReturnType: &effectReturnWire{Kind: "returns.selectResultOfCases"}}},
 	}
 
 	for _, tt := range tests {

@@ -159,7 +159,7 @@ func (c *checker) checkTupleToMap(sub *typ.Tuple, super *typ.Map, depth int) boo
 }
 
 func checkTableTop(sub, super typ.Type) (bool, bool) {
-	if !typetable.IsBuiltinTopMarker(super) {
+	if !typ.IsBuiltinTableTopMarker(super) {
 		return false, false
 	}
 	return typetable.IsLike(sub), true

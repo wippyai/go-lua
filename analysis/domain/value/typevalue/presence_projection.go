@@ -2,7 +2,7 @@ package typevalue
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
+	"github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"

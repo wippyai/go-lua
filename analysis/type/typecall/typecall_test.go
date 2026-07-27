@@ -221,7 +221,7 @@ func TestMetamethodAnyUnknownNeverPolicy(t *testing.T) {
 }
 
 func TestGetMetamethodDoesNotSynthesizeBuiltinTableTopFields(t *testing.T) {
-	if got, ok := GetMetamethod(typetable.BuiltinTopMarker(), "__len"); ok || got != nil {
+	if got, ok := GetMetamethod(typ.BuiltinTableTopMarker(), "__len"); ok || got != nil {
 		t.Fatalf("GetMetamethod(table, __len) = %v/%v, want nil/false", got, ok)
 	}
 }

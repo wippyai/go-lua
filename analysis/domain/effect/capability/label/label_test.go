@@ -29,10 +29,6 @@ func TestIDForClassifiesAuditedLabels(t *testing.T) {
 		{"return callback", returns.Return{ReturnIndex: 0, Transform: returns.CallbackReturn{}}, capability.ReturnsReturnCallbackReturn},
 		{"return array callback", returns.Return{ReturnIndex: 0, Transform: returns.ArrayOfCallbackReturn{}}, capability.ReturnsReturnArrayOfCallbackReturn},
 		{"return type projection", returns.Return{ReturnIndex: 0, Transform: returns.TypeProjection{}}, capability.ReturnsReturnTypeProjection},
-		{"return deep element", returns.Return{ReturnIndex: 0, Transform: returns.DeepElementOf{}}, capability.ReturnsReturnDeepElementOf},
-		{"return string unpack", returns.Return{ReturnIndex: 0, Transform: returns.StringUnpackValue{}}, capability.ReturnsReturnStringUnpackValue},
-		{"return select case", returns.Return{ReturnIndex: 0, Transform: returns.SelectCaseOfParam{}}, capability.ReturnsReturnSelectCaseOfParam},
-		{"return select result", returns.Return{ReturnIndex: 0, Transform: returns.SelectResultOfCases{}}, capability.ReturnsReturnSelectResultOfCases},
 		{"error return", returns.ErrorReturn{}, capability.ReturnsErrorReturn},
 		{"return length", returns.ReturnLength{}, capability.ReturnsReturnLength},
 		{"correlated return", returns.CorrelatedReturn{}, capability.ReturnsCorrelatedReturn},
@@ -48,8 +44,6 @@ func TestIDForClassifiesAuditedLabels(t *testing.T) {
 		{"borrow all", ownership.BorrowAll{}, capability.OwnershipBorrowAll},
 		{"iterator", iteration.Iterator{}, capability.IterationIterator},
 		{"module load", dispatch.ModuleLoad{}, capability.DispatchModuleLoad},
-		{"type predicate", dispatch.TypePredicate{}, capability.DispatchTypePredicate},
-		{"variadic transform", dispatch.VariadicTransform{}, capability.DispatchVariadicTransform},
 		{"mutate", mutation.Mutate{}, capability.MutationMutate},
 		{"length change", mutation.LengthChange{}, capability.MutationLengthChange},
 		{"table mutator", mutation.TableMutator{}, capability.MutationTableMutator},
@@ -92,10 +86,6 @@ func TestIDForNormalizesPointerLabelsAndReturnTransforms(t *testing.T) {
 		{"callback", &returns.CallbackReturn{}, capability.ReturnsReturnCallbackReturn},
 		{"array callback", &returns.ArrayOfCallbackReturn{}, capability.ReturnsReturnArrayOfCallbackReturn},
 		{"type projection", &returns.TypeProjection{}, capability.ReturnsReturnTypeProjection},
-		{"deep element", &returns.DeepElementOf{}, capability.ReturnsReturnDeepElementOf},
-		{"string unpack", &returns.StringUnpackValue{}, capability.ReturnsReturnStringUnpackValue},
-		{"select case", &returns.SelectCaseOfParam{}, capability.ReturnsReturnSelectCaseOfParam},
-		{"select result", &returns.SelectResultOfCases{}, capability.ReturnsReturnSelectResultOfCases},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

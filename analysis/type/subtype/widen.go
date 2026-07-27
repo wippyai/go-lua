@@ -69,7 +69,7 @@ func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
 	if typ.IsAny(wide) {
 		return true
 	}
-	if typetable.IsBuiltinTopMarker(wide) {
+	if typ.IsBuiltinTableTopMarker(wide) {
 		return typetable.IsLike(narrow)
 	}
 	if narrow.Kind() == kind.Nil {

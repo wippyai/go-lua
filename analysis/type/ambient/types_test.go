@@ -3,7 +3,6 @@ package ambient
 import (
 	"testing"
 
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -29,7 +28,7 @@ func TestLookupTableTopMarker(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup(Table) returned ok=false")
 	}
-	if !typetable.IsBuiltinTopMarker(got) {
+	if !typ.IsBuiltinTableTopMarker(got) {
 		t.Fatalf("Lookup(Table) = %s, want builtin table top marker", got)
 	}
 }

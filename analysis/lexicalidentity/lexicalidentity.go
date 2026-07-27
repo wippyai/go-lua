@@ -9,20 +9,9 @@ import (
 	"encoding/hex"
 )
 
-// UnitNamespace fences lexical identities to one stable logical compilation
-// unit. Revision and policy changes are fenced separately by artifact digests.
-type UnitNamespace [sha256.Size]byte
-
-// StableLexicalBodyID identifies one body under stable lexical ownership.
+// StableLexicalBodyID is the full-width identity used for compilation
+// namespaces and the lexical bodies derived within them.
 type StableLexicalBodyID [sha256.Size]byte
-
-func (id UnitNamespace) String() string { return hex.EncodeToString(id[:]) }
-
-func (id UnitNamespace) MarshalText() ([]byte, error) {
-	out := make([]byte, hex.EncodedLen(len(id)))
-	hex.Encode(out, id[:])
-	return out, nil
-}
 
 func (id StableLexicalBodyID) String() string { return hex.EncodeToString(id[:]) }
 
@@ -33,17 +22,17 @@ func (id StableLexicalBodyID) MarshalText() ([]byte, error) {
 }
 
 // UnitNamespaceFromDigest imports an already verified full-width unit digest.
-func UnitNamespaceFromDigest(digest [sha256.Size]byte) UnitNamespace {
-	return UnitNamespace(digest)
+func UnitNamespaceFromDigest(digest [sha256.Size]byte) StableLexicalBodyID {
+	return StableLexicalBodyID(digest)
 }
 
 // UnitNamespaceFromContent derives the deterministic standalone namespace
 // from a canonical recursive program encoding.
-func UnitNamespaceFromContent(content []byte) UnitNamespace {
+func UnitNamespaceFromContent(content []byte) StableLexicalBodyID {
 	h := sha256.New()
 	writeBytes(h, []byte("wippy.lexical-unit.v1"))
 	writeBytes(h, content)
-	var out UnitNamespace
+	var out StableLexicalBodyID
 	copy(out[:], h.Sum(nil))
 	return out
 }
@@ -51,32 +40,32 @@ func UnitNamespaceFromContent(content []byte) UnitNamespace {
 // UnitNamespaceFromLogicalUnit derives a namespace from stable logical
 // ownership only. Revision/configuration inputs belong in artifact cache keys,
 // not lexical allocation identity.
-func UnitNamespaceFromLogicalUnit(unitID, modulePath, entryDocumentID string) UnitNamespace {
+func UnitNamespaceFromLogicalUnit(unitID, modulePath, entryDocumentID string) StableLexicalBodyID {
 	h := sha256.New()
 	writeBytes(h, []byte("wippy.lexical-unit.logical.v1"))
 	for _, part := range []string{unitID, modulePath, entryDocumentID} {
 		writeBytes(h, []byte(part))
 	}
-	var out UnitNamespace
+	var out StableLexicalBodyID
 	copy(out[:], h.Sum(nil))
 	return out
 }
 
 // RootBody identifies the chunk body in namespace.
-func RootBody(namespace UnitNamespace) StableLexicalBodyID {
+func RootBody(namespace StableLexicalBodyID) StableLexicalBodyID {
 	return deriveBody(namespace, 1, 0)
 }
 
 // FunctionBody identifies a binder-owned lexical function in namespace.
-func FunctionBody(namespace UnitNamespace, function uint64) StableLexicalBodyID {
+func FunctionBody(namespace StableLexicalBodyID, function uint64) StableLexicalBodyID {
 	if function == 0 {
 		return StableLexicalBodyID{}
 	}
 	return deriveBody(namespace, 2, function)
 }
 
-func deriveBody(namespace UnitNamespace, ownerKind byte, owner uint64) StableLexicalBodyID {
-	if namespace == (UnitNamespace{}) {
+func deriveBody(namespace StableLexicalBodyID, ownerKind byte, owner uint64) StableLexicalBodyID {
+	if namespace == (StableLexicalBodyID{}) {
 		return StableLexicalBodyID{}
 	}
 	h := sha256.New()

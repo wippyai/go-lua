@@ -134,7 +134,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		return true
 	}
 	if typ.IsAny(sub) {
-		if typetable.IsBuiltinTopMarker(super) {
+		if typ.IsBuiltinTableTopMarker(super) {
 			return true
 		}
 		if i, ok := super.(*typ.Intersection); ok {

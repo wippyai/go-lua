@@ -3,7 +3,6 @@ package manifest
 import (
 	"fmt"
 
-	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/type/projection"
 )
@@ -67,10 +66,6 @@ func decodeEffectReturn(w *effectReturnWire) (returns.ReturnType, error) {
 		return nil, nil
 	}
 	switch w.Kind {
-	case "returns.selectCaseOfParam":
-		return nil, inactiveReturnTransform(returns.SelectCaseOfParam{})
-	case "returns.selectResultOfCases":
-		return nil, inactiveReturnTransform(returns.SelectResultOfCases{})
 	case "returns.elementOf":
 		source, err := decodeRequiredParamRef(w.Source, "returns.elementOf source missing param ref")
 		if err != nil {
@@ -101,10 +96,6 @@ func decodeEffectReturn(w *effectReturnWire) (returns.ReturnType, error) {
 			return nil, err
 		}
 		return returns.SameAs{Source: source}, nil
-	case "returns.deepElementOf":
-		return nil, inactiveReturnTransform(returns.DeepElementOf{})
-	case "returns.stringUnpackValue":
-		return nil, inactiveReturnTransform(returns.StringUnpackValue{})
 	case "returns.typeProjection":
 		steps, err := decodeProjectionSteps(w.Projection)
 		if err != nil {
@@ -136,12 +127,4 @@ func decodeEffectReturn(w *effectReturnWire) (returns.ReturnType, error) {
 	default:
 		return nil, fmt.Errorf("manifest: unknown return effect transform kind %q", w.Kind)
 	}
-}
-
-func inactiveReturnTransform(transform returns.ReturnType) error {
-	desc, ok := caplabel.DescriptorForReturnTransform(transform)
-	if !ok {
-		return fmt.Errorf("manifest: unsupported return effect transform %T", transform)
-	}
-	return inactiveManifestEffectLabelError(desc)
 }

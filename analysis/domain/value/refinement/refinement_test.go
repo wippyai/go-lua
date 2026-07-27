@@ -351,7 +351,7 @@ func TestMeetConstraintKeepsPreciseTableSubtypeForBroadTypeGuardWitness(t *testi
 		},
 	}
 	constraint := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
-	constraint = typevalue.WithWitness(reg, constraint, typetable.BuiltinTopMarker())
+	constraint = typevalue.WithWitness(reg, constraint, typ.BuiltinTableTopMarker())
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -375,7 +375,7 @@ func TestMeetConstraintKeepsExplicitAnyReachableForTableTypeGuard(t *testing.T) 
 	value = product.Set(reg, value, assertion.Key, assertion.Any())
 	constraint := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	constraint = product.Set(reg, constraint, assertion.Key, assertion.Runtime())
-	constraint = typevalue.WithWitness(reg, constraint, typetable.BuiltinTopMarker())
+	constraint = typevalue.WithWitness(reg, constraint, typ.BuiltinTableTopMarker())
 
 	got := MeetConstraint(reg, value, constraint)
 	if product.Equal(reg, got, product.Bottom(reg)) {

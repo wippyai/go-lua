@@ -1,7 +1,6 @@
 package access
 
 import (
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -60,7 +59,7 @@ func SpecialAccessType(t typ.Type) (typ.Type, bool) {
 	if typ.IsNever(t) {
 		return typ.Never, true
 	}
-	if typetable.IsBuiltinTopMarker(t) {
+	if typ.IsBuiltinTableTopMarker(t) {
 		return typ.Any, true
 	}
 	return nil, false

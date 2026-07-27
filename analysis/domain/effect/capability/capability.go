@@ -35,10 +35,6 @@ const (
 	ReturnsReturnConditionalType       = "returns.Return.ConditionalType"
 	ReturnsErrorReturn                 = "returns.ErrorReturn"
 	ReturnsReturnLength                = "returns.ReturnLength"
-	ReturnsReturnDeepElementOf         = "returns.Return.DeepElementOf"
-	ReturnsReturnStringUnpackValue     = "returns.Return.StringUnpackValue"
-	ReturnsReturnSelectCaseOfParam     = "returns.Return.SelectCaseOfParam"
-	ReturnsReturnSelectResultOfCases   = "returns.Return.SelectResultOfCases"
 	ReturnsCorrelatedReturn            = "returns.CorrelatedReturn"
 
 	PostconditionNormalReturnRefinement = "postcondition.NormalReturnRefinement"
@@ -55,9 +51,7 @@ const (
 
 	IterationIterator = "iteration.Iterator"
 
-	DispatchModuleLoad        = "dispatch.ModuleLoad"
-	DispatchTypePredicate     = "dispatch.TypePredicate"
-	DispatchVariadicTransform = "dispatch.VariadicTransform"
+	DispatchModuleLoad = "dispatch.ModuleLoad"
 
 	MutationMutate       = "mutation.Mutate"
 	MutationLengthChange = "mutation.LengthChange"
@@ -81,10 +75,6 @@ var descriptors = map[string]Descriptor{
 	ReturnsReturnConditionalType:       descriptor(ReturnsReturnConditionalType, "returns", "Return.ConditionalType", StatusOperational, "Return transform is actively lowered end-to-end."),
 	ReturnsErrorReturn:                 descriptor(ReturnsErrorReturn, "returns", "ErrorReturn", StatusOperational, "Error return effect is actively lowered end-to-end."),
 	ReturnsReturnLength:                descriptor(ReturnsReturnLength, "returns", "ReturnLength", StatusReserved, "Data/codec vocabulary; not actively lowered into return semantics."),
-	ReturnsReturnDeepElementOf:         descriptor(ReturnsReturnDeepElementOf, "returns", "Return.DeepElementOf", StatusReserved, "Reserved transform; lowering falls back to declared returns."),
-	ReturnsReturnStringUnpackValue:     descriptor(ReturnsReturnStringUnpackValue, "returns", "Return.StringUnpackValue", StatusReservedHighRisk, "Reserved metadata; lowering ignores it, so stdlib must not declare it while inactive."),
-	ReturnsReturnSelectCaseOfParam:     descriptor(ReturnsReturnSelectCaseOfParam, "returns", "Return.SelectCaseOfParam", StatusReserved, "Reserved transform; lowering falls back to declared returns."),
-	ReturnsReturnSelectResultOfCases:   descriptor(ReturnsReturnSelectResultOfCases, "returns", "Return.SelectResultOfCases", StatusReserved, "Reserved transform; lowering falls back to declared returns."),
 	ReturnsCorrelatedReturn:            descriptor(ReturnsCorrelatedReturn, "returns", "CorrelatedReturn", StatusReservedHighRisk, "Reserved metadata; lowering ignores it, so stdlib must not declare it while inactive."),
 
 	PostconditionNormalReturnRefinement: descriptor(PostconditionNormalReturnRefinement, "postcondition", "NormalReturnRefinement", StatusOperational, "Normal-return refinement is actively consumed by postcondition handling."),
@@ -101,10 +91,7 @@ var descriptors = map[string]Descriptor{
 
 	IterationIterator: descriptor(IterationIterator, "iteration", "Iterator", StatusImportOrStdlib, "Import/stdlib operational vocabulary, but not exported as the same label."),
 
-	DispatchModuleLoad:        descriptor(DispatchModuleLoad, "dispatch", "ModuleLoad", StatusImportOrStdlib, "Import/stdlib operational capability: module identity and provider boundaries bind through this label."),
-	DispatchTypePredicate:     descriptor(DispatchTypePredicate, "dispatch", "TypePredicate", StatusReservedHighRisk, "Reserved metadata; type() narrowing is syntax/factflow based, so stdlib must not declare this while inactive."),
-	DispatchVariadicTransform: descriptor(DispatchVariadicTransform, "dispatch", "VariadicTransform", StatusReservedHighRisk, "Reserved metadata; select() lowering ignores this, so stdlib must not declare it while inactive."),
-
+	DispatchModuleLoad:   descriptor(DispatchModuleLoad, "dispatch", "ModuleLoad", StatusImportOrStdlib, "Import/stdlib operational capability: module identity and provider boundaries bind through this label."),
 	MutationMutate:       descriptor(MutationMutate, "mutation", "Mutate", StatusPartial, "Operational lowering consumes only Target as a path-invalidation authority; Transform and LengthDelta are metadata until shape/length mutation semantics are implemented."),
 	MutationLengthChange: descriptor(MutationLengthChange, "mutation", "LengthChange", StatusPartial, "Operational lowering consumes Target as a path-invalidation authority and positive Delta as a length-floor proof; negative Delta remains metadata until precise shrink semantics are implemented."),
 	MutationTableMutator: descriptor(MutationTableMutator, "mutation", "TableMutator", StatusOperational, "Operational lowering invalidates the target and publishes indexed element evidence from Value end-to-end."),

@@ -1,12 +1,10 @@
 package typevalue
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -57,7 +55,7 @@ type cachedContainsUnknown struct {
 }
 
 func NewCache() *Cache {
-	return &Cache{variants: variant.NewCache()}
+	return &Cache{}
 }
 
 func (c *Cache) IsSubtype(sub, super typ.Type) bool {
@@ -171,82 +169,16 @@ func (c *Cache) rememberExactValue(cache *map[typeValueCacheKey]product.Value, k
 	(*cache)[key] = value
 }
 
-func (c *Cache) originOfType(t typ.Type) (uint64, []int, bool) {
+// Variants returns the cache's variant query plane. A nil Cache deliberately
+// returns a nil variant cache, whose methods provide the uncached default.
+func (c *Cache) Variants() *variant.Cache {
 	if c == nil {
-		return variant.OriginOfType(t)
+		return nil
 	}
 	if c.variants == nil {
 		c.variants = variant.NewCache()
 	}
-	return c.variants.OriginOfType(t)
-}
-
-// OriginOfType returns finite variant-origin evidence for t, using the cache's
-// variant catalog when present.
-func (c *Cache) OriginOfType(t typ.Type) (uint64, []int, bool) {
-	return c.originOfType(t)
-}
-
-func (c *Cache) NarrowVariantByOrigin(t typ.Type, family uint64, cases []int) (typ.Type, bool) {
-	if c == nil {
-		return variant.NarrowByOrigin(t, family, cases)
-	}
-	if c.variants == nil {
-		c.variants = variant.NewCache()
-	}
-	return c.variants.NarrowByOrigin(t, family, cases)
-}
-
-// NarrowVariantByOriginView narrows using an immutable canonical case view.
-func (c *Cache) NarrowVariantByOriginView(t typ.Type, family uint64, cases caseset.View) (typ.Type, bool) {
-	if c == nil {
-		return variant.NarrowByOriginView(t, family, cases)
-	}
-	if c.variants == nil {
-		c.variants = variant.NewCache()
-	}
-	return c.variants.NarrowByOriginView(t, family, cases)
-}
-
-func (c *Cache) TypeFromVariantOrigin(family uint64, cases []int) (typ.Type, bool) {
-	if c == nil {
-		return variant.TypeFromOrigin(family, cases)
-	}
-	if c.variants == nil {
-		c.variants = variant.NewCache()
-	}
-	return c.variants.TypeFromOrigin(family, cases)
-}
-
-// TypeFromVariantOriginView reconstructs using an immutable canonical case view.
-func (c *Cache) TypeFromVariantOriginView(family uint64, cases caseset.View) (typ.Type, bool) {
-	if c == nil {
-		return variant.TypeFromOriginView(family, cases)
-	}
-	if c.variants == nil {
-		c.variants = variant.NewCache()
-	}
-	return c.variants.TypeFromOriginView(family, cases)
-}
-
-func (c *Cache) OriginByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type) (uint64, []int, bool) {
-	if c == nil {
-		return variant.OriginByPathLiteral(t, suffix, lit)
-	}
-	if c.variants == nil {
-		c.variants = variant.NewCache()
-	}
-	return c.variants.OriginByPathLiteral(t, suffix, lit)
-}
-
-func (c *Cache) OriginByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type) (uint64, []int, bool) {
-	if c == nil {
-		return variant.OriginByPathLiteralNot(t, suffix, lit)
-	}
-	if c.variants == nil {
-		c.variants = variant.NewCache()
-	}
-	return c.variants.OriginByPathLiteralNot(t, suffix, lit)
+	return c.variants
 }
 
 func (c *Cache) cachedProductActive(reg *axis.Registry, value product.Value) bool {
@@ -260,6 +192,6 @@ func (c *Cache) cachedProductActive(reg *axis.Registry, value product.Value) boo
 	if origin.IsBottom() || origin.IsTop() {
 		return true
 	}
-	_, ok := c.TypeFromVariantOriginView(origin.Family(), origin.CasesView())
+	_, ok := c.Variants().TypeFromOrigin(origin.Family(), origin.CasesView())
 	return ok
 }

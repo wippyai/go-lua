@@ -45,7 +45,7 @@ func metamethodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 
 func metamethodSpecialAccessType(t typ.Type) (typ.Type, bool) {
 	top, ok := access.SpecialAccessType(t)
-	if !ok || typetable.IsBuiltinTopMarker(t) {
+	if !ok || typ.IsBuiltinTableTopMarker(t) {
 		return nil, false
 	}
 	return top, true

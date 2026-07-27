@@ -301,15 +301,6 @@ func TestStringUnpackDeclaresConservativeAnyWithoutReservedTransform(t *testing.
 		t.Fatalf("string.unpack return = %v, want conservative declared Any", got.Type.Returns[0])
 	}
 
-	for _, label := range got.Effect.Labels {
-		ret, ok := label.(returns.Return)
-		if !ok {
-			continue
-		}
-		if _, ok := ret.Transform.(returns.StringUnpackValue); ok {
-			t.Fatalf("string.unpack must not declare inactive StringUnpackValue transform: %v", ret)
-		}
-	}
 }
 
 func TestStringFindDeclaresConservativeReturnsWithoutReservedCorrelation(t *testing.T) {
@@ -341,11 +332,6 @@ func TestTypeDeclaresBorrowWithoutReservedPredicate(t *testing.T) {
 	}
 	if !hasLabel(got.Effect, ownership.BorrowAll{}) {
 		t.Fatalf("type effect missing BorrowAll: %v", got.Effect)
-	}
-	for _, label := range got.Effect.Labels {
-		if _, ok := label.(dispatch.TypePredicate); ok {
-			t.Fatalf("type must not declare inactive TypePredicate: %v", label)
-		}
 	}
 }
 
@@ -381,11 +367,6 @@ func TestSelectDeclaresConservativeAnyWithoutReservedVariadicTransform(t *testin
 	if !typ.TypeEquals(got.Type.Returns[0], typ.Any) {
 		t.Fatalf("select return = %v, want conservative declared Any", got.Type.Returns[0])
 	}
-	for _, label := range got.Effect.Labels {
-		if _, ok := label.(dispatch.VariadicTransform); ok {
-			t.Fatalf("select must not declare inactive VariadicTransform: %v", label)
-		}
-	}
 }
 
 func TestStdlibDoesNotDeclareReservedOrHighRiskEffectLabels(t *testing.T) {
@@ -410,24 +391,6 @@ func TestStdlibSignatureConstructionRejectsInactiveEffectLabels(t *testing.T) {
 	}{
 		{"control throw", control.Throw{}},
 		{"control io", control.IO{}},
-		{"dispatch type predicate", dispatch.TypePredicate{}},
-		{"dispatch variadic transform", dispatch.VariadicTransform{}},
-		{"return deep element", returns.Return{
-			ReturnIndex: 0,
-			Transform:   returns.DeepElementOf{},
-		}},
-		{"return string unpack", returns.Return{
-			ReturnIndex: 0,
-			Transform:   returns.StringUnpackValue{},
-		}},
-		{"return select case", returns.Return{
-			ReturnIndex: 0,
-			Transform:   returns.SelectCaseOfParam{},
-		}},
-		{"return select result", returns.Return{
-			ReturnIndex: 0,
-			Transform:   returns.SelectResultOfCases{},
-		}},
 		{"return length", returns.ReturnLength{}},
 		{"correlated return", returns.CorrelatedReturn{}},
 	}

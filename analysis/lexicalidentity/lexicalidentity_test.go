@@ -7,7 +7,7 @@ import (
 
 func TestBodyIdentityDomains(t *testing.T) {
 	ns := UnitNamespaceFromContent([]byte("unit"))
-	if ns == (UnitNamespace{}) || ns != UnitNamespaceFromContent([]byte("unit")) {
+	if ns == (StableLexicalBodyID{}) || ns != UnitNamespaceFromContent([]byte("unit")) {
 		t.Fatal("unit namespace is empty or unstable")
 	}
 	root := RootBody(ns)
@@ -18,7 +18,7 @@ func TestBodyIdentityDomains(t *testing.T) {
 	if fn == FunctionBody(ns, 2) || fn == FunctionBody(UnitNamespaceFromContent([]byte("other")), 1) {
 		t.Fatal("function body lost owner or unit namespace")
 	}
-	if FunctionBody(ns, 0) != (StableLexicalBodyID{}) || RootBody(UnitNamespace{}) != (StableLexicalBodyID{}) {
+	if FunctionBody(ns, 0) != (StableLexicalBodyID{}) || RootBody(StableLexicalBodyID{}) != (StableLexicalBodyID{}) {
 		t.Fatal("invalid inputs did not fail closed")
 	}
 }

@@ -12,10 +12,7 @@ import (
 // interpreter and the textual printer.
 //
 // wir is the sole owner of this enum: it is upstream IR and analysis/lua's
-// syntax-facing packages (branchcond in particular) consume it, never the
-// reverse, so branchcond.CheckKind is a type alias of this type rather than a
-// second definition. Add new variants here first; CheckKindExhaustivenessTest
-// fails the build if the two packages' names or count ever diverge again.
+// syntax-facing packages consume it, never the reverse.
 type CheckKind uint8
 
 const (

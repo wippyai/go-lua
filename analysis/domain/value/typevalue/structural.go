@@ -26,7 +26,7 @@ func StructuralTypeOf(reg *axis.Registry, cache *Cache, value product.Value, opt
 		}
 	}
 	if !origin.IsBottom() && !origin.IsTop() {
-		if t, ok := cache.TypeFromVariantOriginView(origin.Family(), origin.CasesView()); ok {
+		if t, ok := cache.Variants().TypeFromOrigin(origin.Family(), origin.CasesView()); ok {
 			return structuralTypeWithPresence(t, valuePresence, opts), true
 		}
 	}

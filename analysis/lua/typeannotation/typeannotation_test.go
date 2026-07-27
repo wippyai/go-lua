@@ -62,7 +62,7 @@ func TestTypeBuiltinTableTopMarker(t *testing.T) {
 	if !ok {
 		t.Fatal("Type returned ok=false")
 	}
-	if !luatable.IsBuiltinTopMarker(got) {
+	if !typ.IsBuiltinTableTopMarker(got) {
 		t.Fatalf("Type(table) = %s, want builtin table top marker", got)
 	}
 }

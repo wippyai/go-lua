@@ -10,7 +10,7 @@ import (
 
 func nilOriginDiagnostics(t *testing.T, source string) []engine.PublishedDiagnostic {
 	t.Helper()
-	result, err := engine.CheckWithImportsResolverAndGlobalsAndRelations(source, nil, nil, nil, nil, "main.lua")
+	result, err := engine.Check(source, engine.Options{SourcePath: "main.lua"})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}

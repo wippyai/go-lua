@@ -1,7 +1,7 @@
 package inspect
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/internal/graph"
+	graph "github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -29,10 +29,10 @@ func isMultiArmUnion(t typ.Type, active *graph.Path) bool {
 	if t == nil {
 		return false
 	}
-	if !active.Enter(t) {
+	if !active.Enter(t, 0) {
 		return false
 	}
-	defer active.Leave(t)
+	defer active.Leave(t, 0)
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Union:
 		return len(v.Members) >= 2

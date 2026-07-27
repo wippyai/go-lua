@@ -269,7 +269,7 @@ func TestTypeOfRuntimeKindTableReturnsBuiltinTable(t *testing.T) {
 	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 
 	got, ok := TypeOf(reg, value)
-	want := typetable.BuiltinTopMarker()
+	want := typ.BuiltinTableTopMarker()
 	if !ok || !typ.TypeEquals(got, want) {
 		t.Fatalf("TypeOf(runtime table) = %v/%v, want %v", got, ok, want)
 	}
@@ -536,7 +536,7 @@ func TestCacheTypeOfNarrowsDeclaredWitnessByVariantOrigin(t *testing.T) {
 		Field("value", typ.String).
 		Build()
 	union := typeexpr.Union(left, right)
-	family, cases, ok := cache.OriginByPathLiteral(union, []segment.Segment{{Kind: segment.SegmentField, Name: "kind"}}, typ.LiteralString("left"))
+	family, cases, ok := cache.Variants().OriginByPathLiteral(union, []segment.Segment{{Kind: segment.SegmentField, Name: "kind"}}, typ.LiteralString("left"))
 	if !ok {
 		t.Fatal("left origin missing")
 	}
@@ -1038,7 +1038,7 @@ func TestRuntimeKindFromType(t *testing.T) {
 		{name: "number", typ: typ.Number, want: runtimekind.Singleton(runtimekind.Number), ok: true},
 		{name: "boolean", typ: typ.Boolean, want: runtimekind.Singleton(runtimekind.Boolean), ok: true},
 		{name: "table", typ: typetable.NewRecord().Build(), want: runtimekind.Singleton(runtimekind.Table), ok: true},
-		{name: "builtin table marker", typ: typetable.BuiltinTopMarker(), want: runtimekind.Singleton(runtimekind.Table), ok: true},
+		{name: "builtin table marker", typ: typ.BuiltinTableTopMarker(), want: runtimekind.Singleton(runtimekind.Table), ok: true},
 		{name: "function", typ: typ.Func().Build(), want: runtimekind.Singleton(runtimekind.Function), ok: true},
 		{name: "nil", typ: typ.Nil, want: runtimekind.Singleton(runtimekind.Nil), ok: true},
 		{name: "optional string ignores nil", typ: typeexpr.Optional(typ.String), want: runtimekind.Singleton(runtimekind.String), ok: true},

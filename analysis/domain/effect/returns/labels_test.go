@@ -19,11 +19,7 @@ var (
 	_ ReturnType = CallbackReturn{}
 	_ ReturnType = ArrayOfCallbackReturn{}
 	_ ReturnType = SameAs{}
-	_ ReturnType = DeepElementOf{}
-	_ ReturnType = StringUnpackValue{}
 	_ ReturnType = TypeProjection{}
-	_ ReturnType = SelectCaseOfParam{}
-	_ ReturnType = SelectResultOfCases{}
 )
 
 func TestReturn_String(t *testing.T) {
@@ -130,39 +126,6 @@ func TestReturnTypeEqualsUsesKindVocabularyForEveryTransform(t *testing.T) {
 				Projection: projection.Projection{Steps: []projection.Step{projection.Field("other")}},
 			},
 		},
-		{
-			name:      "deep element",
-			value:     DeepElementOf{Source: effect.ParamRef{Index: 7}},
-			pointer:   &DeepElementOf{Source: effect.ParamRef{Index: 7}},
-			different: DeepElementOf{Source: effect.ParamRef{Index: 8}},
-		},
-		{
-			name:      "string unpack",
-			value:     StringUnpackValue{Format: effect.ParamRef{Index: 8}},
-			pointer:   &StringUnpackValue{Format: effect.ParamRef{Index: 8}},
-			different: StringUnpackValue{Format: effect.ParamRef{Index: 9}},
-		},
-		{
-			name:      "select case",
-			value:     SelectCaseOfParam{Source: effect.ParamRef{Index: 9}},
-			pointer:   &SelectCaseOfParam{Source: effect.ParamRef{Index: 9}},
-			different: SelectCaseOfParam{Source: effect.ParamRef{Index: 10}},
-		},
-		{
-			name: "select result",
-			value: SelectResultOfCases{
-				Cases:   effect.ParamRef{Index: 10},
-				Default: effect.ParamRef{Index: 11},
-			},
-			pointer: &SelectResultOfCases{
-				Cases:   effect.ParamRef{Index: 10},
-				Default: effect.ParamRef{Index: 11},
-			},
-			different: SelectResultOfCases{
-				Cases:   effect.ParamRef{Index: 10},
-				Default: effect.ParamRef{Index: 12},
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -186,22 +149,22 @@ func TestReturnTypeEqualsUsesKindVocabularyForEveryTransform(t *testing.T) {
 
 func TestReturnTypeEqualsHandlesTypedNilPointers(t *testing.T) {
 	var nilElement *ElementOf
-	var nilStringUnpack *StringUnpackValue
+	var nilSame *SameAs
 
 	if !IsNilReturnType(nilElement) {
 		t.Fatal("typed nil ElementOf should be nil-like")
 	}
-	if !IsNilReturnType(nilStringUnpack) {
-		t.Fatal("typed nil StringUnpackValue should be nil-like")
+	if !IsNilReturnType(nilSame) {
+		t.Fatal("typed nil SameAs should be nil-like")
 	}
-	if !returnTypeEquals(nilElement, nilStringUnpack) {
+	if !returnTypeEquals(nilElement, nilSame) {
 		t.Fatal("nil-like return transforms should compare equal")
 	}
 	if returnTypeEquals(nilElement, ElementOf{}) {
 		t.Fatal("typed nil ElementOf should not equal a concrete ElementOf")
 	}
-	if returnTypeEquals(StringUnpackValue{}, nilStringUnpack) {
-		t.Fatal("concrete StringUnpackValue should not equal a typed nil StringUnpackValue")
+	if returnTypeEquals(SameAs{}, nilSame) {
+		t.Fatal("concrete SameAs should not equal a typed nil SameAs")
 	}
 }
 
@@ -215,21 +178,12 @@ func TestReturnTypeConcreteNormalizers(t *testing.T) {
 		Source:     effect.ParamRef{Index: 6},
 		Projection: projection.Projection{Steps: []projection.Step{projection.Field("payload")}},
 	}
-	deepElement := DeepElementOf{}
-	stringUnpack := StringUnpackValue{}
-	selectCase := SelectCaseOfParam{}
-	selectResult := SelectResultOfCases{}
-
 	var nilSame *SameAs
 	var nilElement *ElementOf
 	var nilOptional *OptionalElementOf
 	var nilCallback *CallbackReturn
 	var nilArrayCallback *ArrayOfCallbackReturn
 	var nilProjected *TypeProjection
-	var nilDeepElement *DeepElementOf
-	var nilStringUnpack *StringUnpackValue
-	var nilSelectCase *SelectCaseOfParam
-	var nilSelectResult *SelectResultOfCases
 
 	tests := []struct {
 		name     string
@@ -298,46 +252,6 @@ func TestReturnTypeConcreteNormalizers(t *testing.T) {
 				return ok &&
 					got.Source.Index == projected.Source.Index &&
 					projection.Equal(got.Projection, projected.Projection)
-			},
-		},
-		{
-			name:     "deep element",
-			value:    deepElement,
-			pointer:  &deepElement,
-			nilValue: nilDeepElement,
-			match: func(t ReturnType) bool {
-				_, ok := AsDeepElementOf(t)
-				return ok
-			},
-		},
-		{
-			name:     "string unpack",
-			value:    stringUnpack,
-			pointer:  &stringUnpack,
-			nilValue: nilStringUnpack,
-			match: func(t ReturnType) bool {
-				_, ok := AsStringUnpackValue(t)
-				return ok
-			},
-		},
-		{
-			name:     "select case",
-			value:    selectCase,
-			pointer:  &selectCase,
-			nilValue: nilSelectCase,
-			match: func(t ReturnType) bool {
-				_, ok := AsSelectCaseOfParam(t)
-				return ok
-			},
-		},
-		{
-			name:     "select result",
-			value:    selectResult,
-			pointer:  &selectResult,
-			nilValue: nilSelectResult,
-			match: func(t ReturnType) bool {
-				_, ok := AsSelectResultOfCases(t)
-				return ok
 			},
 		},
 	}
@@ -433,10 +347,6 @@ func TestReturnTransforms_String(t *testing.T) {
 		{"callback return", CallbackReturn{CallbackParam: effect.ParamRef{Index: 1}}, "callback_ret(param[1])"},
 		{"array callback return", ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 1}}, "array(callback_ret(param[1]))"},
 		{"same as", SameAs{Source: effect.ParamRef{Index: 0}}, "same(param[0])"},
-		{"deep element", DeepElementOf{Source: effect.ParamRef{Index: 0}}, "deep_elem(param[0])"},
-		{"string unpack", StringUnpackValue{Format: effect.ParamRef{Index: 0}}, "string_unpack(param[0])"},
-		{"select case", SelectCaseOfParam{Source: effect.ParamRef{Index: 0}}, "select_case(param[0])"},
-		{"select result", SelectResultOfCases{Cases: effect.ParamRef{Index: 0}, Default: effect.ParamRef{Index: 1}}, "select_result(param[0], param[1])"},
 		{
 			"type projection",
 			TypeProjection{
@@ -523,11 +433,7 @@ func TestReturnTypeInterface(t *testing.T) {
 		{CallbackReturn{CallbackParam: effect.ParamRef{Index: 2}}, "callback_ret(param[2])"},
 		{ArrayOfCallbackReturn{CallbackParam: effect.ParamRef{Index: 3}}, "array(callback_ret(param[3]))"},
 		{SameAs{Source: effect.ParamRef{Index: 4}}, "same(param[4])"},
-		{DeepElementOf{Source: effect.ParamRef{Index: 5}}, "deep_elem(param[5])"},
-		{StringUnpackValue{Format: effect.ParamRef{Index: 6}}, "string_unpack(param[6])"},
 		{TypeProjection{Source: effect.ParamRef{Index: 7}, Projection: projection.Projection{Steps: []projection.Step{projection.Field("payload")}}}, "project_type(param[7].payload)"},
-		{SelectCaseOfParam{Source: effect.ParamRef{Index: 8}}, "select_case(param[8])"},
-		{SelectResultOfCases{Cases: effect.ParamRef{Index: 9}, Default: effect.ParamRef{Index: 10}}, "select_result(param[9], param[10])"},
 	}
 	for _, test := range returnTypes {
 		if got := test.transform.String(); got != test.want {
@@ -560,10 +466,6 @@ func TestMarkerMethods(t *testing.T) {
 	label := CorrelatedReturn{Indices: []int{19, 20, 21}}
 	if got := label.String(); got != "correlated_return([19 20 21])" || !label.Equals(CorrelatedReturn{Indices: []int{19, 20, 21}}) || label.Equals(CorrelatedReturn{Indices: []int{19, 21, 20}}) {
 		t.Errorf("marker-backed CorrelatedReturn rendered/equalled as %q", got)
-	}
-	transform := SelectResultOfCases{Cases: effect.ParamRef{Index: 22}, Default: effect.ParamRef{Index: 23}}
-	if got := transform.String(); got != "select_result(param[22], param[23])" {
-		t.Errorf("marker-backed SelectResultOfCases.String() = %q", got)
 	}
 }
 

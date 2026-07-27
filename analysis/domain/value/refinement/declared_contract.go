@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 )
 
 // MergeDeclaredContract enriches a computed value with a declared contract
@@ -67,7 +68,7 @@ func declaredOriginForValue(reg *axis.Registry, value, declared product.Value) (
 	}
 	valueOrigin := product.Get(reg, value, variantorigin.Key)
 	if valueType, ok := typevalue.TypeOf(reg, value); ok {
-		if selected, ok := typevalue.OriginCasesForTypeView(declaredOrigin.Family(), declaredOrigin.CasesView(), valueType); ok {
+		if selected, ok := variant.OriginCasesForType(declaredOrigin.Family(), declaredOrigin.CasesView(), valueType); ok {
 			return variantorigin.Of(declaredOrigin.Family(), selected), true
 		}
 	}

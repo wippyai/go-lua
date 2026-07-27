@@ -462,7 +462,7 @@ func TestFreshAssignableRecordLiteralAdoptsTableTopField(t *testing.T) {
 		Build()
 	target := typetable.NewRecord().
 		Field("model", typ.String).
-		Field("options", typetable.BuiltinTopMarker()).
+		Field("options", typ.BuiltinTableTopMarker()).
 		Build()
 
 	if !IsFreshAssignable(source, target) {

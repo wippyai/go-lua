@@ -12,10 +12,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekindof"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
-	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -90,7 +90,7 @@ func (r Reader) VariantOriginType(value product.Value) (typ.Type, bool) {
 	if origin.IsBottom() || origin.IsTop() {
 		return nil, false
 	}
-	return r.typeCache.TypeFromVariantOriginView(origin.Family(), origin.CasesView())
+	return r.typeCache.Variants().TypeFromOrigin(origin.Family(), origin.CasesView())
 }
 
 // FullVariantOriginType returns the complete structural union of the value's
@@ -163,9 +163,9 @@ func (r Reader) RefineDeclaredType(declared typ.Type, value product.Value) (typ.
 			out = WitnessTypeForPresence(t, p)
 		}
 		if r.typeCache != nil && !origin.IsBottom() && !origin.IsTop() {
-			if refined, ok := r.typeCache.NarrowVariantByOriginView(out, origin.Family(), origin.CasesView()); ok {
+			if refined, ok := r.typeCache.Variants().NarrowByOrigin(out, origin.Family(), origin.CasesView()); ok {
 				out = refined
-			} else if refined, ok := r.typeCache.TypeFromVariantOriginView(origin.Family(), origin.CasesView()); ok {
+			} else if refined, ok := r.typeCache.Variants().TypeFromOrigin(origin.Family(), origin.CasesView()); ok {
 				out = WitnessTypeForPresence(refined, p)
 			}
 		}
@@ -202,9 +202,9 @@ func (r Reader) NarrowDeclaredByOrigin(declared typ.Type, value product.Value) (
 	if r.reg != nil && r.typeCache != nil {
 		origin := product.Get(r.reg, value, variantorigin.Key)
 		if !origin.IsBottom() && !origin.IsTop() {
-			if refined, ok := r.typeCache.NarrowVariantByOriginView(out, origin.Family(), origin.CasesView()); ok {
+			if refined, ok := r.typeCache.Variants().NarrowByOrigin(out, origin.Family(), origin.CasesView()); ok {
 				out = refined
-			} else if refined, ok := r.typeCache.TypeFromVariantOriginView(origin.Family(), origin.CasesView()); ok {
+			} else if refined, ok := r.typeCache.Variants().TypeFromOrigin(origin.Family(), origin.CasesView()); ok {
 				out = WitnessTypeForPresence(refined, p)
 			}
 		}
@@ -476,10 +476,10 @@ func ConcreteBoundaryType(reg *axis.Registry, typeCache *typevalue.Cache, value 
 	if t, ok := typevalue.WitnessOf(reg, value); ok {
 		t = WitnessTypeForPresence(t, valuePresence)
 		if !origin.IsBottom() && !origin.IsTop() && typeCache != nil {
-			if narrowed, ok := typeCache.NarrowVariantByOriginView(t, origin.Family(), origin.CasesView()); ok {
+			if narrowed, ok := typeCache.Variants().NarrowByOrigin(t, origin.Family(), origin.CasesView()); ok {
 				return narrowed, true
 			}
-			if narrowed, ok := typeCache.TypeFromVariantOriginView(origin.Family(), origin.CasesView()); ok {
+			if narrowed, ok := typeCache.Variants().TypeFromOrigin(origin.Family(), origin.CasesView()); ok {
 				return WitnessTypeForPresence(narrowed, valuePresence), true
 			}
 		}
@@ -490,7 +490,7 @@ func ConcreteBoundaryType(reg *axis.Registry, typeCache *typevalue.Cache, value 
 		return typ.Any, true
 	}
 	if !origin.IsBottom() && !origin.IsTop() && typeCache != nil {
-		if t, ok := typeCache.TypeFromVariantOriginView(origin.Family(), origin.CasesView()); ok {
+		if t, ok := typeCache.Variants().TypeFromOrigin(origin.Family(), origin.CasesView()); ok {
 			return t, true
 		}
 	}

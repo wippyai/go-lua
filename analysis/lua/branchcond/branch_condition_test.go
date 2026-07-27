@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -71,7 +72,7 @@ func mustIdentSymbol(t *testing.T, bindings *bind.Result, ident *ast.IdentExpr) 
 	return id
 }
 
-func assertCheck(t *testing.T, got Check, wantKind CheckKind, wantPath path.Path, wantTypeName string) {
+func assertCheck(t *testing.T, got Check, wantKind wir.CheckKind, wantPath path.Path, wantTypeName string) {
 	t.Helper()
 	if got.Kind != wantKind {
 		t.Fatalf("check kind = %v, want %v", got.Kind, wantKind)
@@ -84,7 +85,7 @@ func assertCheck(t *testing.T, got Check, wantKind CheckKind, wantPath path.Path
 	}
 }
 
-func assertLiteralCheck(t *testing.T, got Check, wantKind CheckKind, wantPath path.Path, wantLiteral string) {
+func assertLiteralCheck(t *testing.T, got Check, wantKind wir.CheckKind, wantPath path.Path, wantLiteral string) {
 	t.Helper()
 	assertCheck(t, got, wantKind, wantPath, "")
 	assertLiteralTypeCheck(t, got, typ.LiteralString(wantLiteral))
@@ -104,7 +105,7 @@ func assertLiteralTypeCheck(t *testing.T, got Check, wantLiteral typ.Type) {
 	}
 }
 
-func assertPathCheck(t *testing.T, got Check, wantKind CheckKind, wantPath, wantOtherPath path.Path) {
+func assertPathCheck(t *testing.T, got Check, wantKind wir.CheckKind, wantPath, wantOtherPath path.Path) {
 	t.Helper()
 	assertCheck(t, got, wantKind, wantPath, "")
 	if !got.OtherPath.Equal(wantOtherPath) {
@@ -114,8 +115,8 @@ func assertPathCheck(t *testing.T, got Check, wantKind CheckKind, wantPath, want
 
 func assertCheckNone(t *testing.T, got Check) {
 	t.Helper()
-	if got.Kind != CheckNone || !got.Path.IsEmpty() || !got.OtherPath.IsEmpty() || got.TypeName != "" {
-		t.Fatalf("check = %#v, want empty CheckNone", got)
+	if got.Kind != wir.CheckNone || !got.Path.IsEmpty() || !got.OtherPath.IsEmpty() || got.TypeName != "" {
+		t.Fatalf("check = %#v, want empty wir.CheckNone", got)
 	}
 }
 
@@ -123,7 +124,7 @@ func TestNormalizePathChecks(t *testing.T) {
 	tests := []struct {
 		name     string
 		expr     func(*ast.IdentExpr) ast.Expr
-		wantKind CheckKind
+		wantKind wir.CheckKind
 		wantPath func(symbol.ID) path.Path
 	}{
 		{
@@ -131,7 +132,7 @@ func TestNormalizePathChecks(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return dot(root, "ready")
 			},
-			wantKind: CheckTruthy,
+			wantKind: wir.CheckTruthy,
 			wantPath: func(root symbol.ID) path.Path {
 				return path.NewPath(root, "obj").Field("ready")
 			},
@@ -141,7 +142,7 @@ func TestNormalizePathChecks(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.UnaryNotOpExpr{Expr: dot(root, "ready")}
 			},
-			wantKind: CheckFalsy,
+			wantKind: wir.CheckFalsy,
 			wantPath: func(root symbol.ID) path.Path {
 				return path.NewPath(root, "obj").Field("ready")
 			},
@@ -151,7 +152,7 @@ func TestNormalizePathChecks(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "child"), Rhs: &ast.NilExpr{}}
 			},
-			wantKind: CheckNil,
+			wantKind: wir.CheckNil,
 			wantPath: func(root symbol.ID) path.Path {
 				return path.NewPath(root, "obj").Field("child")
 			},
@@ -161,7 +162,7 @@ func TestNormalizePathChecks(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "~=", Lhs: &ast.NilExpr{}, Rhs: dot(root, "child")}
 			},
-			wantKind: CheckNotNil,
+			wantKind: wir.CheckNotNil,
 			wantPath: func(root symbol.ID) path.Path {
 				return path.NewPath(root, "obj").Field("child")
 			},
@@ -182,17 +183,17 @@ func TestNormalizePathComparisons(t *testing.T) {
 	tests := []struct {
 		name     string
 		operator string
-		wantKind CheckKind
+		wantKind wir.CheckKind
 	}{
 		{
 			name:     "result channel equals channel",
 			operator: "==",
-			wantKind: CheckPathEqual,
+			wantKind: wir.CheckPathEqual,
 		},
 		{
 			name:     "result channel not equals channel",
 			operator: "~=",
-			wantKind: CheckPathNot,
+			wantKind: wir.CheckPathNot,
 		},
 	}
 
@@ -213,7 +214,7 @@ func TestNormalizeTypeComparisons(t *testing.T) {
 	tests := []struct {
 		name     string
 		expr     func(*ast.IdentExpr) ast.Expr
-		wantKind CheckKind
+		wantKind wir.CheckKind
 		typeName string
 	}{
 		{
@@ -221,7 +222,7 @@ func TestNormalizeTypeComparisons(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(dot(root, "kind")), Rhs: stringLit("table")}
 			},
-			wantKind: CheckTypeEqual,
+			wantKind: wir.CheckTypeEqual,
 			typeName: "table",
 		},
 		{
@@ -229,7 +230,7 @@ func TestNormalizeTypeComparisons(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: stringLit("table"), Rhs: typeCall(dot(root, "kind"))}
 			},
-			wantKind: CheckTypeEqual,
+			wantKind: wir.CheckTypeEqual,
 			typeName: "table",
 		},
 		{
@@ -237,7 +238,7 @@ func TestNormalizeTypeComparisons(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "~=", Lhs: typeCall(dot(root, "kind")), Rhs: stringLit("function")}
 			},
-			wantKind: CheckTypeNot,
+			wantKind: wir.CheckTypeNot,
 			typeName: "function",
 		},
 	}
@@ -258,11 +259,11 @@ func TestNormalizeTypeComparisonWithPathRhs(t *testing.T) {
 		name     string
 		operator string
 		reversed bool
-		wantKind CheckKind
+		wantKind wir.CheckKind
 	}{
-		{name: "type equal variable rhs", operator: "==", wantKind: CheckTypeEqual},
-		{name: "type equal variable lhs", operator: "==", reversed: true, wantKind: CheckTypeEqual},
-		{name: "type not equal variable rhs", operator: "~=", wantKind: CheckTypeNot},
+		{name: "type equal variable rhs", operator: "==", wantKind: wir.CheckTypeEqual},
+		{name: "type equal variable lhs", operator: "==", reversed: true, wantKind: wir.CheckTypeEqual},
+		{name: "type not equal variable rhs", operator: "~=", wantKind: wir.CheckTypeNot},
 	}
 
 	for _, tt := range tests {
@@ -356,7 +357,7 @@ func TestNormalizeFrozenTablePredicate(t *testing.T) {
 	bindings := bindReturn(expr, "table")
 	targetPath := path.NewPath(mustIdentSymbol(t, bindings, target), "target")
 
-	assertCheck(t, Normalize(expr, bindings), CheckFrozenTable, targetPath, "")
+	assertCheck(t, Normalize(expr, bindings), wir.CheckFrozenTable, targetPath, "")
 }
 
 func TestFrozenTablePredicateIgnoresShadowedTable(t *testing.T) {
@@ -386,7 +387,7 @@ func TestImpliedFrozenTableChecksPreserveEdgeAndPolarity(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("implied checks = %d, want frozen table + ok truthy: %#v", len(got), got)
 	}
-	if got[0].Check.Kind != CheckFrozenTable || !got[0].Check.Path.Equal(targetPath) || !got[0].Edge || !got[0].Polarity {
+	if got[0].Check.Kind != wir.CheckFrozenTable || !got[0].Check.Path.Equal(targetPath) || !got[0].Edge || !got[0].Polarity {
 		t.Fatalf("frozen implication = %#v, want true-edge frozen target", got[0])
 	}
 }
@@ -406,9 +407,9 @@ func TestTruthyChecksExtractSupportedConjuncts(t *testing.T) {
 		t.Fatalf("TruthyChecks returned %d checks, want 2: %#v", len(got), got)
 	}
 	valuePath := path.NewPath(mustIdentSymbol(t, bindings, value), "value")
-	assertCheck(t, got[0], CheckTypeEqual, valuePath, "number")
-	if got[1].Kind != CheckNumGe || got[1].NumFloor != 1 {
-		t.Fatalf("second conjunct = %#v, want CheckNumGe floor 1 for value > 0", got[1])
+	assertCheck(t, got[0], wir.CheckTypeEqual, valuePath, "number")
+	if got[1].Kind != wir.CheckNumGe || got[1].NumFloor != 1 {
+		t.Fatalf("second conjunct = %#v, want wir.CheckNumGe floor 1 for value > 0", got[1])
 	}
 }
 
@@ -431,10 +432,10 @@ func TestFalsyChecksExtractNegatedConjunctBounds(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("FalsyChecks returned %d checks, want numeric floor and index range: %#v", len(got), got)
 	}
-	if got[0].Kind != CheckNumGe || !got[0].Path.Equal(iPath) || got[0].NumFloor != 1 {
+	if got[0].Kind != wir.CheckNumGe || !got[0].Path.Equal(iPath) || got[0].NumFloor != 1 {
 		t.Fatalf("first check = %#v, want i >= 1", got[0])
 	}
-	if got[1].Kind != CheckIndexInRange || !got[1].Path.Equal(iPath) || !got[1].OtherPath.Equal(xsPath) {
+	if got[1].Kind != wir.CheckIndexInRange || !got[1].Path.Equal(iPath) || !got[1].OtherPath.Equal(xsPath) {
 		t.Fatalf("second check = %#v, want i <= #xs", got[1])
 	}
 }
@@ -464,7 +465,7 @@ func TestImpliedChecksOnEdgePreservesOuterEdgeAndLeafPolarity(t *testing.T) {
 			t.Fatalf("implied check %d polarity = false, want true leaf condition", idx)
 		}
 	}
-	if got[0].Check.Kind != CheckNumGe || got[1].Check.Kind != CheckIndexInRange {
+	if got[0].Check.Kind != wir.CheckNumGe || got[1].Check.Kind != wir.CheckIndexInRange {
 		t.Fatalf("implied checks = %#v, want floor then range", got)
 	}
 }
@@ -489,8 +490,8 @@ func TestImpliedChecksOnBothEdgesKeepsTrueThenFalseOrder(t *testing.T) {
 	if got[1].Edge || got[1].Polarity {
 		t.Fatalf("second implied check = %#v, want false edge with negative polarity", got[1])
 	}
-	if got[0].Check.Kind != CheckNotNil || got[1].Check.Kind != CheckNotNil {
-		t.Fatalf("check kinds = %v/%v, want CheckNotNil on both edges", got[0].Check.Kind, got[1].Check.Kind)
+	if got[0].Check.Kind != wir.CheckNotNil || got[1].Check.Kind != wir.CheckNotNil {
+		t.Fatalf("check kinds = %v/%v, want wir.CheckNotNil on both edges", got[0].Check.Kind, got[1].Check.Kind)
 	}
 }
 
@@ -609,16 +610,16 @@ func TestFalsyChecksExtractSupportedDisjuncts(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("FalsyChecks returned %d checks, want 3: %#v", len(got), got)
 	}
-	assertCheck(t, got[0], CheckFalsy, pagePath, "")
-	assertCheck(t, got[1], CheckFalsy, fieldPath, "")
-	assertLiteralCheck(t, got[2], CheckLiteralEqual, fieldPath, "")
+	assertCheck(t, got[0], wir.CheckFalsy, pagePath, "")
+	assertCheck(t, got[1], wir.CheckFalsy, fieldPath, "")
+	assertLiteralCheck(t, got[2], wir.CheckLiteralEqual, fieldPath, "")
 }
 
 func TestNormalizeLiteralComparisons(t *testing.T) {
 	tests := []struct {
 		name     string
 		expr     func(*ast.IdentExpr) ast.Expr
-		wantKind CheckKind
+		wantKind wir.CheckKind
 		literal  typ.Type
 		field    string
 	}{
@@ -627,7 +628,7 @@ func TestNormalizeLiteralComparisons(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "kind"), Rhs: stringLit("dog")}
 			},
-			wantKind: CheckLiteralEqual,
+			wantKind: wir.CheckLiteralEqual,
 			literal:  typ.LiteralString("dog"),
 			field:    "kind",
 		},
@@ -636,7 +637,7 @@ func TestNormalizeLiteralComparisons(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "~=", Lhs: stringLit("cat"), Rhs: dot(root, "kind")}
 			},
-			wantKind: CheckLiteralNot,
+			wantKind: wir.CheckLiteralNot,
 			literal:  typ.LiteralString("cat"),
 			field:    "kind",
 		},
@@ -645,7 +646,7 @@ func TestNormalizeLiteralComparisons(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "ok"), Rhs: &ast.TrueExpr{}}
 			},
-			wantKind: CheckLiteralEqual,
+			wantKind: wir.CheckLiteralEqual,
 			literal:  typ.LiteralBool(true),
 			field:    "ok",
 		},
@@ -654,7 +655,7 @@ func TestNormalizeLiteralComparisons(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "~=", Lhs: dot(root, "ok"), Rhs: &ast.FalseExpr{}}
 			},
-			wantKind: CheckLiteralNot,
+			wantKind: wir.CheckLiteralNot,
 			literal:  typ.LiteralBool(false),
 			field:    "ok",
 		},
@@ -663,7 +664,7 @@ func TestNormalizeLiteralComparisons(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "code"), Rhs: number("1")}
 			},
-			wantKind: CheckLiteralEqual,
+			wantKind: wir.CheckLiteralEqual,
 			literal:  typ.LiteralInt(1),
 			field:    "code",
 		},
@@ -851,8 +852,8 @@ func TestNormalizeLengthFloorGuards(t *testing.T) {
 			expr := tt.build(arr)
 			bindings := bindReturn(expr)
 			check := Normalize(expr, bindings)
-			if check.Kind != CheckLenGe {
-				t.Fatalf("want CheckLenGe, got kind %d", check.Kind)
+			if check.Kind != wir.CheckLenGe {
+				t.Fatalf("want wir.CheckLenGe, got kind %d", check.Kind)
 			}
 			if check.LenFloor != tt.wantFloor {
 				t.Fatalf("want floor %d, got %d", tt.wantFloor, check.LenFloor)
@@ -872,7 +873,7 @@ func TestNormalizeLengthFloorNotEqualZeroHasNoFalseEdgeFloor(t *testing.T) {
 		arr := ident("xs")
 		expr := &ast.RelationalOpExpr{Operator: op, Lhs: lenOf(arr), Rhs: number("0")}
 		bindings := bindReturn(expr)
-		if check := Normalize(expr, bindings); check.Kind == CheckLenGe {
+		if check := Normalize(expr, bindings); check.Kind == wir.CheckLenGe {
 			if check.Negated {
 				t.Fatalf("operator %q must not produce a negated length floor for zero", op)
 			}
@@ -892,8 +893,8 @@ func TestNormalizeLengthFloorNegatedFalseEdge(t *testing.T) {
 		expr := &ast.RelationalOpExpr{Operator: tc.op, Lhs: lenOf(arr), Rhs: number("5")}
 		bindings := bindReturn(expr)
 		check := Normalize(expr, bindings)
-		if check.Kind != CheckLenGe || !check.Negated || check.LenFloor != tc.floor {
-			t.Fatalf("operator %q: got kind=%v negated=%v floor=%d, want CheckLenGe negated floor=%d",
+		if check.Kind != wir.CheckLenGe || !check.Negated || check.LenFloor != tc.floor {
+			t.Fatalf("operator %q: got kind=%v negated=%v floor=%d, want wir.CheckLenGe negated floor=%d",
 				tc.op, check.Kind, check.Negated, check.LenFloor, tc.floor)
 		}
 	}
@@ -904,8 +905,8 @@ func TestNormalizeLengthFloorEqualZeroFalseEdge(t *testing.T) {
 	expr := &ast.RelationalOpExpr{Operator: "==", Lhs: lenOf(arr), Rhs: number("0")}
 	bindings := bindReturn(expr)
 	check := Normalize(expr, bindings)
-	if check.Kind != CheckLenGe || !check.Negated || check.LenFloor != 1 {
-		t.Fatalf("got kind=%v negated=%v floor=%d, want CheckLenGe negated floor=1",
+	if check.Kind != wir.CheckLenGe || !check.Negated || check.LenFloor != 1 {
+		t.Fatalf("got kind=%v negated=%v floor=%d, want wir.CheckLenGe negated floor=1",
 			check.Kind, check.Negated, check.LenFloor)
 	}
 }
@@ -915,8 +916,8 @@ func TestNormalizeLengthFloorNotEqualPositiveFalseEdge(t *testing.T) {
 	expr := &ast.RelationalOpExpr{Operator: "~=", Lhs: lenOf(arr), Rhs: number("2")}
 	bindings := bindReturn(expr)
 	check := Normalize(expr, bindings)
-	if check.Kind != CheckLenGe || !check.Negated || check.LenFloor != 2 {
-		t.Fatalf("got kind=%v negated=%v floor=%d, want CheckLenGe negated floor=2",
+	if check.Kind != wir.CheckLenGe || !check.Negated || check.LenFloor != 2 {
+		t.Fatalf("got kind=%v negated=%v floor=%d, want wir.CheckLenGe negated floor=2",
 			check.Kind, check.Negated, check.LenFloor)
 	}
 }

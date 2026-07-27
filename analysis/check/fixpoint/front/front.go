@@ -272,7 +272,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	}
 	resolver := typeresolve.NewWithExternal(bindings, external)
 	typeDefinitions := resolveTopLevelTypeDefinitions(stmts, bindings, resolver)
-	body := wirlower.LowerWithResolver("chunk", stmts, bindings, built, resolver)
+	body := wirlower.Lower("chunk", stmts, bindings, built, wirlower.Options{Resolver: resolver})
 	if body == nil {
 		return Compilation{}, fmt.Errorf("front: lower WIR")
 	}

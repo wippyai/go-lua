@@ -10,10 +10,6 @@ func TestKindOfReturnTypeClassifiesValuePointerAndTypedNil(t *testing.T) {
 	var nilArrayCallback *ArrayOfCallbackReturn
 	var nilProjection *TypeProjection
 	var nilConditional *ConditionalType
-	var nilDeepElement *DeepElementOf
-	var nilStringUnpack *StringUnpackValue
-	var nilSelectCase *SelectCaseOfParam
-	var nilSelectResult *SelectResultOfCases
 
 	tests := []struct {
 		name    string
@@ -29,10 +25,6 @@ func TestKindOfReturnTypeClassifiesValuePointerAndTypedNil(t *testing.T) {
 		{"array callback", ArrayOfCallbackReturn{}, &ArrayOfCallbackReturn{}, nilArrayCallback, ReturnTypeArrayOfCallbackReturn},
 		{"type projection", TypeProjection{}, &TypeProjection{}, nilProjection, ReturnTypeTypeProjection},
 		{"conditional type", ConditionalType{}, &ConditionalType{}, nilConditional, ReturnTypeConditionalType},
-		{"deep element", DeepElementOf{}, &DeepElementOf{}, nilDeepElement, ReturnTypeDeepElementOf},
-		{"string unpack", StringUnpackValue{}, &StringUnpackValue{}, nilStringUnpack, ReturnTypeStringUnpackValue},
-		{"select case", SelectCaseOfParam{}, &SelectCaseOfParam{}, nilSelectCase, ReturnTypeSelectCaseOfParam},
-		{"select result", SelectResultOfCases{}, &SelectResultOfCases{}, nilSelectResult, ReturnTypeSelectResultOfCases},
 	}
 
 	for _, tt := range tests {

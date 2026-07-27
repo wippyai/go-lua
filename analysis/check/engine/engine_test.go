@@ -18,6 +18,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
+func checkWithImports(source string, imports map[string]typ.Type) (engine.Result, error) {
+	return engine.Check(source, engine.Options{Imports: imports})
+}
+
 func TestCheckPublishesScalarAssignment(t *testing.T) {
 	result, err := engine.Check(`local answer = 42`)
 	if err != nil {
@@ -833,7 +837,11 @@ local channel = require("channel")
 local outcome = channel.select({})
 return outcome
 `} {
-		result, err := engine.CheckWithImportsResolverAndGlobalsAndRelations(source, map[string]typ.Type{"channel": typ.Any}, nil, resolver, nil, "main.lua")
+		result, err := engine.Check(source, engine.Options{
+			Imports:    map[string]typ.Type{"channel": typ.Any},
+			Resolver:   resolver,
+			SourcePath: "main.lua",
+		})
 		if err != nil {
 			t.Fatalf("Check: %v", err)
 		}
@@ -1514,7 +1522,7 @@ end
 func TestCheckWithImportsSeedsModuleLoadExportAndOmitsAny(t *testing.T) {
 	source := `local provider = require("provider")
 local answer: string = provider.answer`
-	typed, err := engine.CheckWithImports(source, map[string]typ.Type{
+	typed, err := checkWithImports(source, map[string]typ.Type{
 		"provider": typetable.NewRecord().Field("answer", typ.LiteralInt(42)).Build(),
 	})
 	if err != nil {
@@ -1523,7 +1531,7 @@ local answer: string = provider.answer`
 	if got := valuesByName(typed.Diagnostics)["type.assignment/op-00000006"]; !strings.Contains(got, "42") || !strings.Contains(got, "string") {
 		t.Fatalf("typed require diagnostic = %#v", typed.Diagnostics)
 	}
-	unknown, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": typ.Any})
+	unknown, err := checkWithImports(source, map[string]typ.Type{"provider": typ.Any})
 	if err != nil {
 		t.Fatalf("CheckWithImports unknown: %v", err)
 	}
@@ -1544,7 +1552,7 @@ local answer: string = provider.answer`
 func TestCheckWithImportsProjectsResolvedCallableMemberResult(t *testing.T) {
 	source := `local provider = require("provider")
 local answer: string = provider.answer()`
-	typed, err := engine.CheckWithImports(source, map[string]typ.Type{
+	typed, err := checkWithImports(source, map[string]typ.Type{
 		"provider": typetable.NewRecord().Field("answer", typ.Func().Returns(typ.LiteralInt(42)).Build()).Build(),
 	})
 	if err != nil {
@@ -1572,7 +1580,7 @@ return run`
 	provider := typetable.NewRecord().Field("meta", typ.Func().Returns(
 		typetable.NewRecord().Field("name", typ.String).Build(),
 	).Build()).Build()
-	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	result, err := checkWithImports(source, map[string]typ.Type{"provider": provider})
 	if err != nil {
 		t.Fatalf("CheckWithImports: %v", err)
 	}
@@ -1599,7 +1607,7 @@ helper(provider, model_id)`
 		Returns(typ.Any).
 		Build()).
 		Build()
-	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	result, err := checkWithImports(source, map[string]typ.Type{"provider": provider})
 	if err != nil {
 		t.Fatalf("CheckWithImports: %v", err)
 	}
@@ -1622,7 +1630,7 @@ end
 local bad: number = "not a number"`
 	errType := typetable.NewRecord().Field("message", typ.String).Build()
 	provider := typetable.NewRecord().Field("fetch", typ.Func().Returns(typ.MaterializeOptional(errType)).Build()).Build()
-	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	result, err := checkWithImports(source, map[string]typ.Type{"provider": provider})
 	if err != nil {
 		t.Fatalf("CheckWithImports: %v", err)
 	}
@@ -1640,7 +1648,7 @@ local record: { id: string } = provider.make()`
 	provider := typetable.NewRecord().Field("make", typ.Func().Returns(
 		typetable.NewRecord().Field("id", typ.String).Build(),
 	).Build()).Build()
-	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	result, err := checkWithImports(source, map[string]typ.Type{"provider": provider})
 	if err != nil {
 		t.Fatalf("CheckWithImports typed direct callable: %v", err)
 	}
@@ -1658,7 +1666,7 @@ for _, row in ipairs(rows) do
 end`
 	row := typetable.NewRecord().Field("id", typ.String).Field("ready", typ.Boolean).Build()
 	provider := typetable.NewRecord().Field("list", typ.Func().Returns(typ.NewArray(row)).Build()).Build()
-	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	result, err := checkWithImports(source, map[string]typ.Type{"provider": provider})
 	if err != nil {
 		t.Fatalf("CheckWithImports: %v", err)
 	}
@@ -1704,7 +1712,7 @@ local object = provider.new()
 local answer: number = object:answer()`
 	widget := typetable.NewRecord().Field("answer", typ.Func().Returns(typ.LiteralInt(42)).Build()).Build()
 	provider := typetable.NewRecord().Field("new", typ.Func().Returns(widget).Build()).Build()
-	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	result, err := checkWithImports(source, map[string]typ.Type{"provider": provider})
 	if err != nil {
 		t.Fatalf("CheckWithImports typed receiver: %v", err)
 	}
@@ -1725,7 +1733,7 @@ local source: string = provider.meta().tags["source"]`
 		Field("new", typ.Func().Returns(store).Build()).
 		Field("meta", typ.Func().Returns(typ.MaterializeOptional(meta)).Build()).
 		Build()
-	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	result, err := checkWithImports(source, map[string]typ.Type{"provider": provider})
 	if err != nil {
 		t.Fatalf("CheckWithImports: %v", err)
 	}
@@ -1747,7 +1755,7 @@ local answer: number = object:answer()`
 		{Name: "answer", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
 	})
 	provider := typetable.NewRecord().Field("new", typ.Func().Returns(object).Build()).Build()
-	result, err := engine.CheckWithImports(source, map[string]typ.Type{"provider": provider})
+	result, err := checkWithImports(source, map[string]typ.Type{"provider": provider})
 	if err != nil {
 		t.Fatalf("CheckWithImports interface receiver: %v", err)
 	}
@@ -1894,7 +1902,7 @@ func TestCheckWithImportsJoinsInstantiatedGenericSummaryAcrossCalls(t *testing.T
 		Field("map", mapFn).
 		Field("reduce", reduce).
 		Build()
-	resultCheck, err := engine.CheckWithImports(`local iter = require("iter")
+	resultCheck, err := checkWithImports(`local iter = require("iter")
 type User = {name: string, age: number, active: boolean}
 local users: {User} = {
   {name = "Ada", age = 31, active = true},
@@ -1993,7 +2001,7 @@ func TestCheckWithImportsRetainsChainedGenericArrayResult(t *testing.T) {
 		Field("map", typ.Func().TypeParamRef(item).TypeParamRef(u).Param("arr", typ.NewArray(item)).Param("fn", mapper).Returns(typ.NewArray(u)).Build()).
 		Field("reduce", typ.Func().TypeParamRef(item).TypeParamRef(a).Param("arr", typ.NewArray(item)).Param("fn", reducer).Param("initial", a).Returns(a).Build()).
 		Build()
-	result, err := engine.CheckWithImports(`
+	result, err := checkWithImports(`
 local iter = require("iter")
 local words: {string} = {"Ada", "Bob"}
 local filtered = iter.filter(words, function(name: string): boolean return #name > 0 end)
@@ -2020,7 +2028,7 @@ if raw.id then
   local id: string = raw.id
 end
 `
-	result, err := engine.CheckWithImports(source, map[string]typ.Type{
+	result, err := checkWithImports(source, map[string]typ.Type{
 		"provider": typetable.NewRecord().Field("raw_config", typ.Func().Returns(typ.Any).Build()).Build(),
 	})
 	if err != nil {

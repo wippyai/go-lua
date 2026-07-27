@@ -1,7 +1,7 @@
 package access
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/internal/graph"
+	graph "github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -48,12 +48,12 @@ func descendAccessWrappers[T any](
 			optionalDepth--
 		}
 		for index := len(entered) - 1; index >= 0; index-- {
-			active.Leave(entered[index])
+			active.Leave(entered[index], 0)
 		}
 		return value
 	}
 	for {
-		if stopDepth(t, depth) || !active.Enter(t) {
+		if stopDepth(t, depth) || !active.Enter(t, 0) {
 			return finish(stopValue())
 		}
 		entered = append(entered, t)

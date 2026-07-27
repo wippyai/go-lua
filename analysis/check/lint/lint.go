@@ -301,7 +301,13 @@ func CheckProject(ctx context.Context, input ProjectInput) (ProjectResult, error
 				importRelations[resolvedImport.ModulePath] = relation
 			}
 		}
-		result, checkErr := engine.CheckWithImportsResolverAndGlobalsAndRelations(entry.Source, importBindings, hostGlobals, typeSource, importRelations, entry.Path)
+		result, checkErr := engine.Check(entry.Source, engine.Options{
+			Imports:    importBindings,
+			Globals:    hostGlobals,
+			Resolver:   typeSource,
+			Relations:  importRelations,
+			SourcePath: entry.Path,
+		})
 		if checkErr != nil {
 			return fmt.Errorf("lint: check %s: %w", entry.Path, checkErr)
 		}

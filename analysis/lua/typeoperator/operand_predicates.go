@@ -3,7 +3,6 @@ package typeoperator
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -71,6 +70,6 @@ func isTableLike(t typ.Type) bool {
 	case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple:
 		return true
 	default:
-		return typetable.IsBuiltinTopMarker(t)
+		return typ.IsBuiltinTableTopMarker(t)
 	}
 }

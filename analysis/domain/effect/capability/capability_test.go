@@ -27,10 +27,6 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 		capability.ReturnsReturnConditionalType:       capability.StatusOperational,
 		capability.ReturnsErrorReturn:                 capability.StatusOperational,
 		capability.ReturnsReturnLength:                capability.StatusReserved,
-		capability.ReturnsReturnDeepElementOf:         capability.StatusReserved,
-		capability.ReturnsReturnStringUnpackValue:     capability.StatusReservedHighRisk,
-		capability.ReturnsReturnSelectCaseOfParam:     capability.StatusReserved,
-		capability.ReturnsReturnSelectResultOfCases:   capability.StatusReserved,
 		capability.ReturnsCorrelatedReturn:            capability.StatusReservedHighRisk,
 
 		capability.PostconditionNormalReturnRefinement: capability.StatusOperational,
@@ -47,9 +43,7 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 
 		capability.IterationIterator: capability.StatusImportOrStdlib,
 
-		capability.DispatchModuleLoad:        capability.StatusImportOrStdlib,
-		capability.DispatchTypePredicate:     capability.StatusReservedHighRisk,
-		capability.DispatchVariadicTransform: capability.StatusReservedHighRisk,
+		capability.DispatchModuleLoad: capability.StatusImportOrStdlib,
 
 		capability.MutationMutate:       capability.StatusPartial,
 		capability.MutationLengthChange: capability.StatusPartial,
@@ -137,10 +131,6 @@ func TestAuditedConcreteSymbolsHaveOneDescriptor(t *testing.T) {
 		{returns.ConditionalType{}, capability.ReturnsReturnConditionalType},
 		{returns.ErrorReturn{}, capability.ReturnsErrorReturn},
 		{returns.ReturnLength{}, capability.ReturnsReturnLength},
-		{returns.DeepElementOf{}, capability.ReturnsReturnDeepElementOf},
-		{returns.StringUnpackValue{}, capability.ReturnsReturnStringUnpackValue},
-		{returns.SelectCaseOfParam{}, capability.ReturnsReturnSelectCaseOfParam},
-		{returns.SelectResultOfCases{}, capability.ReturnsReturnSelectResultOfCases},
 		{returns.CorrelatedReturn{}, capability.ReturnsCorrelatedReturn},
 
 		{postcondition.NormalReturnRefinement{}, capability.PostconditionNormalReturnRefinement},
@@ -158,8 +148,6 @@ func TestAuditedConcreteSymbolsHaveOneDescriptor(t *testing.T) {
 		{iteration.Iterator{}, capability.IterationIterator},
 
 		{dispatch.ModuleLoad{}, capability.DispatchModuleLoad},
-		{dispatch.TypePredicate{}, capability.DispatchTypePredicate},
-		{dispatch.VariadicTransform{}, capability.DispatchVariadicTransform},
 
 		{mutation.Mutate{}, capability.MutationMutate},
 		{mutation.LengthChange{}, capability.MutationLengthChange},
@@ -195,25 +183,6 @@ func TestAuditedConcreteSymbolsHaveOneDescriptor(t *testing.T) {
 	}
 }
 
-func TestStringUnpackValueIsPinnedReservedHighRisk(t *testing.T) {
-	desc, ok := capability.Lookup(capability.ReturnsReturnStringUnpackValue)
-	if !ok {
-		t.Fatal("missing StringUnpackValue descriptor")
-	}
-	if desc.Status == capability.StatusOperational {
-		t.Fatal("StringUnpackValue must not be classified as operational")
-	}
-	if desc.Status != capability.StatusReservedHighRisk {
-		t.Fatalf("StringUnpackValue status = %q, want %q", desc.Status, capability.StatusReservedHighRisk)
-	}
-	if !strings.Contains(desc.Rationale, "Reserved metadata") {
-		t.Fatalf("StringUnpackValue rationale = %q, want reserved metadata rationale", desc.Rationale)
-	}
-	if !strings.Contains(desc.Rationale, "stdlib must not declare it while inactive") {
-		t.Fatalf("StringUnpackValue rationale = %q, want stdlib quarantine rationale", desc.Rationale)
-	}
-}
-
 func TestCorrelatedReturnIsPinnedReservedHighRisk(t *testing.T) {
 	desc, ok := capability.Lookup(capability.ReturnsCorrelatedReturn)
 	if !ok {
@@ -230,45 +199,6 @@ func TestCorrelatedReturnIsPinnedReservedHighRisk(t *testing.T) {
 	}
 	if !strings.Contains(desc.Rationale, "stdlib must not declare it while inactive") {
 		t.Fatalf("CorrelatedReturn rationale = %q, want stdlib quarantine rationale", desc.Rationale)
-	}
-}
-
-func TestInactiveDispatchLabelsArePinnedReservedHighRisk(t *testing.T) {
-	tests := []struct {
-		name      string
-		id        string
-		rationale string
-	}{
-		{
-			name:      "type predicate",
-			id:        capability.DispatchTypePredicate,
-			rationale: "type() narrowing is syntax/factflow based",
-		},
-		{
-			name:      "variadic transform",
-			id:        capability.DispatchVariadicTransform,
-			rationale: "select() lowering ignores this",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			desc, ok := capability.Lookup(tt.id)
-			if !ok {
-				t.Fatalf("missing descriptor %s", tt.id)
-			}
-			if desc.Status != capability.StatusReservedHighRisk {
-				t.Fatalf("%s status = %q, want %q", tt.id, desc.Status, capability.StatusReservedHighRisk)
-			}
-			if !strings.Contains(desc.Rationale, "Reserved metadata") {
-				t.Fatalf("%s rationale = %q, want reserved metadata rationale", tt.id, desc.Rationale)
-			}
-			if !strings.Contains(desc.Rationale, tt.rationale) {
-				t.Fatalf("%s rationale = %q, want %q", tt.id, desc.Rationale, tt.rationale)
-			}
-			if !strings.Contains(desc.Rationale, "stdlib must not declare") {
-				t.Fatalf("%s rationale = %q, want stdlib quarantine rationale", tt.id, desc.Rationale)
-			}
-		})
 	}
 }
 

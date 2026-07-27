@@ -37,7 +37,7 @@ func VariantOriginOfValue(reg *axis.Registry, cache *Cache, value product.Value)
 	var family uint64
 	var cases []int
 	if cache != nil {
-		family, cases, ok = cache.OriginOfType(t)
+		family, cases, ok = cache.Variants().OriginOfType(t)
 	} else {
 		family, cases, ok = variant.OriginOfType(t)
 	}
@@ -69,7 +69,7 @@ func witnessVariantOrigin(reg *axis.Registry, cache *Cache, value product.Value)
 	var family uint64
 	var cases []int
 	if cache != nil {
-		family, cases, ok = cache.OriginOfType(witnessType)
+		family, cases, ok = cache.Variants().OriginOfType(witnessType)
 	} else {
 		family, cases, ok = variant.OriginOfType(witnessType)
 	}
@@ -77,88 +77,9 @@ func witnessVariantOrigin(reg *axis.Registry, cache *Cache, value product.Value)
 		return variantorigin.Value{}, false
 	}
 	if valueType, ok := cache.TypeOf(reg, value); ok {
-		if selected, ok := cache.OriginCasesForType(family, cases, valueType); ok {
+		if selected, ok := variant.OriginCasesForType(family, caseset.New(cases).View(), valueType); ok {
 			return variantorigin.Of(family, selected), true
 		}
 	}
 	return variantorigin.Of(family, cases), true
-}
-
-func (c *Cache) OriginCasesForType(family uint64, allowedCases []int, valueType typ.Type) ([]int, bool) {
-	return originCasesForType(c, family, allowedVariantCases(allowedCases), valueType)
-}
-
-// OriginCasesForTypeView selects from an immutable canonical case view.
-func (c *Cache) OriginCasesForTypeView(family uint64, allowedCases caseset.View, valueType typ.Type) ([]int, bool) {
-	return originCasesForType(c, family, viewedVariantCases(allowedCases), valueType)
-}
-
-// OriginCasesForType selects the cases in family that are compatible with
-// valueType, restricted to allowedCases.
-func OriginCasesForType(family uint64, allowedCases []int, valueType typ.Type) ([]int, bool) {
-	return originCasesForType(nil, family, allowedVariantCases(allowedCases), valueType)
-}
-
-// OriginCasesForTypeView selects from an immutable canonical case view.
-func OriginCasesForTypeView(family uint64, allowedCases caseset.View, valueType typ.Type) ([]int, bool) {
-	return originCasesForType(nil, family, viewedVariantCases(allowedCases), valueType)
-}
-
-type variantCases struct {
-	values []int
-	view   caseset.View
-	viewed bool
-}
-
-func allowedVariantCases(values []int) variantCases { return variantCases{values: values} }
-func viewedVariantCases(view caseset.View) variantCases {
-	return variantCases{view: view, viewed: true}
-}
-
-func (c variantCases) len() int {
-	if c.viewed {
-		return c.view.Len()
-	}
-	return len(c.values)
-}
-
-func (c variantCases) contains(value int) bool {
-	if c.viewed {
-		low, high := 0, c.view.Len()
-		for low < high {
-			middle := int(uint(low+high) >> 1)
-			if c.view.At(middle) < value {
-				low = middle + 1
-			} else {
-				high = middle
-			}
-		}
-		return low < c.view.Len() && c.view.At(low) == value
-	}
-	for _, candidate := range c.values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
-}
-
-func originCasesForType(cache *Cache, family uint64, allowedCases variantCases, valueType typ.Type) ([]int, bool) {
-	if family == 0 || allowedCases.len() == 0 || valueType == nil || typ.IsAny(valueType) || typ.IsUnknown(valueType) || typ.IsNever(valueType) {
-		return nil, false
-	}
-	cases, ok := variant.OriginCases(family)
-	if !ok {
-		return nil, false
-	}
-	selected := make([]int, 0, len(cases))
-	for _, c := range cases {
-		if !allowedCases.contains(c.Index) {
-			continue
-		}
-		if cache.IsSubtype(valueType, c.Type) || cache.IsSubtype(c.Type, valueType) {
-			selected = append(selected, c.Index)
-		}
-	}
-	return selected, len(selected) != 0
 }

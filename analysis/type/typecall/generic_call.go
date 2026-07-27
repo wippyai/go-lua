@@ -1,7 +1,7 @@
 package typecall
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/internal/graph"
+	graph "github.com/wippyai/go-lua/analysis/internal/typegraph"
 	typelit "github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
@@ -469,10 +469,10 @@ func actualRecordForValidationSeen(actual typ.Type, depth int, active *graph.Pat
 		return nil, false
 	}
 	actual = unwrap.Annotated(actual)
-	if !active.Enter(actual) {
+	if !active.Enter(actual, 0) {
 		return nil, false
 	}
-	defer active.Leave(actual)
+	defer active.Leave(actual, 0)
 	switch a := actual.(type) {
 	case *typ.Alias:
 		return actualRecordForValidationSeen(a.UnaliasedTarget(), depth+1, active)

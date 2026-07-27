@@ -1,7 +1,7 @@
 package refinement
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/internal/graph"
+	graph "github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
@@ -102,7 +102,7 @@ func PruneLessPreciseRefinableUnionMembers(t typ.Type, morePrecise MorePreciseFu
 func closedUnionOf(t typ.Type) *typ.Union {
 	var seen graph.Path
 	for {
-		if !seen.Enter(t) {
+		if !seen.Enter(t, 0) {
 			return nil
 		}
 		switch v := unwrap.Annotated(t).(type) {
@@ -134,10 +134,10 @@ func isRefinableStructuralAnnotation(t typ.Type, active *graph.Path) bool {
 		return false
 	}
 	t = unwrap.Annotated(t)
-	if !active.Enter(t) {
+	if !active.Enter(t, 0) {
 		return false
 	}
-	defer active.Leave(t)
+	defer active.Leave(t, 0)
 	switch v := t.(type) {
 	case *typ.Alias:
 		return isRefinableStructuralAnnotation(v.UnaliasedTarget(), active)

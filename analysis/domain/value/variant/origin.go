@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -54,6 +55,27 @@ func OriginCases(familyID uint64) ([]OriginCase, bool) {
 	return publicOriginCases(family.cases), true
 }
 
+// OriginCasesForType selects allowed family cases compatible with valueType.
+func OriginCasesForType(familyID uint64, allowed caseset.View, valueType typ.Type) ([]int, bool) {
+	if familyID == 0 || allowed.Len() == 0 || valueType == nil || typ.IsAny(valueType) || typ.IsUnknown(valueType) || typ.IsNever(valueType) {
+		return nil, false
+	}
+	cases, ok := OriginCases(familyID)
+	if !ok {
+		return nil, false
+	}
+	selected := make([]int, 0, len(cases))
+	for _, c := range cases {
+		if !containsCase(allowed, c.Index) {
+			continue
+		}
+		if subtype.IsSubtype(valueType, c.Type) || subtype.IsSubtype(c.Type, valueType) {
+			selected = append(selected, c.Index)
+		}
+	}
+	return selected, len(selected) != 0
+}
+
 // SingleCaseWithField returns the index of the only origin case whose type has
 // field as a static field/member. It reports false when no case has the field or
 // more than one case has it.
@@ -95,18 +117,9 @@ func publicOriginCases(cases []originCase) []OriginCase {
 	return out
 }
 
-// NarrowByOrigin narrows t to the cases represented by origin evidence.
-func NarrowByOrigin(t typ.Type, familyID uint64, cases []int) (typ.Type, bool) {
-	return narrowByOrigin(t, familyID, sliceCases(cases))
-}
-
-// NarrowByOriginView narrows t using an immutable canonical case view.
-func NarrowByOriginView(t typ.Type, familyID uint64, cases caseset.View) (typ.Type, bool) {
-	return narrowByOrigin(t, familyID, viewedCases(cases))
-}
-
-func narrowByOrigin(t typ.Type, familyID uint64, cases caseSelection) (typ.Type, bool) {
-	if familyID == 0 || cases.len() == 0 {
+// NarrowByOrigin narrows t using an immutable canonical case view.
+func NarrowByOrigin(t typ.Type, familyID uint64, cases caseset.View) (typ.Type, bool) {
+	if familyID == 0 || cases.Len() == 0 {
 		return t, false
 	}
 	family, ok := originFamilyOf(t)
@@ -116,11 +129,11 @@ func narrowByOrigin(t typ.Type, familyID uint64, cases caseSelection) (typ.Type,
 	return narrowByOriginFamily(t, family, cases)
 }
 
-func narrowByOriginFamily(t typ.Type, family originFamily, cases caseSelection) (typ.Type, bool) {
+func narrowByOriginFamily(t typ.Type, family originFamily, cases caseset.View) (typ.Type, bool) {
 	var out []typ.Type
 	changed := false
 	for _, c := range family.cases {
-		if cases.contains(c.index) {
+		if containsCase(cases, c.index) {
 			out = append(out, c.typ)
 			continue
 		}
@@ -167,19 +180,9 @@ func FullFamilyType(familyID uint64) (typ.Type, bool) {
 	return normalize.UnionForEvidence(out...), true
 }
 
-// TypeFromOrigin reconstructs the structural union represented by origin
-// evidence previously registered from a source type.
-func TypeFromOrigin(familyID uint64, cases []int) (typ.Type, bool) {
-	return typeFromOrigin(familyID, sliceCases(cases))
-}
-
-// TypeFromOriginView reconstructs a type from an immutable canonical case view.
-func TypeFromOriginView(familyID uint64, cases caseset.View) (typ.Type, bool) {
-	return typeFromOrigin(familyID, viewedCases(cases))
-}
-
-func typeFromOrigin(familyID uint64, cases caseSelection) (typ.Type, bool) {
-	if familyID == 0 || cases.len() == 0 {
+// TypeFromOrigin reconstructs a type from an immutable canonical case view.
+func TypeFromOrigin(familyID uint64, cases caseset.View) (typ.Type, bool) {
+	if familyID == 0 || cases.Len() == 0 {
 		return nil, false
 	}
 	family, ok := loadOriginFamily(familyID)
@@ -189,14 +192,14 @@ func typeFromOrigin(familyID uint64, cases caseSelection) (typ.Type, bool) {
 	return typeFromOriginFamily(family, cases)
 }
 
-func typeFromOriginFamily(family originFamily, cases caseSelection) (typ.Type, bool) {
-	out := make([]typ.Type, 0, cases.len())
+func typeFromOriginFamily(family originFamily, cases caseset.View) (typ.Type, bool) {
+	out := make([]typ.Type, 0, cases.Len())
 	for _, c := range family.cases {
-		if cases.contains(c.index) {
+		if containsCase(cases, c.index) {
 			out = append(out, c.typ)
 		}
 	}
-	if !cases.allKnown(family.cases) || len(out) == 0 {
+	if !allCasesKnown(cases, family.cases) || len(out) == 0 {
 		return nil, false
 	}
 	return normalize.UnionForEvidence(out...), true

@@ -12,6 +12,21 @@ func BuiltinTableTopMarker() Type {
 // IsBuiltinTableTopMarker reports whether t is the builtin Lua `table` top
 // marker. The marker means "some table-like shape", not a closed interface.
 func IsBuiltinTableTopMarker(t Type) bool {
-	iface, ok := t.(*Interface)
-	return ok && iface.Name == BuiltinTableTopName && len(iface.Methods) == 0
+	seen := make(map[Type]struct{})
+	for t != nil {
+		if _, repeated := seen[t]; repeated {
+			return false
+		}
+		seen[t] = struct{}{}
+		switch wrapped := t.(type) {
+		case *Annotated:
+			t = wrapped.Inner
+		case *Alias:
+			t = wrapped.UnaliasedTarget()
+		default:
+			iface, ok := t.(*Interface)
+			return ok && iface.Name == BuiltinTableTopName && len(iface.Methods) == 0
+		}
+	}
+	return false
 }

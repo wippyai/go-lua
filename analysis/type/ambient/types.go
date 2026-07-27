@@ -3,14 +3,13 @@
 package ambient
 
 import (
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 const Channel = "Channel"
 const RuntimeModuleChannel = "channel.Channel"
-const Table = typetable.BuiltinTopName
+const Table = typ.BuiltinTableTopName
 
 // Lookup returns a fresh ambient type definition for name.
 func Lookup(name string) (typ.Type, bool) {
@@ -18,7 +17,7 @@ func Lookup(name string) (typ.Type, bool) {
 	case Channel:
 		return ChannelGeneric(), true
 	case Table:
-		return typetable.BuiltinTopMarker(), true
+		return typ.BuiltinTableTopMarker(), true
 	default:
 		return nil, false
 	}

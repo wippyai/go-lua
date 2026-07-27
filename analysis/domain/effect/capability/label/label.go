@@ -48,10 +48,6 @@ func IDFor(label effect.Label) (string, bool) {
 		return capability.IterationIterator, true
 	case dispatch.ModuleLoad:
 		return capability.DispatchModuleLoad, true
-	case dispatch.TypePredicate:
-		return capability.DispatchTypePredicate, true
-	case dispatch.VariadicTransform:
-		return capability.DispatchVariadicTransform, true
 	case mutation.Mutate:
 		return capability.MutationMutate, true
 	case mutation.LengthChange:
@@ -100,14 +96,6 @@ func IDForReturnTransform(transform returns.ReturnType) (string, bool) {
 		return capability.ReturnsReturnTypeProjection, true
 	case returns.ReturnTypeConditionalType:
 		return capability.ReturnsReturnConditionalType, true
-	case returns.ReturnTypeDeepElementOf:
-		return capability.ReturnsReturnDeepElementOf, true
-	case returns.ReturnTypeStringUnpackValue:
-		return capability.ReturnsReturnStringUnpackValue, true
-	case returns.ReturnTypeSelectCaseOfParam:
-		return capability.ReturnsReturnSelectCaseOfParam, true
-	case returns.ReturnTypeSelectResultOfCases:
-		return capability.ReturnsReturnSelectResultOfCases, true
 	default:
 		return "", false
 	}

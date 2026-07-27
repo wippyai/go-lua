@@ -14,10 +14,6 @@ const (
 	ReturnTypeArrayOfCallbackReturn
 	ReturnTypeTypeProjection
 	ReturnTypeConditionalType
-	ReturnTypeDeepElementOf
-	ReturnTypeStringUnpackValue
-	ReturnTypeSelectCaseOfParam
-	ReturnTypeSelectResultOfCases
 )
 
 // KindOfReturnType reports the vocabulary variant of transform.
@@ -37,14 +33,6 @@ func KindOfReturnType(transform ReturnType) ReturnTypeKind {
 		return ReturnTypeTypeProjection
 	case ConditionalType, *ConditionalType:
 		return ReturnTypeConditionalType
-	case DeepElementOf, *DeepElementOf:
-		return ReturnTypeDeepElementOf
-	case StringUnpackValue, *StringUnpackValue:
-		return ReturnTypeStringUnpackValue
-	case SelectCaseOfParam, *SelectCaseOfParam:
-		return ReturnTypeSelectCaseOfParam
-	case SelectResultOfCases, *SelectResultOfCases:
-		return ReturnTypeSelectResultOfCases
 	default:
 		return ReturnTypeUnknown
 	}

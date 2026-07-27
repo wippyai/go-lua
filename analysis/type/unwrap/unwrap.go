@@ -10,7 +10,7 @@
 package unwrap
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/internal/graph"
+	graph "github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -50,7 +50,7 @@ func Annotations(t typ.Type) typ.Type {
 		if ann.Inner == nil || ann.Inner == t {
 			return t
 		}
-		if !seen.Enter(ann) {
+		if !seen.Enter(ann, 0) {
 			return t
 		}
 		t = ann.Inner
@@ -71,7 +71,7 @@ func Alias(t typ.Type) typ.Type {
 		if next == nil || next == t {
 			return next
 		}
-		if !seen.Enter(t) {
+		if !seen.Enter(t, 0) {
 			return nil
 		}
 		t = next
@@ -84,7 +84,7 @@ func Optional(t typ.Type) typ.Type {
 	var seen graph.Path
 	for {
 		t = transparent(t)
-		if !seen.Enter(t) {
+		if !seen.Enter(t, 0) {
 			return nil
 		}
 		switch tt := t.(type) {
@@ -132,7 +132,7 @@ func RecordWithAliasPolicy(t typ.Type, policy RecordAliasPolicy) *typ.Record {
 		if !ok {
 			break
 		}
-		if !seen.Enter(a) {
+		if !seen.Enter(a, 0) {
 			return nil
 		}
 		var next typ.Type
@@ -161,10 +161,10 @@ func isOptionalLike(t typ.Type, active *graph.Path) bool {
 	if t == nil {
 		return true
 	}
-	if !active.Enter(t) {
+	if !active.Enter(t, 0) {
 		return false
 	}
-	defer active.Leave(t)
+	defer active.Leave(t, 0)
 
 	switch tt := t.(type) {
 	case *typ.Annotated:

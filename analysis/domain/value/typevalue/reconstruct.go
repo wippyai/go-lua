@@ -45,9 +45,9 @@ func typeOf(reg *axis.Registry, value product.Value, cache *Cache) (typ.Type, bo
 			ok bool
 		)
 		if cache != nil {
-			t, ok = cache.TypeFromVariantOriginView(origin.Family(), origin.CasesView())
+			t, ok = cache.Variants().TypeFromOrigin(origin.Family(), origin.CasesView())
 		} else {
-			t, ok = variant.TypeFromOriginView(origin.Family(), origin.CasesView())
+			t, ok = variant.TypeFromOrigin(origin.Family(), origin.CasesView())
 		}
 		if ok {
 			return typeWithPresence(t, p), true
@@ -65,18 +65,18 @@ func narrowTypeByOrigin(t typ.Type, origin variantorigin.Value, cache *Cache) (t
 		ok       bool
 	)
 	if cache != nil {
-		narrowed, ok = cache.NarrowVariantByOriginView(t, origin.Family(), origin.CasesView())
+		narrowed, ok = cache.Variants().NarrowByOrigin(t, origin.Family(), origin.CasesView())
 	} else {
-		narrowed, ok = variant.NarrowByOriginView(t, origin.Family(), origin.CasesView())
+		narrowed, ok = variant.NarrowByOrigin(t, origin.Family(), origin.CasesView())
 	}
 	if ok {
 		return narrowed, true
 	}
 	var originType typ.Type
 	if cache != nil {
-		originType, ok = cache.TypeFromVariantOriginView(origin.Family(), origin.CasesView())
+		originType, ok = cache.Variants().TypeFromOrigin(origin.Family(), origin.CasesView())
 	} else {
-		originType, ok = variant.TypeFromOriginView(origin.Family(), origin.CasesView())
+		originType, ok = variant.TypeFromOrigin(origin.Family(), origin.CasesView())
 	}
 	if ok && cache.IsSubtype(originType, t) {
 		return originType, true

@@ -168,23 +168,15 @@ func originPathLiteralKey(suffix []segment.Segment) originPathKey {
 	return key
 }
 
-func (c *Cache) NarrowByOrigin(t typ.Type, familyID uint64, cases []int) (typ.Type, bool) {
+func (c *Cache) NarrowByOrigin(t typ.Type, familyID uint64, cases caseset.View) (typ.Type, bool) {
 	if c == nil {
 		return NarrowByOrigin(t, familyID, cases)
 	}
-	return c.narrowByOrigin(t, familyID, sliceCases(cases), originCaseKey(cases))
+	return c.narrowByOrigin(t, familyID, cases, originCaseKey(cases))
 }
 
-// NarrowByOriginView is the allocation-free immutable-view variant.
-func (c *Cache) NarrowByOriginView(t typ.Type, familyID uint64, cases caseset.View) (typ.Type, bool) {
-	if c == nil {
-		return NarrowByOriginView(t, familyID, cases)
-	}
-	return c.narrowByOrigin(t, familyID, viewedCases(cases), originCaseViewKey(cases))
-}
-
-func (c *Cache) narrowByOrigin(t typ.Type, familyID uint64, cases caseSelection, caseKey originCasesKey) (typ.Type, bool) {
-	if familyID == 0 || cases.len() == 0 {
+func (c *Cache) narrowByOrigin(t typ.Type, familyID uint64, cases caseset.View, caseKey originCasesKey) (typ.Type, bool) {
+	if familyID == 0 || cases.Len() == 0 {
 		return t, false
 	}
 	key := narrowCacheKey{t: t, family: familyID, cases: caseKey}
@@ -220,23 +212,15 @@ func (c *Cache) narrowByOrigin(t typ.Type, familyID uint64, cases caseSelection,
 	return narrowed, changed
 }
 
-func (c *Cache) TypeFromOrigin(familyID uint64, cases []int) (typ.Type, bool) {
+func (c *Cache) TypeFromOrigin(familyID uint64, cases caseset.View) (typ.Type, bool) {
 	if c == nil {
 		return TypeFromOrigin(familyID, cases)
 	}
-	return c.typeFromOrigin(familyID, sliceCases(cases), originCaseKey(cases))
+	return c.typeFromOrigin(familyID, cases, originCaseKey(cases))
 }
 
-// TypeFromOriginView is the allocation-free immutable-view variant.
-func (c *Cache) TypeFromOriginView(familyID uint64, cases caseset.View) (typ.Type, bool) {
-	if c == nil {
-		return TypeFromOriginView(familyID, cases)
-	}
-	return c.typeFromOrigin(familyID, viewedCases(cases), originCaseViewKey(cases))
-}
-
-func (c *Cache) typeFromOrigin(familyID uint64, cases caseSelection, caseKey originCasesKey) (typ.Type, bool) {
-	if familyID == 0 || cases.len() == 0 {
+func (c *Cache) typeFromOrigin(familyID uint64, cases caseset.View, caseKey originCasesKey) (typ.Type, bool) {
+	if familyID == 0 || cases.Len() == 0 {
 		return nil, false
 	}
 	key := originTypeCacheKey{family: familyID, cases: caseKey}
@@ -276,11 +260,7 @@ func originFamilyActive(id uint64) bool {
 	return ok
 }
 
-func originCaseKey(cases []int) originCasesKey {
-	return originSelectionKey(sliceCases(cases))
-}
-
-func originCaseViewKey(cases caseset.View) originCasesKey {
+func originCaseKey(cases caseset.View) originCasesKey {
 	if cases.Len() == 0 {
 		return originCasesKey{}
 	}
@@ -298,57 +278,6 @@ func originCaseViewKey(cases caseset.View) originCasesKey {
 	buf := make([]byte, 0, cases.Len()*4)
 	for i := 0; i < cases.Len(); i++ {
 		buf = strconv.AppendInt(buf, int64(cases.At(i)), 10)
-		buf = append(buf, ',')
-	}
-	key.overflow = string(buf)
-	return key
-}
-
-func originSelectionKey(cases caseSelection) originCasesKey {
-	if cases.len() == 0 {
-		return originCasesKey{}
-	}
-	var key originCasesKey
-	for i := 0; i < cases.len(); i++ {
-		c := cases.at(i)
-		if !insertOriginCase(&key, c) {
-			compact := make([]int, cases.len())
-			for index := 0; index < cases.len(); index++ {
-				compact[index] = cases.at(index)
-			}
-			compact = compactInts(compact)
-			return originCaseOverflowKey(compact)
-		}
-	}
-	return key
-}
-
-func insertOriginCase(key *originCasesKey, value int) bool {
-	i := 0
-	for i < key.count && key.values[i] < value {
-		i++
-	}
-	if i < key.count && key.values[i] == value {
-		return true
-	}
-	if key.count == len(key.values) {
-		return false
-	}
-	copy(key.values[i+1:], key.values[i:key.count])
-	key.values[i] = value
-	key.count++
-	return true
-}
-
-func originCaseOverflowKey(compact []int) originCasesKey {
-	key := originCasesKey{count: len(compact)}
-	copy(key.values[:], compact)
-	if len(compact) <= len(key.values) {
-		return key
-	}
-	buf := make([]byte, 0, len(compact)*4)
-	for _, c := range compact {
-		buf = strconv.AppendInt(buf, int64(c), 10)
 		buf = append(buf, ',')
 	}
 	key.overflow = string(buf)

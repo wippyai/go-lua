@@ -8,17 +8,8 @@ import (
 )
 
 // ProjectOrigin projects origin evidence through a static record path.
-func ProjectOrigin(familyID uint64, cases []int, suffix []segment.Segment) (uint64, []int, bool) {
-	return projectOrigin(familyID, sliceCases(cases), suffix)
-}
-
-// ProjectOriginView projects an immutable canonical origin view through suffix.
-func ProjectOriginView(familyID uint64, cases caseset.View, suffix []segment.Segment) (uint64, []int, bool) {
-	return projectOrigin(familyID, viewedCases(cases), suffix)
-}
-
-func projectOrigin(familyID uint64, cases caseSelection, suffix []segment.Segment) (uint64, []int, bool) {
-	if familyID == 0 || cases.len() == 0 || len(suffix) == 0 {
+func ProjectOrigin(familyID uint64, cases caseset.View, suffix []segment.Segment) (uint64, []int, bool) {
+	if familyID == 0 || cases.Len() == 0 || len(suffix) == 0 {
 		return 0, nil, false
 	}
 	family, ok := loadOriginFamily(familyID)
@@ -28,7 +19,7 @@ func projectOrigin(familyID uint64, cases caseSelection, suffix []segment.Segmen
 	var outFamily uint64
 	var outCases []int
 	for _, c := range family.cases {
-		if !cases.contains(c.index) {
+		if !containsCase(cases, c.index) {
 			continue
 		}
 		field, ok := fieldAtPath(c.typ, suffix)
@@ -47,7 +38,7 @@ func projectOrigin(familyID uint64, cases caseSelection, suffix []segment.Segmen
 		}
 		outCases = append(outCases, childCases...)
 	}
-	if !cases.allKnown(family.cases) {
+	if !allCasesKnown(cases, family.cases) {
 		return 0, nil, false
 	}
 	outCases = compactInts(outCases)
@@ -106,26 +97,17 @@ func originByPathLiteralWithCache(cache *Cache, t typ.Type, suffix []segment.Seg
 
 // NarrowOriginByPath keeps parent cases whose path projection is compatible
 // with constraint. When equal is false it keeps the cases proven incompatible.
-func NarrowOriginByPath(parentFamily uint64, parentCases []int, suffix []segment.Segment, constraintFamily uint64, constraintCases []int, equal bool) ([]int, bool) {
-	return narrowOriginByPath(parentFamily, sliceCases(parentCases), suffix, constraintFamily, sliceCases(constraintCases), equal)
-}
-
-// NarrowOriginByPathView narrows immutable canonical parent and constraint views.
-func NarrowOriginByPathView(parentFamily uint64, parentCases caseset.View, suffix []segment.Segment, constraintFamily uint64, constraintCases caseset.View, equal bool) ([]int, bool) {
-	return narrowOriginByPath(parentFamily, viewedCases(parentCases), suffix, constraintFamily, viewedCases(constraintCases), equal)
-}
-
-func narrowOriginByPath(parentFamily uint64, parentCases caseSelection, suffix []segment.Segment, constraintFamily uint64, constraintCases caseSelection, equal bool) ([]int, bool) {
-	if parentFamily == 0 || parentCases.len() == 0 || len(suffix) == 0 || constraintFamily == 0 || constraintCases.len() == 0 {
+func NarrowOriginByPath(parentFamily uint64, parentCases caseset.View, suffix []segment.Segment, constraintFamily uint64, constraintCases caseset.View, equal bool) ([]int, bool) {
+	if parentFamily == 0 || parentCases.Len() == 0 || len(suffix) == 0 || constraintFamily == 0 || constraintCases.Len() == 0 {
 		return nil, false
 	}
 	family, ok := loadOriginFamily(parentFamily)
 	if !ok {
 		return nil, false
 	}
-	out := make([]int, 0, parentCases.len())
+	out := make([]int, 0, parentCases.Len())
 	for _, c := range family.cases {
-		if !parentCases.contains(c.index) {
+		if !containsCase(parentCases, c.index) {
 			continue
 		}
 		field, ok := fieldAtPath(c.typ, suffix)
@@ -140,16 +122,16 @@ func narrowOriginByPath(parentFamily uint64, parentCases caseSelection, suffix [
 			out = append(out, c.index)
 			continue
 		}
-		intersects := constraintCases.intersects(childCases)
+		intersects := casesIntersect(constraintCases, childCases)
 		if intersects == equal {
 			out = append(out, c.index)
 		}
 	}
-	if !parentCases.allKnown(family.cases) {
+	if !allCasesKnown(parentCases, family.cases) {
 		return nil, false
 	}
 	out = compactInts(out)
-	if parentCases.sameSet(out) {
+	if sameCases(parentCases, out) {
 		return nil, false
 	}
 	return out, true
@@ -159,26 +141,17 @@ func narrowOriginByPath(parentFamily uint64, parentCases caseSelection, suffix [
 // with a concrete constraint type. It covers equality tests where one side is a
 // projected union field and the other side is a concrete local value rather than
 // another variant-origin path.
-func NarrowOriginByPathType(parentFamily uint64, parentCases []int, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
-	return narrowOriginByPathType(parentFamily, sliceCases(parentCases), suffix, constraint, equal)
-}
-
-// NarrowOriginByPathTypeView narrows an immutable canonical parent view.
-func NarrowOriginByPathTypeView(parentFamily uint64, parentCases caseset.View, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
-	return narrowOriginByPathType(parentFamily, viewedCases(parentCases), suffix, constraint, equal)
-}
-
-func narrowOriginByPathType(parentFamily uint64, parentCases caseSelection, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
-	if parentFamily == 0 || parentCases.len() == 0 || len(suffix) == 0 || constraint == nil {
+func NarrowOriginByPathType(parentFamily uint64, parentCases caseset.View, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
+	if parentFamily == 0 || parentCases.Len() == 0 || len(suffix) == 0 || constraint == nil {
 		return nil, false
 	}
 	family, ok := loadOriginFamily(parentFamily)
 	if !ok {
 		return nil, false
 	}
-	out := make([]int, 0, parentCases.len())
+	out := make([]int, 0, parentCases.Len())
 	for _, c := range family.cases {
-		if !parentCases.contains(c.index) {
+		if !containsCase(parentCases, c.index) {
 			continue
 		}
 		field, ok := fieldAtPath(c.typ, suffix)
@@ -193,11 +166,11 @@ func narrowOriginByPathType(parentFamily uint64, parentCases caseSelection, suff
 			out = append(out, c.index)
 		}
 	}
-	if !parentCases.allKnown(family.cases) {
+	if !allCasesKnown(parentCases, family.cases) {
 		return nil, false
 	}
 	out = compactInts(out)
-	if parentCases.sameSet(out) {
+	if sameCases(parentCases, out) {
 		return nil, false
 	}
 	return out, true

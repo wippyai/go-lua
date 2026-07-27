@@ -713,7 +713,7 @@ func TestEntryValueShape(t *testing.T) {
 	}
 }
 
-func TestBuiltinTopMarker(t *testing.T) {
+func TestBuiltinTableTopMarker(t *testing.T) {
 	tableTop := typ.NewInterface("table", nil)
 	nonTableIface := typ.NewInterface("Reader", nil)
 	aliasedTable := typ.NewAlias("TTable", tableTop)
@@ -735,8 +735,8 @@ func TestBuiltinTopMarker(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsBuiltinTopMarker(tt.t); got != tt.want {
-				t.Errorf("IsBuiltinTopMarker() = %v, want %v", got, tt.want)
+			if got := typ.IsBuiltinTableTopMarker(tt.t); got != tt.want {
+				t.Errorf("IsBuiltinTableTopMarker() = %v, want %v", got, tt.want)
 			}
 		})
 	}

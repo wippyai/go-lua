@@ -5,10 +5,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
-	"github.com/wippyai/go-lua/analysis/domain/value/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
+	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
+	"github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	typerefine "github.com/wippyai/go-lua/analysis/type/refinement"
@@ -577,7 +578,7 @@ func currentVariantCasesAdmittedByConstraint(origin variantorigin.Value, constra
 	var selected []int
 	for i := 0; i < origin.CasesLen(); i++ {
 		c := origin.CaseAt(i)
-		caseType, ok := variant.TypeFromOrigin(origin.Family(), []int{c})
+		caseType, ok := variant.TypeFromOrigin(origin.Family(), caseset.New([]int{c}).View())
 		if !ok {
 			continue
 		}

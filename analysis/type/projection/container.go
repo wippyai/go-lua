@@ -1,7 +1,7 @@
 package projection
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/internal/graph"
+	graph "github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
@@ -29,10 +29,10 @@ func descendContainer(t typ.Type, active *graph.Path, cycleType typ.Type, cycleO
 	if t == nil {
 		return nil, false
 	}
-	if !active.Enter(t) {
+	if !active.Enter(t, 0) {
 		return cycleType, cycleOK
 	}
-	defer active.Leave(t)
+	defer active.Leave(t, 0)
 	switch tt := t.(type) {
 	case *typ.Annotated:
 		return descendContainer(tt.Inner, active, cycleType, cycleOK, project)

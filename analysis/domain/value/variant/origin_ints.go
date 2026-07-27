@@ -6,62 +6,25 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
 )
 
-// caseSelection is a concrete, non-retained adapter shared by the legacy slice
-// API and the immutable hot-path view API. It deliberately uses neither an
-// interface nor a callback iterator, so passing a caseset.View cannot box or
-// allocate.
-type caseSelection struct {
-	values []int
-	view   caseset.View
-	viewed bool
-}
-
-func sliceCases(values []int) caseSelection { return caseSelection{values: values} }
-func viewedCases(view caseset.View) caseSelection {
-	return caseSelection{view: view, viewed: true}
-}
-
-func (s caseSelection) len() int {
-	if s.viewed {
-		return s.view.Len()
-	}
-	return len(s.values)
-}
-
-func (s caseSelection) at(i int) int {
-	if s.viewed {
-		return s.view.At(i)
-	}
-	return s.values[i]
-}
-
-func (s caseSelection) contains(value int) bool {
-	if s.viewed {
-		low, high := 0, s.view.Len()
-		for low < high {
-			middle := int(uint(low+high) >> 1)
-			candidate := s.view.At(middle)
-			if candidate < value {
-				low = middle + 1
-			} else {
-				high = middle
-			}
-		}
-		return low < s.view.Len() && s.view.At(low) == value
-	}
-	for _, candidate := range s.values {
-		if candidate == value {
-			return true
+func containsCase(cases caseset.View, value int) bool {
+	low, high := 0, cases.Len()
+	for low < high {
+		middle := int(uint(low+high) >> 1)
+		candidate := cases.At(middle)
+		if candidate < value {
+			low = middle + 1
+		} else {
+			high = middle
 		}
 	}
-	return false
+	return low < cases.Len() && cases.At(low) == value
 }
 
-func (s caseSelection) allKnown(cases []originCase) bool {
-	for i := 0; i < s.len(); i++ {
+func allCasesKnown(selection caseset.View, cases []originCase) bool {
+	for i := 0; i < selection.Len(); i++ {
 		known := false
 		for _, candidate := range cases {
-			if candidate.index == s.at(i) {
+			if candidate.index == selection.At(i) {
 				known = true
 				break
 			}
@@ -73,24 +36,21 @@ func (s caseSelection) allKnown(cases []originCase) bool {
 	return true
 }
 
-func (s caseSelection) intersects(values []int) bool {
+func casesIntersect(selection caseset.View, values []int) bool {
 	for _, value := range values {
-		if s.contains(value) {
+		if containsCase(selection, value) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s caseSelection) sameSet(values []int) bool {
-	if !s.viewed {
-		return sameIntSet(s.values, values)
-	}
-	if s.view.Len() != len(values) {
+func sameCases(selection caseset.View, values []int) bool {
+	if selection.Len() != len(values) {
 		return false
 	}
 	for i, value := range values {
-		if s.view.At(i) != value {
+		if selection.At(i) != value {
 			return false
 		}
 	}

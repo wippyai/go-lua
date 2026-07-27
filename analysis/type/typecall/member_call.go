@@ -1,14 +1,13 @@
 package typecall
 
 import (
+	graph "github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
-	"github.com/wippyai/go-lua/analysis/type/internal/graph"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/stringlib"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
-	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -93,7 +92,7 @@ func ParamConsumesReceiver(receiverParam bool, param typ.Type, receiver typ.Type
 	if param == nil || receiver == nil || typ.IsAny(param) || typ.IsUnknown(param) {
 		return false
 	}
-	if typetable.IsBuiltinTopMarker(param) {
+	if typ.IsBuiltinTableTopMarker(param) {
 		return false
 	}
 	return subtype.IsSubtype(receiver, param)
@@ -140,10 +139,10 @@ func memberCallSeen(t typ.Type, name string, depth int, active *graph.Path) memb
 	if stopDepth(t, depth) {
 		return memberCallResult{status: MemberCallMissing}
 	}
-	if !active.Enter(t) {
+	if !active.Enter(t, 0) {
 		return memberCallResult{status: MemberCallMissing}
 	}
-	defer active.Leave(t)
+	defer active.Leave(t, 0)
 	if method, ok := ambientChannelMethod(t, name, depth+1); ok {
 		return memberCallResult{t: method, status: MemberCallOK}
 	}
@@ -204,10 +203,10 @@ func indexedMemberCallSeen(t typ.Type, key typ.Type, depth int, active *graph.Pa
 	if stopDepth(t, depth) {
 		return memberCallResult{status: MemberCallMissing}
 	}
-	if !active.Enter(t) {
+	if !active.Enter(t, 0) {
 		return memberCallResult{status: MemberCallMissing}
 	}
-	defer active.Leave(t)
+	defer active.Leave(t, 0)
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Union:
 		return indexedMemberCallUnionSeen(v, key, depth+1, active)
@@ -342,10 +341,10 @@ func channelPayloadTypeSeen(t typ.Type, depth int, active *graph.Path) (typ.Type
 	if stopDepth(t, depth) {
 		return nil, nil, false
 	}
-	if !active.Enter(t) {
+	if !active.Enter(t, 0) {
 		return nil, nil, false
 	}
-	defer active.Leave(t)
+	defer active.Leave(t, 0)
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Union:
 		payloads := make([]typ.Type, 0, len(v.Members))
@@ -389,10 +388,10 @@ func containsNilSeen(t typ.Type, depth int, active *graph.Path) bool {
 	if stopDepth(t, depth) {
 		return true
 	}
-	if !active.Enter(t) {
+	if !active.Enter(t, 0) {
 		return false
 	}
-	defer active.Leave(t)
+	defer active.Leave(t, 0)
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Optional:
 		return true
@@ -421,10 +420,10 @@ func callableValueSeen(t typ.Type, depth int, active *graph.Path) bool {
 	if stopDepth(t, depth) {
 		return false
 	}
-	if !active.Enter(t) {
+	if !active.Enter(t, 0) {
 		return false
 	}
-	defer active.Leave(t)
+	defer active.Leave(t, 0)
 	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Function:
 		return true

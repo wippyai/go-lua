@@ -13,35 +13,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
-// CheckKind aliases wir.CheckKind: wir is the upstream IR and owns the
-// single authoritative enum, branchcond only recognizes syntax shapes that
-// project onto it. Aliasing (rather than redeclaring) makes the two
-// enumerations impossible to drift apart; CheckKindExhaustivenessTest still
-// pins the name mapping so a wir-side rename is caught here too.
-type CheckKind = wir.CheckKind
-
-const (
-	CheckNone         = wir.CheckNone
-	CheckTruthy       = wir.CheckTruthy
-	CheckFalsy        = wir.CheckFalsy
-	CheckNil          = wir.CheckNil
-	CheckNotNil       = wir.CheckNotNil
-	CheckTypeEqual    = wir.CheckTypeEqual
-	CheckTypeNot      = wir.CheckTypeNot
-	CheckLiteralEqual = wir.CheckLiteralEqual
-	CheckLiteralNot   = wir.CheckLiteralNot
-	CheckPathEqual    = wir.CheckPathEqual
-	CheckPathNot      = wir.CheckPathNot
-	CheckLenGe        = wir.CheckLenGe
-	CheckIndexInRange = wir.CheckIndexInRange
-	CheckNumGe        = wir.CheckNumGe
-	CheckNumLe        = wir.CheckNumLe
-	CheckFrozenTable  = wir.CheckFrozenTable
-	CheckModResidue   = wir.CheckModResidue
-)
-
 type Check struct {
-	Kind           CheckKind
+	Kind           wir.CheckKind
 	Path           path.Path
 	OtherPath      path.Path
 	TypeName       string
@@ -59,7 +32,7 @@ type Check struct {
 	// Negated is true when the bound holds on the FALSE edge of the comparison
 	// rather than the true edge: e.g. `i > #xs` proves the in-range bound i <= #xs
 	// on its false edge, the standard `if oob then error end` guard form. Only the
-	// bound checks (CheckIndexInRange, CheckNumGe, CheckNumLe, CheckLenGe) use it.
+	// bound checks (wir.CheckIndexInRange, wir.CheckNumGe, wir.CheckNumLe, wir.CheckLenGe) use it.
 	Negated bool
 }
 
@@ -89,7 +62,7 @@ func (c Check) LiteralValue() (typ.Type, bool) {
 	if c.Literal != nil {
 		return c.Literal, true
 	}
-	if c.Kind == CheckLiteralEqual || c.Kind == CheckLiteralNot {
+	if c.Kind == wir.CheckLiteralEqual || c.Kind == wir.CheckLiteralNot {
 		return typ.LiteralString(c.LiteralString), true
 	}
 	return nil, false
@@ -145,17 +118,17 @@ func TypeIsCallReceiver(expr ast.Expr) (*ast.FuncCallExpr, ast.Expr, bool) {
 
 func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 	if p, ok := pathexpr.Resolve(expr, bindings); ok {
-		return Check{Kind: CheckTruthy, Path: p}
+		return Check{Kind: wir.CheckTruthy, Path: p}
 	}
 
 	switch expr := expr.(type) {
 	case *ast.UnaryNotOpExpr:
 		if p, ok := pathexpr.Resolve(expr.Expr, bindings); ok {
-			return Check{Kind: CheckFalsy, Path: p}
+			return Check{Kind: wir.CheckFalsy, Path: p}
 		}
 	case *ast.FuncCallExpr:
 		if p, ok := normalizeFrozenTableCall(expr, bindings); ok {
-			return Check{Kind: CheckFrozenTable, Path: p}
+			return Check{Kind: wir.CheckFrozenTable, Path: p}
 		}
 	case *ast.RelationalOpExpr:
 		if !isSupportedRelop(expr.Operator) {
@@ -186,9 +159,9 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 			return check
 		}
 		if p, ok := nilComparisonPath(expr.Lhs, expr.Rhs, bindings); ok {
-			kind := CheckNil
+			kind := wir.CheckNil
 			if expr.Operator == "~=" {
-				kind = CheckNotNil
+				kind = wir.CheckNotNil
 			}
 			return Check{Kind: kind, Path: p}
 		}
@@ -281,7 +254,7 @@ func ImpliedRelationalOpsOnEdge(expr ast.Expr, edge bool) []ImpliedRelationalOp 
 // flips polarity; any other shape proves nothing individually.
 func polarityChecks(expr ast.Expr, bindings *bind.Result, truthy bool) []Check {
 	check := Normalize(expr, bindings)
-	if check.Kind != CheckNone {
+	if check.Kind != wir.CheckNone {
 		return []Check{check}
 	}
 	if unary, ok := expr.(*ast.UnaryNotOpExpr); ok {
@@ -311,7 +284,7 @@ func polarityChecks(expr ast.Expr, bindings *bind.Result, truthy bool) []Check {
 
 func impliedChecks(expr ast.Expr, bindings *bind.Result, polarity bool, edge bool) []ImpliedCheck {
 	check := Normalize(expr, bindings)
-	if check.Kind != CheckNone {
+	if check.Kind != wir.CheckNone {
 		return []ImpliedCheck{{Check: check, Edge: edge, Polarity: polarity}}
 	}
 	if unary, ok := expr.(*ast.UnaryNotOpExpr); ok {
@@ -381,16 +354,16 @@ func normalizePathComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) 
 	if rhs.Less(lhs) {
 		lhs, rhs = rhs, lhs
 	}
-	kind := CheckPathEqual
+	kind := wir.CheckPathEqual
 	if expr.Operator == "~=" {
-		kind = CheckPathNot
+		kind = wir.CheckPathNot
 	}
 	return Check{Kind: kind, Path: lhs, OtherPath: rhs}, true
 }
 
 // normalizeModuloResidueComparison recognizes a residue guard such as
 // `i % 2 == 1` or the flipped `1 == i % 2`, producing
-// CheckModResidue{Path: i, Modulus: 2, Residue: 1}. Only a positive integer
+// wir.CheckModResidue{Path: i, Modulus: 2, Residue: 1}. Only a positive integer
 // modulus is admitted: Lua's floor modulo then puts `i % k` in [0, k-1] for
 // every sign of i, which is the window every consumer of this check relies on.
 // A residue outside that window is not reachable by the operator at all, so the
@@ -439,11 +412,11 @@ func moduloResidueOperands(moduloExpr, literalExpr ast.Expr, bindings *bind.Resu
 	if !ok || subject.IsEmpty() {
 		return Check{}, 0, false
 	}
-	return Check{Kind: CheckModResidue, Path: subject, Modulus: modulus}, residue, true
+	return Check{Kind: wir.CheckModResidue, Path: subject, Modulus: modulus}, residue, true
 }
 
 func normalizeLiteralComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
-	p, lit, kind, ok := resolveEqualityComparison(expr, bindings, literalComparisonOperands, CheckLiteralEqual, CheckLiteralNot)
+	p, lit, kind, ok := resolveEqualityComparison(expr, bindings, literalComparisonOperands, wir.CheckLiteralEqual, wir.CheckLiteralNot)
 	if !ok {
 		return Check{}, false
 	}
@@ -462,8 +435,8 @@ func resolveEqualityComparison[T any](
 	expr *ast.RelationalOpExpr,
 	bindings *bind.Result,
 	operands func(ast.Expr, ast.Expr, *bind.Result) (path.Path, T, bool),
-	eq, ne CheckKind,
-) (path.Path, T, CheckKind, bool) {
+	eq, ne wir.CheckKind,
+) (path.Path, T, wir.CheckKind, bool) {
 	p, value, ok := operands(expr.Lhs, expr.Rhs, bindings)
 	if !ok {
 		p, value, ok = operands(expr.Rhs, expr.Lhs, bindings)
@@ -502,14 +475,14 @@ func SupportsTypeComparison(expr ast.Expr, bindings *bind.Result) bool {
 
 func normalizeTypeComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
 	// type(path) == "literal": the type name is known syntactically.
-	if p, typeName, kind, ok := resolveEqualityComparison(expr, bindings, typeComparisonOperands, CheckTypeEqual, CheckTypeNot); ok {
+	if p, typeName, kind, ok := resolveEqualityComparison(expr, bindings, typeComparisonOperands, wir.CheckTypeEqual, wir.CheckTypeNot); ok {
 		return Check{Kind: kind, Path: p, TypeName: typeName}, true
 	}
 	// type(path) == otherPath: the right side is a value path whose type may be a
 	// single string literal (e.g. a kind: "number" field or local). The literal
 	// type name is resolved where type facts are available; consumers that have
 	// no type name leave this comparison un-narrowing.
-	if subject, other, kind, ok := resolveEqualityComparison(expr, bindings, typeComparisonPathOperands, CheckTypeEqual, CheckTypeNot); ok {
+	if subject, other, kind, ok := resolveEqualityComparison(expr, bindings, typeComparisonPathOperands, wir.CheckTypeEqual, wir.CheckTypeNot); ok {
 		return Check{Kind: kind, Path: subject, OtherPath: other}, true
 	}
 	return Check{}, false
@@ -606,11 +579,11 @@ func isEqualityRelop(op string) bool {
 
 // normalizeLengthFloorComparison recognizes a non-empty / lower-bound guard on
 // an array length, such as #xs > 0, #xs >= 1, or #xs ~= 0, and lowers it to a
-// canonical CheckLenGe{Path: xs, LenFloor: k} that holds on the true edge.
+// canonical wir.CheckLenGe{Path: xs, LenFloor: k} that holds on the true edge.
 func normalizeLengthFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
 	return normalizeFlippedComparison(expr, bindings, lengthFloorOperands,
 		func(arrayPath path.Path, floor int64, negated bool) Check {
-			return Check{Kind: CheckLenGe, Path: arrayPath, LenFloor: floor, Negated: negated}
+			return Check{Kind: wir.CheckLenGe, Path: arrayPath, LenFloor: floor, Negated: negated}
 		})
 }
 
@@ -637,18 +610,18 @@ func normalizeFlippedComparison[A, B any](
 func normalizeIndexInRangeComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
 	return normalizeFlippedComparison(expr, bindings, indexLenBoundOperands,
 		func(indexPath, arrayPath path.Path, negated bool) Check {
-			return Check{Kind: CheckIndexInRange, Path: indexPath, OtherPath: arrayPath, Negated: negated}
+			return Check{Kind: wir.CheckIndexInRange, Path: indexPath, OtherPath: arrayPath, Negated: negated}
 		})
 }
 
 // normalizeNumericFloorComparison recognizes a numeric lower-bound guard such as
-// `i >= 1`, `i > 0`, or the flipped `1 <= i`, producing CheckNumGe{Path: i,
+// `i >= 1`, `i > 0`, or the flipped `1 <= i`, producing wir.CheckNumGe{Path: i,
 // NumFloor: k}. It supplies the positive-index proof that pairs with an
 // index-in-range guard to remove the optional nil from an array read.
 func normalizeNumericFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
 	return normalizeFlippedComparison(expr, bindings, numericFloorOperands,
 		func(numPath path.Path, floor int64, negated bool) Check {
-			check := Check{Kind: CheckNumGe, Path: numPath, NumFloor: floor, Negated: negated}
+			check := Check{Kind: wir.CheckNumGe, Path: numPath, NumFloor: floor, Negated: negated}
 			if ceil, ceilNegated, ok := numericCeilingForComparisonPath(expr, bindings, numPath); ok {
 				check.NumCeil = ceil
 				check.HasNumCeil = true
@@ -660,14 +633,14 @@ func normalizeNumericFloorComparison(expr *ast.RelationalOpExpr, bindings *bind.
 
 // normalizeNumericCeilingComparison recognizes a numeric upper-bound guard such
 // as `i <= 64`, `i < 65`, or the flipped `64 >= i`, producing
-// CheckNumLe{Path: i, NumCeil: k}. Most non-equality comparisons also carry a
+// wir.CheckNumLe{Path: i, NumCeil: k}. Most non-equality comparisons also carry a
 // lower-bound implication on the opposite edge and are represented as
-// CheckNumGe with HasNumCeil set by normalizeNumericFloorComparison; this
+// wir.CheckNumGe with HasNumCeil set by normalizeNumericFloorComparison; this
 // fallback handles ceilings whose lower edge is not useful to the floor lane.
 func normalizeNumericCeilingComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
 	return normalizeFlippedComparison(expr, bindings, numericCeilingOperands,
 		func(numPath path.Path, ceil int64, negated bool) Check {
-			return Check{Kind: CheckNumLe, Path: numPath, NumCeil: ceil, HasNumCeil: true, NumCeilNegated: negated}
+			return Check{Kind: wir.CheckNumLe, Path: numPath, NumCeil: ceil, HasNumCeil: true, NumCeilNegated: negated}
 		})
 }
 

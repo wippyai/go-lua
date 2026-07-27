@@ -3,7 +3,7 @@
 package literal
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/internal/graph"
+	graph "github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -19,7 +19,7 @@ func ExtractAliasOnly(t typ.Type) (*typ.Literal, bool) {
 		if !ok {
 			break
 		}
-		if !seen.Enter(a) {
+		if !seen.Enter(a, 0) {
 			return nil, false
 		}
 		next := a.Target
@@ -81,10 +81,10 @@ func familyBase(t typ.Type, active *graph.Path) (typ.Type, bool) {
 		if ann.Inner == nil || ann.Inner == t {
 			return nil, false
 		}
-		if !active.Enter(t) {
+		if !active.Enter(t, 0) {
 			return nil, false
 		}
-		defer active.Leave(t)
+		defer active.Leave(t, 0)
 		t = ann.Inner
 	}
 	if t == nil {
@@ -96,10 +96,10 @@ func familyBase(t typ.Type, active *graph.Path) (typ.Type, bool) {
 		if next == nil || next == t {
 			return nil, false
 		}
-		if !active.Enter(t) {
+		if !active.Enter(t, 0) {
 			return nil, false
 		}
-		defer active.Leave(t)
+		defer active.Leave(t, 0)
 		return familyBase(next, active)
 	case *typ.Literal:
 		base := PrimitiveBase(v)

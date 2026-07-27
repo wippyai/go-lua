@@ -112,7 +112,7 @@ func TestValueProofAdmissibleRejectsRuntimeTableKindForOptionalFieldRecord(t *te
 
 func TestValueProofAdmissibleRejectsBuiltinTableTopAsMapOrArrayProof(t *testing.T) {
 	reg := registry()
-	value := typevalue.NewCache().FromTypeWithWitness(reg, typetable.BuiltinTopMarker())
+	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.BuiltinTableTopMarker())
 	proofs := New(reg, typevalue.NewCache())
 
 	for _, want := range []typ.Type{
@@ -351,7 +351,7 @@ func TestRuntimeKindProjectionKeepsTableAndFunctionEvidence(t *testing.T) {
 		t.Fatalf("RuntimeKindType(table) = %v/%v, want map", got, ok)
 	}
 
-	tableUnion := typ.MaterializeUnion([]typ.Type{typ.String, typetable.BuiltinTopMarker()})
+	tableUnion := typ.MaterializeUnion([]typ.Type{typ.String, typ.BuiltinTableTopMarker()})
 	withoutTable := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	withoutTable = product.Set(reg, withoutTable, runtimekind.Key, runtimekind.Top().Without(runtimekind.Table))
 	got, ok := New(reg, typevalue.NewCache()).RefineDeclaredType(tableUnion, withoutTable)

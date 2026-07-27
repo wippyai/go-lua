@@ -167,73 +167,46 @@ type Timings struct {
 	Evaluate       time.Duration
 }
 
+// Options supplies project-boundary capabilities to Check.
+type Options struct {
+	Imports    map[string]typ.Type
+	Globals    map[string]typ.Type
+	Resolver   typeannotation.Resolver
+	Relations  map[string]exportrelation.Summary
+	SourcePath string
+}
+
 // Check compiles source through the new front, binds its sole formal entry,
-// and evaluates the front-selected acyclic or frozen-cyclic artifact. Both
-// paths publish the identical result channels.
-func Check(source string) (result Result, err error) {
-	return CheckWithImportsAndResolver(source, nil, nil)
-}
-
-// CheckWithImports admits resolved module exports as closed entry facts. It
-// does not resolve imports itself: callers provide only the manifest exports
-// already selected at their project boundary. An unknown export is omitted so
-// the equation remains fail-closed rather than treating an unresolved module
-// as any.
-func CheckWithImports(source string, imports map[string]typ.Type) (result Result, err error) {
-	return CheckWithImportsAndResolver(source, imports, nil)
-}
-
-// CheckWithImportsAndResolver admits closed import values and the matching
-// named-type resolver together. The resolver cannot create runtime facts: it
-// only rehydrates annotations whose module manifests were already selected by
-// the project boundary.
-func CheckWithImportsAndResolver(source string, imports map[string]typ.Type, resolver typeannotation.Resolver) (result Result, err error) {
-	return CheckWithImportsResolverAndGlobals(source, imports, nil, resolver)
-}
-
-// CheckWithImportsResolverAndGlobals admits project-selected host globals in
-// addition to resolved module exports. Global values are a separate capability:
-// they are not require results and therefore cannot be reconstructed from an
-// import path or source spelling.
-func CheckWithImportsResolverAndGlobals(source string, imports, globals map[string]typ.Type, resolver typeannotation.Resolver) (result Result, err error) {
-	return CheckWithImportsResolverAndGlobalsAndRelations(source, imports, globals, resolver, nil)
-}
-
-// CheckWithImportsResolverAndGlobalsAndRelations consumes project-selected
-// finite module result relations alongside their ordinary export types.
-// CheckWithImportsResolverAndGlobalsAndRelations consumes project-selected
-// finite module result relations alongside their ordinary export types.
-// Evaluation always runs to completion: the analysis carries its own
-// termination argument (frozen WTO, widening, finite lattices), so no
-// resource cap may truncate a file's verdict.
-// sourcePath is optional: a project adapter that knows the entry's file name
-// supplies it so origin diagnostics can cite the source location they prove.
-// Without it those diagnostics stay unpublished rather than naming a file the
-// engine cannot know.
-func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, globals map[string]typ.Type, resolver typeannotation.Resolver, relations map[string]exportrelation.Summary, sourcePath ...string) (result Result, err error) {
+// and evaluates the front-selected acyclic or frozen-cyclic artifact. The
+// optional project capabilities are closed inputs selected by the caller.
+func Check(source string, supplied ...Options) (result Result, err error) {
+	var options Options
+	if len(supplied) != 0 {
+		options = supplied[0]
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("%w: %v", ErrInternalPanic, recovered)
 			result = Result{}
 		}
 	}()
-	compilation, parseElapsed, compileResult, err := compileCheck(source, resolver)
+	compilation, parseElapsed, compileResult, err := compileCheck(source, options.Resolver)
 	if err != nil || compileResult.Diagnostics != nil {
 		return compileResult, err
 	}
 	evaluateStarted := time.Now()
 	fileContext := context.Background()
 	lexical := newLexicalEvaluator(compilation)
-	lexical.setImportedTypes(imports)
-	lexical.setImportedRelations(relations)
-	lexical.setGlobalTypes(globals)
+	lexical.setImportedTypes(options.Imports)
+	lexical.setImportedRelations(options.Relations)
+	lexical.setGlobalTypes(options.Globals)
 	lexical.setTypeOrigins(compilation)
-	if len(sourcePath) != 0 {
-		lexical.sourcePath = sourcePath[0]
+	if options.SourcePath != "" {
+		lexical.sourcePath = options.SourcePath
 	}
 	lexical.ctx = fileContext
 	nestedFacts := publishedNestedNativeKernelFacts(compilation, lexical)
-	binding, err := bindCheckEntry(compilation.DraftArtifact(), imports)
+	binding, err := bindCheckEntry(compilation.DraftArtifact(), options.Imports)
 	if err != nil {
 		return Result{}, err
 	}

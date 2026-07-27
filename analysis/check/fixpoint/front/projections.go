@@ -31,9 +31,10 @@ type BoundaryView interface {
 	ResolvedTypeDefinitions() map[string]typ.Type
 }
 
-// SpansView is source-owned diagnostic projection metadata. It contains no
-// executable equation or lowered instruction graph.
-type SpansView interface {
+// DraftsSpansView combines executable drafts with their source-owned
+// diagnostic projection metadata.
+type DraftsSpansView interface {
+	DraftsView
 	ClaimSpanIndex() map[string]wir.Span
 	ClaimTargetSpanIndex() map[string]wir.Span
 	ClaimNameSpanIndex() map[string]wir.Span
@@ -70,11 +71,6 @@ type DraftsBoundaryView interface {
 	BoundaryView
 }
 
-type DraftsSpansView interface {
-	DraftsView
-	SpansView
-}
-
 type DraftsGraphView interface {
 	DraftsView
 	GraphView
@@ -86,9 +82,8 @@ type BoundaryGraphView interface {
 }
 
 type DraftsBoundarySpansView interface {
-	DraftsView
+	DraftsSpansView
 	BoundaryView
-	SpansView
 }
 
 type DraftsBoundaryGraphView interface {
@@ -98,16 +93,13 @@ type DraftsBoundaryGraphView interface {
 }
 
 type ProjectionView interface {
-	DraftsView
-	BoundaryView
-	SpansView
+	DraftsBoundarySpansView
 	GraphView
 }
 
 var (
 	_ DraftsView   = Compilation{}
 	_ BoundaryView = Compilation{}
-	_ SpansView    = Compilation{}
 	_ GraphView    = Compilation{}
 )
 

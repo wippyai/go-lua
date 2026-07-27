@@ -30,7 +30,7 @@ func fromType(reg *axis.Registry, t typ.Type, cache *Cache) product.Value {
 	if kindValue, ok := RuntimeKindFromType(t); ok {
 		product.EditSet(&ed, runtimekind.Key, kindValue)
 	}
-	if family, cases, ok := cache.originOfType(t); ok {
+	if family, cases, ok := cache.Variants().OriginOfType(t); ok {
 		product.EditSet(&ed, variantorigin.Key, variantorigin.Of(family, cases))
 	}
 	return ed.Done()

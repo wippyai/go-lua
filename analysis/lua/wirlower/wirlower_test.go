@@ -35,7 +35,7 @@ func lowerSourceG(t *testing.T, src string, globals ...string) string {
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
 	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
-	body := wirlower.LowerWithResolverAndOptions("main", stmts, bindings, built, typeresolve.New(bindings), wirlower.Options{SealedLuaTypeChecks: true})
+	body := wirlower.Lower("main", stmts, bindings, built, wirlower.Options{Resolver: typeresolve.New(bindings), SealedLuaTypeChecks: true})
 	return wirprint.Print(body, built.Graph)
 }
 
@@ -47,7 +47,7 @@ func lowerBody(t *testing.T, src string, globals ...string) *wir.Body {
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
 	built := cfgbuild.BuildChunkWithOptions(stmts, bindings, cfgbuild.Options{SealedLuaTypeChecks: true})
-	return wirlower.LowerWithResolverAndOptions("main", stmts, bindings, built, typeresolve.New(bindings), wirlower.Options{SealedLuaTypeChecks: true})
+	return wirlower.Lower("main", stmts, bindings, built, wirlower.Options{Resolver: typeresolve.New(bindings), SealedLuaTypeChecks: true})
 }
 
 func TestBranchCarriesImpliedChecks(t *testing.T) {
@@ -62,7 +62,7 @@ end
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	body := wirlower.Lower("main", stmts, bindings, built)
+	body := wirlower.Lower("main", stmts, bindings, built, wirlower.Options{})
 
 	var got []wir.ImpliedCheck
 	for i := 0; i < body.Len(); i++ {
@@ -476,7 +476,7 @@ end
 	}
 	bindings := bind.BindFunction(def.Func, bind.Options{})
 	built := cfgbuild.BuildFunction(def.Func, bindings)
-	body := wirlower.LowerFunction("f", def.Func, bindings, built)
+	body := wirlower.Lower("f", nil, bindings, built, wirlower.Options{Function: def.Func})
 	if got := body.DeclaredReturnArity(); got != 2 {
 		t.Fatalf("declared return arity = %d, want 2", got)
 	}
@@ -538,7 +538,7 @@ end
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resolver := typeresolve.NewWithExternal(bindings, typelookup.Source{Manifests: tc.manifests})
-			body := wirlower.LowerWithResolverAndOptions("main", stmts, bindings, built, resolver, wirlower.Options{SealedLuaTypeChecks: true})
+			body := wirlower.Lower("main", stmts, bindings, built, wirlower.Options{Resolver: resolver, SealedLuaTypeChecks: true})
 			typeCalls := 0
 			typePredicateChecks := 0
 
@@ -613,7 +613,7 @@ func TestCallCarriesExplicitTypeArguments(t *testing.T) {
 	stmts := []ast.Stmt{&ast.FuncCallStmt{Expr: call}}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"send", "value"}})
 	built := cfgbuild.BuildChunk(stmts, bindings)
-	body := wirlower.Lower("main", stmts, bindings, built)
+	body := wirlower.Lower("main", stmts, bindings, built, wirlower.Options{})
 	var inst wir.Instruction
 	for i := 0; i < body.Len(); i++ {
 		candidate := body.Instr(i)
