@@ -69,12 +69,12 @@ func TestLocalKeyPreservesPlaceholderAndReturnSlotStructure(t *testing.T) {
 		{
 			name: "placeholder",
 			path: pathdom.NewPlaceholder(0).IndexStr("item"),
-			want: pathdom.PathKey("$0[\"item\"]"),
+			want: pathdom.PathKey("n2:$0[\"item\"]"),
 		},
 		{
 			name: "return slot",
 			path: pathdom.Path{Root: "ret[1]"}.Field("ok"),
-			want: pathdom.PathKey("ret[1].ok"),
+			want: pathdom.PathKey("n6:ret[1].ok"),
 		},
 	}
 
@@ -106,7 +106,7 @@ func TestTypedLocalAndStableKeysAreNotInterchangeable(t *testing.T) {
 
 	localKey := local.LocalKey()
 	stableKey := stable.StableKey()
-	if localKey == "" || stableKey == "" {
+	if localKey.PathKey() == "" || stableKey.PathKey() == "" {
 		t.Fatalf("keys should be populated: local=%q stable=%q", localKey, stableKey)
 	}
 	if localKey.PathKey() == stableKey.PathKey() {
@@ -137,7 +137,7 @@ func TestParseResolverPathAndLocalKeyForVersionRoundTrip(t *testing.T) {
 	if _, _, _, ok := ParseResolverPath(pathdom.PathKey("s42.field")); ok {
 		t.Fatal("ParseResolverPath accepted stable address spelling")
 	}
-	if _, _, _, ok := ParseResolverPath(pathdom.PathKey("$0.field")); ok {
+	if _, _, _, ok := ParseResolverPath(pathdom.PathKey("n2:$0.field")); ok {
 		t.Fatal("ParseResolverPath accepted placeholder spelling")
 	}
 }
@@ -166,8 +166,8 @@ func TestRootSuffixParsersPreserveKeyBoundaries(t *testing.T) {
 	}
 
 	for _, key := range []pathdom.PathKey{
-		pathdom.PathKey(`$0["arg"]`),
-		pathdom.PathKey(`ret[2].ok`),
+		pathdom.PathKey(`n2:$0["arg"]`),
+		pathdom.PathKey(`n6:ret[2].ok`),
 		pathdom.PathKey(`n4:sym7.field`),
 	} {
 		stable, ok := StableFromKey(key)
@@ -210,9 +210,9 @@ func TestRootSuffixParsersPreserveSegmentBoundaryPrefixes(t *testing.T) {
 		t.Fatalf("%s should not be under %s", sibling.PathKey(), parent.PathKey())
 	}
 
-	stableParent := mustStructuralKey(t, pathdom.PathKey("$0.field"))
-	stableChild := mustStructuralKey(t, pathdom.PathKey("$0.field.child"))
-	stableSibling := mustStructuralKey(t, pathdom.PathKey("$0.fieldish"))
+	stableParent := mustStructuralKey(t, pathdom.PathKey("n2:$0.field"))
+	stableChild := mustStructuralKey(t, pathdom.PathKey("n2:$0.field.child"))
+	stableSibling := mustStructuralKey(t, pathdom.PathKey("n2:$0.fieldish"))
 	if !stableChild.HasPrefix(stableParent) {
 		t.Fatalf("%s should be under %s", stableChild.PathKey(), stableParent.PathKey())
 	}
@@ -422,17 +422,17 @@ func TestStableFromKeyRejectsVersionedPathKeys(t *testing.T) {
 	}
 }
 
-func TestStableKeySeparatesAmbiguousRootsAndVersionedLocalKeys(t *testing.T) {
+func TestStableAndLocalWrappersShareCanonicalNamedRootKeys(t *testing.T) {
 	ambiguousRoot := pathdom.Path{Root: "sym12", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
 	ambiguousStable := stableOfPathKey(t, ambiguousRoot)
-	if ambiguousStable == ambiguousRoot.Key() {
-		t.Fatalf("stable key collided with path key %q", ambiguousRoot.Key())
+	if ambiguousStable != ambiguousRoot.Key() {
+		t.Fatalf("stable key = %q, want path grammar key %q", ambiguousStable, ambiguousRoot.Key())
 	}
 	if parsed, ok := StableFromKey(ambiguousStable); !ok || parsed.Key() != ambiguousStable {
 		t.Fatalf("StableFromKey(%q) = %s/%v, want round-trip", ambiguousStable, parsed.Key(), ok)
 	}
-	if _, ok := StableFromKey(ambiguousRoot.Key()); ok {
-		t.Fatalf("StableFromKey accepted ambiguous path key %q", ambiguousRoot.Key())
+	if parsed, ok := StableFromKey(ambiguousRoot.Key()); !ok || parsed.Key() != ambiguousStable {
+		t.Fatalf("StableFromKey(path grammar key) = %q/%v, want %q/true", parsed.Key(), ok, ambiguousStable)
 	}
 
 	versionedLocal := pathdom.NewPath(12, "sym12").Field("field")
@@ -500,8 +500,8 @@ func TestStableKeyEncodesMalformedReservedNamedRoots(t *testing.T) {
 	for _, root := range []string{"$x", "$0x", "ret[]", "ret[x]", "ret[1", "s00042", "sym00042", "sym42@003", "n04:sym7"} {
 		path := pathdom.Path{Root: root}
 		stable := mustStableOfPath(t, path)
-		if stable.Key() == path.Key() {
-			t.Fatalf("stable key for reserved-looking root %q was not encoded: %q", root, stable.Key())
+		if stable.Key() != path.Key() {
+			t.Fatalf("stable key for root %q = %q, want path grammar key %q", root, stable.Key(), path.Key())
 		}
 		parsed, ok := StableFromKey(stable.Key())
 		if !ok || !parsed.Equal(stable) {
@@ -544,10 +544,10 @@ func TestStateKeyFromPathKeyDocumentsStateGrammar(t *testing.T) {
 	for _, key := range []pathdom.PathKey{
 		pathdom.PathKey("sym1"),
 		pathdom.PathKey("sym1@2.field"),
-		pathdom.PathKey("$0.item"),
-		pathdom.PathKey("ret[1].value"),
-		pathdom.PathKey("global.value"),
-		pathdom.PathKey("s911.stable"),
+		pathdom.PathKey("n2:$0.item"),
+		pathdom.PathKey("n6:ret[1].value"),
+		pathdom.PathKey("n6:global.value"),
+		pathdom.PathKey("sym911.stable"),
 	} {
 		got, ok := StateKeyFromPathKey(key)
 		if !ok || got.PathKey() != key {
@@ -569,7 +569,7 @@ func TestStateKeyFromPathKeyDocumentsStateGrammar(t *testing.T) {
 
 func TestRootPlaceholderKeyRejectsMemberPaths(t *testing.T) {
 	placeholder, ok := PlaceholderKeyFromPath(pathdom.NewPlaceholder(2).Field("child"))
-	if !ok || placeholder.PathKey() != pathdom.PathKey("$2.child") {
+	if !ok || placeholder.PathKey() != pathdom.PathKey("n2:$2.child") {
 		t.Fatalf("PlaceholderKeyFromPath($2.child) = %q/%v, want accepted", placeholder.PathKey(), ok)
 	}
 	if _, ok := placeholder.RootPlaceholderIndex(); ok {
@@ -577,7 +577,7 @@ func TestRootPlaceholderKeyRejectsMemberPaths(t *testing.T) {
 	}
 
 	got, ok := RootPlaceholderKeyFromPath(pathdom.NewPlaceholder(2))
-	if !ok || got.PathKey() != pathdom.PathKey("$2") {
+	if !ok || got.PathKey() != pathdom.PathKey("n2:$2") {
 		t.Fatalf("RootPlaceholderKeyFromPath($2) = %q/%v, want $2/true", got.PathKey(), ok)
 	}
 	index, ok := got.PlaceholderIndex()
@@ -588,15 +588,15 @@ func TestRootPlaceholderKeyRejectsMemberPaths(t *testing.T) {
 		t.Fatalf("RootPlaceholderKey %q should be valid", got.PathKey())
 	}
 
-	for _, key := range []pathdom.PathKey{
-		pathdom.PathKey(""),
-		pathdom.PathKey("$0.member"),
-		pathdom.PathKey("sym1"),
-		pathdom.PathKey("ret[1]"),
-		pathdom.PathKey(".member"),
+	for _, path := range []pathdom.Path{
+		{},
+		pathdom.NewPlaceholder(0).Field("member"),
+		pathdom.NewPath(1, "value"),
+		{Root: "ret[1]"},
+		{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "member"}}},
 	} {
-		if got := RootPlaceholderKey(key); got.Valid() {
-			t.Fatalf("RootPlaceholderKey(%q).Valid() = true, want rejected", key)
+		if got, ok := RootPlaceholderKeyFromPath(path); ok || got.Valid() {
+			t.Fatalf("RootPlaceholderKeyFromPath(%#v) = %q/%v, want rejected", path, got.PathKey(), ok)
 		}
 	}
 }
@@ -684,19 +684,19 @@ func TestRelativeStaticMemberSuffixKeyUsesCanonicalRelativeSegments(t *testing.T
 		{
 			name:     "field",
 			segments: []segment.Segment{{Kind: segment.SegmentField, Name: "id"}},
-			want:     pathdom.PathKey(".id"),
+			want:     pathdom.PathKey("n0:.id"),
 			ok:       true,
 		},
 		{
 			name:     "string index",
 			segments: []segment.Segment{{Kind: segment.SegmentIndexString, Name: "id"}},
-			want:     pathdom.PathKey("[\"id\"]"),
+			want:     pathdom.PathKey("n0:[\"id\"]"),
 			ok:       true,
 		},
 		{
 			name:     "int index",
 			segments: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: 1}},
-			want:     pathdom.PathKey("[1]"),
+			want:     pathdom.PathKey("n0:[1]"),
 			ok:       true,
 		},
 		{
@@ -740,10 +740,10 @@ func TestStructuralKeyVersionedPrefixRelationsUseSegmentBoundaries(t *testing.T)
 }
 
 func TestStructuralKeyStablePrefixRelationsUseSegmentBoundaries(t *testing.T) {
-	placeholder := mustStructuralKey(t, pathdom.PathKey("$0.field"))
-	placeholderChild := mustStructuralKey(t, pathdom.PathKey("$0.field.deep"))
-	placeholderSibling := mustStructuralKey(t, pathdom.PathKey("$0.fieldish"))
-	retChild := mustStructuralKey(t, pathdom.PathKey("ret[1].field.deep"))
+	placeholder := mustStructuralKey(t, pathdom.PathKey("n2:$0.field"))
+	placeholderChild := mustStructuralKey(t, pathdom.PathKey("n2:$0.field.deep"))
+	placeholderSibling := mustStructuralKey(t, pathdom.PathKey("n2:$0.fieldish"))
+	retChild := mustStructuralKey(t, pathdom.PathKey("n6:ret[1].field.deep"))
 
 	if !placeholderChild.HasPrefix(placeholder) || !placeholderChild.HasStrictPrefix(placeholder) {
 		t.Fatalf("%s should be a strict descendant of %s", placeholderChild.PathKey(), placeholder.PathKey())
@@ -787,15 +787,15 @@ func TestPathKeyPrefixHelpersUseStructuralBoundaries(t *testing.T) {
 		},
 		{
 			name:       "stable descendant",
-			candidate:  pathdom.PathKey("$0.field.deep"),
-			prefix:     pathdom.PathKey("$0.field"),
+			candidate:  pathdom.PathKey("n2:$0.field.deep"),
+			prefix:     pathdom.PathKey("n2:$0.field"),
 			wantPrefix: true,
 			wantStrict: true,
 		},
 		{
 			name:      "stable root family mismatch",
-			candidate: pathdom.PathKey("ret[1].field.deep"),
-			prefix:    pathdom.PathKey("$0.field"),
+			candidate: pathdom.PathKey("n6:ret[1].field.deep"),
+			prefix:    pathdom.PathKey("n2:$0.field"),
 		},
 		{
 			name:      "invalid candidate",
@@ -827,7 +827,6 @@ func TestStructuralKeyRejectsInvalidSpellings(t *testing.T) {
 		pathdom.PathKey(".field"),
 		pathdom.PathKey("sym1@1[bad]"),
 		pathdom.PathKey("sym1@1."),
-		pathdom.PathKey("sym1.field"),
 		pathdom.PathKey("ret[1"),
 	} {
 		if got, ok := StructuralKeyFromPathKey(key); ok || got.PathKey() != "" {
@@ -855,18 +854,18 @@ func TestRebasePathKeyPreservesStructuralBoundaries(t *testing.T) {
 	}
 
 	got, ok = RebasePathKey(
-		pathdom.PathKey("$0.child.name"),
-		pathdom.PathKey("$0.child"),
-		pathdom.PathKey("ret[1].leaf"),
+		pathdom.PathKey("n2:$0.child.name"),
+		pathdom.PathKey("n2:$0.child"),
+		pathdom.PathKey("n6:ret[1].leaf"),
 	)
-	if !ok || got != pathdom.PathKey("ret[1].leaf.name") {
+	if !ok || got != pathdom.PathKey("n6:ret[1].leaf.name") {
 		t.Fatalf("RebasePathKey(stable) = %s/%v, want ret[1].leaf.name/true", got, ok)
 	}
 
 	if got, ok := RebasePathKey(
 		pathdom.PathKey("sym10@1.child.name"),
 		pathdom.PathKey("sym10@1.child"),
-		pathdom.PathKey("s20.leaf"),
+		pathdom.PathKey("sym20.leaf"),
 	); ok || got != "" {
 		t.Fatalf("RebasePathKey(mixed local/stable) = %s/%v, want rejected", got, ok)
 	}
@@ -920,20 +919,20 @@ func TestRebaseLocalPathKeyToContextUsesContextVersion(t *testing.T) {
 }
 
 func TestPlaceholderPathFromKeyParsesPlaceholderOnly(t *testing.T) {
-	got, ok := PlaceholderPathFromKey(pathdom.PathKey(`$2.child["name"]`))
+	got, ok := PlaceholderPathFromKey(pathdom.PathKey(`n2:$2.child["name"]`))
 	if !ok {
 		t.Fatal("PlaceholderPathFromKey rejected placeholder key")
 	}
 	if got.Root != "$2" || segment.FormatSegments(got.Segments) != `.child["name"]` {
 		t.Fatalf("PlaceholderPathFromKey = %#v, want $2.child[\"name\"]", got)
 	}
-	if got, ok := PlaceholderPathFromKey(pathdom.PathKey("ret[1].child")); ok || !got.IsEmpty() {
+	if got, ok := PlaceholderPathFromKey(pathdom.PathKey("n6:ret[1].child")); ok || !got.IsEmpty() {
 		t.Fatalf("PlaceholderPathFromKey accepted return-root key: %#v/%v", got, ok)
 	}
 }
 
 func TestRelativeStaticMemberSuffixSegmentsParsesRootlessSuffix(t *testing.T) {
-	suffixKey, suffixOK := SuffixKeyFromPathKey(pathdom.PathKey(`.child["name"]`))
+	suffixKey, suffixOK := SuffixKeyFromPathKey(pathdom.PathKey(`n0:.child["name"]`))
 	if !suffixOK {
 		t.Fatal("SuffixKeyFromPathKey rejected valid suffix")
 	}

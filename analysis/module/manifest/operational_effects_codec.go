@@ -13,6 +13,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -1684,68 +1685,33 @@ func decodeLifecycleKind(s string) (signature.LifecycleKind, error) {
 	}
 }
 
-func encodeEscapeKind(kind signature.EscapeKind) (string, error) {
-	switch kind {
-	case signature.EscapeNone:
-		return "none", nil
-	case signature.EscapeBorrow:
-		return "borrow", nil
-	case signature.EscapeRetain:
-		return "retain", nil
-	case signature.EscapeStore:
-		return "store", nil
-	case signature.EscapeSend:
-		return "send", nil
-	case signature.EscapeExport:
-		return "export", nil
-	case signature.EscapeOpaque:
-		return "opaque", nil
-	default:
-		return "", fmt.Errorf("unsupported escape kind %d", kind)
+func encodeEscapeKind(kind placement.Escape) (string, error) {
+	if kind.ValidManifest() {
+		return kind.Name(), nil
 	}
+	return "", fmt.Errorf("unsupported escape kind %d", kind)
 }
 
-func decodeEscapeKind(s string) (signature.EscapeKind, error) {
-	switch s {
-	case "none":
-		return signature.EscapeNone, nil
-	case "borrow":
-		return signature.EscapeBorrow, nil
-	case "retain":
-		return signature.EscapeRetain, nil
-	case "store":
-		return signature.EscapeStore, nil
-	case "send":
-		return signature.EscapeSend, nil
-	case "export":
-		return signature.EscapeExport, nil
-	case "opaque":
-		return signature.EscapeOpaque, nil
-	default:
-		return signature.EscapeNone, fmt.Errorf("unknown escape kind %q", s)
+func decodeEscapeKind(s string) (placement.Escape, error) {
+	for kind := placement.None; kind.ValidManifest(); kind++ {
+		if kind.Name() == s {
+			return kind, nil
+		}
 	}
+	return placement.None, fmt.Errorf("unknown escape kind %q", s)
 }
 
-func encodePlacementConsequence(consequence signature.PlacementConsequence) (string, error) {
-	switch consequence {
-	case signature.PlacementConsequenceKeep,
-		signature.PlacementConsequenceOwnedHeap,
-		signature.PlacementConsequenceSharedHeap:
+func encodePlacementConsequence(consequence placement.Consequence) (string, error) {
+	if consequence.Valid() {
 		return string(consequence), nil
-	default:
-		return "", fmt.Errorf("unsupported placement consequence %q", consequence)
 	}
+	return "", fmt.Errorf("unsupported placement consequence %q", consequence)
 }
 
-func decodePlacementConsequence(s string) (signature.PlacementConsequence, error) {
-	switch signature.PlacementConsequence(s) {
-	case signature.PlacementConsequenceKeep:
-		return signature.PlacementConsequenceKeep, nil
-	case signature.PlacementConsequenceOwnedHeap:
-		return signature.PlacementConsequenceOwnedHeap, nil
-	case signature.PlacementConsequenceSharedHeap:
-		return signature.PlacementConsequenceSharedHeap, nil
-	default:
-		return "", fmt.Errorf("unknown placement consequence %q", s)
+func decodePlacementConsequence(s string) (placement.Consequence, error) {
+	consequence := placement.Consequence(s)
+	if consequence.Valid() {
+		return consequence, nil
 	}
+	return "", fmt.Errorf("unknown placement consequence %q", s)
 }

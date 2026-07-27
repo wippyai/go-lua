@@ -58,43 +58,11 @@ func (p Path) String() string {
 	return b.String()
 }
 
-// Key returns the structural, version-sensitive representation of the path.
-// This is path syntax identity, not stable address identity. Callers that need
-// version-insensitive finite-address identity should use domain/path/address;
-// callers that need point-visible state keys should use the state-key resolver
-// at the engine boundary.
-// Format: sym<symbol>@<version><segments> for versioned symbol paths,
-// sym<symbol><segments> for unversioned symbol paths, <Root><segments> for placeholders.
+// Key returns the canonical structural representation of the path. Stable,
+// local, state, placeholder, and structural address wrappers all delegate to
+// the same FormatKey grammar and differ only in the semantic forms they admit.
 func (p Path) Key() PathKey {
-	if p.IsEmpty() {
-		return ""
-	}
-	var b strings.Builder
-	b.Grow(p.keyLen())
-	if p.Symbol != 0 {
-		b.WriteString("sym")
-		writeUint(&b, uint64(p.Symbol))
-		if p.Version != 0 {
-			b.WriteByte('@')
-			writeInt(&b, p.Version)
-		}
-	} else {
-		b.WriteString(p.Root)
-	}
-	segment.WriteFormattedSegments(&b, p.Segments)
-	return PathKey(b.String())
-}
-
-func (p Path) keyLen() int {
-	n := segment.FormattedLen(p.Segments)
-	if p.Symbol == 0 {
-		return n + len(p.Root)
-	}
-	n += 3 + unsignedDecimalLen(uint64(p.Symbol))
-	if p.Version != 0 {
-		n += 1 + signedDecimalLen(p.Version)
-	}
-	return n
+	return FormatKey(p)
 }
 
 func writeUint(b *strings.Builder, n uint64) {

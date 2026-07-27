@@ -3,7 +3,6 @@ package address
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/internal/keycodec"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
@@ -19,7 +18,11 @@ func StableOfPath(path pathdom.Path) (Stable, bool) {
 	if !ok {
 		return Stable{}, false
 	}
-	return stableOfRootAndSuffix(root, suffixOfOwnedSegments(cloneSegments(path.Segments)))
+	stable, ok := stableOfRootAndSuffix(root, suffixOfOwnedSegments(cloneSegments(path.Segments)))
+	if !ok || stable.StableKey().PathKey() == "" {
+		return Stable{}, false
+	}
+	return stable, true
 }
 
 func stableOfSymbolOwnedSegments(sym symbol.ID, segments []segment.Segment) (Stable, bool) {
@@ -47,27 +50,14 @@ func stableOfRootAndSuffix(root Root, suffix Suffix) (Stable, bool) {
 
 // StableFromKey parses a key produced by Stable.Key.
 func StableFromKey(key pathdom.PathKey) (Stable, bool) {
-	if key == "" {
+	path, ok := pathdom.ParseKey(key)
+	if !ok || path.Version != 0 || path.Symbol == 0 && path.Root == "" {
 		return Stable{}, false
 	}
-	if sym, segments, ok := parseInternedSymbolPathKey(key); ok {
-		return stableOfSymbolOwnedSegments(sym, segments)
+	if path.Symbol != 0 {
+		return stableOfSymbolOwnedSegments(path.Symbol, path.Segments)
 	}
-	if _, _, _, ok := ParseResolverPath(key); ok {
-		return Stable{}, false
-	}
-	if root, segments, ok := parseEncodedNamedRootKey(string(key)); ok {
-		return stableOfRootOwnedSegments(root, segments)
-	}
-	s := string(key)
-	if keycodec.LooksEncodedNamedRootKey(s) || keycodec.LooksStableSymbolRootSuffix(s) || keycodec.LooksResolverRootSuffix(s) {
-		return Stable{}, false
-	}
-	parsed, ok := parsePlainNamedRootSuffix(key)
-	if !ok {
-		return Stable{}, false
-	}
-	return stableOfRootOwnedSegments(parsed.root, parsed.segments)
+	return stableOfRootOwnedSegments(path.Root, path.Segments)
 }
 
 // Key returns the deterministic key for map/set carriers.
@@ -78,13 +68,13 @@ func (a Stable) Key() pathdom.PathKey {
 // StableKey returns the deterministic stable-address key.
 func (a Stable) StableKey() StableKey {
 	if !a.root.isValid() {
-		return ""
+		return StableKey{}
 	}
 	if sym, ok := a.root.Symbol(); ok {
 		return SymbolStableKey(sym, a.suffix.segments)
 	}
 	root, _ := a.root.Name()
-	return StableKey(namedRootKey(root, a.suffix.segments))
+	return StableKey{key: namedRootKey(root, a.suffix.segments)}
 }
 
 // Path returns a path view of the address.

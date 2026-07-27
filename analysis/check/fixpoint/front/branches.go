@@ -193,7 +193,7 @@ func branchChainPathWire(value path.Path) BranchChainPathWire {
 	if value.IsEmpty() {
 		return BranchChainPathWire{}
 	}
-	wire := BranchChainPathWire{Key: string(value.Key()), Display: value.String()}
+	wire := BranchChainPathWire{Key: branchWirePathKey(value), Display: value.String()}
 	if len(value.Segments) == 0 {
 		return wire
 	}
@@ -204,7 +204,7 @@ func branchChainPathWire(value path.Path) BranchChainPathWire {
 	parent := value
 	parent.Segments = append([]segment.Segment(nil), value.Segments[:len(value.Segments)-1]...)
 	wire.FinalField = last.Name
-	wire.ParentKey = string(parent.Key())
+	wire.ParentKey = branchWirePathKey(parent)
 	wire.ParentDisplay = parent.String()
 	return wire
 }
@@ -298,7 +298,18 @@ func checkPathKey(checkPath path.Path) (string, error) {
 	if checkPath.IsEmpty() || checkPath.Key() == "" {
 		return "", fmt.Errorf("empty predicate path")
 	}
-	return string(checkPath.Key()), nil
+	return branchWirePathKey(checkPath), nil
+}
+
+// branchWirePathKey is the v1 wire-boundary translation for path keys.
+// In-memory keys always use path.FormatKey; the frozen branch wire predates
+// length-prefixed named roots and must keep its byte spelling until that wire
+// version changes. Symbol-rooted keys already have the same spelling.
+func branchWirePathKey(value path.Path) string {
+	if value.Symbol != 0 {
+		return string(value.Key())
+	}
+	return value.Root + segment.FormatSegments(value.Segments)
 }
 
 func literalScalarEncoding(value typ.Type) (string, error) {

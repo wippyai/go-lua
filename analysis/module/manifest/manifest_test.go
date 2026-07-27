@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -402,7 +403,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 		}},
 		EscapeEvents: []signature.EscapeEvent{{
 			Target:    pathdom.NewPlaceholder(0).Field("payload"),
-			Kind:      signature.EscapeSend,
+			Kind:      placement.Send,
 			Recursive: true,
 		}},
 		StoreRelations: []signature.StoreRelation{{
@@ -896,7 +897,7 @@ func TestManifestBackwardDecodesOperationalEffectsWithoutParamRelations(t *testi
 		t.Fatalf("param relations = %#v, want absent for legacy wire", decoded.OperationalEffects.ParamRelations)
 	}
 	if len(decoded.OperationalEffects.EscapeEvents) != 1 ||
-		decoded.OperationalEffects.EscapeEvents[0].Kind != signature.EscapeStore ||
+		decoded.OperationalEffects.EscapeEvents[0].Kind != placement.Store ||
 		!decoded.OperationalEffects.EscapeEvents[0].Target.Equal(pathdom.NewPlaceholder(0)) {
 		t.Fatalf("escape events = %#v, want legacy escape event preserved", decoded.OperationalEffects.EscapeEvents)
 	}
@@ -1350,8 +1351,8 @@ func operationalEffectsOrderA() *signature.OperationalEffects {
 			{Target: pathdom.NewPlaceholder(0).Field("sealed")},
 		},
 		EscapeEvents: []signature.EscapeEvent{
-			{Target: pathdom.NewPlaceholder(1).Field("payload"), Kind: signature.EscapeSend, Recursive: true},
-			{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: signature.EscapeBorrow},
+			{Target: pathdom.NewPlaceholder(1).Field("payload"), Kind: placement.Send, Recursive: true},
+			{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: placement.Borrow},
 		},
 		StoreRelations: []signature.StoreRelation{
 			{Source: pathdom.NewPlaceholder(1).Field("payload"), Into: pathdom.NewPlaceholder(0).Field("bucket")},
@@ -1360,15 +1361,15 @@ func operationalEffectsOrderA() *signature.OperationalEffects {
 		ParamRelations: []signature.ParamRelation{
 			{
 				Param:                1,
-				EscapeClass:          signature.EscapeStore,
-				PlacementConsequence: signature.PlacementConsequenceOwnedHeap,
+				EscapeClass:          placement.Store,
+				PlacementConsequence: placement.ConsequenceOwned,
 				StoredInto:           0,
 				HasStoredInto:        true,
 			},
 			{
 				Param:                0,
-				EscapeClass:          signature.EscapeNone,
-				PlacementConsequence: signature.PlacementConsequenceKeep,
+				EscapeClass:          placement.None,
+				PlacementConsequence: placement.Keep,
 				ThroughReturn:        true,
 			},
 		},
@@ -1462,8 +1463,8 @@ func operationalEffectsOrderB() *signature.OperationalEffects {
 			{Target: pathdom.NewPlaceholder(1).Field("sealed")},
 		},
 		EscapeEvents: []signature.EscapeEvent{
-			{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: signature.EscapeBorrow},
-			{Target: pathdom.NewPlaceholder(1).Field("payload"), Kind: signature.EscapeSend, Recursive: true},
+			{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: placement.Borrow},
+			{Target: pathdom.NewPlaceholder(1).Field("payload"), Kind: placement.Send, Recursive: true},
 		},
 		StoreRelations: []signature.StoreRelation{
 			{Source: pathdom.NewPlaceholder(0).Field("payload"), Into: pathdom.NewPlaceholder(1).Field("bucket")},
@@ -1472,14 +1473,14 @@ func operationalEffectsOrderB() *signature.OperationalEffects {
 		ParamRelations: []signature.ParamRelation{
 			{
 				Param:                0,
-				EscapeClass:          signature.EscapeNone,
-				PlacementConsequence: signature.PlacementConsequenceKeep,
+				EscapeClass:          placement.None,
+				PlacementConsequence: placement.Keep,
 				ThroughReturn:        true,
 			},
 			{
 				Param:                1,
-				EscapeClass:          signature.EscapeStore,
-				PlacementConsequence: signature.PlacementConsequenceOwnedHeap,
+				EscapeClass:          placement.Store,
+				PlacementConsequence: placement.ConsequenceOwned,
 				StoredInto:           0,
 				HasStoredInto:        true,
 			},

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -638,30 +639,12 @@ func validateParamRelations(fn *typ.Function, relations []signature.ParamRelatio
 	return nil
 }
 
-func validEscapeKind(kind signature.EscapeKind) bool {
-	switch kind {
-	case signature.EscapeNone,
-		signature.EscapeBorrow,
-		signature.EscapeRetain,
-		signature.EscapeStore,
-		signature.EscapeSend,
-		signature.EscapeExport,
-		signature.EscapeOpaque:
-		return true
-	default:
-		return false
-	}
+func validEscapeKind(kind placement.Escape) bool {
+	return kind.ValidManifest()
 }
 
-func validPlacementConsequence(consequence signature.PlacementConsequence) bool {
-	switch consequence {
-	case signature.PlacementConsequenceKeep,
-		signature.PlacementConsequenceOwnedHeap,
-		signature.PlacementConsequenceSharedHeap:
-		return true
-	default:
-		return false
-	}
+func validPlacementConsequence(consequence placement.Consequence) bool {
+	return consequence.Valid()
 }
 
 func validateManifestFunctionSignatures(m *Manifest) error {

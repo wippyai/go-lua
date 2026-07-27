@@ -8,6 +8,7 @@ import (
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -98,8 +99,8 @@ func oracleRichOperationalEffects() signature.OperationalEffects {
 			{Target: pathdom.NewPlaceholder(1).Field("frozen")},
 		},
 		EscapeEvents: []signature.EscapeEvent{
-			{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: signature.EscapeSend, Recursive: true},
-			{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: signature.EscapeStore, Recursive: false},
+			{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: placement.Send, Recursive: true},
+			{Target: pathdom.NewPlaceholder(0).Field("payload"), Kind: placement.Store, Recursive: false},
 		},
 		StoreRelations: []signature.StoreRelation{
 			{Source: pathdom.NewPlaceholder(0).Field("payload"), Into: pathdom.NewPlaceholder(1).Field("items")},
@@ -108,16 +109,16 @@ func oracleRichOperationalEffects() signature.OperationalEffects {
 		ParamRelations: []signature.ParamRelation{
 			{
 				Param:                1,
-				EscapeClass:          signature.EscapeStore,
-				PlacementConsequence: signature.PlacementConsequenceOwnedHeap,
+				EscapeClass:          placement.Store,
+				PlacementConsequence: placement.ConsequenceOwned,
 				ThroughReturn:        true,
 				StoredInto:           0,
 				HasStoredInto:        true,
 			},
 			{
 				Param:                0,
-				EscapeClass:          signature.EscapeNone,
-				PlacementConsequence: signature.PlacementConsequenceKeep,
+				EscapeClass:          placement.None,
+				PlacementConsequence: placement.Keep,
 			},
 		},
 		LifecycleEffects: []signature.LifecycleEffect{

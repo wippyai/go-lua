@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signature"
@@ -246,16 +247,16 @@ func escapeRelations(escapes []signature.ParamRelation, arity int) (*exportrelat
 			continue
 		}
 		switch relation.EscapeClass {
-		case signature.EscapeNone:
+		case placement.None:
 			// No cross-frame relation.
-		case signature.EscapeBorrow:
+		case placement.Borrow:
 			borrow = append(borrow, relation.Param)
-		case signature.EscapeStore, signature.EscapeRetain:
+		case placement.Store, placement.Retain:
 			if relation.HasStoredInto && relation.StoredInto >= 0 && relation.StoredInto < arity && relation.StoredInto != relation.Param {
 				return &exportrelation.OwnershipStore{Value: relation.Param, Owner: relation.StoredInto}, nil
 			}
 			return &exportrelation.OwnershipStore{Value: relation.Param, EscapingRoot: true}, nil
-		case signature.EscapeSend, signature.EscapeExport, signature.EscapeOpaque:
+		case placement.Send, placement.Export, placement.Opaque:
 			// Shared, return-through, and opaque escapes deliberately publish no
 			// importer-side ownership optimization.
 		}

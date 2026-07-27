@@ -14,35 +14,31 @@ import (
 // The suffix is returned exactly as spelled so callers can preserve the
 // current point-local spelling while still validating segment boundaries.
 func ParseResolverPath(key pathdom.PathKey) (sym symbol.ID, version int, suffix string, ok bool) {
-	n, version, parsed, ok := parseResolverRootSuffix(key)
-	if !ok {
+	path, ok := pathdom.ParseKey(key)
+	if !ok || path.Symbol == 0 {
 		return 0, 0, "", false
 	}
-	return symbol.ID(n), version, parsed.suffix, true
+	return path.Symbol, path.Version, segment.FormatSegments(path.Segments), true
 }
 
 // LocalPathFromKey parses a point-local resolver key into a path. It accepts
 // only versioned resolver keys, because unversioned resolver roots are not
 // point-local state identities.
 func LocalPathFromKey(key pathdom.PathKey) (pathdom.Path, bool) {
-	n, version, parsed, ok := parseResolverRootSuffix(key)
-	if !ok || version <= 0 {
+	path, ok := pathdom.ParseKey(key)
+	if !ok || path.Symbol == 0 || path.Version <= 0 {
 		return pathdom.Path{}, false
 	}
-	return pathdom.Path{
-		Symbol:   symbol.ID(n),
-		Version:  version,
-		Segments: cloneSegments(parsed.segments),
-	}, true
+	path.Segments = cloneSegments(path.Segments)
+	return path, true
 }
 
 // LocalKeyForVersion formats a point-local key for an explicit SSA version.
 func LocalKeyForVersion(sym symbol.ID, version int, segments []segment.Segment) (LocalKey, bool) {
 	if sym == 0 || version <= 0 {
-		return "", false
+		return LocalKey{}, false
 	}
-	path := pathdom.Path{Symbol: sym, Version: version, Segments: segments}
-	return LocalKey(path.Key()), true
+	return LocalKey{key: pathdom.FormatKey(pathdom.Path{Symbol: sym, Version: version, Segments: segments})}, true
 }
 
 // SegmentsHasPrefix reports whether prefix is this segment list or an ancestor.
@@ -110,21 +106,21 @@ func RebaseLocalPathKeyToContext(pathKey, contextKey pathdom.PathKey) (pathdom.P
 	return RebasePathKey(pathKey, fromRoot.PathKey(), toRoot.PathKey())
 }
 
-// PlaceholderPathFromKey parses a placeholder-root key such as $0.field into a
-// placeholder path.
+// PlaceholderPathFromKey parses a canonical placeholder-root key such as
+// n2:$0.field into a placeholder path.
 func PlaceholderPathFromKey(key pathdom.PathKey) (pathdom.Path, bool) {
-	parsed, ok := parsePlainNamedRootSuffix(key)
-	if !ok {
+	path, ok := pathdom.ParseKey(key)
+	if !ok || path.Symbol != 0 {
 		return pathdom.Path{}, false
 	}
-	index := pathdom.PlaceholderIndexFromString(parsed.root)
+	index := pathdom.PlaceholderIndexFromString(path.Root)
 	if index < 0 {
 		return pathdom.Path{}, false
 	}
 	base := pathdom.NewPlaceholder(index)
-	if base.Root != parsed.root {
+	if base.Root != path.Root {
 		return pathdom.Path{}, false
 	}
-	base.Segments = cloneSegments(parsed.segments)
+	base.Segments = cloneSegments(path.Segments)
 	return base, true
 }

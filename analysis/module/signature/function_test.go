@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -75,7 +76,7 @@ func TestFunctionCloneCopiesOperationalEffects(t *testing.T) {
 		OperationalEffects: &OperationalEffects{
 			EscapeEvents: []EscapeEvent{{
 				Target:    pathdom.NewPlaceholder(0).Field("child"),
-				Kind:      EscapeSend,
+				Kind:      placement.Send,
 				Recursive: true,
 			}},
 			PathStaticMembers: []PathStaticMemberFact{{
@@ -131,7 +132,7 @@ func TestFunctionCloneCopiesOperationalEffects(t *testing.T) {
 	}
 
 	clone.OperationalEffects.EscapeEvents[0].Target.Segments[0].Name = "other"
-	clone.OperationalEffects.EscapeEvents[0].Kind = EscapeOpaque
+	clone.OperationalEffects.EscapeEvents[0].Kind = placement.Opaque
 	clone.OperationalEffects.PathStaticMembers[0].Path.Segments[0].Name = "changed"
 	clone.OperationalEffects.BranchProofs[0].Path.Segments[0].Name = "changed"
 	clone.OperationalEffects.KeyMemberships[0].Key.Segments[0].Name = "changed"
@@ -144,7 +145,7 @@ func TestFunctionCloneCopiesOperationalEffects(t *testing.T) {
 	if got := original.OperationalEffects.EscapeEvents[0].Target.String(); got != "$0.child" {
 		t.Fatalf("clone mutation changed original target: %s", got)
 	}
-	if got := original.OperationalEffects.EscapeEvents[0].Kind; got != EscapeSend {
+	if got := original.OperationalEffects.EscapeEvents[0].Kind; got != placement.Send {
 		t.Fatalf("clone mutation changed original kind: %v", got)
 	}
 	if got := original.OperationalEffects.PathStaticMembers[0].Path.String(); got != "$0.member" {

@@ -615,7 +615,7 @@ func classifyEscapeParameters(child front.DraftsBoundaryView, values []equation.
 	opKinds := childOperationKinds(child.DraftArtifact())
 	relations := make([]signature.ParamRelation, 0, len(child.BodyBoundary().Parameters))
 	for index := range child.BodyBoundary().Parameters {
-		relation := signature.ParamRelation{Param: index, EscapeClass: signature.EscapeBorrow, PlacementConsequence: signature.PlacementConsequenceKeep}
+		relation := signature.ParamRelation{Param: index, EscapeClass: placement.Borrow, PlacementConsequence: placement.Keep}
 		if identity, seeded := identities[index]; seeded {
 			relation = classifyEscapeIdentity(index, identity, parsed, values, opKinds, identities)
 		}
@@ -684,7 +684,7 @@ func storeContainerFormal(param int, ownedOps []string, values []equation.Fact, 
 }
 
 func classifyEscapeIdentity(index int, identity string, parsed publishedPlacementFacts, values []equation.Fact, opKinds map[string]string, identities map[int]string) signature.ParamRelation {
-	relation := signature.ParamRelation{Param: index, EscapeClass: signature.EscapeBorrow, PlacementConsequence: signature.PlacementConsequenceKeep}
+	relation := signature.ParamRelation{Param: index, EscapeClass: placement.Borrow, PlacementConsequence: placement.Keep}
 	events := parsed.events[identity]
 	ownedOps := placementProvenOperations(values, factkey.PlacementEvent.Key().String(), identity, placementEventOwned)
 	storeOwned, returnOwned := false, false
@@ -701,19 +701,19 @@ func classifyEscapeIdentity(index int, identity string, parsed publishedPlacemen
 	containedOwned := events[placementEventOwned] && len(ownedOps) == 0
 	switch {
 	case events[placementEventShared]:
-		relation.EscapeClass = signature.EscapeSend
-		relation.PlacementConsequence = signature.PlacementConsequenceSharedHeap
+		relation.EscapeClass = placement.Send
+		relation.PlacementConsequence = placement.ConsequenceShared
 	case storeOwned || containedOwned:
-		relation.EscapeClass = signature.EscapeStore
-		relation.PlacementConsequence = signature.PlacementConsequenceOwnedHeap
+		relation.EscapeClass = placement.Store
+		relation.PlacementConsequence = placement.ConsequenceOwned
 		relation.StoredInto, relation.HasStoredInto = storeContainerFormal(index, ownedOps, values, identities, opKinds)
 	case returnOwned:
-		relation.EscapeClass = signature.EscapeExport
+		relation.EscapeClass = placement.Export
 		relation.ThroughReturn = true
-		relation.PlacementConsequence = signature.PlacementConsequenceKeep
+		relation.PlacementConsequence = placement.Keep
 	case parsed.blockers[identity]["opaque-call"] && placementBlockerStands(identity, "opaque-call", parsed.blockerOperations, parsed.contracts):
-		relation.EscapeClass = signature.EscapeOpaque
-		relation.PlacementConsequence = signature.PlacementConsequenceOwnedHeap
+		relation.EscapeClass = placement.Opaque
+		relation.PlacementConsequence = placement.ConsequenceOwned
 	}
 	return relation
 }

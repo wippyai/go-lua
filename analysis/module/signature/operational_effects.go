@@ -135,23 +135,9 @@ type FrozenTable struct {
 	Target pathdom.Path
 }
 
-// EscapeKind is the manifest-facing compatibility name for the canonical
-// placement/escape vocabulary.
-type EscapeKind = placement.Escape
-
-const (
-	EscapeNone   EscapeKind = placement.None
-	EscapeBorrow EscapeKind = placement.Borrow
-	EscapeRetain EscapeKind = placement.Retain
-	EscapeStore  EscapeKind = placement.Store
-	EscapeSend   EscapeKind = placement.Send
-	EscapeExport EscapeKind = placement.Export
-	EscapeOpaque EscapeKind = placement.Opaque
-)
-
 type EscapeEvent struct {
 	Target    pathdom.Path
-	Kind      EscapeKind
+	Kind      placement.Escape
 	Recursive bool
 }
 
@@ -160,20 +146,10 @@ type StoreRelation struct {
 	Into   pathdom.Path
 }
 
-// PlacementConsequence is the manifest-facing compatibility name for the
-// canonical escape consequence vocabulary.
-type PlacementConsequence = placement.Consequence
-
-const (
-	PlacementConsequenceKeep       PlacementConsequence = placement.Keep
-	PlacementConsequenceOwnedHeap  PlacementConsequence = placement.ConsequenceOwned
-	PlacementConsequenceSharedHeap PlacementConsequence = placement.ConsequenceShared
-)
-
 type ParamRelation struct {
 	Param                int
-	EscapeClass          EscapeKind
-	PlacementConsequence PlacementConsequence
+	EscapeClass          placement.Escape
+	PlacementConsequence placement.Consequence
 	ThroughReturn        bool
 	StoredInto           int
 	HasStoredInto        bool

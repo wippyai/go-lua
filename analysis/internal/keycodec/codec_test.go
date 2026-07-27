@@ -5,18 +5,6 @@ import (
 	"testing"
 )
 
-func TestPrefixedDecimalKey(t *testing.T) {
-	if got := PrefixedDecimalKey('s', 42, `.field["k"]`); got != `s42.field["k"]` {
-		t.Fatalf("PrefixedDecimalKey = %q, want compact key", got)
-	}
-	if got := PrefixedDecimalKey('r', 0, ""); got != "r0" {
-		t.Fatalf("PrefixedDecimalKey zero = %q, want r0", got)
-	}
-	if got := PrefixedDecimalKey('u', ^uint64(0), ".tail"); got != "u18446744073709551615.tail" {
-		t.Fatalf("PrefixedDecimalKey max = %q, want max uint spelling", got)
-	}
-}
-
 func TestParseUnsignedDecimal(t *testing.T) {
 	if got, ok := ParseUnsignedDecimal("18446744073709551615"); !ok || got != ^uint64(0) {
 		t.Fatalf("ParseUnsignedDecimal(max) = %d/%v, want uint64 max/true", got, ok)
@@ -80,39 +68,6 @@ func TestParsePositiveIntAfterAt(t *testing.T) {
 	for _, start := range []int{-1, len("@12")} {
 		if got, next, ok := ParsePositiveIntAfterAt("@12", start); ok || got != 0 || next != 0 {
 			t.Fatalf("ParsePositiveIntAfterAt(%q, %d) = %d/%d/%v, want zero/false", "@12", start, got, next, ok)
-		}
-	}
-}
-
-func TestRootSpellingPredicates(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		encoded bool
-		stable  bool
-		resolve bool
-	}{
-		{name: "encoded named", input: "n3:foo.bar", encoded: true},
-		{name: "encoded prefix only", input: "n3:", encoded: true},
-		{name: "bad encoded no length", input: "n:foo"},
-		{name: "stable bare", input: "s42", stable: true},
-		{name: "stable field", input: "s42.field", stable: true},
-		{name: "stable index", input: "s42[1]", stable: true},
-		{name: "stable bad suffix", input: "s42@1"},
-		{name: "resolver bare", input: "sym42", resolve: true},
-		{name: "resolver version", input: "sym42@3.field", resolve: true},
-		{name: "resolver field", input: "sym42.field", resolve: true},
-		{name: "resolver bad prefix", input: "sy42.field"},
-	}
-	for _, tt := range tests {
-		if got := LooksEncodedNamedRootKey(tt.input); got != tt.encoded {
-			t.Fatalf("%s: LooksEncodedNamedRootKey(%q) = %v, want %v", tt.name, tt.input, got, tt.encoded)
-		}
-		if got := LooksStableSymbolRootSuffix(tt.input); got != tt.stable {
-			t.Fatalf("%s: LooksStableSymbolRootSuffix(%q) = %v, want %v", tt.name, tt.input, got, tt.stable)
-		}
-		if got := LooksResolverRootSuffix(tt.input); got != tt.resolve {
-			t.Fatalf("%s: LooksResolverRootSuffix(%q) = %v, want %v", tt.name, tt.input, got, tt.resolve)
 		}
 	}
 }

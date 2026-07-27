@@ -18,16 +18,19 @@ type StructuralKey struct {
 
 // StructuralKeyFromPathKey parses recognized structural path-key spellings.
 func StructuralKeyFromPathKey(pathKey pathdom.PathKey) (StructuralKey, bool) {
-	n, version, parsed, ok := parseResolverRootSuffix(pathKey)
-	if ok && version > 0 {
+	path, ok := pathdom.ParseKey(pathKey)
+	if !ok || path.Symbol == 0 && path.Root == "" {
+		return StructuralKey{}, false
+	}
+	if path.Symbol != 0 && path.Version > 0 {
 		return StructuralKey{
 			local:    true,
-			sym:      symbol.ID(n),
-			version:  version,
-			segments: parsed.segments,
+			sym:      path.Symbol,
+			version:  path.Version,
+			segments: path.Segments,
 		}, true
 	}
-	stable, ok := StableFromKey(pathKey)
+	stable, ok := StableOfPath(path)
 	if !ok {
 		return StructuralKey{}, false
 	}

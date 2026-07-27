@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
-	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/domain/placement"
 )
 
 // TestFunctionEscapesSummaryFromPlacementFacts proves the engine derives a
@@ -32,11 +32,11 @@ return { store_item = store_item, read_item = read_item }`)
 		t.Fatalf("store_item relation param = %d, want 0", store[0].Param)
 	}
 	switch store[0].EscapeClass {
-	case signature.EscapeStore, signature.EscapeRetain:
+	case placement.Store, placement.Retain:
 	default:
 		t.Fatalf("store_item param 0 escape = %v, want EscapeStore or EscapeRetain", store[0].EscapeClass)
 	}
-	if store[0].PlacementConsequence != signature.PlacementConsequenceOwnedHeap {
+	if store[0].PlacementConsequence != placement.ConsequenceOwned {
 		t.Fatalf("store_item param 0 placement = %q, want owned-heap", store[0].PlacementConsequence)
 	}
 
@@ -47,10 +47,10 @@ return { store_item = store_item, read_item = read_item }`)
 	if read[0].Param != 0 {
 		t.Fatalf("read_item relation param = %d, want 0", read[0].Param)
 	}
-	if read[0].EscapeClass != signature.EscapeBorrow {
+	if read[0].EscapeClass != placement.Borrow {
 		t.Fatalf("read_item param 0 escape = %v, want EscapeBorrow", read[0].EscapeClass)
 	}
-	if read[0].PlacementConsequence != signature.PlacementConsequenceKeep {
+	if read[0].PlacementConsequence != placement.Keep {
 		t.Fatalf("read_item param 0 placement = %q, want keep", read[0].PlacementConsequence)
 	}
 }
@@ -77,7 +77,7 @@ return { store_item = store_item, keep_item = keep_item }`)
 	if !found || len(store) != 2 {
 		t.Fatalf("store_item escapes = %#v, want two parameter relations", store)
 	}
-	if store[0].EscapeClass != signature.EscapeStore {
+	if store[0].EscapeClass != placement.Store {
 		t.Fatalf("store_item param 0 escape = %v, want EscapeStore", store[0].EscapeClass)
 	}
 	if !store[0].HasStoredInto || store[0].StoredInto != 1 {
@@ -91,7 +91,7 @@ return { store_item = store_item, keep_item = keep_item }`)
 	if !found || len(keep) != 2 {
 		t.Fatalf("keep_item escapes = %#v, want two parameter relations", keep)
 	}
-	if keep[0].EscapeClass != signature.EscapeStore {
+	if keep[0].EscapeClass != placement.Store {
 		t.Fatalf("keep_item param 0 escape = %v, want EscapeStore", keep[0].EscapeClass)
 	}
 	if keep[0].HasStoredInto {

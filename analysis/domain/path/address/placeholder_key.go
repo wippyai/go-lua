@@ -2,16 +2,18 @@ package address
 
 import pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 
-// PlaceholderKey is the typed string carrier for a parameter placeholder path,
+// PlaceholderKey is the opaque carrier for a parameter placeholder path,
 // such as $0 or $0.member. It is distinct from RootPlaceholderKey because some
 // summary facts need to rehydrate a member below an argument, while others apply
 // only to the whole parameter object.
-type PlaceholderKey pathdom.PathKey
+type PlaceholderKey struct {
+	key pathdom.PathKey
+}
 
-// PathKey returns the legacy string carrier for compatibility boundaries.
-func (k PlaceholderKey) PathKey() pathdom.PathKey { return pathdom.PathKey(k) }
+// PathKey returns the shared canonical carrier.
+func (k PlaceholderKey) PathKey() pathdom.PathKey { return k.key }
 
-func (k PlaceholderKey) String() string { return string(k) }
+func (k PlaceholderKey) String() string { return string(k.key) }
 
 // Valid reports whether k is a non-empty placeholder path key.
 func (k PlaceholderKey) Valid() bool {
@@ -39,21 +41,24 @@ func (k PlaceholderKey) RootPlaceholderIndex() (int, bool) {
 
 // PlaceholderKeyFromPath validates and narrows path to a placeholder key.
 func PlaceholderKeyFromPath(path pathdom.Path) (PlaceholderKey, bool) {
-	if !path.IsPlaceholder() {
-		return "", false
+	key := path.Key()
+	if !path.IsPlaceholder() || key == "" {
+		return PlaceholderKey{}, false
 	}
-	return PlaceholderKey(path.Key()), true
+	return PlaceholderKey{key: key}, true
 }
 
-// RootPlaceholderKey is the typed string carrier for a whole parameter
+// RootPlaceholderKey is the opaque carrier for a whole parameter
 // placeholder such as $0. It deliberately rejects member suffixes: facts that
 // carry this key apply to the parameter object itself, not one of its fields.
-type RootPlaceholderKey pathdom.PathKey
+type RootPlaceholderKey struct {
+	key pathdom.PathKey
+}
 
-// PathKey returns the legacy string carrier for compatibility boundaries.
-func (k RootPlaceholderKey) PathKey() pathdom.PathKey { return pathdom.PathKey(k) }
+// PathKey returns the shared canonical carrier.
+func (k RootPlaceholderKey) PathKey() pathdom.PathKey { return k.key }
 
-func (k RootPlaceholderKey) String() string { return string(k) }
+func (k RootPlaceholderKey) String() string { return string(k.key) }
 
 // Valid reports whether k is a non-empty root placeholder key with no suffix.
 func (k RootPlaceholderKey) Valid() bool {
@@ -63,14 +68,15 @@ func (k RootPlaceholderKey) Valid() bool {
 
 // PlaceholderIndex returns the parameter index encoded by k.
 func (k RootPlaceholderKey) PlaceholderIndex() (int, bool) {
-	return PlaceholderKey(k).RootPlaceholderIndex()
+	return PlaceholderKey{key: k.key}.RootPlaceholderIndex()
 }
 
 // RootPlaceholderKeyFromPath validates and narrows path to a root placeholder
 // key.
 func RootPlaceholderKeyFromPath(path pathdom.Path) (RootPlaceholderKey, bool) {
-	if !path.IsPlaceholder() || len(path.Segments) != 0 {
-		return "", false
+	key := path.Key()
+	if !path.IsPlaceholder() || len(path.Segments) != 0 || key == "" {
+		return RootPlaceholderKey{}, false
 	}
-	return RootPlaceholderKey(path.Key()), true
+	return RootPlaceholderKey{key: key}, true
 }

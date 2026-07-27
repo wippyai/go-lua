@@ -31,7 +31,7 @@ func TestPathStringKeyHash(t *testing.T) {
 		},
 	}
 	display := "x.y[z][3]"
-	key := `x.y["z"][3]`
+	key := `n1:x.y["z"][3]`
 
 	if p.String() != display {
 		t.Fatalf("expected %q, got %q", display, p.String())
@@ -383,10 +383,10 @@ func TestPathKeyPlaceholderUsesCanonicalSegments(t *testing.T) {
 		},
 	}
 
-	if got, want := string(pStr.Key()), `$0["1"]`; got != want {
+	if got, want := string(pStr.Key()), `n2:$0["1"]`; got != want {
 		t.Fatalf("string index placeholder key: got %q, want %q", got, want)
 	}
-	if got, want := string(pInt.Key()), `$0[1]`; got != want {
+	if got, want := string(pInt.Key()), `n2:$0[1]`; got != want {
 		t.Fatalf("int index placeholder key: got %q, want %q", got, want)
 	}
 	if pStr.Key() == pInt.Key() {
