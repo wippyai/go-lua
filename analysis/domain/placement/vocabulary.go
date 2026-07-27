@@ -1,4 +1,4 @@
-package vocab
+package placement
 
 import internal "github.com/wippyai/go-lua/analysis/internal/hash"
 

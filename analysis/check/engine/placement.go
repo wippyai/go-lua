@@ -18,7 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
-	placementvocab "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -65,18 +64,18 @@ type PlacementHoistableLoad struct {
 }
 
 const (
-	placementEventOwned  = placementvocab.EventOwned
-	placementEventShared = placementvocab.EventShared
-	placementEventSealed = placementvocab.EventSealed
+	placementEventOwned  = placement.EventOwned
+	placementEventShared = placement.EventShared
+	placementEventSealed = placement.EventSealed
 	// placementEventEnvironment records that a local invocation made a closure's
 	// closed environment live. It carries the same heap residency as an owned
 	// event for the closure itself, but it is not a retention: no boundary has
 	// carried the closure value past the frame that materialized it, so it never
 	// propagates through containment the way a retained graph does.
-	placementEventEnvironment = placementvocab.EventEnvironment
+	placementEventEnvironment = placement.EventEnvironment
 	// A suspension event is lifetime evidence, not an ownership transfer. The
 	// allocation remains stack-placed, but neither frame-local license holds.
-	placementEventSuspended = placementvocab.EventSuspended
+	placementEventSuspended = placement.EventSuspended
 )
 
 type placementAllocationFact struct {
@@ -148,7 +147,7 @@ func placementBindingFact(term, operation, identity string) equation.Fact {
 	return equation.Fact{Key: factkey.PlacementBinding.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(term)) + "/" + operation, Value: []byte(identity)}
 }
 
-func placementEventFact(identity, operation string, event placementvocab.Event) equation.Fact {
+func placementEventFact(identity, operation string, event placement.Event) equation.Fact {
 	return equation.Fact{Key: factkey.PlacementEvent.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(event) + "/" + operation, Value: []byte("proven")}
 }
 
@@ -160,7 +159,7 @@ func placementContainmentFact(parent, child, operation string) equation.Fact {
 	return equation.Fact{Key: factkey.PlacementContainment.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(parent)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(child)) + "/" + operation, Value: []byte("proven")}
 }
 
-func placementContractFact(identity string, boundary placementvocab.Boundary, operation string) equation.Fact {
+func placementContractFact(identity string, boundary placement.Boundary, operation string) equation.Fact {
 	return equation.Fact{Key: factkey.PlacementContract.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(boundary) + "/" + operation, Value: []byte("proven")}
 }
 
@@ -190,36 +189,36 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 	allocations := make(map[int]placementAllocationFact, len(arguments))
 	for _, label := range signature.Effect.Labels {
 		var from int
-		var boundary placementvocab.Boundary
-		var event placementvocab.Event
+		var boundary placement.Boundary
+		var event placement.Event
 		trailing := false
 		switch value := effect.NormalizeLabel(label).(type) {
 		case ownership.Send:
 			from, trailing = value.FromParam, true
-			boundary, event = placementvocab.BoundarySend, placementEventShared
+			boundary, event = placement.BoundarySend, placementEventShared
 		case ownership.SendParam:
 			var resolved bool
 			from, resolved = effect.ResolveParamIndex(value.Param, len(arguments))
 			if !resolved {
 				continue
 			}
-			trailing, boundary, event = true, placementvocab.BoundarySend, placementEventShared
+			trailing, boundary, event = true, placement.BoundarySend, placementEventShared
 		case ownership.Retain:
 			var resolved bool
 			from, resolved = effect.ResolveParamIndex(value.Param, len(arguments))
 			if !resolved {
 				continue
 			}
-			boundary, event = placementvocab.BoundaryRetain, placementEventOwned
+			boundary, event = placement.BoundaryRetain, placementEventOwned
 		case ownership.Borrow:
 			var resolved bool
 			from, resolved = effect.ResolveParamIndex(value.Param, len(arguments))
 			if !resolved {
 				continue
 			}
-			boundary = placementvocab.BoundaryBorrow
+			boundary = placement.BoundaryBorrow
 		case ownership.BorrowAll:
-			from, trailing, boundary = 0, true, placementvocab.BoundaryBorrow
+			from, trailing, boundary = 0, true, placement.BoundaryBorrow
 		case mutation.Mutate:
 			// A mutation that changes neither the type-level shape nor the
 			// length rewrites the container in place: the callee is named, it
@@ -235,7 +234,7 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 			if !resolved {
 				continue
 			}
-			boundary = placementvocab.BoundaryMutate
+			boundary = placement.BoundaryMutate
 		case iteration.Iterator:
 			// An iterator reads its source for the duration of the caller's loop
 			// and publishes no retention of it, so the source keeps whatever
@@ -245,7 +244,7 @@ func placementExternalOwnershipFacts(operation equation.BoundEquation, provider 
 			if !resolved {
 				continue
 			}
-			boundary = placementvocab.BoundaryBorrow
+			boundary = placement.BoundaryBorrow
 		default:
 			continue
 		}
@@ -690,7 +689,7 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 			// frame; the owner merely receives it and keeps whatever placement
 			// its own allocation proves. This is the same split the imported
 			// wrapper relation publishes for a declared store.
-			facts = append(facts, placementContractFact(allocation.Identity, placementvocab.BoundaryRetain, operation.Target.Name))
+			facts = append(facts, placementContractFact(allocation.Identity, placement.BoundaryRetain, operation.Target.Name))
 			if index == 0 {
 				facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventOwned))
 			}
@@ -709,7 +708,7 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 			// An exact closed table with an exact empty metatable has no callable
 			// metamethod boundary.  Retain the ordinary opaque blocker for every
 			// other metatable shape.
-			facts = append(facts, placementContractFact(allocation.Identity, placementvocab.BoundaryMetatable, operation.Target.Name))
+			facts = append(facts, placementContractFact(allocation.Identity, placement.BoundaryMetatable, operation.Target.Name))
 		default:
 			facts = append(facts, placementBlockerFact(allocation.Identity, operation.Target.Name, "opaque-call"))
 		}
@@ -859,7 +858,7 @@ func placementImportedStoreFacts(lexical *lexicalEvaluator, operation equation.B
 		if !found {
 			continue
 		}
-		facts = append(facts, placementContractFact(allocation.Identity, placementvocab.BoundaryRetain, application))
+		facts = append(facts, placementContractFact(allocation.Identity, placement.BoundaryRetain, application))
 		if index == function.Store.Value {
 			facts = append(facts, placementEventFact(allocation.Identity, application, placementEventOwned))
 		}
@@ -887,7 +886,7 @@ func placementImportedBorrowFacts(lexical *lexicalEvaluator, operation equation.
 		if !found {
 			continue
 		}
-		facts = append(facts, placementContractFact(allocation.Identity, placementvocab.BoundaryBorrow, application))
+		facts = append(facts, placementContractFact(allocation.Identity, placement.BoundaryBorrow, application))
 	}
 	return facts
 }
@@ -1168,7 +1167,7 @@ func placementStackWitnessFacts(facts []equation.Fact) []equation.Fact {
 type publishedPlacementFacts struct {
 	allocations       map[string]placementAllocationFact
 	bindings          map[string]string
-	events            map[string]map[placementvocab.Event]bool
+	events            map[string]map[placement.Event]bool
 	blockers          map[string]map[string]bool
 	blockerOperations map[string]map[string]map[string]bool
 	contracts         map[string]map[string]bool
@@ -1178,7 +1177,7 @@ type publishedPlacementFacts struct {
 func newPublishedPlacementFacts() publishedPlacementFacts {
 	return publishedPlacementFacts{
 		allocations: make(map[string]placementAllocationFact), bindings: make(map[string]string),
-		events: make(map[string]map[placementvocab.Event]bool), blockers: make(map[string]map[string]bool),
+		events: make(map[string]map[placement.Event]bool), blockers: make(map[string]map[string]bool),
 		blockerOperations: make(map[string]map[string]map[string]bool), contracts: make(map[string]map[string]bool), containment: make(map[string][]string),
 	}
 }
@@ -1232,7 +1231,7 @@ func parsePublishedPlacementFact(parsed *publishedPlacementFacts, fact equation.
 			return
 		}
 		if factkey.PlacementEvent.Owns(fact.Key) {
-			if event, ok := placementvocab.ParseEvent(parts[3]); ok {
+			if event, ok := placement.ParseEvent(parts[3]); ok {
 				placementEventSet(parsed.events, identity)[event] = true
 			}
 		} else if factkey.PlacementBlocker.Owns(fact.Key) {
@@ -1263,9 +1262,9 @@ func placementFactSet(facts map[string]map[string]bool, identity string) map[str
 	return facts[identity]
 }
 
-func placementEventSet(facts map[string]map[placementvocab.Event]bool, identity string) map[placementvocab.Event]bool {
+func placementEventSet(facts map[string]map[placement.Event]bool, identity string) map[placement.Event]bool {
 	if facts[identity] == nil {
-		facts[identity] = make(map[placementvocab.Event]bool)
+		facts[identity] = make(map[placement.Event]bool)
 	}
 	return facts[identity]
 }
@@ -1289,7 +1288,7 @@ func propagatePublishedPlacement(parsed publishedPlacementFacts) map[string][]st
 		}
 		children[identity] = append(children[identity], containment[identity]...)
 	}
-	propagate := func(event placementvocab.Event) {
+	propagate := func(event placement.Event) {
 		changed := true
 		for changed {
 			changed = false
@@ -1299,7 +1298,7 @@ func propagatePublishedPlacement(parsed publishedPlacementFacts) map[string][]st
 				}
 				for _, child := range descendants {
 					if events[child] == nil {
-						events[child] = make(map[placementvocab.Event]bool)
+						events[child] = make(map[placement.Event]bool)
 					}
 					if !events[child][event] {
 						events[child][event], changed = true, true
@@ -1387,7 +1386,7 @@ func placementAllocationDepth(allocations map[string]placementAllocationFact, ch
 	return func(identity string) int { return allocationDepth(identity, make(map[string]bool)) }
 }
 
-func projectPlacementAllocation(identity string, allocation placementAllocationFact, depth int, bindings map[string]string, events map[string]map[placementvocab.Event]bool, blockers map[string]map[string]bool, blockerOperations map[string]map[string]map[string]bool, contracts map[string]map[string]bool) PlacementAllocation {
+func projectPlacementAllocation(identity string, allocation placementAllocationFact, depth int, bindings map[string]string, events map[string]map[placement.Event]bool, blockers map[string]map[string]bool, blockerOperations map[string]map[string]map[string]bool, contracts map[string]map[string]bool) PlacementAllocation {
 	item := PlacementAllocation{Identity: identity, Target: allocation.Result, Kind: allocation.Kind, Complete: allocation.Complete, Depth: depth}
 	for term, bound := range bindings {
 		if bound == identity {

@@ -1,18 +1,16 @@
 package placement
 
-import "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
-
 // EscapeTransition is a compatibility alias for the canonical escape
 // vocabulary. Call-boundary events are translated into this neutral vocabulary
 // by fact application.
-type EscapeTransition = vocab.Escape
+type EscapeTransition = Escape
 
 const (
-	EscapeTransitionNone   = vocab.None
-	EscapeTransitionReturn = vocab.Return
-	EscapeTransitionRetain = vocab.Retain
-	EscapeTransitionStore  = vocab.Store
-	EscapeTransitionSend   = vocab.Send
-	EscapeTransitionExport = vocab.Export
-	EscapeTransitionOpaque = vocab.Opaque
+	EscapeTransitionNone   = None
+	EscapeTransitionReturn = Return
+	EscapeTransitionRetain = Retain
+	EscapeTransitionStore  = Store
+	EscapeTransitionSend   = Send
+	EscapeTransitionExport = Export
+	EscapeTransitionOpaque = Opaque
 )

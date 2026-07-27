@@ -2,7 +2,6 @@ package placement
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	"github.com/wippyai/go-lua/analysis/domain/placement/vocab"
 )
 
 func Lattice() lattice.Lattice[Value] {
@@ -18,7 +17,7 @@ func Lattice() lattice.Lattice[Value] {
 }
 
 // Value is a compatibility alias for the canonical allocation-placement
-// vocabulary. New in-memory code should name vocab.Placement directly.
+// vocabulary. New in-memory code should name Placement directly.
 //
 // The chain is:
 //
@@ -26,21 +25,7 @@ func Lattice() lattice.Lattice[Value] {
 //
 // Higher points are less precise and more conservative. Joining any path that
 // requires a more shared placement moves the result upward; Unknown is Top.
-type Value = vocab.Placement
-
-const (
-	// Bottom is the unreachable placement state.
-	Bottom = vocab.Bottom
-	// Stack is stack/local placement confined to the current activation.
-	Stack = vocab.Stack
-	// OwnedHeap is heap placement owned by one actor or analysis owner.
-	OwnedHeap = vocab.OwnedHeap
-	// SharedHeap is heap placement that may be shared, escaped, or observed
-	// outside the owning actor.
-	SharedHeap = vocab.SharedHeap
-	// Unknown is the conservative top placement.
-	Unknown = vocab.Unknown
-)
+type Value = Placement
 
 // LessOrEq reports whether b conservatively covers a.
 func LessOrEq(a, b Value) bool {

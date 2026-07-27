@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	placementvocab "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
+	placement "github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -673,7 +673,7 @@ func storeContainerFormal(param int, ownedOps []string, values []equation.Fact, 
 		if other == param || len(placementProvenOperations(values, factkey.PlacementEvent.Key().String(), identity, placementEventOwned)) != 0 {
 			continue
 		}
-		for _, operation := range placementProvenOperations(values, factkey.PlacementContract.Key().String(), identity, placementvocab.BoundaryRetain) {
+		for _, operation := range placementProvenOperations(values, factkey.PlacementContract.Key().String(), identity, placement.BoundaryRetain) {
 			if boundaries[operation] {
 				container, candidates = other, candidates+1
 				break

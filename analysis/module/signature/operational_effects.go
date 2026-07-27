@@ -3,7 +3,7 @@ package signature
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	placementvocab "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
+	placement "github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -137,16 +137,16 @@ type FrozenTable struct {
 
 // EscapeKind is the manifest-facing compatibility name for the canonical
 // placement/escape vocabulary.
-type EscapeKind = placementvocab.Escape
+type EscapeKind = placement.Escape
 
 const (
-	EscapeNone   EscapeKind = placementvocab.None
-	EscapeBorrow EscapeKind = placementvocab.Borrow
-	EscapeRetain EscapeKind = placementvocab.Retain
-	EscapeStore  EscapeKind = placementvocab.Store
-	EscapeSend   EscapeKind = placementvocab.Send
-	EscapeExport EscapeKind = placementvocab.Export
-	EscapeOpaque EscapeKind = placementvocab.Opaque
+	EscapeNone   EscapeKind = placement.None
+	EscapeBorrow EscapeKind = placement.Borrow
+	EscapeRetain EscapeKind = placement.Retain
+	EscapeStore  EscapeKind = placement.Store
+	EscapeSend   EscapeKind = placement.Send
+	EscapeExport EscapeKind = placement.Export
+	EscapeOpaque EscapeKind = placement.Opaque
 )
 
 type EscapeEvent struct {
@@ -162,12 +162,12 @@ type StoreRelation struct {
 
 // PlacementConsequence is the manifest-facing compatibility name for the
 // canonical escape consequence vocabulary.
-type PlacementConsequence = placementvocab.Consequence
+type PlacementConsequence = placement.Consequence
 
 const (
-	PlacementConsequenceKeep       PlacementConsequence = placementvocab.Keep
-	PlacementConsequenceOwnedHeap  PlacementConsequence = placementvocab.ConsequenceOwned
-	PlacementConsequenceSharedHeap PlacementConsequence = placementvocab.ConsequenceShared
+	PlacementConsequenceKeep       PlacementConsequence = placement.Keep
+	PlacementConsequenceOwnedHeap  PlacementConsequence = placement.ConsequenceOwned
+	PlacementConsequenceSharedHeap PlacementConsequence = placement.ConsequenceShared
 )
 
 type ParamRelation struct {

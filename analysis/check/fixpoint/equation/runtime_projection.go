@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	placementvocab "github.com/wippyai/go-lua/analysis/domain/placement/vocab"
+	placement "github.com/wippyai/go-lua/analysis/domain/placement"
 )
 
 // FactStatus says whether a runtime fact is backed by the admitted artifact.
@@ -124,14 +124,14 @@ type RuntimeEffectSummary struct {
 
 // RuntimeEscape is the JIT-facing compatibility name for the canonical escape
 // vocabulary. Artifact bytes use the frozen converters below, not enum values.
-type RuntimeEscape = placementvocab.Escape
+type RuntimeEscape = placement.Escape
 
 const (
-	RuntimeEscapeUnknown RuntimeEscape = placementvocab.Opaque
-	RuntimeEscapeNone    RuntimeEscape = placementvocab.None
-	RuntimeEscapeReturn  RuntimeEscape = placementvocab.Return
-	RuntimeEscapeStore   RuntimeEscape = placementvocab.Store
-	RuntimeEscapeShare   RuntimeEscape = placementvocab.Send
+	RuntimeEscapeUnknown RuntimeEscape = placement.Opaque
+	RuntimeEscapeNone    RuntimeEscape = placement.None
+	RuntimeEscapeReturn  RuntimeEscape = placement.Return
+	RuntimeEscapeStore   RuntimeEscape = placement.Store
+	RuntimeEscapeShare   RuntimeEscape = placement.Send
 )
 
 type RuntimeOwnership uint8
@@ -155,15 +155,15 @@ const (
 
 // RuntimePlacement is the JIT-facing compatibility name for the canonical
 // placement vocabulary. Artifact bytes use the frozen converters below.
-type RuntimePlacement = placementvocab.Placement
+type RuntimePlacement = placement.Placement
 
 const (
-	RuntimePlacementUnknown     RuntimePlacement = placementvocab.Unknown
-	RuntimePlacementInterpreter RuntimePlacement = placementvocab.Interpreter
-	RuntimePlacementStack       RuntimePlacement = placementvocab.Stack
-	RuntimePlacementRegister    RuntimePlacement = placementvocab.Register
-	RuntimePlacementOwnedHeap   RuntimePlacement = placementvocab.OwnedHeap
-	RuntimePlacementSharedHeap  RuntimePlacement = placementvocab.SharedHeap
+	RuntimePlacementUnknown     RuntimePlacement = placement.Unknown
+	RuntimePlacementInterpreter RuntimePlacement = placement.Interpreter
+	RuntimePlacementStack       RuntimePlacement = placement.Stack
+	RuntimePlacementRegister    RuntimePlacement = placement.Register
+	RuntimePlacementOwnedHeap   RuntimePlacement = placement.OwnedHeap
+	RuntimePlacementSharedHeap  RuntimePlacement = placement.SharedHeap
 )
 
 // RuntimePlacementVerdicts records the independent escape/ownership/residence

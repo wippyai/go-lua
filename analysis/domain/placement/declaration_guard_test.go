@@ -1,4 +1,4 @@
-package vocab_test
+package placement_test
 
 import (
 	"go/ast"
@@ -20,8 +20,8 @@ func TestCanonicalVocabularyOwnsEscapeAndPlacementEnums(t *testing.T) {
 	if !ok {
 		t.Fatal("runtime.Caller did not locate declaration guard")
 	}
-	root := filepath.Clean(filepath.Join(filepath.Dir(here), "../../../.."))
-	vocabDir := filepath.ToSlash(filepath.Join("analysis", "domain", "placement", "vocab"))
+	root := filepath.Clean(filepath.Join(filepath.Dir(here), "../../.."))
+	vocabDir := filepath.ToSlash(filepath.Join("analysis", "domain", "placement"))
 
 	// These scalar enums are distinct axes, not alternate spellings of an
 	// allocation disposition. Keeping the allowlist exact makes additions fail
