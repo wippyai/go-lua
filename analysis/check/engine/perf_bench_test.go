@@ -16,20 +16,23 @@ package engine_test
 //	  -run '^$' -bench . -benchmem -count=10 | tee new.txt
 //	benchstat old.txt new.txt
 //
-// Baseline (minimum of 10 reps, the least load-contaminated sample):
+// Final-tree baseline (median of 10 interleaved reps):
 //
-//	CheckSmall                    7.958ms   6.964Mi   51.281k allocs
-//	CheckBranchy                  63.722ms  49.526Mi  503.681k allocs
-//	CheckLoopy                    21.203ms  19.282Mi  118.408k allocs
-//	CheckTableHeavy               744.3µs   802.9Ki   6.361k allocs
-//	FullFixture_EdgeMatrix        1.351s    855.554Mi 3.991M allocs
-//	FullFixture_PluginSupervisor  769.358ms 1.217Gi   4.578M allocs
+//	CheckSmall                    13.82ms  6.648Mi   44.30k allocs
+//	CheckBranchy                  96.19ms  43.46Mi   325.0k allocs
+//	CheckLoopy                    46.33ms  22.36Mi   116.8k allocs
+//	CheckTableHeavy               1.212ms  761.7Ki   6.189k allocs
+//	FullFixture_EdgeMatrix        3.358s   844.3Mi   2.566M allocs
+//	FullFixture_PluginSupervisor  1.215s   1.087Gi   2.345M allocs
 //
 // EdgeMatrix's former 3.37GiB / 42.1M-allocation outlier was repeated CFG
 // reachability: every target under one (origin, excluded-point) pair rebuilt
 // the same reachable set and copied each successor slice. Sharing that walk
-// reduced the interleaved median by 75.2% B/op and 90.5% allocs/op; closure
-// merging and diagnostic construction now lead its allocation profile.
+// reduced the original outlier. The string-key tree then rebuilt one immutable
+// dependency key for every diagnostic fact comparison; materializing it once
+// per dependency reduced the interleaved f5c7c3312 median by 4.81% B/op and
+// 26.68% allocs/op. Closure merging and guard-cube canonicalization now lead
+// its allocation profile.
 
 import (
 	"context"

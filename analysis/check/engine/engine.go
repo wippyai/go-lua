@@ -1635,8 +1635,9 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 	// the closed input facts the kernel read before that refinement, so prefer
 	// those facts when explaining a mismatch.
 	for _, dependency := range operation.Dependencies {
+		key := prefix + dependency.Name
 		for _, fact := range closure.Values {
-			if fact.Key == prefix+dependency.Name {
+			if fact.Key == key {
 				return append([]byte(nil), fact.Value...), true
 			}
 		}
