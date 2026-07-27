@@ -162,6 +162,43 @@ func TestNativeCaptureScansStayDisplaced(t *testing.T) {
 	}
 }
 
+func TestNativeFrontCannotPublishSemanticVerdicts(t *testing.T) {
+	_, current, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate engine source")
+	}
+	frontDir := filepath.Join(filepath.Dir(current), "..", "fixpoint", "front")
+	entries, err := os.ReadDir(frontDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(filepath.Join(frontDir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{
+			"native-publications",
+			"completions={'known'",
+			"identity=stable_cross_module",
+			"stable=true",
+			"fresh=true",
+			"ownership=move",
+			"exhaustive=true",
+			"fixpoint=reached",
+			"exactness=exact",
+			"new_identity=minted",
+		} {
+			if strings.Contains(string(source), forbidden) {
+				t.Errorf("%s states front semantic verdict %q", entry.Name(), forbidden)
+			}
+		}
+	}
+}
+
 // TestNativeProjectionHasNoWIRConsumers is the N5 source fence. Native output
 // files are serializers over published facts only; WIR and CFG belong to the
 // lowering-side projection producers and may not return to this boundary.
@@ -205,12 +242,17 @@ func TestNativeProjectionHasNoWIRConsumers(t *testing.T) {
 		}
 	}
 
-	astContracts, err := os.ReadFile(filepath.Join(engineDir, "..", "fixpoint", "front", "native_contracts.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(astContracts), `Family: "call_scc"`) {
-		t.Error("AST native contracts resurrect the displaced call_scc recognizer")
+	frontDir := filepath.Join(engineDir, "..", "fixpoint", "front")
+	for _, deleted := range []string{
+		"native_contracts.go",
+		"native_frozen_projection.go",
+		"native_shape_epoch_projection.go",
+		"native_summary_projection.go",
+		"native_wir_contracts.go",
+	} {
+		if _, err := os.Stat(filepath.Join(frontDir, deleted)); !os.IsNotExist(err) {
+			t.Errorf("displaced native semantic plane returned as %s", deleted)
+		}
 	}
 }
 

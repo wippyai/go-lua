@@ -153,9 +153,10 @@ type Compilation struct {
 	// was named. It is source metadata for diagnostics that must cite where an
 	// optional field was declared; the resolved type stays the sole authority.
 	typeFieldSpans map[string]map[string]wir.Span
-	// nativeContracts is binder-derived lexical topology. It is descriptive
-	// input to the engine's ordinary fact publication, never a second evaluator.
-	nativeContracts []NativeContract
+	// nativeTopology contains only verdict-incapable lowering records. The
+	// publication kernel consumes the typed bundle after the semantic tail has
+	// closed and is the sole producer of conclusions derived from these rows.
+	nativeTopology []NativeTopologyDraft
 }
 
 // recordFieldNameSpans retains the authored field-name token of every
@@ -299,8 +300,12 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	compilation.controlDiagnostics = append(compilation.controlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
 	compilation.typeDefinitions = typeDefinitions
 	compilation.typeFieldSpans = recordFieldNameSpans(stmts)
-	compilation.nativeContracts = append(nativeContracts(stmts, bindings), nativeWIRContracts(compilation)...)
-	artifact, err = appendNativeContractPublications(compilation.Artifact, compilation.nativeContracts)
+	compilation.nativeTopology = append(
+		nativeASTTopologyDrafts(compilation, stmts, bindings),
+		nativeWIRTopologyDrafts(compilation)...,
+	)
+	artifact = compilation.Artifact
+	artifact, err = appendNativeTopologyPublication(artifact, compilation.nativeTopology)
 	if err != nil {
 		return Compilation{}, err
 	}
@@ -324,165 +329,36 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	return compilation, nil
 }
 
-// appendNativeContractPublications lowers front-owned native descriptors into
-// ordinary publication equations. The existing publication kernel executes
-// them after the semantic body has closed, so the rows travel through the same
-// guard stamping, cyclic merge, and output closure as every other fact.
-func appendNativeContractPublications(artifact equation.Artifact, contracts []NativeContract) (equation.Artifact, error) {
-	if len(contracts) == 0 {
+// appendNativeTopologyPublication adds one typed draft bundle after the
+// semantic tail. The bundle is not a native fact and has no family/value
+// spelling; publicationKernel is the only decoder and conclusion owner.
+func appendNativeTopologyPublication(artifact equation.Artifact, drafts []NativeTopologyDraft) (equation.Artifact, error) {
+	if len(drafts) == 0 {
 		return artifact, nil
 	}
 	if len(artifact.Equations) == 0 {
-		return equation.Artifact{}, fmt.Errorf("front: native publications require an admitted body")
+		return equation.Artifact{}, fmt.Errorf("front: native topology requires an admitted body")
+	}
+	encoded, err := EncodeNativeTopologyDrafts(drafts)
+	if err != nil {
+		return equation.Artifact{}, err
 	}
 	body := artifact.Equations[0].Target.Body
 	entry := artifact.Equations[0].Entry
 	semanticTail := artifact.Equations[len(artifact.Equations)-1].Target
-	encodedPublications := make([]byte, 4, 4+len(contracts)*64)
-	publicationCount := uint32(0)
-	ordinal := 0
-	for _, contract := range contracts {
-		if contract.Family == "" && contract.Key.String() == "" ||
-			contract.Value == "" && contract.Source == "" {
-			continue
-		}
-		recordStart := len(encodedPublications)
-		encodedPublications = append(encodedPublications, make([]byte, 9)...)
-		keyStart := len(encodedPublications)
-		if key := contract.Key.String(); key != "" {
-			encodedPublications = append(encodedPublications, key...)
-		} else {
-			encodedPublications = append(encodedPublications, contract.Family...)
-			encodedPublications = append(encodedPublications, "/contract/"...)
-			encodedPublications = appendNativePublicationOrdinal(encodedPublications, ordinal)
-			ordinal++
-			if contract.Subject != "" {
-				encodedPublications = append(encodedPublications, '/')
-				encodedPublications = append(encodedPublications, contract.Subject...)
-			}
-			eventCount := 0
-			for _, event := range contract.Revocations {
-				if event == "" {
-					continue
-				}
-				if eventCount == 0 {
-					encodedPublications = append(encodedPublications, "/contract-revocation/"...)
-				} else {
-					encodedPublications = append(encodedPublications, ',')
-				}
-				encodedPublications = append(encodedPublications, event...)
-				eventCount++
-			}
-		}
-		keyLength := len(encodedPublications) - keyStart
-		kind := byte(0)
-		payload := contract.Value
-		if contract.Source != "" {
-			kind = 1
-			payload = contract.Source
-		}
-		encodedPublications = append(encodedPublications, payload...)
-		encodedPublications[recordStart] = kind
-		binary.BigEndian.PutUint32(encodedPublications[recordStart+1:recordStart+5], uint32(keyLength))
-		binary.BigEndian.PutUint32(encodedPublications[recordStart+5:recordStart+9], uint32(len(payload)))
-		publicationCount++
-	}
-	if publicationCount == 0 {
-		return artifact, nil
-	}
-	binary.BigEndian.PutUint32(encodedPublications, publicationCount)
-	if tail := len(artifact.Equations) - 1; tail >= 0 {
-		existing := artifact.Equations[tail]
-		if existing.Occurrence.Kind == "publication" && len(existing.Operands) == 1 &&
-			existing.Operands[0].Role.Wire() == "native-publications" && !existing.Operands[0].Term.Entry {
-			current := existing.Operands[0].Term.Encoding
-			if len(current) < 4 {
-				return equation.Artifact{}, fmt.Errorf("front: truncated native publication tail")
-			}
-			merged := make([]byte, len(current), len(current)+len(encodedPublications)-4)
-			copy(merged, current)
-			count := binary.BigEndian.Uint32(merged)
-			if uint64(count)+uint64(publicationCount) > uint64(^uint32(0)) {
-				return equation.Artifact{}, fmt.Errorf("front: native publication count overflow")
-			}
-			binary.BigEndian.PutUint32(merged, count+publicationCount)
-			merged = append(merged, encodedPublications[4:]...)
-			artifact.Equations = append([]equation.Equation(nil), artifact.Equations...)
-			existing.Operands = append([]equation.Operand(nil), existing.Operands...)
-			existing.Operands[0].Term.Encoding = merged
-			artifact.Equations[tail] = existing
-			return artifact, nil
-		}
-	}
 	publication := equation.Equation{
 		Target:       equation.Coordinate{Body: body, Name: operationName(len(artifact.Equations))},
 		Entry:        entry,
 		Dependencies: []equation.Coordinate{semanticTail},
 		Occurrence:   occurrence("publication"),
 		Operands: []equation.Operand{{
-			Role: equation.MustOperandRole("native-publications"),
-			Term: equation.ClosedTerm(encodedPublications),
+			Role: equation.RoleNativeTopologyDrafts,
+			Term: equation.ClosedTerm(encoded),
 		}},
 		KernelID: publicationKernel,
 	}
 	artifact.Equations = append(artifact.Equations, publication)
 	return artifact, nil
-}
-
-// AppendNativeProjections closes lowering-owned native descriptors and already
-// evaluated child-kernel facts through an ordinary publication equation before
-// the root body is evaluated. The returned compilation owns the rebuilt frozen
-// schedule; callers must discard the pre-publication copy.
-func AppendNativeProjections(compilation Compilation, rows []NativeProjection) (Compilation, error) {
-	contracts := make([]NativeContract, 0, len(rows))
-	for _, row := range rows {
-		encoded, err := EncodeNativeProjection(row)
-		if err != nil {
-			return Compilation{}, err
-		}
-		identity := sha256.Sum256(encoded)
-		key := factkey.BuildKey(
-			factkey.NativeProjection,
-			[]factkey.Part{
-				factkey.OpaquePart(fmt.Sprintf("%x", compilation.Body)),
-				factkey.OpaquePart(fmt.Sprintf("%x", identity)),
-			},
-			"published",
-		)
-		contracts = append(contracts, NativeContract{Key: key, Value: string(encoded)})
-	}
-	artifact, err := appendNativeContractPublications(compilation.Artifact, contracts)
-	if err != nil {
-		return Compilation{}, err
-	}
-	compilation.Artifact = artifact
-	frozen, err := freezeCyclicArtifact(artifact, compilation.WIR, compilation.Graph)
-	if err != nil {
-		return Compilation{}, err
-	}
-	compilation.frozen = frozen
-	compilation.Cyclic = nil
-	if graphHasCycle(compilation.Graph) {
-		compilation.Cyclic = &compilation.frozen
-	}
-	catalog, err := catalogBodies(compilation)
-	if err != nil {
-		return Compilation{}, err
-	}
-	compilation.catalog = catalog
-	return compilation, nil
-}
-
-func appendNativePublicationOrdinal(out []byte, ordinal int) []byte {
-	if ordinal >= 100000000 {
-		return strconv.AppendInt(out, int64(ordinal), 10)
-	}
-	var digits [8]byte
-	for index := len(digits) - 1; index >= 0; index-- {
-		digits[index] = byte('0' + ordinal%10)
-		ordinal /= 10
-	}
-	return append(out, digits[:]...)
 }
 
 // resolveTopLevelTypeDefinitions resolves each provider declaration before WIR
@@ -1049,8 +925,8 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 		effects := effectSpans(proto.Body, artifact)
 		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, proto.Body, artifact, mergeSpans(claimSpans, effectValueSpans(proto.Body, artifact)), mergeSpans(claimTargetSpans, effectTargetSpans(proto.Body, artifact)), callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effects, expressionSpans(proto.Body, artifact))
 		child.Graph = proto.Graph
-		child.nativeContracts = nativeConstantPublications(child)
-		artifact, err = appendNativeContractPublications(child.Artifact, child.nativeContracts)
+		child.nativeTopology = nativeConstantTopologyDrafts(child)
+		artifact, err = appendNativeTopologyPublication(child.Artifact, child.nativeTopology)
 		if err != nil {
 			return nil, fmt.Errorf("front: nested body %q native constants: %w", proto.Name, err)
 		}
@@ -6110,7 +5986,7 @@ func cyclicOperationCells(artifact equation.Artifact, body *wir.Body, graph cfg.
 	for ; index < len(artifact.Equations); index++ {
 		operation := artifact.Equations[index]
 		if operation.Occurrence.Kind != "publication" || len(operation.Operands) != 1 ||
-			operation.Operands[0].Role.Wire() != "native-publications" {
+			operation.Operands[0].Role != equation.RoleNativeTopologyDrafts {
 			return nil, fmt.Errorf("front: cyclic operation map has unexpected non-WIR cell %s", operation.Target.Name)
 		}
 	}

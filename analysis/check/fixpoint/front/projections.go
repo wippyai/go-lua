@@ -16,7 +16,7 @@ type DraftsView interface {
 	ValidateDraftWires() error
 	ControlDiagnosticDrafts() []ControlDiagnostic
 	PolicyDiagnosticDrafts() []ControlDiagnostic
-	NativeContractDrafts() []NativeContract
+	NativeTopologyDrafts() []NativeTopologyDraft
 }
 
 // BoundaryView is the stable lexical identity and declared boundary of one
@@ -138,7 +138,7 @@ func (c Compilation) CyclicDraft() *equation.CyclicArtifact        { return c.Cy
 func (c Compilation) FrozenDraft() equation.CyclicArtifact         { return c.frozen }
 func (c Compilation) ControlDiagnosticDrafts() []ControlDiagnostic { return c.controlDiagnostics }
 func (c Compilation) PolicyDiagnosticDrafts() []ControlDiagnostic  { return c.policyDiagnostics }
-func (c Compilation) NativeContractDrafts() []NativeContract       { return c.nativeContracts }
+func (c Compilation) NativeTopologyDrafts() []NativeTopologyDraft  { return c.nativeTopology }
 func (c Compilation) BodyID() equation.BodyID                      { return c.Body }
 func (c Compilation) PrototypeID() wir.FunctionSymbolID            { return c.Prototype }
 func (c Compilation) PrototypeDisplayName() string                 { return c.PrototypeName }

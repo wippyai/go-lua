@@ -26,240 +26,6 @@ type nativeOperationScope struct {
 	types map[string]string
 }
 
-func nativeOperationContracts(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
-	return nativeOperationContractsWithTostring(stmts, bindings)
-}
-
-func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
-	var out []NativeContract
-	var walkStmts func([]ast.Stmt, nativeOperationScope, bool)
-	var walkExpr func(ast.Expr, nativeOperationScope, bool)
-
-	add := func(family, value string, revocations ...string) {
-		if value != "" {
-			out = append(out, NativeContract{Family: family, Value: value, Revocations: revocations})
-		}
-	}
-
-	walkExpr = func(expr ast.Expr, scope nativeOperationScope, inLoop bool) {
-		switch x := expr.(type) {
-		case *ast.StringConcatOpExpr:
-			for _, operand := range nativeFlattenConcat(x) {
-				walkExpr(operand, scope, inLoop)
-			}
-		case *ast.FuncCallExpr:
-			nativeEffectCall(bindings, x, scope, add)
-			walkExpr(x.Func, scope, inLoop)
-			walkExpr(x.Receiver, scope, inLoop)
-			for _, arg := range x.Args {
-				walkExpr(arg, scope, inLoop)
-			}
-		case *ast.LogicalOpExpr:
-			walkExpr(x.Lhs, scope, inLoop)
-			walkExpr(x.Rhs, scope, inLoop)
-		case *ast.AttrGetExpr:
-			walkExpr(x.Object, scope, inLoop)
-			walkExpr(x.Key, scope, inLoop)
-		case *ast.TableExpr:
-			for _, field := range x.Fields {
-				if field != nil {
-					walkExpr(field.Key, scope, inLoop)
-					walkExpr(field.Value, scope, inLoop)
-				}
-			}
-		case *ast.FunctionExpr:
-			nativeFunctionEffect(bindings, x, add)
-			child := nativeFunctionScope(x)
-			walkStmts(x.Stmts, child, inLoop)
-		}
-	}
-	walkStmts = func(body []ast.Stmt, scope nativeOperationScope, inLoop bool) {
-		for _, stmt := range body {
-			switch s := stmt.(type) {
-			case *ast.LocalAssignStmt:
-				for i, expr := range s.Exprs {
-					walkExpr(expr, scope, inLoop)
-					if i < len(s.Names) {
-						if _, function := expr.(*ast.FunctionExpr); function {
-							if nativeFunctionHasOpenCall(bindings, expr.(*ast.FunctionExpr)) {
-								scope.types[s.Names[i]] = "function-open"
-							} else {
-								scope.types[s.Names[i]] = "function"
-							}
-							continue
-						}
-						if typ := nativeTypeAt(s.Types, i); typ != "" {
-							scope.types[s.Names[i]] = typ
-						} else if typ, ok := nativeOperandClass(bindings, expr, scope); ok {
-							scope.types[s.Names[i]] = typ
-						}
-					}
-				}
-			case *ast.AssignStmt:
-				for _, expr := range s.Rhs {
-					walkExpr(expr, scope, inLoop)
-				}
-				for _, expr := range s.Lhs {
-					walkExpr(expr, scope, inLoop)
-				}
-			case *ast.FuncDefStmt:
-				if s.Func != nil {
-					if s.Name != nil {
-						if id, ok := s.Name.Func.(*ast.IdentExpr); ok {
-							if nativeFunctionHasOpenCall(bindings, s.Func) {
-								scope.types[id.Value] = "function-open"
-							} else {
-								scope.types[id.Value] = "function"
-							}
-						}
-					}
-					walkExpr(s.Func, scope, inLoop)
-				}
-			case *ast.FuncCallStmt:
-				walkExpr(s.Expr, scope, inLoop)
-			case *ast.ReturnStmt:
-				for _, expr := range s.Exprs {
-					walkExpr(expr, scope, inLoop)
-				}
-			case *ast.IfStmt:
-				walkExpr(s.Condition, scope, inLoop)
-				walkStmts(s.Then, nativeScopeCopy(scope), inLoop)
-				walkStmts(s.Else, nativeScopeCopy(scope), inLoop)
-			case *ast.DoBlockStmt:
-				walkStmts(s.Stmts, nativeScopeCopy(scope), inLoop)
-			case *ast.WhileStmt:
-				walkExpr(s.Condition, scope, inLoop)
-				walkStmts(s.Stmts, nativeScopeCopy(scope), true)
-			case *ast.RepeatStmt:
-				walkStmts(s.Stmts, nativeScopeCopy(scope), true)
-				walkExpr(s.Condition, scope, inLoop)
-			case *ast.NumberForStmt:
-				walkExpr(s.Init, scope, inLoop)
-				walkExpr(s.Limit, scope, inLoop)
-				walkExpr(s.Step, scope, inLoop)
-				loop := nativeScopeCopy(scope)
-				loop.types[s.Name] = nativeInteger
-				walkStmts(s.Stmts, loop, true)
-			case *ast.GenericForStmt:
-				for _, expr := range s.Exprs {
-					walkExpr(expr, scope, inLoop)
-				}
-				walkStmts(s.Stmts, nativeScopeCopy(scope), true)
-			}
-		}
-	}
-	walkStmts(stmts, nativeOperationScope{types: make(map[string]string)}, false)
-	return out
-}
-
-// nativeFunctionEffect audits the admitted lexical body itself.  The closed
-// rows are deliberately limited to bodies whose every operation is in this
-// small, inspectable set; an unlabelled host call stays open.
-func nativeFunctionEffect(bindings *bind.Result, fn *ast.FunctionExpr, add func(string, string, ...string)) {
-	if fn == nil {
-		return
-	}
-	var hasError, hasOpen, hasAllocation bool
-	var walkExpr func(ast.Expr)
-	var walkStmts func([]ast.Stmt)
-	walkExpr = func(expr ast.Expr) {
-		switch x := expr.(type) {
-		case *ast.FuncCallExpr:
-			if _, ok := nativeBoundStdlibCall(bindings, x, nativeStdlibIdentity("error")); ok {
-				hasError = true
-			}
-			if nativeStdlibCallIsOpen(bindings, x, "os.clock") || nativeStdlibCallIsOpen(bindings, x, "load") {
-				hasOpen = true
-			}
-			if nativeRegisteredMethod(x, nativeStdlibIdentity("string.upper")) ||
-				nativeBoundStdlibMemberCall(bindings, x, nativeStdlibIdentity("string.upper")) ||
-				nativeBoundStdlibMemberCall(bindings, x, nativeStdlibIdentity("string.gsub")) {
-				hasAllocation = true
-			}
-			if nativeStdlibCallIsOpen(bindings, x, "pcall") {
-				hasOpen = true
-			}
-			walkExpr(x.Func)
-			walkExpr(x.Receiver)
-			for _, arg := range x.Args {
-				walkExpr(arg)
-			}
-		case *ast.StringConcatOpExpr:
-			walkExpr(x.Lhs)
-			walkExpr(x.Rhs)
-		case *ast.LogicalOpExpr:
-			walkExpr(x.Lhs)
-			walkExpr(x.Rhs)
-		case *ast.AttrGetExpr:
-			walkExpr(x.Object)
-			walkExpr(x.Key)
-		case *ast.TableExpr:
-			for _, field := range x.Fields {
-				if field != nil {
-					walkExpr(field.Key)
-					walkExpr(field.Value)
-				}
-			}
-		}
-	}
-	walkStmts = func(body []ast.Stmt) {
-		for _, stmt := range body {
-			switch s := stmt.(type) {
-			case *ast.LocalAssignStmt:
-				for _, expr := range s.Exprs {
-					walkExpr(expr)
-				}
-			case *ast.AssignStmt:
-				for _, expr := range s.Rhs {
-					walkExpr(expr)
-				}
-			case *ast.FuncCallStmt:
-				walkExpr(s.Expr)
-			case *ast.ReturnStmt:
-				for _, expr := range s.Exprs {
-					walkExpr(expr)
-				}
-			case *ast.IfStmt:
-				walkExpr(s.Condition)
-				walkStmts(s.Then)
-				walkStmts(s.Else)
-			case *ast.DoBlockStmt:
-				walkStmts(s.Stmts)
-			case *ast.WhileStmt:
-				walkExpr(s.Condition)
-				walkStmts(s.Stmts)
-			case *ast.RepeatStmt:
-				walkStmts(s.Stmts)
-				walkExpr(s.Condition)
-			case *ast.NumberForStmt:
-				walkExpr(s.Init)
-				walkExpr(s.Limit)
-				walkExpr(s.Step)
-				walkStmts(s.Stmts)
-			case *ast.GenericForStmt:
-				for _, expr := range s.Exprs {
-					walkExpr(expr)
-				}
-				walkStmts(s.Stmts)
-			}
-		}
-	}
-	walkStmts(fn.Stmts)
-	if hasOpen {
-		add("effect_row", "exhaustive=false")
-		return
-	}
-	allocation := "absent"
-	if hasAllocation {
-		allocation = "present"
-	}
-	errorState := "absent"
-	if hasError {
-		errorState = "present"
-	}
-	add("effect_row", "allocation="+allocation+" error="+errorState+" exhaustive=true yield=absent")
-}
-
 func nativeFunctionHasOpenCall(bindings *bind.Result, fn *ast.FunctionExpr) bool {
 	if fn == nil {
 		return true
@@ -309,63 +75,6 @@ func nativeFunctionHasOpenCall(bindings *bind.Result, fn *ast.FunctionExpr) bool
 		}
 	}
 	return open
-}
-
-func nativeEffectCall(bindings *bind.Result, call *ast.FuncCallExpr, scope nativeOperationScope, add func(string, string, ...string)) {
-	if call == nil {
-		return
-	}
-	if nativeBoundMemberCall(bindings, call, "channel", "select") {
-		add("effect_row", "exhaustive=true safepoint=required suspension=published yield=present")
-		return
-	}
-	if nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("coroutine.yield")) {
-		add("effect_row", "control_transfer=suspend exhaustive=true suspension=published yield=present")
-		return
-	}
-	if nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("coroutine.resume")) {
-		add("effect_row", "control_transfer=resume exhaustive=true safepoint=required suspension=published yield=present")
-		return
-	}
-	if stdlib, ok := nativeBoundStdlibSignature(bindings, call); ok &&
-		stdlib.OperationalEffects != nil &&
-		stdlib.OperationalEffects.SuspensionKnown &&
-		stdlib.OperationalEffects.MaySuspend {
-		add("effect_row", "exhaustive=true safepoint=required suspension=published yield=present")
-		return
-	}
-	if nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("string.gsub")) && len(call.Args) >= 3 {
-		add("effect_row", "allocation=present composed_from_callback=true control_transfer=callback exhaustive=true")
-		return
-	}
-	if nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("table.sort")) && len(call.Args) >= 2 {
-		add("effect_row", "control_transfer=callback error=present exhaustive=true safepoint=required")
-		return
-	}
-	if _, ok := nativeBoundStdlibCall(bindings, call, nativeStdlibIdentity("load")); ok {
-		add("effect_row", "exhaustive=false module_loading=present")
-		return
-	}
-	if _, ok := nativeBoundStdlibCall(bindings, call, nativeStdlibIdentity("pcall")); ok {
-		if len(call.Args) != 0 {
-			if _, ok := call.Args[0].(*ast.IdentExpr); ok && nativeKnownFunction(call.Args[0], scope) {
-				add("effect_row", "composed_from_callback=true error=absent exhaustive=true")
-				return
-			}
-		}
-		add("effect_row", "exhaustive=false")
-		return
-	}
-	if id, ok := call.Func.(*ast.IdentExpr); ok && scope.types[id.Value] == "function" {
-		// A direct lexical function is closed over this compilation. Its own
-		// audited row establishes the absence facts; this caller row is the
-		// safepoint-elision consumption of that closed summary.
-		add("effect_row", "allocation=absent error=absent exhaustive=true safepoint=not_required yield=absent")
-		return
-	}
-	if nativeStdlibCallIsOpen(bindings, call, "os.clock") {
-		add("effect_row", "exhaustive=false")
-	}
 }
 
 var nativeStdlibSignatures = signaturelookup.Source{IncludeStdlib: true}
@@ -569,6 +278,269 @@ func nativeScopeCopy(scope nativeOperationScope) nativeOperationScope {
 		out.types[k] = v
 	}
 	return out
+}
+
+func nativeOperationTopologyDrafts(body NativeBodyReference, stmts []ast.Stmt, bindings *bind.Result) []NativeTopologyDraft {
+	var out []NativeTopologyDraft
+	var site uint32
+	add := func(draft *NativeEffectTopologyDraft) {
+		if draft == nil {
+			return
+		}
+		draft.Body = body
+		draft.Site = site
+		site++
+		out = append(out, NativeTopologyDraft{Kind: NativeTopologyEffect, Effect: draft})
+	}
+	var walkStmts func([]ast.Stmt, nativeOperationScope, bool)
+	var walkExpr func(ast.Expr, nativeOperationScope, bool)
+	walkExpr = func(expr ast.Expr, scope nativeOperationScope, inLoop bool) {
+		switch item := expr.(type) {
+		case *ast.StringConcatOpExpr:
+			for _, operand := range nativeFlattenConcat(item) {
+				walkExpr(operand, scope, inLoop)
+			}
+		case *ast.FuncCallExpr:
+			add(nativeEffectCallTopology(bindings, item, scope))
+			walkExpr(item.Func, scope, inLoop)
+			walkExpr(item.Receiver, scope, inLoop)
+			for _, argument := range item.Args {
+				walkExpr(argument, scope, inLoop)
+			}
+		case *ast.LogicalOpExpr:
+			walkExpr(item.Lhs, scope, inLoop)
+			walkExpr(item.Rhs, scope, inLoop)
+		case *ast.AttrGetExpr:
+			walkExpr(item.Object, scope, inLoop)
+			walkExpr(item.Key, scope, inLoop)
+		case *ast.TableExpr:
+			for _, field := range item.Fields {
+				if field != nil {
+					walkExpr(field.Key, scope, inLoop)
+					walkExpr(field.Value, scope, inLoop)
+				}
+			}
+		case *ast.FunctionExpr:
+			add(nativeFunctionEffectTopology(bindings, item))
+			walkStmts(item.Stmts, nativeFunctionScope(item), inLoop)
+		}
+	}
+	walkStmts = func(body []ast.Stmt, scope nativeOperationScope, inLoop bool) {
+		for _, stmt := range body {
+			switch item := stmt.(type) {
+			case *ast.LocalAssignStmt:
+				for index, expr := range item.Exprs {
+					walkExpr(expr, scope, inLoop)
+					if index >= len(item.Names) {
+						continue
+					}
+					if function, ok := expr.(*ast.FunctionExpr); ok {
+						if nativeFunctionHasOpenCall(bindings, function) {
+							scope.types[item.Names[index]] = "function-open"
+						} else {
+							scope.types[item.Names[index]] = "function"
+						}
+					} else if class := nativeTypeAt(item.Types, index); class != "" {
+						scope.types[item.Names[index]] = class
+					} else if class, ok := nativeOperandClass(bindings, expr, scope); ok {
+						scope.types[item.Names[index]] = class
+					}
+				}
+			case *ast.AssignStmt:
+				for _, expr := range item.Rhs {
+					walkExpr(expr, scope, inLoop)
+				}
+				for _, expr := range item.Lhs {
+					walkExpr(expr, scope, inLoop)
+				}
+			case *ast.FuncDefStmt:
+				if item.Func != nil {
+					if item.Name != nil {
+						if id, ok := item.Name.Func.(*ast.IdentExpr); ok {
+							if nativeFunctionHasOpenCall(bindings, item.Func) {
+								scope.types[id.Value] = "function-open"
+							} else {
+								scope.types[id.Value] = "function"
+							}
+						}
+					}
+					walkExpr(item.Func, scope, inLoop)
+				}
+			case *ast.FuncCallStmt:
+				walkExpr(item.Expr, scope, inLoop)
+			case *ast.ReturnStmt:
+				for _, expr := range item.Exprs {
+					walkExpr(expr, scope, inLoop)
+				}
+			case *ast.IfStmt:
+				walkExpr(item.Condition, scope, inLoop)
+				walkStmts(item.Then, nativeScopeCopy(scope), inLoop)
+				walkStmts(item.Else, nativeScopeCopy(scope), inLoop)
+			case *ast.DoBlockStmt:
+				walkStmts(item.Stmts, nativeScopeCopy(scope), inLoop)
+			case *ast.WhileStmt:
+				walkExpr(item.Condition, scope, inLoop)
+				walkStmts(item.Stmts, nativeScopeCopy(scope), true)
+			case *ast.RepeatStmt:
+				walkStmts(item.Stmts, nativeScopeCopy(scope), true)
+				walkExpr(item.Condition, scope, inLoop)
+			case *ast.NumberForStmt:
+				walkExpr(item.Init, scope, inLoop)
+				walkExpr(item.Limit, scope, inLoop)
+				walkExpr(item.Step, scope, inLoop)
+				loop := nativeScopeCopy(scope)
+				loop.types[item.Name] = nativeInteger
+				walkStmts(item.Stmts, loop, true)
+			case *ast.GenericForStmt:
+				for _, expr := range item.Exprs {
+					walkExpr(expr, scope, inLoop)
+				}
+				walkStmts(item.Stmts, nativeScopeCopy(scope), true)
+			}
+		}
+	}
+	walkStmts(stmts, nativeOperationScope{types: make(map[string]string)}, false)
+	return out
+}
+
+func nativeFunctionEffectTopology(bindings *bind.Result, fn *ast.FunctionExpr) *NativeEffectTopologyDraft {
+	if fn == nil {
+		return nil
+	}
+	draft := &NativeEffectTopologyDraft{Operation: NativeEffectFunction}
+	var position uint32
+	var walkExpr func(ast.Expr)
+	var walkStmts func([]ast.Stmt)
+	walkExpr = func(expr ast.Expr) {
+		switch item := expr.(type) {
+		case *ast.FuncCallExpr:
+			if _, ok := nativeBoundStdlibCall(bindings, item, nativeStdlibIdentity("error")); ok {
+				draft.ErrorCallSites = append(draft.ErrorCallSites, position)
+			}
+			if nativeStdlibCallIsOpen(bindings, item, "os.clock") ||
+				nativeStdlibCallIsOpen(bindings, item, "load") ||
+				nativeStdlibCallIsOpen(bindings, item, "pcall") {
+				draft.OpenCallSites = append(draft.OpenCallSites, position)
+			}
+			if nativeRegisteredMethod(item, nativeStdlibIdentity("string.upper")) ||
+				nativeBoundStdlibMemberCall(bindings, item, nativeStdlibIdentity("string.upper")) ||
+				nativeBoundStdlibMemberCall(bindings, item, nativeStdlibIdentity("string.gsub")) {
+				draft.AllocationSites = append(draft.AllocationSites, position)
+			}
+			position++
+			walkExpr(item.Func)
+			walkExpr(item.Receiver)
+			for _, argument := range item.Args {
+				walkExpr(argument)
+			}
+		case *ast.StringConcatOpExpr:
+			walkExpr(item.Lhs)
+			walkExpr(item.Rhs)
+		case *ast.LogicalOpExpr:
+			walkExpr(item.Lhs)
+			walkExpr(item.Rhs)
+		case *ast.AttrGetExpr:
+			walkExpr(item.Object)
+			walkExpr(item.Key)
+		case *ast.TableExpr:
+			for _, field := range item.Fields {
+				if field != nil {
+					walkExpr(field.Key)
+					walkExpr(field.Value)
+				}
+			}
+		}
+	}
+	walkStmts = func(body []ast.Stmt) {
+		for _, stmt := range body {
+			switch item := stmt.(type) {
+			case *ast.LocalAssignStmt:
+				for _, expr := range item.Exprs {
+					walkExpr(expr)
+				}
+			case *ast.AssignStmt:
+				for _, expr := range item.Rhs {
+					walkExpr(expr)
+				}
+			case *ast.FuncCallStmt:
+				walkExpr(item.Expr)
+			case *ast.ReturnStmt:
+				for _, expr := range item.Exprs {
+					walkExpr(expr)
+				}
+			case *ast.IfStmt:
+				walkExpr(item.Condition)
+				walkStmts(item.Then)
+				walkStmts(item.Else)
+			case *ast.DoBlockStmt:
+				walkStmts(item.Stmts)
+			case *ast.WhileStmt:
+				walkExpr(item.Condition)
+				walkStmts(item.Stmts)
+			case *ast.RepeatStmt:
+				walkStmts(item.Stmts)
+				walkExpr(item.Condition)
+			case *ast.NumberForStmt:
+				walkExpr(item.Init)
+				walkExpr(item.Limit)
+				walkExpr(item.Step)
+				walkStmts(item.Stmts)
+			case *ast.GenericForStmt:
+				for _, expr := range item.Exprs {
+					walkExpr(expr)
+				}
+				walkStmts(item.Stmts)
+			}
+		}
+	}
+	walkStmts(fn.Stmts)
+	return draft
+}
+
+func nativeEffectCallTopology(bindings *bind.Result, call *ast.FuncCallExpr, scope nativeOperationScope) *NativeEffectTopologyDraft {
+	if call == nil {
+		return nil
+	}
+	draft := &NativeEffectTopologyDraft{}
+	switch {
+	case nativeBoundMemberCall(bindings, call, "channel", "select"):
+		draft.Operation = NativeEffectChannelSelect
+	case nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("coroutine.yield")):
+		draft.Operation = NativeEffectCoroutineYield
+	case nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("coroutine.resume")):
+		draft.Operation = NativeEffectCoroutineResume
+	case nativeRegisteredSuspendingCall(bindings, call):
+		draft.Operation = NativeEffectRegisteredSuspend
+	case nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("string.gsub")) && len(call.Args) >= 3:
+		draft.Operation = NativeEffectStringGsub
+	case nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("table.sort")) && len(call.Args) >= 2:
+		draft.Operation = NativeEffectTableSort
+	default:
+		if _, ok := nativeBoundStdlibCall(bindings, call, nativeStdlibIdentity("load")); ok {
+			draft.Operation = NativeEffectModuleLoad
+		} else if _, ok := nativeBoundStdlibCall(bindings, call, nativeStdlibIdentity("pcall")); ok {
+			draft.Operation = NativeEffectProtectedCall
+			if len(call.Args) != 0 {
+				if _, ok := call.Args[0].(*ast.IdentExpr); ok && nativeKnownFunction(call.Args[0], scope) {
+					draft.ArgumentShapes = []NativeOperandShape{NativeOperandSymbol}
+				}
+			}
+		} else if id, ok := call.Func.(*ast.IdentExpr); ok && scope.types[id.Value] == "function" {
+			draft.Operation = NativeEffectDirectLexicalCall
+		} else if nativeStdlibCallIsOpen(bindings, call, "os.clock") {
+			draft.Operation = NativeEffectOpenCall
+		}
+	}
+	if draft.Operation == 0 {
+		return nil
+	}
+	return draft
+}
+
+func nativeRegisteredSuspendingCall(bindings *bind.Result, call *ast.FuncCallExpr) bool {
+	stdlib, ok := nativeBoundStdlibSignature(bindings, call)
+	return ok && stdlib.OperationalEffects != nil &&
+		stdlib.OperationalEffects.SuspensionKnown && stdlib.OperationalEffects.MaySuspend
 }
 
 func nativeDecimal(value int) string {

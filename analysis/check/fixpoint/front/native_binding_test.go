@@ -1,9 +1,6 @@
 package front
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func nativeOpenEffectCount(t *testing.T, source string) int {
 	t.Helper()
@@ -12,8 +9,10 @@ func nativeOpenEffectCount(t *testing.T, source string) int {
 		t.Fatalf("compile: %v", err)
 	}
 	count := 0
-	for _, contract := range compilation.nativeContracts {
-		if contract.Family == "effect_row" && contract.Value == "exhaustive=false" {
+	for _, draft := range compilation.nativeTopology {
+		if draft.Effect != nil &&
+			(draft.Effect.Operation == NativeEffectOpenCall ||
+				draft.Effect.Operation == NativeEffectProtectedCall) {
 			count++
 		}
 	}
@@ -80,8 +79,9 @@ return registered, unregistered`)
 		t.Fatalf("compile: %v", err)
 	}
 	var allocationRows int
-	for _, contract := range compilation.nativeContracts {
-		if contract.Family == "effect_row" && strings.Contains(contract.Value, "allocation=present") {
+	for _, draft := range compilation.nativeTopology {
+		if draft.Effect != nil && draft.Effect.Operation == NativeEffectFunction &&
+			len(draft.Effect.AllocationSites) != 0 {
 			allocationRows++
 		}
 	}
@@ -104,8 +104,8 @@ return wrapped, shadowed`)
 		t.Fatalf("compile: %v", err)
 	}
 	var suspensionRows int
-	for _, contract := range compilation.NativeContractDrafts() {
-		if contract.Family == "effect_row" && strings.Contains(contract.Value, "suspension=published") {
+	for _, draft := range compilation.NativeTopologyDrafts() {
+		if draft.Effect != nil && draft.Effect.Operation == NativeEffectRegisteredSuspend {
 			suspensionRows++
 		}
 	}

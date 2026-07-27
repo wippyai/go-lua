@@ -10,7 +10,7 @@ import (
 
 func TestEngineUsesCompilationProjectionsAndCentralWireDecode(t *testing.T) {
 	root := enginePackageDir(t)
-	directBagRead := regexp.MustCompile(`\b(?:child|compilation|parent|callee|nested)\.(?:Artifact|Cyclic|Frozen|WIR|Graph|Body|PrototypeName|LexicalPath|Boundary|RebindsBoundary|Nested|ClaimSpans|ClaimTargetSpans|ClaimNameSpans|BranchJoinSpans|CallSpans|BranchSpans|EffectSpans|ExpressionSpans|ReturnSpans|TableMemberValueSpans|Catalog|ControlDiagnostics|PolicyDiagnostics|TypeDefinitions|TypeFieldSpans|NativeContracts)\b`)
+	directBagRead := regexp.MustCompile(`\b(?:child|compilation|parent|callee|nested)\.(?:Artifact|Cyclic|Frozen|WIR|Graph|Body|PrototypeName|LexicalPath|Boundary|RebindsBoundary|Nested|ClaimSpans|ClaimTargetSpans|ClaimNameSpans|BranchJoinSpans|CallSpans|BranchSpans|EffectSpans|ExpressionSpans|ReturnSpans|TableMemberValueSpans|Catalog|ControlDiagnostics|PolicyDiagnostics|TypeDefinitions|TypeFieldSpans|NativeTopologyDrafts)\b`)
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr

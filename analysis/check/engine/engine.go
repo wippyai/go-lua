@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -474,7 +473,7 @@ func publishedNestedNativeKernelFacts(root front.GraphView, lexical *lexicalEval
 func semanticArtifact(artifact equation.Artifact) equation.Artifact {
 	for index, operation := range artifact.Equations {
 		if operation.Occurrence.Kind != "publication" || len(operation.Operands) != 1 ||
-			operation.Operands[0].Role.Wire() != "native-publications" {
+			operation.Operands[0].Role != equation.RoleNativeTopologyDrafts {
 			continue
 		}
 		return equation.Artifact{Equations: append([]equation.Equation(nil), artifact.Equations[:index]...)}
@@ -7888,7 +7887,12 @@ func typePredicateBodySummary(child front.DraftsBoundaryGraphView) (typePredicat
 	if child.LoweredBody() == nil || child.CyclicDraft() != nil || child.BoundaryRebound() || len(child.BodyBoundary().Parameters) == 0 {
 		return typePredicateSummary{}, false
 	}
-	returned, found := singleReturnedTerm(child.DraftArtifact())
+	// Topology publication is an engine-owned tail transaction, not an authored
+	// Lua return. Predicate recognition must inspect the semantic artifact just
+	// as coordinate and diagnostic consumers do, including when every topology
+	// candidate is later withheld by its kernel.
+	artifact := semanticArtifact(child.DraftArtifact())
+	returned, found := singleReturnedTerm(artifact)
 	if !found {
 		return typePredicateSummary{}, false
 	}
@@ -7896,7 +7900,7 @@ func typePredicateBodySummary(child front.DraftsBoundaryGraphView) (typePredicat
 	// than one write leaves the returned value undecided by the check, so the
 	// chase stops rather than choosing a definition.
 	for depth := 0; depth < 4; depth++ {
-		predicate, recognized := truthyImpliedTypePredicate(child.DraftArtifact(), returned)
+		predicate, recognized := truthyImpliedTypePredicate(artifact, returned)
 		if recognized {
 			for index, parameter := range child.BodyBoundary().Parameters {
 				if parameter.Vararg || boundaryTerm(parameter.Symbol) != "path/"+predicate.Path {
@@ -7906,7 +7910,7 @@ func typePredicateBodySummary(child front.DraftsBoundaryGraphView) (typePredicat
 			}
 			return typePredicateSummary{}, false
 		}
-		source, bound := singleBoundSource(child.DraftArtifact(), returned)
+		source, bound := singleBoundSource(artifact, returned)
 		if !bound {
 			return typePredicateSummary{}, false
 		}
@@ -19205,7 +19209,7 @@ func branchTrueEdgePredicates(operation equation.BoundEquation, partition equati
 // passed, so the descriptor names a path in this body and the true edge decides
 // it exactly as an in-body check does.
 func branchConditionTypePredicate(operation equation.BoundEquation, partition equation.Partition) (branchPredicateWire, bool, error) {
-	condition := boundOperandValue(operation.Operands, "condition")
+	condition := boundOperandValue(operation.Operands, equation.RoleCondition)
 	if len(condition) == 0 {
 		return branchPredicateWire{}, false, nil
 	}
@@ -28319,109 +28323,21 @@ func publicationKernelWithGlobals(operation equation.BoundEquation, partition eq
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	if encoded := boundOperandValue(operation.Operands, "native-publications"); len(encoded) != 0 {
-		if len(encoded) < 4 {
-			return equation.TransactionResult{}, fmt.Errorf("engine: truncated native publication count")
+	if encoded := boundOperandValue(operation.Operands, equation.RoleNativeTopologyDrafts); len(encoded) != 0 {
+		if len(operation.Operands) != 1 {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed native topology publication")
 		}
-		count := int(binary.BigEndian.Uint32(encoded))
-		encoded = encoded[4:]
-		values := make([]equation.Fact, 0, count)
-		processed := 0
-		for len(encoded) != 0 {
-			if len(encoded) < 9 {
-				return equation.TransactionResult{}, fmt.Errorf("engine: truncated native publication")
-			}
-			kind := encoded[0]
-			keyLength := int(binary.BigEndian.Uint32(encoded[1:5]))
-			valueLength := int(binary.BigEndian.Uint32(encoded[5:9]))
-			encoded = encoded[9:]
-			if keyLength == 0 || valueLength == 0 || keyLength > len(encoded) || valueLength > len(encoded)-keyLength {
-				return equation.TransactionResult{}, fmt.Errorf("engine: malformed native publication lengths")
-			}
-			key := encoded[:keyLength]
-			publication := encoded[keyLength : keyLength+valueLength]
-			encoded = encoded[keyLength+valueLength:]
-			processed++
-			var value []byte
-			switch kind {
-			case 1:
-				source := publication
-				published := source
-				if !shapefact.IsScalar(source) {
-					fact, found := partition.LatestValuePrefix(termFamilyKey(factkey.Value, string(source), "").String())
-					if !found {
-						continue
-					}
-					published = fact.Value
-				}
-				word, ok := nativePublishedConstantWord(published)
-				if !ok {
-					continue
-				}
-				value = []byte("representation=" + word.representation + " value=" + word.text)
-			case 0:
-				if family, declared := factkey.Lookup(string(key)); declared && family.ID == factkey.FamilyNativeProjection {
-					if row, valid := front.DecodeNativeProjection(publication); valid && row.HostGlobal != nil &&
-						!nativeHostGlobalRequirementHolds(row.HostGlobal, lexical) {
-						continue
-					}
-				}
-				// The closure join below the kernel copies every value into its
-				// canonical byte arena. Keep the compiled operand view until that
-				// ownership boundary instead of allocating an identical
-				// transaction-local copy first.
-				value = publication
-			default:
-				return equation.TransactionResult{}, fmt.Errorf("engine: unknown native publication kind %d", kind)
-			}
-			values = append(values, equation.Fact{
-				Key: string(key), Value: value,
-			})
+		drafts, err := front.DecodeNativeTopologyDrafts(encoded)
+		if err != nil {
+			return equation.TransactionResult{}, err
 		}
-		if processed != count {
-			return equation.TransactionResult{}, fmt.Errorf("engine: native publication count %d, want %d", processed, count)
+		values, err := nativeTopologyKernelFacts(operation, partition, drafts)
+		if err != nil {
+			return equation.TransactionResult{}, err
 		}
 		return equation.TransactionResult{
 			Complete: true,
 			Closure:  equation.OutputClosure{Values: values},
-		}, nil
-	}
-	if key, source := boundOperandValue(operation.Operands, "native-key"), boundOperandValue(operation.Operands, "native-source"); len(source) != 0 {
-		if len(operation.Operands) != 2 || len(key) == 0 {
-			return equation.TransactionResult{}, fmt.Errorf("engine: malformed native constant publication")
-		}
-		value := append([]byte(nil), source...)
-		if !shapefact.IsScalar(source) {
-			published, found := partition.LatestValuePrefix(termFamilyKey(factkey.Value, string(source), "").String())
-			if found {
-				value = published.Value
-			} else {
-				// A guarded or recurrent write can have no single visible value at
-				// the body exit. That is a withheld constant, not an incomplete
-				// semantic transaction.
-				return equation.TransactionResult{Complete: true}, nil
-			}
-		}
-		word, ok := nativePublishedConstantWord(value)
-		if !ok {
-			return equation.TransactionResult{Complete: true}, nil
-		}
-		return equation.TransactionResult{
-			Complete: true,
-			Closure: equation.OutputClosure{Values: []equation.Fact{{
-				Key: string(key), Value: []byte("representation=" + word.representation + " value=" + word.text),
-			}}},
-		}, nil
-	}
-	if key, value := boundOperandValue(operation.Operands, "native-key"), boundOperandValue(operation.Operands, "native-value"); len(key) != 0 || len(value) != 0 {
-		if len(operation.Operands) != 2 || len(key) == 0 || len(value) == 0 {
-			return equation.TransactionResult{}, fmt.Errorf("engine: malformed native publication")
-		}
-		return equation.TransactionResult{
-			Complete: true,
-			Closure: equation.OutputClosure{Values: []equation.Fact{{
-				Key: string(key), Value: append([]byte(nil), value...),
-			}}},
 		}, nil
 	}
 	values := make([][]byte, 0, len(operation.Operands))
@@ -28538,7 +28454,7 @@ func publicationKernelWithGlobals(operation equation.BoundEquation, partition eq
 			Key:   fmt.Sprintf("%s%s/%08d", factkey.ReturnRelationSurface.Key().String(), operation.Target.Name, index),
 			Value: relationSurfaces[index],
 		})
-		source := boundOperandValue(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, index).Wire())
+		source := boundOperandValue(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, index))
 		for _, origin := range liveMemberOrigins(source, partition) {
 			projected = append(projected, equation.Fact{
 				Key:   fmt.Sprintf("%s%s/%08d/%s", factkey.ReturnMemberOrigin.Key().String(), operation.Target.Name, index, base64.RawURLEncoding.EncodeToString([]byte(origin.Suffix))),
@@ -28980,9 +28896,9 @@ func operandsByRole(operands []equation.BoundOperand, roles ...string) (map[stri
 
 // boundOperandValue selects one bound operand by role. Operand order is
 // presentation-dependent, so every slot lookup goes through its role.
-func boundOperandValue(operands []equation.BoundOperand, role string) []byte {
+func boundOperandValue(operands []equation.BoundOperand, role equation.OperandRole) []byte {
 	for _, operand := range operands {
-		if operand.Role.Wire() == role {
+		if operand.Role == role {
 			return operand.Value
 		}
 	}
