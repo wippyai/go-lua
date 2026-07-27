@@ -47,7 +47,7 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 
 		capability.IterationIterator: capability.StatusImportOrStdlib,
 
-		capability.DispatchModuleLoad:        capability.StatusPartial,
+		capability.DispatchModuleLoad:        capability.StatusImportOrStdlib,
 		capability.DispatchTypePredicate:     capability.StatusReservedHighRisk,
 		capability.DispatchVariadicTransform: capability.StatusReservedHighRisk,
 
@@ -311,18 +311,17 @@ func TestInactiveControlLabelsArePinnedReservedHighRisk(t *testing.T) {
 	}
 }
 
-func TestPartialDispatchModuleLoadDocumentsRequireNameBinding(t *testing.T) {
+func TestDispatchModuleLoadDocumentsCapabilityBinding(t *testing.T) {
 	desc, ok := capability.Lookup(capability.DispatchModuleLoad)
 	if !ok {
 		t.Fatal("missing ModuleLoad descriptor")
 	}
-	if desc.Status != capability.StatusPartial {
-		t.Fatalf("ModuleLoad status = %q, want %q", desc.Status, capability.StatusPartial)
+	if desc.Status != capability.StatusImportOrStdlib {
+		t.Fatalf("ModuleLoad status = %q, want %q", desc.Status, capability.StatusImportOrStdlib)
 	}
 	for _, want := range []string{
-		"Metadata marker",
-		"name-bound to require",
-		"does not inspect this label",
+		"operational capability",
+		"bind through this label",
 	} {
 		if !strings.Contains(desc.Rationale, want) {
 			t.Fatalf("ModuleLoad rationale = %q, want to contain %q", desc.Rationale, want)

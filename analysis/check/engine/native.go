@@ -167,7 +167,10 @@ func (index *NativeFactIndex) build() {
 		for _, fact := range lane.facts {
 			if family, declared := factkey.Lookup(fact.Key); declared && family.ID == factkey.FamilyNativeProjection {
 				if projection, valid := front.DecodeNativeProjection(fact.Value); valid {
-					facts = append(facts, nativeFactFromProjection(projection))
+					row := nativeFactFromProjection(projection)
+					if admitStructuralNativeFact(row) {
+						facts = append(facts, row)
+					}
 				}
 				continue
 			}
@@ -177,7 +180,10 @@ func (index *NativeFactIndex) build() {
 				// alias row at the guarded allocation coordinate.
 				continue
 			}
-			facts = append(facts, anchors.project(lane.name, fact))
+			row := anchors.project(lane.name, fact)
+			if admitStructuralNativeFact(row) {
+				facts = append(facts, row)
+			}
 		}
 	}
 	sort.Slice(facts, func(i, j int) bool {
@@ -206,6 +212,21 @@ func (index *NativeFactIndex) build() {
 		return facts[i].Value < facts[j].Value
 	})
 	index.facts = facts
+}
+
+// admitStructuralNativeFact is the decision consumer for structural eval and
+// throw publications. Their exact closed payload determines whether the row
+// crosses the native boundary; malformed or widened spellings fail closed.
+func admitStructuralNativeFact(row NativeFact) bool {
+	switch row.Family {
+	case "throw_template":
+		return row.Value == claimAssertThrowTemplateValue
+	case "eval_node":
+		value, ok := strings.CutPrefix(row.Value, "operation=")
+		return ok && projectedEvalNodeOperation(value)
+	default:
+		return true
+	}
 }
 
 func nativeFactFromProjection(projection front.NativeProjection) NativeFact {

@@ -101,7 +101,7 @@ var descriptors = map[string]Descriptor{
 
 	IterationIterator: descriptor(IterationIterator, "iteration", "Iterator", StatusImportOrStdlib, "Import/stdlib operational vocabulary, but not exported as the same label."),
 
-	DispatchModuleLoad:        descriptor(DispatchModuleLoad, "dispatch", "ModuleLoad", StatusPartial, "Metadata marker for require-like signatures; operational module rehydration is currently name-bound to require and does not inspect this label."),
+	DispatchModuleLoad:        descriptor(DispatchModuleLoad, "dispatch", "ModuleLoad", StatusImportOrStdlib, "Import/stdlib operational capability: module identity and provider boundaries bind through this label."),
 	DispatchTypePredicate:     descriptor(DispatchTypePredicate, "dispatch", "TypePredicate", StatusReservedHighRisk, "Reserved metadata; type() narrowing is syntax/factflow based, so stdlib must not declare this while inactive."),
 	DispatchVariadicTransform: descriptor(DispatchVariadicTransform, "dispatch", "VariadicTransform", StatusReservedHighRisk, "Reserved metadata; select() lowering ignores this, so stdlib must not declare it while inactive."),
 

@@ -60,11 +60,6 @@ func (b *Body) ForEachValuePath(visit func(path.Path) bool) bool {
 				return false
 			}
 		}
-		for _, sufficient := range b.SufficientChecks(inst.SufficientChecks) {
-			if !check(sufficient.Check) {
-				return false
-			}
-		}
 		for _, constraint := range b.BranchDiffConstraints(inst.DiffConstraints) {
 			if (!constraint.HiPath.IsEmpty() && !visit(constraint.HiPath)) ||
 				(constraint.HasHi2 && !constraint.Hi2Path.IsEmpty() && !visit(constraint.Hi2Path)) ||

@@ -1511,7 +1511,7 @@ end
 	t.Fatalf("stale map-entry alias diagnostics = %#v", result.Diagnostics)
 }
 
-func TestCheckWithImportsSeedsExactRequireExportAndOmitsAny(t *testing.T) {
+func TestCheckWithImportsSeedsModuleLoadExportAndOmitsAny(t *testing.T) {
 	source := `local provider = require("provider")
 local answer: string = provider.answer`
 	typed, err := engine.CheckWithImports(source, map[string]typ.Type{

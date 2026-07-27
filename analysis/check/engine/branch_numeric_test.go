@@ -142,23 +142,6 @@ func TestResidueClassWindowVerdictIntersectsTheClassWithTheWindow(t *testing.T) 
 	}
 }
 
-func TestTrueEdgeNumericPredicatesRejectSufficientChecks(t *testing.T) {
-	// A disjunction publishes every arm's sufficient check on the true edge.
-	// Their conjunction describes no execution, so admitting them would refute
-	// an arm every value of x reaches.
-	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: "condition", Value: []byte("temp/0")},
-		{Role: "sufficient-00000000", Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
-		{Role: "sufficient-00000001", Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 3, Negated: true})},
-	}}
-	if predicates, err := trueEdgeNumericPredicates(operation); err != nil || len(predicates) != 0 {
-		t.Fatalf("a sufficient check states no necessary condition of its edge, got %v", predicates)
-	}
-	if _, decided, err := branchNumericTruth(operation, equation.Partition{}); err != nil || decided {
-		t.Fatal("a disjunction whose arms exclude each other is still reachable")
-	}
-}
-
 func TestTrueEdgeNumericPredicatesRejectFalseEdgeEvidence(t *testing.T) {
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
 		{Role: "implied-00000000", Value: encodeEvidence(t, "false", "false", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},

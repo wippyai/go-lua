@@ -18,7 +18,7 @@ func TestSkeletonRejectsUnimplementedKind(t *testing.T) {
 }
 
 func TestEnvironmentWriteExemplarBindsExistingKernel(t *testing.T) {
-	compiler, err := Skeleton().With("environment-write", BindExistingKernel("transformer/formal-environment-write/v1"))
+	compiler, err := Skeleton().With("environment-write", "transformer/formal-environment-write/v1")
 	if err != nil {
 		t.Fatal(err)
 	}

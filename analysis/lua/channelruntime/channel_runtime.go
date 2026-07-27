@@ -124,6 +124,6 @@ func isChannelModuleSymbol(bindings *bind.Result, id symbol.ID) bool {
 	if bindings.Name(id) == moduleName && symbolKind(bindings, id) == symbol.Global {
 		return true
 	}
-	modulePath, ok := moduleidentity.LocalRequireModulePath(bindings, id)
+	modulePath, ok := moduleidentity.LocalModuleLoadPath(bindings, id)
 	return ok && modulePath == moduleName
 }

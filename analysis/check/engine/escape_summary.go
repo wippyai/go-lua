@@ -108,7 +108,8 @@ func (l *lexicalEvaluator) returnTuplesForPrototype(body equation.BodyID, child 
 	if !ok {
 		return nil, nil, nil, exportrelation.Value{}, false
 	}
-	entry, admitted, err := l.uncalledChildEntry(body, child, seeds, partition, false, true, true, true)
+	index := l.admissionBody(child)
+	entry, admitted, err := index.childEntry(l, body, seeds, partition, false, true, true, true)
 	if err != nil || !admitted {
 		return nil, nil, nil, exportrelation.Value{}, false
 	}

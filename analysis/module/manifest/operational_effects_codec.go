@@ -39,7 +39,6 @@ type operationalEffectsWire struct {
 	EscapeEvents                    []escapeEventWire               `json:"escapeEvents,omitempty"`
 	StoreRelations                  []storeRelationWire             `json:"storeRelations,omitempty"`
 	ParamRelations                  []paramRelationWire             `json:"paramRelations,omitempty"`
-	ReturnFlows                     []returnFlowWire                `json:"returnFlows,omitempty"`
 	LifecycleEffects                []lifecycleEffectWire           `json:"lifecycleEffects,omitempty"`
 	TypestateRequirements           []typestateRequirementWire      `json:"typestateRequirements,omitempty"`
 	ReturnAllocationTemplates       []returnAllocationTemplateWire  `json:"returnAllocationTemplates,omitempty"`
@@ -147,13 +146,6 @@ type paramRelationWire struct {
 	PlacementConsequence string `json:"placementConsequence"`
 	ThroughReturn        bool   `json:"throughReturn,omitempty"`
 	StoredInto           *int   `json:"storedInto,omitempty"`
-}
-
-type returnFlowWire struct {
-	ReturnIndex *int   `json:"returnIndex"`
-	Kind        string `json:"kind"`
-	Param       *int   `json:"param"`
-	Path        string `json:"path,omitempty"`
 }
 
 type lifecycleEffectWire struct {

@@ -151,13 +151,6 @@ func ValidateDraftWires(artifact equation.Artifact) error {
 				return fmt.Errorf("front: operation %q difference role %q has no difference wire", operation.Target.Name, operand.Role)
 			case operand.Role.InFamily(equation.RoleFamilyImplied) && !evidencePresent:
 				return fmt.Errorf("front: operation %q implied role %q has no evidence wire", operation.Target.Name, operand.Role)
-			case func() bool {
-				_, indexed := operand.Role.Index(equation.RoleFamilySufficient)
-				return indexed
-			}() && !evidencePresent:
-				return fmt.Errorf("front: operation %q sufficient role %q has no evidence wire", operation.Target.Name, operand.Role)
-			case operand.Role.IsCheckEvidence() && !evidencePresent:
-				return fmt.Errorf("front: operation %q check role %q has no evidence wire", operation.Target.Name, operand.Role)
 			case operand.Role == "branch-chain" && !chainPresent:
 				return fmt.Errorf("front: operation %q branch-chain role has no chain wire", operation.Target.Name)
 			}

@@ -18,7 +18,6 @@ import (
 // analysis inputs change. It deliberately avoids package-global memoization.
 type Cache struct {
 	variants         *variant.Cache
-	subtypes         *subtype.Cache
 	values           map[typeValueCacheKey]product.Value
 	witnesses        map[typeValueCacheKey]product.Value
 	valuesByShape    map[typeValueShapeKey][]cachedTypeValue
@@ -61,28 +60,12 @@ func NewCache() *Cache {
 	return &Cache{variants: variant.NewCache()}
 }
 
-func (c *Cache) subtypeCache() *subtype.Cache {
-	if c == nil {
-		return nil
-	}
-	if c.subtypes == nil {
-		c.subtypes = subtype.NewCache()
-	}
-	return c.subtypes
-}
-
 func (c *Cache) IsSubtype(sub, super typ.Type) bool {
-	if c == nil {
-		return subtype.IsSubtype(sub, super)
-	}
-	return c.subtypeCache().IsSubtype(sub, super)
+	return subtype.IsSubtype(sub, super)
 }
 
 func (c *Cache) IsFreshAssignable(sub, super typ.Type) bool {
-	if c == nil {
-		return subtype.IsFreshAssignable(sub, super)
-	}
-	return c.subtypeCache().IsFreshAssignable(sub, super)
+	return subtype.IsFreshAssignable(sub, super)
 }
 
 func (c *Cache) FromType(reg *axis.Registry, t typ.Type) product.Value {

@@ -92,7 +92,8 @@ func deriveFunctions(result engine.Result, export typ.Type) []exportrelation.Fun
 			Arity:           len(function.Params),
 			AllocatedReturn: result.FunctionAllocatedReturns[path],
 		}
-		if store, ok := escapeStoreRelation(result.FunctionEscapes[path], relation.Arity); ok {
+		store, borrow := escapeRelations(result.FunctionEscapes[path], relation.Arity)
+		if store != nil {
 			relation.Store = store
 		} else if tuples, ok := completeEvaluatedReturnTuples(result.FunctionReturnTuples[path]); ok {
 			relation.ReturnTuples = tuples
@@ -103,7 +104,7 @@ func deriveFunctions(result engine.Result, export typ.Type) []exportrelation.Fun
 			relation.Return = templates[0]
 		} else if conditional := result.FunctionConditionalReturns[path]; conditional.Valid(relation.Arity) {
 			relation.Conditional = conditional
-		} else if borrow, ok := escapeBorrowParameters(result.FunctionEscapes[path], relation.Arity); ok {
+		} else if len(borrow) != 0 {
 			relation.Borrow = borrow
 		}
 		if relation.Valid() {
@@ -232,44 +233,35 @@ func providerOwnershipRelation(name, path string) (exportrelation.Function, bool
 	return exportrelation.Function{}, false
 }
 
-// escapeStoreRelation reads the engine's per-parameter escape summary for one
-// exported body. A parameter classified EscapeStore (or EscapeRetain) escaped
-// past the caller frame, so its whole graph is retained. When the summary also
-// names the formal that received it, the relation carries that owner position;
-// otherwise the value reached a container with no allocation in the wrapper's
-// own frame and the store is an escaping root. The disposition is the abstract
-// interpretation's own conclusion, not a source spelling.
-func escapeStoreRelation(escapes []signature.ParamRelation, arity int) (*exportrelation.OwnershipStore, bool) {
+// escapeRelations consumes the complete manifest escape vocabulary. Borrow,
+// Retain, and Store have representable cross-module call optimizations.
+// None carries no relation; Send, Export, and Opaque intentionally reserve no
+// optimization because the export relation has no shared/return/opaque
+// ownership form. Those cases remain conservative instead of being mistaken
+// for a borrow.
+func escapeRelations(escapes []signature.ParamRelation, arity int) (*exportrelation.OwnershipStore, []int) {
+	var borrow []int
 	for _, relation := range escapes {
 		if relation.Param < 0 || relation.Param >= arity {
 			continue
 		}
 		switch relation.EscapeClass {
+		case signature.EscapeNone:
+			// No cross-frame relation.
+		case signature.EscapeBorrow:
+			borrow = append(borrow, relation.Param)
 		case signature.EscapeStore, signature.EscapeRetain:
 			if relation.HasStoredInto && relation.StoredInto >= 0 && relation.StoredInto < arity && relation.StoredInto != relation.Param {
-				return &exportrelation.OwnershipStore{Value: relation.Param, Owner: relation.StoredInto}, true
+				return &exportrelation.OwnershipStore{Value: relation.Param, Owner: relation.StoredInto}, nil
 			}
-			return &exportrelation.OwnershipStore{Value: relation.Param, EscapingRoot: true}, true
+			return &exportrelation.OwnershipStore{Value: relation.Param, EscapingRoot: true}, nil
+		case signature.EscapeSend, signature.EscapeExport, signature.EscapeOpaque:
+			// Shared, return-through, and opaque escapes deliberately publish no
+			// importer-side ownership optimization.
 		}
-	}
-	return nil, false
-}
-
-// escapeBorrowParameters reads the engine's per-parameter escape summary and
-// returns the formal positions classified EscapeBorrow. A borrow is proven only
-// when the evaluated body published no owned, shared, opaque-call, or return
-// escape for that parameter, so each borrowed argument stays frame-local at the
-// caller.
-func escapeBorrowParameters(escapes []signature.ParamRelation, arity int) ([]int, bool) {
-	var borrow []int
-	for _, relation := range escapes {
-		if relation.Param < 0 || relation.Param >= arity || relation.EscapeClass != signature.EscapeBorrow {
-			continue
-		}
-		borrow = append(borrow, relation.Param)
 	}
 	sort.Ints(borrow)
-	return borrow, len(borrow) != 0
+	return nil, borrow
 }
 
 // completeEvaluatedReturnTuples converts only the engine's complete candidate

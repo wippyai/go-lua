@@ -89,3 +89,27 @@ return registered, unregistered`)
 		t.Fatalf("registered method allocation rows = %d, want one", allocationRows)
 	}
 }
+
+func TestNativeSuspensionEffectUsesRegisteredOperationalIdentity(t *testing.T) {
+	compilation, err := Compile(`
+local function wrapped(callback)
+    return coroutine.wrap(callback)
+end
+local coroutine = { wrap = function(callback) return callback end }
+local function shadowed(callback)
+    return coroutine.wrap(callback)
+end
+return wrapped, shadowed`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var suspensionRows int
+	for _, contract := range compilation.NativeContractDrafts() {
+		if contract.Family == "effect_row" && strings.Contains(contract.Value, "suspension=published") {
+			suspensionRows++
+		}
+	}
+	if suspensionRows != 1 {
+		t.Fatalf("registered suspension rows = %d, want one", suspensionRows)
+	}
+}

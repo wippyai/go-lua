@@ -121,6 +121,19 @@ func TestAuthorityPrecedencePinned(t *testing.T) {
 	if got, want := authorityNames(placementDescentTableAuthorities), []string{"current-table-value", "typed-path"}; !slices.Equal(got, want) {
 		t.Fatalf("%s authority order = %q, want %q", placementDescentTableAuthorities.Name, got, want)
 	}
+	if got, want := authorityNames(unresolvedCallResultAuthorities), []string{
+		"sealed-callable-result",
+		"inferred-callable-result",
+		"local-result-summary",
+		"typed-callable-result",
+		"sealed-method-result",
+		"method-receiver-result",
+		"static-receiver-result",
+		"typed-method-result",
+		"channel-method-result",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("%s authority order = %q, want %q", unresolvedCallResultAuthorities.Name, got, want)
+	}
 	for _, rule := range placementDescentTableAuthorities.Rules {
 		if rule == "" {
 			t.Fatalf("incomplete predicate authority rule: %q", rule)
@@ -183,6 +196,7 @@ func TestAuthorityLaddersStayDisplaced(t *testing.T) {
 		"instantiatedFormalType":       "instantiatedFormalTypeAuthorities",
 		"integerTypedTerm":             "integerTermTypeAuthorities",
 		"placementDescentTargetsTable": "placementDescentTableAuthorities",
+		"resolveUnresolvedCallResult":  "unresolvedCallResultAuthorities",
 	}
 	forbiddenByConsumer := map[string]map[string]bool{
 		"resolveValue": {
@@ -212,6 +226,7 @@ func TestAuthorityLaddersStayDisplaced(t *testing.T) {
 		"placementDescentTargetsTable": {
 			"resolveCurrentValue": true, "typedPathType": true,
 		},
+		"resolveUnresolvedCallResult": {},
 	}
 	found := make(map[string]bool, len(requiredView))
 	for _, name := range files {

@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	branchArmEncoding     = "front/branch-arm/v1"
 	densityRelationPrefix = "front/density-relation/v1/"
 )
 
@@ -64,7 +63,7 @@ func shortCircuitBypassGuards(body *wir.Body) map[cfg.Point]shortCircuitBypass {
 // of being silently dropped when this front has no consumer for them yet.
 func branchOperands(body *wir.Body, instruction wir.Instruction, bypass shortCircuitBypass, isShortCircuit bool) ([]equation.Operand, error) {
 	check := body.Check(instruction.Check)
-	operands := make([]equation.Operand, 0, 1+int(instruction.ImpliedChecks.Len)+int(instruction.SufficientChecks.Len)+int(instruction.DiffConstraints.Len))
+	operands := make([]equation.Operand, 0, 1+int(instruction.ImpliedChecks.Len)+int(instruction.DiffConstraints.Len))
 	if instruction.A.Kind != wir.OperandNone {
 		condition, err := scalarTerm(body, instruction.A)
 		if err != nil {
@@ -91,29 +90,6 @@ func branchOperands(body *wir.Body, instruction wir.Instruction, bypass shortCir
 			return nil, fmt.Errorf("implied check %d: %w", index, err)
 		}
 		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyImplied, index), Term: term})
-	}
-	for index, sufficient := range body.SufficientChecks(instruction.SufficientChecks) {
-		term, err := branchEvidenceTerm(sufficient)
-		if err != nil {
-			return nil, fmt.Errorf("sufficient check %d: %w", index, err)
-		}
-		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilySufficient, index), Term: term})
-	}
-	for _, edge := range []struct {
-		name string
-		arms wir.ArmRange
-	}{{"true", instruction.SufficientCheckArmsTrue}, {"false", instruction.SufficientCheckArmsFalse}} {
-		for armIndex, arm := range body.SufficientCheckArms(edge.arms) {
-			armRole := equation.SuffixedRole(equation.RoleFamilySufficientArm, fmt.Sprintf("%s-%08d", edge.name, armIndex))
-			operands = append(operands, equation.Operand{Role: armRole, Term: equation.ClosedTerm([]byte(branchArmEncoding))})
-			for checkIndex, sufficient := range arm {
-				term, err := branchEvidenceTerm(sufficient)
-				if err != nil {
-					return nil, fmt.Errorf("sufficient %s arm %d check %d: %w", edge.name, armIndex, checkIndex, err)
-				}
-				operands = append(operands, equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilySufficientArm, fmt.Sprintf("%s-%08d-check-%08d", edge.name, armIndex, checkIndex)), Term: term})
-			}
-		}
 	}
 	for index, diff := range body.BranchDiffConstraints(instruction.DiffConstraints) {
 		term, err := branchDiffTerm(diff)

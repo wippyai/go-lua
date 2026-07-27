@@ -120,15 +120,6 @@ func oracleRichOperationalEffects() signature.OperationalEffects {
 				PlacementConsequence: signature.PlacementConsequenceKeep,
 			},
 		},
-		ReturnFlows: []signature.ReturnFlow{
-			{ReturnIndex: 1, Kind: signature.ReturnFlowParam, Param: 0},
-			{
-				ReturnIndex: 0,
-				Kind:        signature.ReturnFlowParamMember,
-				Param:       1,
-				Path:        []segment.Segment{{Kind: segment.SegmentField, Name: "meta"}},
-			},
-		},
 		LifecycleEffects: []signature.LifecycleEffect{
 			{
 				Target:     pathdom.Path{Root: "ret[0]"},
@@ -207,7 +198,6 @@ func oracleSingleLaneCases(rich signature.OperationalEffects) []struct {
 		{"EscapeEvents", signature.OperationalEffects{EscapeEvents: rich.EscapeEvents}},
 		{"StoreRelations", signature.OperationalEffects{StoreRelations: rich.StoreRelations}},
 		{"ParamRelations", signature.OperationalEffects{ParamRelations: rich.ParamRelations}},
-		{"ReturnFlows", signature.OperationalEffects{ReturnFlows: rich.ReturnFlows}},
 		{"LifecycleEffects", signature.OperationalEffects{LifecycleEffects: rich.LifecycleEffects}},
 		{"TypestateRequirements", signature.OperationalEffects{TypestateRequirements: rich.TypestateRequirements}},
 		{"ReturnAllocationTemplates", signature.OperationalEffects{ReturnAllocationTemplates: rich.ReturnAllocationTemplates}},
@@ -232,7 +222,6 @@ func reverseOperationalEffectSlices(e *signature.OperationalEffects) {
 	reverseSlice(e.EscapeEvents)
 	reverseSlice(e.StoreRelations)
 	reverseSlice(e.ParamRelations)
-	reverseSlice(e.ReturnFlows)
 	reverseSlice(e.LifecycleEffects)
 	reverseSlice(e.TypestateRequirements)
 	reverseSlice(e.ReturnAllocationTemplates)

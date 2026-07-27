@@ -109,10 +109,9 @@ func TestAdmissionLaneVocabularyGuard(t *testing.T) {
 	}
 }
 
-// TestAdmissionHelpersStayDescriptorOwned fences the displaced free-function
-// battery. Stateful evaluator methods remain legitimate owners; a new
-// freestanding uncalled admission predicate would recreate the parallel
-// surface this lane removed.
+// TestAdmissionHelpersStayDescriptorOwned fences the displaced helper battery.
+// No free function or receiver method may recreate the old uncalled service
+// surface; admission questions belong to descriptors and the body index.
 func TestAdmissionHelpersStayDescriptorOwned(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -129,10 +128,10 @@ func TestAdmissionHelpersStayDescriptorOwned(t *testing.T) {
 		}
 		for _, declaration := range file.Decls {
 			function, ok := declaration.(*ast.FuncDecl)
-			if !ok || function.Recv != nil || !strings.HasPrefix(function.Name.Name, "uncalled") {
+			if !ok || !strings.HasPrefix(function.Name.Name, "uncalled") {
 				continue
 			}
-			t.Errorf("%s: freestanding admission helper %s must be a descriptor query", fset.Position(function.Pos()), function.Name.Name)
+			t.Errorf("%s: admission helper %s must be a descriptor or body-index query", fset.Position(function.Pos()), function.Name.Name)
 		}
 	}
 	loader := newFencePackageLoader(t, "./analysis/check/engine")

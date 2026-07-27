@@ -13,8 +13,10 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
+	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -302,15 +304,15 @@ func nativeContracts(stmts []ast.Stmt, bindings *bind.Result, captureTransports 
 			stable[call] = true
 		}
 	}
-	hasRequire := false
+	hasModuleLoad := false
 	for _, edge := range calls {
-		hasRequire = hasRequire || edge.target == "require"
+		hasModuleLoad = hasModuleLoad || signaturelookup.HasStdlibCapability(edge.target, capability.DispatchModuleLoad)
 	}
 	for _, edge := range calls {
 		if edge.call == nil {
 			continue
 		}
-		if edge.target == "require" {
+		if signaturelookup.HasStdlibCapability(edge.target, capability.DispatchModuleLoad) {
 			continue
 		}
 		if _, member := edge.call.Func.(*ast.AttrGetExpr); member && !isLiteralMemberCall(edge.call, literalMembers) {
@@ -323,7 +325,7 @@ func nativeContracts(stmts []ast.Stmt, bindings *bind.Result, captureTransports 
 			value, revocations = "cardinality=2 completeness=incomplete", []string{"write.local"}
 		} else if edge.owner != nil && isParameterCall(edge.owner, edge.call) {
 			revocations = []string{"escape"}
-		} else if hasRequire {
+		} else if hasModuleLoad {
 			revocations = []string{"write.field", "load.dynamic"}
 		}
 		// A literal table member is sealed by the same constructor fact that

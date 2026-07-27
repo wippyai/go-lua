@@ -81,10 +81,10 @@ local value = receiver:invoke(1)
 	}
 }
 
-// TestExactRequireModuleNeedsTheGlobalRequire pins the module-load boundary to
+// TestModuleLoadCapabilityNeedsItsGlobalBinding pins the module-load boundary to
 // the global binding it names. A local of the same name is a different value,
 // so its call resolves no module.
-func TestExactRequireModuleNeedsTheGlobalRequire(t *testing.T) {
+func TestModuleLoadCapabilityNeedsItsGlobalBinding(t *testing.T) {
 	global, err := front.CompileBody(`local module = require("target")`)
 	if err != nil {
 		t.Fatalf("CompileBody: %v", err)

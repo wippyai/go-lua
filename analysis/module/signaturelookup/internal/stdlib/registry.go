@@ -627,7 +627,6 @@ func PositionalResultSlots(name string) []PositionalResultSlot {
 	return out
 }
 
-// Lookup returns a cloned effect signature for a known stdlib function name.
 // init registers the string-library methods from the canonical type/stringlib
 // table as string.<name> global signatures, so the global call and the colon
 // method resolve from one source.
@@ -638,17 +637,8 @@ func init() {
 	}
 }
 
-func Lookup(name string) (signature.Function, bool) {
-	sig, ok := LookupView(name)
-	if !ok {
-		return signature.Function{}, false
-	}
-	return sig.Clone(), true
-}
-
 // LookupView returns the registry-owned immutable signature for name. It is an
-// internal analysis hot-path view: callers must not mutate any reachable type
-// or effect storage. Lookup remains the ownership-transferring public API.
+// internal analysis view: callers must not mutate reachable storage.
 func LookupView(name string) (signature.Function, bool) {
 	sig, ok := registry[name]
 	return sig, ok

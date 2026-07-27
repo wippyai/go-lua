@@ -276,56 +276,6 @@ func ImpliedRelationalOpsOnEdge(expr ast.Expr, edge bool) []ImpliedRelationalOp 
 	return impliedRelationalOps(expr, edge, edge)
 }
 
-// SufficientChecksOnEdge returns leaf checks that, by themselves, force the
-// requested outer branch edge. For example, any true disjunct is sufficient for
-// an OR true edge, while a true OR edge does not imply that any particular
-// disjunct held.
-func SufficientChecksOnEdge(expr ast.Expr, bindings *bind.Result, edge bool) []ImpliedCheck {
-	return sufficientChecks(expr, bindings, edge, edge)
-}
-
-// SufficientCheckArms recognizes the same top-level shape as
-// SufficientChecksOnEdge (a disjunction for edge=true, a conjunction for
-// edge=false) but keeps each arm's leaf checks separate instead of flattening
-// them into one list. An arm that resolves no leaf check is still reported, as
-// an empty slice, rather than being silently absorbed into a sibling arm's
-// result. This lets a caller that needs a conclusion sound across every arm
-// (for example, joining each arm's narrowing into one narrowing that holds no
-// matter which arm made the edge true) require every arm to be non-empty
-// before trusting the join: an opaque arm means the edge could have been
-// forced by something the caller knows nothing about, so no path-specific
-// conclusion follows. ok is false when expr is not, at this edge, a top-level
-// composition of the matching shape, mirroring SufficientChecksOnEdge.
-func SufficientCheckArms(expr ast.Expr, bindings *bind.Result, edge bool) (arms [][]ImpliedCheck, ok bool) {
-	return sufficientCheckArms(expr, bindings, edge, edge)
-}
-
-func sufficientCheckArms(expr ast.Expr, bindings *bind.Result, polarity bool, edge bool) ([][]ImpliedCheck, bool) {
-	if unary, ok := expr.(*ast.UnaryNotOpExpr); ok {
-		return sufficientCheckArms(unary.Expr, bindings, !polarity, edge)
-	}
-	splitOp := "or"
-	if !polarity {
-		splitOp = "and"
-	}
-	logical, ok := expr.(*ast.LogicalOpExpr)
-	if !ok || logical.Operator != splitOp {
-		return nil, false
-	}
-	left, leftOk := sufficientCheckArms(logical.Lhs, bindings, polarity, edge)
-	if !leftOk {
-		left = [][]ImpliedCheck{impliedChecks(logical.Lhs, bindings, polarity, edge)}
-	}
-	right, rightOk := sufficientCheckArms(logical.Rhs, bindings, polarity, edge)
-	if !rightOk {
-		right = [][]ImpliedCheck{impliedChecks(logical.Rhs, bindings, polarity, edge)}
-	}
-	out := make([][]ImpliedCheck, 0, len(left)+len(right))
-	out = append(out, left...)
-	out = append(out, right...)
-	return out, true
-}
-
 // polarityChecks collects the narrowing checks implied when expr holds the given
 // truth polarity. A truthy `and` (or falsy `or`) proves both operands; `not`
 // flips polarity; any other shape proves nothing individually.
@@ -354,39 +304,6 @@ func polarityChecks(expr ast.Expr, bindings *bind.Result, truthy bool) []Check {
 		return left
 	}
 	out := make([]Check, 0, len(left)+len(right))
-	out = append(out, left...)
-	out = append(out, right...)
-	return out
-}
-
-func sufficientChecks(expr ast.Expr, bindings *bind.Result, polarity bool, edge bool) []ImpliedCheck {
-	check := Normalize(expr, bindings)
-	if check.Kind != CheckNone {
-		return []ImpliedCheck{{Check: check, Edge: edge, Polarity: polarity}}
-	}
-	if unary, ok := expr.(*ast.UnaryNotOpExpr); ok {
-		return sufficientChecks(unary.Expr, bindings, !polarity, edge)
-	}
-	logical, ok := expr.(*ast.LogicalOpExpr)
-	if !ok {
-		return nil
-	}
-	splitOp := "or"
-	if !polarity {
-		splitOp = "and"
-	}
-	if logical.Operator != splitOp {
-		return nil
-	}
-	left := sufficientChecks(logical.Lhs, bindings, polarity, edge)
-	right := sufficientChecks(logical.Rhs, bindings, polarity, edge)
-	if len(left) == 0 {
-		return right
-	}
-	if len(right) == 0 {
-		return left
-	}
-	out := make([]ImpliedCheck, 0, len(left)+len(right))
 	out = append(out, left...)
 	out = append(out, right...)
 	return out

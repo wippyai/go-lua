@@ -6,11 +6,34 @@ import (
 	"fmt"
 	"strings"
 
+	caplabel "github.com/wippyai/go-lua/analysis/domain/effect/capability/label"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup/internal/stdlib"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+// HasCapability reports whether the immutable signature selected for name
+// carries the requested canonical capability identity.
+func (s Source) HasCapability(name, id string) bool {
+	if id == "" {
+		return false
+	}
+	sig, ok := s.LookupView(name)
+	if !ok {
+		return false
+	}
+	for _, label := range sig.Effect.Labels {
+		if candidate, mapped := caplabel.IDFor(label); mapped && candidate == id {
+			return true
+		}
+	}
+	return false
+}
+
+func HasStdlibCapability(name, id string) bool {
+	return (Source{IncludeStdlib: true}).HasCapability(name, id)
+}
 
 // Source is a narrow read view over effect-bearing function signatures.
 //
@@ -37,18 +60,9 @@ func (s Source) Validate() error {
 	return nil
 }
 
-// Lookup returns a cloned signature for name.
-func (s Source) Lookup(name string) (signature.Function, bool) {
-	sig, ok := s.LookupView(name)
-	if !ok {
-		return signature.Function{}, false
-	}
-	return sig.Clone(), true
-}
-
 // LookupView returns a borrowed immutable signature for analysis hot paths.
 // The returned value and all reachable slices/types remain owned by the source;
-// callers that may mutate them must use Lookup instead. Manifest-local type
+// callers that may mutate them must explicitly Clone. Manifest-local type
 // scoping can construct a new immutable view, but deliberately does not perform
 // the otherwise redundant ownership clone.
 func (s Source) LookupView(name string) (signature.Function, bool) {

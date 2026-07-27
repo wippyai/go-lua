@@ -15,6 +15,23 @@ func nativeTestClosedKey() string {
 	).String()
 }
 
+func TestStructuralNativeFactsAreConsumedAtPublicationBoundary(t *testing.T) {
+	tests := []struct {
+		row  NativeFact
+		want bool
+	}{
+		{NativeFact{Family: "throw_template", Value: claimAssertThrowTemplateValue}, true},
+		{NativeFact{Family: "throw_template", Value: "nil_arm=ignored"}, false},
+		{NativeFact{Family: "eval_node", Value: "operation=closure"}, true},
+		{NativeFact{Family: "eval_node", Value: "operation=call"}, false},
+	}
+	for _, test := range tests {
+		if got := admitStructuralNativeFact(test.row); got != test.want {
+			t.Fatalf("admitStructuralNativeFact(%#v) = %v, want %v", test.row, got, test.want)
+		}
+	}
+}
+
 func TestNativeContractBridgeProjectsOnlyPublishedSubstrate(t *testing.T) {
 	root := "sealed-table/test/op-00000003"
 	child := "sealed-table/test/op-00000004"

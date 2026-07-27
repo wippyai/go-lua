@@ -4262,7 +4262,7 @@ func declaredFormalWitnessSeeds(child front.BoundaryGraphView) ([]entrySeed, boo
 
 // cyclicPlacementWitnessEntry supplies only declaration-owned parameter facts
 // to a cyclic lexical body. Captures are added exclusively by
-// uncalledChildEntry from the allocating partition's published values. The
+// the body-index child-entry query from the allocating partition's published values. The
 // result is filtered to boundary-free stack witnesses, so no uncalled body can
 // claim a retain, share, or caller-visible graph.
 func cyclicPlacementWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
@@ -4960,7 +4960,7 @@ func (l *lexicalEvaluator) callbackCompositionCall(operands directCallOperands, 
 	return false
 }
 
-// uncalledDeclaredFormalCallBoundary admits a body whose calls resolve entirely
+// declaredFormalCallBoundary admits a body whose calls resolve entirely
 // from contracts the boundary itself supplies: the declared function type of one
 // of its own formals, a closure this same body allocated, or a sealed callable
 // this body closes over. The formal is seeded as its declared type (an axiom
@@ -4974,7 +4974,7 @@ func (l *lexicalEvaluator) callbackCompositionCall(operands directCallOperands, 
 // surface traces to seeded facts. An unsealed capture, a dynamic read or select
 // from any root, or a call through a value with none of those authorities keeps
 // the body dormant.
-func (l *lexicalEvaluator) uncalledDeclaredFormalCallBoundary(index admissionBodyIndex, allocation lexicalAllocationSite, partition equation.Partition) ([]entrySeed, bool) {
+func (index *admissionBodyIndex) declaredFormalCallBoundary(l *lexicalEvaluator, allocation lexicalAllocationSite, partition equation.Partition) ([]entrySeed, bool) {
 	if !index.ready {
 		return nil, false
 	}
@@ -5602,11 +5602,12 @@ func localUnionEntryRoot(term string, results map[string]bool, formals admission
 	return false
 }
 
-// uncalledLocalUnionReadEntry carries the exact direct-call capability already
+// localUnionReadEntry carries the exact direct-call capability already
 // published at the enclosing allocation point into the admitted child. The
 // child artifact itself names that path, while closureHandleFor verifies it is
 // a local capability rather than a source-level function spelling.
-func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.DraftsView, formalSeeds []entrySeed, partition equation.Partition) ([]byte, bool, error) {
+func (index *admissionBodyIndex) localUnionReadEntry(l *lexicalEvaluator, formalSeeds []entrySeed, partition equation.Partition) ([]byte, bool, error) {
+	child := index.child
 	seeds := append([]entrySeed(nil), formalSeeds...)
 	closures := make([]entryClosureSeed, 0)
 	seen := make(map[string]bool)
@@ -5620,7 +5621,7 @@ func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.DraftsView, f
 		}
 		value, known := resolveKnownCurrentValue(callee, partition)
 		handle, callable := closureHandleFor(callee, partition)
-		if !known || isUnknownScalar(value) || !callable || !l.uncalledLocalUnionCalleeHasAlternativeReturns(handle) {
+		if !known || isUnknownScalar(value) || !callable || !index.localUnionCalleeHasAlternativeReturns(l, handle) {
 			return nil, false, nil
 		}
 		seen[string(callee)] = true
@@ -5637,12 +5638,12 @@ func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.DraftsView, f
 	return entry, true, nil
 }
 
-// uncalledLocalUnionCalleeHasAlternativeReturns requires the callee's own
+// localUnionCalleeHasAlternativeReturns requires the callee's own
 // front artifact to publish more than one normal return candidate. A single
 // concrete return is not a union witness: admitting it through the
 // declaration-only path would make an unreachable else arm look like an
 // ordinary assignment error.
-func (l *lexicalEvaluator) uncalledLocalUnionCalleeHasAlternativeReturns(handle closureHandle) bool {
+func (index *admissionBodyIndex) localUnionCalleeHasAlternativeReturns(l *lexicalEvaluator, handle closureHandle) bool {
 	child, found := l.byPrototype[handle.Prototype]
 	if !found {
 		return false
@@ -6636,7 +6637,7 @@ func (index *admissionBodyIndex) declaredFormalValue(value []byte) bool {
 // staticAssignmentBoundary admits a straight-line lexical body whose
 // only externally callable values are its own captured local closures.  The
 // entry contains ordinary declared formal witnesses; captured closures are
-// supplied separately by uncalledChildEntry, which refuses an absent or opaque
+// supplied separately by the body-index child-entry query, which refuses an absent or opaque
 // capability.  This is deliberately narrower than a general declaration-only
 // execution: branch-selected facts, indexing, and channel operations still
 // require a caller-owned partition.
@@ -6807,13 +6808,14 @@ func branchDecidedByRoots(operation equation.Equation, admits func(term string) 
 	return rooted
 }
 
-// uncalledStaticCapturedReturnBoundary admits one parameter-free return
+// staticCapturedReturnBoundary admits one parameter-free return
 // contract only when its sole captured dependency is an already-published
 // local closure and every call in the body targets that capability. The child
 // entry transports the capability itself; no callable, argument, result, or
 // return value is reconstructed from syntax. Branches, dynamic reads, and
 // external calls remain demand-driven.
-func (l *lexicalEvaluator) uncalledStaticCapturedReturnBoundary(child front.DraftsBoundaryGraphView, partition equation.Partition) bool {
+func (index *admissionBodyIndex) staticCapturedReturnBoundary(l *lexicalEvaluator, partition equation.Partition) bool {
+	child := index.child
 	if l == nil || child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) != 0 || len(child.BodyBoundary().Captures) != 1 || len(child.BodyBoundary().DeclaredReturns) != 1 {
 		return false
 	}
@@ -6847,14 +6849,15 @@ func (l *lexicalEvaluator) uncalledStaticCapturedReturnBoundary(child front.Draf
 	return called
 }
 
-// uncalledStaticArithmeticBoundary admits a parameter-free closure only when
+// staticArithmeticBoundary admits a parameter-free closure only when
 // its entire call graph segment is already closed: imported member calls use a
 // project-published import authority and the local call targets a captured
 // closure whose unannotated formal is directly consumed by numeric arithmetic.
 // The body has no branches, dynamic lookup, or writes beyond ordinary call
 // result bindings, so evaluating it at allocation time cannot invent a path
 // condition or a caller-owned heap fact.
-func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(body equation.BodyID, child front.DraftsBoundaryGraphView, partition equation.Partition) bool {
+func (index *admissionBodyIndex) staticArithmeticBoundary(l *lexicalEvaluator, body equation.BodyID, partition equation.Partition) bool {
+	child := index.child
 	if l == nil || child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) != 0 || len(child.BodyBoundary().Captures) == 0 {
 		return false
 	}
@@ -6913,7 +6916,7 @@ func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(body equation.BodyID
 	return foundArithmeticCall
 }
 
-// uncalledImportedCaptureBoundary admits a body whose every boundary input
+// importedCaptureBoundary admits a body whose every boundary input
 // already has an exact authority independent of any call site: each formal
 // carries a declared type, and each capture is an immutable module binding whose
 // project-selected export type was published when require's result was written.
@@ -6927,7 +6930,7 @@ func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(body equation.BodyID
 // Lifecycle and select bodies keep their own dedicated allocation-time lanes
 // below; those lanes own the epoch and case entries their proofs depend on, and
 // a second entry for the same body would restate the same coordinates.
-func (l *lexicalEvaluator) uncalledImportedCaptureBoundary(body equation.BodyID, index admissionBodyIndex, partition equation.Partition) ([]entrySeed, bool) {
+func (index *admissionBodyIndex) importedCaptureBoundary(l *lexicalEvaluator, body equation.BodyID, partition equation.Partition) ([]entrySeed, bool) {
 	if !index.ready {
 		return nil, false
 	}
@@ -7070,12 +7073,13 @@ func (index *admissionBodyIndex) hasCapturedNoResultCall(captures admissionBound
 	return false
 }
 
-// uncalledStaticAssignmentDiagnostic retains a declaration-only assignment
+// staticAssignmentDiagnostic retains a declaration-only assignment
 // diagnostic only when no no-result call in the same body consumes its source
 // term. A no-result call has no closed return slot, so its assertion or
 // validation effect cannot be replayed without a real invocation. An
 // independent declared formal remains a complete existing boundary witness.
-func (l *lexicalEvaluator) uncalledStaticAssignmentDiagnostic(artifact equation.Artifact, key string, partition equation.Partition) bool {
+func (ctx admissionDiagnosticContext) staticAssignmentDiagnostic() bool {
+	artifact, key, partition := ctx.child.DraftArtifact(), ctx.diagnostic.Key, ctx.partition
 	prefix := diagnosticFamilyPrefix(DiagnosticFamilyAssignment)
 	if !strings.HasPrefix(key, prefix) {
 		return false
@@ -7107,8 +7111,8 @@ func (l *lexicalEvaluator) uncalledStaticAssignmentDiagnostic(artifact equation.
 		for _, operand := range candidate.Operands {
 			if _, argument := operand.Role.Index(equation.RoleFamilyArgument); argument && string(operand.Term.Encoding) == source {
 				callee, hasCallee := artifactOperand(candidate.Operands, "callee")
-				if hasCallee && (l.uncalledCapturedHelperHasOnlyGuardedValidation(callee, partition) ||
-					l.uncalledCapturedHelperHasOnlyGuardedNonValidationEffect(callee, partition)) {
+				if hasCallee && (ctx.bodyIndex.capturedHelperHasOnlyGuardedValidation(ctx.lexical, callee, partition) ||
+					ctx.bodyIndex.capturedHelperHasOnlyGuardedNonValidationEffect(ctx.lexical, callee, partition)) {
 					continue
 				}
 				return false
@@ -7118,11 +7122,11 @@ func (l *lexicalEvaluator) uncalledStaticAssignmentDiagnostic(artifact equation.
 	return true
 }
 
-// uncalledCapturedHelperHasOnlyGuardedValidation admits one very limited
+// capturedHelperHasOnlyGuardedValidation admits one very limited
 // no-result helper shape: its only application is a validation operation that
 // itself is guarded by the helper's branch. The call therefore cannot publish
 // an unconditional postcondition for the caller's argument.
-func (l *lexicalEvaluator) uncalledCapturedHelperHasOnlyGuardedValidation(callee []byte, partition equation.Partition) bool {
+func (index *admissionBodyIndex) capturedHelperHasOnlyGuardedValidation(l *lexicalEvaluator, callee []byte, partition equation.Partition) bool {
 	if l == nil {
 		return false
 	}
@@ -7154,13 +7158,13 @@ func (l *lexicalEvaluator) uncalledCapturedHelperHasOnlyGuardedValidation(callee
 	return foundValidation
 }
 
-// uncalledCapturedHelperHasOnlyGuardedNonValidationEffect recognizes a closed
+// capturedHelperHasOnlyGuardedNonValidationEffect recognizes a closed
 // local helper whose only action is a guarded call to a registered stdlib
 // provider, without a check operand. Such a helper cannot establish a caller
 // proof: it has no writes, claims, result slots, captures, or validation call.
 // Its provider identity comes from the existing stdlib publication, rather
 // than from a source-level callee spelling.
-func (l *lexicalEvaluator) uncalledCapturedHelperHasOnlyGuardedNonValidationEffect(callee []byte, partition equation.Partition) bool {
+func (index *admissionBodyIndex) capturedHelperHasOnlyGuardedNonValidationEffect(l *lexicalEvaluator, callee []byte, partition equation.Partition) bool {
 	if l == nil {
 		return false
 	}
@@ -7227,7 +7231,8 @@ func nonValidatingNoResultStdlibProvider(provider []byte) bool {
 	return true
 }
 
-func (l *lexicalEvaluator) uncalledStaticCapturedCallsAreGuardedValidation(child front.DraftsBoundaryView, partition equation.Partition) bool {
+func (index *admissionBodyIndex) staticCapturedCallsAreGuardedValidation(l *lexicalEvaluator, partition equation.Partition) bool {
+	child := index.child
 	captures := make(map[string]bool, len(child.BodyBoundary().Captures))
 	for _, capture := range child.BodyBoundary().Captures {
 		captures[boundaryTerm(capture.Symbol)] = true
@@ -7239,8 +7244,8 @@ func (l *lexicalEvaluator) uncalledStaticCapturedCallsAreGuardedValidation(child
 		callee, hasCallee := artifactOperand(operation.Operands, "callee")
 		arity, hasArity := artifactOperand(operation.Operands, "result-arity")
 		if hasCallee && hasArity && string(arity) == "0" && captures[string(callee)] &&
-			!l.uncalledCapturedHelperHasOnlyGuardedValidation(callee, partition) &&
-			!l.uncalledCapturedHelperHasOnlyGuardedNonValidationEffect(callee, partition) {
+			!index.capturedHelperHasOnlyGuardedValidation(l, callee, partition) &&
+			!index.capturedHelperHasOnlyGuardedNonValidationEffect(l, callee, partition) {
 			return false
 		}
 	}
@@ -7259,7 +7264,7 @@ func (ctx admissionDiagnosticContext) staticResultCallDiagnostic() bool {
 	}
 	operationName := diagnosticOperationName(key)
 	published := ctx.bodyIndex.publishedStdlibCalls()
-	resultPaths := ctx.bodyIndex.uncalledPublishedResultPaths(published)
+	resultPaths := ctx.bodyIndex.publishedResultPaths(published)
 	for _, operation := range ctx.bodyIndex.operations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
@@ -7296,7 +7301,7 @@ func (ctx admissionDiagnosticContext) declaredProviderResultDiagnostic() bool {
 			applications["call/"+operation.Target.Name] = true
 		}
 	}
-	paths := ctx.bodyIndex.uncalledPublishedResultPaths(applications)
+	paths := ctx.bodyIndex.publishedResultPaths(applications)
 	if len(paths) == 0 {
 		return false
 	}
@@ -7323,12 +7328,12 @@ func (ctx admissionDiagnosticContext) declaredProviderResultDiagnostic() bool {
 	return false
 }
 
-// uncalledPublishedResultPaths names every term holding one of the given
+// publishedResultPaths names every term holding one of the given
 // applications' published results: the result slots themselves and the locals
 // written from them. A result consumed straight out of its slot carries the
 // same published contract as one bound to a local first, so both spellings of
 // the same value answer this question identically.
-func (index *admissionBodyIndex) uncalledPublishedResultPaths(applications map[string]bool) map[string]bool {
+func (index *admissionBodyIndex) publishedResultPaths(applications map[string]bool) map[string]bool {
 	results := make(map[string]bool)
 	for _, operation := range index.operations {
 		if operation.Occurrence.Kind != "call-results" {
@@ -7695,13 +7700,14 @@ func hasDeclaredFormalMethodCall(child front.BoundaryGraphView, operation equati
 	return false
 }
 
-// uncalledChildEntry closes an allocation-time child entry from the same
+// childEntry closes an allocation-time child entry from the same
 // caller partition that allocated it. This allocation-time admission is
 // limited to exact local closure captures: an arbitrary captured value can
 // participate in later validation, while a sealed local closure contributes
 // only its already-published call capability. Unknown or non-callable captures
 // therefore leave the child dormant rather than receiving a synthetic entry.
-func (l *lexicalEvaluator) uncalledChildEntry(body equation.BodyID, child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies, declaredProviderBoundary bool, gradualBoundaryTerms ...[]string) ([]byte, bool, error) {
+func (index *admissionBodyIndex) childEntry(l *lexicalEvaluator, body equation.BodyID, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies, declaredProviderBoundary bool, gradualBoundaryTerms ...[]string) ([]byte, bool, error) {
+	child := index.child
 	seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, admitted := l.childEntrySeedSet(body, child, formalSeeds, partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies)
 	if !admitted {
 		return nil, false, nil
@@ -7728,6 +7734,7 @@ func (l *lexicalEvaluator) uncalledChildEntry(body equation.BodyID, child front.
 // the caller so a summary lane can add its own capabilities to the same seeds.
 func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.Compilation, formalSeeds []entrySeed, partition equation.Partition, allowTypedCaptures, allowImportedCaptures, includeClosureDependencies bool) ([]entrySeed, []entryClosureSeed, []entryMemberClosureSeed, []entryTableIdentitySeed, []entryMemberCellSeed, bool) {
 	seeds := append([]entrySeed(nil), formalSeeds...)
+	childIndex := l.admissionBody(child)
 	declared := declaredBoundaryTypes(child)
 	// A declared container capture is seeded as its declaration. The parent's
 	// member surface below such a cell is a fact about this allocation site
@@ -7790,7 +7797,7 @@ func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.C
 		}
 		capturedAdmission := l.admissionBody(captured)
 		if _, explicitAny := capturedAdmission.explicitAnyBoundary(); !explicitAny && !allowTypedCaptures {
-			if !l.uncalledTypePredicateCaptureBoundary(child, term, handle) {
+			if !childIndex.typePredicateCaptureBoundary(l, term, handle) {
 				return nil, nil, nil, nil, nil, false
 			}
 		}
@@ -7837,13 +7844,14 @@ func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.C
 	return seeds, closureSeeds, memberClosureSeeds, tableIdentitySeeds, memberCellSeeds, true
 }
 
-// uncalledTypePredicateCaptureBoundary recognizes the closed two-result path
+// typePredicateCaptureBoundary recognizes the closed two-result path
 // through a local wrapper around a front-published T:is(value) relation. The
 // enclosing child must consume the exact captured helper, write both result
 // slots, and guard a strict claim with the helper's error slot. This admits no
 // arbitrary uncalled helper: any extra operation, an open result tuple, or a
 // missing predicate target leaves the child dormant.
-func (l *lexicalEvaluator) uncalledTypePredicateCaptureBoundary(child front.Compilation, capture string, handle closureHandle) bool {
+func (index *admissionBodyIndex) typePredicateCaptureBoundary(l *lexicalEvaluator, capture string, handle closureHandle) bool {
+	child := index.child
 	if l == nil || child.CyclicDraft() != nil || capture == "" {
 		return false
 	}
@@ -7855,7 +7863,6 @@ func (l *lexicalEvaluator) uncalledTypePredicateCaptureBoundary(child front.Comp
 	if !helperAdmission.typePredicateHelper() {
 		return false
 	}
-	index := l.admissionBody(child)
 	application, valueResult, errorResult := "", "", ""
 	valuePath, errorPath := "", ""
 	branch := ""
@@ -10844,7 +10851,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// declared formals and already-published captures form a closed entry; only
 	// stack witnesses without any boundary evidence cross the child projector.
 	if seeds, eligible := cyclicPlacementWitnessEntry(child); eligible {
-		entry, admitted, entryErr := lexical.uncalledChildEntry(operation.Target.Body, child, seeds, partition, true, false, false, false)
+		entry, admitted, entryErr := admissionBody.childEntry(lexical, operation.Target.Body, seeds, partition, true, false, false, false)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -10862,7 +10869,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// surface, so it adds inference without widening any obligation.
 	if !inferredReturnPublished && result != "" && undeclaredPrototypeReturn(child) && stableCaptureBoundary(lexical, operation.Target.Body, child, partition) {
 		if seeds, declared := admissionBody.declaredSeeds(); declared {
-			entry, admitted, entryErr := lexical.uncalledChildEntry(operation.Target.Body, child, seeds, partition, false, true, true, true)
+			entry, admitted, entryErr := admissionBody.childEntry(lexical, operation.Target.Body, seeds, partition, false, true, true, true)
 			if entryErr != nil {
 				return equation.TransactionResult{}, entryErr
 			}
@@ -10886,7 +10893,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// projection retains only the child's completed placement facts, so any
 	// opaque boundary remains conservative in the public plan.
 	if seeds, eligible := placementReturnWitnessEntry(child); eligible && lexical.publishesClosureReturn(operation.Target.Body, result) {
-		entry, admitted, entryErr := lexical.uncalledChildEntry(operation.Target.Body, child, seeds, partition, false, false, false, false)
+		entry, admitted, entryErr := admissionBody.childEntry(lexical, operation.Target.Body, seeds, partition, false, false, false, false)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
 		}
@@ -25072,66 +25079,25 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 			if string(value) == shapefact.ScalarTopWire && receiver != nil && externalCallbackReceiverMayMutate(receiver, provider, partition) {
 				value = []byte(shapefact.ScalarExternalCallbackAnyWire)
 			}
-			// A local child result is the most precise existing publication. Only
-			// when it is absent may the result owner use the direct callee's sealed
-			// function contract; an opaque callable has no such witness.
 			if string(value) == shapefact.ScalarTopWire {
-				if contract, ok := sealedCallableResultValue(lexical, callee, index, argumentTerms, partition); ok {
-					value = contract
-					localCallableResult = true
+				answer, authorityErr := resolveUnresolvedCallResult(callResultAuthorityContext{
+					Lexical: lexical, Callee: callee, Receiver: receiver, Method: method,
+					Index: index, Arguments: argumentTerms, Partition: partition,
+					LocalUnionSummary: localUnionSummary, LocalUnion: localUnion,
+				})
+				if authorityErr != nil {
+					return equation.TransactionResult{}, authorityErr
 				}
-			}
-			if string(value) == shapefact.ScalarTopWire {
-				if contract, ok := inferredCallableResultValue(callee, index, partition); ok {
-					value = contract
-					localCallableResult = true
+				if len(answer.Value) != 0 {
+					value = answer.Value
 				}
-			}
-			if string(value) == shapefact.ScalarTopWire {
-				if summary, ok := sealedCallableResultType(lexical, callee, index, argumentTerms, partition); ok && requiresLocalUnionProof(summary) {
-					localSummary = summary
+				localCallableResult = answer.LocalCallable
+				receiverResult = answer.ReceiverResult
+				if answer.ReceiverTerm != nil {
+					receiverResultTerm = answer.ReceiverTerm
 				}
-				if localSummary == nil && localUnion && requiresLocalUnionProof(localUnionSummary) {
-					localSummary = localUnionSummary
-				}
-				if localSummary == nil {
-					if summary, ok := typedCallableResultType(callee, index, argumentTerms, partition); ok && requiresLocalUnionProof(summary) {
-						localSummary = summary
-					}
-				}
-			}
-			if string(value) == shapefact.ScalarTopWire {
-				if contract, ok := typedCallableResultValue(callee, index, argumentTerms, partition); ok {
-					value = contract
-				}
-			}
-			if string(value) == shapefact.ScalarTopWire {
-				if contract, ok := sealedMethodResultValue(lexical, receiver, method, index, partition); ok {
-					value = contract
-				}
-			}
-			if string(value) == shapefact.ScalarTopWire {
-				if contract, ok := sealedMethodReceiverResultValue(lexical, receiver, method, index, partition); ok {
-					value, receiverResult = contract, true
-				}
-			}
-			if string(value) == shapefact.ScalarTopWire {
-				if contract, receiverTerm, ok := sealedStaticMemberReceiverResultValue(lexical, callee, index, partition); ok {
-					value, receiverResult, receiverResultTerm = contract, true, receiverTerm
-				}
-			}
-			if string(value) == shapefact.ScalarTopWire {
-				if summary, ok := typedMethodReturnType(receiver, method, index, partition); ok {
-					methodSummary = summary
-				}
-				if contract, ok := typedMethodResultValue(receiver, method, index, partition); ok {
-					value = contract
-				}
-			}
-			if string(value) == shapefact.ScalarTopWire {
-				if contract, ok := ambientChannelMethodResultValue(receiver, method, index, partition); ok {
-					value = contract
-				}
+				localSummary = answer.LocalSummary
+				methodSummary = answer.MethodSummary
 			}
 			if contract, ok := stdlibMethodResultValue(receiver, method, index, partition); ok {
 				value = contract
@@ -28615,7 +28581,7 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 			// the arm that leaves one, and the cell a short-circuit result
 			// occupies are closed branch metadata. They are intentionally not
 			// alternate selectors.
-			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && operand.Role != equation.RoleBranchChain && !operand.Role.InFamily(equation.RoleFamilyImplied) && !operand.Role.InFamily(equation.RoleFamilySufficient) && !operand.Role.InFamily(equation.RoleFamilyDifference) && !operand.Role.InFamily(equation.RoleFamilyMonotoneFloor) && !operand.Role.InFamily(equation.RoleFamilyDensityRelation) && !operand.Role.InFamily(equation.RoleFamilyShortCircuit) && !operand.Role.InFamily(equation.RoleFamilyNative) {
+			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && operand.Role != equation.RoleBranchChain && !operand.Role.InFamily(equation.RoleFamilyImplied) && !operand.Role.InFamily(equation.RoleFamilyDifference) && !operand.Role.InFamily(equation.RoleFamilyMonotoneFloor) && !operand.Role.InFamily(equation.RoleFamilyDensityRelation) && !operand.Role.InFamily(equation.RoleFamilyShortCircuit) && !operand.Role.InFamily(equation.RoleFamilyNative) {
 				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}

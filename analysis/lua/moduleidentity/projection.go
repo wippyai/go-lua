@@ -3,12 +3,14 @@ package moduleidentity
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -202,7 +204,7 @@ func (p *Projection) addRequireAliasesFromStmts(stmts []ast.Stmt) {
 					continue
 				}
 				expr := exprAt(n.Exprs, i)
-				if modulePath, ok := ExactRequireCall(p.bindings, expr); ok {
+				if modulePath, ok := ExactModuleLoadCall(p.bindings, expr); ok {
 					p.addAliasName(name, modulePath)
 					p.addRoot(id, moduleRoot{modulePath: modulePath, inherited: true})
 					continue
@@ -226,8 +228,9 @@ func (p *Projection) addRequireAliasesFromStmts(stmts []ast.Stmt) {
 	}
 }
 
-// ExactRequireCall recognizes exactly require("module") calls.
-func ExactRequireCall(bindings *bind.Result, expr ast.Expr) (string, bool) {
+// ExactModuleLoadCall recognizes a one-string-argument call whose global
+// signature carries the module-load capability.
+func ExactModuleLoadCall(bindings *bind.Result, expr ast.Expr) (string, bool) {
 	if bindings == nil {
 		return "", false
 	}
@@ -236,7 +239,8 @@ func ExactRequireCall(bindings *bind.Result, expr ast.Expr) (string, bool) {
 		return "", false
 	}
 	fn, ok := call.Func.(*ast.IdentExpr)
-	if !ok || !bindings.ResolvesToGlobal(fn, "require") {
+	if !ok || !bindings.ResolvesToGlobal(fn, fn.Value) ||
+		!signaturelookup.HasStdlibCapability(fn.Value, capability.DispatchModuleLoad) {
 		return "", false
 	}
 	lit, ok := call.Args[0].(*ast.StringExpr)
@@ -246,8 +250,8 @@ func ExactRequireCall(bindings *bind.Result, expr ast.Expr) (string, bool) {
 	return lit.Value, true
 }
 
-// LocalRequireModulePath resolves a local symbol introduced by require("module").
-func LocalRequireModulePath(bindings *bind.Result, id symbol.ID) (string, bool) {
+// LocalModuleLoadPath resolves a local symbol introduced by a module-load call.
+func LocalModuleLoadPath(bindings *bind.Result, id symbol.ID) (string, bool) {
 	if bindings == nil || id == 0 {
 		return "", false
 	}
@@ -255,7 +259,7 @@ func LocalRequireModulePath(bindings *bind.Result, id symbol.ID) (string, bool) 
 	if !ok || origin.Stmt == nil {
 		return "", false
 	}
-	return ExactRequireCall(bindings, exprAt(origin.Stmt.Exprs, origin.Index))
+	return ExactModuleLoadCall(bindings, exprAt(origin.Stmt.Exprs, origin.Index))
 }
 
 // ModulePathForAlias resolves a lexical require alias name to its module path.
@@ -395,7 +399,7 @@ func (p Projection) rootIdentity(id symbol.ID) (moduleRoot, bool) {
 	if root, ok := p.roots[id]; ok {
 		return root, true
 	}
-	if modulePath, ok := LocalRequireModulePath(p.bindings, id); ok {
+	if modulePath, ok := LocalModuleLoadPath(p.bindings, id); ok {
 		return moduleRoot{modulePath: modulePath, inherited: true}, true
 	}
 	return moduleRoot{}, false
@@ -541,7 +545,7 @@ func (p *Projection) addCapturedImportRoots(fn *ast.FunctionExpr) {
 		return
 	}
 	for _, capture := range p.bindings.DirectCaptures(fn) {
-		modulePath, ok := LocalRequireModulePath(p.bindings, capture.Captured)
+		modulePath, ok := LocalModuleLoadPath(p.bindings, capture.Captured)
 		if !ok {
 			continue
 		}
@@ -554,7 +558,7 @@ func (p *Projection) addCapturedAliasNames(fn *ast.FunctionExpr) {
 		return
 	}
 	for _, capture := range p.bindings.DirectCaptures(fn) {
-		if modulePath, ok := LocalRequireModulePath(p.bindings, capture.Captured); ok {
+		if modulePath, ok := LocalModuleLoadPath(p.bindings, capture.Captured); ok {
 			p.addAliasName(capture.CapturedName, modulePath)
 		}
 		origin, ok := p.bindings.LocalOrigin(capture.Captured)
@@ -574,7 +578,7 @@ func (p *Projection) addCapturedAliasNames(fn *ast.FunctionExpr) {
 		if id == 0 {
 			continue
 		}
-		if modulePath, ok := LocalRequireModulePath(p.bindings, id); ok {
+		if modulePath, ok := LocalModuleLoadPath(p.bindings, id); ok {
 			p.addAliasName(name, modulePath)
 		}
 	}
@@ -758,7 +762,12 @@ func (p Projection) exactRequireSource(facts FlowFacts, source Source) (string, 
 	if callee.Symbol == 0 || len(callee.Segments) != 0 {
 		return "", false
 	}
-	if p.bindings == nil || !p.bindings.SymbolResolvesToGlobal(callee.Symbol, "require") {
+	if p.bindings == nil {
+		return "", false
+	}
+	name := p.bindings.Name(callee.Symbol)
+	if !p.bindings.SymbolResolvesToGlobal(callee.Symbol, name) ||
+		!signaturelookup.HasStdlibCapability(name, capability.DispatchModuleLoad) {
 		return "", false
 	}
 	arg := site.Args[0]

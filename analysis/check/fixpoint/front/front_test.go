@@ -364,6 +364,40 @@ left, right = right, left
 	}
 }
 
+func TestNestedAssignmentReadsSharePublishedStatementSnapshot(t *testing.T) {
+	compilation, err := front.Compile(`
+local function swap()
+    local left, right = 1, 2
+    left, right = right, left
+end
+return swap
+`)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	nested := compilation.NestedCompilations()
+	if len(nested) != 1 {
+		t.Fatalf("nested bodies = %d, want one", len(nested))
+	}
+	var boundaries []string
+	for _, operation := range nested[0].DraftArtifact().Equations {
+		if operation.Occurrence.Kind != "environment-write" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role == "read-before" {
+				boundaries = append(boundaries, string(operand.Term.Encoding))
+			}
+		}
+	}
+	if len(boundaries) != 4 {
+		t.Fatalf("nested assignment boundaries = %q, want four", boundaries)
+	}
+	if boundaries[2] != boundaries[3] {
+		t.Fatalf("nested parallel assignment boundaries = %q and %q, want one published snapshot", boundaries[2], boundaries[3])
+	}
+}
+
 func TestCompileBodyLowersCallInsteadOfRejectingIt(t *testing.T) {
 	artifact, err := front.CompileBody(`local value = source()`)
 	if err != nil {

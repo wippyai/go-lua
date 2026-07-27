@@ -28,7 +28,6 @@ type Function struct {
 	ReturnTuples []ReturnTuple
 	Forwarded    bool
 	Store        *OwnershipStore
-	NormalEqual  *Equality
 	// Borrow lists the formal positions a read-only wrapper never retains: the
 	// body neither stores, sends, re-passes, nor returns their graph, so each
 	// argument stays frame-local at the caller.
@@ -72,9 +71,6 @@ type OwnershipStore struct {
 	EscapingRoot bool
 }
 
-// Equality is a normal-return-only equality between two formal parameters.
-type Equality struct{ Left, Right int }
-
 // Value is a finite, serializable return template. A Parameter is an ordinal
 // reference in the exported callable's already-validated signature; it is
 // materialized only from that call site's exact, published argument fact.
@@ -109,9 +105,6 @@ func (f Function) Valid() bool {
 	if (f.Return.Valid(f.Arity) && f.Conditional != nil) ||
 		(f.Return.Valid(f.Arity) && len(f.ReturnTuples) != 0) ||
 		(f.Conditional != nil && len(f.ReturnTuples) != 0) {
-		return false
-	}
-	if f.NormalEqual != nil && (f.NormalEqual.Left < 0 || f.NormalEqual.Right < 0 || f.NormalEqual.Left >= f.Arity || f.NormalEqual.Right >= f.Arity) {
 		return false
 	}
 	return true

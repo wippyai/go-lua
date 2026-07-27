@@ -40,6 +40,15 @@ const (
 	authorityKeyedComponent          authorityRule = "keyed-component"
 	authorityExactCurrentValue       authorityRule = "exact-current-value"
 	authorityCurrentTableValue       authorityRule = "current-table-value"
+	authoritySealedCallableResult    authorityRule = "sealed-callable-result"
+	authorityInferredCallableResult  authorityRule = "inferred-callable-result"
+	authorityLocalResultSummary      authorityRule = "local-result-summary"
+	authorityTypedCallableResult     authorityRule = "typed-callable-result"
+	authoritySealedMethodResult      authorityRule = "sealed-method-result"
+	authorityMethodReceiverResult    authorityRule = "method-receiver-result"
+	authorityStaticReceiverResult    authorityRule = "static-receiver-result"
+	authorityTypedMethodResult       authorityRule = "typed-method-result"
+	authorityChannelMethodResult     authorityRule = "channel-method-result"
 )
 
 type authorityView struct {
@@ -136,6 +145,95 @@ var placementDescentTableAuthorities = authorityView{
 		// refuse descent instead of falling through to an unrelated shape.
 		authorityTypedPath,
 	},
+}
+
+var unresolvedCallResultAuthorities = authorityView{
+	Name: "unresolved-call-result",
+	Rules: []authorityRule{
+		authoritySealedCallableResult,
+		authorityInferredCallableResult,
+		authorityLocalResultSummary,
+		authorityTypedCallableResult,
+		authoritySealedMethodResult,
+		authorityMethodReceiverResult,
+		authorityStaticReceiverResult,
+		authorityTypedMethodResult,
+		authorityChannelMethodResult,
+	},
+}
+
+type callResultAuthorityContext struct {
+	Lexical           *lexicalEvaluator
+	Callee            []byte
+	Receiver          []byte
+	Method            []byte
+	Index             int
+	Arguments         map[int][]byte
+	Partition         equation.Partition
+	LocalUnionSummary typ.Type
+	LocalUnion        bool
+}
+
+type callResultAuthorityAnswer struct {
+	Value          []byte
+	LocalCallable  bool
+	ReceiverResult bool
+	ReceiverTerm   []byte
+	LocalSummary   typ.Type
+	MethodSummary  typ.Type
+}
+
+func resolveUnresolvedCallResult(context callResultAuthorityContext) (callResultAuthorityAnswer, error) {
+	answer := callResultAuthorityAnswer{ReceiverTerm: context.Receiver}
+	for _, rule := range unresolvedCallResultAuthorities.Rules {
+		switch rule {
+		case authoritySealedCallableResult:
+			if value, ok := sealedCallableResultValue(context.Lexical, context.Callee, context.Index, context.Arguments, context.Partition); ok {
+				answer.Value, answer.LocalCallable = value, true
+			}
+		case authorityInferredCallableResult:
+			if value, ok := inferredCallableResultValue(context.Callee, context.Index, context.Partition); ok {
+				answer.Value, answer.LocalCallable = value, true
+			}
+		case authorityLocalResultSummary:
+			if summary, ok := sealedCallableResultType(context.Lexical, context.Callee, context.Index, context.Arguments, context.Partition); ok && requiresLocalUnionProof(summary) {
+				answer.LocalSummary = summary
+			}
+			if answer.LocalSummary == nil && context.LocalUnion && requiresLocalUnionProof(context.LocalUnionSummary) {
+				answer.LocalSummary = context.LocalUnionSummary
+			}
+			if answer.LocalSummary == nil {
+				if summary, ok := typedCallableResultType(context.Callee, context.Index, context.Arguments, context.Partition); ok && requiresLocalUnionProof(summary) {
+					answer.LocalSummary = summary
+				}
+			}
+		case authorityTypedCallableResult:
+			answer.Value, _ = typedCallableResultValue(context.Callee, context.Index, context.Arguments, context.Partition)
+		case authoritySealedMethodResult:
+			answer.Value, _ = sealedMethodResultValue(context.Lexical, context.Receiver, context.Method, context.Index, context.Partition)
+		case authorityMethodReceiverResult:
+			if value, ok := sealedMethodReceiverResultValue(context.Lexical, context.Receiver, context.Method, context.Index, context.Partition); ok {
+				answer.Value, answer.ReceiverResult = value, true
+			}
+		case authorityStaticReceiverResult:
+			if value, term, ok := sealedStaticMemberReceiverResultValue(context.Lexical, context.Callee, context.Index, context.Partition); ok {
+				answer.Value, answer.ReceiverResult, answer.ReceiverTerm = value, true, term
+			}
+		case authorityTypedMethodResult:
+			if summary, ok := typedMethodReturnType(context.Receiver, context.Method, context.Index, context.Partition); ok {
+				answer.MethodSummary = summary
+			}
+			answer.Value, _ = typedMethodResultValue(context.Receiver, context.Method, context.Index, context.Partition)
+		case authorityChannelMethodResult:
+			answer.Value, _ = ambientChannelMethodResultValue(context.Receiver, context.Method, context.Index, context.Partition)
+		default:
+			return callResultAuthorityAnswer{}, unknownAuthorityError(unresolvedCallResultAuthorities, rule)
+		}
+		if len(answer.Value) != 0 {
+			return answer, nil
+		}
+	}
+	return answer, nil
 }
 
 type valueAuthorityContext struct {

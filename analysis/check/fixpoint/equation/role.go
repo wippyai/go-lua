@@ -38,8 +38,6 @@ const (
 	RoleFamilyReturnDisplay
 	RoleFamilyReturnValue
 	RoleFamilyShortCircuit
-	RoleFamilySufficient
-	RoleFamilySufficientArm
 	RoleFamilySuspensionLive
 	RoleFamilyTarget
 	RoleFamilyTypeArgument
@@ -70,8 +68,6 @@ var operandRoleFamilyNames = [...]string{
 	RoleFamilyReturnDisplay:          "return-display",
 	RoleFamilyReturnValue:            "return-value",
 	RoleFamilyShortCircuit:           "short-circuit",
-	RoleFamilySufficient:             "sufficient",
-	RoleFamilySufficientArm:          "sufficient-arm",
 	RoleFamilySuspensionLive:         "suspension-live",
 	RoleFamilyTarget:                 "target",
 	RoleFamilyTypeArgument:           "type-argument",
@@ -165,12 +161,6 @@ func (role OperandRole) Component(family OperandRoleFamily, component string) (s
 		return "", false
 	}
 	return strings.CutPrefix(suffix, component+"-")
-}
-
-// IsCheckEvidence reports a nested sufficient-arm check role.
-func (role OperandRole) IsCheckEvidence() bool {
-	suffix, ok := role.Suffix(RoleFamilySufficientArm)
-	return ok && strings.Contains(suffix, "-check-")
 }
 
 // IsDisplay reports presentation-only roles. This classification is owned by

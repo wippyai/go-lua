@@ -28,7 +28,7 @@ func TestCompileWIRLowersOrderedChannelSelectCases(t *testing.T) {
 	})
 	body.Emit(wir.Instruction{Op: wir.OpExit, Point: graph.Exit()})
 
-	artifact, err := compileWIR("ordered channel select", body, graph, map[cfg.Point]cfg.Point{})
+	artifact, err := compileWIR("ordered channel select", body, graph)
 	if err != nil {
 		t.Fatalf("compileWIR: %v", err)
 	}

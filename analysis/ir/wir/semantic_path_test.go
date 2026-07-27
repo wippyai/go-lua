@@ -28,8 +28,7 @@ func TestForEachValuePathCoversSemanticCarriersAndOnlyOmitsDirectCalleeRoot(t *t
 		Check: body.InternCheck(Check{
 			Kind: CheckPathEqual, Path: makePath(7), OtherPath: makePath(8),
 		}),
-		ImpliedChecks:    body.AppendImpliedChecks([]ImpliedCheck{{Check: Check{Kind: CheckTruthy, Path: makePath(9)}}}),
-		SufficientChecks: body.AppendImpliedChecks([]ImpliedCheck{{Check: Check{Kind: CheckTruthy, Path: makePath(10)}}}),
+		ImpliedChecks: body.AppendImpliedChecks([]ImpliedCheck{{Check: Check{Kind: CheckTruthy, Path: makePath(9)}}}),
 		DiffConstraints: body.AppendBranchDiffConstraints([]BranchDiffConstraint{{
 			HiPath: makePath(11), HasHi2: true, Hi2Path: makePath(12), LoPath: makePath(13),
 		}}),
@@ -52,6 +51,9 @@ func TestForEachValuePathCoversSemanticCarriersAndOnlyOmitsDirectCalleeRoot(t *t
 		t.Fatal("semantic path traversal stopped")
 	}
 	for id := symbol.ID(1); id <= 16; id++ {
+		if id == 10 {
+			continue // retired sufficient-check carrier
+		}
 		if seen[makePath(id).Key()] == 0 {
 			t.Fatalf("semantic path carrier %d was omitted: %v", id, seen)
 		}

@@ -24,7 +24,7 @@ import (
 func TestLookupStdlib(t *testing.T) {
 	src := Source{IncludeStdlib: true}
 
-	got, ok := src.Lookup(stdlib.Require)
+	got, ok := src.LookupView(stdlib.Require)
 	if !ok {
 		t.Fatalf("Lookup(%q) missing", stdlib.Require)
 	}
@@ -39,7 +39,7 @@ func TestLookupManifest(t *testing.T) {
 	m.DefineFunctionSignature("custom", want)
 	src := Source{Manifests: []*manifest.Manifest{m}}
 
-	got, ok := src.Lookup("custom")
+	got, ok := src.LookupView("custom")
 	if !ok {
 		t.Fatal("Lookup(custom) missing")
 	}
@@ -57,7 +57,7 @@ func TestLookupManifestLocalMemberByQualifiedModulePath(t *testing.T) {
 	json.DefineFunctionSignature("get", other)
 	src := Source{Manifests: []*manifest.Manifest{json, sql}}
 
-	got, ok := src.Lookup("sql.get")
+	got, ok := src.LookupView("sql.get")
 	if !ok {
 		t.Fatal("Lookup(sql.get) missing")
 	}
@@ -79,7 +79,7 @@ func TestLookupResolvesBareReturnReferenceInOwningManifest(t *testing.T) {
 		Type: typ.Func().Returns(typ.NewRef("", "Entry")).Build(),
 	})
 
-	got, ok := (Source{Manifests: []*manifest.Manifest{registry, fs}}).Lookup("registry.get")
+	got, ok := (Source{Manifests: []*manifest.Manifest{registry, fs}}).LookupView("registry.get")
 	if !ok || got.Type == nil || len(got.Type.Returns) != 1 {
 		t.Fatalf("Lookup(registry.get) = %#v/%v, want one-return signature", got, ok)
 	}
@@ -94,7 +94,7 @@ func TestLookupManifestLocalStaticIntMemberByQualifiedModulePath(t *testing.T) {
 	m.DefineFunctionSignature("[1]", want)
 	src := Source{Manifests: []*manifest.Manifest{m}}
 
-	got, ok := src.Lookup("pkg[1]")
+	got, ok := src.LookupView("pkg[1]")
 	if !ok {
 		t.Fatal("Lookup(pkg[1]) missing")
 	}
@@ -114,7 +114,7 @@ func TestLookupDerivesManifestInterfaceMethodTypeWithoutErrorType(t *testing.T) 
 	m.DefineType("Contract", contractType)
 	src := Source{Manifests: []*manifest.Manifest{m}}
 
-	got, ok := src.Lookup("contract.Contract.open")
+	got, ok := src.LookupView("contract.Contract.open")
 	if !ok {
 		t.Fatal("Lookup(contract.Contract.open) missing")
 	}
@@ -132,7 +132,7 @@ func TestLookupManifestOverridesStdlib(t *testing.T) {
 	m.DefineFunctionSignature(stdlib.Require, want)
 	src := Source{Manifests: []*manifest.Manifest{m}, IncludeStdlib: true}
 
-	got, ok := src.Lookup(stdlib.Require)
+	got, ok := src.LookupView(stdlib.Require)
 	if !ok {
 		t.Fatalf("Lookup(%q) missing", stdlib.Require)
 	}
@@ -147,7 +147,7 @@ func TestLookupModuleLocalBareStdlibNameDoesNotOverrideStdlibGlobal(t *testing.T
 	m.DefineFunctionSignature("select", local)
 	src := Source{Manifests: []*manifest.Manifest{m}, IncludeStdlib: true}
 
-	global, ok := src.Lookup("select")
+	global, ok := src.LookupView("select")
 	if !ok {
 		t.Fatal("Lookup(select) missing")
 	}
@@ -155,7 +155,7 @@ func TestLookupModuleLocalBareStdlibNameDoesNotOverrideStdlibGlobal(t *testing.T
 		t.Fatalf("Lookup(select) used module-local channel.select signature for bare stdlib global")
 	}
 
-	qualified, ok := src.Lookup("channel.select")
+	qualified, ok := src.LookupView("channel.select")
 	if !ok {
 		t.Fatal("Lookup(channel.select) missing")
 	}
@@ -167,7 +167,7 @@ func TestLookupModuleLocalBareStdlibNameDoesNotOverrideStdlibGlobal(t *testing.T
 func TestLookupMissing(t *testing.T) {
 	src := Source{IncludeStdlib: true}
 
-	if got, ok := src.Lookup("not.a.function"); ok {
+	if got, ok := src.LookupView("not.a.function"); ok {
 		t.Fatalf("Lookup(not.a.function) = %v, want missing", got)
 	}
 }
@@ -213,20 +213,21 @@ func TestSourceValidateAcceptsDeclaredLifecycleFSM(t *testing.T) {
 	}
 }
 
-func TestLookupReturnsClones(t *testing.T) {
+func TestExplicitSignatureCloneIsDetached(t *testing.T) {
 	want := testSignature("custom", returns.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
 	m := manifest.New("example/module")
 	m.DefineFunctionSignature("custom", want)
 	src := Source{Manifests: []*manifest.Manifest{m}, IncludeStdlib: true}
 
-	first, ok := src.Lookup("custom")
+	firstView, ok := src.LookupView("custom")
 	if !ok {
 		t.Fatal("Lookup(custom) missing")
 	}
+	first := firstView.Clone()
 	first.Type.Params[0].Name = "changed"
 	first.Effect.Labels = nil
 
-	second, ok := src.Lookup("custom")
+	second, ok := src.LookupView("custom")
 	if !ok {
 		t.Fatal("Lookup(custom) missing after local mutation")
 	}
@@ -237,14 +238,15 @@ func TestLookupReturnsClones(t *testing.T) {
 		t.Fatal("Lookup returned aliased effect labels")
 	}
 
-	std, ok := src.Lookup(stdlib.Type)
+	stdView, ok := src.LookupView(stdlib.Type)
 	if !ok {
 		t.Fatalf("Lookup(%q) missing", stdlib.Type)
 	}
+	std := stdView.Clone()
 	std.Type.Params[0].Name = "changed"
 	std.Effect.Labels = nil
 
-	stdAgain, ok := src.Lookup(stdlib.Type)
+	stdAgain, ok := src.LookupView(stdlib.Type)
 	if !ok {
 		t.Fatalf("Lookup(%q) missing after local mutation", stdlib.Type)
 	}
@@ -260,9 +262,10 @@ var benchmarkLookupSignature signature.Function
 
 func BenchmarkStdlibLookupOwnership(b *testing.B) {
 	src := Source{IncludeStdlib: true}
-	b.Run("owned-clone", func(b *testing.B) {
+	b.Run("explicit-clone", func(b *testing.B) {
 		for range b.N {
-			benchmarkLookupSignature, _ = src.Lookup("string.format")
+			view, _ := src.LookupView("string.format")
+			benchmarkLookupSignature = view.Clone()
 		}
 	})
 	b.Run("immutable-view", func(b *testing.B) {

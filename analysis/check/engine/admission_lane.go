@@ -65,7 +65,7 @@ func admissionDiagnosticDischarged(ctx admissionDiagnosticContext, closedAnyForm
 	diagnostic := ctx.diagnostic
 	switch ctx.decision.Lane.Name {
 	case "static-assignment":
-		return ctx.lexical.uncalledStaticAssignmentDiagnostic(ctx.child.DraftArtifact(), diagnostic.Key, ctx.partition) ||
+		return ctx.staticAssignmentDiagnostic() ||
 			ctx.staticOptionalMethodDiagnostic() ||
 			ctx.staticResultCallDiagnostic()
 	case "typed-channel-send":
@@ -280,7 +280,7 @@ func (lane *admissionLane) admitDeclaredIndexedRead(ctx *admissionLaneContext) (
 
 func (lane *admissionLane) admitStaticAssignment(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
 	seeds, admitted := ctx.bodyIndex.staticAssignmentBoundary()
-	if !admitted || !ctx.lexical.uncalledStaticCapturedCallsAreGuardedValidation(ctx.child, ctx.partition) {
+	if !admitted || !ctx.bodyIndex.staticCapturedCallsAreGuardedValidation(ctx.lexical, ctx.partition) {
 		return admissionLaneDecision{}, false
 	}
 	return admissionLaneDecision{Seeds: seeds, Root: admissionRootStaticAssignment}, true
@@ -313,14 +313,14 @@ func (lane *admissionLane) admitDeclared(ctx *admissionLaneContext) (admissionLa
 }
 
 func (lane *admissionLane) admitStaticCapturedReturn(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
-	if !ctx.lexical.uncalledStaticCapturedReturnBoundary(ctx.child, ctx.partition) {
+	if !ctx.bodyIndex.staticCapturedReturnBoundary(ctx.lexical, ctx.partition) {
 		return admissionLaneDecision{}, false
 	}
 	return admissionLaneDecision{Root: admissionRootCaptured}, true
 }
 
 func (lane *admissionLane) admitStaticArithmetic(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
-	if !ctx.lexical.uncalledStaticArithmeticBoundary(ctx.body, ctx.child, ctx.partition) {
+	if !ctx.bodyIndex.staticArithmeticBoundary(ctx.lexical, ctx.body, ctx.partition) {
 		return admissionLaneDecision{}, false
 	}
 	return admissionLaneDecision{Root: admissionRootArithmetic}, true
@@ -332,7 +332,7 @@ func (lane *admissionLane) admitStaticMemberRead(ctx *admissionLaneContext) (adm
 }
 
 func (lane *admissionLane) admitDeclaredFormalCall(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
-	seeds, admitted := ctx.lexical.uncalledDeclaredFormalCallBoundary(ctx.bodyIndex, lexicalAllocationSite{body: ctx.body, operation: ctx.operation}, ctx.partition)
+	seeds, admitted := ctx.bodyIndex.declaredFormalCallBoundary(ctx.lexical, lexicalAllocationSite{body: ctx.body, operation: ctx.operation}, ctx.partition)
 	if !admitted {
 		return admissionLaneDecision{}, false
 	}
@@ -352,7 +352,7 @@ func (lane *admissionLane) admitDeclaredFormalCall(ctx *admissionLaneContext) (a
 }
 
 func (lane *admissionLane) admitImportedCapture(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
-	seeds, admitted := ctx.lexical.uncalledImportedCaptureBoundary(ctx.body, ctx.bodyIndex, ctx.partition)
+	seeds, admitted := ctx.bodyIndex.importedCaptureBoundary(ctx.lexical, ctx.body, ctx.partition)
 	return admissionLaneDecision{Seeds: seeds, Root: admissionRootImportedCapture}, admitted
 }
 
@@ -381,19 +381,19 @@ func admissionRootDeclared(ctx admissionLaneContext, decision admissionLaneDecis
 }
 
 func admissionRootLocalUnionRead(ctx admissionLaneContext, decision admissionLaneDecision) ([]byte, bool, error) {
-	return ctx.lexical.uncalledLocalUnionReadEntry(ctx.child, decision.Seeds, ctx.partition)
+	return ctx.bodyIndex.localUnionReadEntry(ctx.lexical, decision.Seeds, ctx.partition)
 }
 
 func admissionRootImportedCapture(ctx admissionLaneContext, decision admissionLaneDecision) ([]byte, bool, error) {
-	return ctx.lexical.uncalledChildEntry(ctx.body, ctx.child, decision.Seeds, ctx.partition, false, true, false, false)
+	return ctx.bodyIndex.childEntry(ctx.lexical, ctx.body, decision.Seeds, ctx.partition, false, true, false, false)
 }
 
 func admissionRootClosedAnyCapture(ctx admissionLaneContext, decision admissionLaneDecision) ([]byte, bool, error) {
-	return ctx.lexical.uncalledChildEntry(ctx.body, ctx.child, decision.Seeds, ctx.partition, true, true, false, false)
+	return ctx.bodyIndex.childEntry(ctx.lexical, ctx.body, decision.Seeds, ctx.partition, true, true, false, false)
 }
 
 func admissionRootSealedEnvironment(ctx admissionLaneContext, decision admissionLaneDecision) ([]byte, bool, error) {
-	return ctx.lexical.uncalledChildEntry(ctx.body, ctx.child, decision.Seeds, ctx.partition, true, false, true, true)
+	return ctx.bodyIndex.childEntry(ctx.lexical, ctx.body, decision.Seeds, ctx.partition, true, false, true, true)
 }
 
 func admissionRootGradualLogical(ctx admissionLaneContext, decision admissionLaneDecision) ([]byte, bool, error) {
@@ -401,21 +401,21 @@ func admissionRootGradualLogical(ctx admissionLaneContext, decision admissionLan
 		entry, err := encodeChildEntryWithCapabilities(decision.Seeds, nil, nil, nil, nil, decision.GradualLogicalTerms)
 		return entry, true, err
 	}
-	return ctx.lexical.uncalledChildEntry(ctx.body, ctx.child, decision.Seeds, ctx.partition, true, false, false, false, decision.GradualLogicalTerms)
+	return ctx.bodyIndex.childEntry(ctx.lexical, ctx.body, decision.Seeds, ctx.partition, true, false, false, false, decision.GradualLogicalTerms)
 }
 
 func admissionRootStaticAssignment(ctx admissionLaneContext, decision admissionLaneDecision) ([]byte, bool, error) {
-	return ctx.lexical.uncalledChildEntry(ctx.body, ctx.child, decision.Seeds, ctx.partition, true, false, false, true)
+	return ctx.bodyIndex.childEntry(ctx.lexical, ctx.body, decision.Seeds, ctx.partition, true, false, false, true)
 }
 
 func admissionRootCaptured(ctx admissionLaneContext, decision admissionLaneDecision) ([]byte, bool, error) {
-	return ctx.lexical.uncalledChildEntry(ctx.body, ctx.child, decision.Seeds, ctx.partition, true, false, false, false)
+	return ctx.bodyIndex.childEntry(ctx.lexical, ctx.body, decision.Seeds, ctx.partition, true, false, false, false)
 }
 
 func admissionRootArithmetic(ctx admissionLaneContext, decision admissionLaneDecision) ([]byte, bool, error) {
-	return ctx.lexical.uncalledChildEntry(ctx.body, ctx.child, decision.Seeds, ctx.partition, true, true, true, false)
+	return ctx.bodyIndex.childEntry(ctx.lexical, ctx.body, decision.Seeds, ctx.partition, true, true, true, false)
 }
 
 func admissionRootSealedCapture(ctx admissionLaneContext, decision admissionLaneDecision) ([]byte, bool, error) {
-	return ctx.lexical.uncalledChildEntry(ctx.body, ctx.child, decision.Seeds, ctx.partition, true, false, true, false)
+	return ctx.bodyIndex.childEntry(ctx.lexical, ctx.body, decision.Seeds, ctx.partition, true, false, true, false)
 }

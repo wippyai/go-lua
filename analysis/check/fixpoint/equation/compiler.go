@@ -3,7 +3,6 @@ package equation
 import (
 	"errors"
 	"fmt"
-	"sort"
 )
 
 // FrozenKinds is duplicated deliberately as stable wire vocabulary, not as an
@@ -35,62 +34,33 @@ func validDraft(d Draft) error {
 // result, rather than a second relation syntax or a transfer interpreter.
 type Source struct{ Drafts []Draft }
 
-// Lowerer binds one already-existing transfer kernel.  It must not implement
-// a transfer itself: KernelID identifies the source-owned canonical kernel.
-type Lowerer interface{ Lower(Draft) (Equation, error) }
-
-type LowererFunc func(Draft) (Equation, error)
-
-func (f LowererFunc) Lower(d Draft) (Equation, error) { return f(d) }
-
-// Compiler has one explicit hook for every frozen catalog kind.  A nil hook
-// is invalid; unimplemented hooks fail rather than allowing an occurrence to
-// disappear from a parameterized artifact.
-type Compiler struct{ hooks map[string]Lowerer }
-
-func NewCompiler(hooks map[string]Lowerer) (*Compiler, error) {
-	if len(hooks) != len(FrozenKinds) {
-		return nil, fmt.Errorf("equation: lowering hook count %d, want %d", len(hooks), len(FrozenKinds))
-	}
-	copy := make(map[string]Lowerer, len(hooks))
-	for _, kind := range FrozenKinds {
-		hook, present := hooks[kind]
-		if !present || hook == nil {
-			return nil, fmt.Errorf("equation: missing lowering hook %q", kind)
-		}
-		copy[kind] = hook
-	}
-	return &Compiler{hooks: copy}, nil
-}
+// Compiler binds each frozen occurrence kind directly to its existing
+// canonical transfer kernel. An empty binding is fail-closed.
+type Compiler struct{ kernels map[string]string }
 
 // Skeleton returns the complete frame with a fail-closed hook for every kind.
 func Skeleton() *Compiler {
-	hooks := make(map[string]Lowerer, len(FrozenKinds))
+	kernels := make(map[string]string, len(FrozenKinds))
 	for _, kind := range FrozenKinds {
-		kind := kind
-		hooks[kind] = LowererFunc(func(Draft) (Equation, error) { return Equation{}, fmt.Errorf("%w: %s", ErrUnimplementedLowering, kind) })
+		kernels[kind] = ""
 	}
-	compiler, err := NewCompiler(hooks)
-	if err != nil {
-		panic(err)
-	}
-	return compiler
+	return &Compiler{kernels: kernels}
 }
 
-// With returns a copied compiler with exactly one hook replaced.
-func (c *Compiler) With(kind string, hook Lowerer) (*Compiler, error) {
-	if c == nil || hook == nil {
+// With returns a copied compiler with exactly one kernel binding replaced.
+func (c *Compiler) With(kind, kernelID string) (*Compiler, error) {
+	if c == nil || kernelID == "" {
 		return nil, fmt.Errorf("equation: invalid lowering replacement %q", kind)
 	}
-	if _, known := c.hooks[kind]; !known {
+	if _, known := c.kernels[kind]; !known {
 		return nil, fmt.Errorf("equation: invalid lowering replacement %q", kind)
 	}
-	hooks := make(map[string]Lowerer, len(c.hooks))
-	for key, value := range c.hooks {
-		hooks[key] = value
+	kernels := make(map[string]string, len(c.kernels))
+	for key, value := range c.kernels {
+		kernels[key] = value
 	}
-	hooks[kind] = hook
-	return NewCompiler(hooks)
+	kernels[kind] = kernelID
+	return &Compiler{kernels: kernels}, nil
 }
 
 // Compile walks every sealed relation occurrence once and emits only complete
@@ -105,20 +75,14 @@ func (c *Compiler) Compile(source Source) (Artifact, error) {
 		if err := validDraft(draft); err != nil {
 			return Artifact{}, fmt.Errorf("equation: draft %d: %w", index, err)
 		}
-		hook, present := c.hooks[draft.Occurrence.Kind]
+		kernelID, present := c.kernels[draft.Occurrence.Kind]
 		if !present {
 			return Artifact{}, fmt.Errorf("equation: draft %d has unknown kind %q", index, draft.Occurrence.Kind)
 		}
-		lowered, err := hook.Lower(draft)
-		if err != nil {
-			return Artifact{}, fmt.Errorf("equation: lower %s at %s: %w", draft.Occurrence.Kind, draft.Target.Name, err)
+		if kernelID == "" {
+			return Artifact{}, fmt.Errorf("equation: lower %s at %s: %w", draft.Occurrence.Kind, draft.Target.Name, ErrUnimplementedLowering)
 		}
-		if lowered.Target != draft.Target || lowered.Entry != draft.Entry || lowered.Occurrence != draft.Occurrence || !sameCoordinates(lowered.Dependencies, draft.Dependencies) || lowered.KernelID == "" {
-			return Artifact{}, fmt.Errorf("equation: lowering %q changed occurrence identity or omitted its kernel", draft.Occurrence.Kind)
-		}
-		if _, err := canonicalEquation(lowered); err != nil {
-			return Artifact{}, fmt.Errorf("equation: lowered %q: %w", draft.Occurrence.Kind, err)
-		}
+		lowered := canonicalEquationSlices(Equation{Target: draft.Target, Entry: draft.Entry, Guards: draft.Guards, Dependencies: draft.Dependencies, Occurrence: draft.Occurrence, Operands: draft.Operands, KernelID: kernelID})
 		equations = append(equations, lowered)
 	}
 	artifact := Artifact{Equations: equations}
@@ -126,32 +90,4 @@ func (c *Compiler) Compile(source Source) (Artifact, error) {
 		return Artifact{}, fmt.Errorf("equation: non-canonical lowering artifact")
 	}
 	return artifact, nil
-}
-
-func sameCoordinates(left, right []Coordinate) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	left = append([]Coordinate(nil), left...)
-	right = append([]Coordinate(nil), right...)
-	sort.Slice(left, func(i, j int) bool { return left[i].less(left[j]) })
-	sort.Slice(right, func(i, j int) bool { return right[i].less(right[j]) })
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
-
-// BindExistingKernel creates a mechanical lowering hook.  The only semantic
-// choice is the pre-existing kernel identifier supplied by the owner; this
-// helper has no evaluation logic.
-func BindExistingKernel(kernelID string) Lowerer {
-	return LowererFunc(func(draft Draft) (Equation, error) {
-		if kernelID == "" {
-			return Equation{}, fmt.Errorf("equation: empty canonical kernel binding")
-		}
-		return canonicalEquationSlices(Equation{Target: draft.Target, Entry: draft.Entry, Guards: draft.Guards, Dependencies: draft.Dependencies, Occurrence: draft.Occurrence, Operands: draft.Operands, KernelID: kernelID}), nil
-	})
 }

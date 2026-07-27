@@ -332,6 +332,13 @@ func nativeEffectCall(bindings *bind.Result, call *ast.FuncCallExpr, scope nativ
 		add("effect_row", "control_transfer=resume exhaustive=true safepoint=required suspension=published yield=present")
 		return
 	}
+	if stdlib, ok := nativeBoundStdlibSignature(bindings, call); ok &&
+		stdlib.OperationalEffects != nil &&
+		stdlib.OperationalEffects.SuspensionKnown &&
+		stdlib.OperationalEffects.MaySuspend {
+		add("effect_row", "exhaustive=true safepoint=required suspension=published yield=present")
+		return
+	}
 	if nativeBoundStdlibMemberCall(bindings, call, "string.gsub") && len(call.Args) >= 3 {
 		add("effect_row", "allocation=present composed_from_callback=true control_transfer=callback exhaustive=true")
 		return
@@ -410,6 +417,29 @@ func nativeBoundStdlibMemberCall(bindings *bind.Result, call *ast.FuncCallExpr, 
 		return false
 	}
 	return nativeBoundMemberCall(bindings, call, object, method)
+}
+
+func nativeBoundStdlibSignature(bindings *bind.Result, call *ast.FuncCallExpr) (signature.Function, bool) {
+	if call == nil || bindings == nil {
+		return signature.Function{}, false
+	}
+	if id, ok := call.Func.(*ast.IdentExpr); ok {
+		return nativeBoundStdlibCall(bindings, call, id.Value)
+	}
+	attr, ok := call.Func.(*ast.AttrGetExpr)
+	if !ok {
+		return signature.Function{}, false
+	}
+	root, ok := attr.Object.(*ast.IdentExpr)
+	member := ast.KeyName(attr.Key)
+	if !ok || member == "" {
+		return signature.Function{}, false
+	}
+	name := root.Value + "." + member
+	if !nativeBoundStdlibMemberCall(bindings, call, name) {
+		return signature.Function{}, false
+	}
+	return nativeStdlibSignatures.LookupView(name)
 }
 
 func nativeBoundMemberCall(bindings *bind.Result, call *ast.FuncCallExpr, object, method string) bool {

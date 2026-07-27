@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/effect/capability"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/solve"
@@ -275,7 +276,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 		return Compilation{}, fmt.Errorf("front: lower WIR")
 	}
 	rootBody := bodyID(source)
-	artifact, err := compileWIRForBody(rootBody, body, built.Graph, assignmentSnapshotStarts(stmts, built))
+	artifact, err := compileWIRForBody(rootBody, body, built.Graph)
 	if err != nil {
 		return Compilation{}, err
 	}
@@ -1040,7 +1041,7 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 			return nil, fmt.Errorf("front: nested prototype is incomplete")
 		}
 		childBody := lexicalBodyID(root, proto.LexicalPath)
-		artifact, err := compileWIRForBody(childBody, proto.Body, proto.Graph, nil)
+		artifact, err := compileWIRForBody(childBody, proto.Body, proto.Graph)
 		if err != nil {
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
 		}
@@ -1558,11 +1559,11 @@ type operation struct {
 	external         equation.Term
 }
 
-func compileWIR(source string, body *wir.Body, graph cfg.Graph, snapshots map[cfg.Point]cfg.Point) (equation.Artifact, error) {
-	return compileWIRForBody(bodyID(source), body, graph, snapshots)
+func compileWIR(source string, body *wir.Body, graph cfg.Graph) (equation.Artifact, error) {
+	return compileWIRForBody(bodyID(source), body, graph)
 }
 
-func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, snapshots map[cfg.Point]cfg.Point) (equation.Artifact, error) {
+func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) (equation.Artifact, error) {
 	if body == nil || graph == nil {
 		return equation.Artifact{}, fmt.Errorf("front: nil WIR body")
 	}
@@ -1839,7 +1840,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			}
 			draft.Occurrence = occurrence("environment-write")
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
-			readBefore, err := readBeforeTerm(operation, operations, snapshots)
+			readBefore, err := readBeforeTerm(operation, operations)
 			if instruction.Dst.Kind == wir.OperandTemp {
 				// Temporary assignments are expression-internal steps, not Lua
 				// statement targets. They must read the immediately preceding
@@ -2178,75 +2179,75 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 		}
 		drafts = append(drafts, draft)
 	}
-	compiler, err := equation.Skeleton().With("entry", equation.BindExistingKernel(entryKernel))
+	compiler, err := equation.Skeleton().With("entry", entryKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure entry compiler: %w", err)
 	}
-	compiler, err = compiler.With("environment-write", equation.BindExistingKernel(writeKernel))
+	compiler, err = compiler.With("environment-write", writeKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure assignment compiler: %w", err)
 	}
-	compiler, err = compiler.With("allocation-template", equation.BindExistingKernel(allocationTemplateKernel))
+	compiler, err = compiler.With("allocation-template", allocationTemplateKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure allocation template compiler: %w", err)
 	}
-	compiler, err = compiler.With("object-materialization", equation.BindExistingKernel(objectMaterializationKernel))
+	compiler, err = compiler.With("object-materialization", objectMaterializationKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure object materialization compiler: %w", err)
 	}
-	compiler, err = compiler.With("path-replacement", equation.BindExistingKernel(pathReplacementKernel))
+	compiler, err = compiler.With("path-replacement", pathReplacementKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure path replacement compiler: %w", err)
 	}
-	compiler, err = compiler.With("dynamic-index-read", equation.BindExistingKernel(dynamicIndexReadKernel))
+	compiler, err = compiler.With("dynamic-index-read", dynamicIndexReadKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure dynamic index read compiler: %w", err)
 	}
-	compiler, err = compiler.With("path-invalidation", equation.BindExistingKernel(pathInvalidationKernel))
+	compiler, err = compiler.With("path-invalidation", pathInvalidationKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure path invalidation compiler: %w", err)
 	}
-	compiler, err = compiler.With("index-mutation", equation.BindExistingKernel(indexMutationKernel))
+	compiler, err = compiler.With("index-mutation", indexMutationKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure index mutation compiler: %w", err)
 	}
-	compiler, err = compiler.With("branch-relations", equation.BindExistingKernel(branchKernel))
+	compiler, err = compiler.With("branch-relations", branchKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure branch compiler: %w", err)
 	}
-	compiler, err = compiler.With("apply", equation.BindExistingKernel(applyKernel))
+	compiler, err = compiler.With("apply", applyKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure apply compiler: %w", err)
 	}
-	compiler, err = compiler.With("call-results", equation.BindExistingKernel(resultsKernel))
+	compiler, err = compiler.With("call-results", resultsKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure call-results compiler: %w", err)
 	}
-	compiler, err = compiler.With("external-call", equation.BindExistingKernel(externalCallKernel))
+	compiler, err = compiler.With("external-call", externalCallKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure external call compiler: %w", err)
 	}
-	compiler, err = compiler.With("generic-for", equation.BindExistingKernel(genericForKernel))
+	compiler, err = compiler.With("generic-for", genericForKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure generic-for compiler: %w", err)
 	}
-	compiler, err = compiler.With("channel-select", equation.BindExistingKernel(selectKernel))
+	compiler, err = compiler.With("channel-select", selectKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure channel-select compiler: %w", err)
 	}
-	compiler, err = compiler.With("publication", equation.BindExistingKernel(publicationKernel))
+	compiler, err = compiler.With("publication", publicationKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure publication compiler: %w", err)
 	}
-	compiler, err = compiler.With("claim", equation.BindExistingKernel(claimKernel))
+	compiler, err = compiler.With("claim", claimKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure claim compiler: %w", err)
 	}
-	compiler, err = compiler.With("expression", equation.BindExistingKernel(expressionKernel))
+	compiler, err = compiler.With("expression", expressionKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure expression compiler: %w", err)
 	}
-	compiler, err = compiler.With("eval-node", equation.BindExistingKernel(evalNodeKernel))
+	compiler, err = compiler.With("eval-node", evalNodeKernel)
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: configure evaluation-node compiler: %w", err)
 	}
@@ -2293,70 +2294,11 @@ func nativeBuiltinCallKey(bodyID equation.BodyID, body *wir.Body, instruction wi
 	).String()
 }
 
-// assignmentSnapshotStarts maps each ordinary/local assignment point to the
-// first point in its source statement. Lua evaluates every right-hand side
-// before writing any left-hand target, so all targets in one statement must
-// resolve path operands at that common pre-write boundary.
-func assignmentSnapshotStarts(stmts []ast.Stmt, built *cfgbuild.Result) map[cfg.Point]cfg.Point {
-	starts := make(map[cfg.Point]cfg.Point)
-	if built == nil {
-		return starts
+func readBeforeTerm(current operation, operations []operation) (equation.Term, error) {
+	if !current.instruction.HasAssignmentSnapshot {
+		return equation.Term{}, fmt.Errorf("assignment operation %s has no snapshot", current.target.Name)
 	}
-	var visit func([]ast.Stmt)
-	mark := func(stmt ast.Stmt, targets int) {
-		points := built.StmtPoints.PointsFor(stmt)
-		if targets == 0 || len(points) < targets {
-			return
-		}
-		assignmentPoints := points[len(points)-targets:]
-		for _, point := range assignmentPoints {
-			starts[point] = assignmentPoints[0]
-		}
-	}
-	visit = func(items []ast.Stmt) {
-		for _, stmt := range items {
-			switch node := stmt.(type) {
-			case *ast.LocalAssignStmt:
-				mark(node, len(node.Names))
-			case *ast.AssignStmt:
-				mark(node, len(node.Lhs))
-			case *ast.IfStmt:
-				visit(node.Then)
-				visit(node.Else)
-			case *ast.DoBlockStmt:
-				visit(node.Stmts)
-			case *ast.WhileStmt:
-				visit(node.Stmts)
-			case *ast.RepeatStmt:
-				visit(node.Stmts)
-			case *ast.NumberForStmt:
-				visit(node.Stmts)
-			case *ast.GenericForStmt:
-				visit(node.Stmts)
-			}
-		}
-	}
-	visit(stmts)
-	return starts
-}
-
-func readBeforeTerm(current operation, operations []operation, snapshots map[cfg.Point]cfg.Point) (equation.Term, error) {
-	start, found := snapshots[current.instruction.Point]
-	if !found {
-		// nested WIR bodies are already source-normalized but intentionally do
-		// not retain an AST statement-point sidecar. Their assignment point is
-		// therefore the exact snapshot boundary; its predecessor remains the
-		// same admitted operation-order seam used by root-body assignments.
-		for index, candidate := range operations {
-			if candidate.target == current.target {
-				if index == 0 {
-					return equation.Term{}, fmt.Errorf("assignment snapshot has no predecessor")
-				}
-				return equation.ClosedTerm([]byte("front/read-before/" + operations[index-1].target.Name)), nil
-			}
-		}
-		return equation.Term{}, fmt.Errorf("assignment operation %s is absent", current.target.Name)
-	}
+	start := current.instruction.AssignmentSnapshot
 	for index, candidate := range operations {
 		if candidate.instruction.Point != start {
 			continue
@@ -3091,7 +3033,7 @@ func externalProviderSeen(body *wir.Body, instruction wir.Instruction, seen map[
 	}
 	kind, known := body.SymbolKind(root.Symbol)
 	global := (known && kind == wir.SymbolGlobal) || body.IsImplicitGlobalSymbol(root.Symbol)
-	if module, ok := exactRequireModule(body, instruction, root.Symbol, global); ok {
+	if module, ok := exactModuleLoad(body, instruction, root.Symbol, global); ok {
 		return equation.ClosedTerm([]byte("provider/module-load/" + strconv.Quote(module))), true
 	}
 	if !global {
@@ -3127,13 +3069,13 @@ func moduleProvider(module, suffix string) (equation.Term, bool) {
 	return equation.ClosedTerm(wired), true
 }
 
-// exactRequireModule recognizes Lua's direct require("module") form before
+// exactModuleLoad recognizes a direct module-load-capable global call before
 // the result is assigned a local alias. Once the alias exists,
 // SymbolRequireModulePath carries the same identity for downstream calls.
 // Dynamic paths and shadowed locals stay outside this provider boundary.
-func exactRequireModule(body *wir.Body, instruction wir.Instruction, symbol wir.SymbolID, global bool) (string, bool) {
+func exactModuleLoad(body *wir.Body, instruction wir.Instruction, symbol wir.SymbolID, global bool) (string, bool) {
 	if body == nil || instruction.Op != wir.OpCall || instruction.Call.Method != 0 || instruction.ListSpread ||
-		!global || body.SymbolName(symbol) != "require" {
+		!global || !signaturelookup.HasStdlibCapability(body.SymbolName(symbol), capability.DispatchModuleLoad) {
 		return "", false
 	}
 	arguments := body.Operands(instruction.List)

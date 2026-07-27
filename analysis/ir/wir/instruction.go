@@ -251,21 +251,12 @@ type Instruction struct {
 	// carries edge-specific leaves proven by and/or/not structure.
 	ImpliedChecks ImpliedCheckRange
 
-	// SufficientChecks is the normalized leaf-check window for OpBranch compound
-	// conditions where a single leaf check is enough to force the recorded edge.
-	// This differs from ImpliedChecks for shapes like `a or b`: the true edge
-	// does not imply that `a` or `b` held, but either leaf is a sufficient case.
-	SufficientChecks ImpliedCheckRange
-
-	// SufficientCheckArmsTrue and SufficientCheckArmsFalse window the per-arm
-	// leaf-check groups behind SufficientChecks for the true and false edge
-	// respectively: one entry per top-level disjunct (true) or conjunct
-	// (false), each still separated instead of flattened together, including
-	// an arm that resolved no leaf check. Sound conclusions that must hold no
-	// matter which arm forced the edge need arm boundaries preserved, which
-	// SufficientChecks discards by flattening.
-	SufficientCheckArmsTrue  ArmRange
-	SufficientCheckArmsFalse ArmRange
+	// AssignmentSnapshot is the first write point of the Lua assignment
+	// statement that owns this instruction. Lua evaluates all right-hand sides
+	// before any target write, so every target in the statement reads from the
+	// same predecessor boundary.
+	AssignmentSnapshot    cfg.Point
+	HasAssignmentSnapshot bool
 
 	// DiffConstraints is the normalized difference-logic descriptor window for
 	// OpBranch conditions. It carries syntax-derived linear relations; transfer

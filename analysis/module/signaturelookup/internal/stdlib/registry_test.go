@@ -155,7 +155,7 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := Lookup(tt.name)
+			got, ok := LookupView(tt.name)
 			if !ok {
 				t.Fatalf("Lookup(%q) missing", tt.name)
 			}
@@ -167,7 +167,7 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 }
 
 func TestLookupTableCreateCarriesFreshReturnAllocation(t *testing.T) {
-	got, ok := Lookup("table.create")
+	got, ok := LookupView("table.create")
 	if !ok {
 		t.Fatal("Lookup(table.create) missing")
 	}
@@ -273,7 +273,7 @@ func TestLookupSeededEffects(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := Lookup(tt.name)
+			got, ok := LookupView(tt.name)
 			if !ok {
 				t.Fatalf("Lookup(%q) missing", tt.name)
 			}
@@ -290,7 +290,7 @@ func TestLookupSeededEffects(t *testing.T) {
 }
 
 func TestStringUnpackDeclaresConservativeAnyWithoutReservedTransform(t *testing.T) {
-	got, ok := Lookup("string.unpack")
+	got, ok := LookupView("string.unpack")
 	if !ok {
 		t.Fatal("Lookup(\"string.unpack\") missing")
 	}
@@ -313,7 +313,7 @@ func TestStringUnpackDeclaresConservativeAnyWithoutReservedTransform(t *testing.
 }
 
 func TestStringFindDeclaresConservativeReturnsWithoutReservedCorrelation(t *testing.T) {
-	got, ok := Lookup("string.find")
+	got, ok := LookupView("string.find")
 	if !ok {
 		t.Fatal("Lookup(\"string.find\") missing")
 	}
@@ -335,7 +335,7 @@ func TestStringFindDeclaresConservativeReturnsWithoutReservedCorrelation(t *test
 }
 
 func TestTypeDeclaresBorrowWithoutReservedPredicate(t *testing.T) {
-	got, ok := Lookup(Type)
+	got, ok := LookupView(Type)
 	if !ok {
 		t.Fatalf("Lookup(%q) missing", Type)
 	}
@@ -350,7 +350,7 @@ func TestTypeDeclaresBorrowWithoutReservedPredicate(t *testing.T) {
 }
 
 func TestSetmetatableRetainsMetatableWithoutOrdinaryStore(t *testing.T) {
-	got, ok := Lookup("setmetatable")
+	got, ok := LookupView("setmetatable")
 	if !ok {
 		t.Fatal("Lookup(\"setmetatable\") missing")
 	}
@@ -371,7 +371,7 @@ func TestSetmetatableRetainsMetatableWithoutOrdinaryStore(t *testing.T) {
 }
 
 func TestSelectDeclaresConservativeAnyWithoutReservedVariadicTransform(t *testing.T) {
-	got, ok := Lookup("select")
+	got, ok := LookupView("select")
 	if !ok {
 		t.Fatal("Lookup(\"select\") missing")
 	}
@@ -442,14 +442,15 @@ func TestStdlibSignatureConstructionRejectsInactiveEffectLabels(t *testing.T) {
 }
 
 func TestLookupAndSignaturesCloneResults(t *testing.T) {
-	first, ok := Lookup(Type)
+	firstView, ok := LookupView(Type)
 	if !ok {
 		t.Fatalf("Lookup(%q) missing", Type)
 	}
+	first := firstView.Clone()
 	first.Type.Params[0].Name = "changed"
 	first.Effect.Labels = nil
 
-	second, ok := Lookup(Type)
+	second, ok := LookupView(Type)
 	if !ok {
 		t.Fatalf("Lookup(%q) missing after local mutation", Type)
 	}
@@ -462,7 +463,7 @@ func TestLookupAndSignaturesCloneResults(t *testing.T) {
 
 	all := Signatures()
 	delete(all, Require)
-	if _, ok := Lookup(Require); !ok {
+	if _, ok := LookupView(Require); !ok {
 		t.Fatal("Signatures returned registry map itself")
 	}
 }
@@ -505,7 +506,7 @@ func TestSignaturesSeededNames(t *testing.T) {
 }
 
 func TestOwnershipStoreSignatureOwnsParameterRoles(t *testing.T) {
-	got, ok := Lookup(OwnershipStore)
+	got, ok := LookupView(OwnershipStore)
 	if !ok {
 		t.Fatalf("Lookup(%q) missing", OwnershipStore)
 	}
@@ -522,7 +523,7 @@ func TestOwnershipStoreSignatureOwnsParameterRoles(t *testing.T) {
 }
 
 func TestAssertSignatureDeclaresNormalReturnPresentPostcondition(t *testing.T) {
-	got, ok := Lookup(Assert)
+	got, ok := LookupView(Assert)
 	if !ok {
 		t.Fatalf("Lookup(%q) missing", Assert)
 	}
