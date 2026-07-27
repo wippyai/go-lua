@@ -10,7 +10,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
@@ -27,11 +26,11 @@ type nativeOperationScope struct {
 	types map[string]string
 }
 
-func nativeOperationContracts(stmts []ast.Stmt, bindings *bind.Result, captureTransports map[wir.FunctionSymbolID]int) []NativeContract {
-	return nativeOperationContractsWithTostring(stmts, bindings, captureTransports)
+func nativeOperationContracts(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
+	return nativeOperationContractsWithTostring(stmts, bindings)
 }
 
-func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Result, captureTransports map[wir.FunctionSymbolID]int) []NativeContract {
+func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Result) []NativeContract {
 	var out []NativeContract
 	var walkStmts func([]ast.Stmt, nativeOperationScope, bool)
 	var walkExpr func(ast.Expr, nativeOperationScope, bool)
@@ -70,10 +69,6 @@ func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Resul
 			}
 		case *ast.FunctionExpr:
 			nativeFunctionEffect(bindings, x, add)
-			symbol, _ := bindings.FunctionSymbol(x)
-			for range captureTransports[wir.FunctionSymbolID(symbol)] {
-				add("capture_transport", "carried_through=closure_construction element_class=number initialization=complete presence=dense_prefix", "write.element", "write.length", "grow")
-			}
 			child := nativeFunctionScope(x)
 			walkStmts(x.Stmts, child, inLoop)
 		}

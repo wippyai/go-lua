@@ -299,7 +299,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	compilation.controlDiagnostics = append(compilation.controlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
 	compilation.typeDefinitions = typeDefinitions
 	compilation.typeFieldSpans = recordFieldNameSpans(stmts)
-	compilation.nativeContracts = append(nativeContracts(stmts, bindings, nativeCaptureTransportCounts(compilation)), nativeWIRContracts(compilation)...)
+	compilation.nativeContracts = append(nativeContracts(stmts, bindings), nativeWIRContracts(compilation)...)
 	artifact, err = appendNativeContractPublications(compilation.Artifact, compilation.nativeContracts)
 	if err != nil {
 		return Compilation{}, err
@@ -1715,6 +1715,27 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 	if err != nil {
 		return equation.Artifact{}, fmt.Errorf("front: branch chains: %w", err)
 	}
+	nativeAssignmentWrites := make(map[string]int)
+	nativeLastAssignment := make(map[string]equation.Coordinate)
+	nativeDeclaredJoinType := make(map[string][]byte)
+	for _, operation := range operations {
+		instruction := operation.instruction
+		if instruction.Op == wir.OpClaim && instruction.Dst.Kind == wir.OperandPath && instruction.Type != 0 {
+			if target, termErr := scalarTerm(body, instruction.Dst); termErr == nil {
+				if encoded, encodedOK := shapefact.EncodeTarget(body.Type(instruction.Type)); encodedOK {
+					nativeDeclaredJoinType[string(target.Encoding)] = encoded
+				}
+			}
+		}
+		if instruction.Op != wir.OpAssign {
+			continue
+		}
+		if term, termErr := scalarTerm(body, instruction.Dst); termErr == nil {
+			nativeAssignmentWrites[string(term.Encoding)]++
+			nativeLastAssignment[string(term.Encoding)] = operation.target
+		}
+	}
+	nativeNumericLoops := nativeNumericLoopOperands(bodyID, body, operations)
 	for index, operation := range operations {
 		instruction := operation.instruction
 		draft := equation.Draft{Target: operation.target, Entry: entry}
@@ -1747,13 +1768,14 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			if operation.family == "allocation-template" {
 				draft.Operands = terms.template
+				draft.Operands = append(draft.Operands, nativeListConstructionOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
 				if bound, published := nativeTableConstructionBoundOperand(body, instruction, operation.sourceIndex, operation.sourceOccurrence); published {
 					draft.Operands = append(draft.Operands, bound)
 				}
 			} else {
 				draft.Operands = terms.materialization
 				draft.Operands = append(draft.Operands, nativeCaptureEpochRootOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
-				draft.Operands = append(draft.Operands, nativeCaptureTransportOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence)...)
+				draft.Operands = append(draft.Operands, nativeCaptureTransportOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
 				if nativeAliasEligible {
 					draft.Operands = append(draft.Operands, nativeAllocationAliasOperands(body, instruction, operation.sourceOccurrence)...)
 				}
@@ -1818,6 +1840,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 						equation.Operand{Role: "write-container-display", Term: equation.ClosedTerm([]byte(display))},
 					)
 				}
+				draft.Operands = append(draft.Operands, nativeTableGrowthOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence, operations)...)
 			}
 		case instruction.Op == wir.OpEntry:
 			draft.Occurrence = occurrence("entry")
@@ -1858,6 +1881,33 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 				{Role: "read-before", Term: readBefore},
 				{Role: "absence", Term: equation.ClosedTerm([]byte(absence))},
 			}
+			if instruction.A.Kind == wir.OperandConst &&
+				body.Const(wir.ConstRef(instruction.A.Ref)).Kind == wir.ConstNumber &&
+				nativeAssignmentWrites[string(target.Encoding)] == 1 {
+				draft.Operands = append(draft.Operands,
+					equation.Operand{
+						Role: "native-representation-key",
+						Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("representation", bodyID, operation.sourceOccurrence))),
+					},
+					equation.Operand{Role: "native-source-occurrence", Term: equation.ClosedTerm([]byte(operation.sourceOccurrence))},
+				)
+			}
+			if nativeAssignmentWrites[string(target.Encoding)] > 1 &&
+				nativeLastAssignment[string(target.Encoding)] == operation.target &&
+				len(nativeDeclaredJoinType[string(target.Encoding)]) != 0 {
+				joinSubject := strings.TrimPrefix(string(target.Encoding), "path/")
+				draft.Operands = append(draft.Operands,
+					equation.Operand{
+						Role: "native-representation-join-key",
+						Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("representation", bodyID, "join-"+joinSubject))),
+					},
+					equation.Operand{
+						Role: "native-representation-join-type",
+						Term: equation.ClosedTerm(nativeDeclaredJoinType[string(target.Encoding)]),
+					},
+					equation.Operand{Role: "native-representation-join-occurrence", Term: equation.ClosedTerm([]byte("join-" + joinSubject))},
+				)
+			}
 			// A member read is static under either spelling: t.name and
 			// t["name"] address the same member, so both publish the read
 			// source display. Only the bracket form needs its key requoted
@@ -1873,6 +1923,8 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 					}
 					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(sourceDisplay))})
 				}
+				draft.Operands = append(draft.Operands, nativeMetatableReadOperands(bodyID, body, instruction.A, operation.sourceOccurrence)...)
+				draft.Operands = append(draft.Operands, nativeElementStaticReadDraftOperands(bodyID, body, instruction.A, operation.sourceIndex, operation.sourceOccurrence, operations)...)
 			}
 			if nativeAliasEligible {
 				draft.Operands = append(draft.Operands, nativeAssignmentAliasOperands(body, instruction, operation.sourceOccurrence)...)
@@ -1929,6 +1981,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 				{Role: "container", Term: container},
 				{Role: "key", Term: key},
 			}
+			draft.Operands = append(draft.Operands, nativeElementReadDraftOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence, operations)...)
 		case instruction.Op == wir.OpClaim:
 			target, err := scalarTerm(body, instruction.Dst)
 			if err != nil {
@@ -1953,6 +2006,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			if target, ok := shapefact.EncodeTarget(body.Type(instruction.Type)); ok {
 				draft.Operands = append(draft.Operands, equation.Operand{Role: "shape-target", Term: equation.ClosedTerm(target)})
 			}
+			draft.Operands = append(draft.Operands, nativeNilabilityClaimOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
 			// An annotation on an ordinary root write contracts a cell the
 			// preceding write has already bound. It decides that write's
 			// obligation without rebinding the cell, so it publishes no value of
@@ -1984,6 +2038,11 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			if err != nil {
 				return equation.Artifact{}, fmt.Errorf("front: expression %s: %w", operation.target.Name, err)
 			}
+			expressionGuards := guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
+			operands = append(operands, nativeNumericExpressionOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence, expressionGuards, operations)...)
+			operands = append(operands, nativeNumericLoops[operation.sourceIndex]...)
+			operands = append(operands, nativeTableLengthOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence, operations)...)
+			operands = append(operands, nativeMetatableExpressionReadOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
 			if instruction.Op == wir.OpConcat {
 				operands = append(operands, equation.Operand{
 					Role: "native-concat-site-key",
@@ -1994,7 +2053,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 					).String())),
 				})
 			}
-			draft.Occurrence, draft.Guards, draft.Operands = occurrence("expression"), guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets), operands
+			draft.Occurrence, draft.Guards, draft.Operands = occurrence("expression"), expressionGuards, operands
 		case instruction.Op == wir.OpBranch:
 			draft.Occurrence = occurrence("branch-relations")
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
@@ -2039,6 +2098,8 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 					).String())),
 				})
 			}
+			operands = append(operands, nativeNumericBranchOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence, operations)...)
+			operands = append(operands, nativeNilabilityBranchOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence, operations, recurrentPoints)...)
 			draft.Operands = operands
 		case instruction.Op == wir.OpCall:
 			if operation.external.Encoding != nil && !operation.callResults {
@@ -2060,6 +2121,8 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 						Term: term,
 					})
 				}
+				operands = append(operands, nativeNilabilityCallOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
+				operands = append(operands, nativeMetatableInstallOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence, operations)...)
 				draft.Occurrence = occurrence("apply")
 				draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 				draft.Operands = operands
@@ -2074,6 +2137,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 						Term: equation.ClosedTerm([]byte(key)),
 					})
 				}
+				operands = append(operands, nativeHostGlobalOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
 				draft.Occurrence = occurrence("call-results")
 				draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 				draft.Operands = operands
@@ -2821,6 +2885,1209 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 	return operands, nil
 }
 
+func nativeProjectionRowKey(family string, body equation.BodyID, occurrence string) string {
+	if family == "" || !body.Valid() || occurrence == "" {
+		return ""
+	}
+	return family + "/" + fmt.Sprintf("%x", body) + "/" + occurrence
+}
+
+func nativeListConstructionOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	occurrence string,
+) []equation.Operand {
+	if body == nil || instruction.Op != wir.OpMakeTable || instruction.ListSpread || occurrence == "" {
+		return nil
+	}
+	positions := make(map[int]bool)
+	keys := 0
+	for _, entry := range body.TableEntries(instruction.TableEntries) {
+		if len(entry.Suffix.Segments) != 1 {
+			continue
+		}
+		item := entry.Suffix.Segments[0]
+		switch item.Kind {
+		case segment.SegmentIndexInt:
+			if item.Index <= 0 || positions[item.Index] {
+				return nil
+			}
+			positions[item.Index] = true
+		case segment.SegmentField, segment.SegmentIndexString:
+			keys++
+		}
+	}
+	for index := 1; index <= len(positions); index++ {
+		if !positions[index] {
+			return nil
+		}
+	}
+	if len(positions) == 0 && keys != 0 {
+		return nil
+	}
+	subject := nativeOperandDisplay(body, instruction.Dst)
+	out := []equation.Operand{
+		{Role: "native-list-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("list_construction", bodyID, occurrence)))},
+		{Role: "native-list-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: "native-list-array-count", Term: equation.ClosedTerm([]byte(strconv.Itoa(len(positions))))},
+		{Role: "native-list-key-count", Term: equation.ClosedTerm([]byte(strconv.Itoa(keys)))},
+	}
+	if subject != "" {
+		out = append(out, equation.Operand{Role: "native-list-subject", Term: equation.ClosedTerm([]byte(subject))})
+	}
+	for index, child := range body.Operands(instruction.List) {
+		term, err := scalarTerm(body, child)
+		if err != nil {
+			return nil
+		}
+		out = append(out, equation.Operand{
+			Role: equation.IndexedRole(equation.RoleFamilyNativeListChild, index),
+			Term: term,
+		})
+	}
+	return out
+}
+
+func nativeTableLengthOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	sourceIndex int,
+	occurrence string,
+	operations []operation,
+) []equation.Operand {
+	if body == nil || occurrence == "" || instruction.Op != wir.OpUnOp ||
+		instruction.Operator != wir.UnLen || instruction.A.Kind != wir.OperandPath {
+		return nil
+	}
+	table := body.Path(wir.PathRef(instruction.A.Ref))
+	if table.IsEmpty() || table.String() == "" {
+		return nil
+	}
+	term, err := scalarTerm(body, instruction.A)
+	if err != nil {
+		return nil
+	}
+	out := []equation.Operand{
+		{Role: "native-length-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_length", bodyID, occurrence)))},
+		{Role: "native-length-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: "native-length-subject", Term: equation.ClosedTerm([]byte(table.String()))},
+		{Role: "native-length-table", Term: term},
+	}
+	events := make([]string, 0)
+	for _, candidate := range operations {
+		if candidate.sourceIndex >= sourceIndex {
+			continue
+		}
+		current := candidate.instruction
+		switch current.Op {
+		case wir.OpMakeTable:
+			if current.Dst.Kind == wir.OperandPath &&
+				body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(table) {
+				events = append(events, "maker")
+			}
+		case wir.OpStaticMemberWrite:
+			if current.Dst.Kind != wir.OperandPath {
+				continue
+			}
+			member := body.Path(wir.PathRef(current.Dst.Ref))
+			last, indexed := member.LastSegment()
+			if indexed && last.Kind == segment.SegmentIndexInt && member.Parent().EqualIgnoringVersion(table) {
+				event := "static-index-write"
+				if current.A.Kind == wir.OperandConst &&
+					body.Const(wir.ConstRef(current.A.Ref)).Kind == wir.ConstNil {
+					event += "/nil"
+				}
+				events = append(events, event)
+			}
+		case wir.OpDynamicIndexWrite:
+			if current.Dst.Kind != wir.OperandPath ||
+				!body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(table) {
+				continue
+			}
+			event := "dynamic-write"
+			for _, iterator := range operations {
+				iter := iterator.instruction
+				if iterator.sourceIndex >= candidate.sourceIndex || iter.Op != wir.OpIterate || iter.Iter != wir.IterNumeric {
+					continue
+				}
+				for _, result := range body.Operands(iter.Results) {
+					if result != current.A {
+						continue
+					}
+					values := body.Operands(iter.List)
+					if len(values) != 0 && values[0].Kind == wir.OperandConst {
+						constant := body.Const(wir.ConstRef(values[0].Ref))
+						if constant.Kind == wir.ConstNumber {
+							event += "/numeric-iterate/start=" + constant.Number
+						}
+					}
+				}
+			}
+			events = append(events, event)
+		case wir.OpCall:
+			for _, argument := range body.Operands(current.List) {
+				if argument.Kind == wir.OperandPath &&
+					body.Path(wir.PathRef(argument.Ref)).EqualIgnoringVersion(table) {
+					event := "call/opaque"
+					if binding := nativeGlobalCallBinding(body, current); binding != "" {
+						event = "call/global/" + binding
+					}
+					events = append(events, event)
+					break
+				}
+			}
+		}
+	}
+	for index, event := range events {
+		out = append(out, equation.Operand{
+			Role: equation.IndexedRole(equation.RoleFamilyNativeLengthEvent, index),
+			Term: equation.ClosedTerm([]byte(event)),
+		})
+	}
+	return out
+}
+
+func nativeTableGrowthOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	sourceIndex int,
+	occurrence string,
+	operations []operation,
+) []equation.Operand {
+	if body == nil || occurrence == "" || instruction.Op != wir.OpDynamicIndexWrite ||
+		instruction.Dst.Kind != wir.OperandPath {
+		return nil
+	}
+	table := body.Path(wir.PathRef(instruction.Dst.Ref))
+	if table.IsEmpty() || table.String() == "" {
+		return nil
+	}
+	out := []equation.Operand{
+		{Role: "native-growth-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_growth", bodyID, occurrence)))},
+		{Role: "native-growth-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: "native-growth-subject", Term: equation.ClosedTerm([]byte(table.String()))},
+	}
+	appendOnce := func(role equation.OperandRole, term equation.Term) {
+		for _, operand := range out {
+			if operand.Role == role {
+				return
+			}
+		}
+		out = append(out, equation.Operand{Role: role, Term: term})
+	}
+	for _, candidate := range operations {
+		if candidate.sourceIndex >= sourceIndex {
+			continue
+		}
+		current := candidate.instruction
+		switch current.Op {
+		case wir.OpMakeTable:
+			if current.Dst.Kind == wir.OperandPath &&
+				body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(table) {
+				appendOnce("native-growth-maker", equation.ClosedTerm([]byte("table")))
+			}
+		case wir.OpIterate:
+			if current.Iter != wir.IterNumeric {
+				continue
+			}
+			matches := false
+			for _, result := range body.Operands(current.Results) {
+				matches = matches || result == instruction.A
+			}
+			values := body.Operands(current.List)
+			if !matches || len(values) < 2 {
+				continue
+			}
+			start, startErr := scalarTerm(body, values[0])
+			limit, limitErr := scalarTerm(body, values[1])
+			if startErr == nil && limitErr == nil {
+				appendOnce("native-growth-iterator-start", start)
+				appendOnce("native-growth-iterator-limit", limit)
+			}
+		case wir.OpCall:
+			for _, argument := range body.Operands(current.List) {
+				if argument.Kind == wir.OperandPath &&
+					body.Path(wir.PathRef(argument.Ref)).EqualIgnoringVersion(table) {
+					appendOnce("native-growth-escape-call", equation.ClosedTerm([]byte("argument")))
+					break
+				}
+			}
+		case wir.OpAssign:
+			if current.Dst.Kind != wir.OperandPath || current.A.Kind != wir.OperandTemp ||
+				!body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(table) {
+				continue
+			}
+			for _, producer := range operations {
+				call := producer.instruction
+				if producer.sourceIndex >= candidate.sourceIndex || call.Op != wir.OpCall ||
+					call.Call.Callee.Kind != wir.OperandPath {
+					continue
+				}
+				results := body.Operands(call.Results)
+				callee := body.Path(wir.PathRef(call.Call.Callee.Ref))
+				if len(results) != 1 || results[0] != current.A || callee.String() != "table.create" ||
+					!body.IsImplicitGlobalSymbol(callee.Symbol) {
+					continue
+				}
+				arguments := body.Operands(call.List)
+				if len(arguments) == 0 {
+					continue
+				}
+				capacity, err := scalarTerm(body, arguments[0])
+				if err == nil {
+					appendOnce("native-growth-capacity", capacity)
+				}
+			}
+		}
+	}
+	if func() bool {
+		for _, operand := range out {
+			if operand.Role == "native-growth-iterator-start" {
+				return true
+			}
+		}
+		return false
+	}() {
+		appendOnce("native-element-domain-key", equation.ClosedTerm([]byte(nativeProjectionRowKey("table_element", bodyID, occurrence))))
+		appendOnce("native-element-domain-occurrence", equation.ClosedTerm([]byte(occurrence)))
+		for _, candidate := range operations {
+			current := candidate.instruction
+			if current.Op != wir.OpCall {
+				continue
+			}
+			for _, argument := range body.Operands(current.List) {
+				if argument.Kind == wir.OperandPath &&
+					body.Path(wir.PathRef(argument.Ref)).EqualIgnoringVersion(table) {
+					appendOnce("native-element-domain-opaque-call", equation.ClosedTerm([]byte("argument")))
+					break
+				}
+			}
+		}
+	}
+	return out
+}
+
+func nativeElementReadDraftOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	sourceIndex int,
+	occurrence string,
+	operations []operation,
+) []equation.Operand {
+	if body == nil || occurrence == "" || instruction.Op != wir.OpDynamicIndexRead ||
+		instruction.A.Kind != wir.OperandPath {
+		return nil
+	}
+	container := body.Path(wir.PathRef(instruction.A.Ref))
+	if container.IsEmpty() || container.String() == "" {
+		return nil
+	}
+	out := []equation.Operand{
+		{Role: "native-element-read-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_element", bodyID, occurrence)))},
+		{Role: "native-element-read-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: "native-element-read-subject", Term: equation.ClosedTerm([]byte(container.String()))},
+	}
+	appendFlag := func(role equation.OperandRole) {
+		for _, operand := range out {
+			if operand.Role == role {
+				return
+			}
+		}
+		out = append(out, equation.Operand{Role: role, Term: equation.ClosedTerm([]byte("true"))})
+	}
+	for _, capture := range body.Boundary().Captures {
+		if capture.Symbol == container.Symbol {
+			appendFlag("native-element-read-shared")
+		}
+	}
+	for _, candidate := range operations {
+		current := candidate.instruction
+		if current.Op == wir.OpMakeTable && current.Dst.Kind == wir.OperandPath &&
+			body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(container) {
+			appendFlag("native-element-read-local-maker")
+		}
+		if current.Op == wir.OpCall {
+			suspends := false
+			if current.Call.Method != 0 {
+				method := body.Const(current.Call.Method)
+				suspends = method.Kind == wir.ConstString && method.Str == "receive"
+			}
+			if suspends {
+				appendFlag("native-element-read-has-suspend")
+				if candidate.sourceIndex < sourceIndex {
+					appendFlag("native-element-read-prior-suspend")
+				}
+			}
+			for _, argument := range body.Operands(current.List) {
+				if argument.Kind != wir.OperandPath ||
+					!body.Path(wir.PathRef(argument.Ref)).EqualIgnoringVersion(container) {
+					continue
+				}
+				appendFlag("native-element-read-has-opaque-call")
+				if candidate.sourceIndex < sourceIndex {
+					appendFlag("native-element-read-prior-opaque-call")
+				}
+			}
+		}
+		if current.Op == wir.OpDynamicIndexWrite && current.Dst.Kind == wir.OperandPath &&
+			body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(container) {
+			iterateKey := false
+			for _, iterator := range operations {
+				iter := iterator.instruction
+				if iter.Op != wir.OpIterate || iter.Iter != wir.IterNumeric {
+					continue
+				}
+				for _, result := range body.Operands(iter.Results) {
+					iterateKey = iterateKey || result == current.A
+				}
+			}
+			if !iterateKey {
+				appendFlag("native-element-read-has-growth")
+			}
+		}
+	}
+	return out
+}
+
+func nativeElementStaticReadDraftOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	operand wir.Operand,
+	sourceIndex int,
+	occurrence string,
+	operations []operation,
+) []equation.Operand {
+	if body == nil || operand.Kind != wir.OperandPath || occurrence == "" {
+		return nil
+	}
+	member := body.Path(wir.PathRef(operand.Ref))
+	last, indexed := member.LastSegment()
+	if !indexed || last.Kind != segment.SegmentIndexInt {
+		return nil
+	}
+	container := member.Parent()
+	if container.IsEmpty() || container.String() == "" {
+		return nil
+	}
+	out := []equation.Operand{
+		{Role: "native-element-static-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_element", bodyID, occurrence)))},
+		{Role: "native-element-static-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: "native-element-static-subject", Term: equation.ClosedTerm([]byte(container.String()))},
+		{Role: "native-element-static-container", Term: equation.ClosedTerm([]byte("path/" + container.Key()))},
+		{Role: "native-element-static-index", Term: equation.ClosedTerm(shapefact.ScalarTextValue(shapefact.ScalarNumber, strconv.Itoa(last.Index)))},
+	}
+	appendFlag := func(role equation.OperandRole) {
+		for _, candidate := range out {
+			if candidate.Role == role {
+				return
+			}
+		}
+		out = append(out, equation.Operand{Role: role, Term: equation.ClosedTerm([]byte("true"))})
+	}
+	for _, capture := range body.Boundary().Captures {
+		if capture.Symbol == container.Symbol {
+			appendFlag("native-element-static-shared")
+		}
+	}
+	for _, candidate := range operations {
+		current := candidate.instruction
+		if current.Op == wir.OpMakeTable && current.Dst.Kind == wir.OperandPath &&
+			body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(container) {
+			appendFlag("native-element-static-local-maker")
+		}
+		if current.Op == wir.OpCall {
+			suspends := false
+			if current.Call.Method != 0 {
+				method := body.Const(current.Call.Method)
+				suspends = method.Kind == wir.ConstString && method.Str == "receive"
+			}
+			if suspends {
+				appendFlag("native-element-static-has-suspend")
+				if candidate.sourceIndex < sourceIndex {
+					appendFlag("native-element-static-prior-suspend")
+				}
+			}
+			for _, argument := range body.Operands(current.List) {
+				if argument.Kind == wir.OperandPath &&
+					body.Path(wir.PathRef(argument.Ref)).EqualIgnoringVersion(container) {
+					appendFlag("native-element-static-has-opaque-call")
+					if candidate.sourceIndex < sourceIndex {
+						appendFlag("native-element-static-prior-opaque-call")
+					}
+				}
+			}
+		}
+		if current.Op == wir.OpDynamicIndexWrite && current.Dst.Kind == wir.OperandPath &&
+			body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(container) {
+			iterateKey := false
+			for _, iterator := range operations {
+				iter := iterator.instruction
+				if iter.Op != wir.OpIterate || iter.Iter != wir.IterNumeric {
+					continue
+				}
+				for _, result := range body.Operands(iter.Results) {
+					iterateKey = iterateKey || result == current.A
+				}
+			}
+			if !iterateKey {
+				appendFlag("native-element-static-has-growth")
+			}
+		}
+	}
+	return out
+}
+
+func nativeNilabilityCaptured(body *wir.Body, candidate path.Path) bool {
+	for index := 0; body != nil && index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op != wir.OpClosure {
+			continue
+		}
+		for _, captured := range body.Operands(instruction.List) {
+			if captured.Kind == wir.OperandPath &&
+				body.Path(wir.PathRef(captured.Ref)).Key() == candidate.Key() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func nativeNilabilityPathOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	candidate path.Path,
+	occurrence string,
+) []equation.Operand {
+	if body == nil || candidate.IsEmpty() || candidate.Key() == "" || candidate.String() == "" || occurrence == "" {
+		return nil
+	}
+	mode := "local"
+	if len(candidate.Segments) != 0 {
+		mode = "field"
+	} else if nativeNilabilityCaptured(body, candidate) {
+		mode = "captured"
+	}
+	key := "nilability/" + fmt.Sprintf("%x", bodyID) + "/" + occurrence + "/" +
+		base64.RawURLEncoding.EncodeToString([]byte(candidate.Key()))
+	return []equation.Operand{
+		{Role: "native-nilability-key", Term: equation.ClosedTerm([]byte(key))},
+		{Role: "native-nilability-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: "native-nilability-subject", Term: equation.ClosedTerm([]byte(candidate.String()))},
+		{Role: "native-nilability-term", Term: equation.ClosedTerm([]byte("path/" + candidate.Key()))},
+		{Role: "native-nilability-mode", Term: equation.ClosedTerm([]byte(mode))},
+	}
+}
+
+func nativeNilabilityBranchOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	sourceIndex int,
+	occurrence string,
+	operations []operation,
+	recurrent map[cfg.Point]bool,
+) []equation.Operand {
+	if body == nil || instruction.Op != wir.OpBranch {
+		return nil
+	}
+	check := body.Check(instruction.Check)
+	var checkName string
+	switch check.Kind {
+	case wir.CheckNil:
+		checkName = "nil"
+	case wir.CheckNotNil:
+		checkName = "not-nil"
+	case wir.CheckTruthy:
+		checkName = "truthy"
+	case wir.CheckFalsy:
+		checkName = "falsy"
+	default:
+		return nil
+	}
+	for _, candidate := range operations {
+		if candidate.sourceIndex >= sourceIndex || candidate.instruction.Op != wir.OpBranch {
+			continue
+		}
+		prior := body.Check(candidate.instruction.Check)
+		if prior.Path.Key() == check.Path.Key() {
+			return nil
+		}
+	}
+	out := nativeNilabilityPathOperands(bodyID, body, check.Path, occurrence)
+	if len(out) == 0 {
+		return nil
+	}
+	out = append(out, equation.Operand{
+		Role: "native-nilability-check",
+		Term: equation.ClosedTerm([]byte(checkName)),
+	})
+	if recurrent[instruction.Point] {
+		for _, candidate := range operations {
+			current := candidate.instruction
+			if !recurrent[current.Point] || current.Dst.Kind != wir.OperandPath ||
+				body.Path(wir.PathRef(current.Dst.Ref)).Key() != check.Path.Key() {
+				continue
+			}
+			switch current.Op {
+			case wir.OpAssign, wir.OpDynamicIndexRead:
+				out = append(out, equation.Operand{
+					Role: "native-nilability-backedge-write",
+					Term: equation.ClosedTerm([]byte("path/" + check.Path.Key())),
+				})
+				return out
+			}
+		}
+	}
+	return out
+}
+
+func nativeNilabilityClaimOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	occurrence string,
+) []equation.Operand {
+	if body == nil || instruction.Op != wir.OpClaim || instruction.Claim != wir.ClaimAssert ||
+		instruction.A.Kind != wir.OperandPath {
+		return nil
+	}
+	candidate := body.Path(wir.PathRef(instruction.A.Ref))
+	out := nativeNilabilityPathOperands(bodyID, body, candidate, occurrence)
+	if len(out) != 0 {
+		out = append(out, equation.Operand{Role: "native-nilability-assert", Term: equation.ClosedTerm([]byte("claim"))})
+	}
+	return out
+}
+
+func nativeNilabilityCallOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	occurrence string,
+) []equation.Operand {
+	if body == nil || instruction.Op != wir.OpCall {
+		return nil
+	}
+	check := body.Check(instruction.Check)
+	if check.Kind != wir.CheckTruthy {
+		return nil
+	}
+	out := nativeNilabilityPathOperands(bodyID, body, check.Path, occurrence)
+	if len(out) != 0 {
+		out = append(out, equation.Operand{Role: "native-nilability-assert", Term: equation.ClosedTerm([]byte("call"))})
+	}
+	return out
+}
+
+func nativeMetatableReadOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	operand wir.Operand,
+	occurrence string,
+) []equation.Operand {
+	return nativeMetatableReadOperandsWithPrefix("native-metatable-read", bodyID, body, operand, occurrence)
+}
+
+func nativeMetatableReadOperandsWithPrefix(
+	prefix string,
+	bodyID equation.BodyID,
+	body *wir.Body,
+	operand wir.Operand,
+	occurrence string,
+) []equation.Operand {
+	if body == nil || occurrence == "" || operand.Kind != wir.OperandPath {
+		return nil
+	}
+	member := body.Path(wir.PathRef(operand.Ref))
+	if len(member.Segments) == 0 {
+		return nil
+	}
+	root := member.RootOnly()
+	if root.IsEmpty() || root.String() == "" {
+		return nil
+	}
+	return []equation.Operand{
+		{Role: equation.OperandRole(prefix + "-key"), Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("metatable_seal", bodyID, occurrence+"-"+string(member.Key()))))},
+		{Role: equation.OperandRole(prefix + "-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.OperandRole(prefix + "-subject"), Term: equation.ClosedTerm([]byte(root.String()))},
+		{Role: equation.OperandRole(prefix + "-root"), Term: equation.ClosedTerm([]byte("path/" + root.Key()))},
+	}
+}
+
+func nativeMetatableExpressionReadOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	occurrence string,
+) []equation.Operand {
+	var out []equation.Operand
+	switch instruction.Op {
+	case wir.OpBinOp, wir.OpLogical:
+		out = append(out, nativeMetatableReadOperandsWithPrefix("native-metatable-read-left", bodyID, body, instruction.A, occurrence)...)
+		out = append(out, nativeMetatableReadOperandsWithPrefix("native-metatable-read-right", bodyID, body, instruction.B, occurrence)...)
+	case wir.OpUnOp:
+		out = append(out, nativeMetatableReadOperandsWithPrefix("native-metatable-read-value", bodyID, body, instruction.A, occurrence)...)
+	}
+	return out
+}
+
+func nativeMetatableInstallOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	sourceIndex int,
+	occurrence string,
+	operations []operation,
+) []equation.Operand {
+	if body == nil || occurrence == "" || instruction.Op != wir.OpCall ||
+		instruction.Call.Callee.Kind != wir.OperandPath {
+		return nil
+	}
+	arguments := body.Operands(instruction.List)
+	if len(arguments) < 2 || arguments[0].Kind != wir.OperandPath {
+		return nil
+	}
+	receiver := body.Path(wir.PathRef(arguments[0].Ref))
+	if len(receiver.Segments) != 0 || receiver.String() == "" {
+		return nil
+	}
+	var indexOperand wir.Operand
+	for _, candidate := range operations {
+		if candidate.sourceIndex >= sourceIndex {
+			continue
+		}
+		current := candidate.instruction
+		switch current.Op {
+		case wir.OpStaticMemberWrite:
+			if arguments[1].Kind != wir.OperandPath || current.Dst.Kind != wir.OperandPath {
+				continue
+			}
+			meta := body.Path(wir.PathRef(arguments[1].Ref))
+			target := body.Path(wir.PathRef(current.Dst.Ref))
+			last, found := target.LastSegment()
+			if found && last.Kind == segment.SegmentField && last.Name == "__index" &&
+				target.Parent().EqualIgnoringVersion(meta) {
+				indexOperand = current.A
+			}
+		case wir.OpMakeTable:
+			if current.Dst != arguments[1] {
+				continue
+			}
+			for _, entry := range body.TableEntries(current.TableEntries) {
+				last, found := entry.Suffix.LastSegment()
+				if found && last.Kind == segment.SegmentField && last.Name == "__index" {
+					indexOperand = entry.Value
+				}
+			}
+		}
+	}
+	if indexOperand.Kind != wir.OperandPath {
+		return nil
+	}
+	receiverTerm, receiverErr := scalarTerm(body, arguments[0])
+	metaTerm, metaErr := scalarTerm(body, arguments[1])
+	indexTerm, indexErr := scalarTerm(body, indexOperand)
+	if receiverErr != nil || metaErr != nil || indexErr != nil {
+		return nil
+	}
+	indexPath := body.Path(wir.PathRef(indexOperand.Ref))
+	return []equation.Operand{
+		{Role: "native-metatable-install-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("metatable_seal", bodyID, occurrence)))},
+		{Role: "native-metatable-install-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: "native-metatable-install-subject", Term: equation.ClosedTerm([]byte(receiver.String()))},
+		{Role: "native-metatable-install-receiver", Term: receiverTerm},
+		{Role: "native-metatable-install-meta", Term: metaTerm},
+		{Role: "native-metatable-install-index", Term: indexTerm},
+		{Role: "native-metatable-install-index-display", Term: equation.ClosedTerm([]byte(indexPath.String()))},
+	}
+}
+
+// nativeNumericExpressionOperands lowers only the structural coordinates and
+// operands a numeric kernel may need. In particular, seeing an arithmetic
+// operator does not publish primitive dispatch: the kernel must prove numeric
+// carriers from the closed partition before using any of these candidate keys.
+func nativeNumericExpressionOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	sourceIndex int,
+	sourceOccurrence string,
+	guards []equation.Guard,
+	operations []operation,
+) []equation.Operand {
+	if body == nil || sourceOccurrence == "" {
+		return nil
+	}
+	operator := ""
+	switch instruction.Operator {
+	case wir.BinAdd:
+		operator = "add"
+	case wir.BinSub:
+		operator = "sub"
+	case wir.BinMul:
+		operator = "mul"
+	case wir.BinDiv:
+		operator = "div"
+	case wir.BinIDiv:
+		operator = "idiv"
+	case wir.BinMod:
+		operator = "mod"
+	case wir.BinPow:
+		operator = "pow"
+	case wir.UnNeg:
+		operator = "unm"
+	default:
+		return nil
+	}
+	out := []equation.Operand{
+		{Role: "native-source-occurrence", Term: equation.ClosedTerm([]byte(sourceOccurrence))},
+		{Role: "native-operator-name", Term: equation.ClosedTerm([]byte(operator))},
+		{
+			Role: "native-representation-key",
+			Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("representation", bodyID, sourceOccurrence))),
+		},
+	}
+	if instruction.Op == wir.OpBinOp {
+		out = append(out, equation.Operand{
+			Role: "native-scalar-operator-key",
+			Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("scalar_operator", bodyID, sourceOccurrence))),
+		})
+		if instruction.Operator == wir.BinDiv || instruction.Operator == wir.BinIDiv {
+			out = append(out, equation.Operand{
+				Role: "native-divisor-key",
+				Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("divisor_property", bodyID, sourceOccurrence))),
+			})
+		}
+		if display := nativeOperandDisplay(body, instruction.A); display != "" {
+			out = append(out, equation.Operand{Role: "native-left-display", Term: equation.ClosedTerm([]byte(display))})
+		}
+		if display := nativeOperandDisplay(body, instruction.B); display != "" {
+			out = append(out, equation.Operand{Role: "native-right-display", Term: equation.ClosedTerm([]byte(display))})
+		}
+		out = append(out, nativeNumericOriginOperands("native-left", body, instruction.A, sourceIndex, operations)...)
+		out = append(out, nativeNumericOriginOperands("native-right", body, instruction.B, sourceIndex, operations)...)
+	}
+	if instruction.Operator == wir.BinIDiv {
+		exclusions := nativeDominatingNumericExclusions(body, instruction.B, guards, operations)
+		if len(exclusions) != 0 {
+			out = append(out, equation.Operand{
+				Role: "native-idiv-exclusions",
+				Term: equation.ClosedTerm([]byte(strings.Join(exclusions, ","))),
+			})
+		}
+	}
+	return out
+}
+
+// nativeNumericOriginOperands preserves only the lowering relationship between
+// a consumer and the expression that produced its operand. Operator semantics
+// are deliberately absent: the solve kernel classifies the producer from the
+// closed facts for these terms.
+func nativeNumericOriginOperands(
+	prefix string,
+	body *wir.Body,
+	operand wir.Operand,
+	before int,
+	operations []operation,
+) []equation.Operand {
+	if body == nil || prefix == "" {
+		return nil
+	}
+	seen := make(map[wir.Operand]bool)
+	var trace func(wir.Operand, int) []equation.Operand
+	trace = func(candidate wir.Operand, limit int) []equation.Operand {
+		if candidate.Kind != wir.OperandPath && candidate.Kind != wir.OperandTemp || seen[candidate] {
+			return nil
+		}
+		seen[candidate] = true
+		for _, producer := range operations {
+			instruction := producer.instruction
+			if producer.sourceIndex >= limit || instruction.Op != wir.OpIterate || instruction.Iter != wir.IterNumeric {
+				continue
+			}
+			for _, result := range body.Operands(instruction.Results) {
+				if result == candidate {
+					return []equation.Operand{{
+						Role: equation.OperandRole(prefix + "-origin"),
+						Term: equation.ClosedTerm([]byte("numeric-iterate")),
+					}}
+				}
+			}
+		}
+		for index := len(operations) - 1; index >= 0; index-- {
+			producer := operations[index]
+			if producer.sourceIndex >= limit || producer.instruction.Dst != candidate {
+				continue
+			}
+			instruction := producer.instruction
+			if instruction.Op == wir.OpAssign {
+				return trace(instruction.A, producer.sourceIndex)
+			}
+			origin := ""
+			switch {
+			case instruction.Op == wir.OpLogical:
+				origin = "logical"
+			case instruction.Op == wir.OpBinOp && instruction.Operator == wir.BinDiv:
+				origin = "div"
+			case instruction.Op == wir.OpBinOp && instruction.Operator == wir.BinPow:
+				origin = "pow"
+			}
+			if origin == "" {
+				return nil
+			}
+			left, leftErr := scalarTerm(body, instruction.A)
+			right, rightErr := scalarTerm(body, instruction.B)
+			if leftErr != nil || rightErr != nil {
+				return nil
+			}
+			out := []equation.Operand{
+				{Role: equation.OperandRole(prefix + "-origin"), Term: equation.ClosedTerm([]byte(origin))},
+				{Role: equation.OperandRole(prefix + "-origin-left"), Term: left},
+				{Role: equation.OperandRole(prefix + "-origin-right"), Term: right},
+			}
+			nestedLeft := trace(instruction.A, producer.sourceIndex)
+			for _, operand := range nestedLeft {
+				operand.Role = equation.OperandRole(strings.Replace(operand.Role.String(), prefix, prefix+"-origin-left", 1))
+				out = append(out, operand)
+			}
+			nestedRight := trace(instruction.B, producer.sourceIndex)
+			for _, operand := range nestedRight {
+				operand.Role = equation.OperandRole(strings.Replace(operand.Role.String(), prefix, prefix+"-origin-right", 1))
+				out = append(out, operand)
+			}
+			return out
+		}
+		return nil
+	}
+	return trace(operand, before)
+}
+
+// nativeNumericLoopOperands publishes recurrence topology as structural draft
+// operands. It says which writes form the same backedge family and transports
+// their source terms; whether those terms prove an integer or promoted carrier
+// is decided only after the partition closes.
+func nativeNumericLoopOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	operations []operation,
+) map[int][]equation.Operand {
+	type update struct {
+		sourceIndex int
+		instruction wir.Instruction
+	}
+	groups := make(map[string][]update)
+	displays := make(map[string]string)
+	for _, candidate := range operations {
+		instruction := candidate.instruction
+		if instruction.Op != wir.OpBinOp || instruction.Dst.Kind != wir.OperandPath || instruction.A.Kind != wir.OperandPath {
+			continue
+		}
+		switch instruction.Operator {
+		case wir.BinAdd, wir.BinSub, wir.BinMul, wir.BinDiv, wir.BinIDiv, wir.BinMod, wir.BinPow:
+		default:
+			continue
+		}
+		dst := body.Path(wir.PathRef(instruction.Dst.Ref))
+		left := body.Path(wir.PathRef(instruction.A.Ref))
+		if dst.Key() == "" || dst.Key() != left.Key() {
+			continue
+		}
+		key := string(dst.Key())
+		groups[key] = append(groups[key], update{sourceIndex: candidate.sourceIndex, instruction: instruction})
+		displays[key] = dst.String()
+	}
+	out := make(map[int][]equation.Operand)
+	for key, updates := range groups {
+		var initial equation.Term
+		for _, candidate := range operations {
+			if candidate.sourceIndex >= updates[0].sourceIndex || candidate.instruction.Op != wir.OpAssign ||
+				candidate.instruction.Dst.Kind != wir.OperandPath {
+				continue
+			}
+			dst := body.Path(wir.PathRef(candidate.instruction.Dst.Ref))
+			if string(dst.Key()) != key {
+				continue
+			}
+			term, err := scalarTerm(body, candidate.instruction.A)
+			if err == nil {
+				initial = term
+				break
+			}
+		}
+		if len(initial.Encoding) == 0 {
+			continue
+		}
+		occurrence := "loop-" + key
+		common := []equation.Operand{
+			{
+				Role: "native-loop-key",
+				Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("numeric_loop_carrier", bodyID, occurrence))),
+			},
+			{Role: "native-loop-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
+			{Role: "native-loop-display", Term: equation.ClosedTerm([]byte(displays[key]))},
+			{Role: "native-loop-initial", Term: initial},
+			{Role: "native-loop-arm-count", Term: equation.ClosedTerm([]byte(strconv.Itoa(len(updates))))},
+		}
+		for index, candidate := range updates {
+			role := equation.IndexedRole(equation.RoleFamilyNativeLoopArm, index)
+			term, err := scalarTerm(body, candidate.instruction.B)
+			if err != nil {
+				common = nil
+				break
+			}
+			common = append(common, equation.Operand{Role: role, Term: term})
+			common = append(common, nativeNumericOriginOperands(role.String(), body, candidate.instruction.B, candidate.sourceIndex, operations)...)
+		}
+		if len(common) == 0 {
+			continue
+		}
+		boundIndex := 0
+		for _, candidate := range operations {
+			instruction := candidate.instruction
+			if instruction.Op != wir.OpBinOp {
+				continue
+			}
+			switch instruction.Operator {
+			case wir.BinLt, wir.BinLe, wir.BinGt, wir.BinGe:
+			default:
+				continue
+			}
+			pathOperand, limitOperand := instruction.A, instruction.B
+			if pathOperand.Kind != wir.OperandPath || limitOperand.Kind != wir.OperandConst {
+				pathOperand, limitOperand = instruction.B, instruction.A
+			}
+			if pathOperand.Kind != wir.OperandPath || limitOperand.Kind != wir.OperandConst {
+				continue
+			}
+			constant := body.Const(wir.ConstRef(limitOperand.Ref))
+			if constant.Kind != wir.ConstNumber {
+				continue
+			}
+			pathTerm, pathErr := scalarTerm(body, pathOperand)
+			limitTerm, limitErr := scalarTerm(body, limitOperand)
+			if pathErr != nil || limitErr != nil {
+				continue
+			}
+			suffix := fmt.Sprintf("%08d", boundIndex)
+			common = append(common,
+				equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeLoopBoundPath, suffix), Term: pathTerm},
+				equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeLoopBoundDisplay, suffix), Term: equation.ClosedTerm([]byte(nativeOperandDisplay(body, pathOperand)))},
+				equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeLoopBoundLimit, suffix), Term: limitTerm},
+			)
+			boundIndex++
+		}
+		for _, candidate := range updates {
+			out[candidate.sourceIndex] = append([]equation.Operand(nil), common...)
+		}
+	}
+	return out
+}
+
+func nativeOperandDisplay(body *wir.Body, operand wir.Operand) string {
+	if body == nil || operand.Kind != wir.OperandPath {
+		return ""
+	}
+	return body.Path(wir.PathRef(operand.Ref)).String()
+}
+
+// nativeDominatingNumericExclusions transports the literal operands of only
+// those branch edges that guard this expression. Dominance is front-owned
+// structure; whether the complete set is sufficient for a numeric operation
+// remains a kernel verdict.
+func nativeDominatingNumericExclusions(
+	body *wir.Body,
+	divisor wir.Operand,
+	guards []equation.Guard,
+	operations []operation,
+) []string {
+	if body == nil || divisor.Kind != wir.OperandPath {
+		return nil
+	}
+	divisorPath := body.Path(wir.PathRef(divisor.Ref))
+	guarded := make(map[string]bool, len(guards))
+	for _, guard := range guards {
+		if parsed, ok := factkey.ParseBranchGuard(string(guard.Encoding)); ok {
+			guarded[parsed.Name] = true
+		}
+	}
+	found := make(map[string]bool)
+	var add func(wir.Operand, map[wir.Operand]bool)
+	add = func(candidate wir.Operand, seen map[wir.Operand]bool) {
+		if candidate.Kind == wir.OperandConst {
+			constant := body.Const(wir.ConstRef(candidate.Ref))
+			if constant.Kind == wir.ConstNumber {
+				found[constant.Number] = true
+			}
+			return
+		}
+		if candidate.Kind != wir.OperandTemp || seen[candidate] {
+			return
+		}
+		seen[candidate] = true
+		for _, producer := range operations {
+			instruction := producer.instruction
+			if instruction.Dst != candidate || instruction.Op != wir.OpUnOp || instruction.Operator != wir.UnNeg {
+				continue
+			}
+			if instruction.A.Kind != wir.OperandConst {
+				continue
+			}
+			constant := body.Const(wir.ConstRef(instruction.A.Ref))
+			if constant.Kind == wir.ConstNumber {
+				found["-"+constant.Number] = true
+			}
+		}
+	}
+	var collectCondition func(wir.Operand, map[wir.Operand]bool)
+	collectCondition = func(condition wir.Operand, seen map[wir.Operand]bool) {
+		if condition.Kind != wir.OperandTemp || seen[condition] {
+			return
+		}
+		seen[condition] = true
+		for _, producer := range operations {
+			candidate := producer.instruction
+			if candidate.Dst != condition {
+				continue
+			}
+			if candidate.Op == wir.OpLogical {
+				collectCondition(candidate.A, seen)
+				collectCondition(candidate.B, seen)
+				continue
+			}
+			if candidate.Op != wir.OpBinOp || candidate.Operator != wir.BinNe {
+				continue
+			}
+			if candidate.A.Kind == wir.OperandPath &&
+				body.Path(wir.PathRef(candidate.A.Ref)).Key() == divisorPath.Key() {
+				add(candidate.B, seen)
+			}
+			if candidate.B.Kind == wir.OperandPath &&
+				body.Path(wir.PathRef(candidate.B.Ref)).Key() == divisorPath.Key() {
+				add(candidate.A, seen)
+			}
+		}
+	}
+	for _, operation := range operations {
+		if !guarded[operation.target.Name] || operation.instruction.Op != wir.OpBranch {
+			continue
+		}
+		branch := operation.instruction
+		collectCondition(branch.A, make(map[wir.Operand]bool))
+		check := body.Check(branch.Check)
+		if check.Kind == wir.CheckLiteralNot && check.Path.Key() == divisorPath.Key() {
+			if literal, ok := check.Literal.(*typ.Literal); ok {
+				found[literal.String()] = true
+			}
+		}
+		// The true edge of a compound conjunction carries its necessary leaves
+		// in the landed implied-check lane. Sufficient checks were intentionally
+		// retired because they state the converse and cannot be conjoined.
+		for _, implied := range body.ImpliedChecks(branch.ImpliedChecks) {
+			if implied.Check.Kind != wir.CheckLiteralNot || implied.Check.Path.Key() != divisorPath.Key() {
+				continue
+			}
+			if literal, ok := implied.Check.Literal.(*typ.Literal); ok {
+				found[literal.String()] = true
+			}
+		}
+		for _, pointCheck := range body.BranchChecks(branch.Point) {
+			if pointCheck.Kind != wir.CheckLiteralNot || pointCheck.Path.Key() != divisorPath.Key() {
+				continue
+			}
+			if literal, ok := pointCheck.Literal.(*typ.Literal); ok {
+				found[literal.String()] = true
+			}
+		}
+		if branch.A.Kind != wir.OperandTemp {
+			continue
+		}
+		for _, producer := range operations {
+			candidate := producer.instruction
+			if candidate.Op != wir.OpBinOp || candidate.Dst != branch.A || candidate.Operator != wir.BinNe {
+				continue
+			}
+			if candidate.A.Kind == wir.OperandPath &&
+				body.Path(wir.PathRef(candidate.A.Ref)).Key() == divisorPath.Key() {
+				add(candidate.B, make(map[wir.Operand]bool))
+			}
+			if candidate.B.Kind == wir.OperandPath &&
+				body.Path(wir.PathRef(candidate.B.Ref)).Key() == divisorPath.Key() {
+				add(candidate.A, make(map[wir.Operand]bool))
+			}
+		}
+	}
+	out := make([]string, 0, len(found))
+	for value := range found {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// nativeNumericBranchOperands names the carrier a numeric comparison reads.
+// A temporary comparison is linked to its already-lowered left operand; no
+// carrier class or NaN disposition is decided here.
+func nativeNumericBranchOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	sourceIndex int,
+	sourceOccurrence string,
+	operations []operation,
+) []equation.Operand {
+	if body == nil || instruction.Op != wir.OpBranch || sourceOccurrence == "" {
+		return nil
+	}
+	var carrier wir.Operand
+	var carrierTerm equation.Term
+	display := ""
+	check := body.Check(instruction.Check)
+	if check.Kind == wir.CheckNumGe || check.Kind == wir.CheckNumLe {
+		if check.Path.Key() != "" {
+			carrierTerm = equation.ClosedTerm([]byte("path/" + check.Path.Key()))
+			display = check.Path.String()
+		}
+	} else if instruction.A.Kind == wir.OperandTemp {
+		for index := 0; index < body.Len(); index++ {
+			producer := body.Instr(index)
+			if producer.Op != wir.OpBinOp || producer.Dst != instruction.A {
+				continue
+			}
+			switch producer.Operator {
+			case wir.BinLt, wir.BinLe, wir.BinGt, wir.BinGe:
+				carrier = producer.A
+				display = nativeOperandDisplay(body, producer.A)
+			}
+			break
+		}
+	}
+	if len(carrierTerm.Encoding) == 0 {
+		term, err := scalarTerm(body, carrier)
+		if err != nil {
+			return nil
+		}
+		carrierTerm = term
+	}
+	out := []equation.Operand{
+		{
+			Role: "native-numeric-branch-key",
+			Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("numeric_branch", bodyID, sourceOccurrence))),
+		},
+		{Role: "native-source-occurrence", Term: equation.ClosedTerm([]byte(sourceOccurrence))},
+		{Role: "native-numeric-carrier", Term: carrierTerm},
+	}
+	if display != "" {
+		out = append(out, equation.Operand{Role: "native-numeric-carrier-display", Term: equation.ClosedTerm([]byte(display))})
+	}
+	out = append(out, nativeNumericOriginOperands("native-numeric-carrier", body, carrier, sourceIndex, operations)...)
+	return out
+}
+
 func scalarTerm(body *wir.Body, operand wir.Operand) (equation.Term, error) {
 	switch operand.Kind {
 	case wir.OperandPath:
@@ -2929,6 +4196,12 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 			calleePath := body.Path(wir.PathRef(instruction.Call.Callee.Ref)).String()
 			if calleePath != "" {
 				operands = append(operands, equation.Operand{Role: "callee-display", Term: equation.ClosedTerm([]byte(calleePath))})
+			}
+			if binding := nativeGlobalCallBinding(body, instruction); binding != "" {
+				operands = append(operands, equation.Operand{
+					Role: equation.RoleGlobalCallee,
+					Term: equation.ClosedTerm([]byte(binding)),
+				})
 			}
 		}
 	}
@@ -3212,6 +4485,56 @@ func publicationOperands(body *wir.Body, instruction wir.Instruction) ([]equatio
 		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyDeclaredReturn, index), Term: equation.ClosedTerm(encoded)})
 	}
 	return operands, nil
+}
+
+// nativeGlobalCallBinding resolves only the authored callee path. Binding
+// identity is lowering-owned structure; builtin effects are derived by kernels.
+func nativeGlobalCallBinding(body *wir.Body, instruction wir.Instruction) string {
+	if body == nil || instruction.Op != wir.OpCall || instruction.Call.Method != 0 ||
+		instruction.Call.Callee.Kind != wir.OperandPath {
+		return ""
+	}
+	callee := body.Path(wir.PathRef(instruction.Call.Callee.Ref))
+	spelling := callee.String()
+	root, _, _ := strings.Cut(spelling, ".")
+	if root == "" || !body.SymbolResolvesToGlobal(callee.Symbol, root) {
+		return ""
+	}
+	return strings.TrimPrefix(spelling, "_G.")
+}
+
+func nativeHostGlobalOperands(
+	bodyID equation.BodyID,
+	body *wir.Body,
+	instruction wir.Instruction,
+	occurrence string,
+) []equation.Operand {
+	if body == nil || occurrence == "" || instruction.Op != wir.OpCall ||
+		instruction.Call.Callee.Kind != wir.OperandPath || len(body.Operands(instruction.Results)) == 0 {
+		return nil
+	}
+	callee := body.Path(wir.PathRef(instruction.Call.Callee.Ref))
+	root := callee.RootOnly()
+	if callee.Symbol == 0 || !body.IsImplicitGlobalSymbol(callee.Symbol) || root.String() == "" {
+		return nil
+	}
+	fields := make([]string, 0, len(callee.Segments))
+	for _, part := range callee.Segments {
+		if part.Name == "" {
+			return nil
+		}
+		fields = append(fields, part.Name)
+	}
+	requirement, err := json.Marshal(NativeHostGlobalRequirement{Root: root.String(), Fields: fields})
+	if err != nil {
+		return nil
+	}
+	return []equation.Operand{
+		{Role: equation.SuffixedRole(equation.RoleFamilyNativeHostGlobal, "key"), Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("host_global_binding", bodyID, occurrence)))},
+		{Role: equation.SuffixedRole(equation.RoleFamilyNativeHostGlobal, "occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.SuffixedRole(equation.RoleFamilyNativeHostGlobal, "subject"), Term: equation.ClosedTerm([]byte(callee.String()))},
+		{Role: equation.SuffixedRole(equation.RoleFamilyNativeHostGlobal, "requirement"), Term: equation.ClosedTerm(requirement)},
+	}
 }
 
 func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equation.Coordinate, provider equation.Term) ([]equation.Operand, error) {
@@ -3621,10 +4944,6 @@ func nativeCaptureEpochRootOperands(bodyID equation.BodyID, body *wir.Body, inst
 			coordinate = "entry"
 		}
 	}
-	content := "active_epoch_root=1 begin_coordinate=" + coordinate + " coverage_proof=complete uniqueness_proof=complete"
-	if coordinate == "edge_form" {
-		content += " coordinate_fields=[from,to,edge_kind,edge_ordinal,begin_ordinal] levels=" + strconv.Itoa(depth+1)
-	}
 	var operands []equation.Operand
 	for index, operand := range captures {
 		if operand.Kind != wir.OperandPath {
@@ -3634,7 +4953,7 @@ func nativeCaptureEpochRootOperands(bodyID equation.BodyID, body *wir.Body, inst
 		if captured.IsEmpty() || captured.Symbol == 0 || child.Boundary.Captures[index].Symbol != captured.Symbol || captured.String() == "" {
 			continue
 		}
-		slot := fmt.Sprintf("%08d", len(operands)/4)
+		slot := fmt.Sprintf("%08d", len(operands)/5)
 		key := factkey.BuildKey(
 			factkey.NativeCaptureEpochRoot,
 			[]factkey.Part{factkey.OpaquePart(fmt.Sprintf("%x", bodyID)), factkey.OpaquePart(occurrence)},
@@ -3643,20 +4962,17 @@ func nativeCaptureEpochRootOperands(bodyID equation.BodyID, body *wir.Body, inst
 		operands = append(operands,
 			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "key-"+slot), Term: equation.ClosedTerm([]byte(key.String()))},
 			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "subject-"+slot), Term: equation.ClosedTerm([]byte(captured.String()))},
-			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "content-"+slot), Term: equation.ClosedTerm([]byte(content))},
 			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "occurrence-"+slot), Term: equation.ClosedTerm([]byte(occurrence + "/" + strconv.Itoa(index)))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "coordinate-"+slot), Term: equation.ClosedTerm([]byte(coordinate))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "levels-"+slot), Term: equation.ClosedTerm([]byte(strconv.Itoa(depth + 1)))},
 		)
 	}
 	return operands
 }
 
-const nativeCaptureTransportContent = "carried_through=closure_construction element_class=number initialization=complete presence=dense_prefix"
-
-// A numeric array whose published member inventory is a dense prefix can carry
-// that exact initialized surface through closure construction. Lowering names
-// the candidate capture and authored coordinate; object materialization still
-// requires the allocation identity and member facts visible under its guards.
-func nativeCaptureTransportOperands(bodyID equation.BodyID, body *wir.Body, instruction wir.Instruction, sourceIndex int, occurrence string) []equation.Operand {
+// Lowering names each captured path and the authored closure coordinate.
+// Numeric element class, initialized density, and transport are solve verdicts.
+func nativeCaptureTransportOperands(bodyID equation.BodyID, body *wir.Body, instruction wir.Instruction, occurrence string) []equation.Operand {
 	if body == nil || instruction.Op != wir.OpClosure || instruction.Func == 0 || instruction.List.Len == 0 ||
 		len(numericForBindingPoints(body)) != 0 {
 		return nil
@@ -3667,97 +4983,19 @@ func nativeCaptureTransportOperands(bodyID equation.BodyID, body *wir.Body, inst
 			continue
 		}
 		root := body.Path(wir.PathRef(operand.Ref))
-		if root.IsEmpty() || root.String() == "" || !nativeNumericArrayType(nativeTableBirthType(body, root)) ||
-			!nativeCaptureTableFilledBefore(body, root, sourceIndex) {
+		if root.IsEmpty() || root.String() == "" {
 			continue
 		}
-		slot := fmt.Sprintf("%08d", len(operands)/5)
+		slot := fmt.Sprintf("%08d", len(operands)/4)
 		term := "path/" + root.Key()
 		operands = append(operands,
 			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "term-"+slot), Term: equation.ClosedTerm([]byte(term))},
 			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "subject-"+slot), Term: equation.ClosedTerm([]byte(root.String()))},
 			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "occurrence-"+slot), Term: equation.ClosedTerm([]byte(occurrence))},
-			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "content-"+slot), Term: equation.ClosedTerm([]byte(nativeCaptureTransportContent))},
 			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "body-"+slot), Term: equation.ClosedTerm([]byte(fmt.Sprintf("%x", bodyID)))},
 		)
 	}
 	return operands
-}
-
-func nativeTableBirthType(body *wir.Body, root path.Path) typ.Type {
-	for index := 0; index < body.Len(); index++ {
-		instruction := body.Instr(index)
-		if instruction.Op != wir.OpMakeTable || instruction.Dst.Kind != wir.OperandPath {
-			continue
-		}
-		candidate := body.Path(wir.PathRef(instruction.Dst.Ref))
-		if candidate.Key() == root.Key() {
-			return body.Type(instruction.Type)
-		}
-	}
-	return nil
-}
-
-func nativeNumericArrayType(value typ.Type) bool {
-	value = unwrap.Alias(value)
-	array, ok := value.(*typ.Array)
-	if !ok || array.Element == nil {
-		return false
-	}
-	element := unwrap.Alias(array.Element)
-	return element != nil && (element.Kind() == kind.Number || element.Kind() == kind.Integer)
-}
-
-func nativeCaptureTableFilledBefore(body *wir.Body, root path.Path, end int) bool {
-	entries := make(map[int]bool)
-	for index := 0; index < end; index++ {
-		instruction := body.Instr(index)
-		if instruction.Op != wir.OpStaticMemberWrite || instruction.Dst.Kind != wir.OperandPath {
-			continue
-		}
-		member := body.Path(wir.PathRef(instruction.Dst.Ref))
-		if !member.SameRootIgnoringVersion(root) || len(member.Segments) != 1 || member.Segments[0].Kind != segment.SegmentIndexInt {
-			continue
-		}
-		entries[member.Segments[0].Index] = true
-	}
-	if len(entries) == 0 {
-		return false
-	}
-	for index := 1; index <= len(entries); index++ {
-		if !entries[index] {
-			return false
-		}
-	}
-	return true
-}
-
-// nativeCaptureTransportCounts is the lowering inventory used only to retain
-// the legacy contract-row ordinal while the guarded coordinate publication is
-// consumed directly. Each numeric array contributes once in its owning
-// function, matching the former AST duplicate without re-reading syntax.
-func nativeCaptureTransportCounts(root Compilation) map[wir.FunctionSymbolID]int {
-	counts := make(map[wir.FunctionSymbolID]int)
-	var visit func(Compilation)
-	visit = func(compilation Compilation) {
-		seen := make(map[string]bool)
-		for _, operation := range compilation.Artifact.Equations {
-			for _, operand := range operation.Operands {
-				if _, termRole := operand.Role.Component(equation.RoleFamilyNativeCaptureTransport, "term"); !termRole || operand.Term.Entry {
-					continue
-				}
-				seen[string(operand.Term.Encoding)] = true
-			}
-		}
-		if compilation.Prototype != 0 {
-			counts[compilation.Prototype] = len(seen)
-		}
-		for _, child := range compilation.nested {
-			visit(child)
-		}
-	}
-	visit(root)
-	return counts
 }
 
 func nativeAssignmentAliasOperands(body *wir.Body, instruction wir.Instruction, occurrence string) []equation.Operand {

@@ -33,6 +33,13 @@ const (
 	RoleFamilyNative
 	RoleFamilyNativeCaptureRoot
 	RoleFamilyNativeCaptureTransport
+	RoleFamilyNativeHostGlobal
+	RoleFamilyNativeListChild
+	RoleFamilyNativeLengthEvent
+	RoleFamilyNativeLoopArm
+	RoleFamilyNativeLoopBoundDisplay
+	RoleFamilyNativeLoopBoundLimit
+	RoleFamilyNativeLoopBoundPath
 	RoleFamilyPayloadType
 	RoleFamilyResult
 	RoleFamilyReturnDisplay
@@ -63,6 +70,13 @@ var operandRoleFamilyNames = [...]string{
 	RoleFamilyNative:                 "native",
 	RoleFamilyNativeCaptureRoot:      "native-capture-root",
 	RoleFamilyNativeCaptureTransport: "native-capture-transport",
+	RoleFamilyNativeHostGlobal:       "native-host-global",
+	RoleFamilyNativeListChild:        "native-list-child",
+	RoleFamilyNativeLengthEvent:      "native-length-event",
+	RoleFamilyNativeLoopArm:          "native-loop-arm",
+	RoleFamilyNativeLoopBoundDisplay: "native-loop-bound-display",
+	RoleFamilyNativeLoopBoundLimit:   "native-loop-bound-limit",
+	RoleFamilyNativeLoopBoundPath:    "native-loop-bound-path",
 	RoleFamilyPayloadType:            "payload-type",
 	RoleFamilyResult:                 "result",
 	RoleFamilyReturnDisplay:          "return-display",
@@ -87,6 +101,7 @@ const (
 	RoleDefault          OperandRole = "default"
 	RoleDisplay          OperandRole = "display"
 	RoleEntry            OperandRole = "entry"
+	RoleGlobalCallee     OperandRole = "global-callee-binding"
 	RolePredicate        OperandRole = "predicate"
 	RolePredicateDisplay OperandRole = "predicate-display"
 	RoleProvider         OperandRole = "provider"

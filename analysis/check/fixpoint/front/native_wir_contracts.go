@@ -33,15 +33,9 @@ func nativeWIRContracts(root Compilation) []NativeContract {
 	// ordinary publication tail as typed factkey records, so their public rows
 	// do not exist until the semantic partition has closed.
 	var projections []NativeProjection
-	projections = append(projections, numericNativeFacts(root)...)
-	projections = append(projections, tableNativeFacts(root)...)
-	projections = append(projections, elementNativeFacts(root)...)
-	projections = append(projections, nilabilityNativeFacts(root)...)
-	projections = append(projections, metatableNativeFacts(root)...)
 	projections = append(projections, frozenBodyNativeFacts(root)...)
 	projections = append(projections, shapeEpochNativeFacts(root)...)
 	projections = append(projections, summaryNativeFacts(root)...)
-	projections = append(projections, hostGlobalBindingFacts(root)...)
 	contracts = append(contracts, nativeProjectionContracts(root, projections)...)
 	var visit func(Compilation)
 	visit = func(compilation Compilation) {
@@ -71,6 +65,19 @@ func nativeWIRContracts(root Compilation) []NativeContract {
 		return contracts[i].Key.String() < contracts[j].Key.String()
 	})
 	return contracts
+}
+
+func forEachNativeBody(root Compilation, visit func(Compilation)) {
+	var walk func(Compilation)
+	walk = func(compilation Compilation) {
+		if compilation.WIR != nil {
+			visit(compilation)
+		}
+		for _, child := range compilation.nested {
+			walk(child)
+		}
+	}
+	walk(root)
 }
 
 func nativeProjectionContracts(root Compilation, rows []NativeProjection) []NativeContract {

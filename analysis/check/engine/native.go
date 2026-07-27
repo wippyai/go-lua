@@ -276,6 +276,13 @@ func closedNativeKernelProjectionFacts(root front.Compilation, facts []equation.
 	visit(root)
 	out := make([]equation.Fact, 0, len(facts))
 	for index, fact := range facts {
+		if family, declared := factkey.Lookup(fact.Key); declared && family.ID == factkey.FamilyNativeProjection {
+			// Owning kernels already closed the typed projection payload.
+			// Wrapping it again would expose native-projection as the semantic
+			// family and hide the verdict encoded inside it.
+			out = append(out, fact)
+			continue
+		}
 		var owner *nativeAnchors
 		for body, candidate := range anchors {
 			if strings.Contains(fact.Key, "/"+body+"/") {

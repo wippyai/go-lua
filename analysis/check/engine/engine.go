@@ -2880,7 +2880,7 @@ func (l *lexicalEvaluator) recordNativeKernelFacts(values []equation.Fact) {
 			factkey.FamilyNativeConcatSite, factkey.FamilyNativeBuiltinCall,
 			factkey.FamilyNativeAliasDisjoint, factkey.FamilyNativeCaptureEpochRoot,
 			factkey.FamilyNativeCaptureTransport, factkey.FamilyNativeTypedProducer,
-			factkey.FamilyNativeTableConstructionBound:
+			factkey.FamilyNativeTableConstructionBound, factkey.FamilyNativeProjection:
 		default:
 			continue
 		}
@@ -2923,6 +2923,11 @@ func nativeKernelProjectionFacts(child front.DraftsBoundaryView, occurrence stri
 				occurrence,
 			)
 			out = append(out, equation.Fact{Key: key.String(), Value: encoded, Guards: fact.Guards})
+		case factkey.FamilyNativeProjection:
+			// The child kernel already encoded the semantic row. Re-wrapping it
+			// would project the transport key as a second native family and lose
+			// the row's subject/revocation metadata.
+			out = append(out, fact)
 		}
 	}
 	return out
@@ -10300,6 +10305,11 @@ func allocationTemplateKernel(operation equation.BoundEquation, partition equati
 			Value: []byte(content),
 		})
 	}
+	if kind == "table" && complete {
+		if list, published := nativeListConstructionFact(operation, partition); published {
+			values = append(values, list)
+		}
+	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
@@ -10377,13 +10387,20 @@ func nativeCaptureEpochRootFacts(operation equation.BoundEquation) ([]equation.F
 			break
 		}
 		subject := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "subject-"+slot)]
-		content := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "content-"+slot)]
 		occurrence := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "occurrence-"+slot)]
-		if len(subject) == 0 || len(content) == 0 || len(occurrence) == 0 {
+		coordinate := string(byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "coordinate-"+slot)])
+		levels, levelsErr := strconv.Atoi(string(byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "levels-"+slot)]))
+		if len(subject) == 0 || len(occurrence) == 0 || levelsErr != nil || levels < 1 ||
+			coordinate != "entry" && coordinate != "edge_form" {
 			return nil, fmt.Errorf("engine: incomplete capture epoch root descriptor %d", index)
 		}
+		content := "active_epoch_root=1 begin_coordinate=" + coordinate +
+			" coverage_proof=complete uniqueness_proof=complete"
+		if coordinate == "edge_form" {
+			content += " coordinate_fields=[from,to,edge_kind,edge_ordinal,begin_ordinal] levels=" + strconv.Itoa(levels)
+		}
 		wire, err := json.Marshal(nativeCaptureEpochRootWire{
-			Version: 1, Subject: string(subject), Content: string(content), Occurrence: string(occurrence),
+			Version: 1, Subject: string(subject), Content: content, Occurrence: string(occurrence),
 		})
 		if err != nil {
 			return nil, err
@@ -10412,17 +10429,18 @@ func nativeCaptureTransportFacts(operation equation.BoundEquation, partition equ
 		}
 		subject := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "subject-"+slot)]
 		occurrence := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "occurrence-"+slot)]
-		content := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "content-"+slot)]
 		body := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "body-"+slot)]
-		if len(subject) == 0 || len(occurrence) == 0 || len(content) == 0 || len(body) == 0 {
+		if len(subject) == 0 || len(occurrence) == 0 || len(body) == 0 {
 			return nil, fmt.Errorf("engine: incomplete capture transport descriptor %d", index)
 		}
-		if !nativeDenseCaptureMembers(term, partition) {
+		class, _, classified := nativeElementClass(term, partition)
+		if !classified || class != "number" || !nativeDenseCaptureMembers(term, partition) {
 			continue
 		}
+		content := "carried_through=closure_construction element_class=number initialization=complete presence=dense_prefix"
 		for _, event := range []string{"write.element", "write.length", "grow"} {
 			wire, err := json.Marshal(nativeCaptureTransportWire{
-				Version: 1, Subject: string(subject), Content: string(content), Occurrence: string(occurrence),
+				Version: 1, Subject: string(subject), Content: content, Occurrence: string(occurrence),
 				Established: string(occurrence), Revoked: event, Event: event,
 			})
 			if err != nil {
@@ -11702,6 +11720,26 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if alias, published := nativeWriteAliasFact(operation, partition); published {
 		values = append(values, alias)
 	}
+	nativeOperands := make(map[string][]byte, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		nativeOperands[operand.Role.String()] = operand.Value
+	}
+	if representation, published := nativeLiteralRepresentationFact(operation, nativeOperands, value); published {
+		values = append(values, representation)
+	}
+	if representation, published := nativeRepresentationJoinFact(operation, nativeOperands); published {
+		values = append(values, representation)
+	}
+	nativeProjectionOperands := make(map[equation.OperandRole][]byte, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		nativeProjectionOperands[operand.Role] = operand.Value
+	}
+	if metatable, published := nativeMetatableReadFact(operation, nativeProjectionOperands, partition); published {
+		values = append(values, metatable)
+	}
+	if element, published := nativeElementStaticReadFact(operation, nativeProjectionOperands, partition, value); published {
+		values = append(values, element)
+	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
 }
 
@@ -12413,6 +12451,14 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 			}
 		}
 	}
+	values = append(values, nativeNumericExpressionFacts(operation, by, partition, string(by["native-operator-name"]))...)
+	if loop, published := nativeNumericLoopFact(operation, by, partition); published {
+		values = append(values, loop)
+	}
+	if length, published := nativeTableLengthFact(operation, by, partition); published {
+		values = append(values, length)
+	}
+	values = append(values, nativeMetatableExpressionReadFacts(operation, by, partition)...)
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values, Diagnostics: diagnostics}}, nil
 }
 
@@ -14070,6 +14116,13 @@ func dynamicIndexReadKernel(operation equation.BoundEquation, partition equation
 			values = append(values, placementContractFact(allocation.Identity, placementvocab.BoundaryDynamicIndex, operation.Target.Name))
 		}
 	}
+	nativeOperands := make(map[string][]byte, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		nativeOperands[operand.Role.String()] = operand.Value
+	}
+	if element, published := nativeElementReadFact(operation, nativeOperands, partition, values[0].Value); published {
+		values = append(values, element)
+	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }
 
@@ -14826,6 +14879,11 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 		if fact, published := nativeTypedProducerFact(operation, kind, target, shapeTarget); published {
 			closure.Values = append(closure.Values, fact)
 		}
+		nativeOperands := make(map[equation.OperandRole][]byte, len(operation.Operands))
+		for _, operand := range operation.Operands {
+			nativeOperands[operand.Role] = operand.Value
+		}
+		closure.Values = append(closure.Values, nativeNilabilityFacts(operation, nativeOperands, partition)...)
 		return equation.TransactionResult{Complete: true, Closure: closure}, nil
 	}
 	refined := claimPayload(kind, targetType)
@@ -14980,6 +15038,11 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	if fact, published := nativeTypedProducerFact(operation, kind, target, shapeTarget); published {
 		closure.Values = append(closure.Values, fact)
 	}
+	nativeOperands := make(map[equation.OperandRole][]byte, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		nativeOperands[operand.Role] = operand.Value
+	}
+	closure.Values = append(closure.Values, nativeNilabilityFacts(operation, nativeOperands, partition)...)
 	return equation.TransactionResult{Complete: true, Closure: closure}, nil
 }
 
@@ -16943,6 +17006,12 @@ func indexMutationKernel(operation equation.BoundEquation, partition equation.Pa
 	case hasChild && !hasParent:
 		result.Closure.Values = append(result.Closure.Values, placementEventFact(childAlloc.Identity, operation.Target.Name, placementEventOwned))
 	}
+	if growth, published := nativeTableGrowthFact(operation, partition); published {
+		result.Closure.Values = append(result.Closure.Values, growth)
+	}
+	if element, published := nativeElementDomainFact(operation, partition); published {
+		result.Closure.Values = append(result.Closure.Values, element)
+	}
 	return result, nil
 }
 
@@ -17595,6 +17664,14 @@ func branchKernel(operation equation.BoundEquation, partition equation.Partition
 		return equation.TransactionResult{}, err
 	}
 	result.Closure.Values = append(result.Closure.Values, nativeFacts...)
+	nativeOperands := make(map[equation.OperandRole][]byte, len(operation.Operands))
+	for _, operand := range operation.Operands {
+		nativeOperands[operand.Role] = operand.Value
+	}
+	if numeric, published := nativeNumericBranchFact(operation, nativeOperands, partition); published {
+		result.Closure.Values = append(result.Closure.Values, numeric)
+	}
+	result.Closure.Values = append(result.Closure.Values, nativeNilabilityFacts(operation, nativeOperands, partition)...)
 	return result, nil
 }
 
@@ -20402,6 +20479,19 @@ func edgeFactIdentity(fact equation.Fact) string { return fact.Key + "\x00" + st
 // proven call-contract failures at this equation point. Unknown values are not
 // violations: diagnostics are proof outputs, never speculative findings.
 func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, partition equation.Partition) (result equation.TransactionResult, err error) {
+	defer func() {
+		if err != nil || !result.Complete {
+			return
+		}
+		nativeOperands := make(map[equation.OperandRole][]byte, len(operation.Operands))
+		for _, operand := range operation.Operands {
+			nativeOperands[operand.Role] = operand.Value
+		}
+		result.Closure.Values = append(result.Closure.Values, nativeNilabilityFacts(operation, nativeOperands, partition)...)
+		if metatable, published := nativeMetatableInstallFact(operation, nativeOperands, partition); published {
+			result.Closure.Values = append(result.Closure.Values, metatable)
+		}
+	}()
 	var placementFacts []equation.Fact
 	var metatableFacts []equation.Fact
 	var argumentFacts []equation.Fact
@@ -20487,7 +20577,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	argumentFacts = callArgumentFacts(operation.Target.Name, operands.arguments)
 	placementFacts = placementApplyFacts(operation, operands, partition)
 	placementFacts = append(placementFacts, placementSuspensionFacts(operation, operands, partition)...)
-	if operands.display == "setmetatable" && !operands.spread && len(operands.arguments) == 2 {
+	if operands.globalCallee == "setmetatable" && !operands.spread && len(operands.arguments) == 2 {
 		if object, found := tableIdentityForTerm(operands.arguments[0], partition); found {
 			metatableFacts = append(metatableFacts, heapMetaAttachedFact(object, operation.Target.Name))
 			if metatable, found := tableIdentityForTerm(operands.arguments[1], partition); found {
@@ -23745,6 +23835,7 @@ type directCallOperands struct {
 	receiver     []byte
 	method       string
 	display      string
+	globalCallee string
 	arguments    [][]byte
 	assertedPath []byte
 	spread       bool
@@ -23780,6 +23871,11 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 				return directCallOperands{}, fmt.Errorf("engine: malformed call display")
 			}
 			result.display = string(operand.Value)
+		case operand.Role == equation.RoleGlobalCallee:
+			if result.globalCallee != "" || len(operand.Value) == 0 {
+				return directCallOperands{}, fmt.Errorf("engine: malformed global callee binding")
+			}
+			result.globalCallee = string(operand.Value)
 		case operand.Role == "receiver-display":
 			if result.display != "target" || len(operand.Value) == 0 {
 				return directCallOperands{}, fmt.Errorf("engine: malformed receiver display")
@@ -24848,6 +24944,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	var receiver []byte
 	var method []byte
 	var nativeBuiltinKey []byte
+	nativeHostOperands := make(map[equation.OperandRole][]byte)
 	var typePredicateErrorTarget []byte
 	for _, operand := range operation.Operands {
 		switch {
@@ -24897,6 +24994,11 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				return equation.TransactionResult{}, fmt.Errorf("engine: duplicate native builtin call key")
 			}
 			nativeBuiltinKey = operand.Value
+		case operand.Role.InFamily(equation.RoleFamilyNativeHostGlobal):
+			if nativeHostOperands[operand.Role] != nil {
+				return equation.TransactionResult{}, fmt.Errorf("engine: duplicate native host global role %q", operand.Role)
+			}
+			nativeHostOperands[operand.Role] = operand.Value
 		case operand.Role.InFamily(equation.RoleFamilyResult):
 			semantic, ok := operand.Role.SemanticResult()
 			if !ok {
@@ -25388,6 +25490,9 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 	values = append(values, importedReturnTupleFacts(lexical, provider, resultTerms, argumentTerms)...)
 	if fact, ok := nativeBuiltinCallPublication(nativeBuiltinKey, callee, resultTerms, argumentTerms, partition); ok {
 		values = append(values, fact)
+	}
+	if host, published := nativeHostGlobalFact(lexical, operation, nativeHostOperands); published {
+		values = append(values, host)
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: values}}, nil
 }

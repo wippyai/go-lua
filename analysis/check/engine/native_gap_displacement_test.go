@@ -133,25 +133,28 @@ func TestNativeCaptureScansStayDisplaced(t *testing.T) {
 		t.Fatal("cannot locate engine source")
 	}
 	engineDir := filepath.Dir(current)
-	for path, forbidden := range map[string][]string{
-		filepath.Join(engineDir, "..", "fixpoint", "front", "lowering_structural_projection.go"): {
-			"captureNativeFacts",
-			"captureTransportNativeFacts",
-			"captureTransportFacts",
-			"capture_epoch_root",
-			"capture_transport",
-		},
-		filepath.Join(engineDir, "..", "fixpoint", "front", "native_operations.go"): {
-			"nativeCaptureTransportCount",
-			"nativeFunctionReferences",
-			"nativeDirectFreeReferenceCountNamed",
-		},
-	} {
+	frontDir := filepath.Join(engineDir, "..", "fixpoint", "front")
+	entries, err := os.ReadDir(frontDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		path := filepath.Join(frontDir, entry.Name())
 		source, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range forbidden {
+		for _, name := range []string{
+			"captureNativeFacts",
+			"captureTransportNativeFacts",
+			"captureTransportFacts",
+			"nativeCaptureTransportCount",
+			"nativeFunctionReferences",
+			"nativeDirectFreeReferenceCountNamed",
+		} {
 			if strings.Contains(string(source), name) {
 				t.Errorf("%s resurrects displaced native capture scan %q", path, name)
 			}
