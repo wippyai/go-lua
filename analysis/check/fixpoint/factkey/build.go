@@ -30,25 +30,6 @@ func TaggedTermPart(term []byte) Part {
 	return Part{kind: Tagged, tag: taggedTerm, data: term}
 }
 
-// PathKey is the standard-library-only bridge implemented by structural path
-// keys. keyspace.Key satisfies it without factkey importing the domain layer.
-type PathKey interface {
-	String() string
-}
-
-// PathPart wraps a structural path/address key as the engine's path-tagged term
-// subject. A keyspace.Key represents the path body (for example "sym2"), but
-// cannot represent the fixpoint term union: temp/* and scalar/* are not paths,
-// and an engine boundary that receives only an already-encoded []byte term has
-// no owning KeySpace from which it could legitimately mint a Key. Those
-// generic wire terms therefore use TermPart instead.
-func PathPart(path PathKey) Part {
-	if path == nil {
-		return Part{}
-	}
-	return TermPart("path/" + path.String())
-}
-
 // RebindSubject projects one semantic subject into another family's declared
 // subject kind. Revocation licenses use it when an identity-scoped proof is
 // revoked by a tagged identity family (or the inverse). Opaque coordinates are

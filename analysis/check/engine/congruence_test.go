@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/base64"
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -38,7 +39,7 @@ func TestProvenPathEqualitiesAreSymmetric(t *testing.T) {
 
 func TestProvenPathEqualitiesDropAReplacedSymbol(t *testing.T) {
 	partition := equalityPartition(t, equation.Fact{
-		Key: epochFactPrefix + "path/sym3/op-00000009", Value: []byte("op-00000009"),
+		Key: factkey.Epoch.Key().String() + "path/sym3/op-00000009", Value: []byte("op-00000009"),
 	})
 	if equal := provenPathEqualities(partition); len(equal) != 0 {
 		t.Fatalf("equality survived a reassignment of one side: %#v", equal)
@@ -47,7 +48,7 @@ func TestProvenPathEqualitiesDropAReplacedSymbol(t *testing.T) {
 
 func TestProvenPathEqualitiesKeepAnEarlierEpoch(t *testing.T) {
 	partition := equalityPartition(t, equation.Fact{
-		Key: epochFactPrefix + "path/sym3/op-00000001", Value: []byte("op-00000001"),
+		Key: factkey.Epoch.Key().String() + "path/sym3/op-00000001", Value: []byte("op-00000001"),
 	})
 	if equal := provenPathEqualities(partition); !equal["sym2"]["sym3"] {
 		t.Fatalf("equality dropped by an epoch that precedes it: %#v", equal)
@@ -57,7 +58,7 @@ func TestProvenPathEqualitiesKeepAnEarlierEpoch(t *testing.T) {
 func TestCongruenceOperandSealedRefusesAnAttachedMetatable(t *testing.T) {
 	identity := []byte("sealed-table/test/op-00000002")
 	term := []byte("path/sym2")
-	epoch := equation.Fact{Key: epochFactPrefix + string(term) + "/op-00000002", Value: []byte("op-00000002")}
+	epoch := equation.Fact{Key: factkey.Epoch.Key().String() + string(term) + "/op-00000002", Value: []byte("op-00000002")}
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: []equation.Fact{
 		epoch,
 		heapIdentityFact(string(term), "op-00000002", identity),
@@ -98,8 +99,8 @@ func TestCorrelatedEqualityTargetsCoverBothTheValueAndItsMembers(t *testing.T) {
 
 func TestProvenPathEqualitiesIgnoreAMalformedKey(t *testing.T) {
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: []equation.Fact{
-		{Key: pathEqualityPrefix + "not-base64/" + base64.RawURLEncoding.EncodeToString([]byte("path/sym3")) + "/op-00000005", Value: []byte("proven")},
-		{Key: pathEqualityPrefix + base64.RawURLEncoding.EncodeToString([]byte("temp/1")) + "/" + base64.RawURLEncoding.EncodeToString([]byte("path/sym3")) + "/op-00000006", Value: []byte("proven")},
+		{Key: factkey.PathEquality.Key().String() + "not-base64/" + base64.RawURLEncoding.EncodeToString([]byte("path/sym3")) + "/op-00000005", Value: []byte("proven")},
+		{Key: factkey.PathEquality.Key().String() + base64.RawURLEncoding.EncodeToString([]byte("temp/1")) + "/" + base64.RawURLEncoding.EncodeToString([]byte("path/sym3")) + "/op-00000006", Value: []byte("proven")},
 	}})
 	if err != nil {
 		t.Fatalf("partition: %v", err)

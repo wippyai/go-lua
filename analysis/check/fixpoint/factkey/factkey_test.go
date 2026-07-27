@@ -3,9 +3,6 @@ package factkey
 import (
 	"encoding/base64"
 	"testing"
-
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 )
 
 func encode(text string) string { return base64.RawURLEncoding.EncodeToString([]byte(text)) }
@@ -163,18 +160,6 @@ func TestBuildKeyOwnsDeclaredFamilySpellings(t *testing.T) {
 	}
 }
 
-func TestBuildKeyAcceptsStructuralPathKey(t *testing.T) {
-	space := keyspace.New()
-	path, ok := space.FromStateKey(pathdom.PathKey("sym2"))
-	if !ok {
-		t.Fatal("could not intern path subject")
-	}
-	key := BuildKey(HeapTableIdentity, []Part{PathPart(path)}, "op-1")
-	if got, want := key.String(), "heap/table-identity/path/sym2/op-1"; got != want {
-		t.Fatalf("structural path key = %q, want %q", got, want)
-	}
-}
-
 func TestBuildKeyProducesTypedPrefixes(t *testing.T) {
 	identity := []byte("heap")
 	prefix := BuildKey(HeapMember, []Part{IdentityPart(identity)}, "")
@@ -198,8 +183,8 @@ func TestTerminalTermSubjectOwnsNestedTermSyntax(t *testing.T) {
 }
 
 func TestFamiliesAreCompleteRecords(t *testing.T) {
-	if len(families) != 52 {
-		t.Fatalf("declared families = %d, want 52", len(families))
+	if len(families) != 150 {
+		t.Fatalf("declared families = %d, want 150", len(families))
 	}
 	for _, family := range families {
 		if family.ID == 0 || family.Prefix == "" || family.RevocationSet == nil ||

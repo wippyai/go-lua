@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
@@ -64,18 +65,6 @@ type PlacementHoistableLoad struct {
 }
 
 const (
-	placementAllocationPrefix  = "placement/allocation/"
-	placementBindingPrefix     = "placement/binding/"
-	placementEventPrefix       = "placement/event/"
-	placementBlockerPrefix     = "placement/blocker/"
-	placementContainmentPrefix = "placement/contains/"
-	placementContractPrefix    = "placement/contract/"
-
-	// placementLocalReturnRootPrefix carries the returned-root allocation identity
-	// of a locally evaluated body from its apply boundary to the call-results
-	// owner, which binds the caller result to it.
-	placementLocalReturnRootPrefix = "placement/local-return-root/"
-
 	placementEventOwned  = placementvocab.EventOwned
 	placementEventShared = placementvocab.EventShared
 	placementEventSealed = placementvocab.EventSealed
@@ -124,11 +113,11 @@ func encodePlacementAllocation(fact placementAllocationFact) ([]byte, error) {
 
 func decodePlacementAllocation(fact equation.Fact) (placementAllocationFact, bool) {
 	var allocation placementAllocationFact
-	return allocation, strings.HasPrefix(fact.Key, placementAllocationPrefix) && front.DecodeRequiredWireJSON(fact.Value, &allocation) == nil && allocation.Identity != ""
+	return allocation, factkey.PlacementAllocation.Owns(fact.Key) && front.DecodeRequiredWireJSON(fact.Value, &allocation) == nil && allocation.Identity != ""
 }
 
 func placementProvenFactParts(fact equation.Fact) ([]string, bool) {
-	parts := strings.Split(fact.Key, "/")
+	parts := factkey.Segments(fact.Key)
 	return parts, len(parts) == 5 && string(fact.Value) == "proven"
 }
 
@@ -148,7 +137,7 @@ func placementContainmentIdentities(parts []string) (string, string, bool) {
 // same-named operation in its caller. The identity itself is sealed from the
 // child body and allocation occurrence.
 func placementAllocationFactKey(identity string) string {
-	return placementAllocationPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity))
+	return factkey.PlacementAllocation.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity))
 }
 
 func placementAllocationIdentity(operation equation.BoundEquation) string {
@@ -156,23 +145,23 @@ func placementAllocationIdentity(operation equation.BoundEquation) string {
 }
 
 func placementBindingFact(term, operation, identity string) equation.Fact {
-	return equation.Fact{Key: placementBindingPrefix + base64.RawURLEncoding.EncodeToString([]byte(term)) + "/" + operation, Value: []byte(identity)}
+	return equation.Fact{Key: factkey.PlacementBinding.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(term)) + "/" + operation, Value: []byte(identity)}
 }
 
 func placementEventFact(identity, operation string, event placementvocab.Event) equation.Fact {
-	return equation.Fact{Key: placementEventPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(event) + "/" + operation, Value: []byte("proven")}
+	return equation.Fact{Key: factkey.PlacementEvent.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(event) + "/" + operation, Value: []byte("proven")}
 }
 
 func placementBlockerFact(identity, operation, blocker string) equation.Fact {
-	return equation.Fact{Key: placementBlockerPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + blocker + "/" + operation, Value: []byte("proven")}
+	return equation.Fact{Key: factkey.PlacementBlocker.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + blocker + "/" + operation, Value: []byte("proven")}
 }
 
 func placementContainmentFact(parent, child, operation string) equation.Fact {
-	return equation.Fact{Key: placementContainmentPrefix + base64.RawURLEncoding.EncodeToString([]byte(parent)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(child)) + "/" + operation, Value: []byte("proven")}
+	return equation.Fact{Key: factkey.PlacementContainment.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(parent)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(child)) + "/" + operation, Value: []byte("proven")}
 }
 
 func placementContractFact(identity string, boundary placementvocab.Boundary, operation string) equation.Fact {
-	return equation.Fact{Key: placementContractPrefix + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(boundary) + "/" + operation, Value: []byte("proven")}
+	return equation.Fact{Key: factkey.PlacementContract.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(boundary) + "/" + operation, Value: []byte("proven")}
 }
 
 // placementExternalOwnershipFacts consumes the ownership labels of a published
@@ -363,7 +352,7 @@ func placementAllocationBeforeOperation(term []byte, operation string, partition
 	if len(term) == 0 || operation == "" {
 		return placementAllocationFact{}, false
 	}
-	prefix := placementBindingPrefix + base64.RawURLEncoding.EncodeToString(term) + "/"
+	prefix := factkey.PlacementBinding.Key().String() + base64.RawURLEncoding.EncodeToString(term) + "/"
 	latest, identity := "", ""
 	bindings := partition.IterateValuesPrefix(prefix)
 	for fact, ok := bindings.Next(); ok; fact, ok = bindings.Next() {
@@ -379,7 +368,7 @@ func placementAllocationBeforeOperation(term []byte, operation string, partition
 }
 
 func placementAllocationInPartition(identity, result string, partition equation.Partition) (placementAllocationFact, bool) {
-	allocations := partition.IterateValuesPrefix(placementAllocationPrefix)
+	allocations := partition.IterateValuesPrefix(factkey.PlacementAllocation.Key().String())
 	for fact, ok := allocations.Next(); ok; fact, ok = allocations.Next() {
 		var allocation placementAllocationFact
 		if front.DecodeRequiredWireJSON(fact.Value, &allocation) == nil && allocation.Identity != "" &&
@@ -406,7 +395,7 @@ func placementAllocationInFacts(term string, facts []equation.Fact) (placementAl
 
 func placementAllocation(identity, result string, facts []equation.Fact) (placementAllocationFact, bool) {
 	for _, fact := range facts {
-		if !strings.HasPrefix(fact.Key, placementAllocationPrefix) {
+		if !factkey.PlacementAllocation.Owns(fact.Key) {
 			continue
 		}
 		var allocation placementAllocationFact
@@ -578,7 +567,7 @@ func placementReturnedRoot(facts []equation.Fact) (string, bool) {
 	root, count := "", 0
 	seen := make(map[string]bool)
 	for _, fact := range facts {
-		if !strings.HasPrefix(fact.Key, placementEventPrefix) {
+		if !factkey.PlacementEvent.Owns(fact.Key) {
 			continue
 		}
 		parts, ok := placementProvenFactParts(fact)
@@ -657,7 +646,7 @@ func placementSingleTableChild(identity string, parsed publishedPlacementFacts, 
 }
 
 func placementBindingForTerm(term []byte, partition equation.Partition) (string, bool) {
-	prefix := placementBindingPrefix + base64.RawURLEncoding.EncodeToString(term) + "/"
+	prefix := factkey.PlacementBinding.Key().String() + base64.RawURLEncoding.EncodeToString(term) + "/"
 	fact, found := partition.LatestValuePrefix(prefix)
 	if !found || len(fact.Value) == 0 {
 		return "", false
@@ -666,10 +655,10 @@ func placementBindingForTerm(term []byte, partition equation.Partition) (string,
 }
 
 func placementBindingInFacts(term string, facts []equation.Fact) (string, bool) {
-	prefix := placementBindingPrefix + base64.RawURLEncoding.EncodeToString([]byte(term)) + "/"
+	prefix := factkey.PlacementBinding.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(term)) + "/"
 	latest, identity := "", ""
 	for _, fact := range facts {
-		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest && len(fact.Value) != 0 {
+		if factkey.OwnsPrefix(prefix, fact.Key) && fact.Key > latest && len(fact.Value) != 0 {
 			latest, identity = fact.Key, string(fact.Value)
 		}
 	}
@@ -1040,7 +1029,7 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 	}
 	for _, fact := range facts {
 		switch {
-		case strings.HasPrefix(fact.Key, placementAllocationPrefix):
+		case factkey.PlacementAllocation.Owns(fact.Key):
 			allocation, ok := decodePlacementAllocation(fact)
 			if !ok || allocation.Result == "" || allocation.Kind == "" {
 				continue
@@ -1056,7 +1045,7 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 				continue
 			}
 			projected = append(projected, equation.Fact{Key: placementAllocationFactKey(allocation.Identity), Value: value})
-		case strings.HasPrefix(fact.Key, placementEventPrefix), strings.HasPrefix(fact.Key, placementBlockerPrefix), strings.HasPrefix(fact.Key, placementContractPrefix):
+		case factkey.PlacementEvent.Owns(fact.Key), factkey.PlacementBlocker.Owns(fact.Key), factkey.PlacementContract.Owns(fact.Key):
 			parts, ok := placementProvenFactParts(fact)
 			if !ok {
 				continue
@@ -1066,7 +1055,7 @@ func placementFactsFromChild(facts []equation.Fact) []equation.Fact {
 				continue
 			}
 			projected = append(projected, equation.Fact{Key: fact.Key, Value: fact.Value})
-		case strings.HasPrefix(fact.Key, placementContainmentPrefix):
+		case factkey.PlacementContainment.Owns(fact.Key):
 			parts, ok := placementProvenFactParts(fact)
 			if !ok {
 				continue
@@ -1112,7 +1101,7 @@ func placementReturnsAllocation(operations []equation.Equation, values []equatio
 		return false
 	}
 	for _, fact := range values {
-		if !strings.HasPrefix(fact.Key, placementEventPrefix) {
+		if !factkey.PlacementEvent.Owns(fact.Key) {
 			continue
 		}
 		if parts, ok := placementProvenFactParts(fact); ok && publications[parts[4]] {
@@ -1135,23 +1124,23 @@ func placementStackWitnessFacts(facts []equation.Fact) []equation.Fact {
 	suspended := make(map[string][]equation.Fact)
 	for _, fact := range facts {
 		switch {
-		case strings.HasPrefix(fact.Key, placementAllocationPrefix):
+		case factkey.PlacementAllocation.Owns(fact.Key):
 			if allocation, ok := decodePlacementAllocation(fact); ok && allocation.Complete {
 				allocations[allocation.Identity] = fact
 			}
-		case strings.HasPrefix(fact.Key, placementEventPrefix), strings.HasPrefix(fact.Key, placementBlockerPrefix), strings.HasPrefix(fact.Key, placementContractPrefix):
+		case factkey.PlacementEvent.Owns(fact.Key), factkey.PlacementBlocker.Owns(fact.Key), factkey.PlacementContract.Owns(fact.Key):
 			parts, ok := placementProvenFactParts(fact)
 			if !ok {
 				continue
 			}
 			if identity, ok := placementFactIdentity(parts); ok {
-				if strings.HasPrefix(fact.Key, placementEventPrefix) && parts[3] == string(placementEventSuspended) {
+				if factkey.PlacementEvent.Owns(fact.Key) && parts[3] == string(placementEventSuspended) {
 					suspended[identity] = append(suspended[identity], fact)
 				} else {
 					boundary[identity] = true
 				}
 			}
-		case strings.HasPrefix(fact.Key, placementContainmentPrefix):
+		case factkey.PlacementContainment.Owns(fact.Key):
 			parts, ok := placementProvenFactParts(fact)
 			if !ok {
 				continue
@@ -1197,12 +1186,12 @@ func newPublishedPlacementFacts() publishedPlacementFacts {
 func parsePublishedPlacementPartition(partition equation.Partition) publishedPlacementFacts {
 	parsed := newPublishedPlacementFacts()
 	for _, prefix := range []string{
-		placementAllocationPrefix,
-		placementBindingPrefix,
-		placementEventPrefix,
-		placementBlockerPrefix,
-		placementContractPrefix,
-		placementContainmentPrefix,
+		factkey.PlacementAllocation.Key().String(),
+		factkey.PlacementBinding.Key().String(),
+		factkey.PlacementEvent.Key().String(),
+		factkey.PlacementBlocker.Key().String(),
+		factkey.PlacementContract.Key().String(),
+		factkey.PlacementContainment.Key().String(),
 	} {
 		values := partition.IterateValuesPrefix(prefix)
 		for fact, ok := values.Next(); ok; fact, ok = values.Next() {
@@ -1222,18 +1211,18 @@ func parsePublishedPlacement(facts []equation.Fact) publishedPlacementFacts {
 
 func parsePublishedPlacementFact(parsed *publishedPlacementFacts, fact equation.Fact) {
 	switch {
-	case strings.HasPrefix(fact.Key, placementAllocationPrefix):
+	case factkey.PlacementAllocation.Owns(fact.Key):
 		if allocation, ok := decodePlacementAllocation(fact); ok && allocation.Result != "" && allocation.Kind != "" {
 			parsed.allocations[allocation.Identity] = allocation
 		}
-	case strings.HasPrefix(fact.Key, placementBindingPrefix):
-		parts := strings.Split(fact.Key, "/")
+	case factkey.PlacementBinding.Owns(fact.Key):
+		parts := factkey.Segments(fact.Key)
 		if len(parts) == 4 && len(fact.Value) != 0 {
 			if term, err := base64.RawURLEncoding.DecodeString(parts[2]); err == nil {
 				parsed.bindings[string(term)] = string(fact.Value)
 			}
 		}
-	case strings.HasPrefix(fact.Key, placementEventPrefix), strings.HasPrefix(fact.Key, placementBlockerPrefix), strings.HasPrefix(fact.Key, placementContractPrefix):
+	case factkey.PlacementEvent.Owns(fact.Key), factkey.PlacementBlocker.Owns(fact.Key), factkey.PlacementContract.Owns(fact.Key):
 		parts, ok := placementProvenFactParts(fact)
 		if !ok {
 			return
@@ -1242,11 +1231,11 @@ func parsePublishedPlacementFact(parsed *publishedPlacementFacts, fact equation.
 		if !ok {
 			return
 		}
-		if strings.HasPrefix(fact.Key, placementEventPrefix) {
+		if factkey.PlacementEvent.Owns(fact.Key) {
 			if event, ok := placementvocab.ParseEvent(parts[3]); ok {
 				placementEventSet(parsed.events, identity)[event] = true
 			}
-		} else if strings.HasPrefix(fact.Key, placementBlockerPrefix) {
+		} else if factkey.PlacementBlocker.Owns(fact.Key) {
 			placementFactSet(parsed.blockers, identity)[parts[3]] = true
 			if parsed.blockerOperations[identity] == nil {
 				parsed.blockerOperations[identity] = make(map[string]map[string]bool)
@@ -1258,7 +1247,7 @@ func parsePublishedPlacementFact(parsed *publishedPlacementFacts, fact equation.
 		} else {
 			placementFactSet(parsed.contracts, identity)[parts[4]] = true
 		}
-	case strings.HasPrefix(fact.Key, placementContainmentPrefix):
+	case factkey.PlacementContainment.Owns(fact.Key):
 		if parts, ok := placementProvenFactParts(fact); ok {
 			if parent, child, ok := placementContainmentIdentities(parts); ok && parent != child {
 				parsed.containment[parent] = append(parsed.containment[parent], child)

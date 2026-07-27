@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -22,7 +23,7 @@ func returnContractResult(t *testing.T, declared typ.Type, returned typ.Type) eq
 	}
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: []equation.Fact{
 		{Key: "value/path/result/op-00000001", Value: returnedValue},
-		{Key: epochFactPrefix + "path/result/op-00000001", Value: []byte("op-00000001")},
+		{Key: factkey.Epoch.Key().String() + "path/result/op-00000001", Value: []byte("op-00000001")},
 	}})
 	if err != nil {
 		t.Fatalf("partition: %v", err)

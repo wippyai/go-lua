@@ -1,10 +1,10 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
@@ -36,8 +36,8 @@ func summaryKeys(closure equation.OutputClosure) map[string]bool {
 func TestRecursiveSummaryCarriesEveryBoundaryAnchoredFamily(t *testing.T) {
 	term := boundaryTerm(2)
 	families := []string{
-		"value/", "closure/", "declared-type/", epochFactPrefix,
-		indexReadDisplayPrefix, indexReadScalarPrefix, affineIndexPrefix, booleanResultPrefix,
+		"value/", "closure/", "declared-type/", factkey.Epoch.Key().String(),
+		factkey.IndexReadDisplay.Key().String(), factkey.IndexReadScalar.Key().String(), factkey.AffineIndex.Key().String(), factkey.BooleanResult.Key().String(),
 		factkey.SummaryType.Prefix, factkey.MethodReturnSummary.Prefix,
 	}
 	closure := equation.OutputClosure{}

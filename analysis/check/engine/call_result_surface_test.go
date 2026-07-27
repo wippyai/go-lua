@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -66,7 +67,7 @@ func TestOpaqueStoreRevokesTheSealedMemberAnswer(t *testing.T) {
 	}
 	partition := callResultPartition(t,
 		heapIdentityFact("temp/3", "op-00000002", identity),
-		equation.Fact{Key: epochFactPrefix + "temp/3/op-00000002", Value: []byte("op-00000002")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/3/op-00000002", Value: []byte("op-00000002")},
 		opaque,
 	)
 	if value, found := sealedShapeMemberValue([]byte("temp/3"), unitBoxTable(true), ".v", partition); found {
@@ -86,7 +87,7 @@ func TestSealedContainerReadYieldsToATrackedHeapCell(t *testing.T) {
 		equation.Fact{Key: "value/temp/3/op-00000002", Value: encoded},
 		equation.Fact{Key: "value/temp/4/op-00000002", Value: []byte(`scalar/string/"v"`)},
 		heapIdentityFact("temp/3", "op-00000002", []byte("sealed-table/test/op-00000002")),
-		equation.Fact{Key: epochFactPrefix + "temp/3/op-00000002", Value: []byte("op-00000002")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/3/op-00000002", Value: []byte("op-00000002")},
 	)
 	if value, found := sealedContainerMemberValue([]byte("temp/3"), []byte("temp/4"), partition); found {
 		t.Fatalf("the literal answered for a tracked cell: %q", value)
@@ -150,7 +151,7 @@ func contractFact(t *testing.T, application, key string, result typ.Type) equati
 	if err != nil {
 		t.Fatalf("encode derived result: %v", err)
 	}
-	return equation.Fact{Key: callInferredReturnPrefix + application + "/" + key, Value: encoded}
+	return equation.Fact{Key: factkey.CallInferredReturn.Key().String() + application + "/" + key, Value: encoded}
 }
 
 // TestReturnedCallableIsCompletedWithItsDerivedResult states the fusion: the

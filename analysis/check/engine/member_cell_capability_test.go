@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -122,7 +123,7 @@ func TestContainerCellCallbacksReachesTheUnnamedSlot(t *testing.T) {
 		t.Fatalf("publishing the unresolved-key row: %v", err)
 	}
 	partition := memberCellPartition(t,
-		equation.Fact{Key: epochFactPrefix + "path/sym9/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "path/sym9/op-00000001", Value: []byte("op-00000001")},
 		heapIdentityFact("path/sym9", "op-00000001", identity),
 		cell,
 		opaque,
@@ -151,7 +152,7 @@ func TestContainerCellCallbacksTerminatesOnASelfReachingContainer(t *testing.T) 
 		t.Fatalf("publishing the self cell: published=%v err=%v", published, err)
 	}
 	partition := memberCellPartition(t,
-		equation.Fact{Key: epochFactPrefix + "path/sym9/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "path/sym9/op-00000001", Value: []byte("op-00000001")},
 		heapIdentityFact("path/sym9", "op-00000001", identity),
 		cell,
 	)

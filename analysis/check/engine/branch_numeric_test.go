@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -12,7 +13,7 @@ import (
 func residueWindowPartition(t *testing.T, path string, window string) equation.Partition {
 	t.Helper()
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: []equation.Fact{
-		{Key: residueWindowPrefix + "path/" + path + "/op-00000001", Value: []byte(window)},
+		{Key: factkey.ResidueWindow.Key().String() + "path/" + path + "/op-00000001", Value: []byte(window)},
 	}})
 	if err != nil {
 		t.Fatalf("partition: %v", err)

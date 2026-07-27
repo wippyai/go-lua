@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -128,7 +129,7 @@ func callableContractPartition(t *testing.T, handleOperation, contractOperation 
 	}
 	return returnedTermPartition(t,
 		equation.Fact{Key: "closure/path/sym2/" + handleOperation, Value: []byte(`{"prototype":"chunk.fn0#1"}`)},
-		equation.Fact{Key: inferredCallableReturnPrefix + "path/sym2/" + contractOperation, Value: encoded},
+		equation.Fact{Key: factkey.InferredCallableReturn.Key().String() + "path/sym2/" + contractOperation, Value: encoded},
 	)
 }
 

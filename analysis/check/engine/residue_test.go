@@ -1,11 +1,11 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 )
 
 func TestLuaFloorModuloCarriesTheModulusSign(t *testing.T) {
@@ -248,7 +248,7 @@ func TestResidueIndexPresenceReadsTheWindowAgainstTheLengthFloor(t *testing.T) {
 	subject := heapIndexSubject(container, equation.Partition{})
 	build := func(window string, floor string) equation.Partition {
 		partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: []equation.Fact{
-			{Key: residueWindowPrefix + string(key) + "/op-00000001", Value: []byte(window)},
+			{Key: factkey.ResidueWindow.Key().String() + string(key) + "/op-00000001", Value: []byte(window)},
 			{Key: factkey.BuildKey(factkey.HeapLengthFloor, []factkey.Part{subject}, "op-00000000").String(), Value: []byte(floor)},
 		}})
 		if err != nil {

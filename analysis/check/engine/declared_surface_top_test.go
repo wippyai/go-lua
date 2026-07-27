@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -25,7 +26,7 @@ func declaredTopRootPartition(t *testing.T, declared typ.Type) equation.Partitio
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: []equation.Fact{
 		{Key: "declared-type/path/source/entry", Value: encoded},
 		{Key: "value/path/source/entry", Value: []byte("scalar/top")},
-		{Key: epochFactPrefix + "path/source/entry", Value: []byte("entry")},
+		{Key: factkey.Epoch.Key().String() + "path/source/entry", Value: []byte("entry")},
 	}})
 	if err != nil {
 		t.Fatalf("partition: %v", err)
@@ -72,7 +73,7 @@ func TestDeclaredSurfaceYieldsToConcreteRootValue(t *testing.T) {
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: []equation.Fact{
 		{Key: "declared-type/path/source/entry", Value: declared},
 		{Key: "value/path/source/op-00000002", Value: concrete},
-		{Key: epochFactPrefix + "path/source/op-00000002", Value: []byte("op-00000002")},
+		{Key: factkey.Epoch.Key().String() + "path/source/op-00000002", Value: []byte("op-00000002")},
 	}})
 	if err != nil {
 		t.Fatalf("partition: %v", err)
@@ -108,7 +109,7 @@ func TestTypedChannelPayloadReadsProvenChannelValue(t *testing.T) {
 	}
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: []equation.Fact{
 		{Key: "value/path/typed_events/op-00000004", Value: encoded},
-		{Key: epochFactPrefix + "path/typed_events/op-00000004", Value: []byte("op-00000004")},
+		{Key: factkey.Epoch.Key().String() + "path/typed_events/op-00000004", Value: []byte("op-00000004")},
 	}})
 	if err != nil {
 		t.Fatalf("partition: %v", err)
@@ -130,7 +131,7 @@ func TestTypedChannelPayloadRefusesNonChannelValue(t *testing.T) {
 	}
 	partition, err := equation.PartitionFromClosuresWithGuards(nil, equation.OutputClosure{Values: []equation.Fact{
 		{Key: "value/path/record/op-00000004", Value: encoded},
-		{Key: epochFactPrefix + "path/record/op-00000004", Value: []byte("op-00000004")},
+		{Key: factkey.Epoch.Key().String() + "path/record/op-00000004", Value: []byte("op-00000004")},
 	}})
 	if err != nil {
 		t.Fatalf("partition: %v", err)

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -174,7 +175,7 @@ func l1Seeds() []entrySeed {
 func TestExternalCallbackReceiverMayMutateReadsTheReceiversOwnCell(t *testing.T) {
 	identity := []byte("sealed-table/receiver/op-00000001")
 	reachable := transportPartition(t,
-		equation.Fact{Key: epochFactPrefix + "path/sym1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "path/sym1/op-00000001", Value: []byte("op-00000001")},
 		heapIdentityFact("path/sym1", "op-00000001", identity),
 		heapExternalCallbackFact(identity, "op-00000002"),
 	)
@@ -188,7 +189,7 @@ func TestExternalCallbackReceiverMayMutateReadsTheReceiversOwnCell(t *testing.T)
 		t.Fatalf("a standard-library provider owns its own result contract")
 	}
 	unreachable := transportPartition(t,
-		equation.Fact{Key: epochFactPrefix + "path/sym1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "path/sym1/op-00000001", Value: []byte("op-00000001")},
 		heapIdentityFact("path/sym1", "op-00000001", identity),
 	)
 	if externalCallbackReceiverMayMutate([]byte("path/sym1"), nil, unreachable) {

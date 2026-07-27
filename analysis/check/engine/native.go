@@ -230,7 +230,7 @@ func admitStructuralNativeFact(row NativeFact) bool {
 }
 
 func nativeFactFromProjection(projection front.NativeProjection) NativeFact {
-	family, _, _ := strings.Cut(projection.Key, "/")
+	family, _ := factkey.Head(projection.Key)
 	row := NativeFact{
 		Lane: NativeLaneValues, Family: family,
 		Key: projection.Key, Value: projection.Value,
@@ -329,18 +329,13 @@ func coalesceNativeContractRevocations(facts []NativeFact) []NativeFact {
 	const marker = "/contract-revocation/"
 	out := make([]NativeFact, 0, len(facts))
 	for _, fact := range facts {
-		index := strings.LastIndex(fact.Key, marker)
-		if index < 0 {
-			out = append(out, fact)
-			continue
-		}
-		events := strings.Split(fact.Key[index+len(marker):], ",")
-		if len(events) == 0 {
+		key, events, found := fact.contractRevocations(marker)
+		if !found {
 			out = append(out, fact)
 			continue
 		}
 		row := fact
-		row.Key, row.Established, row.Revoked, row.Event = fact.Key[:index], "contract", "", ""
+		row.Key, row.Established, row.Revoked, row.Event = key, "contract", "", ""
 		row.Revocations = make([]NativeRevocation, 0, len(events))
 		valid := true
 		for _, event := range events {
@@ -361,13 +356,21 @@ func coalesceNativeContractRevocations(facts []NativeFact) []NativeFact {
 	return out
 }
 
+func (fact NativeFact) contractRevocations(marker string) (string, []string, bool) {
+	key := fact.Key
+	index := strings.LastIndex(key, marker)
+	if index < 0 {
+		return "", nil, false
+	}
+	events := strings.Split(key[index+len(marker):], ",")
+	return key[:index], events, len(events) != 0
+}
+
 // projectNativeContracts translates only contract vocabulary already witnessed
 // by the closed native fact set. It is one-way and fail-closed: a row appears
 // only when every fact it names was published by this evaluation.
 func projectNativeContracts(facts []NativeFact) []NativeFact {
-	const (
-		freezePrefix = "effect.freeze/"
-	)
+	freezePrefix := factkey.EffectFreeze.Key().String()
 	type identityAnchor struct{ term, subject string }
 	type memberRead struct{ identity, member, occurrence string }
 	type sealedClaim struct {
@@ -435,7 +438,7 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 			if application != "" && position != "" && fact.Value != "" {
 				callArguments[application] = append(callArguments[application], fact.Value)
 			}
-		case strings.HasPrefix(fact.Key, freezePrefix):
+		case factkey.OwnsPrefix(freezePrefix, fact.Key):
 			term, _, ok := nativeFreezeTerm(fact.Key, freezePrefix)
 			if ok {
 				frozenTerms[term] = true
@@ -545,7 +548,7 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 		}
 		rows = append(rows, NativeFact{
 			Lane: NativeLaneValues, Family: "table_element",
-			Key: "table_element/" + identity + "/" + index + "/" + occurrence +
+			Key: factkey.NativeTableElement.Key().String() + identity + "/" + index + "/" + occurrence +
 				"/contract-revocation/" + strings.Join(nativeGuardedElementDeopts, ","),
 			Value: "presence=proven result_nilability=non_nil",
 			Term:  anchor.term, Subject: anchor.subject, Occurrence: occurrence,
@@ -648,10 +651,10 @@ func nativeDecodedIdentity(encoded string) string {
 func (a *nativeAnchors) bindValidity(facts []NativeFact) {
 	chains := make(map[string][]string)
 	for _, fact := range facts {
-		if fact.Lane != NativeLaneValues || !strings.HasPrefix(fact.Key, epochFactPrefix) {
+		if fact.Lane != NativeLaneValues || !factkey.Epoch.Owns(fact.Key) {
 			continue
 		}
-		rest := fact.Key[len(epochFactPrefix):]
+		rest := fact.Key[len(factkey.Epoch.Key().String()):]
 		cut := strings.LastIndexByte(rest, '/')
 		if cut < 0 {
 			continue

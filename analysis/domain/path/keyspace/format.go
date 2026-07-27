@@ -40,17 +40,6 @@ func (k Key) PathKey() (pathdom.PathKey, bool) {
 	return k.owner.space.FormatReadOnly(k), true
 }
 
-// String returns the owner-sealed spelling of k. It lets leaf wire-codec
-// packages consume a structural path through fmt.Stringer without importing
-// the domain layer. Invalid or detached keys return the empty string.
-func (k Key) String() string {
-	path, ok := k.PathKey()
-	if !ok {
-		return ""
-	}
-	return string(path)
-}
-
 func (ks *KeySpace) writeRoot(b *strings.Builder, k Key) {
 	switch k.Kind {
 	case KindResolverSym:

@@ -1,10 +1,10 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -407,9 +407,9 @@ func TestJoinedSurfaceStaysPrivateInsideAnEdge(t *testing.T) {
 func TestInheritedSummaryJoinsBothEdges(t *testing.T) {
 	left, right := typ.MaterializeOptional(typ.String), typ.MaterializeOptional(typ.Number)
 	partition := joinTestPartition(t, nil,
-		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/1/op-00000001", Value: []byte("op-00000001")},
 		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "temp/1", "op-00000001").String(), Value: mustCanonicalType(left)},
-		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "temp/1", "op-00000003").String(), Value: mustCanonicalType(right), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 	)
 	encoded, found := reconvergedFamilyEpochFact(factkey.SummaryType, []byte("temp/1"), partition, joinSummaryTypes)
@@ -426,9 +426,9 @@ func TestInheritedSummaryJoinsBothEdges(t *testing.T) {
 	// Inside the taken edge the copy still holds that edge's own summary: the
 	// join belongs to the point both edges reach, not to either of them.
 	inside := joinTestPartition(t, []equation.Guard{joinTestGuard("op-00000002", "true")},
-		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/1/op-00000001", Value: []byte("op-00000001")},
 		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "temp/1", "op-00000001").String(), Value: mustCanonicalType(left)},
-		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "temp/1", "op-00000003").String(), Value: mustCanonicalType(right), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 	)
 	armEncoded, armFound := reconvergedFamilyEpochFact(factkey.SummaryType, []byte("temp/1"), inside, joinSummaryTypes)
@@ -450,8 +450,8 @@ func TestInheritedSummaryJoinsBothEdges(t *testing.T) {
 // no summary at all.
 func TestInheritedSummaryWithholdsWhenAnEdgeProvedNothing(t *testing.T) {
 	partition := joinTestPartition(t, nil,
-		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
-		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "temp/1", "op-00000003").String(), Value: mustCanonicalType(typ.String), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 	)
 	if encoded, found := reconvergedFamilyEpochFact(factkey.SummaryType, []byte("temp/1"), partition, joinSummaryTypes); found {
@@ -464,9 +464,9 @@ func TestInheritedSummaryWithholdsWhenAnEdgeProvedNothing(t *testing.T) {
 // the row the copy could still find describes a value the write replaced.
 func TestInheritedSummaryKeepsEpochAuthority(t *testing.T) {
 	partition := joinTestPartition(t, nil,
-		equation.Fact{Key: epochFactPrefix + "path/x/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "path/x/op-00000001", Value: []byte("op-00000001")},
 		equation.Fact{Key: termFamilyKey(factkey.SummaryType, "path/x", "op-00000001").String(), Value: mustCanonicalType(typ.String)},
-		equation.Fact{Key: epochFactPrefix + "path/x/op-00000002", Value: []byte("op-00000002")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "path/x/op-00000002", Value: []byte("op-00000002")},
 	)
 	if encoded, found := reconvergedFamilyEpochFact(factkey.SummaryType, []byte("path/x"), partition, joinSummaryTypes); found {
 		t.Fatalf("a retired summary was inherited as %q", encoded)
@@ -479,9 +479,9 @@ func TestInheritedSummaryKeepsEpochAuthority(t *testing.T) {
 // copy inherits nothing.
 func TestInheritedNameJoinsOnlyByAgreement(t *testing.T) {
 	agreeing := joinTestPartition(t, nil,
-		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/1/op-00000001", Value: []byte("op-00000001")},
 		joinTestHeapIdentity("temp/1", "op-00000001", "sealed-table/01/op-00000000"),
-		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 		joinTestHeapIdentity("temp/1", "op-00000003", "sealed-table/01/op-00000000", joinTestGuard("op-00000002", "true")),
 	)
 	identity, found := reconvergedFamilyEpochFact(factkey.HeapTableIdentity, []byte("temp/1"), agreeing, joinAgreedValues)
@@ -489,9 +489,9 @@ func TestInheritedNameJoinsOnlyByAgreement(t *testing.T) {
 		t.Fatalf("agreeing edges inherited %q / %v, want the common identity", identity, found)
 	}
 	disagreeing := joinTestPartition(t, nil,
-		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/1/op-00000001", Value: []byte("op-00000001")},
 		joinTestHeapIdentity("temp/1", "op-00000001", "sealed-table/01/op-00000000"),
-		equation.Fact{Key: epochFactPrefix + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "temp/1/op-00000003", Value: []byte("op-00000003"), Guards: []equation.Guard{joinTestGuard("op-00000002", "true")}},
 		joinTestHeapIdentity("temp/1", "op-00000003", "sealed-table/01/op-00000004", joinTestGuard("op-00000002", "true")),
 	)
 	if identity, found := reconvergedFamilyEpochFact(factkey.HeapTableIdentity, []byte("temp/1"), disagreeing, joinAgreedValues); found {

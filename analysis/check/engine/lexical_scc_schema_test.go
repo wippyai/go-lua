@@ -1,10 +1,10 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 )
 
 // A fact states what it is about in the positions its family declares. Some
@@ -115,8 +115,8 @@ func TestUndeclaredFamiliesKeepThePositionalRule(t *testing.T) {
 	term := boundaryTerm(2)
 	carried := []string{
 		"value/" + term + "/op-00000001",
-		affineIndexPrefix + term + "/op-00000001",
-		booleanResultPrefix + term + "/op-00000001",
+		factkey.AffineIndex.Key().String() + term + "/op-00000001",
+		factkey.BooleanResult.Key().String() + term + "/op-00000001",
 	}
 	dropped := []string{
 		"value/" + boundaryTerm(9) + "/op-00000001",

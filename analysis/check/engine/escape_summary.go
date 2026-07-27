@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -132,13 +133,13 @@ func (l *lexicalEvaluator) returnTuplesForPrototype(body equation.BodyID, child 
 // exported member name to its closure handle without re-deriving the return
 // shape from source.
 func exportedFunctionHandles(values []equation.Fact) map[string]closureHandle {
-	const prefix = "return-member-closure/"
+	prefix := factkey.ReturnMemberClosure.Key().String()
 	handles := make(map[string]closureHandle)
 	for _, fact := range values {
-		if !strings.HasPrefix(fact.Key, prefix) {
+		if !factkey.OwnsPrefix(prefix, fact.Key) {
 			continue
 		}
-		parts := strings.Split(fact.Key, "/")
+		parts := factkey.Segments(fact.Key)
 		if len(parts) != 4 || parts[2] != "00000000" {
 			continue
 		}
@@ -193,7 +194,7 @@ type returnCandidateValues struct {
 func completeReturnCandidates(outcomes []equation.Fact) ([][][]byte, bool) {
 	candidates := make(map[string]*returnCandidateValues)
 	for _, fact := range outcomes {
-		parts := strings.Split(fact.Key, "/")
+		parts := factkey.Segments(fact.Key)
 		if len(parts) != 3 || parts[0] != "return-candidate" || parts[1] == "" {
 			continue
 		}
@@ -272,7 +273,7 @@ func completeReturnTemplates(child front.Compilation, outcome equation.OutputClo
 func completeReturnTemplateMap(child front.DraftsBoundaryView, outcome equation.OutputClosure, origins map[string]int) map[string]exportrelation.Value {
 	candidates := make(map[string][]byte)
 	for _, fact := range outcome.Outcomes {
-		parts := strings.Split(fact.Key, "/")
+		parts := factkey.Segments(fact.Key)
 		if len(parts) == 3 && parts[0] == "return-candidate" && parts[2] == "arity" && string(fact.Value) == "1" {
 			candidates[parts[1]] = nil
 		}
@@ -290,7 +291,7 @@ func completeReturnTemplateMap(child front.DraftsBoundaryView, outcome equation.
 		return nil
 	}
 	for _, fact := range outcome.Values {
-		parts := strings.Split(fact.Key, "/")
+		parts := factkey.Segments(fact.Key)
 		if len(parts) != 3 || parts[0] != "return-relation-surface" || parts[2] != "00000000" {
 			continue
 		}
@@ -414,7 +415,7 @@ func relationSurfaceTemplate(encoded []byte, origins map[string]int, prefix stri
 func singleReturnMemberOrigins(child front.BoundaryView, outcome equation.OutputClosure) map[string]int {
 	candidate := ""
 	for _, fact := range outcome.Outcomes {
-		parts := strings.Split(fact.Key, "/")
+		parts := factkey.Segments(fact.Key)
 		if len(parts) != 3 || parts[0] != "return-candidate" || parts[2] != "arity" || string(fact.Value) != "1" {
 			continue
 		}
@@ -433,10 +434,10 @@ func singleReturnMemberOrigins(child front.BoundaryView, outcome equation.Output
 	if len(formals) == 0 {
 		return nil
 	}
-	prefix := "return-member-origin/" + candidate + "/00000000/"
+	prefix := factkey.ReturnMemberOrigin.Key().String() + candidate + "/00000000/"
 	origins := make(map[string]int)
 	for _, fact := range outcome.Values {
-		encoded, found := strings.CutPrefix(fact.Key, prefix)
+		encoded, found := factkey.TailPrefix(prefix, fact.Key)
 		if !found || encoded == "" {
 			continue
 		}
@@ -479,11 +480,11 @@ func singleForwardedReturn(child front.DraftsBoundaryView, tuples [][][]byte, va
 	if returned == "" {
 		return exportrelation.Value{}, false
 	}
-	prefix := importedReturnRelationPrefix + returned + "/"
+	prefix := factkey.ImportedReturnRelation.Key().String() + returned + "/"
 	var encoded []byte
 	latest := ""
 	for _, fact := range values {
-		if strings.HasPrefix(fact.Key, prefix) && fact.Key > latest {
+		if factkey.OwnsPrefix(prefix, fact.Key) && fact.Key > latest {
 			encoded, latest = fact.Value, fact.Key
 		}
 	}
@@ -669,10 +670,10 @@ func storeContainerFormal(param int, ownedOps []string, values []equation.Fact, 
 	}
 	container, candidates := 0, 0
 	for other, identity := range identities {
-		if other == param || len(placementProvenOperations(values, placementEventPrefix, identity, placementEventOwned)) != 0 {
+		if other == param || len(placementProvenOperations(values, factkey.PlacementEvent.Key().String(), identity, placementEventOwned)) != 0 {
 			continue
 		}
-		for _, operation := range placementProvenOperations(values, placementContractPrefix, identity, placementvocab.BoundaryRetain) {
+		for _, operation := range placementProvenOperations(values, factkey.PlacementContract.Key().String(), identity, placementvocab.BoundaryRetain) {
 			if boundaries[operation] {
 				container, candidates = other, candidates+1
 				break
@@ -685,7 +686,7 @@ func storeContainerFormal(param int, ownedOps []string, values []equation.Fact, 
 func classifyEscapeIdentity(index int, identity string, parsed publishedPlacementFacts, values []equation.Fact, opKinds map[string]string, identities map[int]string) signature.ParamRelation {
 	relation := signature.ParamRelation{Param: index, EscapeClass: signature.EscapeBorrow, PlacementConsequence: signature.PlacementConsequenceKeep}
 	events := parsed.events[identity]
-	ownedOps := placementProvenOperations(values, placementEventPrefix, identity, placementEventOwned)
+	ownedOps := placementProvenOperations(values, factkey.PlacementEvent.Key().String(), identity, placementEventOwned)
 	storeOwned, returnOwned := false, false
 	for _, operation := range ownedOps {
 		if opKinds[operation] == "publication" {
@@ -725,8 +726,8 @@ func placementProvenOperations[T ~string](values []equation.Fact, family, identi
 	prefix := family + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(boundary) + "/"
 	var operations []string
 	for _, fact := range values {
-		if string(fact.Value) == "proven" && strings.HasPrefix(fact.Key, prefix) {
-			operations = append(operations, strings.TrimPrefix(fact.Key, prefix))
+		if string(fact.Value) == "proven" && factkey.OwnsPrefix(prefix, fact.Key) {
+			operations = append(operations, factkey.BodyPrefix(prefix, fact.Key))
 		}
 	}
 	return operations

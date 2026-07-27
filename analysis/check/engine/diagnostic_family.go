@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"strconv"
 	"strings"
 
@@ -147,6 +148,30 @@ type diagnosticFamily struct {
 	AnchorKind  DiagnosticAnchorKind
 	Narrate     diagnosticNarrate
 	Severity    diagnostic.Severity
+}
+
+func (f diagnosticFamily) tail(key string) (string, bool) {
+	return strings.CutPrefix(key, f.KeyPrefix)
+}
+
+func (f diagnosticFamily) body(key string) string {
+	tail, _ := f.tail(key)
+	return tail
+}
+
+func (f diagnosticFamily) segments(key string) []string {
+	if _, ok := f.tail(key); !ok {
+		return nil
+	}
+	return strings.Split(key, "/")
+}
+
+func diagnosticFamilyTail(id DiagnosticFamilyID, key string) (string, bool) {
+	return diagnosticFamilies[id].tail(key)
+}
+
+func diagnosticFamilyBody(id DiagnosticFamilyID, key string) string {
+	return diagnosticFamilies[id].body(key)
 }
 
 // diagnosticFamilies is intentionally an array indexed by DiagnosticFamilyID.
@@ -371,7 +396,7 @@ func diagnosticFamilyMatches(key string, ids ...DiagnosticFamilyID) bool {
 func diagnosticOperationName(key string) string {
 	_, family, inner, found := lookupDiagnosticFamily(key)
 	if found {
-		name := strings.TrimPrefix(inner, family.KeyPrefix)
+		name := family.body(inner)
 		if family.AnchorKind == DiagnosticAnchorExpression && family.Code == diagnosticFamilies[DiagnosticFamilyConcatOperand].Code {
 			name, _, _ = strings.Cut(name, "/")
 		}
@@ -395,7 +420,7 @@ func narrateAssignment(item PublishedDiagnostic, context diagnosticNarrationCont
 	if context.fact.Key != context.key {
 		return item, true
 	}
-	name := strings.TrimPrefix(context.key, context.family.KeyPrefix)
+	name := context.family.body(context.key)
 	if operation, found := context.claims[name]; found {
 		// A select-seeded child can carry the closed mismatch payload even when
 		// its entry does not publish the source term again. In that case the
@@ -566,7 +591,7 @@ func narrateSelect(item PublishedDiagnostic, context diagnosticNarrationContext)
 }
 
 func narrateFrozenMutation(item PublishedDiagnostic, context diagnosticNarrationContext) (PublishedDiagnostic, bool) {
-	parts := strings.Split(item.Fact.Key, "/")
+	parts := context.family.segments(item.Fact.Key)
 	if len(parts) != 3 {
 		return item, true
 	}
@@ -951,7 +976,7 @@ func narrateConstantGuard(item PublishedDiagnostic, context diagnosticNarrationC
 }
 
 func narrateReturnContract(item PublishedDiagnostic, context diagnosticNarrationContext) (PublishedDiagnostic, bool) {
-	contract := strings.TrimPrefix(context.key, context.family.KeyPrefix)
+	contract := context.family.body(context.key)
 	operationName, indexed, hasSlot := strings.Cut(contract, "/")
 	slot, member, _ := strings.Cut(indexed, "/")
 	operation, found := context.publications[operationName]
@@ -1019,7 +1044,7 @@ func narrateReturnContract(item PublishedDiagnostic, context diagnosticNarration
 }
 
 func narrateOptionalAssignmentTarget(item PublishedDiagnostic, context diagnosticNarrationContext) (PublishedDiagnostic, bool) {
-	name := strings.TrimPrefix(context.key, context.family.KeyPrefix)
+	name := context.family.body(context.key)
 	if operation, found := context.pathReplacements[name]; found {
 		target, container := "", ""
 		for _, operand := range operation.Operands {
@@ -1035,7 +1060,7 @@ func narrateOptionalAssignmentTarget(item PublishedDiagnostic, context diagnosti
 		}
 		var witness []byte
 		for _, fact := range context.closure.Values {
-			if fact.Key == optionalWriteContainerPrefix+name {
+			if fact.Key == factkey.OptionalWriteContainer.Key().String()+name {
 				witness = fact.Value
 				break
 			}
@@ -1051,7 +1076,7 @@ func narrateOptionalAssignmentTarget(item PublishedDiagnostic, context diagnosti
 }
 
 func narrateMissingMember(item PublishedDiagnostic, context diagnosticNarrationContext) (PublishedDiagnostic, bool) {
-	name := strings.TrimPrefix(context.key, context.family.KeyPrefix)
+	name := context.family.body(context.key)
 	if operation, found := context.claims[name]; found {
 		operands, err := artifactOperandsByRole(operation.Operands, "value")
 		if err != nil {

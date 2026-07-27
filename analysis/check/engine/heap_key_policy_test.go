@@ -1,12 +1,17 @@
 package engine
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 )
 
 // TestEngineFactKeysStayBehindFactkey is deliberately a crude source fence.
@@ -35,6 +40,9 @@ func TestEngineFactKeysStayBehindFactkey(t *testing.T) {
 		regexp.MustCompile(`factkey\.[A-Za-z0-9_]+\.Prefix`),
 		regexp.MustCompile(`strings\.(HasPrefix|CutPrefix|TrimPrefix|Split|SplitN|Cut)\([^\n]*heap`),
 	}
+	for _, family := range factkey.Families() {
+		forbidden = append(forbidden, regexp.MustCompile("[\"`]"+regexp.QuoteMeta(family.Prefix)))
+	}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
@@ -49,6 +57,9 @@ func TestEngineFactKeysStayBehindFactkey(t *testing.T) {
 			if match := pattern.Find(content); match != nil {
 				t.Errorf("%s contains forbidden fact-key handling %q", entry.Name(), match)
 			}
+		}
+		if position := directKeyParser(path, content); position != "" {
+			t.Errorf("%s contains direct key parser at %s", entry.Name(), position)
 		}
 	}
 	frontPath := filepath.Join(directory, "..", "fixpoint", "front", "front.go")
@@ -77,4 +88,40 @@ func TestEngineFactKeysStayBehindFactkey(t *testing.T) {
 			t.Errorf("exporter.go contains forbidden value-key handling %q", match)
 		}
 	}
+}
+
+func directKeyParser(path string, source []byte) string {
+	fileSet := token.NewFileSet()
+	file, err := parser.ParseFile(fileSet, path, source, 0)
+	if err != nil {
+		return err.Error()
+	}
+	parsers := map[string]bool{"HasPrefix": true, "CutPrefix": true, "TrimPrefix": true, "Split": true, "SplitN": true, "Cut": true}
+	var found token.Pos
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || found.IsValid() {
+			return !found.IsValid()
+		}
+		function, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		packageName, packageOK := function.X.(*ast.Ident)
+		if !packageOK || packageName.Name != "strings" || !parsers[function.Sel.Name] {
+			return true
+		}
+		ast.Inspect(call, func(child ast.Node) bool {
+			if selector, ok := child.(*ast.SelectorExpr); ok && selector.Sel.Name == "Key" {
+				found = selector.Pos()
+				return false
+			}
+			return true
+		})
+		return !found.IsValid()
+	})
+	if !found.IsValid() {
+		return ""
+	}
+	return fileSet.Position(found).String()
 }

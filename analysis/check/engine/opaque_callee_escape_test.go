@@ -1,10 +1,10 @@
 package engine
 
 import (
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -102,7 +102,7 @@ func TestProviderContractDischargesOnlyWhatItProves(t *testing.T) {
 func TestEscapeReachesTheGraphBeneathAnArgument(t *testing.T) {
 	root, nested := []byte("sealed-table/root"), []byte("sealed-table/nested")
 	partition := escapeTestPartition(t,
-		equation.Fact{Key: epochFactPrefix + "path/box/op-00000001", Value: []byte("op-00000001")},
+		equation.Fact{Key: factkey.Epoch.Key().String() + "path/box/op-00000001", Value: []byte("op-00000001")},
 		heapIdentityFact("path/box", "op-00000001", root),
 		heapMemberIdentityFact(root, ".items", "op-00000002", nested),
 	)

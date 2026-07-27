@@ -13,13 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// pathEqualityPrefix carries a proven equality between two exact paths. The
-// branch that proved it owns the guard; the fact itself is a statement about
-// the two symbols, not about the condition, so it stays available on every
-// later coordinate the guard reaches. Either symbol's next epoch revokes it: a
-// reassignment replaces the value the equality was about.
-const pathEqualityPrefix = "path-equality/"
-
 // pathEqualityFacts records the equalities a branch proves on each of its
 // edges. The true edge of `p == q` proves the equality; so does the false edge
 // of `p ~= q`, which is the early-return spelling of the same guard.
@@ -73,7 +66,7 @@ func pathEqualityKey(left, right string) string {
 	if right < left {
 		left, right = right, left
 	}
-	return pathEqualityPrefix + base64.RawURLEncoding.EncodeToString([]byte(left)) + "/" +
+	return factkey.PathEquality.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(left)) + "/" +
 		base64.RawURLEncoding.EncodeToString([]byte(right))
 }
 
@@ -83,9 +76,9 @@ func pathEqualityKey(left, right string) string {
 // belongs to an earlier value of that symbol and is dropped.
 func provenPathEqualities(partition equation.Partition) map[string]map[string]bool {
 	var equal map[string]map[string]bool
-	values := partition.IterateValuesPrefix(pathEqualityPrefix)
+	values := partition.IterateValuesPrefix(factkey.PathEquality.Key().String())
 	for fact, ok := values.Next(); ok; fact, ok = values.Next() {
-		rest, found := strings.CutPrefix(fact.Key, pathEqualityPrefix)
+		rest, found := factkey.PathEquality.Tail(fact.Key)
 		if !found || string(fact.Value) != "proven" {
 			continue
 		}

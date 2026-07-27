@@ -6,21 +6,12 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
-)
-
-const (
-	// residueWindowPrefix carries the integer interval a computed index term
-	// occupies, keyed by that term. It is a value fact like any other: the
-	// term's own epoch revokes it when the body recomputes the term.
-	residueWindowPrefix = "residue-window/"
-	// lengthTermPrefix names the container whose length a term holds. It is the
-	// only way a later operator can tell `#xs` apart from an unrelated number.
-	lengthTermPrefix = "length-term/"
 )
 
 // residueWindowWire is the closed encoding of a residue window.
@@ -44,7 +35,7 @@ func residueExpressionFacts(operator wir.Operator, operands map[equation.Operand
 	if err != nil {
 		return nil
 	}
-	return []equation.Fact{{Key: residueWindowPrefix + result + "/" + operation, Value: encoded}}
+	return []equation.Fact{{Key: factkey.ResidueWindow.Key().String() + result + "/" + operation, Value: encoded}}
 }
 
 func residueExpressionWindow(operator wir.Operator, operands map[equation.OperandRole][]byte, partition equation.Partition) (residueWindow, bool) {
@@ -109,7 +100,7 @@ func residueIndexPresenceProven(container, key []byte, partition equation.Partit
 // established before the term's latest epoch describes an earlier value of the
 // same term and is not current.
 func publishedResidueWindow(term []byte, partition equation.Partition) (residueWindow, bool) {
-	prefix := residueWindowPrefix + string(term) + "/"
+	prefix := factkey.ResidueWindow.Key().String() + string(term) + "/"
 	latest, found := partition.LatestValuePrefix(prefix)
 	if !found {
 		return residueWindow{}, false
@@ -135,7 +126,7 @@ func publishedLengthTerm(term []byte, partition equation.Partition) (string, boo
 // measures the container against the remembered value needs the point the
 // snapshot was taken as well as the container it describes.
 func publishedLengthTermTaken(term []byte, partition equation.Partition) (string, string, bool) {
-	prefix := lengthTermPrefix + string(term) + "/"
+	prefix := factkey.LengthTerm.Key().String() + string(term) + "/"
 	latest, found := partition.LatestValuePrefix(prefix)
 	if !found {
 		return "", "", false

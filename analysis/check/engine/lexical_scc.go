@@ -309,12 +309,12 @@ func lexicalSCCSummary(compilation front.BoundaryView, closure equation.OutputCl
 	}
 	outcomes := make([]equation.Fact, 0, len(closure.Outcomes))
 	for _, fact := range closure.Outcomes {
-		if strings.HasPrefix(fact.Key, "return-candidate/") {
+		if factkey.OwnsPrefix(factkey.ReturnCandidate.Key().String(), fact.Key) {
 			outcomes = append(outcomes, fact)
 		}
 	}
 	for _, fact := range closure.Values {
-		if strings.HasPrefix(fact.Key, "return-member-closure/") {
+		if factkey.OwnsPrefix(factkey.ReturnMemberClosure.Key().String(), fact.Key) {
 			keep(fact)
 		}
 	}
