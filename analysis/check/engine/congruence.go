@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"encoding/base64"
 	"fmt"
 	"sort"
 	"strings"
@@ -51,7 +50,7 @@ func pathEqualityFacts(operation equation.BoundEquation, partition equation.Part
 			guardEdge = "false"
 		}
 		facts = append(facts, equation.Fact{
-			Key: key, Value: []byte("proven"),
+			Key: key, Value: factkey.EncodeTruth(factkey.TruthProven),
 			Guards: equation.GuardSet(equation.NewBranchGuard(
 				operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: guardEdge},
 			)),
@@ -66,8 +65,10 @@ func pathEqualityKey(left, right string) string {
 	if right < left {
 		left, right = right, left
 	}
-	return factkey.PathEquality.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(left)) + "/" +
-		base64.RawURLEncoding.EncodeToString([]byte(right))
+	return strings.TrimSuffix(factkey.BuildKey(factkey.PathEquality, []factkey.Part{
+		factkey.EncodedTermPart([]byte(left)),
+		factkey.EncodedTermPart([]byte(right)),
+	}, "").String(), "/")
 }
 
 // provenPathEqualities reads back every equality currently visible at this
@@ -76,22 +77,17 @@ func pathEqualityKey(left, right string) string {
 // belongs to an earlier value of that symbol and is dropped.
 func provenPathEqualities(partition equation.Partition) map[string]map[string]bool {
 	var equal map[string]map[string]bool
-	values := partition.IterateValuesPrefix(factkey.PathEquality.Key().String())
+	values := partition.FamilyValues(factkey.PathEquality.Key())
+	var scratch [256]byte
 	for fact, ok := values.Next(); ok; fact, ok = values.Next() {
-		rest, found := factkey.PathEquality.Tail(fact.Key)
-		if !found || string(fact.Value) != "proven" {
+		if fact.Truth() != factkey.TruthProven {
 			continue
 		}
-		parts := strings.Split(rest, "/")
-		if len(parts) < 3 {
+		left, right, _, decoded := fact.DecodePair(scratch[:0])
+		if !decoded {
 			continue
 		}
-		left, leftErr := base64.RawURLEncoding.DecodeString(parts[0])
-		right, rightErr := base64.RawURLEncoding.DecodeString(parts[1])
-		if leftErr != nil || rightErr != nil {
-			continue
-		}
-		if pathEqualityStale(left, fact.Key, partition) || pathEqualityStale(right, fact.Key, partition) {
+		if pathEqualityStale(left, fact.Occurrence, partition) || pathEqualityStale(right, fact.Occurrence, partition) {
 			continue
 		}
 		leftPath, leftOK := strings.CutPrefix(string(left), "path/")
@@ -117,9 +113,9 @@ func provenPathEqualities(partition equation.Partition) map[string]map[string]bo
 // pathEqualityStale reports that the term was replaced after the relation was
 // proven. A member or index write cannot break reference equality, so only the
 // symbol's own epoch revokes: exactly the event the cone epochs already model.
-func pathEqualityStale(term []byte, proof string, partition equation.Partition) bool {
+func pathEqualityStale(term []byte, publishedAt string, partition equation.Partition) bool {
 	epoch, versioned := currentEpoch(term, partition)
-	return versioned && epoch > factOperation(proof)
+	return versioned && epoch > publishedAt
 }
 
 // congruenceOperandSealed reports that this body installed no metatable on the

@@ -7474,20 +7474,19 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	// facts retain local closure handles for sealed table results without
 	// changing the table's ordinary callable/member facts.
 	for _, fact := range closure.Values {
-		prefix := factkey.ReturnMemberClosure.Key().String()
-		if !factkey.OwnsPrefix(prefix, fact.Key) {
+		value, decoded := equation.DecodeFamilyValue(factkey.ReturnMemberClosure, fact)
+		if !decoded {
 			continue
 		}
-		parts := factkey.PrefixSegments(prefix, fact.Key)
-		if len(parts) != 3 {
+		row, valid := value.ReturnMemberClosure()
+		if !valid {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child member closure")
 		}
-		resultIndex, err := strconv.Atoi(parts[1])
-		if err != nil || resultIndex < 0 || resultIndex >= len(returns) {
+		if row.ReturnSlot >= uint64(len(returns)) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child member closure result")
 		}
 		var wire memberClosureWire
-		if front.DecodeRequiredWireJSON(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
+		if front.DecodeRequiredWireJSON(row.Payload, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child member closure handle")
 		}
 		rebound, values, err := rebindEscapingClosure(operation, child, arguments, handle, closure, wire.Handle)
@@ -7500,7 +7499,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			return equation.TransactionResult{}, err
 		}
 		projected.Values = append(projected.Values, values...)
-		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("%s%s/%08d/%s", factkey.CallMemberClosure.Key().String(), strings.TrimPrefix(operation.Target.Name, "call/"), resultIndex, parts[2]), Value: encoded})
+		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("%s%s/%08d/%s", factkey.CallMemberClosure.Key().String(), strings.TrimPrefix(operation.Target.Name, "call/"), row.ReturnSlot, row.Member), Value: encoded})
 	}
 	for index, capture := range child.BodyBoundary().Captures {
 		value, found := latestClosedValue([]byte(boundaryTerm(capture.Symbol)), closure.Values)
@@ -8788,15 +8787,19 @@ func childReturnCandidates(closure equation.OutputClosure) ([]string, error) {
 	candidates := make([]string, 0, 2)
 	seen := make(map[string]bool, 2)
 	for _, outcome := range closure.Outcomes {
-		if !factkey.OwnsPrefix(factkey.ReturnCandidate.Key().String(), outcome.Key) || !strings.HasSuffix(outcome.Key, "/arity") {
+		value, decoded := equation.DecodeFamilyValue(factkey.ReturnCandidate, outcome)
+		if !decoded {
 			continue
 		}
-		if _, err := strconv.Atoi(string(outcome.Value)); err != nil {
+		row, valid := value.ReturnCandidate()
+		if !valid {
 			return nil, fmt.Errorf("malformed child return arity")
 		}
-		candidate := strings.TrimSuffix(outcome.Key, "/arity") + "/"
-		if !seen[candidate] {
-			seen[candidate], candidates = true, append(candidates, candidate)
+		if row.Field != equation.ReturnCandidateArity {
+			continue
+		}
+		if !seen[row.Candidate] {
+			seen[row.Candidate], candidates = true, append(candidates, row.Candidate)
 		}
 	}
 	return candidates, nil
@@ -8842,21 +8845,24 @@ func childReturnValues(closure equation.OutputClosure, joinAlternatives bool) ([
 	return joined, nil
 }
 
-func childReturnCandidateValues(closure equation.OutputClosure, prefix string) ([][]byte, error) {
+func childReturnCandidateValues(closure equation.OutputClosure, candidate string) ([][]byte, error) {
 	values := map[int][]byte{}
 	for _, outcome := range closure.Outcomes {
-		if !factkey.OwnsPrefix(prefix, outcome.Key) {
+		value, decoded := equation.DecodeFamilyValue(factkey.ReturnCandidate, outcome)
+		if !decoded {
 			continue
 		}
-		indexText := factkey.BodyPrefix(prefix, outcome.Key)
-		if indexText == "arity" {
-			continue
-		}
-		index, err := strconv.Atoi(indexText)
-		if err != nil || index < 0 || (index < len(values) && values[index] != nil) {
+		row, valid := value.ReturnCandidate()
+		if !valid {
 			return nil, fmt.Errorf("malformed child return slot")
 		}
-		values[index] = append([]byte(nil), outcome.Value...)
+		if row.Candidate != candidate || row.Field == equation.ReturnCandidateArity {
+			continue
+		}
+		if row.Field != equation.ReturnCandidateSlot || values[row.Index] != nil {
+			return nil, fmt.Errorf("malformed child return slot")
+		}
+		values[row.Index] = append([]byte(nil), row.Value...)
 	}
 	result := make([][]byte, len(values))
 	for index := range result {
@@ -10989,7 +10995,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	// proof. A contract that accepts every boolean is discharged by it even
 	// where the operands crossed a precision boundary.
 	if wir.Op(kind) == wir.OpBinOp && comparisonOperator(wir.Operator(op)) {
-		values = append(values, equation.Fact{Key: factkey.BooleanResult.Key().String() + string(result) + "/" + operation.Target.Name, Value: []byte("proven")})
+		values = append(values, equation.Fact{Key: factkey.BooleanResult.Key().String() + string(result) + "/" + operation.Target.Name, Value: factkey.EncodeTruth(factkey.TruthProven)})
 	}
 	if wir.Op(kind) == wir.OpBinOp && (wir.Operator(op) == wir.BinEq || wir.Operator(op) == wir.BinNe) {
 		// Equality against an explicit-any boundary has no concrete boolean
@@ -12378,7 +12384,10 @@ func pathReplacementKernel(operation equation.BoundEquation, partition equation.
 		result.Closure.Diagnostics = append(result.Closure.Diagnostics, diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyAssignment)+operation.Target.Name, DiagnosticPayload{
 			Kind: diagnosticFunctionWriteMismatch, Source: string(operands["display"]), Observed: assignmentEvidenceValue(value), Required: functionContractDisplay(existing),
 		}))
-		result.Closure.Values = append(result.Closure.Values, equation.Fact{Key: factkey.AssignmentFunctionContract.Key().String() + operation.Target.Name, Value: []byte("refuted")})
+		result.Closure.Values = append(result.Closure.Values, equation.Fact{
+			Key:   factkey.AssignmentFunctionContract.Key().String() + operation.Target.Name,
+			Value: factkey.EncodeTruth(factkey.TruthRefuted),
+		})
 	}
 	if len(declaredContract) != 0 {
 		result.Closure.Values = append(result.Closure.Values, equation.Fact{
@@ -12783,7 +12792,7 @@ func indexPresenceProven(container, index []byte, consumer string, partition equ
 		if !ok {
 			break
 		}
-		if string(fact.Payload) == "proven" && fact.Occurrence > proof {
+		if fact.Truth() == factkey.TruthProven && fact.Occurrence > proof {
 			proof = fact.Occurrence
 		}
 	}
@@ -12837,7 +12846,7 @@ func keyIterationPresenceFacts(source []byte, key, operation string, partition e
 		Key: factkey.BuildKey(factkey.HeapKeyPresence, []factkey.Part{
 			heapIndexSubject(source, partition), factkey.EncodedTermPart([]byte(key)),
 		}, operation).String(),
-		Value: []byte("proven"),
+		Value: factkey.EncodeTruth(factkey.TruthProven),
 	}}
 }
 
@@ -13063,7 +13072,7 @@ func keyIterationPresenceProven(container, index []byte, partition equation.Part
 		if !ok {
 			break
 		}
-		if string(fact.Payload) == "proven" && fact.Occurrence > proof {
+		if fact.Truth() == factkey.TruthProven && fact.Occurrence > proof {
 			proof = fact.Occurrence
 		}
 	}
@@ -13095,7 +13104,7 @@ func unverifiedCallAfter(container []byte, operation string, partition equation.
 	blockedValues := partition.IterateValuesPrefix(blocked)
 	for fact, ok := blockedValues.Next(); ok; fact, ok = blockedValues.Next() {
 		point := factOperation(fact.Key)
-		if string(fact.Value) != "proven" || point <= operation {
+		if factkey.DecodeTruth(fact.Value) != factkey.TruthProven || point <= operation {
 			continue
 		}
 		if _, complete := partition.Value(discharged + point); !complete {
@@ -15337,10 +15346,12 @@ func frozenMutationDiagnostic(operation equation.BoundEquation, partition equati
 	if guarded {
 		proof = "guard"
 	}
-	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-		Key:   diagnosticFamilyPrefix(DiagnosticFamilyFrozenMutation) + operation.Target.Name + "/" + proof,
-		Value: []byte(fmt.Sprintf("cannot mutate frozen table %q", display)),
-	}}}}, nil
+	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{
+		frozenMutationFact(
+			diagnosticFamilyPrefix(DiagnosticFamilyFrozenMutation)+operation.Target.Name+"/"+proof,
+			frozenMutationWrite, string(display),
+		),
+	}}}, nil
 }
 
 // optionalWriteContainerDiagnostic refutes a member write whose container is
@@ -15365,10 +15376,10 @@ func optionalWriteContainerDiagnostic(operation equation.BoundEquation, display 
 	if err != nil || !optionalConcreteWitness(value) {
 		return equation.Fact{}, equation.Fact{}, false
 	}
-	return equation.Fact{
-			Key:   diagnosticFamilyPrefix(DiagnosticFamilyOptionalAssignmentTarget) + operation.Target.Name,
-			Value: []byte(fmt.Sprintf("cannot assign through optional %s without nil check", containerDisplay)),
-		}, equation.Fact{
+	return optionalAccessFact(
+			diagnosticFamilyPrefix(DiagnosticFamilyOptionalAssignmentTarget)+operation.Target.Name,
+			optionalAccessWrite, string(containerDisplay),
+		), equation.Fact{
 			Key:   factkey.OptionalWriteContainer.Key().String() + operation.Target.Name,
 			Value: append([]byte(nil), value...),
 		}, true
@@ -15385,15 +15396,19 @@ func frozenProof(operation equation.BoundEquation, subject []byte, partition equ
 			continue
 		}
 		op := factkey.BodyPrefix(prefix, fact.Key)
-		if string(fact.Value) == "unconditional" {
+		payload, valid := factkey.DecodeFreezePayload(fact.Value)
+		if !valid {
+			continue
+		}
+		if payload.Kind == factkey.FreezeUnconditional {
 			return op, false
 		}
-		parts := strings.Split(string(fact.Value), "/")
-		if len(parts) == 3 && parts[0] == "guard" && (parts[2] == "true" || parts[2] == "false") {
-			if seen[parts[1]] == nil {
-				seen[parts[1]] = make(map[string]string)
+		if payload.Kind == factkey.FreezeGuarded {
+			edge := strconv.FormatBool(payload.Edge)
+			if seen[payload.Guard] == nil {
+				seen[payload.Guard] = make(map[string]string)
 			}
-			seen[parts[1]][parts[2]] = op
+			seen[payload.Guard][edge] = op
 		}
 	}
 	for _, guard := range operation.Guards {
@@ -15412,7 +15427,7 @@ func frozenProof(operation equation.BoundEquation, subject []byte, partition equ
 
 func hasOutcome(partition equation.Partition, key string) bool {
 	for _, item := range partition.Outcomes() {
-		if item.Key == key && string(item.Value) == "proven" {
+		if item.Key == key && factkey.DecodeTruth(item.Value) == factkey.TruthProven {
 			return true
 		}
 	}
@@ -16263,7 +16278,7 @@ func nativeBranchPublicationFacts(operation equation.BoundEquation, partition eq
 	edge := ""
 	body := fmt.Sprintf("%x", operation.Target.Body)
 	for _, fact := range values {
-		if fact.Value == nil || string(fact.Value) != "proven" {
+		if fact.Value == nil || factkey.DecodeTruth(fact.Value) != factkey.TruthProven {
 			continue
 		}
 		proof, ok := factkey.ParseBranchProof(fact.Key)
@@ -16605,11 +16620,11 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 			Body:        fmt.Sprintf("%x", operation.Target.Body),
 			BranchGuard: factkey.BranchGuard{Name: operation.Target.Name, Edge: edge},
 		}.Key().String(),
-		Value: []byte("proven"),
+		Value: factkey.EncodeTruth(factkey.TruthProven),
 	})
 	closure.Values = append(closure.Values, boundaryFacts...)
 	if frozenGuard && truth {
-		closure.Outcomes = append(closure.Outcomes, equation.Fact{Key: factkey.FrozenBranch.Key().String() + operation.Target.Name, Value: []byte("proven")})
+		closure.Outcomes = append(closure.Outcomes, equation.Fact{Key: factkey.FrozenBranch.Key().String() + operation.Target.Name, Value: factkey.EncodeTruth(factkey.TruthProven)})
 	}
 	if truth {
 		proofs, proofErr := runtimeTypeBranchProofs(operation, partition)
@@ -16618,7 +16633,7 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 		}
 		for _, proof := range proofs {
 			guard := equation.NewBranchGuard(operation.Target.Body, factkey.BranchGuard{Name: operation.Target.Name, Edge: factkey.TrueEdge})
-			closure.Values = append(closure.Values, equation.Fact{Key: runtimeTypeProofKey(proof.path, proof.typeName), Value: []byte("proven"), Guards: equation.GuardSet(guard)})
+			closure.Values = append(closure.Values, equation.Fact{Key: runtimeTypeProofKey(proof.path, proof.typeName), Value: factkey.EncodeTruth(factkey.TruthProven), Guards: equation.GuardSet(guard)})
 		}
 	}
 	if truth && !boundaryPossible {
@@ -16679,7 +16694,7 @@ func compoundTypeEqualityBranchClosure(operation equation.BoundEquation, partiti
 		}
 		closure.Values = append(closure.Values, equation.Fact{
 			Key:    runtimeTypeProofKey(predicate.Path, typeName),
-			Value:  []byte("proven"),
+			Value:  factkey.EncodeTruth(factkey.TruthProven),
 			Guards: equation.GuardSet(guard),
 		})
 	}
@@ -16715,7 +16730,7 @@ func compoundBranchOutcome(operation equation.BoundEquation, truth bool) equatio
 				Body:        fmt.Sprintf("%x", operation.Target.Body),
 				BranchGuard: factkey.BranchGuard{Name: operation.Target.Name, Edge: edge},
 			}.Key().String(),
-			Value: []byte("proven"),
+			Value: factkey.EncodeTruth(factkey.TruthProven),
 		}},
 	}
 }
@@ -16767,7 +16782,7 @@ func trueEdgeRefinements(operation equation.BoundEquation, partition equation.Pa
 	}
 	for _, item := range proofs {
 		facts = append(facts, equation.Fact{
-			Key: runtimeTypeProofKey(item.path, item.typeName), Value: []byte("proven"), Guards: equation.GuardSet(guard),
+			Key: runtimeTypeProofKey(item.path, item.typeName), Value: factkey.EncodeTruth(factkey.TruthProven), Guards: equation.GuardSet(guard),
 		})
 	}
 	floors, err := lengthFloorBranchProofs(operation)
@@ -18026,7 +18041,7 @@ func subjectHasIndexProof(subject factkey.Part, partition equation.Partition) bo
 		if !ok {
 			break
 		}
-		if string(fact.Payload) == "proven" && (familyReadLicense{
+		if fact.Truth() == factkey.TruthProven && (familyReadLicense{
 			Family: factkey.HeapIndexPresence, Subject: subject, Proof: fact.Occurrence,
 		}).Valid(partition) {
 			return true
@@ -18155,7 +18170,7 @@ func runtimeTypeProven(term []byte, name string, partition equation.Partition) b
 	}
 	prefix := runtimeTypeProofKey(strings.TrimPrefix(string(term), "path/"), name)
 	fact, found := partition.LatestValuePrefix(prefix)
-	return found && string(fact.Value) == "proven"
+	return found && factkey.DecodeTruth(fact.Value) == factkey.TruthProven
 }
 
 func runtimeTypeProofAdmitsTarget(name string, target typ.Type) bool {
@@ -18283,7 +18298,7 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 				Key: factkey.BuildKey(factkey.HeapIndexLower, []factkey.Part{
 					factkey.EncodedTermPart(index),
 				}, operation.Target.Name).String(),
-				Value: []byte("proven"), Guards: equation.GuardSet(guard),
+				Value: factkey.EncodeTruth(factkey.TruthProven), Guards: equation.GuardSet(guard),
 			})
 		case "index-in-range":
 			if predicate.OtherPath == "" {
@@ -18296,7 +18311,7 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 				Key: factkey.BuildKey(factkey.HeapIndexUpper, []factkey.Part{
 					factkey.EncodedTermPart(index), factkey.EncodedTermPart(container),
 				}, operation.Target.Name).String(),
-				Value: []byte("proven"), Guards: equation.GuardSet(guard),
+				Value: factkey.EncodeTruth(factkey.TruthProven), Guards: equation.GuardSet(guard),
 			})
 		}
 	}
@@ -18319,7 +18334,7 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			Key: factkey.BuildKey(factkey.HeapIndexLower, []factkey.Part{
 				factkey.EncodedTermPart(carrier),
 			}, operation.Target.Name).String(),
-			Value: []byte("proven"), Guards: equation.GuardSet(guard),
+			Value: factkey.EncodeTruth(factkey.TruthProven), Guards: equation.GuardSet(guard),
 		})
 	}
 	// A constant index ceiling and a container length floor state the same
@@ -18348,7 +18363,7 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 				Key: factkey.BuildKey(factkey.HeapIndexUpper, []factkey.Part{
 					factkey.EncodedTermPart(index), factkey.EncodedTermPart(container),
 				}, operation.Target.Name).String(),
-				Value: []byte("proven"), Guards: equation.GuardSet(guard),
+				Value: factkey.EncodeTruth(factkey.TruthProven), Guards: equation.GuardSet(guard),
 			})
 		}
 	}
@@ -18370,7 +18385,7 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			Key: factkey.BuildKey(factkey.HeapIndexUpper, []factkey.Part{
 				factkey.EncodedTermPart(index), factkey.EncodedTermPart(container),
 			}, operation.Target.Name).String(),
-			Value: []byte("proven"), Guards: equation.GuardSet(guard),
+			Value: factkey.EncodeTruth(factkey.TruthProven), Guards: equation.GuardSet(guard),
 		})
 	}
 	for relation, pair := range upper {
@@ -18382,7 +18397,7 @@ func typedIndexBranchClosure(operation equation.BoundEquation, partition equatio
 			Key: factkey.BuildKey(factkey.HeapIndexPresence, []factkey.Part{
 				heapIndexSubject(pair.container, partition), factkey.EncodedTermPart(pair.index),
 			}, operation.Target.Name).String(),
-			Value: []byte("proven"), Guards: equation.GuardSet(guard),
+			Value: factkey.EncodeTruth(factkey.TruthProven), Guards: equation.GuardSet(guard),
 		})
 	}
 	// Index evidence can be one conjunct of a broader condition such as
@@ -18498,7 +18513,7 @@ func publishedIndexRelations(partition equation.Partition) (map[string][]byte, m
 		if !ok {
 			break
 		}
-		if string(fact.Payload) != "proven" {
+		if fact.Truth() != factkey.TruthProven {
 			continue
 		}
 		decoded, valid := fact.Subject.Decode(nil)
@@ -18512,7 +18527,7 @@ func publishedIndexRelations(partition equation.Partition) (map[string][]byte, m
 		if !ok {
 			break
 		}
-		if string(fact.Payload) != "proven" {
+		if fact.Truth() != factkey.TruthProven {
 			continue
 		}
 		qualifier, present := fact.Qualifier(0)
@@ -19205,10 +19220,12 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 				if guarded {
 					proof = "guard"
 				}
-				return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-					Key:   diagnosticFamilyPrefix(DiagnosticFamilyFrozenMutation) + operation.Target.Name + "/" + proof,
-					Value: []byte(fmt.Sprintf("cannot call mutator on frozen table %q", display)),
-				}}}}, nil
+				return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{
+					frozenMutationFact(
+						diagnosticFamilyPrefix(DiagnosticFamilyFrozenMutation)+operation.Target.Name+"/"+proof,
+						frozenMutationCall, display,
+					),
+				}}}, nil
 			}
 		}
 	}
@@ -19253,10 +19270,12 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			return equation.TransactionResult{Complete: true}, nil
 		}
 		if (strings.HasPrefix(string(operands.receiver), "temp/") || len(operation.Guards) == 0) && optionalMethodReceiverAtCall(operands.receiver, receiver, operands.method.Name(), partition) {
-			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{{
-				Key:   diagnosticFamilyPrefix(DiagnosticFamilyOptionalCallReceiver) + operation.Target.Name,
-				Value: []byte(fmt.Sprintf("cannot call method on an optional value without a nil check: %s may be nil", operands.display)),
-			}}}}, nil
+			return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{
+				optionalAccessFact(
+					diagnosticFamilyPrefix(DiagnosticFamilyOptionalCallReceiver)+operation.Target.Name,
+					optionalAccessCall, operands.display,
+				),
+			}}}, nil
 		}
 		if payload, channel := typedChannelPayload(operands.receiver, partition); channel && operands.method.Matches("send") && !operands.spread && len(operands.arguments) == 1 {
 			if argument, available := resolveKnownCurrentValue(operands.arguments[0], partition); available {
@@ -19712,7 +19731,7 @@ func operatorFixedBooleanResult(term []byte, expected typ.Type, partition equati
 		return false
 	}
 	prefix := factkey.BooleanResult.Key().String() + string(term) + "/"
-	if fact, found := partition.LatestValuePrefix(prefix); !found || string(fact.Value) != "proven" {
+	if fact, found := partition.LatestValuePrefix(prefix); !found || factkey.DecodeTruth(fact.Value) != factkey.TruthProven {
 		return false
 	}
 	for _, witness := range [][]byte{[]byte(shapefact.ScalarTrueWire), []byte(shapefact.ScalarFalseWire)} {
@@ -19911,11 +19930,13 @@ func freezeCallEpoch(operation equation.BoundEquation, partition equation.Partit
 	if !strings.HasPrefix(string(subject), "path/") {
 		return closure, true, nil
 	}
-	value := "unconditional"
+	payload := factkey.FreezePayload{Kind: factkey.FreezeUnconditional}
 	if len(operation.Guards) == 1 {
 		parts := strings.Split(string(operation.Guards[0].Encoding), "/")
 		if len(parts) == 4 && parts[0] == "front" && parts[1] == "branch" && (parts[3] == "true" || parts[3] == "false") {
-			value = "guard/" + parts[2] + "/" + parts[3]
+			payload = factkey.FreezePayload{
+				Kind: factkey.FreezeGuarded, Guard: parts[2], Edge: parts[3] == "true",
+			}
 		} else {
 			return closure, true, nil
 		}
@@ -19924,7 +19945,7 @@ func freezeCallEpoch(operation equation.BoundEquation, partition equation.Partit
 	}
 	closure.Values = append(closure.Values, equation.Fact{
 		Key:   factkey.EffectFreeze.Key().String() + strings.TrimPrefix(string(subject), "path/") + "/" + operation.Target.Name,
-		Value: []byte(value),
+		Value: factkey.EncodeFreezePayload(payload),
 	})
 	if table, err := resolveCurrentValue(subject, partition); err == nil {
 		closure.Values = append(closure.Values, equation.Fact{Key: coordinateFamilyKey(factkey.CallResult, operation.Target.Name, "00000000").String(), Value: table})
@@ -19947,10 +19968,12 @@ func tableInsertEpoch(operation equation.BoundEquation, operands directCallOpera
 		if guarded {
 			proof = "guard"
 		}
-		return equation.OutputClosure{Diagnostics: []equation.Fact{{
-			Key:   diagnosticFamilyPrefix(DiagnosticFamilyFrozenMutation) + operation.Target.Name + "/" + proof,
-			Value: []byte(fmt.Sprintf("cannot call mutator on frozen table %q", callArgumentDisplay(operation.Operands, 0))),
-		}}}, true
+		return equation.OutputClosure{Diagnostics: []equation.Fact{
+			frozenMutationFact(
+				diagnosticFamilyPrefix(DiagnosticFamilyFrozenMutation)+operation.Target.Name+"/"+proof,
+				frozenMutationCall, callArgumentDisplay(operation.Operands, 0),
+			),
+		}}, true
 	}
 	identity, found := tableIdentityForTerm(operands.arguments[0], partition)
 	if !found {
@@ -22274,14 +22297,14 @@ func carriesClosureIdentity(value []byte) bool {
 
 func isolationStateFact(prefix string, term []byte) equation.TransactionResult {
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: []equation.Fact{{
-		Key: prefix + base64.RawURLEncoding.EncodeToString(term), Value: []byte("proven"),
+		Key: prefix + base64.RawURLEncoding.EncodeToString(term), Value: factkey.EncodeTruth(factkey.TruthProven),
 	}}}}
 }
 
 func isolationStatePresent(partition equation.Partition, prefix string, term []byte) bool {
 	key := prefix + base64.RawURLEncoding.EncodeToString(term)
 	fact, found := partition.Value(key)
-	return found && string(fact.Value) == "proven"
+	return found && factkey.DecodeTruth(fact.Value) == factkey.TruthProven
 }
 
 // isIsolatedLiteral recognizes only a sealed table whose complete graph is
@@ -23127,7 +23150,7 @@ func runtimeTypeProofDisplay(term []byte, partition equation.Partition) (string,
 	var typeName string
 	proofValues := partition.IterateValuesPrefix(prefix)
 	for fact, ok := proofValues.Next(); ok; fact, ok = proofValues.Next() {
-		if !factkey.OwnsPrefix(prefix, fact.Key) || string(fact.Value) != "proven" {
+		if !factkey.OwnsPrefix(prefix, fact.Key) || factkey.DecodeTruth(fact.Value) != factkey.TruthProven {
 			continue
 		}
 		candidate := factkey.BodyPrefix(prefix, fact.Key)
@@ -24777,11 +24800,12 @@ func inferredReturnMemberSummaries(lexical *lexicalEvaluator, values []equation.
 		order = append(order, suffix)
 	}
 	for _, fact := range values {
-		if !factkey.OwnsPrefix(factkey.ReturnMemberClosure.Key().String(), fact.Key) {
+		value, decoded := equation.DecodeFamilyValue(factkey.ReturnMemberClosure, fact)
+		if !decoded {
 			continue
 		}
 		var wire memberClosureWire
-		if front.DecodeRequiredWireJSON(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
+		if front.DecodeRequiredWireJSON(value.Payload, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
 			continue
 		}
 		returnType, ok := inferredClosureSingleReturn(lexical, wire.Handle)
@@ -25697,7 +25721,7 @@ func reachedUnaccountedCallee(term, identity []byte, partition equation.Partitio
 	blockers := partition.IterateValuesPrefix(factkey.PlacementBlocker.Key().String() + encodedAllocation + "/opaque-call/")
 	for fact, ok := blockers.Next(); ok; fact, ok = blockers.Next() {
 		point := factOperation(fact.Key)
-		if string(fact.Value) != "proven" || accounted[point] {
+		if factkey.DecodeTruth(fact.Value) != factkey.TruthProven || accounted[point] {
 			continue
 		}
 		if !placementContractDischarged(encodedAllocation, point, partition) {
@@ -26904,12 +26928,19 @@ func publicationKernelWithGlobals(operation equation.BoundEquation, partition eq
 	// than one reachable return (for example, a loop return plus the fallthrough
 	// return), and those alternatives must not collide in the equation fact map.
 	// publishedOutcomes joins them conservatively back into the public slots.
-	prefix := factkey.ReturnCandidate.Key().String() + operation.Target.Name + "/"
 	outcomes := make([]equation.Fact, 0, len(values)+1)
 	projected := make([]equation.Fact, 0)
-	outcomes = append(outcomes, equation.Fact{Key: prefix + "arity", Value: []byte(strconv.Itoa(len(values)))})
+	arityFact, encoded := equation.ReturnCandidateArityFact(operation.Target.Name, len(values))
+	if !encoded {
+		return equation.TransactionResult{}, fmt.Errorf("invalid return candidate arity")
+	}
+	outcomes = append(outcomes, arityFact)
 	for index, value := range values {
-		outcomes = append(outcomes, equation.Fact{Key: prefix + strconv.Itoa(index), Value: value})
+		slotFact, encoded := equation.ReturnCandidateSlotFact(operation.Target.Name, index, value)
+		if !encoded {
+			return equation.TransactionResult{}, fmt.Errorf("invalid return candidate slot")
+		}
+		outcomes = append(outcomes, slotFact)
 		projected = append(projected, equation.Fact{
 			Key:   fmt.Sprintf("%s%s/%08d", factkey.ReturnRelationSurface.Key().String(), operation.Target.Name, index),
 			Value: relationSurfaces[index],
@@ -28808,13 +28839,17 @@ func publishedOutcomes(stored, evidence []equation.Fact) []equation.Fact {
 	// Candidate tuples are operation-scoped inside the equation closure.  Join
 	// alternatives only at publication: identical alternatives retain their
 	// scalar result, while any disagreement becomes Top/unknown.
-	returnCandidates := make(map[string][][]byte)
+	type returnField struct {
+		kind  equation.ReturnCandidateField
+		index int
+	}
+	returnCandidates := make(map[returnField][][]byte)
 	outcomes := make([]equation.Fact, 0, len(stored))
 	for _, storedOutcome := range stored {
-		if factkey.OwnsPrefix(factkey.ReturnCandidate.Key().String(), storedOutcome.Key) {
-			parts := factkey.Segments(storedOutcome.Key)
-			if len(parts) == 3 && parts[2] != "" {
-				returnCandidates[parts[2]] = append(returnCandidates[parts[2]], append([]byte(nil), storedOutcome.Value...))
+		if value, decoded := equation.DecodeFamilyValue(factkey.ReturnCandidate, storedOutcome); decoded {
+			if row, valid := value.ReturnCandidate(); valid {
+				field := returnField{kind: row.Field, index: row.Index}
+				returnCandidates[field] = append(returnCandidates[field], append([]byte(nil), storedOutcome.Value...))
 			}
 			continue
 		}
@@ -28827,7 +28862,7 @@ func publishedOutcomes(stored, evidence []equation.Fact) []equation.Fact {
 		}
 		outcomes = append(outcomes, outcome)
 	}
-	for slot, candidates := range returnCandidates {
+	for field, candidates := range returnCandidates {
 		value := candidates[0]
 		for _, candidate := range candidates[1:] {
 			if !bytes.Equal(value, candidate) {
@@ -28835,11 +28870,16 @@ func publishedOutcomes(stored, evidence []equation.Fact) []equation.Fact {
 				break
 			}
 		}
-		key := factkey.Return.Key().String() + slot
-		if slot == "arity" {
+		key := factkey.Return.Key().String()
+		if field.kind == equation.ReturnCandidateArity {
+			key += "arity"
 			outcomes = append(outcomes, equation.Fact{Key: key, Value: value})
 			continue
 		}
+		if field.kind != equation.ReturnCandidateSlot {
+			continue
+		}
+		key += strconv.Itoa(field.index)
 		decoded, err := displayValue(value)
 		if err == nil {
 			value = decoded

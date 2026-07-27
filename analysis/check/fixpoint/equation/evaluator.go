@@ -548,7 +548,7 @@ func (v *partitionView) index() {
 		if position != 0 && v.closure.Values[position-1].Key > fact.Key {
 			v.ordered = false
 		}
-		if string(fact.Value) != "proven" {
+		if factkey.DecodeTruth(fact.Value) != factkey.TruthProven {
 			continue
 		}
 		guard, ok := branchProofGuard(fact.Key)

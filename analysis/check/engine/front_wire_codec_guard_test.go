@@ -3,11 +3,76 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 )
+
+func TestFactValueWireOwnershipStaysDisplaced(t *testing.T) {
+	root := wireFenceRepositoryRoot(t)
+	codec := filepath.Join(root, "analysis", "check", "fixpoint", "factkey", "payload.go")
+	err := filepath.WalkDir(filepath.Join(root, "analysis", "check"), func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") || path == codec {
+			return nil
+		}
+		source, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		text := string(source)
+		for _, forbidden := range []string{
+			`strings.Split(rest, "/")`,
+			`strings.Split(string(fact.Value), "/")`,
+			`strings.Split(string(fact.Payload), "/")`,
+			`parts[0] != "return-candidate"`,
+			`parts[0] == "return-candidate"`,
+			`parts[2] == "arity"`,
+			`parts[2] != "00000000"`,
+			`Value: []byte(fmt.Sprintf`,
+			`value := fmt.Sprintf("`,
+			`value += fmt.Sprintf("`,
+			`fmt.Sprintf("arguments=%s completions=`,
+			`fmt.Sprintf("distinct_identities=1 field_offsets=identical`,
+			`fmt.Sprintf("epoch=field_read field_offsets=identical`,
+			`fmt.Sprintf("field_offsets=identical field_order=canonical`,
+			`fmt.Sprintf("entries=%d entry_storage=committed`,
+			`fmt.Sprintf("field=%s ownership=%s producer_bound=true`,
+			`fmt.Sprintf("params=%s completions=`,
+			`fmt.Sprintf("cardinality=%d completeness=`,
+			`fmt.Sprintf("cases=%d default_required=`,
+		} {
+			if forbidden == `strings.Split(rest, "/")` &&
+				strings.Contains(path, filepath.Join("fixpoint", "factkey")+string(filepath.Separator)) {
+				continue
+			}
+			if forbidden == `value := fmt.Sprintf("` || forbidden == `value += fmt.Sprintf("` {
+				if path != filepath.Join(root, "analysis", "check", "engine", "native_topology_kernel.go") {
+					continue
+				}
+			}
+			if strings.Contains(text, forbidden) {
+				t.Errorf("%s owns fact-value wire construction or parsing %q; use factkey payload codecs", path, forbidden)
+			}
+		}
+		for _, line := range strings.Split(text, "\n") {
+			if strings.Contains(line, `NativeTrustProven = "proven"`) {
+				continue
+			}
+			if strings.Contains(line, `"proven"`) || strings.Contains(line, `"refuted"`) {
+				t.Errorf("%s carries fact truth as a string sentinel: %s", path, strings.TrimSpace(line))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestFrontDraftWireOwnershipStaysDisplaced(t *testing.T) {
 	loader := newFencePackageLoader(t, "./analysis/check/...")

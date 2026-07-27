@@ -2,11 +2,11 @@ package engine
 
 import (
 	"fmt"
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
@@ -580,7 +580,8 @@ func narrateAssignment(item PublishedDiagnostic, context diagnosticNarrationCont
 	}
 	if replacement, found := context.pathReplacements[name]; found && func() bool {
 		for _, fact := range context.closure.Values {
-			if fact.Key == factkey.AssignmentFunctionContract.Key().String()+name && string(fact.Value) == "refuted" {
+			if fact.Key == factkey.AssignmentFunctionContract.Key().String()+name &&
+				factkey.DecodeTruth(fact.Value) == factkey.TruthRefuted {
 				return true
 			}
 		}

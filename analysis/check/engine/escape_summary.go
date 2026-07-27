@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -42,7 +41,7 @@ func (l *lexicalEvaluator) escapeSummaryForExport(body equation.BodyID, closure 
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil
 	}
-	exports := exportedFunctionHandles(closure.Values)
+	exports := exportedFunctionHandles(partition)
 	if len(exports) == 0 {
 		return nil, nil, nil, nil, nil, nil
 	}
@@ -132,19 +131,16 @@ func (l *lexicalEvaluator) returnTuplesForPrototype(body equation.BodyID, child 
 // the publication kernel already published for return slot zero. It maps each
 // exported member name to its closure handle without re-deriving the return
 // shape from source.
-func exportedFunctionHandles(values []equation.Fact) map[string]closureHandle {
-	prefix := factkey.ReturnMemberClosure.Key().String()
+func exportedFunctionHandles(partition equation.Partition) map[string]closureHandle {
 	handles := make(map[string]closureHandle)
-	for _, fact := range values {
-		if !factkey.OwnsPrefix(prefix, fact.Key) {
-			continue
-		}
-		parts := factkey.Segments(fact.Key)
-		if len(parts) != 4 || parts[2] != "00000000" {
+	values := partition.AllFamilyValues(factkey.ReturnMemberClosure.Key())
+	for fact, ok := values.Next(); ok; fact, ok = values.Next() {
+		row, valid := fact.ReturnMemberClosure()
+		if !valid || row.ReturnSlot != 0 {
 			continue
 		}
 		var wire memberClosureWire
-		if front.DecodeRequiredWireJSON(fact.Value, &wire) != nil || !validClosureHandle(wire.Handle) {
+		if front.DecodeRequiredWireJSON(row.Payload, &wire) != nil || !validClosureHandle(wire.Handle) {
 			continue
 		}
 		name := strings.TrimPrefix(wire.Suffix, ".")
@@ -194,31 +190,33 @@ type returnCandidateValues struct {
 func completeReturnCandidates(outcomes []equation.Fact) ([][][]byte, bool) {
 	candidates := make(map[string]*returnCandidateValues)
 	for _, fact := range outcomes {
-		parts := factkey.Segments(fact.Key)
-		if len(parts) != 3 || parts[0] != "return-candidate" || parts[1] == "" {
+		value, decoded := equation.DecodeFamilyValue(factkey.ReturnCandidate, fact)
+		if !decoded {
 			continue
 		}
-		item := candidates[parts[1]]
+		row, valid := value.ReturnCandidate()
+		if !valid || row.Candidate == "" {
+			return nil, false
+		}
+		item := candidates[row.Candidate]
 		if item == nil {
 			item = &returnCandidateValues{arity: -1, values: make(map[int][]byte)}
-			candidates[parts[1]] = item
+			candidates[row.Candidate] = item
 		}
-		if parts[2] == "arity" {
-			arity, err := strconv.Atoi(string(fact.Value))
-			if err != nil || arity < 0 || item.seen {
+		if row.Field == equation.ReturnCandidateArity {
+			if item.seen {
 				return nil, false
 			}
-			item.arity, item.seen = arity, true
+			item.arity, item.seen = row.Arity, true
 			continue
 		}
-		index, err := strconv.Atoi(parts[2])
-		if err != nil || index < 0 {
+		if row.Field != equation.ReturnCandidateSlot {
 			return nil, false
 		}
-		if _, duplicate := item.values[index]; duplicate {
+		if _, duplicate := item.values[row.Index]; duplicate {
 			return nil, false
 		}
-		item.values[index] = append([]byte(nil), fact.Value...)
+		item.values[row.Index] = append([]byte(nil), row.Value...)
 	}
 	if len(candidates) == 0 {
 		return nil, false
@@ -273,9 +271,10 @@ func completeReturnTemplates(child front.Compilation, outcome equation.OutputClo
 func completeReturnTemplateMap(child front.DraftsBoundaryView, outcome equation.OutputClosure, origins map[string]int) map[string]exportrelation.Value {
 	candidates := make(map[string][]byte)
 	for _, fact := range outcome.Outcomes {
-		parts := factkey.Segments(fact.Key)
-		if len(parts) == 3 && parts[0] == "return-candidate" && parts[2] == "arity" && string(fact.Value) == "1" {
-			candidates[parts[1]] = nil
+		value, decoded := equation.DecodeFamilyValue(factkey.ReturnCandidate, fact)
+		row, valid := value.ReturnCandidate()
+		if decoded && valid && row.Field == equation.ReturnCandidateArity && row.Arity == 1 {
+			candidates[row.Candidate] = nil
 		}
 	}
 	if len(candidates) == 0 {
@@ -291,12 +290,16 @@ func completeReturnTemplateMap(child front.DraftsBoundaryView, outcome equation.
 		return nil
 	}
 	for _, fact := range outcome.Values {
-		parts := factkey.Segments(fact.Key)
-		if len(parts) != 3 || parts[0] != "return-relation-surface" || parts[2] != "00000000" {
+		value, decoded := equation.DecodeFamilyValue(factkey.ReturnRelationSurface, fact)
+		if !decoded {
 			continue
 		}
-		if _, found := candidates[parts[1]]; found {
-			candidates[parts[1]] = fact.Value
+		index, numeric := value.OccurrenceUint(10, 32)
+		if !numeric || index != 0 {
+			continue
+		}
+		if _, found := candidates[value.Subject.Spelling()]; found {
+			candidates[value.Subject.Spelling()] = value.Payload
 		}
 	}
 	templates := make(map[string]exportrelation.Value, len(candidates))
@@ -415,14 +418,15 @@ func relationSurfaceTemplate(encoded []byte, origins map[string]int, prefix stri
 func singleReturnMemberOrigins(child front.BoundaryView, outcome equation.OutputClosure) map[string]int {
 	candidate := ""
 	for _, fact := range outcome.Outcomes {
-		parts := factkey.Segments(fact.Key)
-		if len(parts) != 3 || parts[0] != "return-candidate" || parts[2] != "arity" || string(fact.Value) != "1" {
+		value, decoded := equation.DecodeFamilyValue(factkey.ReturnCandidate, fact)
+		row, valid := value.ReturnCandidate()
+		if !decoded || !valid || row.Field != equation.ReturnCandidateArity || row.Arity != 1 {
 			continue
 		}
-		if candidate != "" && candidate != parts[1] {
+		if candidate != "" && candidate != row.Candidate {
 			return nil
 		}
-		candidate = parts[1]
+		candidate = row.Candidate
 	}
 	if candidate == "" {
 		return nil
@@ -726,7 +730,7 @@ func placementProvenOperations[T ~string](values []equation.Fact, family, identi
 	prefix := family + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(boundary) + "/"
 	var operations []string
 	for _, fact := range values {
-		if string(fact.Value) == "proven" && factkey.OwnsPrefix(prefix, fact.Key) {
+		if factkey.DecodeTruth(fact.Value) == factkey.TruthProven && factkey.OwnsPrefix(prefix, fact.Key) {
 			operations = append(operations, factkey.BodyPrefix(prefix, fact.Key))
 		}
 	}

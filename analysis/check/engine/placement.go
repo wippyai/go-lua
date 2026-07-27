@@ -117,7 +117,7 @@ func decodePlacementAllocation(fact equation.Fact) (placementAllocationFact, boo
 
 func placementProvenFactParts(fact equation.Fact) ([]string, bool) {
 	parts := factkey.Segments(fact.Key)
-	return parts, len(parts) == 5 && string(fact.Value) == "proven"
+	return parts, len(parts) == 5 && factkey.DecodeTruth(fact.Value) == factkey.TruthProven
 }
 
 func placementFactIdentity(parts []string) (string, bool) {
@@ -148,19 +148,19 @@ func placementBindingFact(term, operation, identity string) equation.Fact {
 }
 
 func placementEventFact(identity, operation string, event placement.Event) equation.Fact {
-	return equation.Fact{Key: factkey.PlacementEvent.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(event) + "/" + operation, Value: []byte("proven")}
+	return equation.Fact{Key: factkey.PlacementEvent.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(event) + "/" + operation, Value: factkey.EncodeTruth(factkey.TruthProven)}
 }
 
 func placementBlockerFact(identity, operation, blocker string) equation.Fact {
-	return equation.Fact{Key: factkey.PlacementBlocker.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + blocker + "/" + operation, Value: []byte("proven")}
+	return equation.Fact{Key: factkey.PlacementBlocker.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + blocker + "/" + operation, Value: factkey.EncodeTruth(factkey.TruthProven)}
 }
 
 func placementContainmentFact(parent, child, operation string) equation.Fact {
-	return equation.Fact{Key: factkey.PlacementContainment.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(parent)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(child)) + "/" + operation, Value: []byte("proven")}
+	return equation.Fact{Key: factkey.PlacementContainment.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(parent)) + "/" + base64.RawURLEncoding.EncodeToString([]byte(child)) + "/" + operation, Value: factkey.EncodeTruth(factkey.TruthProven)}
 }
 
 func placementContractFact(identity string, boundary placement.Boundary, operation string) equation.Fact {
-	return equation.Fact{Key: factkey.PlacementContract.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(boundary) + "/" + operation, Value: []byte("proven")}
+	return equation.Fact{Key: factkey.PlacementContract.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(identity)) + "/" + string(boundary) + "/" + operation, Value: factkey.EncodeTruth(factkey.TruthProven)}
 }
 
 // placementExternalOwnershipFacts consumes the ownership labels of a published

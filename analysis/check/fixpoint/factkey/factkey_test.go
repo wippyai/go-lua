@@ -187,7 +187,7 @@ func TestFamiliesAreCompleteRecords(t *testing.T) {
 		t.Fatalf("declared families = %d, want 150", len(families))
 	}
 	for _, family := range families {
-		if family.ID == 0 || family.Prefix == "" || family.PayloadKind > PayloadTypestate {
+		if family.ID == 0 || family.Prefix == "" || family.PayloadKind > PayloadFreeze {
 			t.Errorf("incomplete family record: %+v", family)
 		}
 		if declared, ok := Lookup(family.Prefix + "subject/op"); !ok || declared.ID != family.ID {

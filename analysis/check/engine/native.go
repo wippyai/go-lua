@@ -547,7 +547,7 @@ func projectNativeContracts(facts []NativeFact) []NativeFact {
 	// containers — one an allocation identity this evaluation closed, the other
 	// an opaque-origin binding — so the family keeps one contract spelling.
 	for _, fact := range facts {
-		if fact.Lane != NativeLaneValues || fact.Value != "proven" {
+		if fact.Lane != NativeLaneValues || factkey.DecodeTruthString(fact.Value) != factkey.TruthProven {
 			continue
 		}
 		family, found := factkey.Lookup(fact.Key)

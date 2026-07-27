@@ -30,7 +30,7 @@ func Derive(result engine.Result) typ.Type {
 	var alternatives []typ.Type
 	for _, fact := range result.ReturnCandidates {
 		candidate, slot, ok := returnCandidate(fact)
-		if !ok || slot != "0" {
+		if !ok || slot != 0 {
 			continue
 		}
 		alternatives = append(alternatives, deriveValue(fact.Value, candidate, result, order))
@@ -145,7 +145,7 @@ func publishedProviderRelations(result engine.Result) map[string]exportrelation.
 	roots := make(map[string]bool)
 	for _, fact := range result.ReturnCandidates {
 		candidate, slot, ok := returnCandidate(fact)
-		if !ok || slot != "0" {
+		if !ok || slot != 0 {
 			continue
 		}
 		if root, found := returnRoot(result.Artifact, candidate); found {
@@ -310,12 +310,16 @@ func evaluatedReturnValue(value []byte) (exportrelation.Value, bool, bool) {
 	}
 }
 
-func returnCandidate(fact equation.Fact) (candidate, slot string, ok bool) {
-	parts := strings.Split(fact.Key, "/")
-	if len(parts) != 3 || parts[0] != "return-candidate" || parts[1] == "" || parts[2] == "arity" {
-		return "", "", false
+func returnCandidate(fact equation.Fact) (candidate string, slot int, ok bool) {
+	value, decoded := equation.DecodeFamilyValue(factkey.ReturnCandidate, fact)
+	if !decoded {
+		return "", 0, false
 	}
-	return parts[1], parts[2], true
+	row, valid := value.ReturnCandidate()
+	if !valid || row.Field != equation.ReturnCandidateSlot {
+		return "", 0, false
+	}
+	return row.Candidate, row.Index, true
 }
 
 func operationOrder(artifact equation.Artifact) map[string]int {

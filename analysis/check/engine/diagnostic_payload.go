@@ -11,6 +11,46 @@ import (
 
 const diagnosticPayloadPrefix = "engine/diagnostic/v1/"
 
+type frozenMutationAction uint8
+
+const (
+	frozenMutationWrite frozenMutationAction = iota + 1
+	frozenMutationCall
+)
+
+func frozenMutationFact(key string, action frozenMutationAction, display string) equation.Fact {
+	var message string
+	switch action {
+	case frozenMutationWrite:
+		message = fmt.Sprintf("cannot mutate frozen table %q", display)
+	case frozenMutationCall:
+		message = fmt.Sprintf("cannot call mutator on frozen table %q", display)
+	default:
+		panic("engine: unknown frozen mutation action")
+	}
+	return equation.Fact{Key: key, Value: []byte(message)}
+}
+
+type optionalAccessAction uint8
+
+const (
+	optionalAccessWrite optionalAccessAction = iota + 1
+	optionalAccessCall
+)
+
+func optionalAccessFact(key string, action optionalAccessAction, display string) equation.Fact {
+	var message string
+	switch action {
+	case optionalAccessWrite:
+		message = fmt.Sprintf("cannot assign through optional %s without nil check", display)
+	case optionalAccessCall:
+		message = fmt.Sprintf("cannot call method on an optional value without a nil check: %s may be nil", display)
+	default:
+		panic("engine: unknown optional access action")
+	}
+	return equation.Fact{Key: key, Value: []byte(message)}
+}
+
 // DiagnosticFlags are closed semantic properties of a diagnostic. They are
 // carried across the equation boundary so presentation never has to infer a
 // branch from rendered prose.

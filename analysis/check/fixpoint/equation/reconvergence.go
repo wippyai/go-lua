@@ -98,7 +98,7 @@ func withdrawContradictoryBranchProofs(facts []Fact) []Fact {
 	var contradicted map[proofKey]bool
 	classify := func(fact Fact) (proofKey, bool) {
 		guard, ok := branchProofGuard(fact.Key)
-		if !ok || string(fact.Value) != "proven" {
+		if !ok || factkey.DecodeTruth(fact.Value) != factkey.TruthProven {
 			return proofKey{}, false
 		}
 		decision, _, peelable := decisionOf(guard)

@@ -324,6 +324,59 @@ func TestPartitionFamilyValuesParsesSelectedRowsWithoutAllocation(t *testing.T) 
 	}
 }
 
+func TestFamilyValueDecodesTypedPairAndTruthWithoutAllocation(t *testing.T) {
+	key := factkey.BuildKey(factkey.PathEquality, []factkey.Part{
+		factkey.EncodedTermPart([]byte("path/left")),
+		factkey.EncodedTermPart([]byte("path/right")),
+	}, "op-1")
+	partition, err := PartitionFromClosuresWithGuards(nil, OutputClosure{Values: []Fact{{
+		Key: key.String(), Value: factkey.EncodeTruth(factkey.TruthProven),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func() {
+		values := partition.FamilyValues(factkey.PathEquality.Key())
+		value, ok := values.Next()
+		if !ok || value.Truth() != factkey.TruthProven {
+			panic("missing typed marker row")
+		}
+		var scratch [64]byte
+		left, right, _, decoded := value.DecodePair(scratch[:0])
+		if !decoded || string(left) != "path/left" || string(right) != "path/right" {
+			panic("malformed typed pair")
+		}
+	}
+	read()
+	if allocations := testing.AllocsPerRun(100, read); allocations != 0 {
+		t.Fatalf("typed pair read allocated %v times", allocations)
+	}
+}
+
+func TestReturnCandidateRecordOwnsArityAndSlotUnion(t *testing.T) {
+	arity, ok := ReturnCandidateArityFact("op-1", 1)
+	if !ok {
+		t.Fatal("arity construction failed")
+	}
+	slot, ok := ReturnCandidateSlotFact("op-1", 0, []byte("scalar/string/ok"))
+	if !ok {
+		t.Fatal("slot construction failed")
+	}
+	for _, test := range []struct {
+		fact  Fact
+		field ReturnCandidateField
+	}{
+		{fact: arity, field: ReturnCandidateArity},
+		{fact: slot, field: ReturnCandidateSlot},
+	} {
+		value, decoded := DecodeFamilyValue(factkey.ReturnCandidate, test.fact)
+		row, valid := value.ReturnCandidate()
+		if !decoded || !valid || row.Candidate != "op-1" || row.Field != test.field {
+			t.Fatalf("return candidate = %+v, decoded=%v valid=%v", row, decoded, valid)
+		}
+	}
+}
+
 func TestFamilyValuesDecodesOnlyDeclaredValuePayloads(t *testing.T) {
 	identity := []byte("heap")
 	memberKey := factkey.BuildKey(factkey.HeapMember, []factkey.Part{

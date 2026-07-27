@@ -197,10 +197,9 @@ func nativeCallGraphConclusions(draft *front.NativeCallGraphDraft) []equation.Fa
 			}
 		}
 		resultSlots := bodyType.ResultSlots
-		value := fmt.Sprintf(
-			"arguments=%s completions={'known': ['normal', 'throw', 'user_suspend', 'system_suspend'], 'present': ['normal', 'throw']} edges_closed=[%s] members=[%s] results={'exact': True, 'count': %d}",
-			arguments, strings.Join(edges, ","), strings.Join(component, ","), resultSlots,
-		)
+		value := factkey.EncodeNativeCallSCCPayload(factkey.NativeCallSCCPayload{
+			Arguments: arguments, Edges: edges, Members: component, ResultSlots: resultSlots,
+		})
 		var revocations []string
 		if len(component) > 1 {
 			revocations = []string{"write.local"}
@@ -241,8 +240,10 @@ func nativeShapeAndRecordConclusions(operation equation.BoundEquation, drafts []
 				continue
 			}
 			conclusions = append(conclusions, nativeTopologyConclusion{
-				family:      factkey.ShapeIdentity,
-				value:       fmt.Sprintf("distinct_identities=1 field_offsets=identical field_order=canonical interned=true shape_id=%016x stable_across_modules=true stable_across_sites=true", id),
+				family: factkey.ShapeIdentity,
+				value: factkey.EncodeNativeShapeIdentityPayload(factkey.NativeShapeIdentityPayload{
+					Kind: factkey.NativeShapeIdentityStable, ShapeID: id,
+				}),
 				revocations: []string{"shape.transition"},
 			})
 
@@ -252,7 +253,9 @@ func nativeShapeAndRecordConclusions(operation equation.BoundEquation, drafts []
 			if !ok || len(row.ReadSites) == 0 || len(row.WriteSites) == 0 {
 				continue
 			}
-			value := fmt.Sprintf("epoch=field_read field_offsets=identical interned=true shape_id=%016x stable=true", id)
+			value := factkey.EncodeNativeShapeIdentityPayload(factkey.NativeShapeIdentityPayload{
+				Kind: factkey.NativeShapeIdentityFieldRead, ShapeID: id,
+			})
 			for read := range row.ReadSites {
 				projection := front.NativeProjection{
 					Key: factkey.ShapeIdentity.Key().String() + fmt.Sprintf("%x", row.Body) + "/epoch/" +
@@ -276,8 +279,10 @@ func nativeShapeAndRecordConclusions(operation equation.BoundEquation, drafts []
 			}
 			for _, id := range []uint64{oldID, newID} {
 				conclusions = append(conclusions, nativeTopologyConclusion{
-					family:      factkey.ShapeIdentity,
-					value:       fmt.Sprintf("field_offsets=identical field_order=canonical interned=true shape_id=%016x", id),
+					family: factkey.ShapeIdentity,
+					value: factkey.EncodeNativeShapeIdentityPayload(factkey.NativeShapeIdentityPayload{
+						Kind: factkey.NativeShapeIdentityTransition, ShapeID: id,
+					}),
 					revocations: []string{"shape.transition"},
 				})
 			}
@@ -402,12 +407,8 @@ func nativeRecordConclusion(record *front.NativeRecordTopologyDraft) (
 	if direct == 0 {
 		return nativeTopologyConclusion{}, nil, false
 	}
-	value := fmt.Sprintf("entries=%d entry_storage=committed", direct)
-	if boolean {
-		value += " boolean_storage=canonical_tag"
-	}
-	if multiplication {
-		value += " field_carrier=numeric_union overflow=promote_integer_to_number"
+	payload := factkey.NativeRecordConstructionPayload{
+		Entries: direct, BooleanStorage: boolean, NumericUnion: multiplication,
 	}
 	if len(edges) != 0 {
 		duplicates := 0
@@ -416,32 +417,31 @@ func nativeRecordConclusion(record *front.NativeRecordTopologyDraft) (
 				duplicates++
 			}
 		}
-		value += fmt.Sprintf(" duplicate_children=%d edges=%d", duplicates, len(edges))
+		payload.DuplicateChildren, payload.Edges = duplicates, len(edges)
 	}
-	if order {
-		value += " evaluation_order=preserved"
-	}
-	value += " fresh=true"
+	payload.EvaluationOrder = order
 	var revocations []string
 	if len(record.MemberWrites) != 0 && len(record.AliasSites) == 0 {
-		value += " ownership=move"
+		payload.Ownership = factkey.NativeRecordOwnershipMove
 		revocations = []string{"escape", "call.opaque", "meta.set"}
 	} else if len(record.CallUses) != 0 {
 		revocations = []string{"escape"}
 	}
 	main := nativeTopologyConclusion{
-		family: factkey.RecordConstruction, value: value,
+		family: factkey.RecordConstruction, value: factkey.EncodeNativeRecordConstructionPayload(payload),
 		subject: record.Destination.Term, revocations: revocations,
 	}
 	entryRows := make([]nativeTopologyConclusion, 0, len(edges))
 	for _, edge := range edges {
-		ownership := "retain"
+		ownership := factkey.NativeRecordOwnershipRetain
 		if edge.moved {
-			ownership = "move"
+			ownership = factkey.NativeRecordOwnershipMove
 		}
 		entryRows = append(entryRows, nativeTopologyConclusion{
-			family:      factkey.RecordEntryOwnership,
-			value:       fmt.Sprintf("field=%s ownership=%s producer_bound=true write_barrier=required", edge.field, ownership),
+			family: factkey.RecordEntryOwnership,
+			value: factkey.EncodeNativeRecordEntryOwnershipPayload(factkey.NativeRecordEntryOwnershipPayload{
+				Field: edge.field, Ownership: ownership,
+			}),
 			revocations: []string{"write.field"},
 		})
 	}
@@ -519,51 +519,43 @@ func nativeOtherTopologyConclusions(operation equation.BoundEquation, drafts []f
 }
 
 func nativeFunctionEntryConclusion(draft *front.NativeFunctionEntryDraft) nativeTopologyConclusion {
-	params := fmt.Sprintf("{'exact': True, 'count': %d}", draft.Parameters)
-	if draft.Varargs != 0 {
-		params = fmt.Sprintf("{'exact': False, 'prefix': %d, 'open_tail': True}", draft.Parameters)
+	payload := factkey.NativeFunctionEntryPayload{
+		Parameters: draft.Parameters,
+		Varargs:    draft.Varargs != 0,
+		CanThrow:   len(draft.ErrorCalls) != 0,
 	}
-	present := "['normal']"
-	if len(draft.ErrorCalls) != 0 {
-		present = "['normal', 'throw']"
-	}
-	results := "{'exact': True, 'count': 0}"
 	if len(draft.Returns) != 0 {
-		open := false
 		for _, row := range draft.Returns {
-			open = open || row.OpenTail != 0
+			payload.ResultOpen = payload.ResultOpen || row.OpenTail != 0
 		}
-		if open {
-			results = "{'exact': False, 'prefix': 0, 'open_tail': True}"
-		} else {
-			results = fmt.Sprintf("{'exact': True, 'count': %d}", draft.Returns[0].Slots)
-		}
+		payload.ResultSlots = draft.Returns[0].Slots
 	}
 	return nativeTopologyConclusion{
 		family: factkey.FunctionEntry,
-		value: fmt.Sprintf("params=%s completions={'known': ['normal', 'throw', 'user_suspend', 'system_suspend'], 'present': %s} results=%s",
-			params, present, results),
+		value:  factkey.EncodeNativeFunctionEntryPayload(payload),
 	}
 }
 
 func nativeCalleeConclusion(draft *front.NativeCalleeTopologyDraft) nativeTopologyConclusion {
-	row := nativeTopologyConclusion{family: factkey.CalleeSet, value: "completeness=unknown"}
+	payload := factkey.NativeCalleeSetPayload{Completeness: factkey.NativeCalleeUnknown}
+	row := nativeTopologyConclusion{family: factkey.CalleeSet}
 	switch draft.Topology {
 	case front.NativeCalleeDirectLexical:
-		row.value = "cardinality=1 completeness=complete"
+		payload.Cardinality, payload.Completeness = 1, factkey.NativeCalleeComplete
 	case front.NativeCalleeLocalAlternatives:
-		row.value = fmt.Sprintf("cardinality=%d completeness=incomplete", len(draft.TargetSymbols))
+		payload.Cardinality, payload.Completeness = len(draft.TargetSymbols), factkey.NativeCalleeIncomplete
 		row.revocations = []string{"write.local"}
 	case front.NativeCalleeParameter:
 		row.revocations = []string{"escape"}
 	case front.NativeCalleeLiteralMember:
-		row.value = "cardinality=1 completeness=complete"
+		payload.Cardinality, payload.Completeness = 1, factkey.NativeCalleeComplete
 		row.revocations = []string{"write.field", "meta.set"}
 	case front.NativeCalleeOpen:
 		if len(draft.ModuleLoadSites) != 0 {
 			row.revocations = []string{"write.field", "load.dynamic"}
 		}
 	}
+	row.value = factkey.EncodeNativeCalleeSetPayload(payload)
 	return row
 }
 
@@ -653,14 +645,12 @@ func nativeDiscriminantConclusion(draft *front.NativeDiscriminantDraft) (nativeT
 		return nativeTopologyConclusion{}, false
 	}
 	exhaustive := len(covered) == len(ordered)
-	mapping := make([]string, len(covered))
-	for index := range mapping {
-		mapping[index] = fmt.Sprintf("%d", index)
-	}
 	return nativeTopologyConclusion{
 		family: factkey.DiscriminantSelect,
-		value: fmt.Sprintf("cases=%d default_required=%t dense_mapping=[%s] discriminant_field=%s exhaustive=%t",
-			len(covered), !exhaustive, strings.Join(mapping, ","), draft.Field, exhaustive),
+		value: factkey.EncodeNativeDiscriminantSelectPayload(factkey.NativeDiscriminantSelectPayload{
+			Cases: len(covered), DefaultRequired: !exhaustive,
+			DiscriminantField: draft.Field, Exhaustive: exhaustive,
+		}),
 		revocations: []string{"write.field"},
 	}, true
 }

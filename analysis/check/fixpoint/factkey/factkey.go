@@ -73,6 +73,7 @@ const (
 	PayloadType
 	PayloadRelation
 	PayloadTypestate
+	PayloadFreeze
 )
 
 // FamilyID is the stable identity used by revocation sets. Prefix strings are
@@ -321,7 +322,7 @@ var (
 	Closure                    = newFamilyRecord("closure/", Term, PayloadRelation)
 	SelectConstraint           = newFamilyRecord("select/constraint/", Opaque, PayloadRelation)
 	Return                     = newFamilyRecord("return/", Opaque, PayloadValue)
-	EffectFreeze               = newFamilyRecord("effect.freeze/", Term, PayloadMarker)
+	EffectFreeze               = newFamilyRecord("effect.freeze/", Term, PayloadFreeze)
 	ImportedRelationResult     = newFamilyRecord("imported-relation-result/", EncodedTerm, PayloadMarker)
 	MemberClosure              = newFamilyRecord("member-closure/", Term, PayloadRelation)
 	ReturnMemberOrigin         = newFamilyRecord("return-member-origin/", Term, PayloadTerm, Opaque)
@@ -348,7 +349,7 @@ var (
 	EffectCallBool             = newFamilyRecord("effect.call-bool/", Coordinate, PayloadValue)
 	ExplicitAny                = newFamilyRecord("explicit-any/", Term, PayloadMarker)
 	AssertionValue             = newFamilyRecord("assertion-value/", Term, PayloadValue)
-	ReturnRelationSurface      = newFamilyRecord("return-relation-surface/", Coordinate, PayloadRelation, Opaque)
+	ReturnRelationSurface      = newFamilyRecord("return-relation-surface/", Coordinate, PayloadRelation)
 	DeclaredEntryBoundary      = newFamilyRecord("declared-entry-boundary/", Opaque, PayloadMarker)
 	CallHeapIdentity           = newFamilyRecord("call-heap-identity/", Coordinate, PayloadIdentity, Opaque)
 	CalleeSet                  = newFamilyRecord("callee_set/", Opaque, PayloadRelation)
