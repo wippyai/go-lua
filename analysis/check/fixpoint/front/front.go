@@ -116,12 +116,16 @@ type Compilation struct {
 	ClaimNameSpans map[string]wir.Span
 	// BranchJoinSpans anchor a branch at the closing `end` where its arms
 	// rejoin. BranchSpans own the condition; a merge is a different location.
-	BranchJoinSpans           map[string]wir.Span
-	CallSpans                 map[string]wir.Span
-	BranchSpans               map[string]wir.Span
-	EffectSpans               map[string]wir.Span
-	ExpressionSpans           map[string]wir.Span
-	ReturnSpans               map[string]wir.Span
+	BranchJoinSpans map[string]wir.Span
+	CallSpans       map[string]wir.Span
+	BranchSpans     map[string]wir.Span
+	EffectSpans     map[string]wir.Span
+	ExpressionSpans map[string]wir.Span
+	ReturnSpans     map[string]wir.Span
+	// TableMemberValueSpans is lowering-owned constructor metadata keyed by
+	// the closed table term and canonical member suffix. Diagnostic projection
+	// consumes it without revisiting WIR.
+	TableMemberValueSpans     map[string]map[string]wir.Span
 	QualifiedClaimSpans       map[SpanKey]wir.Span
 	QualifiedClaimTargetSpans map[SpanKey]wir.Span
 	QualifiedCallSpans        map[SpanKey]wir.Span
@@ -956,6 +960,7 @@ func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, protot
 		ClaimSpans: claims, ClaimTargetSpans: claimTargets, CallSpans: calls,
 		BranchSpans: branches, EffectSpans: effects, ExpressionSpans: expressions,
 		ReturnSpans:               returnSpans(wirBody, artifact),
+		TableMemberValueSpans:     tableMemberValueSpans(wirBody),
 		ClaimNameSpans:            claimNameSpans(wirBody, artifact),
 		BranchJoinSpans:           branchJoinSpans(wirBody, artifact),
 		QualifiedClaimSpans:       qualifySpans(body, claims),
@@ -964,6 +969,33 @@ func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, protot
 		QualifiedBranchSpans:      qualifySpans(body, branches),
 		QualifiedEffectSpans:      qualifySpans(body, effects),
 	}
+}
+
+func tableMemberValueSpans(body *wir.Body) map[string]map[string]wir.Span {
+	if body == nil {
+		return nil
+	}
+	out := make(map[string]map[string]wir.Span)
+	for index := 0; index < body.Len(); index++ {
+		instruction := body.Instr(index)
+		if instruction.Op != wir.OpMakeTable {
+			continue
+		}
+		term, err := scalarTerm(body, instruction.Dst)
+		if err != nil || term.Entry {
+			continue
+		}
+		members := make(map[string]wir.Span)
+		for _, entry := range body.TableEntries(instruction.TableEntries) {
+			if entry.ValueSpan.Valid() {
+				members[segment.FormatSegments(entry.Suffix.Segments)] = entry.ValueSpan
+			}
+		}
+		if len(members) != 0 {
+			out[string(term.Encoding)] = members
+		}
+	}
+	return out
 }
 
 func bodyRebindsBoundary(body *wir.Body, boundary wir.BodyBoundary) bool {

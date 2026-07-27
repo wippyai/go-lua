@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/factkey"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Publication lanes of one engine evaluation. They are named after the output
@@ -22,6 +21,8 @@ const (
 	NativeLaneOutcomes    = "outcomes"
 	NativeLaneDiagnostics = "diagnostics"
 )
+
+var nativeGuardedElementDeopts = []string{"write.element", "write.length", "write.local", "meta.set", "call.opaque"}
 
 // Proof provenance of one published row, in the vocabulary the diagnostic
 // evidence layer already uses. It answers the only question a speculative code
@@ -242,7 +243,7 @@ func deduplicateNativeFacts(facts []NativeFact) []NativeFact {
 	return out
 }
 
-func nativeKernelProjectionRows(root front.Compilation, facts []equation.Fact) []front.NativeProjection {
+func closedNativeKernelProjectionFacts(root front.Compilation, facts []equation.Fact) []equation.Fact {
 	anchors := make(map[string]*nativeAnchors)
 	var visit func(front.Compilation)
 	visit = func(compilation front.Compilation) {
@@ -252,8 +253,8 @@ func nativeKernelProjectionRows(root front.Compilation, facts []equation.Fact) [
 		}
 	}
 	visit(root)
-	out := make([]front.NativeProjection, 0, len(facts))
-	for _, fact := range facts {
+	out := make([]equation.Fact, 0, len(facts))
+	for index, fact := range facts {
 		var owner *nativeAnchors
 		for body, candidate := range anchors {
 			if strings.Contains(fact.Key, "/"+body+"/") {
@@ -264,30 +265,20 @@ func nativeKernelProjectionRows(root front.Compilation, facts []equation.Fact) [
 		if owner == nil {
 			owner = newNativeAnchors(root.Artifact)
 		}
-		out = append(out, nativeProjectionFromFact(owner.project(NativeLaneValues, fact)))
-	}
-	return out
-}
-
-func loweringNativeProjectionRows(root front.Compilation, globals map[string]typ.Type) []front.NativeProjection {
-	rows := append(numericNativeFacts(root), tableNativeFacts(root)...)
-	rows = append(rows, elementNativeFacts(root)...)
-	rows = append(rows, nilabilityNativeFacts(root)...)
-	rows = append(rows, frozenBodyNativeFacts(root)...)
-	rows = append(rows, metatableNativeFacts(root)...)
-	rows = append(rows, shapeEpochNativeFacts(root)...)
-	rows = append(rows, summaryNativeFacts(root)...)
-	var visit func(front.Compilation)
-	visit = func(compilation front.Compilation) {
-		rows = append(rows, hostGlobalBindingFactsFromGlobals(compilation, globals)...)
-		for _, child := range compilation.Nested {
-			visit(child)
+		projection := nativeProjectionFromFact(owner.project(NativeLaneValues, fact))
+		encoded, err := front.EncodeNativeProjection(projection)
+		if err != nil {
+			continue
 		}
-	}
-	visit(root)
-	out := make([]front.NativeProjection, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, nativeProjectionFromFact(row))
+		key := factkey.BuildKey(
+			factkey.NativeProjection,
+			[]factkey.Part{
+				factkey.OpaquePart(fmt.Sprintf("%x", root.Body)),
+				factkey.OpaquePart(fmt.Sprintf("%08d", index)),
+			},
+			"published",
+		)
+		out = append(out, equation.Fact{Key: key.String(), Value: encoded, Guards: fact.Guards})
 	}
 	return out
 }

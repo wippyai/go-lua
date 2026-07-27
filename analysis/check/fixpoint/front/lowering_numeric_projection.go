@@ -1,4 +1,4 @@
-package engine
+package front
 
 import (
 	"fmt"
@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -33,21 +32,18 @@ func nativePathKey(symbol wir.SymbolID, key path.PathKey) string {
 	return string(key)
 }
 
-// N7 residual — the numeric families still lack complete solve-owned inputs:
-// scalar_operator/divisor_property/representation need the expression result's
-// machine arm at every unary, binary, and join coordinate; numeric_branch needs
-// both edge carriers plus the NaN disposition; numeric_loop_carrier needs the
-// recurrence's complete carrier write set, overflow disposition, and guard
-// bound. Until those inputs are published by their owning kernels, this scan
-// remains the verdict authority.
+// Numeric projection drafts join the expression machine arm and divisor
+// disposition, both branch-edge carriers and NaN disposition, and the
+// recurrence carrier writes/overflow/guard bound at their owning coordinates.
+// The semantic-tail publication kernel is the sole public verdict authority.
 //
 // numericNativeFacts is intentionally a projection, not another abstract
 // interpreter. Its inputs are the lowering-owned instruction topology and the
 // resolved WIR type identities. A missing representation is therefore an
 // absent fact, never a guessed numeric licence.
-func numericNativeFacts(root front.Compilation) []NativeFact {
-	var rows []NativeFact
-	forEachNativeBody(root, func(compilation front.Compilation) {
+func numericNativeFacts(root Compilation) []NativeProjection {
+	var rows []NativeProjection
+	forEachNativeBody(root, func(compilation Compilation) {
 		rows = append(rows, numericBodyFacts(compilation)...)
 	})
 	return rows
@@ -61,7 +57,7 @@ type numericValue struct {
 	fromFloat bool
 }
 
-func numericBodyFacts(compilation front.Compilation) []NativeFact {
+func numericBodyFacts(compilation Compilation) []NativeProjection {
 	body := compilation.WIR
 	if body == nil {
 		return nil
@@ -109,11 +105,11 @@ func numericBodyFacts(compilation front.Compilation) []NativeFact {
 		}
 		return body.Path(wir.PathRef(operand.Ref)).String()
 	}
-	row := func(family, occurrence, subject, content string) NativeFact {
-		return NativeFact{Lane: NativeLaneValues, Family: family, Key: family + "/" + fmt.Sprintf("%x", compilation.Body) + "/" + occurrence, Value: content, Subject: subject, Occurrence: occurrence, Trust: NativeTrustProven}
+	row := func(family, occurrence, subject, content string) NativeProjection {
+		return NativeProjection{Key: family + "/" + fmt.Sprintf("%x", compilation.Body) + "/" + occurrence, Value: content, Subject: subject, Occurrence: occurrence}
 	}
 
-	var out []NativeFact
+	var out []NativeProjection
 	type comparison struct {
 		value   numericValue
 		subject string
@@ -456,7 +452,7 @@ func nativeIDivGuarded(body *wir.Body, divisor wir.Operand) bool {
 	return (seenZero && seenMinusOne) || exclusions >= 2
 }
 
-func nativeLoopCarrierFacts(compilation front.Compilation, body *wir.Body, values, initials map[string]numericValue, row func(string, string, string, string) NativeFact) []NativeFact {
+func nativeLoopCarrierFacts(compilation Compilation, body *wir.Body, values, initials map[string]numericValue, row func(string, string, string, string) NativeProjection) []NativeProjection {
 	updates := make(map[string][]wir.Instruction)
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
@@ -469,7 +465,7 @@ func nativeLoopCarrierFacts(compilation front.Compilation, body *wir.Body, value
 			updates[string(dst.Key())] = append(updates[string(dst.Key())], instruction)
 		}
 	}
-	var out []NativeFact
+	var out []NativeProjection
 	for target, update := range updates {
 		initial, ok := initials[target]
 		if !ok || initial.rep != "integer" {

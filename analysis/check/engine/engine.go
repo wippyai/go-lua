@@ -295,11 +295,6 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 		return compileResult, err
 	}
 	evaluateStarted := time.Now()
-	projectionRows := loweringNativeProjectionRows(compilation, globals)
-	compilation, err = front.AppendNativeProjections(compilation, projectionRows)
-	if err != nil {
-		return Result{}, err
-	}
 	fileContext := context.Background()
 	lexical := newLexicalEvaluator(compilation)
 	lexical.setImportedTypes(imports)
@@ -311,13 +306,6 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 	}
 	lexical.ctx = fileContext
 	nestedFacts := publishedNestedNativeKernelFacts(compilation, lexical)
-	compilation, err = front.AppendNativeProjections(
-		compilation,
-		nativeKernelProjectionRows(compilation, nestedFacts),
-	)
-	if err != nil {
-		return Result{}, err
-	}
 	binding, err := bindCheckEntry(compilation.Artifact, imports)
 	if err != nil {
 		return Result{}, err
@@ -332,6 +320,10 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 		result.Timings = Timings{ParseBindLower: parseElapsed, Evaluate: time.Since(evaluateStarted)}
 		return result, nil
 	}
+	// Nested descriptors were solved in their owning closed partitions above.
+	// Project them only now, after the root partition has also closed; no
+	// projection row is injected into an unevaluated artifact.
+	closure.Values = append(closure.Values, closedNativeKernelProjectionFacts(compilation, nestedFacts)...)
 	return projectCheck(compilation, lexical, closure, transactions, parseElapsed, time.Since(evaluateStarted)), nil
 }
 
@@ -776,24 +768,8 @@ func diagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact)
 // member coordinates come from WIR TableEntry metadata; no source tree is
 // revisited and an open/malformed literal retains the ordinary operation span.
 func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact, spans map[string]wir.Span) {
-	if compilation.WIR == nil || len(diagnostics) == 0 || spans == nil {
+	if len(compilation.TableMemberValueSpans) == 0 || len(diagnostics) == 0 || spans == nil {
 		return
-	}
-	literalMembers := make(map[string]map[string]wir.Span)
-	for index := 0; index < compilation.WIR.Len(); index++ {
-		instruction := compilation.WIR.Instr(index)
-		if instruction.Op != wir.OpMakeTable {
-			continue
-		}
-		members := make(map[string]wir.Span)
-		for _, entry := range compilation.WIR.TableEntries(instruction.TableEntries) {
-			if entry.ValueSpan.Valid() {
-				members[segment.FormatSegments(entry.Suffix.Segments)] = entry.ValueSpan
-			}
-		}
-		if term, ok := tableOperandTerm(compilation.WIR, instruction.Dst); ok && len(members) != 0 {
-			literalMembers[term] = members
-		}
 	}
 	for _, diagnostic := range diagnostics {
 		name, assignment := strings.CutPrefix(diagnostic.Key, diagnosticFamilyPrefix(DiagnosticFamilyAssignment))
@@ -814,7 +790,7 @@ func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics 
 		if err != nil {
 			continue
 		}
-		members := literalMembers[string(operands["value"])]
+		members := compilation.TableMemberValueSpans[string(operands["value"])]
 		if len(members) == 0 {
 			continue
 		}
@@ -829,7 +805,7 @@ func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics 
 			}
 		}
 	}
-	structuralReturnMemberDiagnosticSpans(compilation, diagnostics, spans, literalMembers)
+	structuralReturnMemberDiagnosticSpans(compilation, diagnostics, spans, compilation.TableMemberValueSpans)
 }
 
 // structuralReturnMemberDiagnosticSpans anchors a member-resolved return
@@ -876,27 +852,9 @@ func structuralReturnMemberDiagnosticSpans(compilation front.Compilation, diagno
 				break
 			}
 		}
-		if span, published := literalMembers[term][suffix]; published {
+		if span, published := compilation.TableMemberValueSpans[term][suffix]; published {
 			spans[diagnostic.Key] = span
 		}
-	}
-}
-
-func tableOperandTerm(body *wir.Body, operand wir.Operand) (string, bool) {
-	if body == nil {
-		return "", false
-	}
-	switch operand.Kind {
-	case wir.OperandPath:
-		path := body.Path(wir.PathRef(operand.Ref))
-		if path.IsEmpty() || path.Key() == "" {
-			return "", false
-		}
-		return "path/" + string(path.Key()), true
-	case wir.OperandTemp:
-		return "temp/" + strconv.FormatUint(uint64(operand.Ref), 10), true
-	default:
-		return "", false
 	}
 }
 
@@ -2096,7 +2054,9 @@ func kernelBindingSpecs(lexical *lexicalEvaluator, imported map[string]bool) []k
 		})}, {"call-results", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
 			return callResultsKernel(lexical, o, p)
 		})},
-		{"generic-for", equation.KernelFunc(genericForKernel)}, {"channel-select", equation.KernelFunc(channelSelectKernel)}, {"publication", equation.KernelFunc(publicationKernel)},
+		{"generic-for", equation.KernelFunc(genericForKernel)}, {"channel-select", equation.KernelFunc(channelSelectKernel)}, {"publication", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
+			return publicationKernelWithGlobals(o, p, lexical)
+		})},
 		{"claim", equation.KernelFunc(func(o equation.BoundEquation, p equation.Partition) (equation.TransactionResult, error) {
 			return claimKernel(lexical, o, p, imported)
 		})}, {"expression", equation.KernelFunc(expressionKernel)}, {"eval-node", equation.KernelFunc(evalNodeKernel)},
@@ -28354,6 +28314,10 @@ func tableFamilyValue(value []byte) bool {
 // output.  A false or unknown guard contributes no tuple; a selected guard
 // contributes the complete indexed tuple, including nil-valued slots.
 func publicationKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
+	return publicationKernelWithGlobals(operation, partition, nil)
+}
+
+func publicationKernelWithGlobals(operation equation.BoundEquation, partition equation.Partition, lexical *lexicalEvaluator) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
@@ -28398,6 +28362,12 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 				}
 				value = []byte("representation=" + word.representation + " value=" + word.text)
 			case 0:
+				if family, declared := factkey.Lookup(string(key)); declared && family.ID == factkey.FamilyNativeProjection {
+					if row, valid := front.DecodeNativeProjection(publication); valid && row.HostGlobal != nil &&
+						!nativeHostGlobalRequirementHolds(row.HostGlobal, lexical) {
+						continue
+					}
+				}
 				// The closure join below the kernel copies every value into its
 				// canonical byte arena. Keep the compiled operand view until that
 				// ownership boundary instead of allocating an identical
@@ -28604,6 +28574,35 @@ func publicationKernel(operation equation.BoundEquation, partition equation.Part
 		}
 	}
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Values: projected, Outcomes: outcomes, Diagnostics: diagnostics}}, nil
+}
+
+func nativeHostGlobalRequirementHolds(requirement *front.NativeHostGlobalRequirement, lexical *lexicalEvaluator) bool {
+	if requirement == nil || lexical == nil || requirement.Root == "" {
+		return false
+	}
+	lexical.importedAuthorityMu.RLock()
+	defer lexical.importedAuthorityMu.RUnlock()
+	calleeType := lexical.globalTypes[requirement.Root]
+	if calleeType == nil {
+		return false
+	}
+	var resolved bool
+	for _, field := range requirement.Fields {
+		if field == "" {
+			return false
+		}
+		calleeType, resolved = access.Field(calleeType, field)
+		if !resolved {
+			return false
+		}
+	}
+	function, callable := unwrap.Alias(calleeType).(*typ.Function)
+	if !callable || len(function.Returns) == 0 {
+		return false
+	}
+	resultType := unwrap.Alias(function.Returns[0])
+	return resultType != nil && !typ.AbsentOrTopLike(resultType) &&
+		resultType.Kind() != kind.Any && resultType.Kind() != kind.Unknown
 }
 
 // branchTruth evaluates exactly one selector.  An unavailable selector is an

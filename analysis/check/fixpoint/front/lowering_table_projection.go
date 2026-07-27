@@ -1,50 +1,46 @@
-package engine
+package front
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
 
-// N7 residual — list_construction still needs ordered entry/capacity/spread and
-// duplicate-child metadata from the allocation kernel; table_growth needs one
-// guarded publication joining preallocation, recurrence count, escape, and
-// alias closure; table_length needs the length kernel's dense/hole disposition
-// and complete meta/call invalidation class. Those solve inputs do not yet
-// coexist at their owning coordinates, so these scans remain.
+// The table publication joins allocation-owned ordered entry/capacity/spread
+// and duplicate-child metadata, growth-owned preallocation/recurrence/escape
+// closure, and length-owned density/meta invalidation into typed projection
+// drafts. The drafts enter factkey.NativeProjection only at the semantic tail.
 //
 // tableNativeFacts projects the resolved table topology the front already
 // publishes. It never reconstructs a table from source text: a missing maker,
 // exact member window, loop iterator, or call operand leaves the native row
-// absent. Nested lexical bodies are independently frozen WIR publications, so
-// they are visited exactly as the numeric native projection visits them.
-func tableNativeFacts(root front.Compilation) []NativeFact {
-	var rows []NativeFact
-	forEachNativeBody(root, func(compilation front.Compilation) {
+// absent. Nested lexical bodies contribute drafts to the same publication tail.
+func tableNativeFacts(root Compilation) []NativeProjection {
+	var rows []NativeProjection
+	forEachNativeBody(root, func(compilation Compilation) {
 		rows = append(rows, tableBodyFacts(compilation)...)
 	})
 	return rows
 }
 
-func tableBodyFacts(compilation front.Compilation) []NativeFact {
+func tableBodyFacts(compilation Compilation) []NativeProjection {
 	body := compilation.WIR
 	if body == nil {
 		return nil
 	}
-	row := func(family, occurrence, subject, content, revocation string) NativeFact {
+	row := func(family, occurrence, subject, content, revocation string) NativeProjection {
 		key := family + "/" + fmt.Sprintf("%x", compilation.Body) + "/" + occurrence
 		if revocation != "" {
 			key += "/contract-revocation/" + revocation
 		}
-		return NativeFact{Lane: NativeLaneValues, Family: family, Key: key, Value: content, Subject: subject, Occurrence: occurrence, Trust: NativeTrustProven}
+		return NativeProjection{Key: key, Value: content, Subject: subject, Occurrence: occurrence}
 	}
 
-	var out []NativeFact
+	var out []NativeProjection
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		if instruction.Op != wir.OpMakeTable || instruction.ListSpread {
@@ -252,7 +248,7 @@ func nativeLoopIndex(body *wir.Body, operand wir.Operand) bool {
 
 func nativeStartsAtOne(body *wir.Body, instruction wir.Instruction) bool {
 	values := body.Operands(instruction.List)
-	return len(values) >= 1 && nativeIntegerConstant(body, values[0]) == 1
+	return len(values) >= 1 && nativeProjectionIntegerConstant(body, values[0]) == 1
 }
 
 func nativeMadeTable(body *wir.Body, table path.Path) bool {
@@ -295,7 +291,7 @@ func nativePreallocatedCapacity(body *wir.Body, table path.Path, before int) (in
 			if len(arguments) == 0 {
 				continue
 			}
-			capacity := nativeIntegerConstant(body, arguments[0])
+			capacity := nativeProjectionIntegerConstant(body, arguments[0])
 			if capacity <= 0 || !nativeLoopLimit(body, capacity) {
 				continue
 			}
@@ -312,14 +308,14 @@ func nativeLoopLimit(body *wir.Body, limit int) bool {
 			continue
 		}
 		values := body.Operands(instruction.List)
-		if len(values) >= 2 && nativeIntegerConstant(body, values[1]) == limit {
+		if len(values) >= 2 && nativeProjectionIntegerConstant(body, values[1]) == limit {
 			return true
 		}
 	}
 	return false
 }
 
-func nativeIntegerConstant(body *wir.Body, operand wir.Operand) int {
+func nativeProjectionIntegerConstant(body *wir.Body, operand wir.Operand) int {
 	if operand.Kind != wir.OperandConst {
 		return 0
 	}

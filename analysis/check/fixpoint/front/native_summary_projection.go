@@ -1,9 +1,8 @@
-package engine
+package front
 
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -17,10 +16,10 @@ import (
 // context-sensitive one does not, and the difference is a published fact rather
 // than a caller's guess. A body whose result contract is not declared publishes
 // nothing at all: an unstated result has no exactness to report.
-func summaryNativeFacts(root front.Compilation) []NativeFact {
-	var rows []NativeFact
-	var visit func(front.Compilation)
-	visit = func(compilation front.Compilation) {
+func summaryNativeFacts(root Compilation) []NativeProjection {
+	var rows []NativeProjection
+	var visit func(Compilation)
+	visit = func(compilation Compilation) {
 		for _, child := range compilation.Nested {
 			if row, published := summaryBodyFact(child); published {
 				rows = append(rows, row)
@@ -32,14 +31,14 @@ func summaryNativeFacts(root front.Compilation) []NativeFact {
 	return rows
 }
 
-func summaryBodyFact(compilation front.Compilation) (NativeFact, bool) {
+func summaryBodyFact(compilation Compilation) (NativeProjection, bool) {
 	body := compilation.WIR
 	if body == nil {
-		return NativeFact{}, false
+		return NativeProjection{}, false
 	}
 	returns := body.DeclaredReturnTypes()
 	if len(returns) == 0 {
-		return NativeFact{}, false
+		return NativeProjection{}, false
 	}
 	generic := false
 	for _, parameter := range compilation.Boundary.Parameters {
@@ -72,10 +71,9 @@ func summaryBodyFact(compilation front.Compilation) (NativeFact, bool) {
 	if revocation != "" {
 		key += "/contract-revocation/" + revocation
 	}
-	return NativeFact{
-		Lane: NativeLaneValues, Family: "interproc_summary", Key: key,
+	return NativeProjection{Key: key,
 		Value:   "exactness=" + exactness + " invariance=" + invariance,
-		Subject: compilation.PrototypeName, Trust: NativeTrustProven,
+		Subject: compilation.PrototypeName,
 	}, true
 }
 

@@ -1,10 +1,8 @@
-package engine
+package front
 
 import (
 	"fmt"
 	"strconv"
-
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 )
 
 // shapeEpochRevocations is the exhaustive deopt class set of a receiver whose
@@ -22,20 +20,16 @@ const shapeEpochRevocations = "write.field,shape.transition,meta.set,call.opaque
 // is derived here where the receiver name is directly available. The module-wide
 // layout contract for the same layout is withheld by the front shape walk, so
 // one physical layout is never counted twice.
-func shapeEpochNativeFacts(root front.Compilation) []NativeFact {
-	var rows []NativeFact
-	forEachNativeBody(root, func(compilation front.Compilation) {
-		for _, receiver := range front.ShapeEpochReceivers(compilation) {
+func shapeEpochNativeFacts(root Compilation) []NativeProjection {
+	var rows []NativeProjection
+	forEachNativeBody(root, func(compilation Compilation) {
+		for _, receiver := range ShapeEpochReceivers(compilation) {
 			value := fmt.Sprintf("epoch=field_read field_offsets=identical interned=true shape_id=%016x stable=true", uint64(receiver.Shape))
 			for read := 0; read < receiver.Reads; read++ {
-				rows = append(rows, NativeFact{
-					Lane:   NativeLaneValues,
-					Family: "shape_identity",
+				rows = append(rows, NativeProjection{
 					Key: "shape_identity/" + fmt.Sprintf("%x", compilation.Body) + "/epoch/" +
 						receiver.Display + "/" + strconv.Itoa(read) + "/contract-revocation/" + shapeEpochRevocations,
-					Value:   value,
-					Subject: receiver.Display,
-					Trust:   NativeTrustProven,
+					Value: value, Subject: receiver.Display,
 				})
 			}
 		}

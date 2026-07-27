@@ -1,4 +1,4 @@
-package engine
+package front
 
 import (
 	"fmt"
@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
@@ -32,10 +31,10 @@ type nativeElementOrigin struct {
 	constructor int
 }
 
-// N7 residual — table_element needs a solve-owned consumer descriptor joining
-// allocation origin, density/presence, index bounds, producer class, escape,
-// suspension, and mutation closure at the dynamic-read coordinate. No owning
-// kernel currently receives that complete input set, so this scan remains.
+// Element drafts join allocation origin, density/presence, index bounds,
+// producer class, escape, suspension, and mutation closure at the dynamic-read
+// coordinate. They are transported through the semantic-tail
+// factkey.NativeProjection publication, never projected from engine WIR.
 //
 // elementNativeFacts projects the element domain of the containers the resolved
 // WIR already establishes. It publishes three contracts, each anchored at the
@@ -49,10 +48,10 @@ type nativeElementOrigin struct {
 // visited exactly as the table projection visits them. A container established
 // by an enclosing body travels down that walk so a child body can read an
 // element of shared state it did not construct.
-func elementNativeFacts(root front.Compilation) []NativeFact {
-	var rows []NativeFact
-	var visit func(front.Compilation, map[wir.SymbolID]nativeElementOrigin)
-	visit = func(compilation front.Compilation, inherited map[wir.SymbolID]nativeElementOrigin) {
+func elementNativeFacts(root Compilation) []NativeProjection {
+	var rows []NativeProjection
+	var visit func(Compilation, map[wir.SymbolID]nativeElementOrigin)
+	visit = func(compilation Compilation, inherited map[wir.SymbolID]nativeElementOrigin) {
 		rows = append(rows, elementBodyFacts(compilation, inherited)...)
 		nested := nativeInheritedElementOrigins(compilation.WIR, inherited)
 		for _, child := range compilation.Nested {
@@ -63,7 +62,7 @@ func elementNativeFacts(root front.Compilation) []NativeFact {
 	return rows
 }
 
-func elementBodyFacts(compilation front.Compilation, inherited map[wir.SymbolID]nativeElementOrigin) []NativeFact {
+func elementBodyFacts(compilation Compilation, inherited map[wir.SymbolID]nativeElementOrigin) []NativeProjection {
 	if compilation.WIR == nil {
 		return nil
 	}
@@ -75,15 +74,14 @@ func elementBodyFacts(compilation front.Compilation, inherited map[wir.SymbolID]
 // nativeElementRow builds one element contract. The revocation set travels in
 // the key as a comma-separated suffix, so one contract stays one row with a set
 // of deopt classes rather than one row per class.
-func nativeElementRow(compilation front.Compilation, occurrence, discriminator, subject, value string, events []string) NativeFact {
+func nativeElementRow(compilation Compilation, occurrence, discriminator, subject, value string, events []string) NativeProjection {
 	key := "table_element/" + fmt.Sprintf("%x", compilation.Body) + "/" + occurrence
 	if discriminator != "" {
 		key += "/" + discriminator
 	}
 	key += "/contract-revocation/" + strings.Join(events, ",")
-	return NativeFact{
-		Lane: NativeLaneValues, Family: "table_element", Key: key,
-		Value: value, Subject: subject, Occurrence: occurrence, Trust: NativeTrustProven,
+	return NativeProjection{
+		Key: key, Value: value, Subject: subject, Occurrence: occurrence,
 	}
 }
 
@@ -92,9 +90,9 @@ func nativeElementRow(compilation front.Compilation, occurrence, discriminator, 
 // pointer element domain additionally publishes its ownership mode and the
 // write-barrier obligation, because a consumer may not install one without the
 // other.
-func elementDomainFacts(compilation front.Compilation) []NativeFact {
+func elementDomainFacts(compilation Compilation) []NativeProjection {
 	body := compilation.WIR
-	var rows []NativeFact
+	var rows []NativeProjection
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		if instruction.Op != wir.OpMakeTable || instruction.ListSpread || instruction.Dst.Kind != wir.OperandPath {
@@ -179,12 +177,12 @@ func nativeLoopFilledClass(body *wir.Body, container path.Path) (string, bool) {
 // where the container's validity is intact at the read: an opaque call, a
 // select, or a suspension between the establishing store and the read leaves
 // the fact unpublished rather than reestablished.
-func elementAddressFacts(compilation front.Compilation, inherited map[wir.SymbolID]nativeElementOrigin) []NativeFact {
+func elementAddressFacts(compilation Compilation, inherited map[wir.SymbolID]nativeElementOrigin) []NativeProjection {
 	body := compilation.WIR
 	local := nativeElementLiterals(body)
 	suspends := nativeElementSuspends(body)
 	published := make(map[string]bool)
-	var rows []NativeFact
+	var rows []NativeProjection
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		for _, operand := range nativeElementReadOperands(body, instruction) {
@@ -305,10 +303,10 @@ var nativeGuardedElementDeopts = []string{"write.element", "write.length", "writ
 // opaque-origin table with a declared array element type. A proven floor of one
 // is the whole contract when no upper bound is proven: presence stays withheld
 // and the read remains optional.
-func guardedElementFacts(compilation front.Compilation) []NativeFact {
+func guardedElementFacts(compilation Compilation) []NativeProjection {
 	body := compilation.WIR
 	types := nativePathTypes(body)
-	var rows []NativeFact
+	var rows []NativeProjection
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		if instruction.Op != wir.OpDynamicIndexRead || instruction.A.Kind != wir.OperandPath {
@@ -463,6 +461,115 @@ type nativeGuardBounds struct {
 	residue     int64
 	hasResidue  bool
 	lengthFloor int64
+}
+
+// residueWindow is the closed integer interval a lowering-owned residue
+// expression occupies. Container marks the self-length-relative form.
+type residueWindow struct {
+	Low       int64
+	High      int64
+	Container string
+}
+
+func (w residueWindow) shift(offset int64) (residueWindow, bool) {
+	low, lowOK := checkedResidueAdd(w.Low, offset)
+	high, highOK := checkedResidueAdd(w.High, offset)
+	if !lowOK || !highOK {
+		return residueWindow{}, false
+	}
+	return residueWindow{Low: low, High: high, Container: w.Container}, true
+}
+
+func checkedResidueAdd(left, right int64) (int64, bool) {
+	if (right > 0 && left > math.MaxInt64-right) || (right < 0 && left < math.MinInt64-right) {
+		return 0, false
+	}
+	return left + right, true
+}
+
+func constantModulusWindow(modulus int64) (residueWindow, bool) {
+	switch {
+	case modulus > 0:
+		return residueWindow{Low: 0, High: modulus - 1}, true
+	case modulus < 0:
+		if modulus == math.MinInt64 {
+			return residueWindow{}, false
+		}
+		return residueWindow{Low: modulus + 1, High: 0}, true
+	default:
+		return residueWindow{}, false
+	}
+}
+
+func selfLengthWindow(container string) residueWindow {
+	return residueWindow{Low: 0, High: -1, Container: container}
+}
+
+type indexResidueClass struct {
+	stated  bool
+	modulus int64
+	residue int64
+}
+
+func indexCeilingWithinLengthFloor(ceiling, lengthFloor int64, residue indexResidueClass) bool {
+	if lengthFloor < 1 {
+		return false
+	}
+	if residue.stated {
+		tightened, ok := residueClassCeiling(ceiling, residue.modulus, residue.residue)
+		if !ok {
+			return false
+		}
+		ceiling = tightened
+	}
+	return ceiling >= 1 && ceiling <= lengthFloor
+}
+
+func residueClassCeiling(ceiling, modulus, residue int64) (int64, bool) {
+	if modulus <= 0 || residue < 0 || residue >= modulus {
+		return 0, false
+	}
+	offset, ok := checkedResidueSub(ceiling, residue)
+	if !ok {
+		return 0, false
+	}
+	steps := offset / modulus
+	if offset%modulus != 0 && offset < 0 {
+		steps--
+	}
+	product, ok := checkedResidueMul(steps, modulus)
+	if !ok {
+		return 0, false
+	}
+	return checkedResidueAdd(residue, product)
+}
+
+func checkedResidueSub(left, right int64) (int64, bool) {
+	if (right < 0 && left > math.MaxInt64+right) || (right > 0 && left < math.MinInt64+right) {
+		return 0, false
+	}
+	return left - right, true
+}
+
+func checkedResidueMul(left, right int64) (int64, bool) {
+	if left == 0 || right == 0 {
+		return 0, true
+	}
+	if left == -1 && right == math.MinInt64 || right == -1 && left == math.MinInt64 {
+		return 0, false
+	}
+	if left > 0 {
+		if right > 0 && left > math.MaxInt64/right || right < 0 && right < math.MinInt64/left {
+			return 0, false
+		}
+	} else if right > 0 {
+		if left < math.MinInt64/right {
+			return 0, false
+		}
+	} else if left < math.MaxInt64/right {
+		return 0, false
+	}
+	return left * right, true
 }
 
 // nativeElementIndexBounds reads the bounds the normalized guard descriptor
@@ -838,7 +945,7 @@ func nativeUnitStrideLoopIndex(body *wir.Body, operand wir.Operand) bool {
 			continue
 		}
 		values := body.Operands(instruction.List)
-		if len(values) != 3 || nativeIntegerConstant(body, values[0]) != 1 || nativeIntegerConstant(body, values[2]) != 1 {
+		if len(values) != 3 || nativeProjectionIntegerConstant(body, values[0]) != 1 || nativeProjectionIntegerConstant(body, values[2]) != 1 {
 			continue
 		}
 		for _, result := range body.Operands(instruction.Results) {

@@ -54,6 +54,16 @@ type NativeProjection struct {
 	Revoked     string                       `json:"revoked,omitempty"`
 	Event       string                       `json:"event,omitempty"`
 	Revocations []NativeProjectionRevocation `json:"revocations,omitempty"`
+	// HostGlobal is the project-boundary capability the semantic-tail
+	// publication kernel must validate before exposing this row. Lowering owns
+	// the call coordinate and path; the engine-owned global type map supplies
+	// the stable host binding and resolved result contract.
+	HostGlobal *NativeHostGlobalRequirement `json:"host_global,omitempty"`
+}
+
+type NativeHostGlobalRequirement struct {
+	Root   string   `json:"root"`
+	Fields []string `json:"fields,omitempty"`
 }
 
 type NativeProjectionRevocation struct {

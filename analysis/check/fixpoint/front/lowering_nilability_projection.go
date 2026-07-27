@@ -1,10 +1,9 @@
-package engine
+package front
 
 import (
 	"encoding/base64"
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/proof"
@@ -15,10 +14,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// N7 residual — nilability needs point-local publications not only for branch
-// refinements but also assertions, writes, captured-call invalidation, and loop
-// backedge widening. The solve does not yet publish one complete epoch/capture/
-// backedge invalidation class for those coordinates, so this scan remains.
+// Nilability drafts join point-local branch/assertion evidence with write,
+// capture-call, and loop-backedge invalidation at the owning coordinate. They
+// become public facts only in the closed semantic-tail partition.
 //
 // nilabilityNativeFacts projects only refinements that the lowered body has
 // already made explicit: a nil-capable path, plus a normalized branch or
@@ -26,21 +24,21 @@ import (
 // authoritative CFG for loop membership so a guard whose narrowing a backedge
 // revokes widens to maybe_nil, but it never reconstructs that topology or
 // infers optionality from source spelling.
-func nilabilityNativeFacts(root front.Compilation) []NativeFact {
-	var rows []NativeFact
-	forEachNativeBody(root, func(compilation front.Compilation) {
+func nilabilityNativeFacts(root Compilation) []NativeProjection {
+	var rows []NativeProjection
+	forEachNativeBody(root, func(compilation Compilation) {
 		rows = append(rows, nilabilityBodyFacts(compilation)...)
 	})
 	return rows
 }
 
-func nilabilityBodyFacts(compilation front.Compilation) []NativeFact {
+func nilabilityBodyFacts(compilation Compilation) []NativeProjection {
 	body := compilation.WIR
 	if body == nil {
 		return nil
 	}
 	types := nativePathTypes(body)
-	var rows []NativeFact
+	var rows []NativeProjection
 	seenBranches := make(map[string]struct{})
 	backedge := newBackedgeCarriers(compilation)
 	for index := 0; index < body.Len(); index++ {
@@ -116,7 +114,7 @@ type backedgeCarriers struct {
 	reach *cfg.Reachability
 }
 
-func newBackedgeCarriers(compilation front.Compilation) backedgeCarriers {
+func newBackedgeCarriers(compilation Compilation) backedgeCarriers {
 	carriers := backedgeCarriers{body: compilation.WIR}
 	// Cyclic is non-nil exactly when the body's source topology has a cycle, so a
 	// backedge is possible. An acyclic body needs no reachability query.
@@ -282,7 +280,7 @@ func nativeTruthyNilOnly(path path.Path, types map[string]typ.Type) bool {
 	return withoutNil != nil && (typ.TypeEquals(withoutNil, typ.String) || typ.TypeEquals(withoutNil, typ.Number))
 }
 
-func nilabilityNativeRow(compilation front.Compilation, occurrence string, path path.Path, value string) NativeFact {
+func nilabilityNativeRow(compilation Compilation, occurrence string, path path.Path, value string) NativeProjection {
 	events := []string{"write.local"}
 	if len(path.Segments) != 0 {
 		events = []string{"write.field", "call.opaque", "escape", "suspend"}
@@ -290,19 +288,18 @@ func nilabilityNativeRow(compilation front.Compilation, occurrence string, path 
 		events = []string{"write.local", "write.upvalue", "call.opaque"}
 	}
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(path.Key()))
-	return NativeFact{
-		Lane: NativeLaneValues, Family: "nilability",
+	return NativeProjection{
 		Key:   "nilability/" + fmt.Sprintf("%x", compilation.Body) + "/" + occurrence + "/" + encoded,
-		Value: value, Subject: path.String(), Occurrence: occurrence, Trust: NativeTrustProven,
+		Value: value, Subject: path.String(), Occurrence: occurrence,
 		Established: "contract", Revoked: "contract/nilability", Event: events[0], Revocations: nativeContractRevocations("contract/nilability", events),
 	}
 }
 
-func nativeContractRevocations(revoked string, events []string) []NativeRevocation {
-	out := make([]NativeRevocation, 0, len(events))
+func nativeContractRevocations(revoked string, events []string) []NativeProjectionRevocation {
+	out := make([]NativeProjectionRevocation, 0, len(events))
 	for _, event := range events {
 		if event != "" {
-			out = append(out, NativeRevocation{Established: "contract", Revoked: revoked, Event: event})
+			out = append(out, NativeProjectionRevocation{Established: "contract", Revoked: revoked, Event: event})
 		}
 	}
 	return out

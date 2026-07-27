@@ -7,6 +7,7 @@ package front
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"sort"
@@ -28,6 +29,20 @@ type ShapeID uint64
 
 func nativeWIRContracts(root Compilation) []NativeContract {
 	contracts := nativeCallSCCContracts(root)
+	// Native lowering drafts carry only immutable WIR topology. They enter the
+	// ordinary publication tail as typed factkey records, so their public rows
+	// do not exist until the semantic partition has closed.
+	var projections []NativeProjection
+	projections = append(projections, numericNativeFacts(root)...)
+	projections = append(projections, tableNativeFacts(root)...)
+	projections = append(projections, elementNativeFacts(root)...)
+	projections = append(projections, nilabilityNativeFacts(root)...)
+	projections = append(projections, metatableNativeFacts(root)...)
+	projections = append(projections, frozenBodyNativeFacts(root)...)
+	projections = append(projections, shapeEpochNativeFacts(root)...)
+	projections = append(projections, summaryNativeFacts(root)...)
+	projections = append(projections, hostGlobalBindingFacts(root)...)
+	contracts = append(contracts, nativeProjectionContracts(root, projections)...)
 	var visit func(Compilation)
 	visit = func(compilation Compilation) {
 		contracts = append(contracts, nativeConstantPublications(compilation)...)
@@ -55,6 +70,29 @@ func nativeWIRContracts(root Compilation) []NativeContract {
 		}
 		return contracts[i].Key.String() < contracts[j].Key.String()
 	})
+	return contracts
+}
+
+func nativeProjectionContracts(root Compilation, rows []NativeProjection) []NativeContract {
+	contracts := make([]NativeContract, 0, len(rows))
+	for _, row := range rows {
+		encoded, err := EncodeNativeProjection(row)
+		if err != nil {
+			continue
+		}
+		identity := sha256.Sum256(encoded)
+		contracts = append(contracts, NativeContract{
+			Key: factkey.BuildKey(
+				factkey.NativeProjection,
+				[]factkey.Part{
+					factkey.OpaquePart(fmt.Sprintf("%x", root.Body)),
+					factkey.OpaquePart(fmt.Sprintf("%x", identity)),
+				},
+				"published",
+			),
+			Value: string(encoded),
+		})
+	}
 	return contracts
 }
 

@@ -1,9 +1,9 @@
-package engine
+package front
 
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 )
 
 // frozenBodyNativeFacts reads the structural rows the equation kernels publish
@@ -16,10 +16,10 @@ import (
 // It derives nothing the kernels do not: the same occurrence kinds, the same
 // operand roles and the same published values. The root body is never projected
 // here, so one occurrence never carries two rows.
-func frozenBodyNativeFacts(root front.Compilation) []NativeFact {
-	var rows []NativeFact
-	var visit func(compilation front.Compilation, evaluated bool)
-	visit = func(compilation front.Compilation, evaluated bool) {
+func frozenBodyNativeFacts(root Compilation) []NativeProjection {
+	var rows []NativeProjection
+	var visit func(compilation Compilation, evaluated bool)
+	visit = func(compilation Compilation, evaluated bool) {
 		if !evaluated {
 			rows = append(rows, frozenBodyOccurrenceFacts(compilation)...)
 		}
@@ -31,8 +31,8 @@ func frozenBodyNativeFacts(root front.Compilation) []NativeFact {
 	return rows
 }
 
-func frozenBodyOccurrenceFacts(compilation front.Compilation) []NativeFact {
-	var out []NativeFact
+func frozenBodyOccurrenceFacts(compilation Compilation) []NativeProjection {
+	var out []NativeProjection
 	for _, operation := range compilation.Artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "eval-node":
@@ -56,11 +56,40 @@ func frozenBodyOccurrenceFacts(compilation front.Compilation) []NativeFact {
 	return out
 }
 
-func frozenBodyRow(compilation front.Compilation, family, occurrence, content string) NativeFact {
-	return NativeFact{
-		Lane: NativeLaneValues, Family: family,
+func frozenBodyRow(compilation Compilation, family, occurrence, content string) NativeProjection {
+	return NativeProjection{
 		Key:        family + "/" + fmt.Sprintf("%x", compilation.Body) + "/" + occurrence,
 		Value:      content,
-		Occurrence: occurrence, Trust: NativeTrustProven,
+		Occurrence: occurrence,
 	}
+}
+
+const (
+	claimAssertKind               = "claim-kind/2"
+	claimAssertThrowTemplateValue = "allocates=false;false_arm=passes;kind=claim_assert;nil_arm=throws;preserves_word_on_success=true"
+)
+
+func projectedEvalNodeOperation(name string) bool {
+	switch name {
+	case "closure", "length":
+		return true
+	default:
+		return false
+	}
+}
+
+func artifactOperandsByRole(operands []equation.Operand, roles ...string) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(roles))
+	for _, role := range roles {
+		for _, operand := range operands {
+			if operand.Role == role && !operand.Term.Entry {
+				out[role] = operand.Term.Encoding
+				break
+			}
+		}
+		if out[role] == nil {
+			return nil, fmt.Errorf("front: missing closed artifact operand %q", role)
+		}
+	}
+	return out, nil
 }

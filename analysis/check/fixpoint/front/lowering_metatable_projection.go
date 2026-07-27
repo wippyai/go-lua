@@ -1,18 +1,17 @@
-package engine
+package front
 
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
 
-// N7 residual — metatable_seal needs a guarded heap/meta publication that joins
-// the receiver identity, installed __index identity, aliases, all later meta
-// writes, and opaque-call invalidation. That closed topology is not available
-// to one solve kernel yet, so this scan remains.
+// Metatable seal drafts join receiver identity, installed __index identity,
+// aliases, later meta writes, and opaque-call invalidation. The complete
+// topology is transported as a typed factkey.NativeProjection record and
+// becomes visible only at the semantic tail.
 //
 // metatableNativeFacts publishes the metatable seal of every table binding the
 // module builds. A binding is a lexical symbol, so the analysis spans every
@@ -26,19 +25,19 @@ import (
 // `setmetatable` call does name is sealed to the exact index table it was given,
 // and that seal ends when the metatable is replaced or the index table itself is
 // mutated.
-func metatableNativeFacts(root front.Compilation) []NativeFact {
+func metatableNativeFacts(root Compilation) []NativeProjection {
 	state := newMetatableState()
 	forEachNativeBody(root, state.observe)
-	var rows []NativeFact
-	forEachNativeBody(root, func(compilation front.Compilation) {
+	var rows []NativeProjection
+	forEachNativeBody(root, func(compilation Compilation) {
 		rows = append(rows, state.bodyFacts(compilation)...)
 	})
 	return rows
 }
 
-func forEachNativeBody(root front.Compilation, visit func(front.Compilation)) {
-	var walk func(front.Compilation)
-	walk = func(compilation front.Compilation) {
+func forEachNativeBody(root Compilation, visit func(Compilation)) {
+	var walk func(Compilation)
+	walk = func(compilation Compilation) {
 		if compilation.WIR != nil {
 			visit(compilation)
 		}
@@ -70,7 +69,7 @@ func newMetatableState() *metatableState {
 	}
 }
 
-func (s *metatableState) observe(compilation front.Compilation) {
+func (s *metatableState) observe(compilation Compilation) {
 	body := compilation.WIR
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
@@ -116,17 +115,16 @@ func (s *metatableState) observe(compilation front.Compilation) {
 	}
 }
 
-func (s *metatableState) bodyFacts(compilation front.Compilation) []NativeFact {
+func (s *metatableState) bodyFacts(compilation Compilation) []NativeProjection {
 	body := compilation.WIR
-	row := func(key, occurrence, subject, content, revocation string) NativeFact {
-		return NativeFact{
-			Lane: NativeLaneValues, Family: "metatable_seal",
+	row := func(key, occurrence, subject, content, revocation string) NativeProjection {
+		return NativeProjection{
 			Key:   "metatable_seal/" + fmt.Sprintf("%x", compilation.Body) + "/" + key + "/contract-revocation/" + revocation,
-			Value: content, Subject: subject, Occurrence: occurrence, Trust: NativeTrustProven,
+			Value: content, Subject: subject, Occurrence: occurrence,
 		}
 	}
 
-	var out []NativeFact
+	var out []NativeProjection
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		occurrence := fmt.Sprintf("op-%08d", index)
@@ -176,7 +174,7 @@ func (s *metatableState) absentProved(symbol wir.SymbolID) bool {
 // installedIndexTable names the table an installed metatable delegates to,
 // whether the metatable is a named binding carrying an `__index` write or the
 // constructor expression passed directly to the call.
-func (s *metatableState) installedIndexTable(compilation front.Compilation, body *wir.Body, operand wir.Operand) (string, bool) {
+func (s *metatableState) installedIndexTable(compilation Compilation, body *wir.Body, operand wir.Operand) (string, bool) {
 	if operand.Kind == wir.OperandTemp {
 		name, found := s.entryIndexes[nativeTempKey(compilation, operand)]
 		return name, found
@@ -223,7 +221,7 @@ func nativeSymbolKey(symbol wir.SymbolID) string {
 	return fmt.Sprintf("sym%d", symbol)
 }
 
-func nativeTempKey(compilation front.Compilation, operand wir.Operand) string {
+func nativeTempKey(compilation Compilation, operand wir.Operand) string {
 	return fmt.Sprintf("%x/temp/%d", compilation.Body, operand.Ref)
 }
 
