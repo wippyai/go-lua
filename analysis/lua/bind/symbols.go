@@ -144,6 +144,30 @@ func (r *Result) IsImplicitGlobalSymbol(id symbol.ID) bool {
 	return ok
 }
 
+// GlobalIdentity is an opaque binder-owned global selection. It can only be
+// obtained by resolving an identifier occurrence through Result.
+type GlobalIdentity struct {
+	id   symbol.ID
+	name string
+}
+
+// GlobalIdentity resolves ident to its bound global declaration.
+func (r *Result) GlobalIdentity(ident *ast.IdentExpr) (GlobalIdentity, bool) {
+	if r == nil || ident == nil {
+		return GlobalIdentity{}, false
+	}
+	id, ok := r.SymbolOf(ident)
+	if !ok || !r.SymbolResolvesToGlobal(id, ident.Value) {
+		return GlobalIdentity{}, false
+	}
+	return GlobalIdentity{id: id, name: ident.Value}, true
+}
+
+// Matches reports whether the bound global has the registry-selected name.
+func (identity GlobalIdentity) Matches(name string) bool {
+	return identity.id != 0 && identity.name != "" && identity.name == name
+}
+
 // ResolvesToGlobal reports whether ident is bound to the global named name.
 func (r *Result) ResolvesToGlobal(ident *ast.IdentExpr, name string) bool {
 	if r == nil || ident == nil || name == "" || ident.Value != name {

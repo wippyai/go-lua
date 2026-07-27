@@ -25,7 +25,7 @@ func TestChildEntryTransportsPublishedDescendantAndMemberCapability(t *testing.T
 	if err != nil {
 		t.Fatalf("encode child entry: %v", err)
 	}
-	result, err := entryKernel(equation.BoundEquation{Operands: []equation.BoundOperand{{Role: "entry", Value: entry}}}, equation.Partition{})
+	result, err := entryKernel(equation.BoundEquation{Operands: []equation.BoundOperand{{Role: equation.MustOperandRole("entry"), Value: entry}}}, equation.Partition{})
 	if err != nil {
 		t.Fatalf("entry kernel: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestChildEntryPublishesInstantiatedFormalType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode child entry: %v", err)
 	}
-	result, err := entryKernel(equation.BoundEquation{Operands: []equation.BoundOperand{{Role: "entry", Value: entry}}}, equation.Partition{})
+	result, err := entryKernel(equation.BoundEquation{Operands: []equation.BoundOperand{{Role: equation.MustOperandRole("entry"), Value: entry}}}, equation.Partition{})
 	if err != nil {
 		t.Fatalf("entry kernel: %v", err)
 	}
@@ -109,9 +109,9 @@ func TestChildEntryDeclarationOutranksInstantiatedType(t *testing.T) {
 		t.Fatalf("encode child entry: %v", err)
 	}
 	result, err := entryKernel(equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: "entry", Value: entry},
-		{Role: "declared-root-00000000", Value: []byte("path/sym4")},
-		{Role: "declared-type-00000000", Value: numberTarget},
+		{Role: equation.MustOperandRole("entry"), Value: entry},
+		{Role: equation.MustOperandRole("declared-root-00000000"), Value: []byte("path/sym4")},
+		{Role: equation.MustOperandRole("declared-type-00000000"), Value: numberTarget},
 	}}, equation.Partition{})
 	if err != nil {
 		t.Fatalf("entry kernel: %v", err)

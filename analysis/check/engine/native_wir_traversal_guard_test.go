@@ -164,6 +164,24 @@ func TestWIRTraversalGuardResolvesTypeAliases(t *testing.T) {
 	}
 }
 
+func TestSanctionedNativeWIRTraversalReferenceSetIsPinned(t *testing.T) {
+	loader := newFencePackageLoader(t, "./analysis/check/fixpoint/front")
+	meta := loader.metas[modulePath+"/analysis/check/fixpoint/front"]
+	references := fenceWIRTraversalReferences(loader.load(meta))
+	count := 0
+	for _, reference := range references {
+		if filepath.Base(strings.SplitN(reference, ":", 2)[0]) == "native_wir_contracts.go" {
+			count++
+		}
+	}
+	// The sanctioned file currently owns fourteen bounded Body.Len/Body.Instr
+	// pairs. Any additional traversal, including the rescan5 loop mutation,
+	// changes this closed census and requires an explicit ownership review.
+	if count != 28 {
+		t.Fatalf("native_wir_contracts.go traversal references = %d, want pinned 28", count)
+	}
+}
+
 func isWIRNamed(value types.Type, name string) bool {
 	value = types.Unalias(value)
 	if pointer, ok := value.(*types.Pointer); ok {

@@ -39,7 +39,7 @@ func residueExpressionFacts(operator wir.Operator, operands map[equation.Operand
 }
 
 func residueExpressionWindow(operator wir.Operator, operands map[equation.OperandRole][]byte, partition equation.Partition) (residueWindow, bool) {
-	left, right := operands["left"], operands["right"]
+	left, right := operands[equation.MustOperandRole("left")], operands[equation.MustOperandRole("right")]
 	switch operator {
 	case wir.BinAdd, wir.BinSub:
 		offset, ok := scalarIntegerConstant(right)

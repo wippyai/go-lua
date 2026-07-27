@@ -149,7 +149,7 @@ func BenchmarkRuntimeProjectionJITAdmission(b *testing.B) {
 	body := testBody(31)
 	entry := EntryParameter{Body: body, Name: "entry"}
 	artifact := Artifact{Equations: []Equation{
-		{Target: Coordinate{Body: body, Name: "identity"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: testID(41)}, KernelID: "canonical/identity", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "identity"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: testID(41)}, KernelID: "canonical/identity", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
 	}}
 	compiled, err := CompileArtifact(artifact)
 	if err != nil {

@@ -1,6 +1,7 @@
 package front
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -32,7 +33,16 @@ func TestDraftWireCodecsDistinguishAbsentFromMalformed(t *testing.T) {
 }
 
 func TestDraftWireCodecsRoundTripCanonicalValues(t *testing.T) {
-	predicate := BranchPredicateWire{Kind: "path-equal", Path: "result.channel", OtherPath: "ch"}
+	predicate := BranchPredicateWire{
+		Kind:      "path-equal",
+		Path:      "result.channel",
+		OtherPath: "ch",
+		PathShape: BranchChainPathWire{
+			Key: "result.channel", Display: "result.channel",
+			ParentKey: "result", ParentDisplay: "result", FinalField: "channel",
+		},
+		OtherPathShape: BranchChainPathWire{Key: "ch", Display: "ch"},
+	}
 	predicateEncoded, err := EncodeBranchPredicateWire(predicate)
 	if err != nil {
 		t.Fatal(err)
@@ -80,5 +90,14 @@ func TestDraftWireCodecsRejectInvalidConstruction(t *testing.T) {
 				t.Fatal("invalid semantic wire construction succeeded")
 			}
 		})
+	}
+}
+
+func TestPathRelationRejectsFormattedChannelSuffixWithoutStructuralIdentity(t *testing.T) {
+	_, err := EncodeBranchPredicateWire(BranchPredicateWire{
+		Kind: "path-equal", Path: fmt.Sprint("result", ".", "channel"), OtherPath: "ch",
+	})
+	if err == nil {
+		t.Fatal("path relation accepted formatted channel suffix without typed path structure")
 	}
 }

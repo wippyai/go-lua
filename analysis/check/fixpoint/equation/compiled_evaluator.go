@@ -231,11 +231,15 @@ func (a CompiledArtifact) bindOperation(op CompiledOp, entry EntryBinding, frame
 		} else if descriptor.Kind != OperandCanonicalConstant {
 			return BoundEquation{}, fmt.Errorf("equation: compiled operand kind %d is not executable", descriptor.Kind)
 		}
-		role, ok := a.arenaString(descriptor.RoleOffset, descriptor.RoleLength)
-		if !ok || role == "" {
+		spelling, ok := a.arenaString(descriptor.RoleOffset, descriptor.RoleLength)
+		if !ok {
 			return BoundEquation{}, fmt.Errorf("equation: compiled operand role is invalid")
 		}
-		operands[index] = BoundOperand{Role: OperandRole(role), Value: value}
+		role, ok := ParseOperandRole(spelling)
+		if !ok {
+			return BoundEquation{}, fmt.Errorf("equation: compiled operand role is invalid")
+		}
+		operands[index] = BoundOperand{Role: role, Value: value}
 	}
 	guards := frame.guards[:guardCount]
 	for index, descriptor := range a.guards[op.GuardStart : op.GuardStart+op.GuardCount] {

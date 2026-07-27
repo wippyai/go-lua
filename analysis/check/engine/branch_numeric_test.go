@@ -145,7 +145,7 @@ func TestResidueClassWindowVerdictIntersectsTheClassWithTheWindow(t *testing.T) 
 
 func TestTrueEdgeNumericPredicatesRejectFalseEdgeEvidence(t *testing.T) {
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: "implied-00000000", Value: encodeEvidence(t, "false", "false", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
+		{Role: equation.MustOperandRole("implied-00000000"), Value: encodeEvidence(t, "false", "false", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 	}}
 	if predicates, err := trueEdgeNumericPredicates(operation); err != nil || len(predicates) != 0 {
 		t.Fatalf("false-edge evidence asserts nothing on the true edge, got %v", predicates)
@@ -156,8 +156,8 @@ func TestTrueEdgeNumericPredicatesIgnoreAnUnknownRole(t *testing.T) {
 	// A role this vocabulary does not name is an orthogonal marker, not an
 	// assertion, so it neither enters the set nor blocks the roles that do.
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: "recurrence", Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
-		{Role: "implied-00000000", Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
+		{Role: equation.MustOperandRole("recurrence"), Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
+		{Role: equation.MustOperandRole("implied-00000000"), Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 	}}
 	predicates, err := trueEdgeNumericPredicates(operation)
 	if err != nil {
@@ -170,8 +170,8 @@ func TestTrueEdgeNumericPredicatesIgnoreAnUnknownRole(t *testing.T) {
 
 func TestNegatableBranchSelectorRefusesACompoundCondition(t *testing.T) {
 	compound := equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: "condition", Value: []byte("temp/0")},
-		{Role: "implied-00000000", Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
+		{Role: equation.MustOperandRole("condition"), Value: []byte("temp/0")},
+		{Role: equation.MustOperandRole("implied-00000000"), Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 	}}
 	if _, single, err := negatableBranchSelector(compound); err != nil || single {
 		t.Fatal("a compound condition's false edge refutes no individual conjunct")
@@ -184,7 +184,7 @@ func TestBranchNumericTruthProvesTheTrueEdgeOfABoundInsideItsWindow(t *testing.T
 		t.Fatalf("encoding predicate: %v", err)
 	}
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: "predicate", Value: predicate},
+		{Role: equation.MustOperandRole("predicate"), Value: predicate},
 	}}
 	truth, decided, err := branchNumericTruth(operation, residueWindowPartition(t, "y", `{"low":1,"high":3}`))
 	if err != nil || !decided || !truth {
@@ -198,7 +198,7 @@ func TestBranchNumericTruthLeavesAnUndecidedBoundAlone(t *testing.T) {
 		t.Fatalf("encoding predicate: %v", err)
 	}
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: "predicate", Value: predicate},
+		{Role: equation.MustOperandRole("predicate"), Value: predicate},
 	}}
 	if _, decided, err := branchNumericTruth(operation, residueWindowPartition(t, "y", `{"low":0,"high":3}`)); err != nil || decided {
 		t.Fatal("a window straddling the floor decides neither arm")

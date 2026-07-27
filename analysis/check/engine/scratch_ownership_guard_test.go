@@ -58,6 +58,15 @@ type localWorkerArena struct {
 	*interproc.ProjectionScratch
 }
 `,
+		"rescan5 local anonymous owner": `package engine
+import "` + modulePath + `/analysis/check/fixpoint/evalscratch"
+func mutation() {
+	local := struct {
+		depth evalscratch.Depth
+	}{}
+	_ = local
+}
+`,
 	}
 	for name, source := range tests {
 		t.Run(name, func(t *testing.T) {

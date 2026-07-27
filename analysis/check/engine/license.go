@@ -28,11 +28,8 @@ func (license familyReadLicense) Valid(partition equation.Partition) bool {
 			return false
 		}
 	}
-	for _, revokerID := range license.Family.RevocationSet {
-		revoker, declared := factkey.FamilyByID(revokerID)
-		if !declared {
-			return false
-		}
+	revokers := license.Family.Revokers()
+	for revoker, declared := revokers.Next(); declared; revoker, declared = revokers.Next() {
 		subject, compatible := factkey.RebindSubject(license.Subject, revoker)
 		if !compatible {
 			// A revoker whose subject kind cannot name this semantic subject

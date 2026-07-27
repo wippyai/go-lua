@@ -10,9 +10,9 @@ import (
 
 func providerCallEquation(name, provider string, arguments ...string) equation.Equation {
 	operands := []equation.Operand{
-		{Role: "application", Term: equation.ClosedTerm([]byte("call/" + name))},
-		{Role: "provider", Term: equation.ClosedTerm([]byte(provider))},
-		{Role: "argument-display-00000000", Term: equation.ClosedTerm([]byte("display"))},
+		{Role: equation.MustOperandRole("application"), Term: equation.ClosedTerm([]byte("call/" + name))},
+		{Role: equation.MustOperandRole("provider"), Term: equation.ClosedTerm([]byte(provider))},
+		{Role: equation.MustOperandRole("argument-display-00000000"), Term: equation.ClosedTerm([]byte("display"))},
 	}
 	for index, argument := range arguments {
 		operands = append(operands, equation.Operand{
@@ -66,7 +66,7 @@ func TestContextualCallbackArgumentRefusesACallWithNoProvider(t *testing.T) {
 	call := providerCallEquation("op-1", "provider/module/v1/json", "temp/26")
 	operands := make([]equation.Operand, 0, len(call.Operands))
 	for _, operand := range call.Operands {
-		if operand.Role != "provider" {
+		if operand.Role.Wire() != "provider" {
 			operands = append(operands, operand)
 		}
 	}

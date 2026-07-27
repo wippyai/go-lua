@@ -431,7 +431,7 @@ func narrateAssignment(item PublishedDiagnostic, context diagnosticNarrationCont
 				if _, available := claimDiagnosticValue(operands["value"], operation, context.closure); !available {
 					source, display := "value", "value"
 					for _, operand := range operation.Operands {
-						switch operand.Role {
+						switch operand.Role.Wire() {
 						case "source-display":
 							source = string(operand.Term.Encoding)
 						case "display":
@@ -461,7 +461,7 @@ func narrateAssignment(item PublishedDiagnostic, context diagnosticNarrationCont
 	if mutation, found := context.indexMutations[name]; found {
 		source, target := "value", "value"
 		for _, operand := range mutation.Operands {
-			switch operand.Role {
+			switch operand.Role.Wire() {
 			case "source-display":
 				source = string(operand.Term.Encoding)
 			case "display":
@@ -609,7 +609,7 @@ func narrateFrozenMutation(item PublishedDiagnostic, context diagnosticNarration
 	}
 	display, callMutation := "", operation.Occurrence.Kind == "apply"
 	for _, operand := range operation.Operands {
-		if operand.Role == "write-container-display" || (callMutation && operand.Role == equation.IndexedRole(equation.RoleFamilyArgumentDisplay, 0)) {
+		if operand.Role.Wire() == "write-container-display" || (callMutation && operand.Role == equation.IndexedRole(equation.RoleFamilyArgumentDisplay, 0)) {
 			display = string(operand.Term.Encoding)
 		}
 	}
@@ -658,13 +658,13 @@ func narrateDirectCall(item PublishedDiagnostic, context diagnosticNarrationCont
 	for _, operand := range operation.Operands {
 		operands[operand.Role] = string(operand.Term.Encoding)
 	}
-	callee := operands["callee-display"]
+	callee := operands[equation.RoleCalleeDisplay]
 	if callee == "" {
-		callee = strings.TrimPrefix(operands["callee"], "path/")
+		callee = strings.TrimPrefix(operands[equation.RoleCallee], "path/")
 	}
-	if callee == "" && operands["receiver-display"] != "" {
-		if method, ok := callMethodName([]byte(operands["method"])); ok {
-			callee = operands["receiver-display"] + "." + method
+	if callee == "" && operands[equation.MustOperandRole("receiver-display")] != "" {
+		if method, ok := callMethodName([]byte(operands[equation.MustOperandRole("method")])); ok {
+			callee = operands[equation.MustOperandRole("receiver-display")] + "." + method
 		}
 	}
 	if callee == "" {
@@ -798,7 +798,7 @@ func narrateOptionalCallReceiver(item PublishedDiagnostic, context diagnosticNar
 	}
 	receiver, method := "", ""
 	for _, operand := range operation.Operands {
-		switch operand.Role {
+		switch operand.Role.Wire() {
 		case "receiver-display":
 			receiver = string(operand.Term.Encoding)
 		case "method":
@@ -887,7 +887,7 @@ func narrateRedundantClaim(item PublishedDiagnostic, context diagnosticNarration
 		}
 		value := strings.TrimPrefix(string(operands["value"]), "path/")
 		for _, operand := range operation.Operands {
-			if operand.Role == "source-display" && len(operand.Term.Encoding) != 0 {
+			if operand.Role.Wire() == "source-display" && len(operand.Term.Encoding) != 0 {
 				value = string(operand.Term.Encoding)
 			}
 		}
@@ -1048,7 +1048,7 @@ func narrateOptionalAssignmentTarget(item PublishedDiagnostic, context diagnosti
 	if operation, found := context.pathReplacements[name]; found {
 		target, container := "", ""
 		for _, operand := range operation.Operands {
-			switch operand.Role {
+			switch operand.Role.Wire() {
 			case "display":
 				target = string(operand.Term.Encoding)
 			case "write-container-display":
@@ -1085,7 +1085,7 @@ func narrateMissingMember(item PublishedDiagnostic, context diagnosticNarrationC
 		value, available := claimDiagnosticValue(operands["value"], operation, context.closure)
 		source := "member"
 		for _, operand := range operation.Operands {
-			if operand.Role == "source-display" && len(operand.Term.Encoding) != 0 {
+			if operand.Role.Wire() == "source-display" && len(operand.Term.Encoding) != 0 {
 				source = string(operand.Term.Encoding)
 			}
 		}
@@ -1122,7 +1122,7 @@ func narrateMissingMember(item PublishedDiagnostic, context diagnosticNarrationC
 	if operation, found := context.applies[name]; found {
 		receiver, method := "", ""
 		for _, operand := range operation.Operands {
-			switch operand.Role {
+			switch operand.Role.Wire() {
 			case "receiver-display":
 				receiver = string(operand.Term.Encoding)
 			case "method":

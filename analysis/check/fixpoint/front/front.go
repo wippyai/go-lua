@@ -394,7 +394,7 @@ func appendNativeContractPublications(artifact equation.Artifact, contracts []Na
 	if tail := len(artifact.Equations) - 1; tail >= 0 {
 		existing := artifact.Equations[tail]
 		if existing.Occurrence.Kind == "publication" && len(existing.Operands) == 1 &&
-			existing.Operands[0].Role == "native-publications" && !existing.Operands[0].Term.Entry {
+			existing.Operands[0].Role.Wire() == "native-publications" && !existing.Operands[0].Term.Entry {
 			current := existing.Operands[0].Term.Encoding
 			if len(current) < 4 {
 				return equation.Artifact{}, fmt.Errorf("front: truncated native publication tail")
@@ -420,7 +420,7 @@ func appendNativeContractPublications(artifact equation.Artifact, contracts []Na
 		Dependencies: []equation.Coordinate{semanticTail},
 		Occurrence:   occurrence("publication"),
 		Operands: []equation.Operand{{
-			Role: "native-publications",
+			Role: equation.MustOperandRole("native-publications"),
 			Term: equation.ClosedTerm(encodedPublications),
 		}},
 		KernelID: publicationKernel,
@@ -1156,7 +1156,7 @@ func effectSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 		case "environment-write":
 			isStaticRead := false
 			for _, operand := range operation.Operands {
-				isStaticRead = isStaticRead || operand.Role == "source-display"
+				isStaticRead = isStaticRead || operand.Role.Wire() == "source-display"
 			}
 			if isStaticRead && readIndex < len(reads) && reads[readIndex].ExprSpan.Valid() {
 				out[operation.Target.Name] = reads[readIndex].ExprSpan
@@ -1298,13 +1298,13 @@ func returnSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 			}
 			for index, meta := range body.ReturnValueMeta(returns[returnIndex].ReturnValues) {
 				if meta.Span.Valid() {
-					out[operation.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyReturnValue, index).String()] = meta.Span
+					out[operation.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyReturnValue, index).Wire()] = meta.Span
 				}
 			}
 		}
 		for index, span := range declared {
 			if span.Valid() {
-				out[operation.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyDeclaredReturn, index).String()] = span
+				out[operation.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyDeclaredReturn, index).Wire()] = span
 			}
 		}
 		returnIndex++
@@ -1336,7 +1336,7 @@ func expressionSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.
 		expressionIndex++
 		for index, meta := range body.ConcatOperandMeta(instruction.ConcatOperands) {
 			if meta.Span.Valid() {
-				out[operation.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyValue, index).String()] = meta.Span
+				out[operation.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyValue, index).Wire()] = meta.Span
 			}
 		}
 	}
@@ -1345,7 +1345,7 @@ func expressionSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.
 
 func expressionIsConcat(operation equation.Equation) bool {
 	for _, operand := range operation.Operands {
-		if operand.Role == "kind" && string(operand.Term.Encoding) == strconv.Itoa(int(wir.OpConcat)) {
+		if operand.Role.Wire() == "kind" && string(operand.Term.Encoding) == strconv.Itoa(int(wir.OpConcat)) {
 			return true
 		}
 	}
@@ -1397,7 +1397,7 @@ func callSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
 		}
 		for index, argument := range body.CallArgumentMeta(call.CallArgs) {
 			if argument.Span.Valid() {
-				out[item.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyArgument, index).String()] = argument.Span
+				out[item.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyArgument, index).Wire()] = argument.Span
 			}
 		}
 		for index, argument := range body.Operands(call.List) {
@@ -1405,7 +1405,7 @@ func callSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
 				continue
 			}
 			for suffix, span := range literalMembers[argument.Ref] {
-				out[item.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyArgument, index).String()+suffix] = span
+				out[item.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyArgument, index).Wire()+suffix] = span
 			}
 		}
 		callIndex++
@@ -1758,7 +1758,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			}
 			draft.Occurrence = occurrence("eval-node")
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
-			draft.Operands = []equation.Operand{{Role: "operation", Term: equation.ClosedTerm([]byte(operationName))}}
+			draft.Operands = []equation.Operand{{Role: equation.MustOperandRole("operation"), Term: equation.ClosedTerm([]byte(operationName))}}
 		case operation.family == "allocation-template" || operation.family == "object-materialization":
 			terms, err := allocationOperands(body, instruction, operation.allocationSite)
 			if err != nil {
@@ -1817,34 +1817,34 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			if operation.family == "path-invalidation" {
 				draft.Operands = []equation.Operand{
-					{Role: "container", Term: container},
-					{Role: "key", Term: key},
-					{Role: "suffix", Term: suffixTerm(body, instruction.DynamicSuffix)},
+					{Role: equation.MustOperandRole("container"), Term: container},
+					{Role: equation.MustOperandRole("key"), Term: key},
+					{Role: equation.MustOperandRole("suffix"), Term: suffixTerm(body, instruction.DynamicSuffix)},
 				}
 			} else {
 				draft.Operands = []equation.Operand{
-					{Role: "container", Term: container},
-					{Role: "key", Term: key},
-					{Role: "suffix", Term: suffixTerm(body, instruction.DynamicSuffix)},
-					{Role: "value", Term: value},
+					{Role: equation.MustOperandRole("container"), Term: container},
+					{Role: equation.MustOperandRole("key"), Term: key},
+					{Role: equation.MustOperandRole("suffix"), Term: suffixTerm(body, instruction.DynamicSuffix)},
+					{Role: equation.MustOperandRole("value"), Term: value},
 				}
 				if instruction.DynamicTargetDisplay != "" {
-					draft.Operands = append(draft.Operands, equation.Operand{Role: "display", Term: equation.ClosedTerm([]byte(instruction.DynamicTargetDisplay))})
+					draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("display"), Term: equation.ClosedTerm([]byte(instruction.DynamicTargetDisplay))})
 				}
 				if instruction.DynamicValueDisplay != "" {
-					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(instruction.DynamicValueDisplay))})
+					draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("source-display"), Term: equation.ClosedTerm([]byte(instruction.DynamicValueDisplay))})
 				}
 				if subject, display, ok := writeContainerSubject(body, instruction.Dst, true); ok {
 					draft.Operands = append(draft.Operands,
-						equation.Operand{Role: "write-container", Term: subject},
-						equation.Operand{Role: "write-container-display", Term: equation.ClosedTerm([]byte(display))},
+						equation.Operand{Role: equation.MustOperandRole("write-container"), Term: subject},
+						equation.Operand{Role: equation.MustOperandRole("write-container-display"), Term: equation.ClosedTerm([]byte(display))},
 					)
 				}
 				draft.Operands = append(draft.Operands, nativeTableGrowthOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence, operations)...)
 			}
 		case instruction.Op == wir.OpEntry:
 			draft.Occurrence = occurrence("entry")
-			draft.Operands = append([]equation.Operand{{Role: "entry", Term: equation.EntryTerm(entry)}}, entryDeclaredOperands(body)...)
+			draft.Operands = append([]equation.Operand{{Role: equation.MustOperandRole("entry"), Term: equation.EntryTerm(entry)}}, entryDeclaredOperands(body)...)
 		case instruction.Op == wir.OpAssign:
 			target, err := scalarTerm(body, instruction.Dst)
 			if err != nil {
@@ -1875,21 +1875,21 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			}
 			absence := assignmentAbsencePolicy(body, instruction.A)
 			draft.Operands = []equation.Operand{
-				{Role: "target", Term: target},
-				{Role: "display", Term: equation.ClosedTerm([]byte(display))},
-				{Role: "value", Term: value},
-				{Role: "read-before", Term: readBefore},
-				{Role: "absence", Term: equation.ClosedTerm([]byte(absence))},
+				{Role: equation.MustOperandRole("target"), Term: target},
+				{Role: equation.MustOperandRole("display"), Term: equation.ClosedTerm([]byte(display))},
+				{Role: equation.MustOperandRole("value"), Term: value},
+				{Role: equation.MustOperandRole("read-before"), Term: readBefore},
+				{Role: equation.MustOperandRole("absence"), Term: equation.ClosedTerm([]byte(absence))},
 			}
 			if instruction.A.Kind == wir.OperandConst &&
 				body.Const(wir.ConstRef(instruction.A.Ref)).Kind == wir.ConstNumber &&
 				nativeAssignmentWrites[string(target.Encoding)] == 1 {
 				draft.Operands = append(draft.Operands,
 					equation.Operand{
-						Role: "native-representation-key",
+						Role: equation.MustOperandRole("native-representation-key"),
 						Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("representation", bodyID, operation.sourceOccurrence))),
 					},
-					equation.Operand{Role: "native-source-occurrence", Term: equation.ClosedTerm([]byte(operation.sourceOccurrence))},
+					equation.Operand{Role: equation.MustOperandRole("native-source-occurrence"), Term: equation.ClosedTerm([]byte(operation.sourceOccurrence))},
 				)
 			}
 			if nativeAssignmentWrites[string(target.Encoding)] > 1 &&
@@ -1898,14 +1898,14 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 				joinSubject := strings.TrimPrefix(string(target.Encoding), "path/")
 				draft.Operands = append(draft.Operands,
 					equation.Operand{
-						Role: "native-representation-join-key",
+						Role: equation.MustOperandRole("native-representation-join-key"),
 						Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("representation", bodyID, "join-"+joinSubject))),
 					},
 					equation.Operand{
-						Role: "native-representation-join-type",
+						Role: equation.MustOperandRole("native-representation-join-type"),
 						Term: equation.ClosedTerm(nativeDeclaredJoinType[string(target.Encoding)]),
 					},
-					equation.Operand{Role: "native-representation-join-occurrence", Term: equation.ClosedTerm([]byte("join-" + joinSubject))},
+					equation.Operand{Role: equation.MustOperandRole("native-representation-join-occurrence"), Term: equation.ClosedTerm([]byte("join-" + joinSubject))},
 				)
 			}
 			// A member read is static under either spelling: t.name and
@@ -1921,7 +1921,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 						suffix := "[" + last.Name + "]"
 						sourceDisplay = strings.TrimSuffix(sourceDisplay, suffix) + "[" + strconv.Quote(last.Name) + "]"
 					}
-					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(sourceDisplay))})
+					draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("source-display"), Term: equation.ClosedTerm([]byte(sourceDisplay))})
 				}
 				draft.Operands = append(draft.Operands, nativeMetatableReadOperands(bodyID, body, instruction.A, operation.sourceOccurrence)...)
 				draft.Operands = append(draft.Operands, nativeElementStaticReadDraftOperands(bodyID, body, instruction.A, operation.sourceIndex, operation.sourceOccurrence, operations)...)
@@ -1941,24 +1941,24 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			draft.Occurrence = occurrence("path-replacement")
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = []equation.Operand{
-				{Role: "target", Term: target},
-				{Role: "display", Term: equation.ClosedTerm([]byte(display))},
-				{Role: "value", Term: value},
+				{Role: equation.MustOperandRole("target"), Term: target},
+				{Role: equation.MustOperandRole("display"), Term: equation.ClosedTerm([]byte(display))},
+				{Role: equation.MustOperandRole("value"), Term: value},
 			}
 			// WIR records a signature on typed dotted function definitions. Carry
 			// only that resolved, closed type as the member's declaration contract;
 			// ordinary static writes have no such authority.
 			if instruction.Type != 0 {
 				if declared, ok := shapefact.EncodeTarget(body.Type(instruction.Type)); ok {
-					draft.Operands = append(draft.Operands, equation.Operand{Role: "declared-type", Term: equation.ClosedTerm(declared)})
+					draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("declared-type"), Term: equation.ClosedTerm(declared)})
 				}
 			}
 			// table.freeze is deliberately shallow. A direct member write can
 			// mutate the frozen table itself; deeper writes affect a child table.
 			if subject, rootDisplay, ok := writeContainerSubject(body, instruction.Dst, false); ok {
 				draft.Operands = append(draft.Operands,
-					equation.Operand{Role: "write-container", Term: subject},
-					equation.Operand{Role: "write-container-display", Term: equation.ClosedTerm([]byte(rootDisplay))},
+					equation.Operand{Role: equation.MustOperandRole("write-container"), Term: subject},
+					equation.Operand{Role: equation.MustOperandRole("write-container-display"), Term: equation.ClosedTerm([]byte(rootDisplay))},
 				)
 			}
 		case instruction.Op == wir.OpDynamicIndexRead:
@@ -1977,9 +1977,9 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			draft.Occurrence = occurrence("dynamic-index-read")
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = []equation.Operand{
-				{Role: "target", Term: target},
-				{Role: "container", Term: container},
-				{Role: "key", Term: key},
+				{Role: equation.MustOperandRole("target"), Term: target},
+				{Role: equation.MustOperandRole("container"), Term: container},
+				{Role: equation.MustOperandRole("key"), Term: key},
 			}
 			draft.Operands = append(draft.Operands, nativeElementReadDraftOperands(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence, operations)...)
 		case instruction.Op == wir.OpClaim:
@@ -1998,13 +1998,13 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			draft.Occurrence = occurrence("claim")
 			draft.Guards = guardsForPoint(graph, guardReachability, instruction.Point, bodyID, branchTargets)
 			draft.Operands = []equation.Operand{
-				{Role: "target", Term: target},
-				{Role: "value", Term: value},
-				{Role: "kind", Term: equation.ClosedTerm([]byte("claim-kind/" + strconv.Itoa(int(instruction.Claim))))},
-				{Role: "type", Term: claimType},
+				{Role: equation.MustOperandRole("target"), Term: target},
+				{Role: equation.MustOperandRole("value"), Term: value},
+				{Role: equation.MustOperandRole("kind"), Term: equation.ClosedTerm([]byte("claim-kind/" + strconv.Itoa(int(instruction.Claim))))},
+				{Role: equation.MustOperandRole("type"), Term: claimType},
 			}
 			if target, ok := shapefact.EncodeTarget(body.Type(instruction.Type)); ok {
-				draft.Operands = append(draft.Operands, equation.Operand{Role: "shape-target", Term: equation.ClosedTerm(target)})
+				draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("shape-target"), Term: equation.ClosedTerm(target)})
 			}
 			draft.Operands = append(draft.Operands, nativeNilabilityClaimOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
 			// An annotation on an ordinary root write contracts a cell the
@@ -2012,26 +2012,26 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			// obligation without rebinding the cell, so it publishes no value of
 			// its own: the write remains the cell's sole definition.
 			if instruction.Assign == wir.AssignOrdinaryRootWrite {
-				draft.Operands = append(draft.Operands, equation.Operand{Role: "write-contract", Term: equation.ClosedTerm([]byte(shapefact.ScalarTrueWire))})
+				draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("write-contract"), Term: equation.ClosedTerm([]byte(shapefact.ScalarTrueWire))})
 			}
 			if instruction.Dst.Kind == wir.OperandPath {
 				display := body.Path(wir.PathRef(instruction.Dst.Ref)).String()
 				if display == "" {
 					return equation.Artifact{}, fmt.Errorf("front: claim %s: empty path target", operation.target.Name)
 				}
-				draft.Operands = append(draft.Operands, equation.Operand{Role: "display", Term: equation.ClosedTerm([]byte(display))})
+				draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("display"), Term: equation.ClosedTerm([]byte(display))})
 			}
 			if instruction.ClaimSourceDisplay != "" {
-				draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(instruction.ClaimSourceDisplay))})
+				draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("source-display"), Term: equation.ClosedTerm([]byte(instruction.ClaimSourceDisplay))})
 				if instruction.ClaimSourceMethodSelector {
-					draft.Operands = append(draft.Operands, equation.Operand{Role: "source-method-selector", Term: equation.ClosedTerm([]byte(shapefact.ScalarTrueWire))})
+					draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("source-method-selector"), Term: equation.ClosedTerm([]byte(shapefact.ScalarTrueWire))})
 				}
 			} else if instruction.A.Kind == wir.OperandPath {
 				sourceDisplay := diagnosticPathDisplay(body.Path(wir.PathRef(instruction.A.Ref)))
 				if sourceDisplay == "" {
 					return equation.Artifact{}, fmt.Errorf("front: claim %s: empty path source", operation.target.Name)
 				}
-				draft.Operands = append(draft.Operands, equation.Operand{Role: "source-display", Term: equation.ClosedTerm([]byte(sourceDisplay))})
+				draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("source-display"), Term: equation.ClosedTerm([]byte(sourceDisplay))})
 			}
 		case instruction.Op == wir.OpBinOp, instruction.Op == wir.OpUnOp, instruction.Op == wir.OpConcat, instruction.Op == wir.OpLogical:
 			operands, err := expressionOperands(body, instruction)
@@ -2045,7 +2045,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			operands = append(operands, nativeMetatableExpressionReadOperands(bodyID, body, instruction, operation.sourceOccurrence)...)
 			if instruction.Op == wir.OpConcat {
 				operands = append(operands, equation.Operand{
-					Role: "native-concat-site-key",
+					Role: equation.MustOperandRole("native-concat-site-key"),
 					Term: equation.ClosedTerm([]byte(factkey.BuildKey(
 						factkey.NativeConcatSite,
 						[]factkey.Part{factkey.OpaquePart(fmt.Sprintf("%x", bodyID))},
@@ -2063,10 +2063,10 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 				return equation.Artifact{}, fmt.Errorf("front: branch %s: %w", operation.target.Name, err)
 			}
 			if hasDynamicIndexRead {
-				operands = append(operands, equation.Operand{Role: "index-presence-consumer", Term: equation.ClosedTerm([]byte(shapefact.ScalarTrueWire))})
+				operands = append(operands, equation.Operand{Role: equation.MustOperandRole("index-presence-consumer"), Term: equation.ClosedTerm([]byte(shapefact.ScalarTrueWire))})
 			}
 			if chain, published := branchChains[instruction.Point]; published {
-				operands = append(operands, equation.Operand{Role: "branch-chain", Term: chain})
+				operands = append(operands, equation.Operand{Role: equation.MustOperandRole("branch-chain"), Term: chain})
 			}
 			// A decision one arm of which leaves a loop states which arm that is.
 			// The arm that stays inside republishes on every trip, so a point the
@@ -2076,11 +2076,11 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			// apply it, so the front states it and publishes nothing else about
 			// it.
 			if exitEdge, controls := guardReachability.naturalLoopExit(instruction.Point); controls {
-				operands = append(operands, equation.Operand{Role: "recurrence-exit", Term: equation.ClosedTerm([]byte(strconv.FormatBool(exitEdge)))})
+				operands = append(operands, equation.Operand{Role: equation.MustOperandRole("recurrence-exit"), Term: equation.ClosedTerm([]byte(strconv.FormatBool(exitEdge)))})
 			}
 			nativeBody := fmt.Sprintf("%x", bodyID)
 			operands = append(operands, equation.Operand{
-				Role: "native-branch-partition-key",
+				Role: equation.MustOperandRole("native-branch-partition-key"),
 				Term: equation.ClosedTerm([]byte(factkey.BuildKey(
 					factkey.NativeBranchPartition,
 					[]factkey.Part{factkey.OpaquePart(nativeBody)},
@@ -2090,7 +2090,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			check := body.Check(instruction.Check)
 			if check.Kind == wir.CheckTruthy || check.Kind == wir.CheckFalsy {
 				operands = append(operands, equation.Operand{
-					Role: "native-truthiness-key",
+					Role: equation.MustOperandRole("native-truthiness-key"),
 					Term: equation.ClosedTerm([]byte(factkey.BuildKey(
 						factkey.NativeTruthinessClass,
 						[]factkey.Part{factkey.OpaquePart(nativeBody)},
@@ -2133,7 +2133,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 				}
 				if key := nativeBuiltinCallKey(bodyID, body, instruction, operation.sourceIndex, operation.sourceOccurrence); key != "" {
 					operands = append(operands, equation.Operand{
-						Role: "native-builtin-call-key",
+						Role: equation.MustOperandRole("native-builtin-call-key"),
 						Term: equation.ClosedTerm([]byte(key)),
 					})
 				}
@@ -2171,8 +2171,8 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 			}
 			operands := make([]equation.Operand, 0, 2+3*instruction.List.Len)
 			operands = append(operands,
-				equation.Operand{Role: "result", Term: result},
-				equation.Operand{Role: "default", Term: equation.ClosedTerm([]byte("select/default/" + strconv.FormatBool(instruction.SelectDefault)))},
+				equation.Operand{Role: equation.MustOperandRole("result"), Term: result},
+				equation.Operand{Role: equation.MustOperandRole("default"), Term: equation.ClosedTerm([]byte("select/default/" + strconv.FormatBool(instruction.SelectDefault)))},
 			)
 			for caseIndex, candidate := range body.Operands(instruction.List) {
 				channel, err := selectCaseTerm(body, candidate)
@@ -2212,7 +2212,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph) 
 		// produces one such text per trip. Only the fixed point is the body's
 		// answer, so the reporter needs to know it is describing a carrier.
 		if recurrentPoints[instruction.Point] && (draft.Occurrence.Kind == "environment-write" || draft.Occurrence.Kind == "index-mutation" || draft.Occurrence.Kind == "path-replacement" || draft.Occurrence.Kind == "branch-relations" || draft.Occurrence.Kind == "claim" || draft.Occurrence.Kind == "publication") {
-			draft.Operands = append(draft.Operands, equation.Operand{Role: "recurrence", Term: equation.ClosedTerm([]byte("recurrence/cyclic"))})
+			draft.Operands = append(draft.Operands, equation.Operand{Role: equation.MustOperandRole("recurrence"), Term: equation.ClosedTerm([]byte("recurrence/cyclic"))})
 		}
 		// A decision inside the cycle carries the carriers this body proved
 		// never fall below the constant they entered it with. The proof is the
@@ -2568,9 +2568,9 @@ func genericForOperands(body *wir.Body, instruction wir.Instruction, bindings []
 	if len(sources) == 0 {
 		return nil, fmt.Errorf("iterator has no source values")
 	}
-	roles := []equation.OperandRole{"iterator", "state", "control"}
+	roles := []equation.OperandRole{equation.MustOperandRole("iterator"), equation.MustOperandRole("state"), equation.MustOperandRole("control")}
 	operands := make([]equation.Operand, 0, len(roles)+1+2*len(bindings))
-	operands = append(operands, equation.Operand{Role: "iteration-kind", Term: equation.ClosedTerm([]byte("iteration-kind/generic"))})
+	operands = append(operands, equation.Operand{Role: equation.MustOperandRole("iteration-kind"), Term: equation.ClosedTerm([]byte("iteration-kind/generic"))})
 	for index, role := range roles {
 		term := equation.ClosedTerm([]byte(shapefact.ScalarNilWire))
 		// An open iterator tail carries no closed state/control coordinates. It
@@ -2607,8 +2607,8 @@ func numericForOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 		return nil, fmt.Errorf("numeric-for has %d bounds and %d bindings, want 3 and 1", len(sources), len(results))
 	}
 	operands := make([]equation.Operand, 0, 6)
-	operands = append(operands, equation.Operand{Role: "iteration-kind", Term: equation.ClosedTerm([]byte("iteration-kind/numeric"))})
-	for index, role := range []equation.OperandRole{"iterator", "state", "control"} {
+	operands = append(operands, equation.Operand{Role: equation.MustOperandRole("iteration-kind"), Term: equation.ClosedTerm([]byte("iteration-kind/numeric"))})
+	for index, role := range []equation.OperandRole{equation.MustOperandRole("iterator"), equation.MustOperandRole("state"), equation.MustOperandRole("control")} {
 		term, err := scalarTerm(body, sources[index])
 		if err != nil {
 			return nil, fmt.Errorf("%s bound: %w", role, err)
@@ -2813,9 +2813,9 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 	if instruction.Op != wir.OpConcat && instruction.Operator == wir.OperatorNone {
 		return nil, fmt.Errorf("missing operator")
 	}
-	operands := []equation.Operand{{Role: "result", Term: result}, {Role: "kind", Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Op))))}, {Role: "operator", Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Operator))))}}
+	operands := []equation.Operand{{Role: equation.MustOperandRole("result"), Term: result}, {Role: equation.MustOperandRole("kind"), Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Op))))}, {Role: equation.MustOperandRole("operator"), Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Operator))))}}
 	if display != "" {
-		operands = append(operands, equation.Operand{Role: "display", Term: equation.ClosedTerm([]byte(display))})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("display"), Term: equation.ClosedTerm([]byte(display))})
 	}
 	// A comparison in value position carries the same normalized descriptor a
 	// branch condition carries. The sealed lowering erases the type() call the
@@ -2826,7 +2826,7 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 		if err != nil {
 			return nil, fmt.Errorf("predicate: %w", err)
 		}
-		operands = append(operands, equation.Operand{Role: "predicate", Term: predicate})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("predicate"), Term: predicate})
 	}
 	appendOperand := func(role equation.OperandRole, value wir.Operand) error {
 		if value.Kind == wir.OperandNone {
@@ -2852,14 +2852,14 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 	}
 	switch instruction.Op {
 	case wir.OpBinOp, wir.OpLogical:
-		if err := appendOperand("left", instruction.A); err != nil {
+		if err := appendOperand(equation.MustOperandRole("left"), instruction.A); err != nil {
 			return nil, err
 		}
-		if err := appendOperand("right", instruction.B); err != nil {
+		if err := appendOperand(equation.MustOperandRole("right"), instruction.B); err != nil {
 			return nil, err
 		}
 	case wir.OpUnOp:
-		if err := appendOperand("value", instruction.A); err != nil {
+		if err := appendOperand(equation.MustOperandRole("value"), instruction.A); err != nil {
 			return nil, err
 		}
 	case wir.OpConcat:
@@ -2928,13 +2928,13 @@ func nativeListConstructionOperands(
 	}
 	subject := nativeOperandDisplay(body, instruction.Dst)
 	out := []equation.Operand{
-		{Role: "native-list-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("list_construction", bodyID, occurrence)))},
-		{Role: "native-list-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
-		{Role: "native-list-array-count", Term: equation.ClosedTerm([]byte(strconv.Itoa(len(positions))))},
-		{Role: "native-list-key-count", Term: equation.ClosedTerm([]byte(strconv.Itoa(keys)))},
+		{Role: equation.MustOperandRole("native-list-key"), Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("list_construction", bodyID, occurrence)))},
+		{Role: equation.MustOperandRole("native-list-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.MustOperandRole("native-list-array-count"), Term: equation.ClosedTerm([]byte(strconv.Itoa(len(positions))))},
+		{Role: equation.MustOperandRole("native-list-key-count"), Term: equation.ClosedTerm([]byte(strconv.Itoa(keys)))},
 	}
 	if subject != "" {
-		out = append(out, equation.Operand{Role: "native-list-subject", Term: equation.ClosedTerm([]byte(subject))})
+		out = append(out, equation.Operand{Role: equation.MustOperandRole("native-list-subject"), Term: equation.ClosedTerm([]byte(subject))})
 	}
 	for index, child := range body.Operands(instruction.List) {
 		term, err := scalarTerm(body, child)
@@ -2970,10 +2970,10 @@ func nativeTableLengthOperands(
 		return nil
 	}
 	out := []equation.Operand{
-		{Role: "native-length-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_length", bodyID, occurrence)))},
-		{Role: "native-length-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
-		{Role: "native-length-subject", Term: equation.ClosedTerm([]byte(table.String()))},
-		{Role: "native-length-table", Term: term},
+		{Role: equation.MustOperandRole("native-length-key"), Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_length", bodyID, occurrence)))},
+		{Role: equation.MustOperandRole("native-length-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.MustOperandRole("native-length-subject"), Term: equation.ClosedTerm([]byte(table.String()))},
+		{Role: equation.MustOperandRole("native-length-table"), Term: term},
 	}
 	events := make([]string, 0)
 	for _, candidate := range operations {
@@ -3031,8 +3031,8 @@ func nativeTableLengthOperands(
 				if argument.Kind == wir.OperandPath &&
 					body.Path(wir.PathRef(argument.Ref)).EqualIgnoringVersion(table) {
 					event := "call/opaque"
-					if binding := nativeGlobalCallBinding(body, current); binding != "" {
-						event = "call/global/" + binding
+					if binding := nativeGlobalCallBinding(body, current); binding.Valid() {
+						event = "call/global/" + binding.wire()
 					}
 					events = append(events, event)
 					break
@@ -3066,9 +3066,9 @@ func nativeTableGrowthOperands(
 		return nil
 	}
 	out := []equation.Operand{
-		{Role: "native-growth-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_growth", bodyID, occurrence)))},
-		{Role: "native-growth-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
-		{Role: "native-growth-subject", Term: equation.ClosedTerm([]byte(table.String()))},
+		{Role: equation.MustOperandRole("native-growth-key"), Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_growth", bodyID, occurrence)))},
+		{Role: equation.MustOperandRole("native-growth-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.MustOperandRole("native-growth-subject"), Term: equation.ClosedTerm([]byte(table.String()))},
 	}
 	appendOnce := func(role equation.OperandRole, term equation.Term) {
 		for _, operand := range out {
@@ -3087,7 +3087,7 @@ func nativeTableGrowthOperands(
 		case wir.OpMakeTable:
 			if current.Dst.Kind == wir.OperandPath &&
 				body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(table) {
-				appendOnce("native-growth-maker", equation.ClosedTerm([]byte("table")))
+				appendOnce(equation.MustOperandRole("native-growth-maker"), equation.ClosedTerm([]byte("table")))
 			}
 		case wir.OpIterate:
 			if current.Iter != wir.IterNumeric {
@@ -3104,14 +3104,14 @@ func nativeTableGrowthOperands(
 			start, startErr := scalarTerm(body, values[0])
 			limit, limitErr := scalarTerm(body, values[1])
 			if startErr == nil && limitErr == nil {
-				appendOnce("native-growth-iterator-start", start)
-				appendOnce("native-growth-iterator-limit", limit)
+				appendOnce(equation.MustOperandRole("native-growth-iterator-start"), start)
+				appendOnce(equation.MustOperandRole("native-growth-iterator-limit"), limit)
 			}
 		case wir.OpCall:
 			for _, argument := range body.Operands(current.List) {
 				if argument.Kind == wir.OperandPath &&
 					body.Path(wir.PathRef(argument.Ref)).EqualIgnoringVersion(table) {
-					appendOnce("native-growth-escape-call", equation.ClosedTerm([]byte("argument")))
+					appendOnce(equation.MustOperandRole("native-growth-escape-call"), equation.ClosedTerm([]byte("argument")))
 					break
 				}
 			}
@@ -3138,21 +3138,21 @@ func nativeTableGrowthOperands(
 				}
 				capacity, err := scalarTerm(body, arguments[0])
 				if err == nil {
-					appendOnce("native-growth-capacity", capacity)
+					appendOnce(equation.MustOperandRole("native-growth-capacity"), capacity)
 				}
 			}
 		}
 	}
 	if func() bool {
 		for _, operand := range out {
-			if operand.Role == "native-growth-iterator-start" {
+			if operand.Role.Wire() == "native-growth-iterator-start" {
 				return true
 			}
 		}
 		return false
 	}() {
-		appendOnce("native-element-domain-key", equation.ClosedTerm([]byte(nativeProjectionRowKey("table_element", bodyID, occurrence))))
-		appendOnce("native-element-domain-occurrence", equation.ClosedTerm([]byte(occurrence)))
+		appendOnce(equation.MustOperandRole("native-element-domain-key"), equation.ClosedTerm([]byte(nativeProjectionRowKey("table_element", bodyID, occurrence))))
+		appendOnce(equation.MustOperandRole("native-element-domain-occurrence"), equation.ClosedTerm([]byte(occurrence)))
 		for _, candidate := range operations {
 			current := candidate.instruction
 			if current.Op != wir.OpCall {
@@ -3161,7 +3161,7 @@ func nativeTableGrowthOperands(
 			for _, argument := range body.Operands(current.List) {
 				if argument.Kind == wir.OperandPath &&
 					body.Path(wir.PathRef(argument.Ref)).EqualIgnoringVersion(table) {
-					appendOnce("native-element-domain-opaque-call", equation.ClosedTerm([]byte("argument")))
+					appendOnce(equation.MustOperandRole("native-element-domain-opaque-call"), equation.ClosedTerm([]byte("argument")))
 					break
 				}
 			}
@@ -3187,9 +3187,9 @@ func nativeElementReadDraftOperands(
 		return nil
 	}
 	out := []equation.Operand{
-		{Role: "native-element-read-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_element", bodyID, occurrence)))},
-		{Role: "native-element-read-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
-		{Role: "native-element-read-subject", Term: equation.ClosedTerm([]byte(container.String()))},
+		{Role: equation.MustOperandRole("native-element-read-key"), Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_element", bodyID, occurrence)))},
+		{Role: equation.MustOperandRole("native-element-read-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.MustOperandRole("native-element-read-subject"), Term: equation.ClosedTerm([]byte(container.String()))},
 	}
 	appendFlag := func(role equation.OperandRole) {
 		for _, operand := range out {
@@ -3201,14 +3201,14 @@ func nativeElementReadDraftOperands(
 	}
 	for _, capture := range body.Boundary().Captures {
 		if capture.Symbol == container.Symbol {
-			appendFlag("native-element-read-shared")
+			appendFlag(equation.MustOperandRole("native-element-read-shared"))
 		}
 	}
 	for _, candidate := range operations {
 		current := candidate.instruction
 		if current.Op == wir.OpMakeTable && current.Dst.Kind == wir.OperandPath &&
 			body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(container) {
-			appendFlag("native-element-read-local-maker")
+			appendFlag(equation.MustOperandRole("native-element-read-local-maker"))
 		}
 		if current.Op == wir.OpCall {
 			suspends := false
@@ -3217,9 +3217,9 @@ func nativeElementReadDraftOperands(
 				suspends = method.Kind == wir.ConstString && method.Str == "receive"
 			}
 			if suspends {
-				appendFlag("native-element-read-has-suspend")
+				appendFlag(equation.MustOperandRole("native-element-read-has-suspend"))
 				if candidate.sourceIndex < sourceIndex {
-					appendFlag("native-element-read-prior-suspend")
+					appendFlag(equation.MustOperandRole("native-element-read-prior-suspend"))
 				}
 			}
 			for _, argument := range body.Operands(current.List) {
@@ -3227,9 +3227,9 @@ func nativeElementReadDraftOperands(
 					!body.Path(wir.PathRef(argument.Ref)).EqualIgnoringVersion(container) {
 					continue
 				}
-				appendFlag("native-element-read-has-opaque-call")
+				appendFlag(equation.MustOperandRole("native-element-read-has-opaque-call"))
 				if candidate.sourceIndex < sourceIndex {
-					appendFlag("native-element-read-prior-opaque-call")
+					appendFlag(equation.MustOperandRole("native-element-read-prior-opaque-call"))
 				}
 			}
 		}
@@ -3246,7 +3246,7 @@ func nativeElementReadDraftOperands(
 				}
 			}
 			if !iterateKey {
-				appendFlag("native-element-read-has-growth")
+				appendFlag(equation.MustOperandRole("native-element-read-has-growth"))
 			}
 		}
 	}
@@ -3274,11 +3274,11 @@ func nativeElementStaticReadDraftOperands(
 		return nil
 	}
 	out := []equation.Operand{
-		{Role: "native-element-static-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_element", bodyID, occurrence)))},
-		{Role: "native-element-static-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
-		{Role: "native-element-static-subject", Term: equation.ClosedTerm([]byte(container.String()))},
-		{Role: "native-element-static-container", Term: equation.ClosedTerm([]byte("path/" + container.Key()))},
-		{Role: "native-element-static-index", Term: equation.ClosedTerm(shapefact.ScalarTextValue(shapefact.ScalarNumber, strconv.Itoa(last.Index)))},
+		{Role: equation.MustOperandRole("native-element-static-key"), Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("table_element", bodyID, occurrence)))},
+		{Role: equation.MustOperandRole("native-element-static-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.MustOperandRole("native-element-static-subject"), Term: equation.ClosedTerm([]byte(container.String()))},
+		{Role: equation.MustOperandRole("native-element-static-container"), Term: equation.ClosedTerm([]byte("path/" + container.Key()))},
+		{Role: equation.MustOperandRole("native-element-static-index"), Term: equation.ClosedTerm(shapefact.ScalarTextValue(shapefact.ScalarNumber, strconv.Itoa(last.Index)))},
 	}
 	appendFlag := func(role equation.OperandRole) {
 		for _, candidate := range out {
@@ -3290,14 +3290,14 @@ func nativeElementStaticReadDraftOperands(
 	}
 	for _, capture := range body.Boundary().Captures {
 		if capture.Symbol == container.Symbol {
-			appendFlag("native-element-static-shared")
+			appendFlag(equation.MustOperandRole("native-element-static-shared"))
 		}
 	}
 	for _, candidate := range operations {
 		current := candidate.instruction
 		if current.Op == wir.OpMakeTable && current.Dst.Kind == wir.OperandPath &&
 			body.Path(wir.PathRef(current.Dst.Ref)).EqualIgnoringVersion(container) {
-			appendFlag("native-element-static-local-maker")
+			appendFlag(equation.MustOperandRole("native-element-static-local-maker"))
 		}
 		if current.Op == wir.OpCall {
 			suspends := false
@@ -3306,17 +3306,17 @@ func nativeElementStaticReadDraftOperands(
 				suspends = method.Kind == wir.ConstString && method.Str == "receive"
 			}
 			if suspends {
-				appendFlag("native-element-static-has-suspend")
+				appendFlag(equation.MustOperandRole("native-element-static-has-suspend"))
 				if candidate.sourceIndex < sourceIndex {
-					appendFlag("native-element-static-prior-suspend")
+					appendFlag(equation.MustOperandRole("native-element-static-prior-suspend"))
 				}
 			}
 			for _, argument := range body.Operands(current.List) {
 				if argument.Kind == wir.OperandPath &&
 					body.Path(wir.PathRef(argument.Ref)).EqualIgnoringVersion(container) {
-					appendFlag("native-element-static-has-opaque-call")
+					appendFlag(equation.MustOperandRole("native-element-static-has-opaque-call"))
 					if candidate.sourceIndex < sourceIndex {
-						appendFlag("native-element-static-prior-opaque-call")
+						appendFlag(equation.MustOperandRole("native-element-static-prior-opaque-call"))
 					}
 				}
 			}
@@ -3334,7 +3334,7 @@ func nativeElementStaticReadDraftOperands(
 				}
 			}
 			if !iterateKey {
-				appendFlag("native-element-static-has-growth")
+				appendFlag(equation.MustOperandRole("native-element-static-has-growth"))
 			}
 		}
 	}
@@ -3375,11 +3375,11 @@ func nativeNilabilityPathOperands(
 	key := "nilability/" + fmt.Sprintf("%x", bodyID) + "/" + occurrence + "/" +
 		base64.RawURLEncoding.EncodeToString([]byte(candidate.Key()))
 	return []equation.Operand{
-		{Role: "native-nilability-key", Term: equation.ClosedTerm([]byte(key))},
-		{Role: "native-nilability-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
-		{Role: "native-nilability-subject", Term: equation.ClosedTerm([]byte(candidate.String()))},
-		{Role: "native-nilability-term", Term: equation.ClosedTerm([]byte("path/" + candidate.Key()))},
-		{Role: "native-nilability-mode", Term: equation.ClosedTerm([]byte(mode))},
+		{Role: equation.MustOperandRole("native-nilability-key"), Term: equation.ClosedTerm([]byte(key))},
+		{Role: equation.MustOperandRole("native-nilability-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.MustOperandRole("native-nilability-subject"), Term: equation.ClosedTerm([]byte(candidate.String()))},
+		{Role: equation.MustOperandRole("native-nilability-term"), Term: equation.ClosedTerm([]byte("path/" + candidate.Key()))},
+		{Role: equation.MustOperandRole("native-nilability-mode"), Term: equation.ClosedTerm([]byte(mode))},
 	}
 }
 
@@ -3423,7 +3423,7 @@ func nativeNilabilityBranchOperands(
 		return nil
 	}
 	out = append(out, equation.Operand{
-		Role: "native-nilability-check",
+		Role: equation.MustOperandRole("native-nilability-check"),
 		Term: equation.ClosedTerm([]byte(checkName)),
 	})
 	if recurrent[instruction.Point] {
@@ -3436,7 +3436,7 @@ func nativeNilabilityBranchOperands(
 			switch current.Op {
 			case wir.OpAssign, wir.OpDynamicIndexRead:
 				out = append(out, equation.Operand{
-					Role: "native-nilability-backedge-write",
+					Role: equation.MustOperandRole("native-nilability-backedge-write"),
 					Term: equation.ClosedTerm([]byte("path/" + check.Path.Key())),
 				})
 				return out
@@ -3459,7 +3459,7 @@ func nativeNilabilityClaimOperands(
 	candidate := body.Path(wir.PathRef(instruction.A.Ref))
 	out := nativeNilabilityPathOperands(bodyID, body, candidate, occurrence)
 	if len(out) != 0 {
-		out = append(out, equation.Operand{Role: "native-nilability-assert", Term: equation.ClosedTerm([]byte("claim"))})
+		out = append(out, equation.Operand{Role: equation.MustOperandRole("native-nilability-assert"), Term: equation.ClosedTerm([]byte("claim"))})
 	}
 	return out
 }
@@ -3479,7 +3479,7 @@ func nativeNilabilityCallOperands(
 	}
 	out := nativeNilabilityPathOperands(bodyID, body, check.Path, occurrence)
 	if len(out) != 0 {
-		out = append(out, equation.Operand{Role: "native-nilability-assert", Term: equation.ClosedTerm([]byte("call"))})
+		out = append(out, equation.Operand{Role: equation.MustOperandRole("native-nilability-assert"), Term: equation.ClosedTerm([]byte("call"))})
 	}
 	return out
 }
@@ -3512,10 +3512,10 @@ func nativeMetatableReadOperandsWithPrefix(
 		return nil
 	}
 	return []equation.Operand{
-		{Role: equation.OperandRole(prefix + "-key"), Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("metatable_seal", bodyID, occurrence+"-"+string(member.Key()))))},
-		{Role: equation.OperandRole(prefix + "-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
-		{Role: equation.OperandRole(prefix + "-subject"), Term: equation.ClosedTerm([]byte(root.String()))},
-		{Role: equation.OperandRole(prefix + "-root"), Term: equation.ClosedTerm([]byte("path/" + root.Key()))},
+		{Role: equation.MustOperandRole(prefix + "-key"), Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("metatable_seal", bodyID, occurrence+"-"+string(member.Key()))))},
+		{Role: equation.MustOperandRole(prefix + "-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.MustOperandRole(prefix + "-subject"), Term: equation.ClosedTerm([]byte(root.String()))},
+		{Role: equation.MustOperandRole(prefix + "-root"), Term: equation.ClosedTerm([]byte("path/" + root.Key()))},
 	}
 }
 
@@ -3597,13 +3597,13 @@ func nativeMetatableInstallOperands(
 	}
 	indexPath := body.Path(wir.PathRef(indexOperand.Ref))
 	return []equation.Operand{
-		{Role: "native-metatable-install-key", Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("metatable_seal", bodyID, occurrence)))},
-		{Role: "native-metatable-install-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
-		{Role: "native-metatable-install-subject", Term: equation.ClosedTerm([]byte(receiver.String()))},
-		{Role: "native-metatable-install-receiver", Term: receiverTerm},
-		{Role: "native-metatable-install-meta", Term: metaTerm},
-		{Role: "native-metatable-install-index", Term: indexTerm},
-		{Role: "native-metatable-install-index-display", Term: equation.ClosedTerm([]byte(indexPath.String()))},
+		{Role: equation.MustOperandRole("native-metatable-install-key"), Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("metatable_seal", bodyID, occurrence)))},
+		{Role: equation.MustOperandRole("native-metatable-install-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.MustOperandRole("native-metatable-install-subject"), Term: equation.ClosedTerm([]byte(receiver.String()))},
+		{Role: equation.MustOperandRole("native-metatable-install-receiver"), Term: receiverTerm},
+		{Role: equation.MustOperandRole("native-metatable-install-meta"), Term: metaTerm},
+		{Role: equation.MustOperandRole("native-metatable-install-index"), Term: indexTerm},
+		{Role: equation.MustOperandRole("native-metatable-install-index-display"), Term: equation.ClosedTerm([]byte(indexPath.String()))},
 	}
 }
 
@@ -3645,29 +3645,29 @@ func nativeNumericExpressionOperands(
 		return nil
 	}
 	out := []equation.Operand{
-		{Role: "native-source-occurrence", Term: equation.ClosedTerm([]byte(sourceOccurrence))},
-		{Role: "native-operator-name", Term: equation.ClosedTerm([]byte(operator))},
+		{Role: equation.MustOperandRole("native-source-occurrence"), Term: equation.ClosedTerm([]byte(sourceOccurrence))},
+		{Role: equation.MustOperandRole("native-operator-name"), Term: equation.ClosedTerm([]byte(operator))},
 		{
-			Role: "native-representation-key",
+			Role: equation.MustOperandRole("native-representation-key"),
 			Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("representation", bodyID, sourceOccurrence))),
 		},
 	}
 	if instruction.Op == wir.OpBinOp {
 		out = append(out, equation.Operand{
-			Role: "native-scalar-operator-key",
+			Role: equation.MustOperandRole("native-scalar-operator-key"),
 			Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("scalar_operator", bodyID, sourceOccurrence))),
 		})
 		if instruction.Operator == wir.BinDiv || instruction.Operator == wir.BinIDiv {
 			out = append(out, equation.Operand{
-				Role: "native-divisor-key",
+				Role: equation.MustOperandRole("native-divisor-key"),
 				Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("divisor_property", bodyID, sourceOccurrence))),
 			})
 		}
 		if display := nativeOperandDisplay(body, instruction.A); display != "" {
-			out = append(out, equation.Operand{Role: "native-left-display", Term: equation.ClosedTerm([]byte(display))})
+			out = append(out, equation.Operand{Role: equation.MustOperandRole("native-left-display"), Term: equation.ClosedTerm([]byte(display))})
 		}
 		if display := nativeOperandDisplay(body, instruction.B); display != "" {
-			out = append(out, equation.Operand{Role: "native-right-display", Term: equation.ClosedTerm([]byte(display))})
+			out = append(out, equation.Operand{Role: equation.MustOperandRole("native-right-display"), Term: equation.ClosedTerm([]byte(display))})
 		}
 		out = append(out, nativeNumericOriginOperands("native-left", body, instruction.A, sourceIndex, operations)...)
 		out = append(out, nativeNumericOriginOperands("native-right", body, instruction.B, sourceIndex, operations)...)
@@ -3676,7 +3676,7 @@ func nativeNumericExpressionOperands(
 		exclusions := nativeDominatingNumericExclusions(body, instruction.B, guards, operations)
 		if len(exclusions) != 0 {
 			out = append(out, equation.Operand{
-				Role: "native-idiv-exclusions",
+				Role: equation.MustOperandRole("native-idiv-exclusions"),
 				Term: equation.ClosedTerm([]byte(strings.Join(exclusions, ","))),
 			})
 		}
@@ -3713,7 +3713,7 @@ func nativeNumericOriginOperands(
 			for _, result := range body.Operands(instruction.Results) {
 				if result == candidate {
 					return []equation.Operand{{
-						Role: equation.OperandRole(prefix + "-origin"),
+						Role: equation.MustOperandRole(prefix + "-origin"),
 						Term: equation.ClosedTerm([]byte("numeric-iterate")),
 					}}
 				}
@@ -3746,18 +3746,18 @@ func nativeNumericOriginOperands(
 				return nil
 			}
 			out := []equation.Operand{
-				{Role: equation.OperandRole(prefix + "-origin"), Term: equation.ClosedTerm([]byte(origin))},
-				{Role: equation.OperandRole(prefix + "-origin-left"), Term: left},
-				{Role: equation.OperandRole(prefix + "-origin-right"), Term: right},
+				{Role: equation.MustOperandRole(prefix + "-origin"), Term: equation.ClosedTerm([]byte(origin))},
+				{Role: equation.MustOperandRole(prefix + "-origin-left"), Term: left},
+				{Role: equation.MustOperandRole(prefix + "-origin-right"), Term: right},
 			}
 			nestedLeft := trace(instruction.A, producer.sourceIndex)
 			for _, operand := range nestedLeft {
-				operand.Role = equation.OperandRole(strings.Replace(operand.Role.String(), prefix, prefix+"-origin-left", 1))
+				operand.Role = equation.MustOperandRole(strings.Replace(operand.Role.Wire(), prefix, prefix+"-origin-left", 1))
 				out = append(out, operand)
 			}
 			nestedRight := trace(instruction.B, producer.sourceIndex)
 			for _, operand := range nestedRight {
-				operand.Role = equation.OperandRole(strings.Replace(operand.Role.String(), prefix, prefix+"-origin-right", 1))
+				operand.Role = equation.MustOperandRole(strings.Replace(operand.Role.Wire(), prefix, prefix+"-origin-right", 1))
 				out = append(out, operand)
 			}
 			return out
@@ -3825,13 +3825,13 @@ func nativeNumericLoopOperands(
 		occurrence := "loop-" + key
 		common := []equation.Operand{
 			{
-				Role: "native-loop-key",
+				Role: equation.MustOperandRole("native-loop-key"),
 				Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("numeric_loop_carrier", bodyID, occurrence))),
 			},
-			{Role: "native-loop-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
-			{Role: "native-loop-display", Term: equation.ClosedTerm([]byte(displays[key]))},
-			{Role: "native-loop-initial", Term: initial},
-			{Role: "native-loop-arm-count", Term: equation.ClosedTerm([]byte(strconv.Itoa(len(updates))))},
+			{Role: equation.MustOperandRole("native-loop-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+			{Role: equation.MustOperandRole("native-loop-display"), Term: equation.ClosedTerm([]byte(displays[key]))},
+			{Role: equation.MustOperandRole("native-loop-initial"), Term: initial},
+			{Role: equation.MustOperandRole("native-loop-arm-count"), Term: equation.ClosedTerm([]byte(strconv.Itoa(len(updates))))},
 		}
 		for index, candidate := range updates {
 			role := equation.IndexedRole(equation.RoleFamilyNativeLoopArm, index)
@@ -3841,7 +3841,7 @@ func nativeNumericLoopOperands(
 				break
 			}
 			common = append(common, equation.Operand{Role: role, Term: term})
-			common = append(common, nativeNumericOriginOperands(role.String(), body, candidate.instruction.B, candidate.sourceIndex, operations)...)
+			common = append(common, nativeNumericOriginOperands(role.Wire(), body, candidate.instruction.B, candidate.sourceIndex, operations)...)
 		}
 		if len(common) == 0 {
 			continue
@@ -4075,14 +4075,14 @@ func nativeNumericBranchOperands(
 	}
 	out := []equation.Operand{
 		{
-			Role: "native-numeric-branch-key",
+			Role: equation.MustOperandRole("native-numeric-branch-key"),
 			Term: equation.ClosedTerm([]byte(nativeProjectionRowKey("numeric_branch", bodyID, sourceOccurrence))),
 		},
-		{Role: "native-source-occurrence", Term: equation.ClosedTerm([]byte(sourceOccurrence))},
-		{Role: "native-numeric-carrier", Term: carrierTerm},
+		{Role: equation.MustOperandRole("native-source-occurrence"), Term: equation.ClosedTerm([]byte(sourceOccurrence))},
+		{Role: equation.MustOperandRole("native-numeric-carrier"), Term: carrierTerm},
 	}
 	if display != "" {
-		out = append(out, equation.Operand{Role: "native-numeric-carrier-display", Term: equation.ClosedTerm([]byte(display))})
+		out = append(out, equation.Operand{Role: equation.MustOperandRole("native-numeric-carrier-display"), Term: equation.ClosedTerm([]byte(display))})
 	}
 	out = append(out, nativeNumericOriginOperands("native-numeric-carrier", body, carrier, sourceIndex, operations)...)
 	return out
@@ -4175,12 +4175,12 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 			return nil, fmt.Errorf("malformed method name")
 		}
 		operands = append(operands,
-			equation.Operand{Role: "receiver", Term: receiver},
-			equation.Operand{Role: "method", Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
+			equation.Operand{Role: equation.MustOperandRole("receiver"), Term: receiver},
+			equation.Operand{Role: equation.MustOperandRole("method"), Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
 		)
 		if instruction.Call.Receiver.Kind == wir.OperandPath {
 			if display := body.Path(wir.PathRef(instruction.Call.Receiver.Ref)).String(); display != "" {
-				operands = append(operands, equation.Operand{Role: "receiver-display", Term: equation.ClosedTerm([]byte(display))})
+				operands = append(operands, equation.Operand{Role: equation.MustOperandRole("receiver-display"), Term: equation.ClosedTerm([]byte(display))})
 			}
 		}
 	} else {
@@ -4191,16 +4191,22 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 		if err != nil {
 			return nil, fmt.Errorf("callee: %w", err)
 		}
-		operands = append(operands, equation.Operand{Role: "callee", Term: callee})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("callee"), Term: callee})
 		if instruction.Call.Callee.Kind == wir.OperandPath {
 			calleePath := body.Path(wir.PathRef(instruction.Call.Callee.Ref)).String()
 			if calleePath != "" {
-				operands = append(operands, equation.Operand{Role: "callee-display", Term: equation.ClosedTerm([]byte(calleePath))})
+				operands = append(operands, equation.Operand{Role: equation.MustOperandRole("callee-display"), Term: equation.ClosedTerm([]byte(calleePath))})
 			}
-			if binding := nativeGlobalCallBinding(body, instruction); binding != "" {
+			if binding := boundCallBinding(body, instruction); binding.Valid() {
+				operands = append(operands, equation.Operand{
+					Role: equation.RoleBoundCallee,
+					Term: equation.ClosedTerm([]byte(binding.wire())),
+				})
+			}
+			if binding := nativeGlobalCallBinding(body, instruction); binding.Valid() {
 				operands = append(operands, equation.Operand{
 					Role: equation.RoleGlobalCallee,
-					Term: equation.ClosedTerm([]byte(binding)),
+					Term: equation.ClosedTerm([]byte(binding.wire())),
 				})
 			}
 		}
@@ -4222,7 +4228,7 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 		if typeName == "" {
 			return nil, fmt.Errorf("empty callee type")
 		}
-		operands = append(operands, equation.Operand{Role: "callee-type", Term: equation.ClosedTerm([]byte("type/" + strconv.Quote(typeName)))})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("callee-type"), Term: equation.ClosedTerm([]byte("type/" + strconv.Quote(typeName)))})
 	}
 	for index, ref := range body.TypeRefs(instruction.CallTypeArgs) {
 		typeName := body.TypeDisplay(ref)
@@ -4236,7 +4242,7 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 		if err != nil {
 			return nil, err
 		}
-		operands = append(operands, equation.Operand{Role: "check", Term: check})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("check"), Term: check})
 		// A direct global assert is a runtime-validating operation. Keep its
 		// exact checked path beside the application so the kernel can publish
 		// the postcondition without reparsing the diagnostic check encoding.
@@ -4245,19 +4251,19 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 			if checked.Path.IsEmpty() || checked.Path.Key() == "" {
 				return nil, fmt.Errorf("assertion check has no path")
 			}
-			operands = append(operands, equation.Operand{Role: "asserted-path", Term: equation.ClosedTerm([]byte("path/" + checked.Path.Key()))})
+			operands = append(operands, equation.Operand{Role: equation.MustOperandRole("asserted-path"), Term: equation.ClosedTerm([]byte("path/" + checked.Path.Key()))})
 		}
 	}
 	operands = append(operands,
-		equation.Operand{Role: "context", Term: equation.ClosedTerm([]byte("call-context/" + strconv.FormatUint(uint64(instruction.CallContext), 10)))},
-		equation.Operand{Role: "result-arity", Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Results.Len))))},
-		equation.Operand{Role: "list-spread", Term: boolTerm(instruction.ListSpread)},
-		equation.Operand{Role: "result-spread", Term: boolTerm(instruction.ResultSpread)},
-		equation.Operand{Role: "final", Term: boolTerm(instruction.CallFinal)},
-		equation.Operand{Role: "expanded", Term: boolTerm(instruction.CallExpanded)},
-		equation.Operand{Role: "adjusted", Term: boolTerm(instruction.CallAdjusted)},
-		equation.Operand{Role: "open-tail", Term: boolTerm(instruction.CallOpenTail)},
-		equation.Operand{Role: "condition-negated", Term: boolTerm(instruction.CallConditionNegated)},
+		equation.Operand{Role: equation.MustOperandRole("context"), Term: equation.ClosedTerm([]byte("call-context/" + strconv.FormatUint(uint64(instruction.CallContext), 10)))},
+		equation.Operand{Role: equation.MustOperandRole("result-arity"), Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Results.Len))))},
+		equation.Operand{Role: equation.MustOperandRole("list-spread"), Term: boolTerm(instruction.ListSpread)},
+		equation.Operand{Role: equation.MustOperandRole("result-spread"), Term: boolTerm(instruction.ResultSpread)},
+		equation.Operand{Role: equation.MustOperandRole("final"), Term: boolTerm(instruction.CallFinal)},
+		equation.Operand{Role: equation.MustOperandRole("expanded"), Term: boolTerm(instruction.CallExpanded)},
+		equation.Operand{Role: equation.MustOperandRole("adjusted"), Term: boolTerm(instruction.CallAdjusted)},
+		equation.Operand{Role: equation.MustOperandRole("open-tail"), Term: boolTerm(instruction.CallOpenTail)},
+		equation.Operand{Role: equation.MustOperandRole("condition-negated"), Term: boolTerm(instruction.CallConditionNegated)},
 	)
 	return operands, nil
 }
@@ -4426,12 +4432,12 @@ func externalCallOperands(body *wir.Body, instruction wir.Instruction, apply equ
 		return nil, fmt.Errorf("incomplete external call boundary")
 	}
 	operands := []equation.Operand{
-		{Role: "application", Term: equation.ClosedTerm([]byte("call/" + apply.Name))},
-		{Role: "provider", Term: provider},
-		{Role: "argument-spread", Term: boolTerm(instruction.ListSpread)},
-		{Role: "result-arity", Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Results.Len))))},
-		{Role: "result-spread", Term: boolTerm(instruction.ResultSpread)},
-		{Role: "context", Term: equation.ClosedTerm([]byte("call-context/" + strconv.FormatUint(uint64(instruction.CallContext), 10)))},
+		{Role: equation.MustOperandRole("application"), Term: equation.ClosedTerm([]byte("call/" + apply.Name))},
+		{Role: equation.MustOperandRole("provider"), Term: provider},
+		{Role: equation.MustOperandRole("argument-spread"), Term: boolTerm(instruction.ListSpread)},
+		{Role: equation.MustOperandRole("result-arity"), Term: equation.ClosedTerm([]byte(strconv.Itoa(int(instruction.Results.Len))))},
+		{Role: equation.MustOperandRole("result-spread"), Term: boolTerm(instruction.ResultSpread)},
+		{Role: equation.MustOperandRole("context"), Term: equation.ClosedTerm([]byte("call-context/" + strconv.FormatUint(uint64(instruction.CallContext), 10)))},
 	}
 	for index, argument := range body.Operands(instruction.List) {
 		term, err := scalarTerm(body, argument)
@@ -4450,8 +4456,8 @@ func externalCallOperands(body *wir.Body, instruction wir.Instruction, apply equ
 			return nil, fmt.Errorf("malformed method selector")
 		}
 		operands = append(operands,
-			equation.Operand{Role: "receiver", Term: receiver},
-			equation.Operand{Role: "method", Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
+			equation.Operand{Role: equation.MustOperandRole("receiver"), Term: receiver},
+			equation.Operand{Role: equation.MustOperandRole("method"), Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
 		)
 	}
 	return operands, nil
@@ -4487,20 +4493,37 @@ func publicationOperands(body *wir.Body, instruction wir.Instruction) ([]equatio
 	return operands, nil
 }
 
-// nativeGlobalCallBinding resolves only the authored callee path. Binding
-// identity is lowering-owned structure; builtin effects are derived by kernels.
-func nativeGlobalCallBinding(body *wir.Body, instruction wir.Instruction) string {
+// boundCallBinding freezes the authored path of a callee whose root carries
+// binder identity. It covers module-bound locals as well as globals; consumers
+// receive it only through RoleBoundCallee.
+func boundCallBinding(body *wir.Body, instruction wir.Instruction) BoundCallIdentity {
 	if body == nil || instruction.Op != wir.OpCall || instruction.Call.Method != 0 ||
 		instruction.Call.Callee.Kind != wir.OperandPath {
-		return ""
+		return BoundCallIdentity{}
+	}
+	callee := body.Path(wir.PathRef(instruction.Call.Callee.Ref))
+	if callee.Symbol == 0 {
+		return BoundCallIdentity{}
+	}
+	identity, _ := boundCallIdentity(strings.TrimPrefix(callee.String(), "_G."))
+	return identity
+}
+
+// nativeGlobalCallBinding resolves only the authored callee path. Binding
+// identity is lowering-owned structure; builtin effects are derived by kernels.
+func nativeGlobalCallBinding(body *wir.Body, instruction wir.Instruction) BoundCallIdentity {
+	if body == nil || instruction.Op != wir.OpCall || instruction.Call.Method != 0 ||
+		instruction.Call.Callee.Kind != wir.OperandPath {
+		return BoundCallIdentity{}
 	}
 	callee := body.Path(wir.PathRef(instruction.Call.Callee.Ref))
 	spelling := callee.String()
 	root, _, _ := strings.Cut(spelling, ".")
 	if root == "" || !body.SymbolResolvesToGlobal(callee.Symbol, root) {
-		return ""
+		return BoundCallIdentity{}
 	}
-	return strings.TrimPrefix(spelling, "_G.")
+	identity, _ := boundCallIdentity(strings.TrimPrefix(spelling, "_G."))
+	return identity
 }
 
 func nativeHostGlobalOperands(
@@ -4554,7 +4577,7 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 	// result as Top, but only emit target metadata when it is complete: a partial
 	// target tuple would incorrectly certify a selective result flow.
 	operands := make([]equation.Operand, 1, 1+len(results)*2)
-	operands[0] = equation.Operand{Role: "application", Term: equation.ClosedTerm([]byte("call/" + apply.Name))}
+	operands[0] = equation.Operand{Role: equation.MustOperandRole("application"), Term: equation.ClosedTerm([]byte("call/" + apply.Name))}
 	// A direct callee's sealed function value is an independently published
 	// return contract. Keep that fact beside the result owner; method calls
 	// retain their existing receiver/method form below.
@@ -4563,13 +4586,13 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 		if err != nil {
 			return nil, fmt.Errorf("call result callee: %w", err)
 		}
-		operands = append(operands, equation.Operand{Role: "callee", Term: callee})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("callee"), Term: callee})
 	}
 	if len(provider.Encoding) != 0 {
 		if provider.Entry {
 			return nil, fmt.Errorf("provider result contract has entry term")
 		}
-		operands = append(operands, equation.Operand{Role: "provider", Term: provider})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("provider"), Term: provider})
 		for index, argument := range body.Operands(instruction.List) {
 			term, err := scalarTerm(body, argument)
 			if err != nil {
@@ -4583,7 +4606,7 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 	// a later assignment diagnostic can identify the proven result without
 	// recovering it from source text or a provider name.
 	if display, ok := directCallDisplay(body, instruction); ok {
-		operands = append(operands, equation.Operand{Role: "result-display", Term: equation.ClosedTerm([]byte(display))})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("result-display"), Term: equation.ClosedTerm([]byte(display))})
 	}
 	if instruction.Call.Method != 0 {
 		receiver, err := scalarTerm(body, instruction.Call.Receiver)
@@ -4595,12 +4618,12 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 			return nil, fmt.Errorf("call result method selector")
 		}
 		operands = append(operands,
-			equation.Operand{Role: "receiver", Term: receiver},
-			equation.Operand{Role: "method", Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
+			equation.Operand{Role: equation.MustOperandRole("receiver"), Term: receiver},
+			equation.Operand{Role: equation.MustOperandRole("method"), Term: equation.ClosedTerm([]byte("method/" + strconv.Quote(method.Str)))},
 		)
 	}
 	if target, ok := typePredicateErrorTarget(body, instruction); ok {
-		operands = append(operands, equation.Operand{Role: "type-predicate-error-target", Term: target})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("type-predicate-error-target"), Term: target})
 	}
 	for index, result := range results {
 		term, err := scalarTerm(body, result)
@@ -4721,12 +4744,12 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 	site := equation.ClosedTerm([]byte("allocation-site/" + allocationSite))
 	sets := allocationOperandSets{
 		template: []equation.Operand{
-			{Role: "site", Term: site},
-			{Role: "result", Term: result},
+			{Role: equation.MustOperandRole("site"), Term: site},
+			{Role: equation.MustOperandRole("result"), Term: result},
 		},
 		materialization: []equation.Operand{
-			{Role: "site", Term: site},
-			{Role: "result", Term: result},
+			{Role: equation.MustOperandRole("site"), Term: site},
+			{Role: equation.MustOperandRole("result"), Term: result},
 		},
 	}
 	if instruction.Dst.Kind == wir.OperandPath {
@@ -4734,12 +4757,12 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 		if target.String() != "" {
 			display := equation.ClosedTerm([]byte(target.String()))
 			sets.template = append(sets.template,
-				equation.Operand{Role: "allocation-subject", Term: result},
-				equation.Operand{Role: "allocation-subject-display", Term: display},
+				equation.Operand{Role: equation.MustOperandRole("allocation-subject"), Term: result},
+				equation.Operand{Role: equation.MustOperandRole("allocation-subject-display"), Term: display},
 			)
 			sets.materialization = append(sets.materialization,
-				equation.Operand{Role: "allocation-subject", Term: result},
-				equation.Operand{Role: "allocation-subject-display", Term: display},
+				equation.Operand{Role: equation.MustOperandRole("allocation-subject"), Term: result},
+				equation.Operand{Role: equation.MustOperandRole("allocation-subject-display"), Term: display},
 			)
 		}
 	}
@@ -4753,12 +4776,12 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 			return allocationOperandSets{}, err
 		}
 		sets.template = append(sets.template,
-			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("allocation-kind/table"))},
-			equation.Operand{Role: "type", Term: typeTerm},
+			equation.Operand{Role: equation.MustOperandRole("kind"), Term: equation.ClosedTerm([]byte("allocation-kind/table"))},
+			equation.Operand{Role: equation.MustOperandRole("type"), Term: typeTerm},
 		)
 		sets.materialization = append(sets.materialization,
-			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("object-kind/table"))},
-			equation.Operand{Role: "list-floor", Term: listFloorTerm(body, instruction)},
+			equation.Operand{Role: equation.MustOperandRole("kind"), Term: equation.ClosedTerm([]byte("object-kind/table"))},
+			equation.Operand{Role: equation.MustOperandRole("list-floor"), Term: listFloorTerm(body, instruction)},
 		)
 		if instruction.ListSpread {
 			values := body.Operands(instruction.List)
@@ -4773,16 +4796,16 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 			// materializer can retain the exact source producer without treating
 			// unknown arity as an absent member or a closed array bound.
 			sets.template = append(sets.template,
-				equation.Operand{Role: "open-tail", Term: boolTerm(true)},
-				equation.Operand{Role: "tail", Term: tail},
+				equation.Operand{Role: equation.MustOperandRole("open-tail"), Term: boolTerm(true)},
+				equation.Operand{Role: equation.MustOperandRole("tail"), Term: tail},
 			)
 			sets.materialization = append(sets.materialization,
-				equation.Operand{Role: "open-tail", Term: boolTerm(true)},
-				equation.Operand{Role: "tail", Term: tail},
+				equation.Operand{Role: equation.MustOperandRole("open-tail"), Term: boolTerm(true)},
+				equation.Operand{Role: equation.MustOperandRole("tail"), Term: tail},
 			)
 		} else {
-			sets.template = append(sets.template, equation.Operand{Role: "open-tail", Term: boolTerm(false)})
-			sets.materialization = append(sets.materialization, equation.Operand{Role: "open-tail", Term: boolTerm(false)})
+			sets.template = append(sets.template, equation.Operand{Role: equation.MustOperandRole("open-tail"), Term: boolTerm(false)})
+			sets.materialization = append(sets.materialization, equation.Operand{Role: equation.MustOperandRole("open-tail"), Term: boolTerm(false)})
 		}
 		for index, entry := range body.TableEntries(instruction.TableEntries) {
 			if len(entry.Suffix.Segments) == 0 {
@@ -4817,12 +4840,12 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 			return allocationOperandSets{}, fmt.Errorf("closure has no complete nested prototype")
 		}
 		sets.template = append(sets.template,
-			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("allocation-kind/closure"))},
-			equation.Operand{Role: "prototype", Term: equation.ClosedTerm([]byte("prototype/" + prototypeIdentity(proto)))},
+			equation.Operand{Role: equation.MustOperandRole("kind"), Term: equation.ClosedTerm([]byte("allocation-kind/closure"))},
+			equation.Operand{Role: equation.MustOperandRole("prototype"), Term: equation.ClosedTerm([]byte("prototype/" + prototypeIdentity(proto)))},
 		)
 		sets.materialization = append(sets.materialization,
-			equation.Operand{Role: "kind", Term: equation.ClosedTerm([]byte("object-kind/closure"))},
-			equation.Operand{Role: "prototype", Term: equation.ClosedTerm([]byte("prototype/" + prototypeIdentity(proto)))},
+			equation.Operand{Role: equation.MustOperandRole("kind"), Term: equation.ClosedTerm([]byte("object-kind/closure"))},
+			equation.Operand{Role: equation.MustOperandRole("prototype"), Term: equation.ClosedTerm([]byte("prototype/" + prototypeIdentity(proto)))},
 		)
 		for index, capture := range body.Operands(instruction.List) {
 			value, err := allocationValueTerm(body, capture)
@@ -4883,7 +4906,7 @@ func nativeTableConstructionBoundOperand(body *wir.Body, instruction wir.Instruc
 		return equation.Operand{}, false
 	}
 	return equation.Operand{
-		Role: "native-table-construction-bound",
+		Role: equation.MustOperandRole("native-table-construction-bound"),
 		Term: equation.ClosedTerm([]byte(occurrence + "\x00max_occurrences=" +
 			strconv.FormatInt(count, 10) + " occurrence_mode=" + mode)),
 	}, true
@@ -4915,9 +4938,9 @@ func nativeAllocationAliasOperands(body *wir.Body, instruction wir.Instruction, 
 	}
 	term := []byte("path/" + target.Key())
 	return []equation.Operand{
-		{Role: "native-alias-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
-		{Role: "alias-subject", Term: equation.ClosedTerm(term)},
-		{Role: "alias-subject-display", Term: equation.ClosedTerm([]byte(target.String()))},
+		{Role: equation.MustOperandRole("native-alias-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.MustOperandRole("alias-subject"), Term: equation.ClosedTerm(term)},
+		{Role: equation.MustOperandRole("alias-subject-display"), Term: equation.ClosedTerm([]byte(target.String()))},
 	}
 }
 
@@ -5016,14 +5039,14 @@ func nativeAssignmentAliasOperands(body *wir.Body, instruction wir.Instruction, 
 	}
 	term := []byte("path/" + subject.Key())
 	operands := []equation.Operand{
-		{Role: "native-alias-occurrence", Term: equation.ClosedTerm([]byte(occurrence))},
-		{Role: "alias-subject", Term: equation.ClosedTerm(term)},
-		{Role: "alias-subject-display", Term: equation.ClosedTerm([]byte(subject.String()))},
+		{Role: equation.MustOperandRole("native-alias-occurrence"), Term: equation.ClosedTerm([]byte(occurrence))},
+		{Role: equation.MustOperandRole("alias-subject"), Term: equation.ClosedTerm(term)},
+		{Role: equation.MustOperandRole("alias-subject-display"), Term: equation.ClosedTerm([]byte(subject.String()))},
 	}
 	if copy {
 		operands = append(operands,
-			equation.Operand{Role: "alias-against", Term: equation.ClosedTerm([]byte("path/" + source.Key()))},
-			equation.Operand{Role: "alias-against-display", Term: equation.ClosedTerm([]byte(source.String()))},
+			equation.Operand{Role: equation.MustOperandRole("alias-against"), Term: equation.ClosedTerm([]byte("path/" + source.Key()))},
+			equation.Operand{Role: equation.MustOperandRole("alias-against-display"), Term: equation.ClosedTerm([]byte(source.String()))},
 		)
 	}
 	return operands
@@ -5067,12 +5090,12 @@ func allocationWriteOperands(body *wir.Body, instruction wir.Instruction, curren
 		return nil, err
 	}
 	return []equation.Operand{
-		{Role: "target", Term: target},
-		{Role: "display", Term: hiddenAllocationDisplay(current.target)},
-		{Role: "value", Term: equation.ClosedTerm([]byte(value))},
-		{Role: "allocation-result", Term: allocationResult},
-		{Role: "read-before", Term: readBefore},
-		{Role: "absence", Term: equation.ClosedTerm([]byte("front/absence/error"))},
+		{Role: equation.MustOperandRole("target"), Term: target},
+		{Role: equation.MustOperandRole("display"), Term: hiddenAllocationDisplay(current.target)},
+		{Role: equation.MustOperandRole("value"), Term: equation.ClosedTerm([]byte(value))},
+		{Role: equation.MustOperandRole("allocation-result"), Term: allocationResult},
+		{Role: equation.MustOperandRole("read-before"), Term: readBefore},
+		{Role: equation.MustOperandRole("absence"), Term: equation.ClosedTerm([]byte("front/absence/error"))},
 	}, nil
 }
 
@@ -5238,11 +5261,11 @@ func allocationEntryWriteOperands(body *wir.Body, instruction wir.Instruction, c
 		return nil, err
 	}
 	return []equation.Operand{
-		{Role: "target", Term: target},
-		{Role: "display", Term: equation.ClosedTerm([]byte("front/hidden/allocation/" + display))},
-		{Role: "value", Term: value},
-		{Role: "read-before", Term: readBefore},
-		{Role: "absence", Term: equation.ClosedTerm([]byte("front/absence/error"))},
+		{Role: equation.MustOperandRole("target"), Term: target},
+		{Role: equation.MustOperandRole("display"), Term: equation.ClosedTerm([]byte("front/hidden/allocation/" + display))},
+		{Role: equation.MustOperandRole("value"), Term: value},
+		{Role: equation.MustOperandRole("read-before"), Term: readBefore},
+		{Role: equation.MustOperandRole("absence"), Term: equation.ClosedTerm([]byte("front/absence/error"))},
 	}, nil
 }
 
@@ -6087,7 +6110,7 @@ func cyclicOperationCells(artifact equation.Artifact, body *wir.Body, graph cfg.
 	for ; index < len(artifact.Equations); index++ {
 		operation := artifact.Equations[index]
 		if operation.Occurrence.Kind != "publication" || len(operation.Operands) != 1 ||
-			operation.Operands[0].Role != "native-publications" {
+			operation.Operands[0].Role.Wire() != "native-publications" {
 			return nil, fmt.Errorf("front: cyclic operation map has unexpected non-WIR cell %s", operation.Target.Name)
 		}
 	}

@@ -17,8 +17,8 @@ func TestPublishedValuesChoosesDependencyLatestContentNotKeyOrder(t *testing.T) 
 			Target: target, Entry: entry, Dependencies: dependencies,
 			Occurrence: equation.Occurrence{Kind: "environment-write", ContractID: equation.ContentID{1}}, KernelID: "test/write",
 			Operands: []equation.Operand{
-				{Role: "target", Term: equation.ClosedTerm([]byte("path/value"))},
-				{Role: "display", Term: equation.ClosedTerm([]byte("value"))},
+				{Role: equation.MustOperandRole("target"), Term: equation.ClosedTerm([]byte("path/value"))},
+				{Role: equation.MustOperandRole("display"), Term: equation.ClosedTerm([]byte("value"))},
 			},
 		}
 	}

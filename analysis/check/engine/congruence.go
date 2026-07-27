@@ -311,7 +311,7 @@ func branchEvidencePredicateOnEdge(operand equation.BoundOperand) (branchPredica
 	} else if present {
 		return predicate, edge, polarity, true, nil
 	}
-	if operand.Role != "predicate" {
+	if operand.Role.Wire() != "predicate" {
 		return branchPredicateWire{}, false, false, false, nil
 	}
 	predicate, present, err := front.DecodeBranchPredicateWire(operand.Value)

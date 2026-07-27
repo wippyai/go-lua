@@ -187,16 +187,16 @@ func TestFamiliesAreCompleteRecords(t *testing.T) {
 		t.Fatalf("declared families = %d, want 150", len(families))
 	}
 	for _, family := range families {
-		if family.ID == 0 || family.Prefix == "" || family.RevocationSet == nil ||
-			family.PayloadKind > PayloadTypestate {
+		if family.ID == 0 || family.Prefix == "" || family.PayloadKind > PayloadTypestate {
 			t.Errorf("incomplete family record: %+v", family)
 		}
 		if declared, ok := Lookup(family.Prefix + "subject/op"); !ok || declared.ID != family.ID {
 			t.Errorf("%s is absent from the family lookup", family.Prefix)
 		}
-		for _, revoker := range family.RevocationSet {
-			if _, ok := byID[revoker]; !ok {
-				t.Errorf("%s names undeclared revoker %d", family.Prefix, revoker)
+		revokers := family.Revokers()
+		for revoker, ok := revokers.Next(); ok; revoker, ok = revokers.Next() {
+			if _, declared := byID[revoker.ID]; !declared {
+				t.Errorf("%s names undeclared revoker %d", family.Prefix, revoker.ID)
 			}
 		}
 	}

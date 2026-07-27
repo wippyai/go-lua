@@ -9,6 +9,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 )
 
+func operandRole(spelling string) equation.OperandRole {
+	return equation.MustOperandRole(spelling)
+}
+
 func TestCompileBodyLowersScalarAssignmentAndBranchSlice(t *testing.T) {
 	artifact, err := front.CompileBody(`
 local first = 1
@@ -269,7 +273,7 @@ end
 			for _, operation := range artifact.Equations {
 				operands := make(map[string]string, len(operation.Operands))
 				for _, operand := range operation.Operands {
-					operands[operand.Role.String()] = string(operand.Term.Encoding)
+					operands[operand.Role.Wire()] = string(operand.Term.Encoding)
 				}
 				switch operation.Occurrence.Kind {
 				case "apply":
@@ -349,7 +353,7 @@ left, right = right, left
 	readBoundary := func(operation equation.Equation) string {
 		t.Helper()
 		for _, operand := range operation.Operands {
-			if operand.Role == "read-before" {
+			if operand.Role.Wire() == "read-before" {
 				return string(operand.Term.Encoding)
 			}
 		}
@@ -385,7 +389,7 @@ return swap
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if operand.Role == "read-before" {
+			if operand.Role.Wire() == "read-before" {
 				boundaries = append(boundaries, string(operand.Term.Encoding))
 			}
 		}
@@ -621,9 +625,9 @@ func TestTableAllocationKeepsTemplateAndMaterializationOnOneSite(t *testing.T) {
 	for _, equation := range artifact.Equations {
 		switch equation.Occurrence.Kind {
 		case "allocation-template":
-			templateSite = string(operand(equation.Operands, "site").Term.Encoding)
+			templateSite = string(operand(equation.Operands, operandRole("site")).Term.Encoding)
 		case "object-materialization":
-			materializedSite = string(operand(equation.Operands, "site").Term.Encoding)
+			materializedSite = string(operand(equation.Operands, operandRole("site")).Term.Encoding)
 		}
 	}
 	if templateSite == "" || templateSite != materializedSite {
@@ -640,7 +644,7 @@ func TestTableAllocationRepresentsNilAsAbsenceAndContiguousFloor(t *testing.T) {
 		if operation.Occurrence.Kind != "object-materialization" {
 			continue
 		}
-		if got := string(operand(operation.Operands, "list-floor").Term.Encoding); got != "list-floor/1" {
+		if got := string(operand(operation.Operands, operandRole("list-floor")).Term.Encoding); got != "list-floor/1" {
 			t.Fatalf("list floor = %q, want contiguous exact prefix of one", got)
 		}
 		for _, candidate := range operation.Operands {
@@ -679,11 +683,11 @@ local read = function() return captured end
 	}
 	var materialized bool
 	for _, equation := range artifact.Equations {
-		if equation.Occurrence.Kind != "object-materialization" || string(operand(equation.Operands, "kind").Term.Encoding) != "object-kind/closure" {
+		if equation.Occurrence.Kind != "object-materialization" || string(operand(equation.Operands, operandRole("kind")).Term.Encoding) != "object-kind/closure" {
 			continue
 		}
 		materialized = true
-		if operand(equation.Operands, "prototype") == nil || operand(equation.Operands, "capture-00000000") == nil {
+		if operand(equation.Operands, operandRole("prototype")) == nil || operand(equation.Operands, operandRole("capture-00000000")) == nil {
 			t.Fatalf("closure materialization lost its prototype or capture: %#v", equation.Operands)
 		}
 	}
@@ -907,7 +911,7 @@ func TestCompileBodyAdmitsUnknownDynamicIndexWriteContainers(t *testing.T) {
 func operands(equation equation.Equation) map[string]string {
 	result := make(map[string]string, len(equation.Operands))
 	for _, operand := range equation.Operands {
-		result[operand.Role.String()] = string(operand.Term.Encoding)
+		result[operand.Role.Wire()] = string(operand.Term.Encoding)
 	}
 	return result
 }
@@ -921,7 +925,7 @@ func valueOperands(equation equation.Equation) map[string]string {
 		if operand.Role.IsDisplay() {
 			continue
 		}
-		result[operand.Role.String()] = string(operand.Term.Encoding)
+		result[operand.Role.Wire()] = string(operand.Term.Encoding)
 	}
 	return result
 }
@@ -941,7 +945,7 @@ end
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if operand.Role == "predicate" {
+			if operand.Role.Wire() == "predicate" {
 				if !strings.HasPrefix(string(operand.Term.Encoding), "front/branch-predicate/v1/") {
 					t.Fatalf("predicate encoding = %q", operand.Term.Encoding)
 				}

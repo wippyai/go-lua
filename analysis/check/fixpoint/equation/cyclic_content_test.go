@@ -32,8 +32,8 @@ func TestCyclicArtifactContentCanonicalizesMutableDirectoryOrder(t *testing.T) {
 	body := testBody(124)
 	entry := EntryParameter{Body: body, Name: "entry"}
 	artifact := Artifact{Equations: []Equation{
-		{Target: Coordinate{Body: body, Name: "a"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: testID(124)}, KernelID: "a", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
-		{Target: Coordinate{Body: body, Name: "b"}, Entry: entry, Occurrence: Occurrence{Kind: "outcome", ContractID: testID(125)}, KernelID: "b", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "a"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: testID(124)}, KernelID: "a", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "b"}, Entry: entry, Occurrence: Occurrence{Kind: "outcome", ContractID: testID(125)}, KernelID: "b", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
 	}}
 	plan, err := solve.FreezeWTOPlan([]CellID{"a", "b"}, []solve.WTOElement[CellID]{{Vertex: "a"}, {Vertex: "b"}}, []solve.WTOInfluence[CellID]{{From: "a", To: "b"}})
 	if err != nil {
@@ -59,7 +59,7 @@ func cyclicContentFixture(t *testing.T) CyclicArtifact {
 	body := testBody(123)
 	entry := EntryParameter{Body: body, Name: "entry"}
 	artifact := Artifact{Equations: []Equation{
-		{Target: Coordinate{Body: body, Name: "seed"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: testID(123)}, KernelID: "seed", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "seed"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: testID(123)}, KernelID: "seed", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
 	}}
 	plan, err := solve.FreezeWTOPlan([]CellID{"seed"}, []solve.WTOElement[CellID]{{Vertex: "seed"}}, nil)
 	if err != nil {

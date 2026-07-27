@@ -122,15 +122,15 @@ func nativeNumericResolvedOperand(
 	partition equation.Partition,
 ) (nativeNumericVerdict, bool) {
 	value, ok := nativeNumericResolved(operands[role], partition)
-	origin := string(operands[role+"-origin"])
+	origin := string(operands[equation.MustOperandRole(role.Wire()+"-origin")])
 	if origin == "" {
 		return value, ok
 	}
 	if origin == "numeric-iterate" {
 		return nativeNumericVerdict{representation: "integer", exact: true, finite: true}, true
 	}
-	left, leftOK := nativeNumericResolvedOperand(operands, role+"-origin-left", partition)
-	right, rightOK := nativeNumericResolvedOperand(operands, role+"-origin-right", partition)
+	left, leftOK := nativeNumericResolvedOperand(operands, equation.MustOperandRole(role.Wire()+"-origin-left"), partition)
+	right, rightOK := nativeNumericResolvedOperand(operands, equation.MustOperandRole(role.Wire()+"-origin-right"), partition)
 	if !leftOK || !rightOK {
 		return nativeNumericVerdict{}, false
 	}
@@ -172,7 +172,7 @@ func nativeNumericExpressionFacts(
 	partition equation.Partition,
 	operator string,
 ) []equation.Fact {
-	occurrence := nativeProjectionOperand(operands, "native-source-occurrence")
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole("native-source-occurrence"))
 	if occurrence == "" {
 		return nil
 	}
@@ -182,32 +182,32 @@ func nativeNumericExpressionFacts(
 			Subject: subject, Occurrence: occurrence,
 		}
 	}
-	resultSubject := nativeProjectionOperand(operands, "display")
+	resultSubject := nativeProjectionOperand(operands, equation.MustOperandRole("display"))
 	var facts []equation.Fact
 	if operator == "unm" {
-		operand, ok := nativeNumericResolved(operands["value"], partition)
+		operand, ok := nativeNumericResolved(operands[equation.MustOperandRole("value")], partition)
 		if !ok || !operand.exact {
 			return nil
 		}
 		facts = appendNativeProjection(facts, operation, row(
-			"native-representation-key", resultSubject,
+			equation.MustOperandRole("native-representation-key"), resultSubject,
 			"exact=true operator=unm overflow=closed_integer representation="+nativeNumericRepresentation(operand)+
 				" result_representation="+nativeNumericRepresentation(operand),
 		))
 		return facts
 	}
-	left, leftOK := nativeNumericResolvedOperand(operands, "native-left", partition)
-	if nativeProjectionOperand(operands, "native-left-origin") == "" {
-		left, leftOK = nativeNumericResolved(operands["left"], partition)
+	left, leftOK := nativeNumericResolvedOperand(operands, equation.MustOperandRole("native-left"), partition)
+	if nativeProjectionOperand(operands, equation.MustOperandRole("native-left-origin")) == "" {
+		left, leftOK = nativeNumericResolved(operands[equation.MustOperandRole("left")], partition)
 	}
-	right, rightOK := nativeNumericResolvedOperand(operands, "native-right", partition)
-	if nativeProjectionOperand(operands, "native-right-origin") == "" {
-		right, rightOK = nativeNumericResolved(operands["right"], partition)
+	right, rightOK := nativeNumericResolvedOperand(operands, equation.MustOperandRole("native-right"), partition)
+	if nativeProjectionOperand(operands, equation.MustOperandRole("native-right-origin")) == "" {
+		right, rightOK = nativeNumericResolved(operands[equation.MustOperandRole("right")], partition)
 	}
 	if !leftOK || !rightOK {
 		return nil
 	}
-	resultValue, err := resolveCurrentValue(operands["result"], partition)
+	resultValue, err := resolveCurrentValue(operands[equation.MustOperandRole("result")], partition)
 	if err != nil {
 		// The result being evaluated is not visible in the predecessor
 		// partition. Derive its carrier from the same closed operands.
@@ -255,27 +255,27 @@ func nativeNumericExpressionFacts(
 			content += " divisor=nonzero"
 		}
 		facts = appendNativeProjection(facts, operation, row(
-			"native-divisor-key", nativeProjectionOperand(operands, "native-right-display"), "divisor=not_applicable",
+			equation.MustOperandRole("native-divisor-key"), nativeProjectionOperand(operands, equation.MustOperandRole("native-right-display")), "divisor=not_applicable",
 		))
 	case "idiv":
-		if nativeIDivExclusionsHold(nativeProjectionOperand(operands, "native-idiv-exclusions")) {
+		if nativeIDivExclusionsHold(nativeProjectionOperand(operands, equation.MustOperandRole("native-idiv-exclusions"))) {
 			content += " divisor=nonzero_not_minus_one"
 			facts = appendNativeProjection(facts, operation, row(
-				"native-divisor-key", nativeProjectionOperand(operands, "native-right-display"), "divisor=nonzero_not_minus_one",
+				equation.MustOperandRole("native-divisor-key"), nativeProjectionOperand(operands, equation.MustOperandRole("native-right-display")), "divisor=nonzero_not_minus_one",
 			))
 		}
 	}
-	facts = appendNativeProjection(facts, operation, row("native-scalar-operator-key", resultSubject, content))
+	facts = appendNativeProjection(facts, operation, row(equation.MustOperandRole("native-scalar-operator-key"), resultSubject, content))
 	if operator == "div" || operator == "pow" || operator == "idiv" {
 		facts = appendNativeProjection(facts, operation, row(
-			"native-representation-key", resultSubject,
+			equation.MustOperandRole("native-representation-key"), resultSubject,
 			"left="+nativeNumericCarrier(left)+" operator="+operator+" overflow="+overflow+
 				" result_representation="+nativeNumericRepresentation(result)+" right="+nativeNumericCarrier(right),
 		))
 	}
 	if result.exact {
 		facts = appendNativeProjection(facts, operation, row(
-			"native-representation-key", resultSubject,
+			equation.MustOperandRole("native-representation-key"), resultSubject,
 			"exact=true representation="+nativeNumericRepresentation(result),
 		))
 	}
@@ -324,17 +324,17 @@ func nativeNumericLoopFact(
 	operands map[equation.OperandRole][]byte,
 	partition equation.Partition,
 ) (equation.Fact, bool) {
-	key := nativeProjectionOperand(operands, "native-loop-key")
-	occurrence := nativeProjectionOperand(operands, "native-loop-occurrence")
-	display := nativeProjectionOperand(operands, "native-loop-display")
+	key := nativeProjectionOperand(operands, equation.MustOperandRole("native-loop-key"))
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole("native-loop-occurrence"))
+	display := nativeProjectionOperand(operands, equation.MustOperandRole("native-loop-display"))
 	if key == "" || occurrence == "" || display == "" {
 		return equation.Fact{}, false
 	}
-	initial, ok := nativeNumericResolved(operands["native-loop-initial"], partition)
+	initial, ok := nativeNumericResolved(operands[equation.MustOperandRole("native-loop-initial")], partition)
 	if !ok || initial.representation != "integer" {
 		return equation.Fact{}, false
 	}
-	armCount, err := strconv.Atoi(nativeProjectionOperand(operands, "native-loop-arm-count"))
+	armCount, err := strconv.Atoi(nativeProjectionOperand(operands, equation.MustOperandRole("native-loop-arm-count")))
 	if err != nil || armCount < 1 {
 		return equation.Fact{}, false
 	}
@@ -387,14 +387,14 @@ func nativeNumericBranchFact(
 	operands map[equation.OperandRole][]byte,
 	partition equation.Partition,
 ) (equation.Fact, bool) {
-	key := nativeProjectionOperand(operands, "native-numeric-branch-key")
-	occurrence := nativeProjectionOperand(operands, "native-source-occurrence")
-	carrierTerm := operands["native-numeric-carrier"]
+	key := nativeProjectionOperand(operands, equation.MustOperandRole("native-numeric-branch-key"))
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole("native-source-occurrence"))
+	carrierTerm := operands[equation.MustOperandRole("native-numeric-carrier")]
 	if key == "" || occurrence == "" || len(carrierTerm) == 0 {
 		return equation.Fact{}, false
 	}
-	carrier, ok := nativeNumericResolvedOperand(operands, "native-numeric-carrier", partition)
-	if nativeProjectionOperand(operands, "native-numeric-carrier-origin") == "" {
+	carrier, ok := nativeNumericResolvedOperand(operands, equation.MustOperandRole("native-numeric-carrier"), partition)
+	if nativeProjectionOperand(operands, equation.MustOperandRole("native-numeric-carrier-origin")) == "" {
 		carrier, ok = nativeNumericResolved(carrierTerm, partition)
 	}
 	if !ok {
@@ -420,7 +420,7 @@ func nativeNumericBranchFact(
 	}
 	return nativeProjectionFact(operation, front.NativeProjection{
 		Key: key, Value: content,
-		Subject:    nativeProjectionOperand(operands, "native-numeric-carrier-display"),
+		Subject:    nativeProjectionOperand(operands, equation.MustOperandRole("native-numeric-carrier-display")),
 		Occurrence: occurrence,
 	})
 }
@@ -439,14 +439,14 @@ func nativeHostGlobalFact(
 	operation equation.BoundEquation,
 	operands map[equation.OperandRole][]byte,
 ) (equation.Fact, bool) {
-	key := nativeProjectionOperand(operands, "native-host-global-key")
-	occurrence := nativeProjectionOperand(operands, "native-host-global-occurrence")
-	subject := nativeProjectionOperand(operands, "native-host-global-subject")
+	key := nativeProjectionOperand(operands, equation.MustOperandRole("native-host-global-key"))
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole("native-host-global-occurrence"))
+	subject := nativeProjectionOperand(operands, equation.MustOperandRole("native-host-global-subject"))
 	if key == "" || occurrence == "" || subject == "" {
 		return equation.Fact{}, false
 	}
 	var requirement front.NativeHostGlobalRequirement
-	if err := front.DecodeRequiredWireJSON(operands["native-host-global-requirement"], &requirement); err != nil ||
+	if err := front.DecodeRequiredWireJSON(operands[equation.MustOperandRole("native-host-global-requirement")], &requirement); err != nil ||
 		!nativeHostGlobalRequirementHolds(&requirement, lexical) {
 		return equation.Fact{}, false
 	}
@@ -471,13 +471,13 @@ func nativeListConstructionFact(
 	for _, operand := range operation.Operands {
 		operands[operand.Role] = operand.Value
 	}
-	key := nativeProjectionOperand(operands, "native-list-key")
-	occurrence := nativeProjectionOperand(operands, "native-list-occurrence")
+	key := nativeProjectionOperand(operands, equation.MustOperandRole("native-list-key"))
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole("native-list-occurrence"))
 	if key == "" || occurrence == "" {
 		return equation.Fact{}, false
 	}
-	arrayCount, arrayErr := strconv.Atoi(nativeProjectionOperand(operands, "native-list-array-count"))
-	keyCount, keyErr := strconv.Atoi(nativeProjectionOperand(operands, "native-list-key-count"))
+	arrayCount, arrayErr := strconv.Atoi(nativeProjectionOperand(operands, equation.MustOperandRole("native-list-array-count")))
+	keyCount, keyErr := strconv.Atoi(nativeProjectionOperand(operands, equation.MustOperandRole("native-list-key-count")))
 	if arrayErr != nil || keyErr != nil || arrayCount < 0 || keyCount < 0 {
 		return equation.Fact{}, false
 	}
@@ -527,7 +527,7 @@ func nativeListConstructionFact(
 	}
 	return nativeProjectionFact(operation, front.NativeProjection{
 		Key: key, Value: content,
-		Subject: nativeProjectionOperand(operands, "native-list-subject"), Occurrence: occurrence,
+		Subject: nativeProjectionOperand(operands, equation.MustOperandRole("native-list-subject")), Occurrence: occurrence,
 	})
 }
 
@@ -536,9 +536,9 @@ func nativeTableLengthFact(
 	operands map[equation.OperandRole][]byte,
 	partition equation.Partition,
 ) (equation.Fact, bool) {
-	key := nativeProjectionOperand(operands, "native-length-key")
-	occurrence := nativeProjectionOperand(operands, "native-length-occurrence")
-	table := operands["native-length-table"]
+	key := nativeProjectionOperand(operands, equation.MustOperandRole("native-length-key"))
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole("native-length-occurrence"))
+	table := operands[equation.MustOperandRole("native-length-table")]
 	if key == "" || occurrence == "" || len(table) == 0 {
 		return equation.Fact{}, false
 	}
@@ -578,7 +578,7 @@ func nativeTableLengthFact(
 		}
 		return nativeProjectionFact(operation, front.NativeProjection{
 			Key: key, Value: value,
-			Subject: nativeProjectionOperand(operands, "native-length-subject"), Occurrence: occurrence,
+			Subject: nativeProjectionOperand(operands, equation.MustOperandRole("native-length-subject")), Occurrence: occurrence,
 			Established: occurrence, Revoked: event, Event: event,
 			Revocations: []front.NativeProjectionRevocation{{
 				Established: occurrence, Revoked: event, Event: event,
@@ -597,7 +597,7 @@ func nativeTableLengthFact(
 	}
 	return nativeProjectionFact(operation, front.NativeProjection{
 		Key: key, Value: "border_algorithm=canonical dense_prefix=true disposition=raw",
-		Subject: nativeProjectionOperand(operands, "native-length-subject"), Occurrence: occurrence,
+		Subject: nativeProjectionOperand(operands, equation.MustOperandRole("native-length-subject")), Occurrence: occurrence,
 		Established: occurrence, Revoked: events[0], Event: events[0], Revocations: revocations,
 	})
 }
@@ -619,39 +619,39 @@ func nativeTableGrowthFact(
 	for _, operand := range operation.Operands {
 		operands[operand.Role] = operand.Value
 	}
-	key := nativeProjectionOperand(operands, "native-growth-key")
-	occurrence := nativeProjectionOperand(operands, "native-growth-occurrence")
-	if key == "" || occurrence == "" || len(operands["container"]) == 0 ||
-		len(operands["native-growth-iterator-start"]) == 0 || len(operands["native-growth-iterator-limit"]) == 0 {
+	key := nativeProjectionOperand(operands, equation.MustOperandRole("native-growth-key"))
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole("native-growth-occurrence"))
+	if key == "" || occurrence == "" || len(operands[equation.MustOperandRole("container")]) == 0 ||
+		len(operands[equation.MustOperandRole("native-growth-iterator-start")]) == 0 || len(operands[equation.MustOperandRole("native-growth-iterator-limit")]) == 0 {
 		return equation.Fact{}, false
 	}
-	_, identified := tableIdentityForTerm(operands["container"], partition)
-	if nativeProjectionOperand(operands, "native-growth-escape-call") != "" {
+	_, identified := tableIdentityForTerm(operands[equation.MustOperandRole("container")], partition)
+	if nativeProjectionOperand(operands, equation.MustOperandRole("native-growth-escape-call")) != "" {
 		return equation.Fact{}, false
 	}
-	start, startExact := nativeExactIntegerTerm(operands["native-growth-iterator-start"], partition)
+	start, startExact := nativeExactIntegerTerm(operands[equation.MustOperandRole("native-growth-iterator-start")], partition)
 	if !startExact || start != "1" {
 		return equation.Fact{}, false
 	}
 	content := ""
-	if len(operands["native-growth-capacity"]) != 0 {
-		capacity, capacityExact := nativeExactIntegerTerm(operands["native-growth-capacity"], partition)
-		limit, limitExact := nativeExactIntegerTerm(operands["native-growth-iterator-limit"], partition)
+	if len(operands[equation.MustOperandRole("native-growth-capacity")]) != 0 {
+		capacity, capacityExact := nativeExactIntegerTerm(operands[equation.MustOperandRole("native-growth-capacity")], partition)
+		limit, limitExact := nativeExactIntegerTerm(operands[equation.MustOperandRole("native-growth-iterator-limit")], partition)
 		if !capacityExact || !limitExact || capacity != limit {
 			return equation.Fact{}, false
 		}
 		content = "capacity=" + capacity + " growth=absent"
 	} else {
-		if !identified || nativeProjectionOperand(operands, "native-growth-maker") != "table" {
+		if !identified || nativeProjectionOperand(operands, equation.MustOperandRole("native-growth-maker")) != "table" {
 			return equation.Fact{}, false
 		}
 		content = "occurrence_mode=repeatable retirement=array_or_hash rollback=published throw_inventory=complete"
 	}
 	row := front.NativeProjection{
 		Key: key, Value: content,
-		Subject: nativeProjectionOperand(operands, "native-growth-subject"), Occurrence: occurrence,
+		Subject: nativeProjectionOperand(operands, equation.MustOperandRole("native-growth-subject")), Occurrence: occurrence,
 	}
-	if len(operands["native-growth-capacity"]) == 0 {
+	if len(operands[equation.MustOperandRole("native-growth-capacity")]) == 0 {
 		events := []string{"escape", "meta.set", "call.opaque", "load.dynamic"}
 		row.Established, row.Revoked, row.Event = occurrence, events[0], events[0]
 		for _, event := range events {
@@ -675,10 +675,10 @@ func nativeNilabilityFacts(
 	operands map[equation.OperandRole][]byte,
 	partition equation.Partition,
 ) []equation.Fact {
-	key := nativeProjectionOperand(operands, "native-nilability-key")
-	occurrence := nativeProjectionOperand(operands, "native-nilability-occurrence")
-	subject := nativeProjectionOperand(operands, "native-nilability-subject")
-	term := operands["native-nilability-term"]
+	key := nativeProjectionOperand(operands, equation.MustOperandRole("native-nilability-key"))
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole("native-nilability-occurrence"))
+	subject := nativeProjectionOperand(operands, equation.MustOperandRole("native-nilability-subject"))
+	term := operands[equation.MustOperandRole("native-nilability-term")]
 	if key == "" || occurrence == "" || subject == "" || len(term) == 0 {
 		return nil
 	}
@@ -688,7 +688,7 @@ func nativeNilabilityFacts(
 		return nil
 	}
 	events := []string{"write.local"}
-	switch nativeProjectionOperand(operands, "native-nilability-mode") {
+	switch nativeProjectionOperand(operands, equation.MustOperandRole("native-nilability-mode")) {
 	case "field":
 		events = []string{"write.field", "call.opaque", "escape", "suspend"}
 	case "captured":
@@ -709,24 +709,24 @@ func nativeNilabilityFacts(
 	appendRow := func(facts []equation.Fact, content string) []equation.Fact {
 		return appendNativeProjection(facts, operation, row(content))
 	}
-	if nativeProjectionOperand(operands, "native-nilability-assert") != "" {
+	if nativeProjectionOperand(operands, equation.MustOperandRole("native-nilability-assert")) != "" {
 		return appendRow(nil, "nilability=non_nil")
 	}
 	withoutNil := proof.ProjectionWithoutNil(valueType)
 	truthyNilOnly := typ.TypeEquals(withoutNil, typ.String) || typ.TypeEquals(withoutNil, typ.Number)
 	var facts []equation.Fact
-	switch nativeProjectionOperand(operands, "native-nilability-check") {
+	switch nativeProjectionOperand(operands, equation.MustOperandRole("native-nilability-check")) {
 	case "not-nil":
 		facts = appendRow(facts, "else_edge=nil nilability=non_nil then_edge=non_nil")
 		arm := "nilability=non_nil"
-		if len(operands["native-nilability-backedge-write"]) != 0 {
+		if len(operands[equation.MustOperandRole("native-nilability-backedge-write")]) != 0 {
 			arm = "nilability=maybe_nil"
 		}
 		facts = appendRow(facts, arm)
 		facts = appendRow(facts, "nilability=nil")
 	case "nil":
 		facts = appendRow(facts, "else_edge=non_nil nilability=non_nil then_edge=nil")
-		if nativeProjectionOperand(operands, "native-nilability-mode") != "captured" {
+		if nativeProjectionOperand(operands, equation.MustOperandRole("native-nilability-mode")) != "captured" {
 			facts = appendRow(facts, "nilability=nil")
 		}
 	case "truthy":
@@ -759,9 +759,9 @@ func nativeMetatableReadFactFor(
 	operands map[equation.OperandRole][]byte,
 	partition equation.Partition,
 ) (equation.Fact, bool) {
-	key := nativeProjectionOperand(operands, equation.OperandRole(prefix+"-key"))
-	occurrence := nativeProjectionOperand(operands, equation.OperandRole(prefix+"-occurrence"))
-	root := operands[equation.OperandRole(prefix+"-root")]
+	key := nativeProjectionOperand(operands, equation.MustOperandRole(prefix+"-key"))
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole(prefix+"-occurrence"))
+	root := operands[equation.MustOperandRole(prefix+"-root")]
 	if key == "" || occurrence == "" || len(root) == 0 {
 		return equation.Fact{}, false
 	}
@@ -772,7 +772,7 @@ func nativeMetatableReadFactFor(
 	}
 	return nativeProjectionFact(operation, front.NativeProjection{
 		Key: key, Value: "index_chain=elided metatable=absent",
-		Subject: nativeProjectionOperand(operands, equation.OperandRole(prefix+"-subject")), Occurrence: occurrence,
+		Subject: nativeProjectionOperand(operands, equation.MustOperandRole(prefix+"-subject")), Occurrence: occurrence,
 		Established: occurrence, Revoked: "meta.set", Event: "meta.set",
 		Revocations: []front.NativeProjectionRevocation{{
 			Established: occurrence, Revoked: "meta.set", Event: "meta.set",
@@ -799,18 +799,18 @@ func nativeMetatableInstallFact(
 	operands map[equation.OperandRole][]byte,
 	partition equation.Partition,
 ) (equation.Fact, bool) {
-	key := nativeProjectionOperand(operands, "native-metatable-install-key")
-	occurrence := nativeProjectionOperand(operands, "native-metatable-install-occurrence")
-	indexDisplay := nativeProjectionOperand(operands, "native-metatable-install-index-display")
+	key := nativeProjectionOperand(operands, equation.MustOperandRole("native-metatable-install-key"))
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole("native-metatable-install-occurrence"))
+	indexDisplay := nativeProjectionOperand(operands, equation.MustOperandRole("native-metatable-install-index-display"))
 	if key == "" || occurrence == "" || indexDisplay == "" {
 		return equation.Fact{}, false
 	}
 	if nativeProjectionOperand(operands, equation.RoleGlobalCallee) != "setmetatable" {
 		return equation.Fact{}, false
 	}
-	receiver, receiverOK := tableIdentityForTerm(operands["native-metatable-install-receiver"], partition)
-	meta, metaOK := tableIdentityForTerm(operands["native-metatable-install-meta"], partition)
-	index, indexOK := tableIdentityForTerm(operands["native-metatable-install-index"], partition)
+	receiver, receiverOK := tableIdentityForTerm(operands[equation.MustOperandRole("native-metatable-install-receiver")], partition)
+	meta, metaOK := tableIdentityForTerm(operands[equation.MustOperandRole("native-metatable-install-meta")], partition)
+	index, indexOK := tableIdentityForTerm(operands[equation.MustOperandRole("native-metatable-install-index")], partition)
 	if !receiverOK || !metaOK || !indexOK {
 		return equation.Fact{}, false
 	}
@@ -821,7 +821,7 @@ func nativeMetatableInstallFact(
 	events := []string{"meta.set", "meta.mutate"}
 	row := front.NativeProjection{
 		Key: key, Value: "index_table=" + indexDisplay + " sealed=true",
-		Subject: nativeProjectionOperand(operands, "native-metatable-install-subject"), Occurrence: occurrence,
+		Subject: nativeProjectionOperand(operands, equation.MustOperandRole("native-metatable-install-subject")), Occurrence: occurrence,
 		Established: occurrence, Revoked: "meta.set,meta.mutate", Event: events[0],
 	}
 	for _, event := range events {
@@ -880,32 +880,32 @@ func nativeElementDomainFact(
 	for _, operand := range operation.Operands {
 		operands[operand.Role] = operand.Value
 	}
-	key := nativeProjectionOperand(operands, "native-element-domain-key")
-	occurrence := nativeProjectionOperand(operands, "native-element-domain-occurrence")
-	container := operands["container"]
+	key := nativeProjectionOperand(operands, equation.MustOperandRole("native-element-domain-key"))
+	occurrence := nativeProjectionOperand(operands, equation.MustOperandRole("native-element-domain-occurrence"))
+	container := operands[equation.MustOperandRole("container")]
 	if key == "" || occurrence == "" || len(container) == 0 {
 		return equation.Fact{}, false
 	}
-	start, exact := nativeExactIntegerTerm(operands["native-growth-iterator-start"], partition)
-	if !exact || start != "1" || nativeProjectionOperand(operands, "native-growth-maker") != "table" {
+	start, exact := nativeExactIntegerTerm(operands[equation.MustOperandRole("native-growth-iterator-start")], partition)
+	if !exact || start != "1" || nativeProjectionOperand(operands, equation.MustOperandRole("native-growth-maker")) != "table" {
 		return equation.Fact{}, false
 	}
 	class, _, classified := nativeElementClass(container, partition)
 	if !classified {
 		return equation.Fact{}, false
 	}
-	subject := nativeProjectionOperand(operands, "native-growth-subject")
+	subject := nativeProjectionOperand(operands, equation.MustOperandRole("native-growth-subject"))
 	switch class {
 	case "number":
 		content := "element_class=number presence=dense_prefix"
 		events := []string{"write.element", "write.length", "call.opaque", "escape"}
-		if nativeProjectionOperand(operands, "native-element-domain-opaque-call") == "" {
+		if nativeProjectionOperand(operands, equation.MustOperandRole("native-element-domain-opaque-call")) == "" {
 			content = "element_class=number mutations_closed=true presence=dense_prefix"
 			events = []string{"write.element", "write.length", "meta.set", "call.opaque", "escape"}
 		}
 		return nativeProjectionWithEvents(operation, key, occurrence, subject, content, events)
 	case "record":
-		if _, found := tableIdentityForTerm(operands["value"], partition); !found {
+		if _, found := tableIdentityForTerm(operands[equation.MustOperandRole("value")], partition); !found {
 			return equation.Fact{}, false
 		}
 		return nativeProjectionWithEvents(operation, key, occurrence, subject,
@@ -967,18 +967,18 @@ func nativeElementStaticReadFact(
 ) (equation.Fact, bool) {
 	generic := make(map[string][]byte)
 	for target, source := range map[string]equation.OperandRole{
-		"native-element-read-key":               "native-element-static-key",
-		"native-element-read-occurrence":        "native-element-static-occurrence",
-		"native-element-read-subject":           "native-element-static-subject",
-		"container":                             "native-element-static-container",
-		"key":                                   "native-element-static-index",
-		"native-element-read-shared":            "native-element-static-shared",
-		"native-element-read-local-maker":       "native-element-static-local-maker",
-		"native-element-read-has-suspend":       "native-element-static-has-suspend",
-		"native-element-read-prior-suspend":     "native-element-static-prior-suspend",
-		"native-element-read-has-opaque-call":   "native-element-static-has-opaque-call",
-		"native-element-read-prior-opaque-call": "native-element-static-prior-opaque-call",
-		"native-element-read-has-growth":        "native-element-static-has-growth",
+		"native-element-read-key":               equation.MustOperandRole("native-element-static-key"),
+		"native-element-read-occurrence":        equation.MustOperandRole("native-element-static-occurrence"),
+		"native-element-read-subject":           equation.MustOperandRole("native-element-static-subject"),
+		"container":                             equation.MustOperandRole("native-element-static-container"),
+		"key":                                   equation.MustOperandRole("native-element-static-index"),
+		"native-element-read-shared":            equation.MustOperandRole("native-element-static-shared"),
+		"native-element-read-local-maker":       equation.MustOperandRole("native-element-static-local-maker"),
+		"native-element-read-has-suspend":       equation.MustOperandRole("native-element-static-has-suspend"),
+		"native-element-read-prior-suspend":     equation.MustOperandRole("native-element-static-prior-suspend"),
+		"native-element-read-has-opaque-call":   equation.MustOperandRole("native-element-static-has-opaque-call"),
+		"native-element-read-prior-opaque-call": equation.MustOperandRole("native-element-static-prior-opaque-call"),
+		"native-element-read-has-growth":        equation.MustOperandRole("native-element-static-has-growth"),
 	} {
 		generic[target] = operands[source]
 	}

@@ -120,28 +120,28 @@ func nativeTestArtifact() equation.Artifact {
 		Target: equation.Coordinate{Body: body, Name: "op-00000003"}, Entry: entry,
 		Occurrence: equation.Occurrence{Kind: "environment-write", ContractID: equation.ContentID{1}}, KernelID: "test/write",
 		Operands: []equation.Operand{
-			{Role: "target", Term: equation.ClosedTerm([]byte("path/sym2"))},
-			{Role: "display", Term: equation.ClosedTerm([]byte("total"))},
-			{Role: "value", Term: equation.ClosedTerm([]byte("scalar/number/7"))},
+			{Role: equation.MustOperandRole("target"), Term: equation.ClosedTerm([]byte("path/sym2"))},
+			{Role: equation.MustOperandRole("display"), Term: equation.ClosedTerm([]byte("total"))},
+			{Role: equation.MustOperandRole("value"), Term: equation.ClosedTerm([]byte("scalar/number/7"))},
 		},
 	}
 	apply := equation.Equation{
 		Target: equation.Coordinate{Body: body, Name: "op-00000004"}, Entry: entry,
 		Occurrence: equation.Occurrence{Kind: "apply", ContractID: equation.ContentID{2}}, KernelID: "test/apply",
 		Operands: []equation.Operand{
-			{Role: "callee", Term: equation.ClosedTerm([]byte("path/sym5"))},
-			{Role: "callee-display", Term: equation.ClosedTerm([]byte("scale"))},
-			{Role: "argument-00000000", Term: equation.ClosedTerm([]byte("path/sym2"))},
-			{Role: "argument-display-00000000", Term: equation.ClosedTerm([]byte("total"))},
+			{Role: equation.MustOperandRole("callee"), Term: equation.ClosedTerm([]byte("path/sym5"))},
+			{Role: equation.MustOperandRole("callee-display"), Term: equation.ClosedTerm([]byte("scale"))},
+			{Role: equation.MustOperandRole("argument-00000000"), Term: equation.ClosedTerm([]byte("path/sym2"))},
+			{Role: equation.MustOperandRole("argument-display-00000000"), Term: equation.ClosedTerm([]byte("total"))},
 		},
 	}
 	hidden := equation.Equation{
 		Target: equation.Coordinate{Body: body, Name: "op-00000005"}, Entry: entry,
 		Occurrence: equation.Occurrence{Kind: "environment-write", ContractID: equation.ContentID{3}}, KernelID: "test/write",
 		Operands: []equation.Operand{
-			{Role: "target", Term: equation.ClosedTerm([]byte("path/sym9"))},
-			{Role: "display", Term: equation.ClosedTerm([]byte("front/hidden/allocation/op-00000005"))},
-			{Role: "value", Term: equation.ClosedTerm([]byte("scalar/number/1"))},
+			{Role: equation.MustOperandRole("target"), Term: equation.ClosedTerm([]byte("path/sym9"))},
+			{Role: equation.MustOperandRole("display"), Term: equation.ClosedTerm([]byte("front/hidden/allocation/op-00000005"))},
+			{Role: equation.MustOperandRole("value"), Term: equation.ClosedTerm([]byte("scalar/number/1"))},
 		},
 	}
 	return equation.Artifact{Equations: []equation.Equation{write, apply, hidden}}

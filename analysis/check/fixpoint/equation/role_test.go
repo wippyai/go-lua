@@ -1,6 +1,7 @@
 package equation_test
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 
 func TestOperandRoleOwnsIndexedConstruction(t *testing.T) {
 	role := equation.IndexedRole(equation.RoleFamilyArgument, 7)
-	if role.String() != "argument-00000007" {
+	if role.Wire() != "argument-00000007" {
 		t.Fatalf("indexed role = %q", role)
 	}
 	if index, ok := role.FixedIndex(equation.RoleFamilyArgument, 8); !ok || index != 7 {
@@ -20,8 +21,15 @@ func TestOperandRoleOwnsIndexedConstruction(t *testing.T) {
 	}
 
 	field, ok := reflect.TypeOf(equation.Operand{}).FieldByName("Role")
-	if !ok || field.Type != reflect.TypeOf(equation.OperandRole("")) {
+	if !ok || field.Type != reflect.TypeOf(equation.OperandRole{}) {
 		t.Fatalf("Operand.Role type = %v, want equation.OperandRole", field.Type)
+	}
+}
+
+func TestOperandRoleDoesNotExposeWireTextThroughFormatting(t *testing.T) {
+	role := equation.IndexedRole(equation.RoleFamilyResult, 2)
+	if got := fmt.Sprint(role); got == role.Wire() {
+		t.Fatalf("fmt.Sprint exposed role wire spelling %q", got)
 	}
 }
 

@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 )
 
@@ -36,7 +37,7 @@ func declaredAssignmentClaims(t *testing.T, child front.Compilation, formals adm
 		if !index.declaredFormalAssignment(operation, formals, derived) {
 			continue
 		}
-		display, found := artifactOperand(operation.Operands, "display")
+		display, found := artifactOperand(operation.Operands, equation.MustOperandRole("display"))
 		if !found {
 			t.Fatalf("claim %s has no display", operation.Target.Name)
 		}
@@ -111,7 +112,7 @@ return display`)
 		if operation.Occurrence.Kind != "environment-write" || !declaredCellAllocationWrite(operation) {
 			continue
 		}
-		target, found := artifactOperand(operation.Operands, "target")
+		target, found := artifactOperand(operation.Operands, equation.MustOperandRole("target"))
 		if found && derived[string(target)] {
 			t.Fatalf("constructor cell %q entered the derived set", target)
 		}

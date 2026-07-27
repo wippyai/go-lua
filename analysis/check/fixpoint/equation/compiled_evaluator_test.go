@@ -40,7 +40,7 @@ func TestFastEvaluatorMatchesAcyclicVMAndClearsScratch(t *testing.T) {
 	}
 	for _, frame := range scratch.frames {
 		for _, operand := range frame.operands {
-			if operand.Role != "" || operand.Value != nil {
+			if operand.Role.Valid() || operand.Value != nil {
 				t.Fatalf("scratch retained operand %#v", operand)
 			}
 		}
@@ -109,7 +109,7 @@ func compiledNoOutputFixture(t testing.TB) (CompiledArtifact, EntryBinding, *Fas
 		Entry:      entry,
 		Occurrence: Occurrence{Kind: "hot", ContractID: contract},
 		KernelID:   "hot/no-output",
-		Operands:   []Operand{{Role: "entry", Term: EntryTerm(entry)}},
+		Operands:   []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}},
 	}}}
 	compiled, err := CompileArtifact(artifact)
 	if err != nil {
@@ -169,7 +169,7 @@ func TestCompiledArtifactInternsArenaTextAtAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bound.Target.Name != "hot" || bound.KernelID != "hot/no-output" || bound.Operands[0].Role != "entry" {
+	if bound.Target.Name != "hot" || bound.KernelID != "hot/no-output" || bound.Operands[0].Role.Wire() != "entry" {
 		t.Fatalf("compiled text aliases mutable arena: %#v", bound)
 	}
 }

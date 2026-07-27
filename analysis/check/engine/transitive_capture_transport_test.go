@@ -20,8 +20,8 @@ func transportPartition(t *testing.T, facts ...equation.Fact) equation.Partition
 
 func materializationEquation(name string, prototype string, captures ...string) equation.Equation {
 	operands := []equation.Operand{
-		{Role: "prototype", Term: equation.ClosedTerm([]byte("prototype/" + prototype))},
-		{Role: "result", Term: equation.ClosedTerm([]byte("path/sym9"))},
+		{Role: equation.MustOperandRole("prototype"), Term: equation.ClosedTerm([]byte("prototype/" + prototype))},
+		{Role: equation.MustOperandRole("result"), Term: equation.ClosedTerm([]byte("path/sym9"))},
 	}
 	for index, capture := range captures {
 		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyCapture, index), Term: equation.ClosedTerm([]byte(capture))})
@@ -37,7 +37,7 @@ func writeEquation(name, target string) equation.Equation {
 	return equation.Equation{
 		Target:     equation.Coordinate{Name: name},
 		Occurrence: equation.Occurrence{Kind: "environment-write"},
-		Operands:   []equation.Operand{{Role: "target", Term: equation.ClosedTerm([]byte(target))}},
+		Operands:   []equation.Operand{{Role: equation.MustOperandRole("target"), Term: equation.ClosedTerm([]byte(target))}},
 	}
 }
 

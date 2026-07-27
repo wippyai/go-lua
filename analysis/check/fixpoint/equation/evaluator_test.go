@@ -18,9 +18,9 @@ func stage3Artifact(t *testing.T) (Artifact, EntryBinding, []ContentID) {
 	entry := EntryParameter{Body: body, Name: "entry"}
 	contracts := []ContentID{testID(41), testID(42), testID(43)}
 	artifact := Artifact{Equations: []Equation{
-		{Target: Coordinate{Body: body, Name: "identity"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: contracts[0]}, KernelID: "canonical/identity", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
-		{Target: Coordinate{Body: body, Name: "guarded-return"}, Entry: entry, Guards: []Guard{{Body: body, Encoding: []byte("not-nil")}}, Occurrence: Occurrence{Kind: "outcome", ContractID: contracts[1]}, KernelID: "canonical/guarded-return", Operands: []Operand{{Role: "flow", Term: ClosedTerm([]byte("identity"))}}},
-		{Target: Coordinate{Body: body, Name: "copied-store"}, Entry: entry, Dependencies: []Coordinate{{Body: body, Name: "identity"}}, Occurrence: Occurrence{Kind: "environment-write", ContractID: contracts[2]}, KernelID: "canonical/copied-store", Operands: []Operand{{Role: "store", Term: ClosedTerm([]byte("source"))}}},
+		{Target: Coordinate{Body: body, Name: "identity"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: contracts[0]}, KernelID: "canonical/identity", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "guarded-return"}, Entry: entry, Guards: []Guard{{Body: body, Encoding: []byte("not-nil")}}, Occurrence: Occurrence{Kind: "outcome", ContractID: contracts[1]}, KernelID: "canonical/guarded-return", Operands: []Operand{{Role: MustOperandRole("flow"), Term: ClosedTerm([]byte("identity"))}}},
+		{Target: Coordinate{Body: body, Name: "copied-store"}, Entry: entry, Dependencies: []Coordinate{{Body: body, Name: "identity"}}, Occurrence: Occurrence{Kind: "environment-write", ContractID: contracts[2]}, KernelID: "canonical/copied-store", Operands: []Operand{{Role: MustOperandRole("store"), Term: ClosedTerm([]byte("source"))}}},
 	}}
 	if artifact.CanonicalBytes() == nil {
 		t.Fatal("stage-3 fixture artifact is invalid")

@@ -177,6 +177,18 @@ func (loader *fencePackageLoader) source(importPath, source string) *fenceTypedP
 	}
 }
 
+func (loader *fencePackageLoader) sourceError(importPath, source string) error {
+	loader.t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "mutation.go", source, 0)
+	if err != nil {
+		return err
+	}
+	config := types.Config{Importer: loader.imports}
+	_, err = config.Check(importPath, fset, []*ast.File{file}, nil)
+	return err
+}
+
 func (loader *fencePackageLoader) ownedType(packagePath, name string) fenceOwnedType {
 	loader.t.Helper()
 	pkg, err := loader.imports.Import(packagePath)
@@ -635,6 +647,34 @@ func (analyzer *fenceSemanticAnalyzer) callExpr(call *ast.CallExpr, env, globals
 	}
 	object := fenceCalledFunction(analyzer.typed.info, call)
 	if object != nil {
+		if selector, ok := call.Fun.(*ast.SelectorExpr); ok {
+			selection := analyzer.typed.info.Selections[selector]
+			if selection != nil &&
+				fenceNamedType(selection.Recv(), "strings", "Builder") {
+				receiverObject := types.Object(nil)
+				if identifier, ok := selector.X.(*ast.Ident); ok {
+					receiverObject = analyzer.typed.info.Uses[identifier]
+					if receiverObject == nil {
+						receiverObject = analyzer.typed.info.Defs[identifier]
+					}
+				}
+				switch object.Name() {
+				case "WriteString":
+					if receiverObject != nil && len(arguments) == 1 {
+						current := env[receiverObject]
+						if len(current.texts) == 0 {
+							current = fenceKnownText("")
+						}
+						env[receiverObject] = fenceConcatValue(current, arguments[0])
+					}
+					return fenceValue{}
+				case "String":
+					if receiverObject != nil {
+						return env[receiverObject]
+					}
+				}
+			}
+		}
 		if object.Pkg() != nil && object.Pkg().Path() == "strings" {
 			switch object.Name() {
 			case "Clone":
@@ -685,7 +725,7 @@ func (analyzer *fenceSemanticAnalyzer) callExpr(call *ast.CallExpr, env, globals
 			}
 			return analyzer.call(object, receiverArguments, globals, depth+1)
 		}
-		if object.Name() == "String" {
+		if object.Name() == "Wire" {
 			if selector, ok := call.Fun.(*ast.SelectorExpr); ok {
 				receiver := analyzer.expr(selector.X, env, globals, depth)
 				if receiver.role || fenceNamedType(analyzer.typed.info.TypeOf(selector.X), modulePath+"/analysis/check/fixpoint/equation", "OperandRole") {
@@ -835,9 +875,36 @@ func fenceFunctionResultIncludesBool(signature *types.Signature) bool {
 		return false
 	}
 	for index := 0; index < signature.Results().Len(); index++ {
-		basic, ok := types.Unalias(signature.Results().At(index).Type()).Underlying().(*types.Basic)
-		if ok && basic.Kind() == types.Bool {
+		if fenceTypeContainsBool(signature.Results().At(index).Type(), make(map[types.Type]bool)) {
 			return true
+		}
+	}
+	return false
+}
+
+func fenceTypeContainsBool(typed types.Type, visiting map[types.Type]bool) bool {
+	if typed == nil {
+		return false
+	}
+	typed = types.Unalias(typed)
+	if named, ok := typed.(*types.Named); ok && named.Obj().Pkg() != nil &&
+		named.Obj().Pkg().Path() == modulePath+"/analysis/check/engine" &&
+		named.Obj().Name() == "admissionLaneResult" {
+		return false
+	}
+	if visiting[typed] {
+		return false
+	}
+	visiting[typed] = true
+	defer delete(visiting, typed)
+	switch value := typed.Underlying().(type) {
+	case *types.Basic:
+		return value.Kind() == types.Bool
+	case *types.Struct:
+		for index := 0; index < value.NumFields(); index++ {
+			if fenceTypeContainsBool(value.Field(index).Type(), visiting) {
+				return true
+			}
 		}
 	}
 	return false
@@ -946,6 +1013,10 @@ func fenceAdmissionBypasses(typed *fenceTypedPackage) []string {
 						if field, ok := selection.Obj().(*types.Var); ok && field.IsField() && field.Name() == "Admit" {
 							return true
 						}
+						if method, ok := selection.Obj().(*types.Func); ok && method.Name() == "admitted" &&
+							fenceNamedType(selection.Recv(), modulePath+"/analysis/check/engine", "admissionLaneResult") {
+							return true
+						}
 					}
 				}
 				found = append(found, typed.fset.Position(call.Pos()).String())
@@ -1008,14 +1079,17 @@ func fenceRevokerConstructions(typed *fenceTypedPackage) []string {
 }
 
 func fenceRevokerCollectionType(typed types.Type) bool {
-	if fenceNamedType(typed, modulePath+"/analysis/check/fixpoint/factkey", "RevocationSet") {
-		return true
-	}
 	if typed == nil {
 		return false
 	}
-	slice, ok := types.Unalias(typed).Underlying().(*types.Slice)
-	return ok && fenceNamedType(slice.Elem(), modulePath+"/analysis/check/fixpoint/factkey", "FamilyID")
+	switch collection := types.Unalias(typed).Underlying().(type) {
+	case *types.Slice:
+		return fenceNamedType(collection.Elem(), modulePath+"/analysis/check/fixpoint/factkey", "FamilyID")
+	case *types.Map:
+		return fenceNamedType(collection.Key(), modulePath+"/analysis/check/fixpoint/factkey", "FamilyID")
+	default:
+		return false
+	}
 }
 
 func fenceReachableRawASTNameComparisons(typed *fenceTypedPackage, rootName string) []string {
@@ -1085,6 +1159,25 @@ func fenceScratchOwnerTypes(typed *fenceTypedPackage) []string {
 		modulePath + "/analysis/check/fixpoint/interproc.ProjectionScratch": true,
 	}
 	var found []string
+	sanctionedShapes := make(map[*ast.StructType]bool)
+	for _, file := range typed.files {
+		for _, declaration := range file.Decls {
+			generic, ok := declaration.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, specification := range generic.Specs {
+				typeSpec, ok := specification.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				structure, ok := typeSpec.Type.(*ast.StructType)
+				if ok && allowed[typed.pkg.Path()+"."+typeSpec.Name.Name] {
+					sanctionedShapes[structure] = true
+				}
+			}
+		}
+	}
 	scope := typed.pkg.Scope()
 	for _, name := range scope.Names() {
 		typeName, ok := scope.Lookup(name).(*types.TypeName)
@@ -1106,6 +1199,17 @@ func fenceScratchOwnerTypes(typed *fenceTypedPackage) []string {
 		if scratchLike {
 			found = append(found, qualified)
 		}
+	}
+	for _, file := range typed.files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			structure, ok := node.(*ast.StructType)
+			if !ok || sanctionedShapes[structure] ||
+				!fenceTypeContainsScratch(typed.info.TypeOf(structure), make(map[types.Type]bool)) {
+				return true
+			}
+			found = append(found, typed.fset.Position(structure.Pos()).String()+": local or anonymous scratch owner")
+			return true
+		})
 	}
 	sort.Strings(found)
 	return found

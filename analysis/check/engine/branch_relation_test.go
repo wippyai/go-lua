@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -31,18 +32,18 @@ func TestDecodeBranchDifferenceRejectsAnEmptyOperand(t *testing.T) {
 
 func TestArtifactTrueEdgeLengthRelationAdmitsOnlyLengthBearingTrueEdgeRelations(t *testing.T) {
 	lengthRelation := encodeDifference(t, branchDiffWire{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1, Edge: true})
-	if holds, err := artifactTrueEdgeLengthRelation("difference-00000000", lengthRelation); err != nil || !holds {
+	if holds, err := artifactTrueEdgeLengthRelation(equation.IndexedRole(equation.RoleFamilyDifference, 0), lengthRelation); err != nil || !holds {
 		t.Fatal("i + 1 <= #xs relates an index to an array length on the true edge")
 	}
-	if holds, err := artifactTrueEdgeLengthRelation("predicate", lengthRelation); err != nil || holds {
+	if holds, err := artifactTrueEdgeLengthRelation(equation.RolePredicate, lengthRelation); err != nil || holds {
 		t.Fatal("only a difference operand carries a relation")
 	}
 	falseEdge := encodeDifference(t, branchDiffWire{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1})
-	if holds, err := artifactTrueEdgeLengthRelation("difference-00000000", falseEdge); err != nil || holds {
+	if holds, err := artifactTrueEdgeLengthRelation(equation.IndexedRole(equation.RoleFamilyDifference, 0), falseEdge); err != nil || holds {
 		t.Fatal("a false-edge relation proves nothing on the guarded arm")
 	}
 	valuesOnly := encodeDifference(t, branchDiffWire{CoHi: 1, HiPath: "q", LoPath: "r", Edge: true})
-	if holds, err := artifactTrueEdgeLengthRelation("difference-00000000", valuesOnly); err != nil || holds {
+	if holds, err := artifactTrueEdgeLengthRelation(equation.IndexedRole(equation.RoleFamilyDifference, 0), valuesOnly); err != nil || holds {
 		t.Fatal("a relation between two values bounds no array")
 	}
 }

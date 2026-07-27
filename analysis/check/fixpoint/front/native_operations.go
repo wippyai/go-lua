@@ -165,15 +165,15 @@ func nativeFunctionEffect(bindings *bind.Result, fn *ast.FunctionExpr, add func(
 	walkExpr = func(expr ast.Expr) {
 		switch x := expr.(type) {
 		case *ast.FuncCallExpr:
-			if _, ok := nativeBoundStdlibCall(bindings, x, "error"); ok {
+			if _, ok := nativeBoundStdlibCall(bindings, x, nativeStdlibIdentity("error")); ok {
 				hasError = true
 			}
 			if nativeStdlibCallIsOpen(bindings, x, "os.clock") || nativeStdlibCallIsOpen(bindings, x, "load") {
 				hasOpen = true
 			}
-			if nativeRegisteredMethod(x, "string.upper") ||
-				nativeBoundStdlibMemberCall(bindings, x, "string.upper") ||
-				nativeBoundStdlibMemberCall(bindings, x, "string.gsub") {
+			if nativeRegisteredMethod(x, nativeStdlibIdentity("string.upper")) ||
+				nativeBoundStdlibMemberCall(bindings, x, nativeStdlibIdentity("string.upper")) ||
+				nativeBoundStdlibMemberCall(bindings, x, nativeStdlibIdentity("string.gsub")) {
 				hasAllocation = true
 			}
 			if nativeStdlibCallIsOpen(bindings, x, "pcall") {
@@ -319,11 +319,11 @@ func nativeEffectCall(bindings *bind.Result, call *ast.FuncCallExpr, scope nativ
 		add("effect_row", "exhaustive=true safepoint=required suspension=published yield=present")
 		return
 	}
-	if nativeBoundStdlibMemberCall(bindings, call, "coroutine.yield") {
+	if nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("coroutine.yield")) {
 		add("effect_row", "control_transfer=suspend exhaustive=true suspension=published yield=present")
 		return
 	}
-	if nativeBoundStdlibMemberCall(bindings, call, "coroutine.resume") {
+	if nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("coroutine.resume")) {
 		add("effect_row", "control_transfer=resume exhaustive=true safepoint=required suspension=published yield=present")
 		return
 	}
@@ -334,19 +334,19 @@ func nativeEffectCall(bindings *bind.Result, call *ast.FuncCallExpr, scope nativ
 		add("effect_row", "exhaustive=true safepoint=required suspension=published yield=present")
 		return
 	}
-	if nativeBoundStdlibMemberCall(bindings, call, "string.gsub") && len(call.Args) >= 3 {
+	if nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("string.gsub")) && len(call.Args) >= 3 {
 		add("effect_row", "allocation=present composed_from_callback=true control_transfer=callback exhaustive=true")
 		return
 	}
-	if nativeBoundStdlibMemberCall(bindings, call, "table.sort") && len(call.Args) >= 2 {
+	if nativeBoundStdlibMemberCall(bindings, call, nativeStdlibIdentity("table.sort")) && len(call.Args) >= 2 {
 		add("effect_row", "control_transfer=callback error=present exhaustive=true safepoint=required")
 		return
 	}
-	if _, ok := nativeBoundStdlibCall(bindings, call, "load"); ok {
+	if _, ok := nativeBoundStdlibCall(bindings, call, nativeStdlibIdentity("load")); ok {
 		add("effect_row", "exhaustive=false module_loading=present")
 		return
 	}
-	if _, ok := nativeBoundStdlibCall(bindings, call, "pcall"); ok {
+	if _, ok := nativeBoundStdlibCall(bindings, call, nativeStdlibIdentity("pcall")); ok {
 		if len(call.Args) != 0 {
 			if _, ok := call.Args[0].(*ast.IdentExpr); ok && nativeKnownFunction(call.Args[0], scope) {
 				add("effect_row", "composed_from_callback=true error=absent exhaustive=true")
@@ -369,33 +369,31 @@ func nativeEffectCall(bindings *bind.Result, call *ast.FuncCallExpr, scope nativ
 }
 
 var nativeStdlibSignatures = signaturelookup.Source{IncludeStdlib: true}
-var nativeStdlibGlobals = func() map[string]struct{} {
-	names := signaturelookup.StdlibBareGlobals()
-	out := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		out[name] = struct{}{}
-	}
-	return out
-}()
+
+func nativeStdlibIdentity(name string) signaturelookup.Identity {
+	identity, _ := nativeStdlibSignatures.RegistryIdentity(name)
+	return identity
+}
 
 // nativeBoundStdlibCall recognizes a standard-library operation only when the
 // binder resolves the callee to the corresponding global and the owning
 // signature registry declares that operation. Source spelling alone is not a
 // binding and therefore cannot license a native contract.
-func nativeBoundStdlibCall(bindings *bind.Result, call *ast.FuncCallExpr, name string) (signature.Function, bool) {
+func nativeBoundStdlibCall(bindings *bind.Result, call *ast.FuncCallExpr, identity signaturelookup.Identity) (signature.Function, bool) {
+	name := identity.Name()
 	if call == nil || bindings == nil || name == "" || strings.Contains(name, ".") {
 		return signature.Function{}, false
 	}
 	id, ok := call.Func.(*ast.IdentExpr)
-	if !ok || !bindings.ResolvesToGlobal(id, name) {
+	if !ok {
 		return signature.Function{}, false
 	}
-	if stdlib, registered := nativeStdlibSignatures.LookupView(name); registered {
+	global, bound := bindings.GlobalIdentity(id)
+	if !bound || !global.Matches(name) {
+		return signature.Function{}, false
+	}
+	if stdlib, registered := identity.Signature(); registered {
 		return stdlib, true
-	}
-	_, declared := nativeStdlibGlobals[name]
-	if !declared {
-		return signature.Function{}, false
 	}
 	// A declared bare global without a modeled signature is an open boundary.
 	return signature.Function{Effect: effect.Unknown}, true
@@ -403,12 +401,13 @@ func nativeBoundStdlibCall(bindings *bind.Result, call *ast.FuncCallExpr, name s
 
 // nativeBoundStdlibMemberCall is the member counterpart: both the global root
 // binding and the complete registered provider name must agree.
-func nativeBoundStdlibMemberCall(bindings *bind.Result, call *ast.FuncCallExpr, name string) bool {
+func nativeBoundStdlibMemberCall(bindings *bind.Result, call *ast.FuncCallExpr, identity signaturelookup.Identity) bool {
+	name := identity.Name()
 	object, method, ok := strings.Cut(name, ".")
 	if !ok || object == "" || method == "" || strings.Contains(method, ".") {
 		return false
 	}
-	if _, registered := nativeStdlibSignatures.LookupView(name); !registered {
+	if _, registered := identity.Signature(); !registered {
 		return false
 	}
 	return nativeBoundMemberCall(bindings, call, object, method)
@@ -419,7 +418,11 @@ func nativeBoundStdlibSignature(bindings *bind.Result, call *ast.FuncCallExpr) (
 		return signature.Function{}, false
 	}
 	if id, ok := call.Func.(*ast.IdentExpr); ok {
-		return nativeBoundStdlibCall(bindings, call, id.Value)
+		identity, registered := nativeStdlibSignatures.RegistryIdentity(id.Value)
+		if !registered {
+			return signature.Function{}, false
+		}
+		return nativeBoundStdlibCall(bindings, call, identity)
 	}
 	attr, ok := call.Func.(*ast.AttrGetExpr)
 	if !ok {
@@ -431,10 +434,11 @@ func nativeBoundStdlibSignature(bindings *bind.Result, call *ast.FuncCallExpr) (
 		return signature.Function{}, false
 	}
 	name := root.Value + "." + member
-	if !nativeBoundStdlibMemberCall(bindings, call, name) {
+	identity, registered := nativeStdlibSignatures.RegistryIdentity(name)
+	if !registered || !nativeBoundStdlibMemberCall(bindings, call, identity) {
 		return signature.Function{}, false
 	}
-	return nativeStdlibSignatures.LookupView(name)
+	return identity.Signature()
 }
 
 func nativeBoundMemberCall(bindings *bind.Result, call *ast.FuncCallExpr, object, method string) bool {
@@ -450,15 +454,19 @@ func nativeBoundMemberCall(bindings *bind.Result, call *ast.FuncCallExpr, object
 }
 
 func nativeStdlibCallIsOpen(bindings *bind.Result, call *ast.FuncCallExpr, name string) bool {
+	identity, registered := nativeStdlibSignatures.RegistryIdentity(name)
+	if !registered {
+		return false
+	}
 	var stdlib signature.Function
 	var ok bool
 	if strings.Contains(name, ".") {
-		if !nativeBoundStdlibMemberCall(bindings, call, name) {
+		if !nativeBoundStdlibMemberCall(bindings, call, identity) {
 			return false
 		}
-		stdlib, ok = nativeStdlibSignatures.LookupView(name)
+		stdlib, ok = identity.Signature()
 	} else {
-		stdlib, ok = nativeBoundStdlibCall(bindings, call, name)
+		stdlib, ok = nativeBoundStdlibCall(bindings, call, identity)
 	}
 	return ok && (stdlib.Effect.IsOpen() || nativeSignatureCallsCallback(stdlib))
 }
@@ -479,7 +487,8 @@ func nativeSignatureCallsCallback(stdlib signature.Function) bool {
 // nativeRegisteredMethod covers colon calls whose receiver is the runtime
 // value rather than a global library table. The method name is accepted only
 // through the standard-library registry.
-func nativeRegisteredMethod(call *ast.FuncCallExpr, name string) bool {
+func nativeRegisteredMethod(call *ast.FuncCallExpr, identity signaturelookup.Identity) bool {
+	name := identity.Name()
 	if call == nil || call.Method == "" {
 		return false
 	}
@@ -487,7 +496,7 @@ func nativeRegisteredMethod(call *ast.FuncCallExpr, name string) bool {
 	if !ok || call.Method != method {
 		return false
 	}
-	_, registered := nativeStdlibSignatures.LookupView(name)
+	_, registered := identity.Signature()
 	return registered
 }
 func nativeKnownFunction(expr ast.Expr, scope nativeOperationScope) bool {
@@ -512,7 +521,7 @@ func nativeOperandClass(bindings *bind.Result, expr ast.Expr, scope nativeOperat
 		right, rok := nativeOperandClass(bindings, x.Rhs, scope)
 		return left, lok && rok && left == right
 	case *ast.FuncCallExpr:
-		if _, ok := nativeBoundStdlibCall(bindings, x, "tostring"); ok {
+		if _, ok := nativeBoundStdlibCall(bindings, x, nativeStdlibIdentity("tostring")); ok {
 			return nativeString, true
 		}
 	}

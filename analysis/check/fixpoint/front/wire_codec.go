@@ -33,19 +33,21 @@ const (
 // owns both its schema and codec; consumers must not reconstruct either from
 // the JSON representation.
 type BranchPredicateWire struct {
-	Kind           string `json:"kind"`
-	Path           string `json:"path,omitempty"`
-	OtherPath      string `json:"other_path,omitempty"`
-	TypeName       string `json:"type_name,omitempty"`
-	Literal        string `json:"literal,omitempty"`
-	LenFloor       int64  `json:"len_floor,omitempty"`
-	NumFloor       int64  `json:"num_floor,omitempty"`
-	NumCeil        int64  `json:"num_ceil,omitempty"`
-	HasNumCeil     bool   `json:"has_num_ceil,omitempty"`
-	NumCeilNegated bool   `json:"num_ceil_negated,omitempty"`
-	Modulus        int64  `json:"modulus,omitempty"`
-	Residue        int64  `json:"residue,omitempty"`
-	Negated        bool   `json:"negated,omitempty"`
+	Kind           string              `json:"kind"`
+	Path           string              `json:"path,omitempty"`
+	OtherPath      string              `json:"other_path,omitempty"`
+	PathShape      BranchChainPathWire `json:"path_shape,omitempty"`
+	OtherPathShape BranchChainPathWire `json:"other_path_shape,omitempty"`
+	TypeName       string              `json:"type_name,omitempty"`
+	Literal        string              `json:"literal,omitempty"`
+	LenFloor       int64               `json:"len_floor,omitempty"`
+	NumFloor       int64               `json:"num_floor,omitempty"`
+	NumCeil        int64               `json:"num_ceil,omitempty"`
+	HasNumCeil     bool                `json:"has_num_ceil,omitempty"`
+	NumCeilNegated bool                `json:"num_ceil_negated,omitempty"`
+	Modulus        int64               `json:"modulus,omitempty"`
+	Residue        int64               `json:"residue,omitempty"`
+	Negated        bool                `json:"negated,omitempty"`
 }
 
 // BranchDiffWire is one normalized difference-logic descriptor:
@@ -145,13 +147,13 @@ func ValidateDraftWires(artifact equation.Artifact) error {
 				return fmt.Errorf("front: operation %q role %q: %w", operation.Target.Name, operand.Role, chainErr)
 			}
 			switch {
-			case operand.Role == "predicate" && !predicatePresent:
+			case operand.Role.Wire() == "predicate" && !predicatePresent:
 				return fmt.Errorf("front: operation %q predicate role has no predicate wire", operation.Target.Name)
 			case operand.Role.InFamily(equation.RoleFamilyDifference) && !differencePresent:
 				return fmt.Errorf("front: operation %q difference role %q has no difference wire", operation.Target.Name, operand.Role)
 			case operand.Role.InFamily(equation.RoleFamilyImplied) && !evidencePresent:
 				return fmt.Errorf("front: operation %q implied role %q has no evidence wire", operation.Target.Name, operand.Role)
-			case operand.Role == "branch-chain" && !chainPresent:
+			case operand.Role.Wire() == "branch-chain" && !chainPresent:
 				return fmt.Errorf("front: operation %q branch-chain role has no chain wire", operation.Target.Name)
 			}
 		}
@@ -319,6 +321,20 @@ func validateBranchPredicateWire(wire BranchPredicateWire) error {
 	}
 	if requiresOther && wire.OtherPath == "" {
 		return fmt.Errorf("front: branch predicate %q has no other path", wire.Kind)
+	}
+	if wire.PathShape.Key != "" {
+		if err := validateBranchChainPath(wire.PathShape, wire.Path); err != nil {
+			return err
+		}
+	}
+	if wire.OtherPathShape.Key != "" {
+		if err := validateBranchChainPath(wire.OtherPathShape, wire.OtherPath); err != nil {
+			return err
+		}
+	}
+	if (wire.Kind == "path-equal" || wire.Kind == "path-not") &&
+		(wire.PathShape.Key == "" || wire.OtherPathShape.Key == "") {
+		return fmt.Errorf("front: path relation has no structural path identity")
 	}
 	return nil
 }

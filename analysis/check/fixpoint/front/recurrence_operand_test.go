@@ -20,7 +20,7 @@ func recurrenceTaggedDecisions(t *testing.T, source string) (decisions, tagged i
 		}
 		decisions++
 		for _, operand := range operation.Operands {
-			if operand.Role == "recurrence" && string(operand.Term.Encoding) == "recurrence/cyclic" {
+			if operand.Role.Wire() == "recurrence" && string(operand.Term.Encoding) == "recurrence/cyclic" {
 				tagged++
 				break
 			}
@@ -107,7 +107,7 @@ return classify
 	}
 	for _, operation := range first.Artifact.Equations {
 		for _, operand := range operation.Operands {
-			if operand.Role == "recurrence" {
+			if operand.Role.Wire() == "recurrence" {
 				t.Fatalf("acyclic body carried a recurrence marker at %s", operation.Target.Name)
 			}
 		}

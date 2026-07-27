@@ -21,16 +21,29 @@ func TestRevokerFamilySubsetsStayDeclarationOwned(t *testing.T) {
 
 func TestRevocationFenceRejectsHandwrittenFamilyIDSubset(t *testing.T) {
 	loader := newFencePackageLoader(t, "./analysis/check/...")
-	tests := map[string]string{
-		"rescan4 in-consumer set": `package engine
+	compileFailures := map[string]string{
+		"removed exported set": `package engine
 import "` + modulePath + `/analysis/check/fixpoint/factkey"
 var revocationRegression = factkey.RevocationSet{factkey.FamilyHeapIndexRevoke}
 func consume() { _ = revocationRegression }
 `,
-		"type alias literal": `package engine
+		"opaque cursor literal": `package engine
 import "` + modulePath + `/analysis/check/fixpoint/factkey"
-type localRevokers = factkey.RevocationSet
-var regression = localRevokers{factkey.FamilyHeapTableEscape}
+var regression = factkey.RevokerCursor{set: nil}
+`,
+	}
+	for name, source := range compileFailures {
+		t.Run(name, func(t *testing.T) {
+			if err := loader.sourceError(modulePath+"/analysis/check/engine", source); err == nil {
+				t.Fatal("opaque revocation boundary compiled handwritten subset")
+			}
+		})
+	}
+
+	typeCheckedEvasions := map[string]string{
+		"rescan5 in-consumer map subset": `package engine
+import "` + modulePath + `/analysis/check/fixpoint/factkey"
+var regression = map[factkey.FamilyID]bool{factkey.FamilyHeapIndexRevoke: true}
 `,
 		"unnamed family ID slice": `package engine
 import "` + modulePath + `/analysis/check/fixpoint/factkey"
@@ -44,7 +57,7 @@ func regression() []factkey.FamilyID {
 }
 `,
 	}
-	for name, source := range tests {
+	for name, source := range typeCheckedEvasions {
 		t.Run(name, func(t *testing.T) {
 			typed := loader.source(modulePath+"/analysis/check/engine", source)
 			if constructions := fenceRevokerConstructions(typed); len(constructions) == 0 {

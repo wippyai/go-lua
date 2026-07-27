@@ -193,7 +193,7 @@ func publishedProviderRelations(result engine.Result) map[string]exportrelation.
 
 func operationOperand(operands []equation.Operand, role string) string {
 	for _, operand := range operands {
-		if operand.Role.String() == role && !operand.Term.Entry {
+		if operand.Role.Wire() == role && !operand.Term.Entry {
 			return string(operand.Term.Encoding)
 		}
 	}
@@ -402,7 +402,7 @@ func hasDynamicMutation(artifact equation.Artifact, root, candidate string, orde
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if operand.Role == "container" && string(operand.Term.Encoding) == root {
+			if operand.Role.Wire() == "container" && string(operand.Term.Encoding) == root {
 				return true
 			}
 		}

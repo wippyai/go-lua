@@ -106,9 +106,9 @@ func TestPositionalContractEndsWhereTheParameterListDoes(t *testing.T) {
 // two-operand concatenation.
 func concatExpression(result string, terms ...string) equation.BoundEquation {
 	operands := []equation.BoundOperand{
-		{Role: "result", Value: []byte(result)},
-		{Role: "kind", Value: []byte(strconv.Itoa(int(wir.OpConcat)))},
-		{Role: "operator", Value: []byte("0")},
+		{Role: equation.MustOperandRole("result"), Value: []byte(result)},
+		{Role: equation.MustOperandRole("kind"), Value: []byte(strconv.Itoa(int(wir.OpConcat)))},
+		{Role: equation.MustOperandRole("operator"), Value: []byte("0")},
 	}
 	for index, term := range terms {
 		operands = append(operands, equation.BoundOperand{Role: equation.IndexedRole(equation.RoleFamilyValue, index), Value: []byte(term)})

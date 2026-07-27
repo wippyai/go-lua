@@ -752,7 +752,7 @@ func newNativeAnchors(artifact equation.Artifact) *nativeAnchors {
 			if operand.Term.Entry || len(operand.Term.Encoding) == 0 || operand.Role.InFamily(equation.RoleFamilyNative) {
 				continue
 			}
-			byRole[operand.Role.String()] = operand.Term.Encoding
+			byRole[operand.Role.Wire()] = operand.Term.Encoding
 			term := string(operand.Term.Encoding)
 			if _, known := anchors.terms[term]; !known {
 				anchors.terms[term] = ""

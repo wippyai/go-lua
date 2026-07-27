@@ -260,7 +260,7 @@ func trueEdgeNumericPredicates(operation equation.BoundEquation) ([]branchPredic
 // edge refutes no individual conjunct, so neither form yields one.
 func negatableBranchSelector(operation equation.BoundEquation) (branchPredicateWire, bool, error) {
 	for _, operand := range operation.Operands {
-		if operand.Role == "condition" {
+		if operand.Role.Wire() == "condition" {
 			return branchPredicateWire{}, false, nil
 		}
 	}

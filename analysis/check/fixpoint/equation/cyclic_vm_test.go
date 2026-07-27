@@ -22,8 +22,8 @@ func cyclicVMFixture(t *testing.T) (CyclicArtifact, EntryBinding, []ContentID) {
 	entry := EntryParameter{Body: body, Name: "entry"}
 	contracts := []ContentID{testID(101), testID(102)}
 	artifact := Artifact{Equations: []Equation{
-		{Target: Coordinate{Body: body, Name: "seed"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: contracts[0]}, KernelID: "seed", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
-		{Target: Coordinate{Body: body, Name: "loop"}, Entry: entry, Occurrence: Occurrence{Kind: "loop-control", ContractID: contracts[1]}, KernelID: "loop", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "seed"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: contracts[0]}, KernelID: "seed", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "loop"}, Entry: entry, Occurrence: Occurrence{Kind: "loop-control", ContractID: contracts[1]}, KernelID: "loop", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
 	}}
 	plan, err := solve.FreezeWTOPlan([]CellID{"seed", "loop"}, []solve.WTOElement[CellID]{{Vertex: "seed"}, {Vertex: "loop", Body: []solve.WTOElement[CellID]{}}}, []solve.WTOInfluence[CellID]{{From: "seed", To: "loop"}, {From: "loop", To: "loop"}})
 	if err != nil {
@@ -187,8 +187,8 @@ func TestCyclicVMStampsPublicationsWithProducerGuards(t *testing.T) {
 	contracts := []ContentID{testID(107), testID(108)}
 	guard := Guard{Body: body, Encoding: []byte("front/branch/op-1/true")}
 	artifact := Artifact{Equations: []Equation{
-		{Target: Coordinate{Body: body, Name: "seed"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: contracts[0]}, KernelID: "seed", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
-		{Target: Coordinate{Body: body, Name: "arm"}, Entry: entry, Occurrence: Occurrence{Kind: "claim", ContractID: contracts[1]}, KernelID: "arm", Guards: []Guard{guard}, Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "seed"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: contracts[0]}, KernelID: "seed", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "arm"}, Entry: entry, Occurrence: Occurrence{Kind: "claim", ContractID: contracts[1]}, KernelID: "arm", Guards: []Guard{guard}, Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
 	}}
 	plan, err := solve.FreezeWTOPlan([]CellID{"seed", "arm"}, []solve.WTOElement[CellID]{{Vertex: "seed"}, {Vertex: "arm", Body: []solve.WTOElement[CellID]{}}}, []solve.WTOInfluence[CellID]{{From: "seed", To: "arm"}, {From: "arm", To: "arm"}})
 	if err != nil {

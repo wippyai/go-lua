@@ -335,7 +335,7 @@ func conditionalReturnForPrototype(child front.DraftsBoundaryView, outcome equat
 		if operation.Occurrence.Kind != "branch-relations" {
 			continue
 		}
-		encoded, found := artifactOperand(operation.Operands, "predicate")
+		encoded, found := artifactOperand(operation.Operands, equation.MustOperandRole("predicate"))
 		predicate, decoded, err := front.DecodeBranchPredicateWire(encoded)
 		index, formal := formals[predicate.Path]
 		if !found || err != nil || !decoded || predicate.Kind != "literal-equal" || predicate.Negated ||

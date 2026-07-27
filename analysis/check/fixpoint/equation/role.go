@@ -7,119 +7,145 @@ import (
 )
 
 // OperandRole is the declared role vocabulary carried by equation operands.
-// Its textual form remains wire-compatible with content-v1 artifacts, while
-// family and index recovery is owned here instead of repeated by consumers.
-type OperandRole string
+// Its representation is deliberately private: role text is a wire spelling,
+// not a value another package may cast into semantic identity. Producers use
+// the fixed values or the constructors below; artifact decoders use
+// ParseOperandRole and fail closed on an empty spelling.
+type OperandRole struct{ spelling string }
 
 // OperandRoleFamily is a declared family whose members use the existing
 // "<family>-<suffix>" canonical spelling.
-type OperandRoleFamily uint8
+type OperandRoleFamily struct{ id uint8 }
 
-const (
-	RoleFamilyArgument OperandRoleFamily = iota + 1
-	RoleFamilyArgumentDisplay
-	RoleFamilyCapture
-	RoleFamilyCase
-	RoleFamilyCaseDisplay
-	RoleFamilyDeclaredReturn
-	RoleFamilyDeclaredRoot
-	RoleFamilyDeclaredType
-	RoleFamilyDensityRelation
-	RoleFamilyDisplay
-	RoleFamilyDifference
-	RoleFamilyImplied
-	RoleFamilyMember
-	RoleFamilyMonotoneFloor
-	RoleFamilyNative
-	RoleFamilyNativeCaptureRoot
-	RoleFamilyNativeCaptureTransport
-	RoleFamilyNativeHostGlobal
-	RoleFamilyNativeListChild
-	RoleFamilyNativeLengthEvent
-	RoleFamilyNativeLoopArm
-	RoleFamilyNativeLoopBoundDisplay
-	RoleFamilyNativeLoopBoundLimit
-	RoleFamilyNativeLoopBoundPath
-	RoleFamilyPayloadType
-	RoleFamilyResult
-	RoleFamilyReturnDisplay
-	RoleFamilyReturnValue
-	RoleFamilyShortCircuit
-	RoleFamilySuspensionLive
-	RoleFamilyTarget
-	RoleFamilyTypeArgument
-	RoleFamilyValue
-	RoleFamilyValueDisplay
+var (
+	RoleFamilyArgument               = OperandRoleFamily{id: 1}
+	RoleFamilyArgumentDisplay        = OperandRoleFamily{id: 2}
+	RoleFamilyCapture                = OperandRoleFamily{id: 3}
+	RoleFamilyCase                   = OperandRoleFamily{id: 4}
+	RoleFamilyCaseDisplay            = OperandRoleFamily{id: 5}
+	RoleFamilyDeclaredReturn         = OperandRoleFamily{id: 6}
+	RoleFamilyDeclaredRoot           = OperandRoleFamily{id: 7}
+	RoleFamilyDeclaredType           = OperandRoleFamily{id: 8}
+	RoleFamilyDensityRelation        = OperandRoleFamily{id: 9}
+	RoleFamilyDisplay                = OperandRoleFamily{id: 10}
+	RoleFamilyDifference             = OperandRoleFamily{id: 11}
+	RoleFamilyImplied                = OperandRoleFamily{id: 12}
+	RoleFamilyMember                 = OperandRoleFamily{id: 13}
+	RoleFamilyMonotoneFloor          = OperandRoleFamily{id: 14}
+	RoleFamilyNative                 = OperandRoleFamily{id: 15}
+	RoleFamilyNativeCaptureRoot      = OperandRoleFamily{id: 16}
+	RoleFamilyNativeCaptureTransport = OperandRoleFamily{id: 17}
+	RoleFamilyNativeHostGlobal       = OperandRoleFamily{id: 18}
+	RoleFamilyNativeListChild        = OperandRoleFamily{id: 19}
+	RoleFamilyNativeLengthEvent      = OperandRoleFamily{id: 20}
+	RoleFamilyNativeLoopArm          = OperandRoleFamily{id: 21}
+	RoleFamilyNativeLoopBoundDisplay = OperandRoleFamily{id: 22}
+	RoleFamilyNativeLoopBoundLimit   = OperandRoleFamily{id: 23}
+	RoleFamilyNativeLoopBoundPath    = OperandRoleFamily{id: 24}
+	RoleFamilyPayloadType            = OperandRoleFamily{id: 25}
+	RoleFamilyResult                 = OperandRoleFamily{id: 26}
+	RoleFamilyReturnDisplay          = OperandRoleFamily{id: 27}
+	RoleFamilyReturnValue            = OperandRoleFamily{id: 28}
+	RoleFamilyShortCircuit           = OperandRoleFamily{id: 29}
+	RoleFamilySuspensionLive         = OperandRoleFamily{id: 30}
+	RoleFamilyTarget                 = OperandRoleFamily{id: 31}
+	RoleFamilyTypeArgument           = OperandRoleFamily{id: 32}
+	RoleFamilyValue                  = OperandRoleFamily{id: 33}
+	RoleFamilyValueDisplay           = OperandRoleFamily{id: 34}
 )
 
 var operandRoleFamilyNames = [...]string{
-	RoleFamilyArgument:               "argument",
-	RoleFamilyArgumentDisplay:        "argument-display",
-	RoleFamilyCapture:                "capture",
-	RoleFamilyCase:                   "case",
-	RoleFamilyCaseDisplay:            "case-display",
-	RoleFamilyDeclaredReturn:         "declared-return",
-	RoleFamilyDeclaredRoot:           "declared-root",
-	RoleFamilyDeclaredType:           "declared-type",
-	RoleFamilyDensityRelation:        "density-relation",
-	RoleFamilyDisplay:                "display",
-	RoleFamilyDifference:             "difference",
-	RoleFamilyImplied:                "implied",
-	RoleFamilyMember:                 "member",
-	RoleFamilyMonotoneFloor:          "monotone-floor",
-	RoleFamilyNative:                 "native",
-	RoleFamilyNativeCaptureRoot:      "native-capture-root",
-	RoleFamilyNativeCaptureTransport: "native-capture-transport",
-	RoleFamilyNativeHostGlobal:       "native-host-global",
-	RoleFamilyNativeListChild:        "native-list-child",
-	RoleFamilyNativeLengthEvent:      "native-length-event",
-	RoleFamilyNativeLoopArm:          "native-loop-arm",
-	RoleFamilyNativeLoopBoundDisplay: "native-loop-bound-display",
-	RoleFamilyNativeLoopBoundLimit:   "native-loop-bound-limit",
-	RoleFamilyNativeLoopBoundPath:    "native-loop-bound-path",
-	RoleFamilyPayloadType:            "payload-type",
-	RoleFamilyResult:                 "result",
-	RoleFamilyReturnDisplay:          "return-display",
-	RoleFamilyReturnValue:            "return-value",
-	RoleFamilyShortCircuit:           "short-circuit",
-	RoleFamilySuspensionLive:         "suspension-live",
-	RoleFamilyTarget:                 "target",
-	RoleFamilyTypeArgument:           "type-argument",
-	RoleFamilyValue:                  "value",
-	RoleFamilyValueDisplay:           "value-display",
+	"",
+	"argument",
+	"argument-display",
+	"capture",
+	"case",
+	"case-display",
+	"declared-return",
+	"declared-root",
+	"declared-type",
+	"density-relation",
+	"display",
+	"difference",
+	"implied",
+	"member",
+	"monotone-floor",
+	"native",
+	"native-capture-root",
+	"native-capture-transport",
+	"native-host-global",
+	"native-list-child",
+	"native-length-event",
+	"native-loop-arm",
+	"native-loop-bound-display",
+	"native-loop-bound-limit",
+	"native-loop-bound-path",
+	"payload-type",
+	"result",
+	"return-display",
+	"return-value",
+	"short-circuit",
+	"suspension-live",
+	"target",
+	"type-argument",
+	"value",
+	"value-display",
 }
 
-const (
-	RoleAllocationResult OperandRole = "allocation-result"
-	RoleApplication      OperandRole = "application"
-	RoleArgumentSpread   OperandRole = "argument-spread"
-	RoleBranchChain      OperandRole = "branch-chain"
-	RoleCallee           OperandRole = "callee"
-	RoleCalleeDisplay    OperandRole = "callee-display"
-	RoleCondition        OperandRole = "condition"
-	RoleContainer        OperandRole = "container"
-	RoleDefault          OperandRole = "default"
-	RoleDisplay          OperandRole = "display"
-	RoleEntry            OperandRole = "entry"
-	RoleGlobalCallee     OperandRole = "global-callee-binding"
-	RolePredicate        OperandRole = "predicate"
-	RolePredicateDisplay OperandRole = "predicate-display"
-	RoleProvider         OperandRole = "provider"
-	RoleReceiver         OperandRole = "receiver"
-	RoleResult           OperandRole = "result"
-	RoleResultArity      OperandRole = "result-arity"
-	RoleResultDisplay    OperandRole = "result-display"
-	RoleResultSpread     OperandRole = "result-spread"
-	RoleTarget           OperandRole = "target"
-	RoleValue            OperandRole = "value"
+var (
+	RoleAllocationResult = mustOperandRole("allocation-result")
+	RoleApplication      = mustOperandRole("application")
+	RoleArgumentSpread   = mustOperandRole("argument-spread")
+	RoleBranchChain      = mustOperandRole("branch-chain")
+	RoleBoundCallee      = mustOperandRole("bound-callee")
+	RoleCallee           = mustOperandRole("callee")
+	RoleCalleeDisplay    = mustOperandRole("callee-display")
+	RoleCondition        = mustOperandRole("condition")
+	RoleContainer        = mustOperandRole("container")
+	RoleDefault          = mustOperandRole("default")
+	RoleDisplay          = mustOperandRole("display")
+	RoleEntry            = mustOperandRole("entry")
+	RoleGlobalCallee     = mustOperandRole("global-callee-binding")
+	RolePredicate        = mustOperandRole("predicate")
+	RolePredicateDisplay = mustOperandRole("predicate-display")
+	RoleProvider         = mustOperandRole("provider")
+	RoleReceiver         = mustOperandRole("receiver")
+	RoleResult           = mustOperandRole("result")
+	RoleResultArity      = mustOperandRole("result-arity")
+	RoleResultDisplay    = mustOperandRole("result-display")
+	RoleResultSpread     = mustOperandRole("result-spread")
+	RoleTarget           = mustOperandRole("target")
+	RoleValue            = mustOperandRole("value")
 )
 
 func (family OperandRoleFamily) name() (string, bool) {
-	if int(family) <= 0 || int(family) >= len(operandRoleFamilyNames) {
+	if int(family.id) <= 0 || int(family.id) >= len(operandRoleFamilyNames) {
 		return "", false
 	}
-	name := operandRoleFamilyNames[family]
+	name := operandRoleFamilyNames[family.id]
 	return name, name != ""
+}
+
+// ParseOperandRole is the wire admission boundary for role spellings.
+func ParseOperandRole(spelling string) (OperandRole, bool) {
+	if spelling == "" || strings.ContainsAny(spelling, "/\x00") {
+		return OperandRole{}, false
+	}
+	return OperandRole{spelling: spelling}, true
+}
+
+// MustOperandRole constructs a statically declared producer role. Dynamic
+// families should prefer IndexedRole, SuffixedRole, and Subrole.
+func MustOperandRole(spelling string) OperandRole {
+	return mustOperandRole(spelling)
+}
+
+func mustOperandRole(spelling string) OperandRole {
+	role, ok := ParseOperandRole(spelling)
+	if !ok {
+		panic("equation: invalid operand role")
+	}
+	return role
 }
 
 // IndexedRole constructs the canonical fixed-width member of a declared
@@ -127,9 +153,9 @@ func (family OperandRoleFamily) name() (string, bool) {
 func IndexedRole(family OperandRoleFamily, index int) OperandRole {
 	name, ok := family.name()
 	if !ok || index < 0 {
-		return ""
+		return OperandRole{}
 	}
-	return OperandRole(fmt.Sprintf("%s-%08d", name, index))
+	return mustOperandRole(fmt.Sprintf("%s-%08d", name, index))
 }
 
 // SuffixedRole constructs a non-indexed member of a declared family. Empty
@@ -138,20 +164,23 @@ func IndexedRole(family OperandRoleFamily, index int) OperandRole {
 func SuffixedRole(family OperandRoleFamily, suffix string) OperandRole {
 	name, ok := family.name()
 	if !ok || suffix == "" || strings.Contains(suffix, "/") {
-		return ""
+		return OperandRole{}
 	}
-	return OperandRole(name + "-" + suffix)
+	return mustOperandRole(name + "-" + suffix)
 }
 
 // Subrole appends one closed component to an already-typed parent role.
 func Subrole(parent OperandRole, suffix string) OperandRole {
-	if parent == "" || suffix == "" || strings.ContainsAny(suffix, "/-") {
-		return ""
+	if !parent.Valid() || suffix == "" || strings.ContainsAny(suffix, "/-") {
+		return OperandRole{}
 	}
-	return OperandRole(parent.String() + "-" + suffix)
+	return mustOperandRole(parent.Wire() + "-" + suffix)
 }
 
-func (role OperandRole) String() string { return string(role) }
+// Valid reports whether the role came through an owner constructor.
+func (role OperandRole) Valid() bool { return role.spelling != "" }
+
+func (role OperandRole) Wire() string { return role.spelling }
 
 // Suffix returns the family-owned suffix. Parsing is centralized here; callers
 // choose the exact declared family rather than hand-matching text.
@@ -160,7 +189,7 @@ func (role OperandRole) Suffix(family OperandRoleFamily) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return strings.CutPrefix(string(role), name+"-")
+	return strings.CutPrefix(role.spelling, name+"-")
 }
 
 // InFamily reports membership in a declared role family.
@@ -197,7 +226,7 @@ func (role OperandRole) IsDisplay() bool {
 	if _, ok := role.Index(RoleFamilyValueDisplay); ok {
 		return true
 	}
-	return strings.HasSuffix(role.String(), "-display")
+	return strings.HasSuffix(role.Wire(), "-display")
 }
 
 // Index returns a decimal indexed-family member. It intentionally accepts

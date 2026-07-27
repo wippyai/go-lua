@@ -12,7 +12,7 @@ func TestArtifactCanonicalContentIgnoresInputOrder(t *testing.T) {
 		return Equation{Target: Coordinate{Body: body, Name: name}, Entry: entry,
 			Guards:     []Guard{{Body: body, Encoding: []byte("z")}, {Body: body, Encoding: []byte("a")}},
 			Occurrence: Occurrence{Kind: "environment-write", ContractID: testID(1)}, KernelID: "factapply/environment-write/v1",
-			Operands: []Operand{{Role: "state", Term: ClosedTerm([]byte("state"))}, {Role: "flow", Term: ClosedTerm([]byte("flow"))}, {Role: "guard", Term: ClosedTerm([]byte("guard"))}},
+			Operands: []Operand{{Role: MustOperandRole("state"), Term: ClosedTerm([]byte("state"))}, {Role: MustOperandRole("flow"), Term: ClosedTerm([]byte("flow"))}, {Role: MustOperandRole("guard"), Term: ClosedTerm([]byte("guard"))}},
 		}
 	}
 	left := Artifact{Equations: []Equation{makeEquation("b"), makeEquation("a")}}
@@ -24,7 +24,7 @@ func TestArtifactCanonicalContentIgnoresInputOrder(t *testing.T) {
 
 func TestArtifactRejectsUnboundEntryTerm(t *testing.T) {
 	body := testBody(1)
-	artifact := Artifact{Equations: []Equation{{Target: Coordinate{Body: body, Name: "out"}, Entry: EntryParameter{Body: body, Name: "entry"}, Occurrence: Occurrence{Kind: "apply", ContractID: testID(1)}, KernelID: "factapply/apply/v1", Operands: []Operand{{Role: "entry", Term: Term{Encoding: []byte("other"), Entry: true}}}}}}
+	artifact := Artifact{Equations: []Equation{{Target: Coordinate{Body: body, Name: "out"}, Entry: EntryParameter{Body: body, Name: "entry"}, Occurrence: Occurrence{Kind: "apply", ContractID: testID(1)}, KernelID: "factapply/apply/v1", Operands: []Operand{{Role: MustOperandRole("entry"), Term: Term{Encoding: []byte("other"), Entry: true}}}}}}
 	if artifact.CanonicalBytes() != nil {
 		t.Fatal("artifact accepted an unbound entry parameter")
 	}
@@ -34,7 +34,7 @@ func TestArtifactCanonicalContentRetainsReadinessDependencies(t *testing.T) {
 	body := testBody(7)
 	entry := EntryParameter{Body: body, Name: "entry"}
 	base := func(name string, dependencies []Coordinate) Equation {
-		return Equation{Target: Coordinate{Body: body, Name: name}, Entry: entry, Dependencies: dependencies, Occurrence: Occurrence{Kind: "entry", ContractID: testID(7)}, KernelID: "kernel", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}}
+		return Equation{Target: Coordinate{Body: body, Name: name}, Entry: entry, Dependencies: dependencies, Occurrence: Occurrence{Kind: "entry", ContractID: testID(7)}, KernelID: "kernel", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}}
 	}
 	without := Artifact{Equations: []Equation{base("a", nil), base("b", nil)}}
 	with := Artifact{Equations: []Equation{base("a", nil), base("b", []Coordinate{{Body: body, Name: "a"}})}}

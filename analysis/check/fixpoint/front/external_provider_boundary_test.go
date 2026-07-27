@@ -15,7 +15,7 @@ func providerTerms(artifact equation.Artifact) []string {
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if operand.Role == "provider" {
+			if operand.Role.Wire() == "provider" {
 				providers = append(providers, string(operand.Term.Encoding))
 			}
 		}
@@ -131,7 +131,7 @@ func TestCallResultDisplayCarriesTheMethodSpelling(t *testing.T) {
 					continue
 				}
 				for _, operand := range operation.Operands {
-					if operand.Role == "result-display" {
+					if operand.Role.Wire() == "result-display" {
 						displays = append(displays, string(operand.Term.Encoding))
 					}
 				}

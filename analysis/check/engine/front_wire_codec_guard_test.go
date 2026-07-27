@@ -170,6 +170,18 @@ func mutation(value string) bool {
 }`,
 		},
 		{
+			name:      "rescan5 wire strings builder",
+			forbidden: "front/branch-predicate/v1/",
+			source: `package engine
+import "strings"
+func mutation(value string) bool {
+	var wire strings.Builder
+	wire.WriteString("front/")
+	wire.WriteString("branch-predicate/v1/")
+	return strings.HasPrefix(value, wire.String())
+}`,
+		},
+		{
 			name:      "rescan4 lifecycle local alias",
 			forbidden: "effect.lifecycle.resource/",
 			source: `package engine
@@ -260,7 +272,7 @@ func TestBranchKernelSurfacesMalformedPredicateWire(t *testing.T) {
 	operation := equation.BoundEquation{
 		Target: equation.Coordinate{Name: "branch"},
 		Operands: []equation.BoundOperand{{
-			Role:  "predicate",
+			Role:  equation.MustOperandRole("predicate"),
 			Value: []byte("front/branch-predicate/v1/{"),
 		}},
 	}
@@ -271,7 +283,7 @@ func TestBranchKernelSurfacesMalformedPredicateWire(t *testing.T) {
 
 func TestBranchNumericConsumerSurfacesMalformedDifferenceWire(t *testing.T) {
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{{
-		Role:  "difference-00000000",
+		Role:  equation.MustOperandRole("difference-00000000"),
 		Value: []byte("front/branch-diff/v1/{"),
 	}}}
 	if _, _, err := branchNumericTruth(operation, equation.Partition{}); err == nil {
@@ -283,7 +295,7 @@ func TestEngineAdmissionSurfacesMalformedModuleProviderWire(t *testing.T) {
 	compilation := front.Compilation{Artifact: equation.Artifact{Equations: []equation.Equation{{
 		Target: equation.Coordinate{Name: "call"},
 		Operands: []equation.Operand{{
-			Role: "provider",
+			Role: equation.MustOperandRole("provider"),
 			Term: equation.ClosedTerm([]byte("provider/module/v1/not-base64")),
 		}},
 	}}}}

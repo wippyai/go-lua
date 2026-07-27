@@ -171,6 +171,13 @@ func selectAdmissionLane() bool {
 	_ = decision()
 	return false
 }`,
+		"rescan5 wrapped bool": `package engine
+type admissionAnswer struct{ admitted bool }
+func parallelAdmission() admissionAnswer { return admissionAnswer{admitted: true} }
+func selectAdmissionLane() bool {
+	answer := parallelAdmission()
+	return answer.admitted
+}`,
 	}
 	for name, source := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -202,17 +209,19 @@ return validate`)
 	child := compilation.NestedCompilations()[0]
 	bodyIndex := indexAdmissionBody(child)
 	ctx := admissionLaneContext{child: child, bodyIndex: bodyIndex}
-	decision, admitted := selectAdmissionLane(&ctx)
-	if !admitted || decision.Lane == nil || decision.Lane.Name != "explicit-any" {
+	result := selectAdmissionLane(&ctx)
+	decision := result.decision
+	if !result.admitted() || decision.Lane == nil || decision.Lane.Name != "explicit-any" {
 		name := ""
 		if decision.Lane != nil {
 			name = decision.Lane.Name
 		}
-		t.Fatalf("indexed admission = (%q, %v), want explicit-any", name, admitted)
+		t.Fatalf("indexed admission = (%q, %v), want explicit-any", name, result.admitted())
 	}
 
 	ctx.bodyIndex = admissionBodyIndex{} // mutation: disconnect the consumer from its projection.
-	if decision, admitted := selectAdmissionLane(&ctx); admitted {
+	if result := selectAdmissionLane(&ctx); result.admitted() {
+		decision := result.decision
 		name := ""
 		if decision.Lane != nil {
 			name = decision.Lane.Name

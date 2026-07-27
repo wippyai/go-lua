@@ -31,8 +31,8 @@ func returnContractResult(t *testing.T, declared typ.Type, returned typ.Type) eq
 	operation := equation.BoundEquation{
 		Target: equation.Coordinate{Body: equation.BodyID{1}, Name: "op-00000002"},
 		Operands: []equation.BoundOperand{
-			{Role: "declared-return-0", Value: declaredValue},
-			{Role: "return-value-00000000", Value: []byte("path/result")},
+			{Role: equation.MustOperandRole("declared-return-0"), Value: declaredValue},
+			{Role: equation.MustOperandRole("return-value-00000000"), Value: []byte("path/result")},
 		},
 	}
 	result, err := publicationKernel(operation, partition)

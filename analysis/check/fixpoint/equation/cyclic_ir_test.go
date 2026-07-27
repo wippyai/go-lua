@@ -10,9 +10,9 @@ func TestCyclicArtifactDemandRetainsContractReverseReachability(t *testing.T) {
 	body := testBody(91)
 	entry := EntryParameter{Body: body, Name: "entry"}
 	artifact := Artifact{Equations: []Equation{
-		{Target: Coordinate{Body: body, Name: "seed"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: testID(91)}, KernelID: "seed", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
-		{Target: Coordinate{Body: body, Name: "loop"}, Entry: entry, Occurrence: Occurrence{Kind: "loop-control", ContractID: testID(92)}, KernelID: "loop", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
-		{Target: Coordinate{Body: body, Name: "result"}, Entry: entry, Occurrence: Occurrence{Kind: "outcome", ContractID: testID(93)}, KernelID: "result", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "seed"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: testID(91)}, KernelID: "seed", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "loop"}, Entry: entry, Occurrence: Occurrence{Kind: "loop-control", ContractID: testID(92)}, KernelID: "loop", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "result"}, Entry: entry, Occurrence: Occurrence{Kind: "outcome", ContractID: testID(93)}, KernelID: "result", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
 	}}
 	cells := []CellID{"seed", "loop", "result"}
 	plan, err := solve.FreezeWTOPlan(cells,
@@ -48,8 +48,8 @@ func TestCyclicArtifactRejectsUnscheduleableContractEdge(t *testing.T) {
 	body := testBody(92)
 	entry := EntryParameter{Body: body, Name: "entry"}
 	artifact := Artifact{Equations: []Equation{
-		{Target: Coordinate{Body: body, Name: "a"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: testID(94)}, KernelID: "a", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
-		{Target: Coordinate{Body: body, Name: "b"}, Entry: entry, Occurrence: Occurrence{Kind: "outcome", ContractID: testID(95)}, KernelID: "b", Operands: []Operand{{Role: "entry", Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "a"}, Entry: entry, Occurrence: Occurrence{Kind: "entry", ContractID: testID(94)}, KernelID: "a", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
+		{Target: Coordinate{Body: body, Name: "b"}, Entry: entry, Occurrence: Occurrence{Kind: "outcome", ContractID: testID(95)}, KernelID: "b", Operands: []Operand{{Role: MustOperandRole("entry"), Term: EntryTerm(entry)}}},
 	}}
 	plan, err := solve.FreezeWTOPlan([]CellID{"a", "b"}, []solve.WTOElement[CellID]{{Vertex: "a"}, {Vertex: "b"}}, nil)
 	if err != nil {

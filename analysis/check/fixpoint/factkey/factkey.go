@@ -140,21 +140,46 @@ var (
 	newFamilies  []Family
 )
 
-// RevocationSet names the fact families whose publications can invalidate a
-// fact in this family. The engine's ordering predicates still decide whether a
-// particular publication is later; this record states the closed vocabulary.
-type RevocationSet []FamilyID
+// revocationSet is the declaration-owned closed set of families whose
+// publications can invalidate another family. Its representation is private:
+// consumers receive only a cursor minted from the family declaration.
+type revocationSet struct{ ids []FamilyID }
+
+func revokers(ids ...FamilyID) revocationSet {
+	return revocationSet{ids: append([]FamilyID(nil), ids...)}
+}
+
+// RevokerCursor is an opaque traversal of one family's declared revokers. A
+// consumer cannot populate or subset it; only Family.Revokers can mint one.
+type RevokerCursor struct {
+	set   revocationSet
+	index int
+}
+
+func (cursor *RevokerCursor) Next() (Family, bool) {
+	if cursor == nil || cursor.index >= len(cursor.set.ids) {
+		return Family{}, false
+	}
+	id := cursor.set.ids[cursor.index]
+	cursor.index++
+	return FamilyByID(id)
+}
 
 // Family declares one fact family's key shape. A key of this family is the
 // prefix, then the subject, then each qualifier in order, then the occurrence
 // that published it.
 type Family struct {
-	ID            FamilyID
-	Prefix        string
-	Subject       Kind
-	Qualifiers    []Kind
-	PayloadKind   PayloadKind
-	RevocationSet RevocationSet
+	ID          FamilyID
+	Prefix      string
+	Subject     Kind
+	Qualifiers  []Kind
+	PayloadKind PayloadKind
+	revokers    revocationSet
+}
+
+// Revokers returns the declaration-owned opaque revoker traversal.
+func (f Family) Revokers() RevokerCursor {
+	return RevokerCursor{set: f.revokers}
 }
 
 // Position is one resolved position of a parsed key.
@@ -184,48 +209,48 @@ const (
 )
 
 var (
-	HeapTableIdentity     = revokingFamilyRecord(FamilyHeapTableIdentity, "heap/table-identity/", Term, PayloadIdentity, RevocationSet{FamilyHeapTableIdentity})
-	HeapTableClosed       = revokingFamilyRecord(FamilyHeapTableClosed, "heap/table-closed/", Identity, PayloadMarker, RevocationSet{FamilyHeapMetaAttached, FamilyHeapExternalCallback, FamilyHeapOpaqueMemberWrite, FamilyHeapTableEscape})
-	HeapMember            = revokingFamilyRecord(FamilyHeapMember, "heap/member/", Identity, PayloadValue, RevocationSet{FamilyHeapMember, FamilyHeapStaticReplace, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape}, EncodedOpaque)
-	HeapMemberIdentity    = revokingFamilyRecord(FamilyHeapMemberIdentity, "heap/member-identity/", Identity, PayloadIdentity, RevocationSet{FamilyHeapMemberIdentity, FamilyHeapStaticReplace, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape}, EncodedOpaque)
-	HeapMemberCell        = revokingFamilyRecord(FamilyHeapMemberCell, "heap/member-cell/", Identity, PayloadBytes, RevocationSet{FamilyHeapMemberCell, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape}, EncodedOpaque)
-	HeapMemberOrigin      = revokingFamilyRecord(FamilyHeapMemberOrigin, "heap/member-origin/", Term, PayloadTerm, RevocationSet{FamilyHeapMemberOrigin}, EncodedOpaque)
-	HeapStaticReplace     = revokingFamilyRecord(FamilyHeapStaticReplace, "heap/static-replace/", Identity, PayloadMarker, RevocationSet{FamilyHeapStaticReplace, FamilyHeapTableEscape})
-	HeapMetaAttached      = revokingFamilyRecord(FamilyHeapMetaAttached, "heap/meta-attached/", Identity, PayloadMarker, RevocationSet{FamilyHeapMetaAttached})
-	HeapMetaIdentity      = revokingFamilyRecord(FamilyHeapMetaIdentity, "heap/meta-identity/", Identity, PayloadIdentity, RevocationSet{FamilyHeapMetaIdentity, FamilyHeapExternalCallback})
-	HeapMetaNewIndex      = revokingFamilyRecord(FamilyHeapMetaNewIndex, "heap/meta-newindex/", Identity, PayloadIdentity, RevocationSet{FamilyHeapMetaNewIndex, FamilyHeapExternalCallback})
-	HeapExternalCallback  = revokingFamilyRecord(FamilyHeapExternalCallback, "heap/external-callback/", Identity, PayloadMarker, RevocationSet{FamilyHeapExternalCallback})
+	HeapTableIdentity     = revokingFamilyRecord(FamilyHeapTableIdentity, "heap/table-identity/", Term, PayloadIdentity, revokers(FamilyHeapTableIdentity))
+	HeapTableClosed       = revokingFamilyRecord(FamilyHeapTableClosed, "heap/table-closed/", Identity, PayloadMarker, revokers(FamilyHeapMetaAttached, FamilyHeapExternalCallback, FamilyHeapOpaqueMemberWrite, FamilyHeapTableEscape))
+	HeapMember            = revokingFamilyRecord(FamilyHeapMember, "heap/member/", Identity, PayloadValue, revokers(FamilyHeapMember, FamilyHeapStaticReplace, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape), EncodedOpaque)
+	HeapMemberIdentity    = revokingFamilyRecord(FamilyHeapMemberIdentity, "heap/member-identity/", Identity, PayloadIdentity, revokers(FamilyHeapMemberIdentity, FamilyHeapStaticReplace, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape), EncodedOpaque)
+	HeapMemberCell        = revokingFamilyRecord(FamilyHeapMemberCell, "heap/member-cell/", Identity, PayloadBytes, revokers(FamilyHeapMemberCell, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapTableEscape), EncodedOpaque)
+	HeapMemberOrigin      = revokingFamilyRecord(FamilyHeapMemberOrigin, "heap/member-origin/", Term, PayloadTerm, revokers(FamilyHeapMemberOrigin), EncodedOpaque)
+	HeapStaticReplace     = revokingFamilyRecord(FamilyHeapStaticReplace, "heap/static-replace/", Identity, PayloadMarker, revokers(FamilyHeapStaticReplace, FamilyHeapTableEscape))
+	HeapMetaAttached      = revokingFamilyRecord(FamilyHeapMetaAttached, "heap/meta-attached/", Identity, PayloadMarker, revokers(FamilyHeapMetaAttached))
+	HeapMetaIdentity      = revokingFamilyRecord(FamilyHeapMetaIdentity, "heap/meta-identity/", Identity, PayloadIdentity, revokers(FamilyHeapMetaIdentity, FamilyHeapExternalCallback))
+	HeapMetaNewIndex      = revokingFamilyRecord(FamilyHeapMetaNewIndex, "heap/meta-newindex/", Identity, PayloadIdentity, revokers(FamilyHeapMetaNewIndex, FamilyHeapExternalCallback))
+	HeapExternalCallback  = revokingFamilyRecord(FamilyHeapExternalCallback, "heap/external-callback/", Identity, PayloadMarker, revokers(FamilyHeapExternalCallback))
 	HeapOpaqueMemberWrite = revokingFamilyRecord(
-		FamilyHeapOpaqueMemberWrite, "heap/opaque-member-write/", Identity, PayloadBytes, RevocationSet{FamilyHeapTableEscape},
+		FamilyHeapOpaqueMemberWrite, "heap/opaque-member-write/", Identity, PayloadBytes, revokers(FamilyHeapTableEscape),
 	)
 	HeapKeysOf = revokingFamilyRecord(
 		FamilyHeapKeysOf, "heap/keys-of/", Identity, PayloadTerm,
-		RevocationSet{FamilyHeapMember, FamilyHeapMemberCell, FamilyHeapStaticReplace, FamilyHeapMetaAttached, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapIndexRevoke},
+		revokers(FamilyHeapMember, FamilyHeapMemberCell, FamilyHeapStaticReplace, FamilyHeapMetaAttached, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapIndexRevoke),
 	)
 	HeapKeyedRead       = familyRecord(FamilyHeapKeyedRead, "heap/keyed-read/", EncodedTerm, PayloadIdentity)
-	HeapKeyedElement    = revokingFamilyRecord(FamilyHeapKeyedElement, "heap/keyed-element/", Identity, PayloadType, RevocationSet{FamilyHeapMetaAttached, FamilyHeapExternalCallback, FamilyHeapTableEscape})
-	HeapIndexPresence   = revokingFamilyRecord(FamilyHeapIndexPresence, "heap/index-presence/", Tagged, PayloadMarker, RevocationSet{FamilyHeapIndexRevoke}, EncodedTerm)
-	HeapKeyPresence     = revokingFamilyRecord(FamilyHeapKeyPresence, "heap/key-presence/", Tagged, PayloadMarker, RevocationSet{FamilyHeapMember, FamilyHeapMemberCell, FamilyHeapStaticReplace, FamilyHeapMetaAttached, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapIndexRevoke}, EncodedTerm)
-	HeapIndexRevoke     = revokingFamilyRecord(FamilyHeapIndexRevoke, "heap/index-revoke/", Tagged, PayloadMarker, RevocationSet{FamilyHeapIndexRevoke})
-	HeapLengthFloor     = revokingFamilyRecord(FamilyHeapLengthFloor, "heap/length-floor/", Tagged, PayloadInteger, RevocationSet{FamilyHeapIndexRevoke})
-	HeapTableEscape     = revokingFamilyRecord(FamilyHeapTableEscape, "heap/table-escape/", Tagged, PayloadMarker, RevocationSet{FamilyHeapTableEscape})
-	HeapIndexLower      = revokingFamilyRecord(FamilyHeapIndexLower, "heap/index-lower/", EncodedTerm, PayloadMarker, RevocationSet{FamilyHeapIndexRevoke})
-	HeapIndexUpper      = revokingFamilyRecord(FamilyHeapIndexUpper, "heap/index-upper/", EncodedTerm, PayloadMarker, RevocationSet{FamilyHeapIndexRevoke}, EncodedTerm)
-	HeapIndexRelation   = revokingFamilyRecord(FamilyHeapIndexRelation, "heap/index-relation/", Opaque, PayloadRelation, RevocationSet{FamilyHeapIndexRelation})
-	Value               = revokingFamilyRecord(FamilyValue, "value/", Term, PayloadValue, RevocationSet{FamilyValue})
-	CallResult          = revokingFamilyRecord(FamilyCallResult, "call-result/", Coordinate, PayloadValue, RevocationSet{FamilyCallResult})
-	CallArgument        = revokingFamilyRecord(FamilyCallArgument, "call-argument/", Coordinate, PayloadTerm, RevocationSet{FamilyCallArgument})
-	LocalCallResult     = revokingFamilyRecord(FamilyLocalCallResult, "local-call-result/", Term, PayloadMarker, RevocationSet{FamilyLocalCallResult})
-	Type                = revokingFamilyRecord(FamilyType, "type/", Term, PayloadType, RevocationSet{FamilyType})
-	DeclaredType        = revokingFamilyRecord(FamilyDeclaredType, "declared-type/", Term, PayloadType, RevocationSet{FamilyDeclaredType})
-	SummaryType         = revokingFamilyRecord(FamilySummaryType, "summary-type/", Term, PayloadType, RevocationSet{FamilySummaryType})
+	HeapKeyedElement    = revokingFamilyRecord(FamilyHeapKeyedElement, "heap/keyed-element/", Identity, PayloadType, revokers(FamilyHeapMetaAttached, FamilyHeapExternalCallback, FamilyHeapTableEscape))
+	HeapIndexPresence   = revokingFamilyRecord(FamilyHeapIndexPresence, "heap/index-presence/", Tagged, PayloadMarker, revokers(FamilyHeapIndexRevoke), EncodedTerm)
+	HeapKeyPresence     = revokingFamilyRecord(FamilyHeapKeyPresence, "heap/key-presence/", Tagged, PayloadMarker, revokers(FamilyHeapMember, FamilyHeapMemberCell, FamilyHeapStaticReplace, FamilyHeapMetaAttached, FamilyHeapOpaqueMemberWrite, FamilyHeapExternalCallback, FamilyHeapIndexRevoke), EncodedTerm)
+	HeapIndexRevoke     = revokingFamilyRecord(FamilyHeapIndexRevoke, "heap/index-revoke/", Tagged, PayloadMarker, revokers(FamilyHeapIndexRevoke))
+	HeapLengthFloor     = revokingFamilyRecord(FamilyHeapLengthFloor, "heap/length-floor/", Tagged, PayloadInteger, revokers(FamilyHeapIndexRevoke))
+	HeapTableEscape     = revokingFamilyRecord(FamilyHeapTableEscape, "heap/table-escape/", Tagged, PayloadMarker, revokers(FamilyHeapTableEscape))
+	HeapIndexLower      = revokingFamilyRecord(FamilyHeapIndexLower, "heap/index-lower/", EncodedTerm, PayloadMarker, revokers(FamilyHeapIndexRevoke))
+	HeapIndexUpper      = revokingFamilyRecord(FamilyHeapIndexUpper, "heap/index-upper/", EncodedTerm, PayloadMarker, revokers(FamilyHeapIndexRevoke), EncodedTerm)
+	HeapIndexRelation   = revokingFamilyRecord(FamilyHeapIndexRelation, "heap/index-relation/", Opaque, PayloadRelation, revokers(FamilyHeapIndexRelation))
+	Value               = revokingFamilyRecord(FamilyValue, "value/", Term, PayloadValue, revokers(FamilyValue))
+	CallResult          = revokingFamilyRecord(FamilyCallResult, "call-result/", Coordinate, PayloadValue, revokers(FamilyCallResult))
+	CallArgument        = revokingFamilyRecord(FamilyCallArgument, "call-argument/", Coordinate, PayloadTerm, revokers(FamilyCallArgument))
+	LocalCallResult     = revokingFamilyRecord(FamilyLocalCallResult, "local-call-result/", Term, PayloadMarker, revokers(FamilyLocalCallResult))
+	Type                = revokingFamilyRecord(FamilyType, "type/", Term, PayloadType, revokers(FamilyType))
+	DeclaredType        = revokingFamilyRecord(FamilyDeclaredType, "declared-type/", Term, PayloadType, revokers(FamilyDeclaredType))
+	SummaryType         = revokingFamilyRecord(FamilySummaryType, "summary-type/", Term, PayloadType, revokers(FamilySummaryType))
 	MethodReturnSummary = revokingFamilyRecord(
-		FamilyMethodReturnSummary, "method-return-summary/", Term, PayloadType, RevocationSet{FamilyMethodReturnSummary},
+		FamilyMethodReturnSummary, "method-return-summary/", Term, PayloadType, revokers(FamilyMethodReturnSummary),
 	)
-	BranchProofFamily            = revokingFamilyRecord(FamilyBranchProof, "branch-proof/", Opaque, PayloadMarker, RevocationSet{FamilyBranchProof}, Coordinate)
-	IteratorElement              = revokingFamilyRecord(FamilyIteratorElement, "iterator-element/", Term, PayloadType, RevocationSet{FamilyIteratorElement})
-	IteratorKey                  = revokingFamilyRecord(FamilyIteratorKey, "iterator-key/", Term, PayloadType, RevocationSet{FamilyIteratorKey})
-	IteratorKeySource            = revokingFamilyRecord(FamilyIteratorKeySource, "iterator-key-source/", Term, PayloadTerm, RevocationSet{FamilyIteratorKeySource})
+	BranchProofFamily            = revokingFamilyRecord(FamilyBranchProof, "branch-proof/", Opaque, PayloadMarker, revokers(FamilyBranchProof), Coordinate)
+	IteratorElement              = revokingFamilyRecord(FamilyIteratorElement, "iterator-element/", Term, PayloadType, revokers(FamilyIteratorElement))
+	IteratorKey                  = revokingFamilyRecord(FamilyIteratorKey, "iterator-key/", Term, PayloadType, revokers(FamilyIteratorKey))
+	IteratorKeySource            = revokingFamilyRecord(FamilyIteratorKeySource, "iterator-key-source/", Term, PayloadTerm, revokers(FamilyIteratorKeySource))
 	NativeConstantValue          = familyRecord(FamilyNativeConstantValue, "constant_value/", Opaque, PayloadBytes)
 	NativePublicationIdentity    = familyRecord(FamilyNativePublicationIdentity, "publication_identity/", Opaque, PayloadBytes)
 	NativeBranchPartition        = familyRecord(FamilyNativeBranchPartition, "branch_partition/", Opaque, PayloadBytes)
@@ -247,9 +272,9 @@ var (
 	// Lifecycle state families retain their established wire prefixes, while
 	// their payload declaration makes typestate's publication codec the sole
 	// interpreter. ChannelDisplay is term metadata, not lifecycle state.
-	LifecycleChannelState   = revokingFamilyRecord(FamilyLifecycleChannelState, "effect.lifecycle.channel/", Identity, PayloadTypestate, RevocationSet{FamilyLifecycleChannelState})
-	LifecycleChannelDisplay = revokingFamilyRecord(FamilyLifecycleChannelDisplay, "effect.lifecycle.channel.display/", EncodedTerm, PayloadBytes, RevocationSet{FamilyLifecycleChannelDisplay})
-	LifecycleResourceState  = revokingFamilyRecord(FamilyLifecycleResourceState, "effect.lifecycle.resource/", Identity, PayloadTypestate, RevocationSet{FamilyLifecycleResourceState})
+	LifecycleChannelState   = revokingFamilyRecord(FamilyLifecycleChannelState, "effect.lifecycle.channel/", Identity, PayloadTypestate, revokers(FamilyLifecycleChannelState))
+	LifecycleChannelDisplay = revokingFamilyRecord(FamilyLifecycleChannelDisplay, "effect.lifecycle.channel.display/", EncodedTerm, PayloadBytes, revokers(FamilyLifecycleChannelDisplay))
+	LifecycleResourceState  = revokingFamilyRecord(FamilyLifecycleResourceState, "effect.lifecycle.resource/", Identity, PayloadTypestate, revokers(FamilyLifecycleResourceState))
 
 	ResidueWindow              = newFamilyRecord("residue-window/", Term, PayloadRelation)
 	LengthTerm                 = newFamilyRecord("length-term/", Term, PayloadTerm)
@@ -355,7 +380,7 @@ var (
 func familyRecord(id FamilyID, prefix string, subject Kind, payload PayloadKind, qualifiers ...Kind) Family {
 	return Family{
 		ID: id, Prefix: prefix, Subject: subject, Qualifiers: qualifiers,
-		PayloadKind: payload, RevocationSet: RevocationSet{},
+		PayloadKind: payload, revokers: revocationSet{},
 	}
 }
 
@@ -366,9 +391,9 @@ func newFamilyRecord(prefix string, subject Kind, payload PayloadKind, qualifier
 	return record
 }
 
-func revokingFamilyRecord(id FamilyID, prefix string, subject Kind, payload PayloadKind, revocations RevocationSet, qualifiers ...Kind) Family {
+func revokingFamilyRecord(id FamilyID, prefix string, subject Kind, payload PayloadKind, revocations revocationSet, qualifiers ...Kind) Family {
 	record := familyRecord(id, prefix, subject, payload, qualifiers...)
-	record.RevocationSet = revocations
+	record.revokers = revocations
 	return record
 }
 
@@ -468,8 +493,8 @@ func Lookup(key string) (Family, bool) {
 	return Family{}, false
 }
 
-// FamilyByID resolves the stable identity used by a declaration's
-// RevocationSet. Consumers never translate through prefix strings.
+// FamilyByID resolves a stable family identity. Consumers never translate
+// through prefix strings.
 func FamilyByID(id FamilyID) (Family, bool) {
 	family, ok := byID[id]
 	return family, ok

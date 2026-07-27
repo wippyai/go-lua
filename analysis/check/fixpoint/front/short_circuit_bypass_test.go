@@ -22,9 +22,9 @@ func branchBypassOperands(t *testing.T, source string) []map[string]string {
 		}
 		stated := map[string]string{}
 		for _, operand := range operation.Operands {
-			switch operand.Role {
+			switch operand.Role.Wire() {
 			case "short-circuit-result", "short-circuit-operand", "short-circuit-bypass":
-				stated[operand.Role.String()] = string(operand.Term.Encoding)
+				stated[operand.Role.Wire()] = string(operand.Term.Encoding)
 			}
 		}
 		if len(stated) != 0 {

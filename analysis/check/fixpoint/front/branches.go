@@ -69,16 +69,16 @@ func branchOperands(body *wir.Body, instruction wir.Instruction, bypass shortCir
 		if err != nil {
 			return nil, fmt.Errorf("condition: %w", err)
 		}
-		operands = append(operands, equation.Operand{Role: "condition", Term: condition})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("condition"), Term: condition})
 	}
 	if check.Kind != wir.CheckNone {
 		predicate, err := branchPredicateTerm(check)
 		if err != nil {
 			return nil, err
 		}
-		operands = append(operands, equation.Operand{Role: "predicate", Term: predicate})
+		operands = append(operands, equation.Operand{Role: equation.MustOperandRole("predicate"), Term: predicate})
 		if display := check.Path.String(); display != "" {
-			operands = append(operands, equation.Operand{Role: "predicate-display", Term: equation.ClosedTerm([]byte(display))})
+			operands = append(operands, equation.Operand{Role: equation.MustOperandRole("predicate-display"), Term: equation.ClosedTerm([]byte(display))})
 		}
 	}
 	if instruction.A.Kind == wir.OperandNone && check.Kind == wir.CheckNone {
@@ -108,9 +108,9 @@ func branchOperands(body *wir.Body, instruction wir.Instruction, bypass shortCir
 			return nil, fmt.Errorf("short-circuit operand: %w", err)
 		}
 		operands = append(operands,
-			equation.Operand{Role: "short-circuit-result", Term: result},
-			equation.Operand{Role: "short-circuit-operand", Term: value},
-			equation.Operand{Role: "short-circuit-bypass", Term: equation.ClosedTerm([]byte(shapefact.BooleanValueString(bypass.edge)))},
+			equation.Operand{Role: equation.MustOperandRole("short-circuit-result"), Term: result},
+			equation.Operand{Role: equation.MustOperandRole("short-circuit-operand"), Term: value},
+			equation.Operand{Role: equation.MustOperandRole("short-circuit-bypass"), Term: equation.ClosedTerm([]byte(shapefact.BooleanValueString(bypass.edge)))},
 		)
 	}
 	return operands, nil
@@ -250,12 +250,14 @@ func branchPredicateWireForCheck(check wir.Check) (BranchPredicateWire, error) {
 		if err != nil {
 			return BranchPredicateWire{}, err
 		}
+		wire.PathShape = branchChainPathWire(check.Path)
 	}
 	if requiresOtherBranchPath(check.Kind, check.TypeName) {
 		wire.OtherPath, err = checkPathKey(check.OtherPath)
 		if err != nil {
 			return BranchPredicateWire{}, fmt.Errorf("other path: %w", err)
 		}
+		wire.OtherPathShape = branchChainPathWire(check.OtherPath)
 	}
 	if check.Kind == wir.CheckLiteralEqual || check.Kind == wir.CheckLiteralNot {
 		wire.Literal, err = literalScalarEncoding(check.Literal)

@@ -302,7 +302,7 @@ func placementGlobalProviderName(provider []byte) (string, bool) {
 
 func operationOperandValue(operation equation.BoundEquation, role string) []byte {
 	for _, operand := range operation.Operands {
-		if operand.Role.String() == role {
+		if operand.Role.Wire() == role {
 			return operand.Value
 		}
 	}
@@ -694,7 +694,7 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 			if index == 0 {
 				facts = append(facts, placementEventFact(allocation.Identity, operation.Target.Name, placementEventOwned))
 			}
-		case (operands.display == "process.send" && index == 2) || (operands.method == "send" && index == 0 && typedChannelReceiver(operands.receiver, partition)):
+		case (operands.display == "process.send" && index == 2) || (operands.method.Matches("send") && index == 0 && typedChannelReceiver(operands.receiver, partition)):
 			// The send boundary is the sealing event for its closed transfer
 			// payload. Both conclusions are emitted from the same proved call
 			// contract, so a later source mutation cannot masquerade as a
@@ -723,7 +723,7 @@ func placementApplyFacts(operation equation.BoundEquation, operands directCallOp
 // rebound, and has a reachable later read. A method spelling alone therefore
 // cannot promote an arbitrary frame-local value.
 func placementSuspensionFacts(operation equation.BoundEquation, operands directCallOperands, partition equation.Partition) []equation.Fact {
-	if operands.method != "receive" || !typedChannelReceiver(operands.receiver, partition) {
+	if !operands.method.Matches("receive") || !typedChannelReceiver(operands.receiver, partition) {
 		return nil
 	}
 	return placementSuspendedLiveFacts(operation, partition)

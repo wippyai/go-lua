@@ -44,6 +44,40 @@ type Source struct {
 	IncludeStdlib bool
 }
 
+// Identity is an opaque registry selection. Consumers that recognize native
+// operations pass this value instead of reconstructing identity from source
+// text.
+type Identity struct {
+	name      string
+	signature signature.Function
+	modeled   bool
+}
+
+// RegistryIdentity resolves name through this source and seals the selected
+// registry entry into an opaque identity.
+func (s Source) RegistryIdentity(name string) (Identity, bool) {
+	if sig, ok := s.LookupView(name); ok {
+		return Identity{name: name, signature: sig, modeled: true}, true
+	}
+	if s.IncludeStdlib && !strings.Contains(name, ".") {
+		for _, bare := range stdlib.BareGlobals() {
+			if bare == name {
+				return Identity{name: name}, true
+			}
+		}
+	}
+	return Identity{}, false
+}
+
+// Name returns the spelling sealed by the registry lookup.
+func (identity Identity) Name() string { return identity.name }
+
+// Signature returns the selected modeled signature. Declared bare globals are
+// valid identities but intentionally have no modeled signature.
+func (identity Identity) Signature() (signature.Function, bool) {
+	return identity.signature, identity.name != "" && identity.modeled
+}
+
 // Validate checks in-memory manifest metadata before analysis consumes it.
 func (s Source) Validate() error {
 	for i, m := range s.Manifests {

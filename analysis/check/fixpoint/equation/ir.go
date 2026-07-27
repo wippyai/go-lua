@@ -107,8 +107,8 @@ type Operand struct {
 	Term Term
 }
 
-func (o Operand) validFor(entry EntryParameter) bool { return o.Role != "" && o.Term.validFor(entry) }
-func (o Operand) less(other Operand) bool            { return o.Role.String() < other.Role.String() }
+func (o Operand) validFor(entry EntryParameter) bool { return o.Role.Valid() && o.Term.validFor(entry) }
+func (o Operand) less(other Operand) bool            { return o.Role.Wire() < other.Role.Wire() }
 
 // Equation is one guarded equation over a body coordinate.  Every equation
 // explicitly retains its body's formal entry parameter; it has no concrete
@@ -237,7 +237,7 @@ func appendEquation(out []byte, equation Equation) []byte {
 	}
 	out = appendU64(out, uint64(len(equation.Operands)))
 	for _, operand := range equation.Operands {
-		out = appendText(out, operand.Role.String())
+		out = appendText(out, operand.Role.Wire())
 		if operand.Term.Entry {
 			out = append(out, 1)
 		} else {

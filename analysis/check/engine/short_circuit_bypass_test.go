@@ -18,9 +18,9 @@ func bypassOperation(t *testing.T, operand string, edge string) equation.BoundEq
 	return equation.BoundEquation{
 		Target: equation.Coordinate{Body: equation.BodyID{1}, Name: "op-00000002"},
 		Operands: []equation.BoundOperand{
-			{Role: "short-circuit-result", Value: []byte("temp/0")},
-			{Role: "short-circuit-operand", Value: []byte(operand)},
-			{Role: "short-circuit-bypass", Value: []byte("scalar/bool/" + edge)},
+			{Role: equation.MustOperandRole("short-circuit-result"), Value: []byte("temp/0")},
+			{Role: equation.MustOperandRole("short-circuit-operand"), Value: []byte(operand)},
+			{Role: equation.MustOperandRole("short-circuit-bypass"), Value: []byte("scalar/bool/" + edge)},
 		},
 	}
 }

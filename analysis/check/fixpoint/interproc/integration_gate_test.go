@@ -346,7 +346,7 @@ func gateArtifact(t *testing.T, module string, source interproc.ContentID) inter
 	plain := equation.Artifact{Equations: []equation.Equation{{
 		Target: equation.Coordinate{Body: bodyID, Name: "result"}, Entry: entry,
 		Occurrence: equation.Occurrence{Kind: "entry", ContractID: contract}, KernelID: "gate",
-		Operands: []equation.Operand{{Role: "entry", Term: equation.EntryTerm(entry)}},
+		Operands: []equation.Operand{{Role: equation.MustOperandRole("entry"), Term: equation.EntryTerm(entry)}},
 	}}}
 	plan, err := solve.FreezeWTOPlan([]equation.CellID{"result"}, []solve.WTOElement[equation.CellID]{{Vertex: "result"}}, nil)
 	if err != nil {
