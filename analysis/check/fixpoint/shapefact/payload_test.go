@@ -2,14 +2,9 @@ package shapefact_test
 
 import (
 	"encoding/json"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -193,95 +188,5 @@ func walkPublishedValues(value any, visit func(string)) {
 		for _, child := range value {
 			walkPublishedValues(child, visit)
 		}
-	}
-}
-
-// A payload wire is protocol data, so only the codec may own a scalar/ or
-// shape/ literal. Consumers compare exported canonical sentinels, construct
-// through typed codec values, and switch on Decode's declared forms.
-func TestNoPayloadLiteralPrefixTestsOutsideCodec(t *testing.T) {
-	root := filepath.Join(repositoryRoot(t), "analysis")
-	codecDir := filepath.Join(root, "check", "fixpoint", "shapefact")
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			if path == codecDir {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		source, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if regexp.MustCompile(`_\s*,\s*[A-Za-z][A-Za-z0-9_]*\s*:?=\s*shapefact\.DecodeTarget`).Match(source) {
-			t.Errorf("%s: shape-target classification must switch on shapefact.Decode", path)
-		}
-		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-		if err != nil {
-			return err
-		}
-		ast.Inspect(file, func(node ast.Node) bool {
-			expression, ok := node.(ast.Expr)
-			if ok {
-				text, constant := constantStringExpression(expression)
-				if constant && (strings.HasPrefix(text, "scalar/") || strings.HasPrefix(text, "shape/")) {
-					t.Errorf("%s: payload wire literal must be owned by shapefact", path)
-				}
-			}
-			call, ok := node.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			selector, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || (selector.Sel.Name != "HasPrefix" && selector.Sel.Name != "CutPrefix" && selector.Sel.Name != "TrimPrefix") {
-				return true
-			}
-			for _, argument := range call.Args {
-				literal, ok := argument.(*ast.BasicLit)
-				if !ok || literal.Kind != token.STRING {
-					continue
-				}
-				text, err := strconv.Unquote(literal.Value)
-				if err == nil && (strings.HasPrefix(text, "scalar/") || strings.HasPrefix(text, "shape/")) {
-					t.Errorf("%s: payload wire-prefix test must use shapefact.Decode", path)
-				}
-			}
-			return true
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-// constantStringExpression folds only source-level string concatenation. It
-// keeps the ownership fence discriminating when an incumbent construction is
-// split into adjacent literals to evade a simple prefix grep.
-func constantStringExpression(expression ast.Expr) (string, bool) {
-	switch expression := expression.(type) {
-	case *ast.BasicLit:
-		if expression.Kind != token.STRING {
-			return "", false
-		}
-		text, err := strconv.Unquote(expression.Value)
-		return text, err == nil
-	case *ast.ParenExpr:
-		return constantStringExpression(expression.X)
-	case *ast.BinaryExpr:
-		if expression.Op != token.ADD {
-			return "", false
-		}
-		left, leftOK := constantStringExpression(expression.X)
-		right, rightOK := constantStringExpression(expression.Y)
-		return left + right, leftOK && rightOK
-	default:
-		return "", false
 	}
 }

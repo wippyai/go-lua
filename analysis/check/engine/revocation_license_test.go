@@ -1,12 +1,6 @@
 package engine
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"io/fs"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -14,82 +8,49 @@ import (
 )
 
 func TestRevokerFamilySubsetsStayDeclarationOwned(t *testing.T) {
-	root := wireFenceRepositoryRoot(t)
-	analysisRoot := filepath.Join(root, "analysis")
-	ownedDeclarations := filepath.Join(root, "analysis", "check", "fixpoint", "factkey")
-	ownedConsumer := filepath.Join(root, "analysis", "check", "engine", "license.go")
-	err := filepath.WalkDir(analysisRoot, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	loader := newFencePackageLoader(t, "./analysis/check/...")
+	for _, meta := range loader.modulePackages("/analysis/check/") {
+		if meta.ImportPath == modulePath+"/analysis/check/fixpoint/factkey" {
+			continue
 		}
-		if entry.IsDir() {
-			if path == ownedDeclarations {
-				return filepath.SkipDir
-			}
-			return nil
+		for _, construction := range fenceRevokerConstructions(loader.load(meta)) {
+			t.Errorf("%s constructs a handwritten revoker-family subset; use the factkey declaration through familyReadLicense", construction)
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || path == ownedConsumer {
-			return nil
-		}
-		file, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-		if parseErr != nil {
-			return parseErr
-		}
-		ast.Inspect(file, func(node ast.Node) bool {
-			if literal, ok := node.(*ast.CompositeLit); ok && fenceRevokerSubsetLiteral(literal) {
-				t.Errorf("%s:%d constructs a handwritten revoker-family subset; use the factkey declaration through familyReadLicense", path, literal.Pos())
-			}
-			if loop, ok := node.(*ast.RangeStmt); ok && fenceHandwrittenRevokerRange(loop) {
-				t.Errorf("%s:%d enumerates a handwritten revoker-family subset; use the factkey declaration through familyReadLicense", path, loop.Pos())
-			}
-			return true
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }
 
 func TestRevocationFenceRejectsHandwrittenFamilyIDSubset(t *testing.T) {
-	file, err := fenceParseSource(`package engine
-var revokers = factkey.RevocationSet{factkey.FamilyHeapIndexRevoke}
-var alternate = []factkey.FamilyID{factkey.FamilyHeapTableEscape}
-func handwrittenRevocation(partition Partition, proof string) bool {
-	for _, family := range []factkey.Family{factkey.HeapIndexRevoke} {
-		values := partition.FamilyValues(factkey.BuildKey(family, nil, ""))
-		for fact, ok := values.Next(); ok; fact, ok = values.Next() {
-			if fact.Occurrence >= proof {
-				return false
+	loader := newFencePackageLoader(t, "./analysis/check/...")
+	tests := map[string]string{
+		"rescan4 in-consumer set": `package engine
+import "` + modulePath + `/analysis/check/fixpoint/factkey"
+var revocationRegression = factkey.RevocationSet{factkey.FamilyHeapIndexRevoke}
+func consume() { _ = revocationRegression }
+`,
+		"type alias literal": `package engine
+import "` + modulePath + `/analysis/check/fixpoint/factkey"
+type localRevokers = factkey.RevocationSet
+var regression = localRevokers{factkey.FamilyHeapTableEscape}
+`,
+		"unnamed family ID slice": `package engine
+import "` + modulePath + `/analysis/check/fixpoint/factkey"
+var regression = []factkey.FamilyID{factkey.FamilyHeapIndexRevoke}
+`,
+		"make and append": `package engine
+import "` + modulePath + `/analysis/check/fixpoint/factkey"
+func regression() []factkey.FamilyID {
+	out := make([]factkey.FamilyID, 0, 1)
+	return append(out, factkey.FamilyHeapIndexRevoke)
+}
+`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			typed := loader.source(modulePath+"/analysis/check/engine", source)
+			if constructions := fenceRevokerConstructions(typed); len(constructions) == 0 {
+				t.Fatal("type-based revocation fence accepted handwritten subset")
 			}
-		}
-	}
-	return true
-}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	matches := 0
-	ast.Inspect(file, func(node ast.Node) bool {
-		literal, ok := node.(*ast.CompositeLit)
-		if ok && fenceRevokerSubsetLiteral(literal) {
-			matches++
-		}
-		return true
-	})
-	if matches != 2 {
-		t.Fatalf("handwritten revoker subset matches = %d, want 2", matches)
-	}
-	ranges := 0
-	ast.Inspect(file, func(node ast.Node) bool {
-		loop, ok := node.(*ast.RangeStmt)
-		if ok && fenceHandwrittenRevokerRange(loop) {
-			ranges++
-		}
-		return true
-	})
-	if ranges != 1 {
-		t.Fatalf("handwritten revoker family-list ranges = %d, want 1", ranges)
+		})
 	}
 }
 

@@ -1,11 +1,8 @@
 package engine
 
 import (
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -26,22 +23,10 @@ var n7DisplacedScannerPatterns = []string{
 	`"table_construction_bound"`,
 }
 
-const engineWIRInstructionLoopCeiling = 36
-
-var n7InstructionWalkPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`for\s+\w+\s*:=\s*0;\s*\w+\s*<\s*[\w.]+\.Len\(\);`),
-	regexp.MustCompile(`for\s+[^{}]*range\s+[\w.]+\.PointInstructions\(`),
-}
-
 func n7DisplacedScanner(source []byte) string {
 	for _, pattern := range n7DisplacedScannerPatterns {
 		if strings.Contains(string(source), pattern) {
 			return pattern
-		}
-	}
-	for _, pattern := range n7InstructionWalkPatterns {
-		if pattern.Match(source) {
-			return pattern.String()
 		}
 	}
 	return ""
@@ -74,7 +59,7 @@ func TestN7SoundPrefixScannersStayDisplaced(t *testing.T) {
 			t.Errorf("%s resurrects an N7 sound-prefix scanner via %q", name, pattern)
 		}
 	}
-	assertEngineWIRInstructionLoopCeiling(t, engineDir)
+	assertEngineHasNoWIRTraversal(t)
 }
 
 func TestN7SoundPrefixFenceRejectsRenamedScanner(t *testing.T) {
@@ -84,27 +69,57 @@ func TestN7SoundPrefixFenceRejectsRenamedScanner(t *testing.T) {
 	}
 }
 
-func TestNativeFencesRejectGenericWIRInstructionWalk(t *testing.T) {
-	file, err := fenceParseSource(`package engine
-func numericNativeFacts(root Compilation) {
-	if root.WIR != nil {
-		for index := 0; index < root.WIR.Len(); index++ {
-			_ = root.WIR.Instr(index)
-		}
+func TestNativeTraversalFenceRejectsEquivalentForms(t *testing.T) {
+	loader := newFencePackageLoader(t, "./analysis/check/engine")
+	tests := map[string]string{
+		"canonical indexed loop": `package engine
+import "` + modulePath + `/analysis/ir/wir"
+func scan(body *wir.Body) {
+	for index := 0; index < body.Len(); index++ {
+		_ = body.Instr(index)
 	}
-}`)
-	if err != nil {
-		t.Fatal(err)
+}`,
+		"rescan4 open ended loop": `package engine
+import "` + modulePath + `/analysis/ir/wir"
+func scan(body *wir.Body) {
+	for index := 0; ; index++ {
+		if index >= body.Len() { break }
+		_ = body.Instr(index)
 	}
-	if got := fenceWIRInstructionLoopCount(file); got != 1 {
-		t.Fatalf("generic WIR mutation matched %d instruction loops, want 1", got)
+}`,
+		"body type alias": `package engine
+import "` + modulePath + `/analysis/ir/wir"
+type scanBody = wir.Body
+func scan(body *scanBody) {
+	for index := 0; index != body.Len(); index++ {
+		_ = body.Instr(index)
 	}
-}
-
-func TestN7SoundPrefixFenceRejectsGenericInstructionWalk(t *testing.T) {
-	mutated := []byte("package engine\nfunc scan(body *wir.Body) { for index := 0; index < body.Len(); index++ { _ = body.Instr(index) } }\n")
-	if pattern := n7DisplacedScanner(mutated); pattern == "" {
-		t.Fatal("pattern-over-all-files fence accepted a generic WIR instruction walk")
+}`,
+		"bound traversal methods": `package engine
+import "` + modulePath + `/analysis/ir/wir"
+func scan(body *wir.Body) {
+	length := body.Len
+	instruction := body.Instr
+	for index := 0; index < length(); index++ {
+		_ = instruction(index)
+	}
+}`,
+		"point instruction range": `package engine
+import (
+	"` + modulePath + `/analysis/ir/cfg"
+	"` + modulePath + `/analysis/ir/wir"
+)
+func scan(body *wir.Body, point cfg.Point) {
+	for range body.PointInstructions(point) {}
+}`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			typed := loader.source(modulePath+"/analysis/check/engine", source)
+			if references := fenceWIRTraversalReferences(typed); len(references) == 0 {
+				t.Fatal("type-based WIR traversal fence accepted traversal reference")
+			}
+		})
 	}
 }
 
@@ -172,7 +187,7 @@ func TestNativeProjectionHasNoWIRConsumers(t *testing.T) {
 			}
 		}
 	}
-	assertEngineWIRInstructionLoopCeiling(t, engineDir)
+	assertEngineHasNoWIRTraversal(t)
 
 	engineSource, err := os.ReadFile(filepath.Join(engineDir, "engine.go"))
 	if err != nil {
@@ -196,25 +211,11 @@ func TestNativeProjectionHasNoWIRConsumers(t *testing.T) {
 	}
 }
 
-func assertEngineWIRInstructionLoopCeiling(t *testing.T, engineDir string) {
+func assertEngineHasNoWIRTraversal(t *testing.T) {
 	t.Helper()
-	entries, err := os.ReadDir(engineDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	count := 0
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		file, parseErr := parser.ParseFile(token.NewFileSet(), filepath.Join(engineDir, name), nil, 0)
-		if parseErr != nil {
-			t.Fatalf("parse %s: %v", name, parseErr)
-		}
-		count += fenceWIRInstructionLoopCount(file)
-	}
-	if count > engineWIRInstructionLoopCeiling {
-		t.Errorf("engine contains %d indexed WIR instruction walks, ceiling is %d; native projections must consume published facts", count, engineWIRInstructionLoopCeiling)
+	loader := newFencePackageLoader(t, "./analysis/check/engine")
+	typed := loader.load(loader.metas[modulePath+"/analysis/check/engine"])
+	if references := fenceWIRTraversalReferences(typed); len(references) != 0 {
+		t.Errorf("engine references WIR traversal APIs outside W7A lowering ownership: %v", references)
 	}
 }

@@ -119,7 +119,6 @@ func TestAdmissionHelpersStayDescriptorOwned(t *testing.T) {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
-	var parsedFiles []*ast.File
 	for _, name := range files {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
@@ -128,7 +127,6 @@ func TestAdmissionHelpersStayDescriptorOwned(t *testing.T) {
 		if parseErr != nil {
 			t.Fatalf("parse %s: %v", name, parseErr)
 		}
-		parsedFiles = append(parsedFiles, file)
 		for _, declaration := range file.Decls {
 			function, ok := declaration.(*ast.FuncDecl)
 			if !ok || function.Recv != nil || !strings.HasPrefix(function.Name.Name, "uncalled") {
@@ -137,24 +135,51 @@ func TestAdmissionHelpersStayDescriptorOwned(t *testing.T) {
 			t.Errorf("%s: freestanding admission helper %s must be a descriptor query", fset.Position(function.Pos()), function.Name.Name)
 		}
 	}
-	for _, helper := range fenceFreestandingBoolCalls(parsedFiles, "selectAdmissionLane") {
-		t.Errorf("selectAdmissionLane calls freestanding boolean helper %s; admission decisions must route through descriptor callbacks", helper)
+	loader := newFencePackageLoader(t, "./analysis/check/engine")
+	typed := loader.load(loader.metas[modulePath+"/analysis/check/engine"])
+	for _, bypass := range fenceAdmissionBypasses(typed) {
+		t.Errorf("%s: selectAdmissionLane obtains a boolean outside its registered descriptor callback", bypass)
 	}
 }
 
-func TestAdmissionFenceRejectsRenamedFreestandingHelper(t *testing.T) {
-	file, err := fenceParseSource(`package engine
+func TestAdmissionFenceRejectsCallableEvasions(t *testing.T) {
+	loader := newFencePackageLoader(t, "./analysis/check/engine")
+	tests := map[string]string{
+		"rescan4 receiver method": `package engine
+type admissionLaneContext struct{}
+func (*admissionLaneContext) admissionRegressionHelper() bool { return false }
+func selectAdmissionLane(ctx *admissionLaneContext) bool {
+	_ = ctx.admissionRegressionHelper()
+	return false
+}`,
+		"freestanding helper": `package engine
 func admissionRegressionHelper() bool { return false }
 func selectAdmissionLane() bool {
 	_ = admissionRegressionHelper()
 	return false
-}`)
-	if err != nil {
-		t.Fatal(err)
+}`,
+		"bound method value": `package engine
+type admissionLaneContext struct{}
+func (*admissionLaneContext) decision() bool { return false }
+func selectAdmissionLane(ctx *admissionLaneContext) bool {
+	decision := ctx.decision
+	_ = decision()
+	return false
+}`,
+		"function literal": `package engine
+func selectAdmissionLane() bool {
+	decision := func() bool { return false }
+	_ = decision()
+	return false
+}`,
 	}
-	calls := fenceFreestandingBoolCalls([]*ast.File{file}, "selectAdmissionLane")
-	if len(calls) != 1 || calls[0] != "admissionRegressionHelper" {
-		t.Fatalf("renamed admission helper calls = %v, want admissionRegressionHelper", calls)
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			typed := loader.source(modulePath+"/analysis/check/engine", source)
+			if bypasses := fenceAdmissionBypasses(typed); len(bypasses) == 0 {
+				t.Fatal("semantic admission fence accepted parallel boolean authority")
+			}
+		})
 	}
 }
 

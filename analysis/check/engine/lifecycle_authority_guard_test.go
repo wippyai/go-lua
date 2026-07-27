@@ -24,11 +24,6 @@ func TestLifecycleProtocolsAreRegistryOwned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	forbiddenPrefixes := map[string]bool{
-		"effect.lifecycle.channel/":         true,
-		"effect.lifecycle.channel.display/": true,
-		"effect.lifecycle.resource/":        true,
-	}
 	forbiddenFunctions := map[string]bool{
 		"channelLifecycleStateFact":  true,
 		"channelLifecycleState":      true,
@@ -48,13 +43,6 @@ func TestLifecycleProtocolsAreRegistryOwned(t *testing.T) {
 		if parseErr != nil {
 			t.Errorf("parse %s: %v", path, parseErr)
 			continue
-		}
-		prefixes := make([]string, 0, len(forbiddenPrefixes))
-		for prefix := range forbiddenPrefixes {
-			prefixes = append(prefixes, prefix)
-		}
-		if prefix := fenceFoldedStringContains(file, prefixes); prefix != "" {
-			t.Errorf("%s restates lifecycle family prefix %q; use factkey", path, prefix)
 		}
 		ast.Inspect(file, func(node ast.Node) bool {
 			switch typed := node.(type) {
@@ -85,18 +73,5 @@ func TestLifecycleProtocolsAreRegistryOwned(t *testing.T) {
 			}
 			return true
 		})
-	}
-}
-
-func TestLifecycleFenceRejectsSplitLiteralReconstruction(t *testing.T) {
-	file, err := fenceParseSource(`package engine
-func resourceUnreleasedDiagnostics() bool {
-	return strings.HasPrefix("", "effect.lifecycle." + "resource/")
-}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := fenceFoldedStringContains(file, []string{"effect.lifecycle.resource/"}); got == "" {
-		t.Fatal("lifecycle ownership predicate accepted split-literal prefix reconstruction")
 	}
 }

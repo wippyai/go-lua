@@ -1,182 +1,170 @@
 package engine
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
-func w6aSourceRoots(t *testing.T) (engineDir, frontDir, exporterDir string) {
-	t.Helper()
-	_, current, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate engine source")
-	}
-	engineDir = filepath.Dir(current)
-	checkDir := filepath.Dir(engineDir)
-	return engineDir, filepath.Join(checkDir, "fixpoint", "front"), filepath.Join(checkDir, "exporter")
-}
-
-func w6aProductionFiles(t *testing.T, directories ...string) []string {
-	t.Helper()
-	var files []string
-	for _, directory := range directories {
-		entries, err := os.ReadDir(directory)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if !entry.IsDir() && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") {
-				files = append(files, filepath.Join(directory, name))
-			}
-		}
-	}
-	return files
-}
-
-func w6aNodeMentionsRole(node ast.Node) bool {
-	mentions := false
-	ast.Inspect(node, func(candidate ast.Node) bool {
-		switch value := candidate.(type) {
-		case *ast.SelectorExpr:
-			mentions = mentions || value.Sel.Name == "Role"
-		case *ast.Ident:
-			mentions = mentions || value.Name == "role"
-		}
-		return !mentions
-	})
-	return mentions
-}
-
-func w6aRawRoleParser(source []byte) string {
-	file, err := parser.ParseFile(token.NewFileSet(), "candidate.go", source, 0)
-	if err != nil {
-		return "unparseable source"
-	}
-	found := ""
-	ast.Inspect(file, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		selector, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		pkg, ok := selector.X.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		if pkg.Name != "strings" ||
-			(selector.Sel.Name != "HasPrefix" && selector.Sel.Name != "TrimPrefix" &&
-				selector.Sel.Name != "HasSuffix" && selector.Sel.Name != "TrimSuffix" &&
-				selector.Sel.Name != "Cut" && selector.Sel.Name != "CutPrefix") {
-			return true
-		}
-		for _, argument := range call.Args {
-			if w6aNodeMentionsRole(argument) {
-				found = pkg.Name + "." + selector.Sel.Name
-				return false
-			}
-		}
-		return true
-	})
-	return found
-}
-
 func TestTypedOperandRolesStayDisplaced(t *testing.T) {
-	engineDir, frontDir, exporterDir := w6aSourceRoots(t)
-	for _, path := range w6aProductionFiles(t, engineDir, frontDir, exporterDir) {
-		source, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
+	loader := newFencePackageLoader(t, "./analysis/check/...")
+	for _, path := range []string{
+		modulePath + "/analysis/check/engine",
+		modulePath + "/analysis/check/fixpoint/front",
+		modulePath + "/analysis/check/exporter",
+	} {
+		meta, ok := loader.metas[path]
+		if !ok {
+			t.Fatalf("semantic role fence package %s not found", path)
 		}
-		if parser := w6aRawRoleParser(source); parser != "" {
-			t.Errorf("%s reconstructs operand roles with %s", path, parser)
+		for _, parser := range fenceRawRoleParsers(loader.load(meta)) {
+			t.Errorf("%s reconstructs an OperandRole display value with a string parser", parser)
 		}
 	}
 }
 
-func TestTypedOperandRoleFenceRejectsPrefixReconstruction(t *testing.T) {
-	mutated := []byte(`package engine
-import "strings"
-func resurrect(operand struct{ Role string }) bool {
-	return strings.HasPrefix(operand.Role, "result-")
-}`)
-	if parser := w6aRawRoleParser(mutated); parser == "" {
-		t.Fatal("role fence accepted a reconstructed result family")
+func TestTypedOperandRoleFenceRejectsAssignmentEvasions(t *testing.T) {
+	loader := newFencePackageLoader(t, "./analysis/check/...")
+	tests := map[string]string{
+		"rescan4 two-stage display alias": `package engine
+import (
+	"strings"
+	"` + modulePath + `/analysis/check/fixpoint/equation"
+)
+func resurrect(operand equation.Operand) bool {
+	text := operand.Role.String()
+	alias := text
+	return strings.HasPrefix(alias, "result-")
+}`,
+		"typed role then display": `package engine
+import (
+	"strings"
+	"` + modulePath + `/analysis/check/fixpoint/equation"
+)
+func resurrect(operand equation.Operand) bool {
+	role := operand.Role
+	text := role.String()
+	return strings.TrimPrefix(text, "result-") != text
+}`,
+		"helper returns role display": `package engine
+import (
+	"strings"
+	"` + modulePath + `/analysis/check/fixpoint/equation"
+)
+func roleText(role equation.OperandRole) string { return role.String() }
+func resurrect(operand equation.Operand) bool {
+	text := roleText(operand.Role)
+	return strings.HasPrefix(text, "result-")
+}`,
+		"named string conversion": `package engine
+import (
+	"strings"
+	"` + modulePath + `/analysis/check/fixpoint/equation"
+)
+type roleText string
+func resurrect(operand equation.Operand) bool {
+	text := roleText(operand.Role)
+	return strings.HasPrefix(string(text), "result-")
+}`,
+		"parser function alias": `package engine
+import (
+	"strings"
+	"` + modulePath + `/analysis/check/fixpoint/equation"
+)
+func resurrect(operand equation.Operand) bool {
+	parse := strings.HasPrefix
+	text := operand.Role.String()
+	return parse(text, "result-")
+}`,
 	}
-}
-
-func w6aForbiddenChannelConsumer(source []byte) string {
-	text := string(source)
-	for _, forbidden := range []string{"compilation.WIR", "ForEachIfChainDescriptor", "BranchChecks("} {
-		if strings.Contains(text, forbidden) {
-			return forbidden
-		}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			typed := loader.source(modulePath+"/analysis/check/engine", source)
+			if parsers := fenceRawRoleParsers(typed); len(parsers) == 0 {
+				t.Fatal("semantic role fence accepted raw role reconstruction")
+			}
+		})
 	}
-	if strings.Contains(text, `".channel"`) &&
-		(strings.Contains(text, "HasSuffix(") || strings.Contains(text, "TrimSuffix(")) {
-		return "channel suffix parser"
-	}
-	return ""
 }
 
 func TestChannelSelectConsumersStayOnFrontOperands(t *testing.T) {
-	engineDir, _, _ := w6aSourceRoots(t)
-	source, err := os.ReadFile(filepath.Join(engineDir, "channel_select_consumers.go"))
+	loader := newFencePackageLoader(t, "./analysis/check/engine")
+	meta := loader.metas[modulePath+"/analysis/check/engine"]
+	typed := loader.load(meta)
+	if found := fenceReachableStringParserLiterals(typed, "channelSelectCoverageConsumer", ".channel"); len(found) != 0 {
+		t.Fatalf("channel-select consumer reconstructs path topology by suffix: %v", found)
+	}
+	source, err := os.ReadFile(filepath.Join(meta.Dir, "channel_select_consumers.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forbidden := w6aForbiddenChannelConsumer(source); forbidden != "" {
-		t.Fatalf("channel-select consumer resurrected %q", forbidden)
+	for _, forbidden := range []string{"compilation.WIR", "ForEachIfChainDescriptor", "BranchChecks("} {
+		if strings.Contains(string(source), forbidden) {
+			t.Fatalf("channel-select consumer resurrected %q", forbidden)
+		}
 	}
 }
 
 func TestChannelSelectFenceRejectsTopologyAndSuffixReconstruction(t *testing.T) {
-	for _, mutated := range [][]byte{
-		[]byte(`package engine
-func resurrect() { compilation.WIR.ForEachIfChainDescriptor(nil) }`),
-		[]byte(`package engine
+	loader := newFencePackageLoader(t, "./analysis/check/engine")
+	tests := map[string]string{
+		"rescan4 split suffix": `package engine
 import "strings"
-func resurrect(path string) { _ = strings.TrimSuffix(path, ".channel") }`),
-	} {
-		if forbidden := w6aForbiddenChannelConsumer(mutated); forbidden == "" {
-			t.Fatal("channel-select fence accepted reconstructed topology")
-		}
+func channelSelectCoverageConsumer(path string) bool {
+	return strings.TrimSuffix(path, "."+"channel") != path
+}`,
+		"suffix local alias": `package engine
+import "strings"
+func channelSelectCoverageConsumer(path string) bool {
+	suffix := ".channel"
+	return strings.HasSuffix(path, suffix)
+}`,
+		"suffix helper": `package engine
+import "strings"
+func channelSuffix() string { return "."+"channel" }
+func channelSelectCoverageConsumer(path string) bool {
+	return strings.TrimSuffix(path, channelSuffix()) != path
+}`,
+		"suffix join": `package engine
+import "strings"
+func channelSelectCoverageConsumer(path string) bool {
+	suffix := strings.Join([]string{"", "channel"}, ".")
+	return strings.HasSuffix(path, suffix)
+}`,
+		"parser function alias": `package engine
+import "strings"
+func channelSelectCoverageConsumer(path string) bool {
+	parse := strings.TrimSuffix
+	suffix := ".channel"
+	return parse(path, suffix) != path
+}`,
 	}
-}
-
-func w6aForbiddenNativeRecognizer(source []byte) string {
-	text := string(source)
-	for _, forbidden := range []string{
-		"nativeDirectCall(",
-		"nativeMemberCall(",
-		`Value == "pcall"`,
-		`Value == "os"`,
-		`Value == "clock"`,
-	} {
-		if strings.Contains(text, forbidden) {
-			return forbidden
-		}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			typed := loader.source(modulePath+"/analysis/check/engine", source)
+			if found := fenceReachableStringParserLiterals(typed, "channelSelectCoverageConsumer", ".channel"); len(found) == 0 {
+				t.Fatal("semantic channel fence accepted suffix reconstruction")
+			}
+		})
 	}
-	return ""
 }
 
 func TestNativeRecognitionStaysBinderAndRegistryOwned(t *testing.T) {
-	_, frontDir, _ := w6aSourceRoots(t)
-	source, err := os.ReadFile(filepath.Join(frontDir, "native_operations.go"))
+	loader := newFencePackageLoader(t, "./analysis/check/fixpoint/front")
+	meta := loader.metas[modulePath+"/analysis/check/fixpoint/front"]
+	typed := loader.load(meta)
+	if found := fenceReachableRawASTNameComparisons(typed, "nativeBoundStdlibCall"); len(found) != 0 {
+		t.Fatalf("native recognition compares raw AST names: %v", found)
+	}
+	source, err := os.ReadFile(filepath.Join(meta.Dir, "native_operations.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forbidden := w6aForbiddenNativeRecognizer(source); forbidden != "" {
-		t.Fatalf("native recognition resurrected %q", forbidden)
+	for _, forbidden := range []string{"nativeDirectCall(", "nativeMemberCall("} {
+		if strings.Contains(string(source), forbidden) {
+			t.Fatalf("native recognition resurrected %q", forbidden)
+		}
 	}
 	for _, required := range []string{"ResolvesToGlobal(", "LookupView("} {
 		if !strings.Contains(string(source), required) {
@@ -185,10 +173,41 @@ func TestNativeRecognitionStaysBinderAndRegistryOwned(t *testing.T) {
 	}
 }
 
-func TestNativeRecognitionFenceRejectsRawNameMatching(t *testing.T) {
-	mutated := []byte(`package front
-func resurrect(id *Ident) bool { return id.Value == "pcall" }`)
-	if forbidden := w6aForbiddenNativeRecognizer(mutated); forbidden == "" {
-		t.Fatal("native-recognition fence accepted raw AST name matching")
+func TestNativeRecognitionFenceRejectsSemanticNameEvasions(t *testing.T) {
+	loader := newFencePackageLoader(t, "./analysis/check/fixpoint/front")
+	tests := map[string]string{
+		"rescan4 split constant": `package front
+import luaast "` + modulePath + `/compiler/ast"
+func nativeBoundStdlibCall(id *luaast.IdentExpr) bool {
+	return id.Value == "p"+"call"
+}`,
+		"two-stage AST name alias": `package front
+import luaast "` + modulePath + `/compiler/ast"
+func nativeBoundStdlibCall(id *luaast.IdentExpr) bool {
+	text := id.Value
+	alias := text
+	return alias == "pcall"
+}`,
+		"helper returns AST name": `package front
+import luaast "` + modulePath + `/compiler/ast"
+func rawName(id *luaast.IdentExpr) string { return id.Value }
+func nativeBoundStdlibCall(id *luaast.IdentExpr) bool {
+	return rawName(id) == "pcall"
+}`,
+		"typed AST name alias": `package front
+import luaast "` + modulePath + `/compiler/ast"
+type nativeName string
+func nativeBoundStdlibCall(id *luaast.IdentExpr) bool {
+	text := nativeName(id.Value)
+	return text == nativeName("pcall")
+}`,
+	}
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			typed := loader.source(modulePath+"/analysis/check/fixpoint/front", source)
+			if found := fenceReachableRawASTNameComparisons(typed, "nativeBoundStdlibCall"); len(found) == 0 {
+				t.Fatal("semantic native-recognition fence accepted raw AST name comparison")
+			}
+		})
 	}
 }
