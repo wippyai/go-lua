@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/lua/exprdisplay"
+	"github.com/wippyai/go-lua/__legacy/analysis/lua/exprdisplay"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )

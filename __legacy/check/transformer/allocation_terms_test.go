@@ -3,6 +3,7 @@ package transformer
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -13,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestAllocationResultAndEffectShareOneTemplateTerm(t *testing.T) {

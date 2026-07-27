@@ -1,11 +1,11 @@
 package projection
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"

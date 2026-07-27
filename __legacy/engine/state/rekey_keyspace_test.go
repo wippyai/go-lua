@@ -4,16 +4,16 @@ import (
 	"errors"
 	"testing"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestRekeyKeySpaceCoversEveryStructuralStateLane(t *testing.T) {

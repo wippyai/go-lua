@@ -3,11 +3,12 @@ package state
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -18,7 +19,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func boundaryStateKey(t *testing.T, keys *keyspace.KeySpace, path keyspace.Key) pathaddr.StateKey {

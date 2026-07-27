@@ -3,7 +3,7 @@ package transformer
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/domain/indexform"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/indexform"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"

@@ -3,6 +3,7 @@ package effectlowering
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -12,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestMaterializeStaticAllocationMatchesCanonicalProvider(t *testing.T) {

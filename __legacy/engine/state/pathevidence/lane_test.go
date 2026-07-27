@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/formal"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
@@ -12,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestEditLaneMatchesRepeatedPathEvidenceWrites(t *testing.T) {

@@ -3,8 +3,8 @@ package factapply
 import (
 	"fmt"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"

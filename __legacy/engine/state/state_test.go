@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -27,7 +28,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 

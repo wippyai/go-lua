@@ -1,10 +1,10 @@
 package state
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/lift"
+	"github.com/wippyai/go-lua/__legacy/analysis/internal/mapedit"
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 // RelConstraint records relational evidence proven on all paths reaching this

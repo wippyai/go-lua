@@ -5,13 +5,13 @@ import (
 	"errors"
 	"testing"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestFormalComponentTerminalForestAllocatesUniqueOwnedLeaves(t *testing.T) {

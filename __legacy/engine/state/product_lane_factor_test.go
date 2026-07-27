@@ -6,18 +6,18 @@ import (
 	"reflect"
 	"testing"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestValueLaneFactorExactInverseNormalizesOnlyNoncanonicalInput(t *testing.T) {

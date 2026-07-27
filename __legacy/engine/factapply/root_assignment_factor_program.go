@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/formal"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"

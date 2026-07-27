@@ -4,11 +4,11 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestExactCoordinateBoundarySelectionDoesNotReadmitSharedEndpoint(t *testing.T) {

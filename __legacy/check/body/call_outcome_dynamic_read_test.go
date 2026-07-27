@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -17,7 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func resolveReferenceFixture(t testing.TB) *Static {

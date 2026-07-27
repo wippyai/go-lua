@@ -1,10 +1,10 @@
 package transformer
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	valuerefine "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	enginesourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"

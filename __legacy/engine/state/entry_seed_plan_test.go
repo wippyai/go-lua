@@ -3,10 +3,10 @@ package state
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestEntrySeedPlanIsDetachedAndMissingOnly(t *testing.T) {

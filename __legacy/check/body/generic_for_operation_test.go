@@ -3,6 +3,7 @@ package body
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/engine/effectlowering"
@@ -10,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestGenericForMethodIteratorComesFromCanonicalSignatureCallDescriptor(t *testing.T) {

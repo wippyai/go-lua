@@ -1,13 +1,13 @@
 package sourcevalue
 
 import (
+	valuerefine "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lua/typeoperator"

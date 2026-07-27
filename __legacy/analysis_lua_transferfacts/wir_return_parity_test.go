@@ -3,6 +3,7 @@ package transferfacts
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -12,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/test/wirprint"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"

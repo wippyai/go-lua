@@ -3,10 +3,10 @@ package body
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestReleaseTransientDropsSealedFlowAndWorkingSet(t *testing.T) {

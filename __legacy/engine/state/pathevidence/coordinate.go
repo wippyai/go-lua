@@ -3,10 +3,10 @@ package pathevidence
 import (
 	"sort"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"

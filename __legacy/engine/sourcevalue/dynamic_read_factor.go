@@ -3,18 +3,18 @@ package sourcevalue
 import (
 	"sort"
 
+	valuerefinement "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
+	"github.com/wippyai/go-lua/__legacy/analysis/type/indexproof"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valuerefinement "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
-	"github.com/wippyai/go-lua/analysis/type/indexproof"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 

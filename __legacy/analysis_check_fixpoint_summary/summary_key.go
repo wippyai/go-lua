@@ -1,6 +1,6 @@
 package summary
 
-import "github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
+import "github.com/wippyai/go-lua/__legacy/analysis/check/fixpoint/ref"
 
 // Digest is an explicit caller-provided digest for future entry dimensions.
 type Digest uint64

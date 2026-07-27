@@ -5,7 +5,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
+	"github.com/wippyai/go-lua/__legacy/analysis/check/fixpoint/ref"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
@@ -18,7 +19,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"

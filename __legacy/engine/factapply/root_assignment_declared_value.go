@@ -1,11 +1,11 @@
 package factapply
 
 import (
+	valueref "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )

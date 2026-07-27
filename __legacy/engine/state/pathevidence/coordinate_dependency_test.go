@@ -3,12 +3,12 @@ package pathevidence
 import (
 	"testing"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestCoordinateDependenciesReadEqualityAndAuthorizeAliasOutput(t *testing.T) {

@@ -3,9 +3,9 @@ package transformer
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/domain/formal"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func externalCallEquationContentID(seed byte) ContentID {

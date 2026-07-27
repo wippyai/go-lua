@@ -2,17 +2,17 @@
 package check
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/module/importlookup"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/exportmanifest"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/transformer"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"

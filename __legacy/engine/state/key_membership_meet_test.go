@@ -3,12 +3,12 @@ package state
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestKeyMembershipLaneRegistersExactMeet(t *testing.T) {

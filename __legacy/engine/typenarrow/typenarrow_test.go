@@ -3,9 +3,9 @@ package typenarrow
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )

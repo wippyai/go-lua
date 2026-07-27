@@ -1,12 +1,12 @@
 package visibility
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/ir/ssa"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 

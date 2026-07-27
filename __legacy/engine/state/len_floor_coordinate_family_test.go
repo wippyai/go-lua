@@ -4,9 +4,9 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestLenFloorCoordinateFamilyRoundTripAndCanonicalLattice(t *testing.T) {

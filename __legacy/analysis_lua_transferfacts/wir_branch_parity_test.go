@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	path "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -15,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
 	"github.com/wippyai/go-lua/analysis/semantic/intrinsic"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/test/wirprint"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"

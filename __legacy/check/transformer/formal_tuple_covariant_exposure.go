@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"sort"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	typecovariant "github.com/wippyai/go-lua/__legacy/analysis/type/covariant"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	typecovariant "github.com/wippyai/go-lua/analysis/type/covariant"
 )
 
 // formalCovariantExposureStep is the frozen address vocabulary for the one

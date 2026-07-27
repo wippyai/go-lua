@@ -1,12 +1,12 @@
 package factapply
 
 import (
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	valuerefine "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"

@@ -3,11 +3,11 @@ package pathevidence
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/internal/mapedit"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type BranchProofKind uint8

@@ -1,7 +1,7 @@
 package summary
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/factset"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 )
 

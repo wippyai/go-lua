@@ -3,6 +3,7 @@ package body
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -12,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/moduleidentity"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/symbol"

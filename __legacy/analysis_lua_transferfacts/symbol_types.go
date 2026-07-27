@@ -1,11 +1,11 @@
 package transferfacts
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"

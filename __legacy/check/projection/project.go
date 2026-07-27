@@ -3,9 +3,9 @@ package projection
 import (
 	"context"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"

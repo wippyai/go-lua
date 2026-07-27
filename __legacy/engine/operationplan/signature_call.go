@@ -3,8 +3,8 @@ package operationplan
 import (
 	"context"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/module/signaturecontent"
 	"github.com/wippyai/go-lua/analysis/module/signature"
-	"github.com/wippyai/go-lua/analysis/module/signaturecontent"
 )
 
 // SignatureCallOperation is the immutable, already-resolved producer

@@ -3,11 +3,11 @@ package transformer
 import (
 	"fmt"
 
+	valueref "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 )
 
 // DescriptorHandler lowers one executable operation into the existing Summary

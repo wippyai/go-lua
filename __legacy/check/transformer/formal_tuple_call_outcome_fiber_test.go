@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -11,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func formalCallOutcomeFiberFixture(t *testing.T) (*RelationProgram, *formalTupleAlgebra, formalRelationCell, formalCallOutcomeFiber) {

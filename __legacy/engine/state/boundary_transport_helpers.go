@@ -1,12 +1,12 @@
 package state
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/internal/mapedit"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 func boundaryContainsStateKey(keys *keyspace.KeySpace, closure BoundaryClosure, value pathaddr.StateKey) bool {

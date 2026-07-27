@@ -3,8 +3,8 @@ package factapply
 import (
 	"sort"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 )
 

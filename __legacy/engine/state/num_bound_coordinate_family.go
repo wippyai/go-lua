@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/lift"
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/numbound"

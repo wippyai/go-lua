@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -16,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestObjectLiteralTargetEntryTransactionMatchesConcreteOrderedPublication(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/factset"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 )

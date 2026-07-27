@@ -4,12 +4,12 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestDiagnosticOutputJoinSemilatticeLaws(t *testing.T) {

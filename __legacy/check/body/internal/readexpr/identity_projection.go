@@ -1,6 +1,7 @@
 package readexpr
 
 import (
+	valuerefine "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
@@ -10,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"

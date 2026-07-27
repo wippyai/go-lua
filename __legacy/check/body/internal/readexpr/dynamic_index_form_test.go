@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/indexform"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/indexform"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/symbol"

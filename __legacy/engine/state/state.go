@@ -1,15 +1,15 @@
 package state
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/internal/mapedit"
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/channelselectfact"
 	"github.com/wippyai/go-lua/analysis/engine/state/escapeevent"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 

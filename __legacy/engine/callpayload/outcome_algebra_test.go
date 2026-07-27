@@ -3,13 +3,13 @@ package callpayload
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestCallOutcomeAlgebraIsDescriptorTotal(t *testing.T) {

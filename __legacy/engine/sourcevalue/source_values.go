@@ -1,12 +1,13 @@
 package sourcevalue
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/indexform"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/indexform"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	valueref "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -15,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"

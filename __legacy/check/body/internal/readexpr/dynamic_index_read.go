@@ -1,7 +1,7 @@
 package readexpr
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/indexform"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/indexform"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"

@@ -3,7 +3,7 @@ package transformer
 import (
 	"fmt"
 
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"

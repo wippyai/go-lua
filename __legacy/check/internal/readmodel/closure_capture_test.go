@@ -3,10 +3,10 @@ package readmodel
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	readapi "github.com/wippyai/go-lua/analysis/check/readmodel"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestForEachClosureCaptureProjectsSolvedCaptureFacts(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/diagnostics"
 	"github.com/wippyai/go-lua/analysis/check/exportmanifest"
@@ -14,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/embedding"
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/analysis/module/typelookup"

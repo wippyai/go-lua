@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
@@ -11,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 // TestCallOutcomeRepresentationEqualMatchesPreChangeBehavior exercises each

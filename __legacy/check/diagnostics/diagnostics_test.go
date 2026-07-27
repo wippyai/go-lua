@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/program"
 	internalreadmodel "github.com/wippyai/go-lua/analysis/check/internal/readmodel"
@@ -17,7 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"

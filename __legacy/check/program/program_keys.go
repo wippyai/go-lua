@@ -1,7 +1,8 @@
 package program
 
 import (
-	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
+	"github.com/wippyai/go-lua/__legacy/analysis/check/fixpoint/ref"
+	"github.com/wippyai/go-lua/__legacy/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -10,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/typeannotation"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"

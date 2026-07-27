@@ -1,9 +1,9 @@
 package callpayload
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/factmap"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/factset"
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	"github.com/wippyai/go-lua/analysis/domain/lattice/factmap"
-	"github.com/wippyai/go-lua/analysis/domain/lattice/factset"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"

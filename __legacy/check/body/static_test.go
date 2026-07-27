@@ -3,7 +3,7 @@ package body
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/lua/bind"

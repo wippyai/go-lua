@@ -5,8 +5,8 @@
 package lenbound
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/state/internal/floor"
 )

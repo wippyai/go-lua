@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"sort"
 
+	semanticschema "github.com/wippyai/go-lua/__legacy/analysis/semantic/schema"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	semanticschema "github.com/wippyai/go-lua/analysis/semantic/schema"
 )
 
 // Inventory projects the verified runtime extensions into the canonical,

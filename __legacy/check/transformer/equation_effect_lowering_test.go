@@ -4,11 +4,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/domain/formal"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func effectEquationBinding(t *testing.T, kind OperatorKind, ordinal uint64) EffectEquationBinding {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/ir/ssa"
+	"github.com/wippyai/go-lua/__legacy/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 

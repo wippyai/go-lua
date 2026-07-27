@@ -5,9 +5,10 @@ import (
 	"reflect"
 	"testing"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -16,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	luasourcevalue "github.com/wippyai/go-lua/analysis/lua/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestRelationTermClosureTurnsFormalEnvironmentIntoRebaseableArithmetic(t *testing.T) {

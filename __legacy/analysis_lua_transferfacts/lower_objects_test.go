@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -17,7 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/expressionid"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/test/wirprint"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"

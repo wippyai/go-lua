@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 )
 
 func TestFormalChoicePartitionsAmbiguousTupleAndPreservesEveryProductFiber(t *testing.T) {

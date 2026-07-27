@@ -3,8 +3,8 @@ package lift
 import (
 	"reflect"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/internal/mapedit"
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 // MustMapLane is a finite must-fact map carrier.

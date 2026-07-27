@@ -3,10 +3,10 @@ package transformer
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/domain/indexform"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/indexform"
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	valuerefine "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
-	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"

@@ -3,9 +3,9 @@ package transformer
 import (
 	"sort"
 
+	valueref "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	valueref "github.com/wippyai/go-lua/analysis/domain/value/refinement"
 	"github.com/wippyai/go-lua/analysis/engine/callboundary"
 	"github.com/wippyai/go-lua/analysis/engine/callpayload"
 	"github.com/wippyai/go-lua/analysis/engine/state"

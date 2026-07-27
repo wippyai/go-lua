@@ -5,6 +5,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
@@ -14,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state/heapidentity"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestDynamicIndexMembershipEvidenceFactorMatchesRegisteredCarrier(t *testing.T) {

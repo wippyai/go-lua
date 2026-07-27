@@ -3,6 +3,7 @@ package transformer
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -15,7 +16,6 @@ import (
 	enginesourcevalue "github.com/wippyai/go-lua/analysis/engine/sourcevalue"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )

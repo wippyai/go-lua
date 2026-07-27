@@ -3,11 +3,11 @@ package state
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/lift"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 )
 

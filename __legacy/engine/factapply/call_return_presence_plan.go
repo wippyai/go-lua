@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/value/returnpresence"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/returnpresence"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"

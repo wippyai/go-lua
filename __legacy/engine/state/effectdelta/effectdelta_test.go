@@ -3,13 +3,13 @@ package effectdelta
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestExactLatticeLaws(t *testing.T) {

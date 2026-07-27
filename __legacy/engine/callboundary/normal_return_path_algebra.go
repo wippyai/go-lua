@@ -3,7 +3,7 @@ package callboundary
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/domain/lattice/factmap"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/factmap"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"

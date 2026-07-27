@@ -1,7 +1,8 @@
 package body
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -13,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"

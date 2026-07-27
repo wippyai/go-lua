@@ -1,8 +1,8 @@
 package transformer
 
 import (
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 )
 

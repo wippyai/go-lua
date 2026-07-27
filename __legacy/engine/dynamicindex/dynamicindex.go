@@ -5,13 +5,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/lift"
+	"github.com/wippyai/go-lua/__legacy/analysis/internal/mapedit"
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 	"github.com/wippyai/go-lua/analysis/internal/registrycache"
 )
 

@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/indexform"
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/type/indexproof"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/decision"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/numeric"
 	"github.com/wippyai/go-lua/analysis/domain/constraint/solver"
-	"github.com/wippyai/go-lua/analysis/domain/indexform"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -21,7 +22,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/state/lenbound"
 	"github.com/wippyai/go-lua/analysis/engine/state/numbound"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
-	"github.com/wippyai/go-lua/analysis/type/indexproof"
 )
 
 // DynamicReadRangeQuery is one exact visible index/array address pair. It is

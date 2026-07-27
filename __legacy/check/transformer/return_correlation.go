@@ -1,13 +1,13 @@
 package transformer
 
 import (
+	valuerefine "github.com/wippyai/go-lua/__legacy/analysis/domain/value/refinement"
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/value/returnpresence"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	checkprojection "github.com/wippyai/go-lua/analysis/check/internal/projection"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	valuerefine "github.com/wippyai/go-lua/analysis/domain/value/refinement"
-	"github.com/wippyai/go-lua/analysis/domain/value/returnpresence"
 )
 
 // inferReturnRowCorrelations projects the same two cross-slot families as the

@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/check/body"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func functionalSummaryCallerFixture(callers int) string {

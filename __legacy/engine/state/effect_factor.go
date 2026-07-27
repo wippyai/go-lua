@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/internal/mapedit"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/dynamicindex"
 	effectdelta "github.com/wippyai/go-lua/analysis/engine/state/effectdelta"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 

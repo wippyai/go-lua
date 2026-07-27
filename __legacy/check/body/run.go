@@ -3,11 +3,12 @@ package body
 import (
 	"errors"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/__legacy/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/check/body/internal/readexpr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -37,7 +38,6 @@ import (
 	luatypeprojection "github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/wirlower"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typecall"

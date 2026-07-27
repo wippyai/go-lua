@@ -3,7 +3,7 @@ package transformer
 import (
 	"fmt"
 
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 )
 
 // genericForProjectionIdentityClass records whether the value synthesized by

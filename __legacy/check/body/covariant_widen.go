@@ -1,8 +1,8 @@
 package body
 
 import (
+	typecovariant "github.com/wippyai/go-lua/__legacy/analysis/type/covariant"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	typecovariant "github.com/wippyai/go-lua/analysis/type/covariant"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 

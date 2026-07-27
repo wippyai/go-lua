@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	typecovariant "github.com/wippyai/go-lua/__legacy/analysis/type/covariant"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -11,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/cancellation"
 	"github.com/wippyai/go-lua/analysis/engine/factapply"
 	"github.com/wippyai/go-lua/analysis/engine/state"
-	typecovariant "github.com/wippyai/go-lua/analysis/type/covariant"
 )
 
 // formalOutcomeStep is the sole frozen N5 terminal transaction. The relation

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/domain/formal"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -13,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lexicalidentity"
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestEnvironmentWriteLoweringAuditsRecordedExecution(t *testing.T) {

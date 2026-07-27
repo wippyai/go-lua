@@ -1,6 +1,7 @@
 package program
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/module/importlookup"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -14,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/typeprojection"
 	"github.com/wippyai/go-lua/analysis/lua/typeresolve"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typenormalize "github.com/wippyai/go-lua/analysis/type/normalize"

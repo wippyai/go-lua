@@ -3,8 +3,8 @@ package numbound
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/lift"
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 )
 
 const testMaxBound = int64(^uint64(0) >> 1)

@@ -1,13 +1,13 @@
 package state
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/domain/lattice/lift"
+	"github.com/wippyai/go-lua/__legacy/analysis/internal/mapedit"
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
-	"github.com/wippyai/go-lua/analysis/domain/lattice/lift"
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
 	"github.com/wippyai/go-lua/analysis/engine/state/lenbound"
 	"github.com/wippyai/go-lua/analysis/engine/state/pathevidence"
-	"github.com/wippyai/go-lua/analysis/internal/mapedit"
 )
 
 type lenFloorLane struct {

@@ -1,6 +1,7 @@
 package body
 
 import (
+	"github.com/wippyai/go-lua/__legacy/analysis/module/importlookup"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine/calloutcome"
@@ -9,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/operationplan"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/module/importlookup"
 )
 
 // moduleLoadOperations compiles every statically identified require site, not

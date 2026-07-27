@@ -4,10 +4,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
 )
 
 func TestRebaseTermDAGsPreservesNamespacesCorrelationAndCanonicalIdentity(t *testing.T) {

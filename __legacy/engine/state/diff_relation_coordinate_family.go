@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sort"
 
+	statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/domain/path/keyspace"
-	statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"

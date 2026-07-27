@@ -1,6 +1,6 @@
 package transformer
 
-import statekey "github.com/wippyai/go-lua/analysis/domain/state/key"
+import statekey "github.com/wippyai/go-lua/__legacy/analysis/domain/state/key"
 
 // formalMiddleSlotForStateKey is the sole binding from an evolving CFG-point
 // Values cell to its formal tuple coordinate. Even when slot names a parameter,

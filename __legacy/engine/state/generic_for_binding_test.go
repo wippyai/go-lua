@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/__legacy/analysis/test/value/standard"
 )
 
 func TestGenericForTransferLanesMatchRegisteredDefaultSemantics(t *testing.T) {
