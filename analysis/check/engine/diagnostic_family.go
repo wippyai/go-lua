@@ -9,9 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/domain/value/proof"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // DiagnosticFamilyID is the stable identity of one diagnostic key family.
@@ -575,7 +578,14 @@ func narrateAssignment(item PublishedDiagnostic, context diagnosticNarrationCont
 		builder.labelAt(targetSpan, "assignment target "+target)
 		return builder.build("Use a value compatible with the expected type, or change the target type if `" + source + "` is valid.")
 	}
-	if replacement, found := context.pathReplacements[name]; found && functionContractDiagnostic(name, context.closure.Values) {
+	if replacement, found := context.pathReplacements[name]; found && func() bool {
+		for _, fact := range context.closure.Values {
+			if fact.Key == factkey.AssignmentFunctionContract.Key().String()+name && string(fact.Value) == "refuted" {
+				return true
+			}
+		}
+		return false
+	}() {
 		operands, err := artifactOperandsByRole(replacement.Operands, "display", "value")
 		if err != nil {
 			return item, true
@@ -771,7 +781,19 @@ func narrateCallArgument(builder *diagnosticExplanationBuilder, callee, subject 
 		argument += " (" + display + ")"
 	}
 	argumentTerm := []byte(operands[equation.IndexedRole(equation.RoleFamilyArgument, argumentIndex-1)])
-	if summaryTypeIsAnyInFacts(argumentTerm, values) || sourceHasGradualLogicalBoundaryInFacts(argumentTerm, values) {
+	if summaryTypeIsAnyInFacts(argumentTerm, values) || func() bool {
+		root, found := gradualAnySourceFactInFacts(argumentTerm, values)
+		if !found {
+			return false
+		}
+		prefix := factkey.GradualLogical.Key().String() + string(root) + "/"
+		for _, fact := range values {
+			if factkey.OwnsPrefix(prefix, fact.Key) && string(fact.Value) == string(root) {
+				return true
+			}
+		}
+		return false
+	}() {
 		display := strings.TrimPrefix(argument, fmt.Sprintf("argument %d (", argumentIndex))
 		display = strings.TrimSuffix(display, ")")
 		if display == argument {
@@ -801,7 +823,13 @@ func narrateCallArgument(builder *diagnosticExplanationBuilder, callee, subject 
 	}
 	builder.message(fmt.Sprintf("%s is %s, not %s", argument, value, expected))
 	valueFact := fmt.Sprintf("%s has type %s", argument, value)
-	if callDiagnosticValueIsLiteral(value) {
+	if func() bool {
+		if value == "nil" || value == "true" || value == "false" || strings.HasPrefix(value, "\"") {
+			return true
+		}
+		_, err := strconv.ParseFloat(value, 64)
+		return err == nil
+	}() {
 		valueFact = fmt.Sprintf("%s has literal value %s", argument, value)
 	}
 	parameter := fmt.Sprintf("%s parameter %d", callee, argumentIndex) + suffix
@@ -809,7 +837,14 @@ func narrateCallArgument(builder *diagnosticExplanationBuilder, callee, subject 
 	if display := operands[equation.IndexedRole(equation.RoleFamilyArgumentDisplay, argumentIndex-1)]; display != "" {
 		missingProof = fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", display)
 	}
-	if field, record := firstRequiredRecordField(expected); record {
+	if field, record := func() (string, bool) {
+		if !strings.HasPrefix(expected, "{") || !strings.HasSuffix(expected, "}") {
+			return "", false
+		}
+		field, _, found := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(expected, "{"), "}"), ":")
+		field = strings.TrimSpace(field)
+		return field, found && field != ""
+	}(); record {
 		parameter += "." + field
 		if strings.HasPrefix(value, "{") {
 			missingProof = fmt.Sprintf("object literal does not provide field %q", field)
@@ -859,7 +894,14 @@ func narrateConcatOperand(item PublishedDiagnostic, context diagnosticNarrationC
 	if !ok {
 		return item, true
 	}
-	index, ok := concatOperandIndex(subject)
+	index, ok := func() (int, bool) {
+		encoded, ok := strings.CutPrefix(subject, "value-")
+		if !ok || len(encoded) != 8 {
+			return 0, false
+		}
+		index, err := strconv.Atoi(encoded)
+		return index, err == nil && index >= 0
+	}()
 	if !ok {
 		return item, true
 	}
@@ -876,7 +918,23 @@ func narrateConcatOperand(item PublishedDiagnostic, context diagnosticNarrationC
 	}
 	builder := explainDiagnostic(item)
 	builder.message(fmt.Sprintf("%s operand `%s` of `..` may be nil", side, display))
-	if origin, exists := concatOperandOriginEvidence(operationName, index, display, context.closure.Values); exists {
+	if origin, exists := func() (string, bool) {
+		var display string = display
+		key := fmt.Sprintf("%s%s/value-%08d", factkey.ConcatOperandOrigin.Key().String(), operationName, index)
+		for _, fact := range context.closure.Values {
+			if fact.Key != key {
+				continue
+			}
+			classification := string(fact.Value)
+			if classification == concatOriginOptionalField {
+				return fmt.Sprintf("%s is an optional field and may be nil", display), true
+			}
+			if subject, isResult := strings.CutPrefix(classification, concatOriginOptionalResult); isResult && subject != "" {
+				return fmt.Sprintf("%s has type nil and may be nil", subject), true
+			}
+		}
+		return "", false
+	}(); exists {
 		builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, origin)
 	}
 	builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, fmt.Sprintf("%s operand `%s` has type nil", side, display))
@@ -965,7 +1023,18 @@ func narrateSendIsolation(item PublishedDiagnostic, context diagnosticNarrationC
 	case "escaped":
 		builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, "escape proof: payload has already crossed a retaining boundary")
 	case "fallback":
-		_, reason := sendIsolationPayload(operation)
+		_, reason := func() ([]byte, string) {
+			for _, operand := range operation.Operands {
+				if operand.Role != equation.IndexedRole(equation.RoleFamilyArgument, 2) {
+					continue
+				}
+				if strings.HasPrefix(string(operand.Term.Encoding), "temp/") {
+					return operand.Term.Encoding, "copy fallback: object graph contains another identity that may still be aliased"
+				}
+				return operand.Term.Encoding, "copy fallback: stack-local path may have aliases across the send"
+			}
+			return nil, "copy fallback: stack-local path may have aliases across the send"
+		}()
 		builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustUnknown, diagnostic.EvidenceReasonUnspecified, reason)
 		builder.evidence(diagnostic.EvidenceMissingProof, diagnostic.TrustUnknown, diagnostic.EvidenceReasonUnspecified, reason)
 	}
@@ -995,7 +1064,32 @@ func narrateConstantGuard(item PublishedDiagnostic, context diagnosticNarrationC
 		builder.item.Help = "Remove this unreachable branch, or change the prior guard if this path should still run."
 	}
 	current, currentOK := branchPredicateDescription(operation)
-	prior, priorSpan, priorOK := enclosingBranchProof(operation, context.artifact, context.branchSpans)
+	prior, priorSpan, priorOK := func() (string, wir.Span, bool) {
+		for _, guard := range operation.Guards {
+			parts := strings.Split(string(guard.Encoding), "/")
+			if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || parts[3] != "true" {
+				continue
+			}
+			prior, found := branchOperation(context.artifact, parts[2])
+			if !found {
+				continue
+			}
+			description, ok := branchPredicateDescription(prior)
+			if !ok {
+				continue
+			}
+			if left, right, found := strings.Cut(description, " equals "); found {
+				return left + " is " + right, context.branchSpans[parts[2]], true
+			}
+			if strings.HasSuffix(description, " is checked as truthy") {
+				return strings.TrimSuffix(description, " is checked as truthy") + " is truthy", context.branchSpans[parts[2]], true
+			}
+			if strings.HasSuffix(description, " is checked as falsy") {
+				return strings.TrimSuffix(description, " is checked as falsy") + " is falsy", context.branchSpans[parts[2]], true
+			}
+		}
+		return "", wir.Span{}, false
+	}()
 	if !currentOK || !priorOK {
 		builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, "condition is proven constant under its enclosing guard")
 		builder.label("constant guard")
@@ -1048,7 +1142,23 @@ func narrateReturnContract(item PublishedDiagnostic, context diagnosticNarration
 		declaredSpan = item.Span
 	}
 	if member != "" {
-		fieldType, exists := recordFieldType(declaredTarget, member)
+		fieldType, exists := func() (typ.Type, bool) {
+			var target typ.Type = declaredTarget
+			name, ok := strings.CutPrefix(member, ".")
+			if !ok || name == "" {
+				return nil, false
+			}
+			record, ok := unwrap.Alias(subst.ExpandInstantiated(target)).(*typ.Record)
+			if !ok {
+				return nil, false
+			}
+			for _, field := range record.Fields {
+				if field.Name == name && field.Type != nil {
+					return field.Type, true
+				}
+			}
+			return nil, false
+		}()
 		if !exists {
 			return item, true
 		}
@@ -1100,7 +1210,18 @@ func narrateOptionalAssignmentTarget(item PublishedDiagnostic, context diagnosti
 			}
 		}
 		builder := explainDiagnostic(item)
-		builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, optionalContainerEvidence(container, witness))
+		builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, func() string {
+			var container string = container
+			decoded, ok := shapefact.DecodeTarget(witness)
+			if ok && decoded != nil {
+				if present := proof.ProjectionWithoutNil(decoded); present != nil && !typ.IsNever(present) {
+					if rendered := typeformat.Short(present); rendered != "" && len(rendered) <= inlineEvidenceTypeLimit {
+						return fmt.Sprintf("%s can be %s or nil here", container, rendered)
+					}
+				}
+			}
+			return fmt.Sprintf("%s can be nil here", container)
+		}())
 		builder.evidence(diagnostic.EvidenceAbstractFact, diagnostic.TrustProven, diagnostic.EvidenceReasonUnspecified, fmt.Sprintf("writing %s requires its container to be non-nil", target))
 		builder.label("possibly nil container")
 		builder.label("assignment target")

@@ -107,13 +107,29 @@ func TestDiagnosticOperationReadsTheCoordinate(t *testing.T) {
 // stays withheld either way.
 func TestFormalMemberWriteDiagnosticIsScopedToItsObligation(t *testing.T) {
 	obligations := map[string]bool{"op-00000006": true}
-	if !formalMemberWriteDiagnostic(obligations, "type.assignment/op-00000006") {
-		t.Fatal("a covered assignment refutation was withheld")
+	lane := admissionLane{
+		Name:       "declared-formal-call",
+		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyAssignment, DiagnosticFamilyUnprovenClaim),
 	}
-	if formalMemberWriteDiagnostic(obligations, "type.assignment/op-00000009") {
-		t.Fatal("an operation outside the obligation was published")
-	}
-	if formalMemberWriteDiagnostic(obligations, "claim/unproven/op-00000006") {
-		t.Fatal("an absence family was published from a declaration-owned entry")
+	for _, test := range []struct {
+		key  string
+		want bool
+	}{
+		{key: "type.assignment/op-00000006", want: true},
+		{key: "type.assignment/op-00000009", want: false},
+		{key: "claim/unproven/op-00000006", want: false},
+	} {
+		context := admissionDiagnosticContext{
+			decision: admissionLaneDecision{
+				Lane:               &lane,
+				FormalMemberWrites: obligations,
+				SealedEnvironment:  true,
+			},
+			diagnostic:      equation.Fact{Key: test.key},
+			qualifiedFamily: test.key,
+		}
+		if got := admissionDiagnosticDischarged(context, false); got != test.want {
+			t.Errorf("admissionDiagnosticDischarged(%q) = %t, want %t", test.key, got, test.want)
+		}
 	}
 }

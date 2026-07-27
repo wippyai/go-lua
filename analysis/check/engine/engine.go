@@ -1273,15 +1273,6 @@ func dependentIndexScalarDisplay(operation equation.Equation, values []equation.
 	return display, display != ""
 }
 
-func functionContractDiagnostic(operation string, facts []equation.Fact) bool {
-	for _, fact := range facts {
-		if fact.Key == factkey.AssignmentFunctionContract.Key().String()+operation && string(fact.Value) == "refuted" {
-			return true
-		}
-	}
-	return false
-}
-
 // returnContractHelp is the single remediation every return-contract refutation
 // states: the declaration is the contract, so either the value satisfies it or
 // the annotation is wrong.
@@ -1291,41 +1282,6 @@ const returnContractHelp = "Return a value compatible with the declared return t
 // annotation's trust. It is the same line the argument boundary states, so a
 // reader sees one account of what an any declaration does and does not prove.
 var userAssertedAnyEvidence = diag.FormatAssertionClaims(assertion.Of(assertion.AnyClaim))
-
-// recordFieldType resolves one declared field of a record target by the member
-// suffix a refutation named. Only a direct, statically named field resolves; a
-// nested or computed suffix names no single declaration here.
-func recordFieldType(target typ.Type, suffix string) (typ.Type, bool) {
-	name, ok := strings.CutPrefix(suffix, ".")
-	if !ok || name == "" {
-		return nil, false
-	}
-	record, ok := unwrap.Alias(subst.ExpandInstantiated(target)).(*typ.Record)
-	if !ok {
-		return nil, false
-	}
-	for _, field := range record.Fields {
-		if field.Name == name && field.Type != nil {
-			return field.Type, true
-		}
-	}
-	return nil, false
-}
-
-// optionalContainerEvidence renders the container's proven nilability. The
-// present projection is inlined only while it stays readable; a large shape
-// reports the nil possibility alone rather than a wall of type text.
-func optionalContainerEvidence(container string, witness []byte) string {
-	decoded, ok := shapefact.DecodeTarget(witness)
-	if ok && decoded != nil {
-		if present := proof.ProjectionWithoutNil(decoded); present != nil && !typ.IsNever(present) {
-			if rendered := typeformat.Short(present); rendered != "" && len(rendered) <= inlineEvidenceTypeLimit {
-				return fmt.Sprintf("%s can be %s or nil here", container, rendered)
-			}
-		}
-	}
-	return fmt.Sprintf("%s can be nil here", container)
-}
 
 // callResultDisplay returns display metadata only from the call-results
 // operation that owns this exact result term. The display is the spelling the
@@ -1661,26 +1617,6 @@ func claimDiagnosticValue(term []byte, operation equation.Equation, closure equa
 	return nil, false
 }
 
-// concatOperandOriginEvidence renders the closed origin classification that the
-// refuting transaction published for this operand. Absent that fact the operand
-// has no proven provenance beyond its own nil possibility.
-func concatOperandOriginEvidence(operation string, index int, display string, values []equation.Fact) (string, bool) {
-	key := fmt.Sprintf("%s%s/value-%08d", factkey.ConcatOperandOrigin.Key().String(), operation, index)
-	for _, fact := range values {
-		if fact.Key != key {
-			continue
-		}
-		classification := string(fact.Value)
-		if classification == concatOriginOptionalField {
-			return fmt.Sprintf("%s is an optional field and may be nil", display), true
-		}
-		if subject, isResult := strings.CutPrefix(classification, concatOriginOptionalResult); isResult && subject != "" {
-			return fmt.Sprintf("%s has type nil and may be nil", subject), true
-		}
-	}
-	return "", false
-}
-
 func concatOperandDiagnosticParts(key string) (code, operation, subject string, ok bool) {
 	if inner, child := childDiagnosticKey(key); child {
 		key = inner
@@ -1691,15 +1627,6 @@ func concatOperandDiagnosticParts(key string) (code, operation, subject string, 
 	}
 	operation, subject, ok = strings.Cut(strings.TrimPrefix(key, prefix), "/")
 	return "concat_operand", operation, subject, ok && operation != "" && subject != ""
-}
-
-func concatOperandIndex(subject string) (int, bool) {
-	encoded, ok := strings.CutPrefix(subject, "value-")
-	if !ok || len(encoded) != 8 {
-		return 0, false
-	}
-	index, err := strconv.Atoi(encoded)
-	return index, err == nil && index >= 0
 }
 
 func directCallDiagnosticParts(key string) (code, operation, subject string, ok bool) {
@@ -1733,23 +1660,6 @@ func callArgumentSubject(subject string) (int, string, bool) {
 		suffix = "." + suffix
 	}
 	return index + 1, suffix, true
-}
-
-func callDiagnosticValueIsLiteral(value string) bool {
-	if value == "nil" || value == "true" || value == "false" || strings.HasPrefix(value, "\"") {
-		return true
-	}
-	_, err := strconv.ParseFloat(value, 64)
-	return err == nil
-}
-
-func firstRequiredRecordField(value string) (string, bool) {
-	if !strings.HasPrefix(value, "{") || !strings.HasSuffix(value, "}") {
-		return "", false
-	}
-	field, _, found := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(value, "{"), "}"), ":")
-	field = strings.TrimSpace(field)
-	return field, found && field != ""
 }
 
 func plural(count int) string {
@@ -1833,33 +1743,6 @@ func branchPredicateDescription(operation equation.Equation) (string, bool) {
 	default:
 		return "", false
 	}
-}
-
-func enclosingBranchProof(operation equation.Equation, artifact equation.Artifact, spans map[string]wir.Span) (string, wir.Span, bool) {
-	for _, guard := range operation.Guards {
-		parts := strings.Split(string(guard.Encoding), "/")
-		if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || parts[3] != "true" {
-			continue
-		}
-		prior, found := branchOperation(artifact, parts[2])
-		if !found {
-			continue
-		}
-		description, ok := branchPredicateDescription(prior)
-		if !ok {
-			continue
-		}
-		if left, right, found := strings.Cut(description, " equals "); found {
-			return left + " is " + right, spans[parts[2]], true
-		}
-		if strings.HasSuffix(description, " is checked as truthy") {
-			return strings.TrimSuffix(description, " is checked as truthy") + " is truthy", spans[parts[2]], true
-		}
-		if strings.HasSuffix(description, " is checked as falsy") {
-			return strings.TrimSuffix(description, " is checked as falsy") + " is falsy", spans[parts[2]], true
-		}
-	}
-	return "", wir.Span{}, false
 }
 
 func assignmentEvidenceValue(value []byte) string {
@@ -3739,14 +3622,6 @@ func (set admissionBoundarySet) has(term string) bool {
 	return false
 }
 
-func (census *admissionOccurrenceCensus) include(kind string) {
-	*census |= 1 << (uint(len(kind)) & 63)
-}
-
-func (census admissionOccurrenceCensus) mayContain(kind string) bool {
-	return census&(1<<(uint(len(kind))&63)) != 0
-}
-
 func indexAdmissionBody(child front.Compilation) admissionBodyIndex {
 	index := admissionBodyIndex{
 		child:          child,
@@ -3756,7 +3631,7 @@ func indexAdmissionBody(child front.Compilation) admissionBodyIndex {
 	}
 	boundary := make(admissionBoundarySet, 0, len(child.BodyBoundary().Parameters)+len(child.BodyBoundary().Captures))
 	for _, operation := range child.DraftArtifact().Equations {
-		index.occurrences.include(operation.Occurrence.Kind)
+		*&index.occurrences |= 1 << (uint(len(operation.Occurrence.Kind)) & 63)
 	}
 	index.explicitAnySeeds = make([]entrySeed, 0, len(child.BodyBoundary().Parameters))
 	index.explicitAnySeeded = child.LoweredBody() != nil && len(child.BodyBoundary().Parameters) != 0
@@ -3847,7 +3722,7 @@ func (l *lexicalEvaluator) rememberAdmissionBody(index admissionBodyIndex) {
 }
 
 func (index *admissionBodyIndex) has(kind string) bool {
-	if index == nil || !index.occurrences.mayContain(kind) {
+	if index == nil || !(index.occurrences&(1<<(uint(len(kind))&63)) != 0) {
 		return false
 	}
 	for _, operation := range index.operations {
@@ -3856,10 +3731,6 @@ func (index *admissionBodyIndex) has(kind string) bool {
 		}
 	}
 	return false
-}
-
-func (index *admissionBodyIndex) hasRoot(term string) bool {
-	return index != nil && (index.formals.has(term) || index.captures.has(term))
 }
 
 func (index *admissionBodyIndex) declaredSeeds() ([]entrySeed, bool) {
@@ -3900,81 +3771,6 @@ func (index *admissionBodyIndex) explicitAnyBoundary() ([]entrySeed, bool) {
 	return index.explicitAnySeeds, true
 }
 
-// gradualLogicalCallBoundary admits an otherwise closed helper only
-// when the lowered graph itself connects an unannotated formal, through Lua
-// short-circuit expressions, to a call argument. The entry carries Top plus
-// the formal's gradual boundary; the ordinary call-contract kernel remains the
-// only authority that can turn that boundary into a diagnostic.
-func (index *admissionBodyIndex) gradualLogicalCallBoundary() ([]entrySeed, []string, bool) {
-	if index == nil {
-		return nil, nil, false
-	}
-	child := index.child
-	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Captures) == 0 || len(child.BodyBoundary().Parameters) != 1 {
-		return nil, nil, false
-	}
-	seeds := make([]entrySeed, 0, len(child.BodyBoundary().Parameters))
-	terms := make([]string, 0, len(child.BodyBoundary().Parameters))
-	for position, parameter := range child.BodyBoundary().Parameters {
-		if parameter.Vararg || parameter.Type != 0 {
-			return nil, nil, false
-		}
-		term := index.formals[position]
-		seeds = append(seeds, entrySeed{Term: term, Value: []byte(shapefact.ScalarTopWire)})
-		terms = append(terms, term)
-	}
-	tainted := make(map[string]bool, len(index.formals))
-	for _, formal := range index.formals {
-		tainted[formal] = true
-	}
-	logical := false
-	changed := true
-	for changed {
-		changed = false
-		for _, operation := range index.operations {
-			switch operation.Occurrence.Kind {
-			case "expression":
-				kind, found := artifactOperand(operation.Operands, equation.MustOperandRole("kind"))
-				if !found || string(kind) != strconv.Itoa(int(wir.OpLogical)) {
-					continue
-				}
-				left, hasLeft := artifactOperand(operation.Operands, equation.MustOperandRole("left"))
-				right, hasRight := artifactOperand(operation.Operands, equation.MustOperandRole("right"))
-				result, hasResult := artifactOperand(operation.Operands, equation.MustOperandRole("result"))
-				if !hasLeft || !hasRight || !hasResult || (!tainted[string(left)] && !tainted[string(right)]) {
-					continue
-				}
-				logical = true
-				if !tainted[string(result)] {
-					tainted[string(result)] = true
-					changed = true
-				}
-			case "environment-write":
-				value, hasValue := artifactOperand(operation.Operands, equation.MustOperandRole("value"))
-				target, hasTarget := artifactOperand(operation.Operands, equation.MustOperandRole("target"))
-				if hasValue && hasTarget && tainted[string(value)] && !tainted[string(target)] {
-					tainted[string(target)] = true
-					changed = true
-				}
-			}
-		}
-	}
-	if !logical {
-		return nil, nil, false
-	}
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		for _, operand := range operation.Operands {
-			if _, argument := operand.Role.Index(equation.RoleFamilyArgument); argument && tainted[string(operand.Term.Encoding)] {
-				return seeds, terms, true
-			}
-		}
-	}
-	return nil, nil, false
-}
-
 // capturelessFormalBody is the shared entry condition of the declaration-only
 // boundaries: a lowered body that closes over nothing and takes at least one
 // formal. A caller supplies its own withholding value. A body with a cycle is
@@ -3983,35 +3779,6 @@ func (index *admissionBodyIndex) gradualLogicalCallBoundary() ([]entrySeed, []st
 // surface exactly as it decides a straight-line one's.
 func capturelessFormalBody(child front.BoundaryGraphView) bool {
 	return child.LoweredBody() != nil && len(child.BodyBoundary().Captures) == 0 && len(child.BodyBoundary().Parameters) != 0
-}
-
-// sealedCaptureBoundary admits a parameter-free body whose entire free
-// environment is sealed. Such a body is closed at allocation time exactly like a
-// capture-free one: it takes no argument a caller could refine, and its free
-// cells all carry an authority every invocation observes.
-func (ctx admissionLaneContext) sealedCaptureBoundary() bool {
-	if ctx.child.CyclicDraft() != nil || len(ctx.bodyIndex.formals) != 0 {
-		return false
-	}
-	return ctx.lexical.sealedCaptureEnvironment(ctx.child, lexicalAllocationSite{body: ctx.body, operation: ctx.operation}, ctx.partition, false)
-}
-
-// closedAnyCaptureBoundary states that same closedness for a body whose
-// formals are all declared any. Neither half of such a boundary can be refined
-// by a call: any is the top of the value lattice, so no argument is more precise
-// than the declaration already is, and a sealed capture environment holds the
-// same values at every later invocation. The body is therefore decided at
-// allocation exactly like the capture-free explicit-any boundary, including a
-// recurrence in its own control flow: a loop belongs to the body this allocation
-// closes, not to a refinement a caller could supply.
-func (ctx admissionLaneContext) closedAnyCaptureBoundary() bool {
-	if ctx.lexical == nil || ctx.child.LoweredBody() == nil || len(ctx.bodyIndex.captures) == 0 {
-		return false
-	}
-	if _, closedAny := ctx.bodyIndex.explicitAnyBoundary(); !closedAny {
-		return false
-	}
-	return ctx.lexical.sealedCaptureEnvironment(ctx.child, lexicalAllocationSite{body: ctx.body, operation: ctx.operation}, ctx.partition, true)
 }
 
 // sealedCaptureEnvironment reports that every free cell of this body carries an
@@ -4523,122 +4290,6 @@ type declaredBoundaryAdmission struct {
 	Assertions           map[string]bool
 }
 
-// declaredBoundary materializes only the checker-owned type witnesses
-// already present on a capture-free function boundary. These are not runtime
-// values and carry no invented member facts: the shape encoder preserves the
-// declared union/optional relation for the child's ordinary claim and branch
-// consumers. A missing, variadic, recursive, or captured boundary stays
-// dormant.
-func (index *admissionBodyIndex) declaredBoundary() declaredBoundaryAdmission {
-	if index == nil {
-		return declaredBoundaryAdmission{}
-	}
-	child := index.child
-	if !capturelessFormalBody(child) {
-		return declaredBoundaryAdmission{}
-	}
-	// The declaration-only entry supports a closed discriminant proof, not an
-	// arbitrary body execution. A direct static member call is also admissible
-	// when its receiver is one of those declared formals: resolving a missing
-	// member consumes that same published declaration and produces no call
-	// result or capability. Calls through any other value, dynamic reads, and
-	// select operations need a caller-owned value/heap entry and remain
-	// demand-driven.
-	formals := index.formals
-	if !index.declaredSeeded {
-		return declaredBoundaryAdmission{}
-	}
-	arithmeticTerms := index.declaredFormalArithmeticTerms(formals)
-	derivedCells := index.declaredFormalDerivedCells(formals)
-	memberCalls := make(map[string]bool)
-	hasDirectMethod := false
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		if index.declaredMemberCall(operation, formals) {
-			memberCalls["call/"+operation.Target.Name] = true
-			hasDirectMethod = hasDirectMethod || hasDeclaredFormalMethodCall(child, operation, formals)
-			continue
-		}
-		// A published standard-library contract reached only from terms this
-		// declaration entry already closes needs no caller-owned value: the
-		// registry signature is the result authority. Admitting it keeps the
-		// rest of the body — its declared member reads and their claims —
-		// evaluable instead of dormant behind an ambient call.
-		if index.declaredStdlibCall(operation, formals) ||
-			index.declaredExpandedStdlibCall(operation, formals) {
-			memberCalls["call/"+operation.Target.Name] = true
-		}
-	}
-	hasBranch, hasDeclaredMemberRead, hasDeclaredMemberCall, hasDeclaredAssignment, hasDeclaredMemberWrite := false, false, false, false, false
-	hasDeclaredArithmeticAssignment, hasArithmeticReturnCandidate := false, false
-	localTables := bodyLocalTableTerms(child)
-	assertionOperations := make(map[string]bool)
-	for _, operation := range child.DraftArtifact().Equations {
-		switch operation.Occurrence.Kind {
-		case "apply":
-			if !memberCalls["call/"+operation.Target.Name] {
-				return declaredBoundaryAdmission{}
-			}
-			hasDeclaredMemberCall = true
-		case "external-call":
-			application, found := artifactOperand(operation.Operands, equation.MustOperandRole("application"))
-			if !found || !memberCalls[string(application)] {
-				return declaredBoundaryAdmission{}
-			}
-		case "dynamic-index-read":
-			// A read at a key this body cannot resolve is decided by the container
-			// it reads. A table this body allocated is named by no argument and
-			// reached by no capture, so every write that establishes which of its
-			// slots are occupied is here and the read's outcome is this
-			// declaration's own. Any other container rests on a caller-owned heap
-			// entry and keeps the body dormant.
-			container, found := artifactOperand(operation.Operands, equation.MustOperandRole("container"))
-			if !found || !localTables[string(container)] {
-				return declaredBoundaryAdmission{}
-			}
-		case "channel-select":
-			return declaredBoundaryAdmission{}
-		case "branch-relations":
-			hasBranch = true
-		case "path-replacement":
-			hasDeclaredMemberWrite = hasDeclaredMemberWrite || index.declaredFormalMemberWrite(operation, formals)
-		case "claim":
-			hasDeclaredMemberRead = hasDeclaredMemberRead || index.declaredFormalMemberRead(operation, formals)
-			hasDeclaredAssignment = hasDeclaredAssignment || index.declaredFormalAssignment(operation, formals, derivedCells)
-			hasDeclaredArithmeticAssignment = hasDeclaredArithmeticAssignment || index.declaredFormalArithmeticAssignment(operation, arithmeticTerms)
-			if index.declaredFormalAssertion(operation, formals) {
-				assertionOperations[operation.Target.Name] = true
-			}
-		case "publication":
-			hasArithmeticReturnCandidate = hasArithmeticReturnCandidate || index.declaredFormalArithmeticReturn(operation, arithmeticTerms)
-		}
-	}
-	// A declared method return can depend on a branch-local refinement. Its
-	// allocation-time boundary is therefore limited to straight-line bodies;
-	// declared missing-member reads retain their independent diagnostic path.
-	if hasDirectMethod && hasBranch {
-		return declaredBoundaryAdmission{}
-	}
-	// An arithmetic-return contract is likewise limited to straight-line bodies:
-	// a branch can select a different, caller-refined return value the whole-body
-	// contract projection would not see.
-	hasDeclaredArithmeticReturn := hasArithmeticReturnCandidate && !hasBranch
-	concatOperations := index.declaredFormalConcatOperations(memberCalls)
-	comparisonOperations := index.declaredFormalOrderedComparisonOperations(formals)
-	if !hasDeclaredMemberRead && !hasDeclaredMemberCall && !hasDeclaredAssignment && !hasDeclaredMemberWrite &&
-		!hasDeclaredArithmeticAssignment && !hasDeclaredArithmeticReturn &&
-		len(assertionOperations) == 0 && len(concatOperations) == 0 && len(comparisonOperations) == 0 {
-		return declaredBoundaryAdmission{}
-	}
-	seeds, ok := index.declaredSeeds()
-	if !ok {
-		return declaredBoundaryAdmission{}
-	}
-	return declaredBoundaryAdmission{Seeds: seeds, Admitted: true, Method: hasDirectMethod, MemberWrite: hasDeclaredMemberWrite, ArithmeticAssignment: hasDeclaredArithmeticAssignment, ArithmeticReturn: hasDeclaredArithmeticReturn, Concat: concatOperations, Comparison: comparisonOperations, Assertions: assertionOperations}
-}
-
 // functionFormalType resolves the underlying function contract of a declared
 // formal that is a function type or an optional function type. A nil guard
 // narrows the optional to this function before any call through it, so the
@@ -4671,13 +4322,6 @@ func (index *admissionBodyIndex) declaredFormalFunctionCall(operation equation.E
 		return formalFunctions[string(operand.Term.Encoding)]
 	}
 	return false
-}
-
-// bodyLocalClosureTerms names the terms this body materializes its own lexical
-// closures into. The materialization operand list is the sole authority: a term
-// a body did not allocate a closure into is not one of its own callables.
-func bodyLocalClosureTerms(child front.Compilation) map[string]bool {
-	return bodyLocalObjectTerms(child, "object-kind/closure")
 }
 
 // bodyLocalTableTerms names the terms this body materializes its own tables
@@ -4866,118 +4510,6 @@ func (l *lexicalEvaluator) callbackCompositionCall(operands directCallOperands, 
 	return false
 }
 
-// declaredFormalCallBoundary admits a body whose calls resolve entirely
-// from contracts the boundary itself supplies: the declared function type of one
-// of its own formals, a closure this same body allocated, or a sealed callable
-// this body closes over. The formal is seeded as its declared type (an axiom
-// under test, never a caller value); a call through it derives its result from
-// that declared return and checks arguments against the declared parameters. A
-// body-local closure needs no contract at all — its prototype and its capture
-// cells belong to this body, so the call resolves inside the same evaluation —
-// and a sealed capture carries the same authority, since the environment it
-// resolves from is the one this entry reconstructs. Every root is therefore
-// seeded — no unsealed capture, no unseeded Top — so the body's full diagnostic
-// surface traces to seeded facts. An unsealed capture, a dynamic read or select
-// from any root, or a call through a value with none of those authorities keeps
-// the body dormant.
-func (index *admissionBodyIndex) declaredFormalCallBoundary(l *lexicalEvaluator, allocation lexicalAllocationSite, partition equation.Partition) ([]entrySeed, bool) {
-	if !index.ready {
-		return nil, false
-	}
-	child := index.child
-	if child.LoweredBody() == nil || len(child.BodyBoundary().Parameters) == 0 {
-		return nil, false
-	}
-	if len(child.BodyBoundary().Captures) != 0 && (child.CyclicDraft() != nil || !l.sealedCaptureEnvironment(child, allocation, partition, false)) {
-		return nil, false
-	}
-	formals := index.formals
-	formalFunctions := make(map[string]bool, len(child.BodyBoundary().Parameters))
-	seeds, seeded := index.declaredSeeds()
-	if !seeded {
-		return nil, false
-	}
-	for _, parameter := range child.BodyBoundary().Parameters {
-		declared := child.LoweredBody().Type(parameter.Type)
-		term := boundaryTerm(parameter.Symbol)
-		if _, isFunction := functionFormalType(declared); isFunction {
-			formalFunctions[term] = true
-		}
-	}
-	// An external-call equation is emitted only for a resolved provider (a
-	// standard-library or imported module function). Its result is owned by the
-	// published registry contract; since every capture is sealed and every
-	// formal is seeded, every argument already traces to a seeded root, so the
-	// call needs no additional closedness proof.
-	externalApplications := make(map[string]bool)
-	for _, operation := range index.operations {
-		if operation.Occurrence.Kind != "external-call" {
-			continue
-		}
-		application, hasApplication := artifactOperand(operation.Operands, equation.MustOperandRole("application"))
-		if _, hasProvider := artifactOperand(operation.Operands, equation.MustOperandRole("provider")); hasApplication && hasProvider {
-			externalApplications[string(application)] = true
-		}
-	}
-	localClosures := bodyLocalClosureTerms(child)
-	for _, capture := range child.BodyBoundary().Captures {
-		term := boundaryTerm(capture.Symbol)
-		if _, found := closureHandleFor([]byte(term), partition); found {
-			localClosures[term] = true
-		}
-	}
-	localTables := bodyLocalTableTerms(child)
-	memberCalls := make(map[string]bool)
-	hasClosedCall := false
-	for _, operation := range index.operations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		application := "call/" + operation.Target.Name
-		if index.declaredFormalFunctionCall(operation, formalFunctions) || index.localClosureCall(operation, localClosures) ||
-			index.localMemberClosureCall(operation, localClosures, localTables) {
-			memberCalls[application] = true
-			hasClosedCall = true
-			continue
-		}
-		if index.declaredMemberCall(operation, formals) || externalApplications[application] {
-			memberCalls[application] = true
-			continue
-		}
-		return nil, false
-	}
-	if !hasClosedCall {
-		return nil, false
-	}
-	for _, operation := range child.DraftArtifact().Equations {
-		switch operation.Occurrence.Kind {
-		case "apply":
-			if !memberCalls["call/"+operation.Target.Name] {
-				return nil, false
-			}
-		case "external-call":
-			application, found := artifactOperand(operation.Operands, equation.MustOperandRole("application"))
-			if !found || !memberCalls[string(application)] {
-				return nil, false
-			}
-		case "dynamic-index-read":
-			// A read at a key this body cannot resolve is decided by the container
-			// it reads. When that container is a formal the entry seeded with its
-			// own declaration, the declaration types every slot the read can land
-			// on and proves none of them occupied, so the read's outcome is this
-			// declaration's and needs no caller. Any other container rests on an
-			// authority this entry does not establish.
-			container, found := artifactOperand(operation.Operands, equation.MustOperandRole("container"))
-			if !found || !formals.has(string(container)) {
-				return nil, false
-			}
-		case "channel-select":
-			return nil, false
-		}
-	}
-	return seeds, true
-}
-
 // calleePrototype resolves the lexical prototype one application dispatches to:
 // a capture or local whose closure handle the allocating partition published, or
 // a closure this same body materialized.
@@ -5023,73 +4555,6 @@ func applicationArgumentTerms(operation equation.Equation) [][]byte {
 	return arguments
 }
 
-// formalMemberWriteObligations names the operations a body with a sealed free
-// environment decides on its own. Forwarding a declared formal to a callee that
-// writes that formal's member states the post-call content of the cell without
-// any caller: the write replaces whatever the caller knew of it, so a later read
-// of that cell resolves from this body's own evaluation. Reads before the write,
-// and reads of any other cell, still depend on a caller-owned refinement and
-// stay dormant.
-func (l *lexicalEvaluator) formalMemberWriteObligations(child front.DraftsBoundaryGraphView, partition equation.Partition) map[string]bool {
-	if l == nil || child.LoweredBody() == nil {
-		return nil
-	}
-	formals := make(map[string]bool, len(child.BodyBoundary().Parameters))
-	for _, parameter := range child.BodyBoundary().Parameters {
-		formals[boundaryTerm(parameter.Symbol)] = true
-	}
-	written := make(map[string]string, len(formals))
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		term, hasCallee := artifactOperand(operation.Operands, equation.MustOperandRole("callee"))
-		if !hasCallee {
-			continue
-		}
-		prototype, resolved := l.calleePrototype(child, term, partition)
-		if !resolved || len(l.parameterWrites[prototype]) == 0 {
-			continue
-		}
-		callee, known := l.byPrototype[prototype]
-		if !known {
-			continue
-		}
-		arguments := applicationArgumentTerms(operation)
-		for index, parameter := range callee.BodyBoundary().Parameters {
-			if index >= len(arguments) || !l.parameterWrites[prototype][boundaryTerm(parameter.Symbol)] {
-				continue
-			}
-			argument := string(arguments[index])
-			if !formals[argument] {
-				continue
-			}
-			if prior, exists := written[argument]; !exists || operation.Target.Name < prior {
-				written[argument] = operation.Target.Name
-			}
-		}
-	}
-	if len(written) == 0 {
-		return nil
-	}
-	obligations := make(map[string]bool)
-	for _, operation := range child.DraftArtifact().Equations {
-		for term, writeOperation := range written {
-			if operation.Target.Name <= writeOperation {
-				continue
-			}
-			for _, operand := range operation.Operands {
-				read := string(operand.Term.Encoding)
-				if read == term || strings.HasPrefix(read, term+".") || strings.HasPrefix(read, term+"[") {
-					obligations[operation.Target.Name] = true
-					break
-				}
-			}
-		}
-	}
-	return obligations
-}
-
 // diagnosticOperation reads the operation coordinate a diagnostic key carries.
 func diagnosticOperation(key string) (string, bool) {
 	for _, part := range strings.Split(key, "/") {
@@ -5098,16 +4563,6 @@ func diagnosticOperation(key string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// formalMemberWriteDiagnostic keeps only the refutations proven at an operation
-// the member-write obligation covers.
-func formalMemberWriteDiagnostic(obligations map[string]bool, key string) bool {
-	if !declaredFormalCallDiagnostic(key) {
-		return false
-	}
-	operation, found := diagnosticOperation(key)
-	return found && obligations[operation]
 }
 
 // declaredFormalCallDiagnostic whitelists the refutation families a fully
@@ -5301,132 +4756,6 @@ func contextualCallable(term []byte, partition equation.Partition) (typ.Type, bo
 	return contract, true
 }
 
-// declaredLocalUnionReadBoundary admits one allocation-time relay:
-// declared formals feed an already-published local closure, whose sole result
-// is assigned and read through an exact static key. The call capability and
-// declared return are supplied by the enclosing allocation partition; the
-// child receives neither an invented value nor an arbitrary capture. This is
-// sufficient to check an unguarded union member assignment and one closed
-// equality discriminant over that result. Other branches, dynamic keys,
-// external calls, and child effects remain demand-driven.
-func (index *admissionBodyIndex) declaredLocalUnionReadBoundary() ([]entrySeed, bool) {
-	if index == nil {
-		return nil, false
-	}
-	child := index.child
-	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) == 0 {
-		return nil, false
-	}
-	if !index.declaredSeeded {
-		return nil, false
-	}
-	formals := index.formals
-	for _, parameter := range child.BodyBoundary().Parameters {
-		if parameter.Symbol == 0 {
-			return nil, false
-		}
-	}
-	applications := make(map[string]bool)
-	derived := index.declaredLocalUnionExpressionTerms(formals)
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		callee, hasCallee := artifactOperand(operation.Operands, equation.MustOperandRole("callee"))
-		arity, hasArity := artifactOperand(operation.Operands, equation.MustOperandRole("result-arity"))
-		if !hasCallee || !strings.HasPrefix(string(callee), "path/") || !hasArity || string(arity) != "1" {
-			return nil, false
-		}
-		for _, operand := range operation.Operands {
-			if _, argument := operand.Role.FixedIndex(equation.RoleFamilyArgument, 8); argument {
-				if !formals.has(string(operand.Term.Encoding)) && !derived[string(operand.Term.Encoding)] {
-					return nil, false
-				}
-			}
-		}
-		applications["call/"+operation.Target.Name] = true
-	}
-	if len(applications) == 0 {
-		return nil, false
-	}
-	results := make(map[string]bool)
-	for _, operation := range index.operations {
-		if operation.Occurrence.Kind != "call-results" {
-			continue
-		}
-		application, found := artifactOperand(operation.Operands, equation.MustOperandRole("application"))
-		if !found || !applications[string(application)] {
-			return nil, false
-		}
-		result, found := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyResult, 0))
-		if !found {
-			return nil, false
-		}
-		results[string(result)] = true
-	}
-	paths := make(map[string]bool)
-	reads := make(map[string]bool)
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "environment-write" {
-			continue
-		}
-		value, hasValue := artifactOperand(operation.Operands, equation.MustOperandRole("value"))
-		target, hasTarget := artifactOperand(operation.Operands, equation.MustOperandRole("target"))
-		if hasValue && hasTarget && results[string(value)] {
-			paths[string(target)] = true
-			continue
-		}
-		if hasValue && hasTarget && strings.HasPrefix(string(value), "path/") {
-			for path := range paths {
-				if strings.HasPrefix(string(value), path+".") {
-					reads[string(value)] = true
-					reads[string(target)] = true
-				}
-			}
-		}
-	}
-	for _, operation := range child.DraftArtifact().Equations {
-		switch operation.Occurrence.Kind {
-		case "entry", "apply", "call-results", "environment-write", "claim", "expression", "publication":
-			continue
-		case "branch-relations":
-			if !index.declaredLocalUnionBranch(operation, paths, formals, derived) {
-				return nil, false
-			}
-			continue
-		case "external-call":
-			application, found := artifactOperand(operation.Operands, equation.MustOperandRole("application"))
-			if !found || !applications[string(application)] {
-				return nil, false
-			}
-			continue
-		case "dynamic-index-read":
-			container, hasContainer := artifactOperand(operation.Operands, equation.MustOperandRole("container"))
-			key, hasKey := artifactOperand(operation.Operands, equation.MustOperandRole("key"))
-			target, hasTarget := artifactOperand(operation.Operands, equation.MustOperandRole("target"))
-			if !hasContainer || !paths[string(container)] || !hasKey || !shapefact.IsScalarKind(key, shapefact.ScalarString) || !hasTarget {
-				return nil, false
-			}
-			reads[string(target)] = true
-		default:
-			return nil, false
-		}
-	}
-	if len(reads) == 0 {
-		return nil, false
-	}
-	for _, operation := range index.operations {
-		if operation.Occurrence.Kind != "claim" {
-			continue
-		}
-		value, found := artifactOperand(operation.Operands, equation.MustOperandRole("value"))
-		if found && reads[string(value)] {
-			return index.declaredSeeds()
-		}
-	}
-	return nil, false
-}
-
 // declaredLocalUnionExpressionTerms closes only expression temporaries
 // whose value is computed from declared formals and exact scalar literals. The
 // resulting terms may supply an uncalled local union call, but they never
@@ -5506,42 +4835,6 @@ func localUnionEntryRoot(term string, results map[string]bool, formals admission
 		}
 	}
 	return false
-}
-
-// localUnionReadEntry carries the exact direct-call capability already
-// published at the enclosing allocation point into the admitted child. The
-// child artifact itself names that path, while closureHandleFor verifies it is
-// a local capability rather than a source-level function spelling.
-func (index *admissionBodyIndex) localUnionReadEntry(l *lexicalEvaluator, formalSeeds []entrySeed, partition equation.Partition) ([]byte, bool, error) {
-	child := index.child
-	seeds := append([]entrySeed(nil), formalSeeds...)
-	closures := make([]entryClosureSeed, 0)
-	seen := make(map[string]bool)
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		callee, found := artifactOperand(operation.Operands, equation.MustOperandRole("callee"))
-		if !found || !strings.HasPrefix(string(callee), "path/") || seen[string(callee)] {
-			continue
-		}
-		value, known := resolveKnownCurrentValue(callee, partition)
-		handle, callable := closureHandleFor(callee, partition)
-		if !known || isUnknownScalar(value) || !callable || !index.localUnionCalleeHasAlternativeReturns(l, handle) {
-			return nil, false, nil
-		}
-		seen[string(callee)] = true
-		seeds = append(seeds, entrySeed{Term: string(callee), Value: value})
-		closures = append(closures, entryClosureSeed{Term: string(callee), Handle: handle})
-	}
-	if len(closures) == 0 {
-		return nil, false, nil
-	}
-	entry, err := encodeChildEntryWithCapabilities(seeds, closures, childEntryMemberClosureSeeds(seeds, nil, partition), tableIdentitySeedsForEntry(seeds, nil, partition), memberCellSeedsForEntry(seeds, nil, partition))
-	if err != nil {
-		return nil, false, err
-	}
-	return entry, true, nil
 }
 
 // localUnionCalleeHasAlternativeReturns requires the callee's own
@@ -6473,58 +5766,6 @@ func (index *admissionBodyIndex) declaredFormalMemberRead(operation equation.Equ
 	return index.declaredFormalMemberTerm(value, formals)
 }
 
-// declaredLocalAllocationAssignment identifies an assignment claim whose
-// value reads a slot of a table this body itself allocated. Such a table is not
-// a caller's: no argument names it and no capture reaches it, so the writes that
-// establish which of its slots are occupied are all in this body and a conflict
-// proven against one of them is this declaration's own obligation, exactly as a
-// conflict proven against a seeded formal is.
-//
-// The lane it opens carries proven conflicts only. A slot the body leaves
-// unproven states no conflict and keeps the demand-driven path, where a
-// call-specific refinement can still discharge it.
-func (index *admissionBodyIndex) declaredLocalAllocationAssignment(operation equation.Equation, allocations map[string]bool, allocationReads map[string]bool) bool {
-	if operation.Occurrence.Kind != "claim" || (len(allocations) == 0 && len(allocationReads) == 0) {
-		return false
-	}
-	assignment, hasKind := artifactOperand(operation.Operands, equation.MustOperandRole("kind"))
-	value, hasValue := artifactOperand(operation.Operands, equation.MustOperandRole("value"))
-	if !hasKind || !hasValue || string(assignment) != "claim-kind/3" {
-		return false
-	}
-	// A read at a key this body cannot spell selects a slot of the same table
-	// and carries the same authority: the container is still this body's own
-	// allocation, so the conflict its result proves is this declaration's.
-	if allocationReads[string(value)] {
-		return true
-	}
-	root, suffix, member := tableAddress(value)
-	return member && allocations[string(root)] && len(suffix) != 0
-}
-
-// bodyLocalAllocationReadTargets names the results of this body's own dynamic
-// index reads into tables it allocated itself. They are the unspelled
-// counterpart of a static slot read: the same container, selected at a key no
-// coordinate names.
-func bodyLocalAllocationReadTargets(child front.DraftsView, allocations map[string]bool) map[string]bool {
-	if len(allocations) == 0 {
-		return nil
-	}
-	targets := make(map[string]bool)
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "dynamic-index-read" {
-			continue
-		}
-		container, hasContainer := artifactOperand(operation.Operands, equation.MustOperandRole("container"))
-		target, hasTarget := artifactOperand(operation.Operands, equation.MustOperandRole("target"))
-		if !hasContainer || !hasTarget || !allocations[string(container)] {
-			continue
-		}
-		targets[string(target)] = true
-	}
-	return targets
-}
-
 // declaredFormalValue accepts only an exact, non-gradual boundary
 // formal. Its type is emitted by the front end and encoded as an entry seed;
 // no call result, branch result, or inferred local is used as authority.
@@ -6538,140 +5779,6 @@ func (index *admissionBodyIndex) declaredFormalValue(value []byte) bool {
 		return declared != nil && declared.Kind() != kind.Any
 	}
 	return false
-}
-
-// staticAssignmentBoundary admits a straight-line lexical body whose
-// only externally callable values are its own captured local closures.  The
-// entry contains ordinary declared formal witnesses; captured closures are
-// supplied separately by the body-index child-entry query, which refuses an absent or opaque
-// capability.  This is deliberately narrower than a general declaration-only
-// execution: branch-selected facts, indexing, and channel operations still
-// require a caller-owned partition.
-//
-// Its sole publication consumer is an assignment claim in this same body.  A
-// direct local call must produce an owned result slot; the declaration-only
-// caller never imports a guard effect from a no-result helper.
-func (index *admissionBodyIndex) staticAssignmentBoundary() ([]entrySeed, bool) {
-	if index == nil {
-		return nil, false
-	}
-	child := index.child
-	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) == 0 || len(child.BodyBoundary().Captures) == 0 {
-		return nil, false
-	}
-	captures := index.captures
-	publishedStdlibCalls := index.publishedStdlibCalls()
-	// A result slot is owned only by a captured local call's exact
-	// apply -> call-results -> write chain. A subsequent unguarded method call
-	// may consume that slot's declared optional contract, but no other local
-	// can enter this declaration-only boundary.
-	capturedCalls := make(map[string]bool)
-	callResults := make(map[string]bool)
-	callPaths := make(map[string]bool)
-	for _, operation := range child.DraftArtifact().Equations {
-		switch operation.Occurrence.Kind {
-		case "apply":
-			callee, arity := "", ""
-			for _, operand := range operation.Operands {
-				if operand.Role.Wire() == "callee" {
-					callee = string(operand.Term.Encoding)
-				}
-				if operand.Role.Wire() == "result-arity" {
-					arity = string(operand.Term.Encoding)
-				}
-			}
-			if captures.has(callee) && arity != "" && arity != "0" {
-				capturedCalls["call/"+operation.Target.Name] = true
-			}
-		case "call-results":
-			application, found := artifactOperand(operation.Operands, equation.MustOperandRole("application"))
-			if !found || !capturedCalls[string(application)] {
-				continue
-			}
-			for _, operand := range operation.Operands {
-				if _, semantic := operand.Role.SemanticResult(); semantic {
-					callResults[string(operand.Term.Encoding)] = true
-				}
-			}
-		case "environment-write":
-			value, hasValue := artifactOperand(operation.Operands, equation.MustOperandRole("value"))
-			target, hasTarget := artifactOperand(operation.Operands, equation.MustOperandRole("target"))
-			if hasValue && hasTarget && callResults[string(value)] {
-				callPaths[string(target)] = true
-			}
-		}
-	}
-	hasAssignment, hasResultCall, hasOptionalMethod := false, false, false
-	for _, operation := range child.DraftArtifact().Equations {
-		switch operation.Occurrence.Kind {
-		case "claim":
-			for _, operand := range operation.Operands {
-				if operand.Role.Wire() == "kind" && string(operand.Term.Encoding) == "claim-kind/3" {
-					hasAssignment = true
-				}
-			}
-		case "apply":
-			callee, receiver := "", ""
-			resultArity, method := "", ""
-			for _, operand := range operation.Operands {
-				if operand.Role.Wire() == "callee" {
-					callee = string(operand.Term.Encoding)
-				}
-				if operand.Role.Wire() == "receiver" {
-					receiver = string(operand.Term.Encoding)
-				}
-				if operand.Role.Wire() == "method" {
-					method = string(operand.Term.Encoding)
-				}
-				if operand.Role.Wire() == "result-arity" {
-					resultArity = string(operand.Term.Encoding)
-				}
-			}
-			if resultArity == "" {
-				return nil, false
-			}
-			if method != "" && receiver != "" && callPaths[receiver] && resultArity == "0" {
-				hasOptionalMethod = true
-				continue
-			}
-			if resultArity == "0" {
-				if captures.has(callee) {
-					continue
-				}
-				// A no-result static member call cannot supply a value or a
-				// branch fact to this declaration-only evaluation.  It is safe
-				// only when the receiver is an already-captured table; the entry
-				// transport below requires that table's sealed identity and member
-				// cells rather than reconstructing a callable from source spelling.
-				if !index.staticCapturedMemberCall(callee, captures) {
-					return nil, false
-				}
-				continue
-			}
-			if !captures.has(callee) && !publishedStdlibCalls["call/"+operation.Target.Name] {
-				return nil, false
-			}
-			hasResultCall = true
-		case "branch-relations":
-			// A condition stated over this body's declared formals is decided by
-			// nothing a caller supplies: the declaration seeds each formal, the
-			// guard stays undecided here exactly as it does at every call site,
-			// and both arms are evaluated under the same entry. A condition
-			// naming any other root can be refined by a caller value and keeps
-			// this body demand-driven. A local is not such a root here: this
-			// boundary admits captured and standard-library calls, so a local can
-			// hold a call result whose value the entry does not determine.
-			if !index.declaredFormalBranch(operation) {
-				return nil, false
-			}
-		case "dynamic-index-read", "channel-select":
-			return nil, false
-		}
-	}
-	if (!hasAssignment && !hasOptionalMethod && !hasResultCall) || (!hasResultCall && !index.hasCapturedNoResultCall(captures)) {
-		return nil, false
-	}
-	return index.declaredSeeds()
 }
 
 // declaredFormalBranch reports a branch whose entire condition is stated
@@ -6712,154 +5819,6 @@ func branchDecidedByRoots(operation equation.Equation, admits func(term string) 
 		}
 	}
 	return rooted
-}
-
-// staticCapturedReturnBoundary admits one parameter-free return
-// contract only when its sole captured dependency is an already-published
-// local closure and every call in the body targets that capability. The child
-// entry transports the capability itself; no callable, argument, result, or
-// return value is reconstructed from syntax. Branches, dynamic reads, and
-// external calls remain demand-driven.
-func (index *admissionBodyIndex) staticCapturedReturnBoundary(l *lexicalEvaluator, partition equation.Partition) bool {
-	child := index.child
-	if l == nil || child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) != 0 || len(child.BodyBoundary().Captures) != 1 || len(child.BodyBoundary().DeclaredReturns) != 1 {
-		return false
-	}
-	capture := boundaryTerm(child.BodyBoundary().Captures[0].Symbol)
-	if _, found := closureHandleFor([]byte(capture), partition); !found {
-		return false
-	}
-	called := false
-	applications := make(map[string]bool)
-	for _, operation := range child.DraftArtifact().Equations {
-		switch operation.Occurrence.Kind {
-		case "entry", "environment-write", "publication":
-			continue
-		case "apply":
-			callee, hasCallee := artifactOperand(operation.Operands, equation.MustOperandRole("callee"))
-			arity, hasArity := artifactOperand(operation.Operands, equation.MustOperandRole("result-arity"))
-			if !hasCallee || !hasArity || string(callee) != capture || string(arity) != "1" {
-				return false
-			}
-			called = true
-			applications["call/"+operation.Target.Name] = true
-		case "external-call", "call-results":
-			application, found := artifactOperand(operation.Operands, equation.MustOperandRole("application"))
-			if !found || !applications[string(application)] {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return called
-}
-
-// staticArithmeticBoundary admits a parameter-free closure only when
-// its entire call graph segment is already closed: imported member calls use a
-// project-published import authority and the local call targets a captured
-// closure whose unannotated formal is directly consumed by numeric arithmetic.
-// The body has no branches, dynamic lookup, or writes beyond ordinary call
-// result bindings, so evaluating it at allocation time cannot invent a path
-// condition or a caller-owned heap fact.
-func (index *admissionBodyIndex) staticArithmeticBoundary(l *lexicalEvaluator, body equation.BodyID, partition equation.Partition) bool {
-	child := index.child
-	if l == nil || child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) != 0 || len(child.BodyBoundary().Captures) == 0 {
-		return false
-	}
-	captures := make(map[string]bool, len(child.BodyBoundary().Captures))
-	arithmeticCallees := make(map[string]bool)
-	for _, capture := range child.BodyBoundary().Captures {
-		term := boundaryTerm(capture.Symbol)
-		captures[term] = true
-		if handle, found := closureHandleFor([]byte(term), partition); found {
-			callee, exists := l.byPrototype[handle.Prototype]
-			if !exists {
-				return false
-			}
-			if unannotatedArithmeticFormal(callee) {
-				arithmeticCallees[term] = true
-			}
-			continue
-		}
-		if _, imported := l.importedAuthority(body, term); !imported {
-			return false
-		}
-	}
-	foundArithmeticCall := false
-	applications := make(map[string]bool)
-	for _, operation := range child.DraftArtifact().Equations {
-		switch operation.Occurrence.Kind {
-		case "entry", "publication", "environment-write":
-			continue
-		case "apply":
-			callee, found := artifactOperand(operation.Operands, equation.MustOperandRole("callee"))
-			if !found {
-				return false
-			}
-			if arithmeticCallees[string(callee)] {
-				foundArithmeticCall = true
-				applications["call/"+operation.Target.Name] = true
-				continue
-			}
-			root, _, member := tableAddress(callee)
-			if !member || !captures[string(root)] {
-				return false
-			}
-			if _, imported := l.importedAuthority(body, string(root)); !imported {
-				return false
-			}
-			applications["call/"+operation.Target.Name] = true
-		case "external-call", "call-results":
-			application, found := artifactOperand(operation.Operands, equation.MustOperandRole("application"))
-			if !found || !applications[string(application)] {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return foundArithmeticCall
-}
-
-// importedCaptureBoundary admits a body whose every boundary input
-// already has an exact authority independent of any call site: each formal
-// carries a declared type, and each capture is an immutable module binding whose
-// project-selected export type was published when require's result was written.
-// Neither input is reconstructed and neither is a caller's value, so the entry
-// states exactly what a real call site would state about them.
-//
-// The body needs no operation whitelist. Every operation this entry does not
-// close evaluates to top, and top proves no obligation, so widening admission
-// here can only add diagnostics the body's own declarations already refute.
-//
-// Lifecycle and select bodies keep their own dedicated allocation-time lanes
-// below; those lanes own the epoch and case entries their proofs depend on, and
-// a second entry for the same body would restate the same coordinates.
-func (index *admissionBodyIndex) importedCaptureBoundary(l *lexicalEvaluator, body equation.BodyID, partition equation.Partition) ([]entrySeed, bool) {
-	if !index.ready {
-		return nil, false
-	}
-	child := index.child
-	if l == nil || child.LoweredBody() == nil || len(child.BodyBoundary().Captures) == 0 {
-		return nil, false
-	}
-	if childHasChannelLifecycle(child) || childHasResourceLifecycle(child) || childHasSelect(child) {
-		return nil, false
-	}
-	for _, capture := range child.BodyBoundary().Captures {
-		if capture.Mutable {
-			return nil, false
-		}
-		term := boundaryTerm(capture.Symbol)
-		if _, imported := l.importedAuthority(body, term); !imported {
-			return nil, false
-		}
-		if _, closure := closureHandleFor([]byte(term), partition); closure {
-			return nil, false
-		}
-	}
-	return index.declaredSeeds()
 }
 
 func unannotatedArithmeticFormal(child front.DraftsBoundaryGraphView) bool {
@@ -6928,36 +5887,12 @@ func (index *admissionBodyIndex) publishedStdlibCalls() map[string]bool {
 	return out
 }
 
-// staticOptionalMethodDiagnostic admits only the call failure owned by
-// an unguarded method application that the static boundary already proved to
-// consume a captured call result. It cannot publish a result, a refinement, or
-// a diagnostic from an unrelated method call.
-func (ctx admissionDiagnosticContext) staticOptionalMethodDiagnostic() bool {
-	diagnostic := ctx.diagnostic
-	if !diagnosticFamilyMatches(diagnostic.Key, DiagnosticFamilyCallNotCallable, DiagnosticFamilyOptionalCallReceiver) {
-		return false
-	}
-	name := diagnosticOperationName(diagnostic.Key)
-	for _, operation := range ctx.bodyIndex.operations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		if operation.Target.Name != name || operation.Occurrence.Kind != "apply" || len(operation.Guards) != 0 {
-			continue
-		}
-		receiver, hasReceiver := artifactOperand(operation.Operands, equation.MustOperandRole("receiver"))
-		method, hasMethod := artifactOperand(operation.Operands, equation.MustOperandRole("method"))
-		return hasReceiver && hasMethod && strings.HasPrefix(string(receiver), "path/") && strings.HasPrefix(string(method), "method/")
-	}
-	return false
-}
-
 // staticCapturedMemberCall recognizes the no-result counterpart to a
 // direct captured closure call.  The callee must be one static member below a
 // captured table root; dynamic indexing and deeper paths remain caller-driven.
 func (index *admissionBodyIndex) staticCapturedMemberCall(callee string, captures admissionBoundarySet) bool {
 	root, suffix, member := tableAddress([]byte(callee))
-	if !member || !index.hasRoot(string(root)) || !captures.has(string(root)) {
+	if !member || !(index != nil && (index.formals.has(string(root)) || index.captures.has(string(root)))) || !captures.has(string(root)) {
 		return false
 	}
 	segments, static := segment.ParseFormattedSegments(suffix)
@@ -6977,55 +5912,6 @@ func (index *admissionBodyIndex) hasCapturedNoResultCall(captures admissionBound
 		}
 	}
 	return false
-}
-
-// staticAssignmentDiagnostic retains a declaration-only assignment
-// diagnostic only when no no-result call in the same body consumes its source
-// term. A no-result call has no closed return slot, so its assertion or
-// validation effect cannot be replayed without a real invocation. An
-// independent declared formal remains a complete existing boundary witness.
-func (ctx admissionDiagnosticContext) staticAssignmentDiagnostic() bool {
-	artifact, key, partition := ctx.child.DraftArtifact(), ctx.diagnostic.Key, ctx.partition
-	prefix := diagnosticFamilyPrefix(DiagnosticFamilyAssignment)
-	if !strings.HasPrefix(key, prefix) {
-		return false
-	}
-	operation := strings.TrimPrefix(key, prefix)
-	var source string
-	for _, candidate := range artifact.Equations {
-		if candidate.Target.Name != operation || candidate.Occurrence.Kind != "claim" {
-			continue
-		}
-		value, found := artifactOperand(candidate.Operands, equation.MustOperandRole("value"))
-		if !found {
-			return false
-		}
-		source = string(value)
-		break
-	}
-	if source == "" {
-		return false
-	}
-	for _, candidate := range artifact.Equations {
-		if candidate.Occurrence.Kind != "apply" {
-			continue
-		}
-		arity, hasArity := artifactOperand(candidate.Operands, equation.MustOperandRole("result-arity"))
-		if !hasArity || string(arity) != "0" {
-			continue
-		}
-		for _, operand := range candidate.Operands {
-			if _, argument := operand.Role.Index(equation.RoleFamilyArgument); argument && string(operand.Term.Encoding) == source {
-				callee, hasCallee := artifactOperand(candidate.Operands, equation.MustOperandRole("callee"))
-				if hasCallee && (ctx.bodyIndex.capturedHelperHasOnlyGuardedValidation(ctx.lexical, callee, partition) ||
-					ctx.bodyIndex.capturedHelperHasOnlyGuardedNonValidationEffect(ctx.lexical, callee, partition)) {
-					continue
-				}
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // capturedHelperHasOnlyGuardedValidation admits one very limited
@@ -7137,56 +6023,6 @@ func nonValidatingNoResultStdlibProvider(provider []byte) bool {
 	return true
 }
 
-func (index *admissionBodyIndex) staticCapturedCallsAreGuardedValidation(l *lexicalEvaluator, partition equation.Partition) bool {
-	child := index.child
-	captures := make(map[string]bool, len(child.BodyBoundary().Captures))
-	for _, capture := range child.BodyBoundary().Captures {
-		captures[boundaryTerm(capture.Symbol)] = true
-	}
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		callee, hasCallee := artifactOperand(operation.Operands, equation.MustOperandRole("callee"))
-		arity, hasArity := artifactOperand(operation.Operands, equation.MustOperandRole("result-arity"))
-		if hasCallee && hasArity && string(arity) == "0" && captures[string(callee)] &&
-			!index.capturedHelperHasOnlyGuardedValidation(l, callee, partition) &&
-			!index.capturedHelperHasOnlyGuardedNonValidationEffect(l, callee, partition) {
-			return false
-		}
-	}
-	return true
-}
-
-// staticResultCallDiagnostic retains only an argument contract on a
-// captured local callable when that exact argument is the local write of an
-// already-published stdlib result. The apply/external-call/call-results/write
-// chain prevents unrelated local calls or source-shaped names from entering a
-// declaration-only child evaluation.
-func (ctx admissionDiagnosticContext) staticResultCallDiagnostic() bool {
-	key := ctx.diagnostic.Key
-	if !diagnosticFamilyMatches(key, DiagnosticFamilyCallArgumentType) {
-		return false
-	}
-	operationName := diagnosticOperationName(key)
-	published := ctx.bodyIndex.publishedStdlibCalls()
-	resultPaths := ctx.bodyIndex.publishedResultPaths(published)
-	for _, operation := range ctx.bodyIndex.operations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		if operation.Target.Name != operationName || operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		for _, operand := range operation.Operands {
-			if _, argument := operand.Role.Index(equation.RoleFamilyArgument); argument && resultPaths[string(operand.Term.Encoding)] {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // declaredProviderResultDiagnostic retains an assignment or argument
 // contract only when its source is the local write of a standard-library
 // result from a call that the declaration-only boundary already admits. The
@@ -7288,52 +6124,6 @@ func (index *admissionBodyIndex) publishedResultPaths(applications map[string]bo
 		}
 	}
 	return paths
-}
-
-// declaredIndexedReadBoundary admits a capture-free indexed read whose
-// container is an exact declared formal. RuntimeIndex already publishes the
-// selected slot's nilability from that array or map witness; the bounded
-// branch facts and a later direct mutation are existing transactions over that
-// same witness. Calls, channel operations, and generic iteration still require
-// a caller-owned entry.
-func (index *admissionBodyIndex) declaredIndexedReadBoundary() ([]entrySeed, bool) {
-	if index == nil {
-		return nil, false
-	}
-	child := index.child
-	if !capturelessFormalBody(child) {
-		return nil, false
-	}
-	if !index.declaredSeeded {
-		return nil, false
-	}
-	formals := index.formals
-	for _, parameter := range child.BodyBoundary().Parameters {
-		if parameter.Symbol == 0 {
-			return nil, false
-		}
-	}
-	hasIndexedRead := false
-	for _, operation := range child.DraftArtifact().Equations {
-		switch operation.Occurrence.Kind {
-		case "dynamic-index-read":
-			container, found := artifactOperand(operation.Operands, equation.MustOperandRole("container"))
-			if !found || !formals.has(string(container)) {
-				return nil, false
-			}
-			hasIndexedRead = true
-		case "branch-relations":
-			if !index.declaredIndexedBranch(operation) {
-				return nil, false
-			}
-		case "apply", "external-call", "channel-select", "generic-for":
-			return nil, false
-		}
-	}
-	if !hasIndexedRead {
-		return nil, false
-	}
-	return index.declaredSeeds()
 }
 
 // declaredIndexedBranch reports whether a branch of this body is decided
@@ -8259,47 +7049,6 @@ func (capture admissionCaptureProjection) sealedTable() bool {
 	return identified
 }
 
-// closedAnyFormalObligation names the contract families a body decides from an
-// entirely explicit-any formal boundary. Every formal already holds the widest
-// value the declaration permits, so an assignment, argument, callability, or
-// return contract refuted against it cannot be discharged by any caller.
-func closedAnyFormalObligation(key string) bool {
-	return diagnosticFamilyMatches(key,
-		DiagnosticFamilyCallArgumentType,
-		DiagnosticFamilyCallNotCallable,
-		DiagnosticFamilyReturnContract,
-		DiagnosticFamilyAssignment,
-	)
-}
-
-// explicitAnyDiagnostic retains only strict assignment contracts. A
-// runtime claim may validate an any value only along an invoked path, but an
-// annotation assignment is a source-owned obligation at the closed boundary.
-func (ctx admissionDiagnosticContext) explicitAnyDiagnostic() bool {
-	diagnostic := ctx.diagnostic
-	if diagnosticFamilyMatches(diagnostic.Key, DiagnosticFamilyAssignment) {
-		return true
-	}
-	name, unproven := diagnosticFamilyTail(DiagnosticFamilyUnprovenClaim, diagnostic.Key)
-	if !unproven || typePredicateResultClaim(ctx.child.DraftArtifact(), name) {
-		return false
-	}
-	for _, operation := range ctx.bodyIndex.operations {
-		if operation.Occurrence.Kind != "claim" {
-			continue
-		}
-		if operation.Target.Name != name || operation.Occurrence.Kind != "claim" {
-			continue
-		}
-		for _, operand := range operation.Operands {
-			if operand.Role.Wire() == "kind" {
-				return string(operand.Term.Encoding) == "claim-kind/3"
-			}
-		}
-	}
-	return false
-}
-
 // typePredicateResultClaim recognizes an annotation sourced from the first
 // result slot of an already-published T:is(value) call. The relation follows
 // only the front's exact call-results -> write -> claim chain, so an arbitrary
@@ -8360,51 +7109,6 @@ func typePredicateResultClaim(artifact equation.Artifact, claim string) bool {
 		}
 	}
 	return false
-}
-
-// typedChannelSendBoundary recognizes the narrow declaration-owned
-// contract that can be checked before a function is called. The receiver must
-// be an exact typed Channel<T> formal already published by the child entry;
-// no runtime value or type spelling is invented for a different boundary.
-func (index *admissionBodyIndex) typedChannelSendBoundary() bool {
-	if index == nil {
-		return false
-	}
-	child := index.child
-	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Captures) != 0 {
-		return false
-	}
-	channels := make(map[string]bool, len(child.BodyBoundary().Parameters))
-	for _, parameter := range child.BodyBoundary().Parameters {
-		if parameter.Vararg || parameter.Type == 0 {
-			continue
-		}
-		if _, ok := ambient.ChannelPayloadType(child.LoweredBody().Type(parameter.Type)); ok {
-			channels[boundaryTerm(parameter.Symbol)] = true
-		}
-	}
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		var receiver, method string
-		for _, operand := range operation.Operands {
-			switch operand.Role.Wire() {
-			case "receiver":
-				receiver = string(operand.Term.Encoding)
-			case "method":
-				method, _ = callMethodName(operand.Term.Encoding)
-			}
-		}
-		if method == "send" && channels[receiver] {
-			return true
-		}
-	}
-	return false
-}
-
-func (ctx admissionDiagnosticContext) typedChannelSendDiagnostic() bool {
-	return diagnosticFamilyMatches(ctx.diagnostic.Key, DiagnosticFamilyCallArgumentType)
 }
 
 type nestedCaptureSeed struct {
@@ -10936,32 +9640,6 @@ func selectChildDiagnostic(key string) bool {
 	)
 }
 
-func declaredConcatDiagnostic(allowed map[string]bool, key string) bool {
-	_, operation, subject, ok := concatOperandDiagnosticParts(key)
-	return ok && allowed[operation+"/"+subject]
-}
-
-// declaredAssertionDiagnostic recognizes the unproven-claim diagnostic of an
-// assertion this boundary admitted. The operation name is the exact one whose
-// narrowing edge made the assertion declaration-owned, so no other claim in the
-// same body borrows this surface.
-func declaredAssertionDiagnostic(allowed map[string]bool, key string) bool {
-	name, unproven := strings.CutPrefix(key, diagnosticFamilyPrefix(DiagnosticFamilyUnprovenClaim))
-	return unproven && allowed[name]
-}
-
-func declaredOrderedComparisonDiagnostic(allowed map[string]bool, key string) bool {
-	name, ok := strings.CutPrefix(key, diagnosticFamilyPrefix(DiagnosticFamilyComparisonOperand))
-	return ok && allowed[name]
-}
-
-// staticMemberSegment reports whether a path segment names one member of a
-// declared receiver. Field and quoted-key spellings address the same member,
-// so both establish the static member read boundary.
-func staticMemberSegment(item segment.Segment) bool {
-	return item.Kind == segment.SegmentField || item.Kind == segment.SegmentIndexString
-}
-
 // claimConsumedStaticReads names the environment writes whose read a claim in
 // the same body also consumes — either by reading the same source path or by
 // reading back the local the write produced. The claim owns that read's
@@ -10991,39 +9669,6 @@ func claimConsumedStaticReads(artifact equation.Artifact) map[string]bool {
 	return consumed
 }
 
-func (index *admissionBodyIndex) staticMemberReadSeeds() ([]entrySeed, bool) {
-	if index == nil {
-		return nil, false
-	}
-	child := index.child
-	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Captures) != 0 {
-		return nil, false
-	}
-	formals := index.formals
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "environment-write" {
-			continue
-		}
-		for _, operand := range operation.Operands {
-			if operand.Role.Wire() != "value" {
-				continue
-			}
-			root, suffix, ok := tableAddress(operand.Term.Encoding)
-			segments, static := segment.ParseFormattedSegments(suffix)
-			if formals.has(string(root)) && ok && static && len(segments) == 1 && staticMemberSegment(segments[0]) {
-				declared, seeded := index.declaredSeeds()
-				if !seeded {
-					return nil, false
-				}
-				seeds := append([]entrySeed(nil), declared...)
-				sort.Slice(seeds, func(i, j int) bool { return seeds[i].Term < seeds[j].Term })
-				return seeds, true
-			}
-		}
-	}
-	return nil, false
-}
-
 // closedImportEntrySeeds reuses only import values already published by the
 // parent's entry transaction. Child evaluation needs these same module facts
 // to project an imported member call's result; the captured table value alone
@@ -11051,65 +9696,6 @@ func closedImportEntrySeeds(partition equation.Partition) []entrySeed {
 		seeds = append(seeds, entrySeed{Term: term, Value: byTerm[term]})
 	}
 	return seeds
-}
-
-// closedBodyCalleeSeeds carries the module-lexical callables a body invokes but
-// does not bind. A parameter-free, capture-free body is closed only once those
-// bindings travel with it: without them its own calls resolve to nothing, and
-// every contract they carry is lost. Only a currently published callable value
-// and its admitted prototype cross; mutable state and unavailable bindings stay
-// out of the private entry.
-func (l *lexicalEvaluator) closedBodyCalleeSeeds(child front.DraftsView, seeds []entrySeed, partition equation.Partition) ([]entrySeed, []entryClosureSeed) {
-	bound := make(map[string]bool, len(seeds))
-	for _, seed := range seeds {
-		bound[seed.Term] = true
-	}
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "environment-write" {
-			continue
-		}
-		if target, found := artifactOperand(operation.Operands, equation.MustOperandRole("target")); found {
-			bound[string(target)] = true
-		}
-	}
-	callees := make([]string, 0, len(child.DraftArtifact().Equations))
-	seen := make(map[string]bool, len(child.DraftArtifact().Equations))
-	for _, operation := range child.DraftArtifact().Equations {
-		if operation.Occurrence.Kind != "apply" {
-			continue
-		}
-		callee, found := artifactOperand(operation.Operands, equation.MustOperandRole("callee"))
-		if !found || bound[string(callee)] || seen[string(callee)] || !strings.HasPrefix(string(callee), "path/") {
-			continue
-		}
-		seen[string(callee)] = true
-		callees = append(callees, string(callee))
-	}
-	sort.Strings(callees)
-	closureSeeds := make([]entryClosureSeed, 0, len(callees))
-	for _, callee := range callees {
-		term := []byte(callee)
-		value, known := resolveKnownCurrentValue(term, partition)
-		if !known || !isCallableValue(value) {
-			continue
-		}
-		seed := entrySeed{Term: callee, Value: value}
-		if !validEntrySeed(seed) {
-			continue
-		}
-		handle, hasHandle := closureHandleFor(term, partition)
-		if hasHandle {
-			if _, admitted := l.byPrototype[handle.Prototype]; !admitted {
-				continue
-			}
-		}
-		seeds = append(seeds, seed)
-		if hasHandle {
-			closureSeeds = append(closureSeeds, entryClosureSeed{Term: callee, Handle: handle})
-		}
-	}
-	sort.Slice(seeds, func(i, j int) bool { return seeds[i].Term < seeds[j].Term })
-	return seeds, closureSeeds
 }
 
 // selectChildEntry seeds the complete private environment of the optional
@@ -11577,7 +10163,7 @@ func writeKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	values = append(values, rebaseChannelPayloadFacts(operands["value"], target, operation.Target.Name, partition)...)
 	identity, hasIdentity := tableIdentityForTerm(operands["value"], partition)
 	if !hasIdentity && (shapefact.IsTable(value) || string(value) == shapefact.ScalarTableWire) {
-		identity, hasIdentity = sealedTableIdentity(operation), true
+		identity, hasIdentity = []byte(fmt.Sprintf("sealed-table/%x/%s", operation.Target.Body, operation.Target.Name)), true
 	}
 	if hasIdentity {
 		values = append(values, heapIdentityFact(target, operation.Target.Name, identity))
@@ -14716,7 +13302,7 @@ func claimKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 			display = string(operand.Value)
 		}
 	}
-	if (!strings.HasPrefix(target, "path/") && !strings.HasPrefix(target, "temp/")) || !validClaimKind(kind) || !validClaimType(kind, targetType) {
+	if (!strings.HasPrefix(target, "path/") && !strings.HasPrefix(target, "temp/")) || !(kind == "claim-kind/1" || kind == "claim-kind/2" || kind == "claim-kind/3" || kind == "claim-kind/4") || !validClaimType(kind, targetType) {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed claim")
 	}
 	throwTemplate := claimAssertThrowTemplate(operation, kind)
@@ -15572,7 +14158,7 @@ func methodReturnSummaryAncestor(term []byte, partition equation.Partition) bool
 }
 
 func valueAgainstType(value []byte, target typ.Type) shapeRelation {
-	return valueAgainstTypeSeen(value, target, newShapeComparison())
+	return valueAgainstTypeSeen(value, target, &shapeComparison{active: make(map[shapeRecursivePair]bool), memo: make(map[shapeRecursivePair]shapeRelation)})
 }
 
 // shapeComparison holds one structural claim comparison. Recursive aliases are
@@ -15588,13 +14174,6 @@ type shapeComparison struct {
 type shapeRecursivePair struct {
 	value  string
 	target *typ.Recursive
-}
-
-func newShapeComparison() *shapeComparison {
-	return &shapeComparison{
-		active: make(map[shapeRecursivePair]bool),
-		memo:   make(map[shapeRecursivePair]shapeRelation),
-	}
 }
 
 func valueAgainstTypeSeen(value []byte, target typ.Type, comparison *shapeComparison) shapeRelation {
@@ -16459,20 +15038,6 @@ func gradualAnySourceFactInFacts(source []byte, values []equation.Fact) ([]byte,
 	}
 }
 
-func sourceHasGradualLogicalBoundaryInFacts(source []byte, values []equation.Fact) bool {
-	root, found := gradualAnySourceFactInFacts(source, values)
-	if !found {
-		return false
-	}
-	prefix := factkey.GradualLogical.Key().String() + string(root) + "/"
-	for _, fact := range values {
-		if factkey.OwnsPrefix(prefix, fact.Key) && string(fact.Value) == string(root) {
-			return true
-		}
-	}
-	return false
-}
-
 func explicitAnySourceFactInFacts(source []byte, values []equation.Fact) ([]byte, []byte, bool) {
 	if root, found := gradualAnySourceFactInFacts(source, values); found {
 		return root, shapefact.ClaimValue(shapefact.Claim{Kind: wir.ClaimAnnotation, Target: []byte(`"any"`)}), true
@@ -16615,10 +15180,6 @@ func assignmentValueType(value []byte) string {
 	default:
 		return "unknown"
 	}
-}
-
-func validClaimKind(kind string) bool {
-	return kind == "claim-kind/1" || kind == "claim-kind/2" || kind == "claim-kind/3" || kind == "claim-kind/4"
 }
 
 // claimPayload translates the front's declared claim-kind operand into the
@@ -17070,7 +15631,7 @@ func closedDynamicWriteDiagnostic(operation equation.BoundEquation, operands map
 		return equation.Fact{}, false
 	}
 	key, keyErr := resolveCurrentValue(operands["key"], partition)
-	if keyErr != nil || dynamicKeyIsExact(key) {
+	if keyErr != nil || shapefact.IsScalarKind(key, shapefact.ScalarString) || shapefact.IsScalarKind(key, shapefact.ScalarNumber) {
 		return equation.Fact{}, false
 	}
 	value, valueErr := resolveCurrentValue(operands["value"], partition)
@@ -17153,10 +15714,6 @@ func operationIndex(operation string) (int, bool) {
 	}
 	index, err := strconv.Atoi(value)
 	return index, err == nil
-}
-
-func dynamicKeyIsExact(value []byte) bool {
-	return shapefact.IsScalarKind(value, shapefact.ScalarString) || shapefact.IsScalarKind(value, shapefact.ScalarNumber)
 }
 
 func literalValueContract(value []byte) (string, bool) {
@@ -20758,7 +19315,7 @@ func applyKernel(lexical *lexicalEvaluator, operation equation.BoundEquation, pa
 	// is applicable. The value may happen to hold a function, but that shape
 	// crossed the boundary unvalidated, so the application is refuted until a
 	// runtime type test proves the callable kind.
-	if hasCallee && !typedMethodContract && anyBoundaryCallee(operands.callee, callee, known, partition) {
+	if hasCallee && !typedMethodContract && anyBoundarySource(operands.callee, callee, known, partition) && !runtimeTypeProven(operands.callee, "function", partition) {
 		return callDiagnostic(operation, "not_callable", "callee", DiagnosticPayload{Kind: diagnosticCallNotCallable, Source: operands.display, Flags: DiagnosticAnyBoundary}), nil
 	}
 	if hasCallee && !typedMethodContract && !localCallable {
@@ -21173,14 +19730,6 @@ func anyBoundarySource(term []byte, value []byte, known bool, partition equation
 	return (known && isUnvalidatedAnyValue(value)) ||
 		sourceHasAnyBoundary(term, partition) ||
 		providerAnyResultBoundary(term, partition)
-}
-
-// anyBoundaryCallee reports whether a call is dispatched through an any/unknown
-// boundary. Callability is a runtime kind, so Lua's own type test is the
-// boundary's validator here: a proven "function" edge certifies the value can
-// be applied.
-func anyBoundaryCallee(term []byte, value []byte, known bool, partition equation.Partition) bool {
-	return anyBoundarySource(term, value, known, partition) && !runtimeTypeProven(term, "function", partition)
 }
 
 // callBoundaryAnyResult reports that an application resolves its callee through
@@ -22185,13 +20734,6 @@ func currentEpoch(term []byte, partition equation.Partition) (string, bool) {
 		return "", false
 	}
 	return factkey.BodyPrefix(epochPrefix, latest.Key), true
-}
-
-func sealedTableIdentity(operation equation.BoundEquation) []byte {
-	// Target coordinates are frozen by the artifact compiler.  Their body
-	// identity prevents equal operation ordinals in distinct lexical bodies
-	// from aliasing each other.
-	return []byte(fmt.Sprintf("sealed-table/%x/%s", operation.Target.Body, operation.Target.Name))
 }
 
 func heapIdentityFact(term, operation string, identity []byte) equation.Fact {
@@ -24134,19 +22676,6 @@ func callDiagnostic(operation equation.BoundEquation, code, subject string, payl
 	return equation.TransactionResult{Complete: true, Closure: equation.OutputClosure{Diagnostics: []equation.Fact{
 		diagnosticFact("type.call.direct."+code+"/"+operation.Target.Name+"/"+subject, payload),
 	}}}
-}
-
-func sendIsolationPayload(operation equation.Equation) ([]byte, string) {
-	for _, operand := range operation.Operands {
-		if operand.Role != equation.IndexedRole(equation.RoleFamilyArgument, 2) {
-			continue
-		}
-		if strings.HasPrefix(string(operand.Term.Encoding), "temp/") {
-			return operand.Term.Encoding, "copy fallback: object graph contains another identity that may still be aliased"
-		}
-		return operand.Term.Encoding, "copy fallback: stack-local path may have aliases across the send"
-	}
-	return nil, "copy fallback: stack-local path may have aliases across the send"
 }
 
 func indexedCallSubject(prefix string, index int) string {
