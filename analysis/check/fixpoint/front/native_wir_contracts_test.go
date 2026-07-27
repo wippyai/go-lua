@@ -20,13 +20,13 @@ return root_title`)
 		t.Fatalf("compile: %v", err)
 	}
 	var mutual int
-	for _, contract := range compilation.NativeContracts {
+	for _, contract := range compilation.nativeContracts {
 		if contract.Family == "recursive_type_identity" && strings.Contains(contract.Value, "mutual=true") {
 			mutual++
 		}
 	}
 	if mutual < 2 {
-		t.Fatalf("mutual recursive contracts = %d, want at least 2: %#v", mutual, compilation.NativeContracts)
+		t.Fatalf("mutual recursive contracts = %d, want at least 2: %#v", mutual, compilation.nativeContracts)
 	}
 }
 
@@ -49,8 +49,8 @@ return f`
 	if err != nil {
 		t.Fatalf("second compile: %v", err)
 	}
-	if !reflect.DeepEqual(first.NativeContracts, second.NativeContracts) {
-		t.Fatalf("native contracts differ across identical compilations:\nfirst=%#v\nsecond=%#v", first.NativeContracts, second.NativeContracts)
+	if !reflect.DeepEqual(first.nativeContracts, second.nativeContracts) {
+		t.Fatalf("native contracts differ across identical compilations:\nfirst=%#v\nsecond=%#v", first.nativeContracts, second.nativeContracts)
 	}
 }
 
@@ -67,7 +67,7 @@ return message`)
 		t.Fatalf("compile: %v", err)
 	}
 	var records []NativeContract
-	for _, contract := range compilation.NativeContracts {
+	for _, contract := range compilation.nativeContracts {
 		if contract.Family == "record_construction" {
 			records = append(records, contract)
 		}
@@ -91,7 +91,7 @@ return message.id`)
 		t.Fatalf("compile: %v", err)
 	}
 	var records []NativeContract
-	for _, contract := range compilation.NativeContracts {
+	for _, contract := range compilation.nativeContracts {
 		if contract.Family == "record_construction" {
 			records = append(records, contract)
 		}
@@ -114,7 +114,7 @@ return message.id`)
 		t.Fatalf("compile: %v", err)
 	}
 	var records []NativeContract
-	for _, contract := range compilation.NativeContracts {
+	for _, contract := range compilation.nativeContracts {
 		if contract.Family == "record_construction" {
 			records = append(records, contract)
 		}
@@ -140,7 +140,7 @@ return build`)
 		t.Fatalf("compile: %v", err)
 	}
 	var values []string
-	for _, contract := range compilation.NativeContracts {
+	for _, contract := range compilation.nativeContracts {
 		if contract.Family == "record_construction" {
 			values = append(values, contract.Value)
 		}

@@ -23,7 +23,7 @@ func frozenBodyNativeFacts(root Compilation) []NativeProjection {
 		if !evaluated {
 			rows = append(rows, frozenBodyOccurrenceFacts(compilation)...)
 		}
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.nested {
 			visit(child, false)
 		}
 	}

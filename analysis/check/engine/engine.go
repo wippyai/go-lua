@@ -306,7 +306,7 @@ func CheckWithImportsResolverAndGlobalsAndRelations(source string, imports, glob
 	}
 	lexical.ctx = fileContext
 	nestedFacts := publishedNestedNativeKernelFacts(compilation, lexical)
-	binding, err := bindCheckEntry(compilation.Artifact, imports)
+	binding, err := bindCheckEntry(compilation.DraftArtifact(), imports)
 	if err != nil {
 		return Result{}, err
 	}
@@ -338,7 +338,7 @@ func compileCheck(source string, resolver typeannotation.Resolver) (front.Compil
 		result.Timings.ParseBindLower = elapsed
 		return front.Compilation{}, elapsed, result, nil
 	}
-	if len(compilation.Artifact.Equations) == 0 {
+	if len(compilation.DraftArtifact().Equations) == 0 {
 		return front.Compilation{}, elapsed, Result{}, fmt.Errorf("engine: front returned an empty artifact")
 	}
 	return compilation, elapsed, Result{}, nil
@@ -352,12 +352,12 @@ func bindCheckEntry(artifact equation.Artifact, imports map[string]typ.Type) (eq
 	return equation.EntryBinding{Parameter: artifact.Equations[0].Entry, Value: value}, nil
 }
 
-func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding, lexical *lexicalEvaluator, ctx context.Context) (equation.OutputClosure, int, error) {
-	artifact := compilation.Artifact
+func evaluateCheck(compilation front.DraftsView, binding equation.EntryBinding, lexical *lexicalEvaluator, ctx context.Context) (equation.OutputClosure, int, error) {
+	artifact := compilation.DraftArtifact()
 	if err := compilation.ValidateDraftWires(); err != nil {
 		return equation.OutputClosure{}, 0, fmt.Errorf("engine: validate front draft wires: %w", err)
 	}
-	if compilation.Cyclic == nil {
+	if compilation.CyclicDraft() == nil {
 		bound, err := equation.BindEntry(artifact, binding)
 		if err != nil {
 			return equation.OutputClosure{}, 0, fmt.Errorf("engine: bind entry: %w", err)
@@ -376,7 +376,7 @@ func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding,
 		}
 		return evaluation.Closure, evaluation.Transactions, nil
 	}
-	bound, err := equation.BindCyclicEntry(*compilation.Cyclic, binding)
+	bound, err := equation.BindCyclicEntry(*compilation.CyclicDraft(), binding)
 	if err != nil {
 		return equation.OutputClosure{}, 0, fmt.Errorf("engine: bind cyclic entry: %w", err)
 	}
@@ -395,15 +395,15 @@ func evaluateCheck(compilation front.Compilation, binding equation.EntryBinding,
 	return evaluation.Closure, evaluation.Transactions, nil
 }
 
-func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, closure equation.OutputClosure, transactions int, parseElapsed, evaluateElapsed time.Duration) Result {
-	artifact := semanticArtifact(compilation.Artifact)
-	transactions -= len(compilation.Artifact.Equations) - len(artifact.Equations)
+func projectCheck(compilation front.DraftsBoundarySpansView, lexical *lexicalEvaluator, closure equation.OutputClosure, transactions int, parseElapsed, evaluateElapsed time.Duration) Result {
+	artifact := semanticArtifact(compilation.DraftArtifact())
+	transactions -= len(compilation.DraftArtifact().Equations) - len(artifact.Equations)
 	// An unbound annotation has a direct lexical diagnostic. Its unresolved
 	// reference must not also be presented as an ordinary failed type claim:
 	// no declared type witness exists to validate in the first place.
-	if len(compilation.ControlDiagnostics) != 0 {
+	if len(compilation.ControlDiagnosticDrafts()) != 0 {
 		unresolvedTypes := make(map[string]bool)
-		for _, diagnostic := range compilation.ControlDiagnostics {
+		for _, diagnostic := range compilation.ControlDiagnosticDrafts() {
 			if diagnostic.Code != "type.reference.unresolved" {
 				continue
 			}
@@ -439,9 +439,9 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 		diagnosticSpans[key] = span
 	}
 	diagnosticSpans = lexical.calleeReturnContractSpans(artifact, closure, diagnosticSpans)
-	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpans, compilation.CallSpans, compilation.BranchSpans, compilation.ReturnSpans, lexical.lifecycleEvidence, lexical.selectEvidence)
+	published := publishedDiagnostics(artifact, closure, diagnosticSpans, compilation.ClaimTargetSpanIndex(), compilation.CallSpanIndex(), compilation.BranchSpanIndex(), compilation.ReturnSpanIndex(), lexical.lifecycleEvidence, lexical.selectEvidence)
 	published = mergeChildPublishedDiagnostics(published, lexical.childPublished)
-	for _, diagnostic := range compilation.ControlDiagnostics {
+	for _, diagnostic := range compilation.ControlDiagnosticDrafts() {
 		fact := equation.Fact{Key: diagnostic.Key, Value: []byte(diagnostic.Message)}
 		closure.Diagnostics = append(closure.Diagnostics, fact)
 		if diagnosticSpans == nil {
@@ -484,18 +484,18 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 	// The escape summary is computed last and reads only its own evaluated
 	// outcomes, so it observes the finalized module closure without altering any
 	// field already projected above.
-	functionEscapes, allocatedReturns, functionReturnTuples, functionReturnTemplates, functionConditionalReturns, functionForwardedReturns := lexical.escapeSummaryForExport(compilation.Body, closure)
+	functionEscapes, allocatedReturns, functionReturnTuples, functionReturnTemplates, functionConditionalReturns, functionForwardedReturns := lexical.escapeSummaryForExport(compilation.BodyID(), closure)
 	return Result{
 		Artifact: artifact, Values: publishedValues(artifact, closure.Values),
 		Outcomes: outcomes, Diagnostics: publicDiagnostics,
 		ReturnCandidates:           cloneFacts(closure.Outcomes),
 		ValueFacts:                 valueFacts,
-		Native:                     publishedNativeFacts(compilation.Artifact, valueFacts, outcomes, publicDiagnostics),
+		Native:                     publishedNativeFacts(compilation.DraftArtifact(), valueFacts, outcomes, publicDiagnostics),
 		PublishedDiagnostics:       published,
-		PolicyDiagnostics:          publishedPolicyDiagnostics(compilation.PolicyDiagnostics),
+		PolicyDiagnostics:          publishedPolicyDiagnostics(compilation.PolicyDiagnosticDrafts()),
 		DiagnosticSpans:            diagnosticSpans,
 		Placement:                  placement,
-		TypeDefinitions:            cloneTypeDefinitions(compilation.TypeDefinitions),
+		TypeDefinitions:            cloneTypeDefinitions(compilation.ResolvedTypeDefinitions()),
 		FunctionEscapes:            functionEscapes,
 		FunctionAllocatedReturns:   allocatedReturns,
 		FunctionReturnTuples:       functionReturnTuples,
@@ -514,15 +514,15 @@ func projectCheck(compilation front.Compilation, lexical *lexicalEvaluator, clos
 // kernels with the closed entry preserves that separation: declared entry
 // types and local facts are visible, caller-owned values are not invented, and
 // no serializer re-walks WIR to recover the result.
-func publishedNestedNativeKernelFacts(root front.Compilation, lexical *lexicalEvaluator) []equation.Fact {
+func publishedNestedNativeKernelFacts(root front.GraphView, lexical *lexicalEvaluator) []equation.Fact {
 	var visit func(front.Compilation)
 	visit = func(compilation front.Compilation) {
 		_, _, _ = lexical.evaluate(compilation, []byte(entryValue))
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.NestedCompilations() {
 			visit(child)
 		}
 	}
-	for _, child := range root.Nested {
+	for _, child := range root.NestedCompilations() {
 		visit(child)
 	}
 	out := make([]equation.Fact, 0, len(lexical.nativeKernelFacts))
@@ -636,10 +636,10 @@ func rootPublishedDiagnostics(artifact equation.Artifact, diagnostics []equation
 // authored source coordinate. The compilation is the single span authority: its
 // front-published maps carry the operation anchors, and its WIR carries the
 // constructor entries a member-resolved fact is stated at.
-func diagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact) map[string]wir.Span {
-	claimSpans, callSpans := compilation.ClaimSpans, compilation.CallSpans
-	branchSpans, effectSpans := compilation.BranchSpans, compilation.EffectSpans
-	expressionSpans, returnSpans := compilation.ExpressionSpans, compilation.ReturnSpans
+func diagnosticSpans(compilation front.DraftsSpansView, diagnostics []equation.Fact) map[string]wir.Span {
+	claimSpans, callSpans := compilation.ClaimSpanIndex(), compilation.CallSpanIndex()
+	branchSpans, effectSpans := compilation.BranchSpanIndex(), compilation.EffectSpanIndex()
+	expressionSpans, returnSpans := compilation.ExpressionSpanIndex(), compilation.ReturnSpanIndex()
 	if (len(claimSpans) == 0 && len(callSpans) == 0 && len(branchSpans) == 0 && len(effectSpans) == 0 && len(expressionSpans) == 0 && len(returnSpans) == 0) || len(diagnostics) == 0 {
 		return nil
 	}
@@ -767,8 +767,8 @@ func diagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact)
 // anchor only when its closed table literal has a proven refuting member. The
 // member coordinates come from WIR TableEntry metadata; no source tree is
 // revisited and an open/malformed literal retains the ordinary operation span.
-func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact, spans map[string]wir.Span) {
-	if len(compilation.TableMemberValueSpans) == 0 || len(diagnostics) == 0 || spans == nil {
+func structuralMemberDiagnosticSpans(compilation front.DraftsSpansView, diagnostics []equation.Fact, spans map[string]wir.Span) {
+	if len(compilation.TableMemberValueSpanIndex()) == 0 || len(diagnostics) == 0 || spans == nil {
 		return
 	}
 	for _, diagnostic := range diagnostics {
@@ -777,7 +777,7 @@ func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics 
 			continue
 		}
 		var operation equation.Equation
-		for _, candidate := range compilation.Artifact.Equations {
+		for _, candidate := range compilation.DraftArtifact().Equations {
 			if candidate.Target.Name == name && candidate.Occurrence.Kind == "claim" {
 				operation = candidate
 				break
@@ -790,7 +790,7 @@ func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics 
 		if err != nil {
 			continue
 		}
-		members := compilation.TableMemberValueSpans[string(operands["value"])]
+		members := compilation.TableMemberValueSpanIndex()[string(operands["value"])]
 		if len(members) == 0 {
 			continue
 		}
@@ -805,7 +805,7 @@ func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics 
 			}
 		}
 	}
-	structuralReturnMemberDiagnosticSpans(compilation, diagnostics, spans, compilation.TableMemberValueSpans)
+	structuralReturnMemberDiagnosticSpans(compilation, diagnostics, spans, compilation.TableMemberValueSpanIndex())
 }
 
 // structuralReturnMemberDiagnosticSpans anchors a member-resolved return
@@ -814,12 +814,12 @@ func structuralMemberDiagnosticSpans(compilation front.Compilation, diagnostics 
 // recovered from the same WIR table entries the assignment path reads rather
 // than from a second source lookup. A returned value that is not a literal in
 // this body, and a suffix absent from that literal, keep the publication span.
-func structuralReturnMemberDiagnosticSpans(compilation front.Compilation, diagnostics []equation.Fact, spans map[string]wir.Span, literalMembers map[string]map[string]wir.Span) {
+func structuralReturnMemberDiagnosticSpans(compilation front.DraftsSpansView, diagnostics []equation.Fact, spans map[string]wir.Span, literalMembers map[string]map[string]wir.Span) {
 	if len(literalMembers) == 0 {
 		return
 	}
 	publications := make(map[string]equation.Equation)
-	for _, candidate := range compilation.Artifact.Equations {
+	for _, candidate := range compilation.DraftArtifact().Equations {
 		if candidate.Occurrence.Kind == "publication" {
 			publications[candidate.Target.Name] = candidate
 		}
@@ -852,7 +852,7 @@ func structuralReturnMemberDiagnosticSpans(compilation front.Compilation, diagno
 				break
 			}
 		}
-		if span, published := compilation.TableMemberValueSpans[term][suffix]; published {
+		if span, published := compilation.TableMemberValueSpanIndex()[term][suffix]; published {
 			spans[diagnostic.Key] = span
 		}
 	}
@@ -1562,10 +1562,10 @@ func (l *lexicalEvaluator) declaredReturnSpan(values []equation.Fact, callee []b
 		return wir.Span{}, false
 	}
 	compilation, admitted := l.byPrototype[handle.Prototype]
-	if !admitted || compilation.WIR == nil {
+	if !admitted || compilation.LoweredBody() == nil {
 		return wir.Span{}, false
 	}
-	declared := compilation.WIR.DeclaredReturnSpans()
+	declared := compilation.LoweredBody().DeclaredReturnSpans()
 	if index < 0 || index >= len(declared) || !declared[index].Valid() {
 		return wir.Span{}, false
 	}
@@ -1587,7 +1587,7 @@ func closureHandleFromValues(values []equation.Fact, term []byte) (closureHandle
 		return closureHandle{}, false
 	}
 	var handle closureHandle
-	return handle, json.Unmarshal(encoded, &handle) == nil && validClosureHandle(handle)
+	return handle, front.DecodeRequiredWireJSON(encoded, &handle) == nil && validClosureHandle(handle)
 }
 
 // artifactEquation finds one operation by name and occurrence kind.
@@ -2332,15 +2332,15 @@ func (l *lexicalEvaluator) setTypeOrigins(root front.Compilation) {
 	origins := make(map[string]typ.Type)
 	var collect func(front.Compilation)
 	collect = func(compilation front.Compilation) {
-		if compilation.WIR != nil {
-			compilation.WIR.ForEachType(func(value typ.Type) bool {
+		if compilation.LoweredBody() != nil {
+			compilation.LoweredBody().ForEachType(func(value typ.Type) bool {
 				if encoded, ok := shapefact.EncodeTarget(value); ok {
 					origins[string(encoded)] = value
 				}
 				return true
 			})
 		}
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.NestedCompilations() {
 			collect(child)
 		}
 	}
@@ -2419,7 +2419,7 @@ func (l *lexicalEvaluator) hasVarargBoundary(prototype string) bool {
 	if !exists {
 		return false
 	}
-	for _, parameter := range child.Boundary.Parameters {
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg {
 			return true
 		}
@@ -2432,7 +2432,7 @@ func (l *lexicalEvaluator) hasClaim(prototype string) bool {
 	if !exists {
 		return true
 	}
-	for _, item := range child.Artifact.Equations {
+	for _, item := range child.DraftArtifact().Equations {
 		if item.Occurrence.Kind == "claim" {
 			return true
 		}
@@ -2450,7 +2450,7 @@ func (l *lexicalEvaluator) hasRuntimeCastClaim(prototype string) bool {
 	if !exists {
 		return false
 	}
-	for _, item := range child.Artifact.Equations {
+	for _, item := range child.DraftArtifact().Equations {
 		if item.Occurrence.Kind != "claim" {
 			continue
 		}
@@ -2468,7 +2468,7 @@ func (l *lexicalEvaluator) hasTableAllocation(prototype string) bool {
 	if !exists {
 		return true
 	}
-	for _, item := range child.Artifact.Equations {
+	for _, item := range child.DraftArtifact().Equations {
 		if item.Occurrence.Kind != "object-materialization" {
 			continue
 		}
@@ -2496,29 +2496,29 @@ func (l *lexicalEvaluator) hasTableAllocation(prototype string) bool {
 // keeps its authority here rather than degrading to a Top caller result. A
 // recursive call graph remains separately gated by the caller's recursive
 // demand.
-func hasProjectableTableResult(child front.Compilation) bool {
-	if child.WIR == nil || len(child.Boundary.DeclaredReturns) > 1 {
+func hasProjectableTableResult(child front.BoundaryGraphView) bool {
+	if child.LoweredBody() == nil || len(child.BodyBoundary().DeclaredReturns) > 1 {
 		return false
 	}
-	if len(child.Boundary.DeclaredReturns) == 0 {
+	if len(child.BodyBoundary().DeclaredReturns) == 0 {
 		return true
 	}
-	return !typ.ContainsRecursive(child.WIR.Type(child.Boundary.DeclaredReturns[0]))
+	return !typ.ContainsRecursive(child.LoweredBody().Type(child.BodyBoundary().DeclaredReturns[0]))
 }
 
 func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 	table := interproc.NewProjectedTable()
-	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), parameterWrites: make(map[string]map[string]bool), heapMutators: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), captureWrites: make(map[string]map[string]bool), typeDefinitions: cloneTypeDefinitions(root.TypeDefinitions), typeFieldSpans: root.TypeFieldSpans}
+	l := &lexicalEvaluator{byPrototype: make(map[string]front.Compilation), byBody: make(map[equation.BodyID]front.Compilation), requiresBody: make(map[string]bool), parameterWrites: make(map[string]map[string]bool), heapMutators: make(map[string]bool), diagnosticSpans: make(map[string]wir.Span), callSpans: make(map[string]wir.Span), lifecycleEvidence: make(map[string][]DiagnosticEvidence), selectEvidence: make(map[string][]DiagnosticEvidence), childPublished: make(map[string]PublishedDiagnostic), ctx: context.Background(), table: table, coordinator: interproc.NewRecursionCoordinator(table, 256), admissions: make(map[string]lexicalSCCAdmission), captureWrites: make(map[string]map[string]bool), typeDefinitions: cloneTypeDefinitions(root.ResolvedTypeDefinitions()), typeFieldSpans: root.TypeFieldSpanIndex()}
 	var add func(front.Compilation)
 	add = func(compilation front.Compilation) {
-		l.byBody[compilation.Body] = compilation
-		if compilation.PrototypeName != "" {
-			l.byPrototype[compilation.PrototypeName] = compilation
+		l.byBody[compilation.BodyID()] = compilation
+		if compilation.PrototypeDisplayName() != "" {
+			l.byPrototype[compilation.PrototypeDisplayName()] = compilation
 		}
-		for name, span := range compilation.CallSpans {
-			l.callSpans[lexicalSpanKey(compilation.Body, name)] = span
+		for name, span := range compilation.CallSpanIndex() {
+			l.callSpans[lexicalSpanKey(compilation.BodyID(), name)] = span
 		}
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.NestedCompilations() {
 			add(child)
 		}
 	}
@@ -2531,25 +2531,25 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 		diagnosticRelay := compilationRequiresDiagnosticPublication(compilation)
 		captureWrites := capturedMemberWriteTerms(compilation)
 		parameterWrites := parameterMemberWriteTerms(compilation)
-		required := len(compilation.Boundary.Captures) != 0 || diagnosticRelay
+		required := len(compilation.BodyBoundary().Captures) != 0 || diagnosticRelay
 		// A body that statically writes a member of one of its own captures owns
 		// an effect the caller can observe. Its writeback is exactly the capture
 		// lens this evaluator already transports, so it keeps body admission
 		// rather than degrading to the fail-closed revocation.
-		if lexicalRequiresHeapTransport(compilation) && !compilation.RebindsBoundary && !diagnosticRelay && len(captureWrites) == 0 {
+		if lexicalRequiresHeapTransport(compilation) && !compilation.BoundaryRebound() && !diagnosticRelay && len(captureWrites) == 0 {
 			required = false
 		}
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.NestedCompilations() {
 			required = mark(child) || required
 		}
-		if compilation.PrototypeName != "" {
+		if compilation.PrototypeDisplayName() != "" {
 			if len(captureWrites) != 0 {
-				l.captureWrites[compilation.PrototypeName] = captureWrites
+				l.captureWrites[compilation.PrototypeDisplayName()] = captureWrites
 			}
 			if len(parameterWrites) != 0 {
-				l.parameterWrites[compilation.PrototypeName] = parameterWrites
+				l.parameterWrites[compilation.PrototypeDisplayName()] = parameterWrites
 			}
-			l.requiresBody[compilation.PrototypeName] = required
+			l.requiresBody[compilation.PrototypeDisplayName()] = required
 		}
 		return required
 	}
@@ -2561,7 +2561,7 @@ func newLexicalEvaluator(root front.Compilation) *lexicalEvaluator {
 // its equation-owned diagnostic templates needs the body's closed entry facts.
 // This is a template property, not a source scan: the child remains dormant
 // unless its local capability is actually applied by the enclosing closure.
-func compilationRequiresDiagnosticPublication(compilation front.Compilation) bool {
+func compilationRequiresDiagnosticPublication(compilation front.DraftsBoundaryGraphView) bool {
 	if forwardedStaticMemberContractBoundary(compilation) {
 		return true
 	}
@@ -2572,7 +2572,7 @@ func compilationRequiresDiagnosticPublication(compilation front.Compilation) boo
 	// relay shape; arbitrary calls, branches, writes, and dynamic lookup remain
 	// demand-driven.
 	memberRelay := false
-	for _, operation := range compilation.Artifact.Equations {
+	for _, operation := range compilation.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "entry", "external-call", "call-results":
 			continue
@@ -2608,19 +2608,19 @@ func compilationRequiresDiagnosticPublication(compilation front.Compilation) boo
 // only effectful use of one formal is forwarding it to a static member of
 // another formal. Admission carries only the caller's completed entry facts to
 // the ordinary call-contract kernel; it does not infer a contract from source.
-func forwardedStaticMemberContractBoundary(compilation front.Compilation) bool {
-	if compilation.WIR == nil || compilation.Cyclic != nil || len(compilation.Boundary.Parameters) == 0 {
+func forwardedStaticMemberContractBoundary(compilation front.DraftsBoundaryGraphView) bool {
+	if compilation.LoweredBody() == nil || compilation.CyclicDraft() != nil || len(compilation.BodyBoundary().Parameters) == 0 {
 		return false
 	}
-	formals := make(map[string]bool, len(compilation.Boundary.Parameters))
-	for _, parameter := range compilation.Boundary.Parameters {
+	formals := make(map[string]bool, len(compilation.BodyBoundary().Parameters))
+	for _, parameter := range compilation.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Symbol == 0 {
 			return false
 		}
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
 	found := false
-	for _, operation := range compilation.Artifact.Equations {
+	for _, operation := range compilation.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "entry", "allocation-template", "object-materialization", "external-call", "call-results", "publication":
 			continue
@@ -2672,12 +2672,12 @@ func forwardedStaticMemberContractBoundary(compilation front.Compilation) bool {
 // cells; once this body runs, that shape can no longer prove any member
 // absent. Detection is keyed to the exact captured boundary term, so a write
 // through a parameter or a temporary is not part of the relation.
-func capturedMemberWriteTerms(compilation front.Compilation) map[string]bool {
-	if len(compilation.Boundary.Captures) == 0 {
+func capturedMemberWriteTerms(compilation front.DraftsBoundaryView) map[string]bool {
+	if len(compilation.BodyBoundary().Captures) == 0 {
 		return nil
 	}
-	captured := make(map[string]bool, len(compilation.Boundary.Captures))
-	for _, capture := range compilation.Boundary.Captures {
+	captured := make(map[string]bool, len(compilation.BodyBoundary().Captures))
+	for _, capture := range compilation.BodyBoundary().Captures {
 		captured[boundaryTerm(capture.Symbol)] = true
 	}
 	return memberWriteRoots(compilation, captured)
@@ -2700,7 +2700,7 @@ func (l *lexicalEvaluator) formalMemberWriteEscape(handle closureHandle, operand
 	if operands.receiver != nil {
 		arguments = append([][]byte{operands.receiver}, arguments...)
 	}
-	if operands.spread || len(arguments) != len(child.Boundary.Parameters) {
+	if operands.spread || len(arguments) != len(child.BodyBoundary().Parameters) {
 		return false
 	}
 	return len(writtenFormalIdentitySources(l, child, handle, arguments, nil, partition)) != 0
@@ -2710,10 +2710,10 @@ func (l *lexicalEvaluator) formalMemberWriteEscape(handle closureHandle, operand
 // binds, and withholds the whole map when two of those cells share one heap
 // identity. Capture sources pass through unchanged: a capture already spells
 // the same term on both sides of the boundary.
-func writtenFormalIdentitySources(l *lexicalEvaluator, child front.Compilation, handle closureHandle, arguments [][]byte, base map[string][]byte, partition equation.Partition) map[string][]byte {
+func writtenFormalIdentitySources(l *lexicalEvaluator, child front.BoundaryView, handle closureHandle, arguments [][]byte, base map[string][]byte, partition equation.Partition) map[string][]byte {
 	written := l.parameterWrites[handle.Prototype]
 	sources := make(map[string][]byte, len(base))
-	for index, capture := range child.Boundary.Captures {
+	for index, capture := range child.BodyBoundary().Captures {
 		if index < len(handle.Captures) {
 			sources[boundaryTerm(capture.Symbol)] = []byte(handle.Captures[index])
 		}
@@ -2721,9 +2721,9 @@ func writtenFormalIdentitySources(l *lexicalEvaluator, child front.Compilation, 
 	if len(written) == 0 {
 		return sources
 	}
-	seen := make(map[string]bool, len(child.Boundary.Parameters))
-	formals := make(map[string][]byte, len(child.Boundary.Parameters))
-	for index, parameter := range child.Boundary.Parameters {
+	seen := make(map[string]bool, len(child.BodyBoundary().Parameters))
+	formals := make(map[string][]byte, len(child.BodyBoundary().Parameters))
+	for index, parameter := range child.BodyBoundary().Parameters {
 		term := boundaryTerm(parameter.Symbol)
 		if !written[term] || index >= len(arguments) || !strings.HasPrefix(string(arguments[index]), "path/") {
 			continue
@@ -2747,18 +2747,18 @@ func writtenFormalIdentitySources(l *lexicalEvaluator, child front.Compilation, 
 // parameterMemberWriteTerms names the formals whose members this body writes.
 // Lua binds a table argument by reference, so such a write is a write to the
 // caller's own table and is as observable as a capture write.
-func parameterMemberWriteTerms(compilation front.Compilation) map[string]bool {
-	if len(compilation.Boundary.Parameters) == 0 {
+func parameterMemberWriteTerms(compilation front.DraftsBoundaryView) map[string]bool {
+	if len(compilation.BodyBoundary().Parameters) == 0 {
 		return nil
 	}
-	formals := make(map[string]bool, len(compilation.Boundary.Parameters))
-	for _, parameter := range compilation.Boundary.Parameters {
+	formals := make(map[string]bool, len(compilation.BodyBoundary().Parameters))
+	for _, parameter := range compilation.BodyBoundary().Parameters {
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
 	written := memberWriteRoots(compilation, formals)
 	formalMemberWrites := len(written) != 0
-	captures := make(map[string]bool, len(compilation.Boundary.Captures))
-	for _, capture := range compilation.Boundary.Captures {
+	captures := make(map[string]bool, len(compilation.BodyBoundary().Captures))
+	for _, capture := range compilation.BodyBoundary().Captures {
 		captures[boundaryTerm(capture.Symbol)] = true
 	}
 	// A formal stored into a member address escapes with that container: the
@@ -2767,7 +2767,7 @@ func parameterMemberWriteTerms(compilation front.Compilation) map[string]bool {
 	// it. A formal or a captured root is caller-reachable by construction; once
 	// the body already writes a formal's member the whole body is under that
 	// lens, so every stored formal joins it.
-	for _, item := range compilation.Artifact.Equations {
+	for _, item := range compilation.DraftArtifact().Equations {
 		if item.Occurrence.Kind != "path-replacement" && item.Occurrence.Kind != "environment-write" {
 			continue
 		}
@@ -2796,7 +2796,7 @@ func parameterMemberWriteTerms(compilation front.Compilation) map[string]bool {
 // store states it as the container it addresses. Both reach the same table
 // through the same reference, so both are the same caller-observable effect
 // and the key's spelling does not decide whether the effect crosses.
-func memberWriteRoots(compilation front.Compilation, roots map[string]bool) map[string]bool {
+func memberWriteRoots(compilation front.DraftsView, roots map[string]bool) map[string]bool {
 	var written map[string]bool
 	record := func(root []byte) {
 		if !roots[string(root)] {
@@ -2807,7 +2807,7 @@ func memberWriteRoots(compilation front.Compilation, roots map[string]bool) map[
 		}
 		written[string(root)] = true
 	}
-	for _, item := range compilation.Artifact.Equations {
+	for _, item := range compilation.DraftArtifact().Equations {
 		switch item.Occurrence.Kind {
 		case "path-replacement", "environment-write":
 			target, found := artifactOperand(item.Operands, "target")
@@ -2844,11 +2844,11 @@ func (l *lexicalEvaluator) capturedMemberWriteInvalidations(handle closureHandle
 		return nil
 	}
 	child, known := l.byPrototype[handle.Prototype]
-	if !known || len(child.Boundary.Captures) != len(handle.Captures) {
+	if !known || len(child.BodyBoundary().Captures) != len(handle.Captures) {
 		return nil
 	}
 	var facts []equation.Fact
-	for index, capture := range child.Boundary.Captures {
+	for index, capture := range child.BodyBoundary().Captures {
 		if !written[boundaryTerm(capture.Symbol)] {
 			continue
 		}
@@ -2874,8 +2874,8 @@ func (l *lexicalEvaluator) capturedMemberWriteInvalidations(handle closureHandle
 	return facts
 }
 
-func lexicalRequiresHeapTransport(compilation front.Compilation) bool {
-	for _, item := range compilation.Artifact.Equations {
+func lexicalRequiresHeapTransport(compilation front.DraftsView) bool {
+	for _, item := range compilation.DraftArtifact().Equations {
 		switch item.Occurrence.Kind {
 		case "apply", "external-call", "index-mutation", "path-replacement", "path-invalidation":
 			return true
@@ -2884,21 +2884,21 @@ func lexicalRequiresHeapTransport(compilation front.Compilation) bool {
 	return false
 }
 
-func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []byte) (equation.OutputClosure, int, error) {
-	if l == nil || !compilation.Body.Valid() || len(compilation.Artifact.Equations) == 0 {
+func (l *lexicalEvaluator) evaluate(compilation front.DraftsBoundaryView, entryValue []byte) (equation.OutputClosure, int, error) {
+	if l == nil || !compilation.BodyID().Valid() || len(compilation.DraftArtifact().Equations) == 0 {
 		return equation.OutputClosure{}, 0, fmt.Errorf("engine: incomplete lexical body admission")
 	}
 	if err := compilation.ValidateDraftWires(); err != nil {
 		return equation.OutputClosure{}, 0, fmt.Errorf("engine: validate lexical front draft wires: %w", err)
 	}
-	entry := compilation.Artifact.Equations[0].Entry
+	entry := compilation.DraftArtifact().Equations[0].Entry
 	binding := equation.EntryBinding{Parameter: entry, Value: append([]byte(nil), entryValue...)}
-	if compilation.Cyclic == nil {
-		bound, err := equation.BindEntry(compilation.Artifact, binding)
+	if compilation.CyclicDraft() == nil {
+		bound, err := equation.BindEntry(compilation.DraftArtifact(), binding)
 		if err != nil {
 			return equation.OutputClosure{}, 0, fmt.Errorf("engine: bind lexical entry: %w", err)
 		}
-		kernelRegistry, err := registry(l, importedResultPaths(compilation.Artifact))
+		kernelRegistry, err := registry(l, importedResultPaths(compilation.DraftArtifact()))
 		if err != nil {
 			return equation.OutputClosure{}, 0, err
 		}
@@ -2913,11 +2913,11 @@ func (l *lexicalEvaluator) evaluate(compilation front.Compilation, entryValue []
 		l.recordNativeKernelFacts(evaluation.Closure.Values)
 		return evaluation.Closure, evaluation.Transactions, nil
 	}
-	bound, err := equation.BindCyclicEntry(*compilation.Cyclic, binding)
+	bound, err := equation.BindCyclicEntry(*compilation.CyclicDraft(), binding)
 	if err != nil {
 		return equation.OutputClosure{}, 0, fmt.Errorf("engine: bind lexical cyclic entry: %w", err)
 	}
-	kernelRegistry, err := cyclicRegistry(l, importedResultPaths(compilation.Artifact))
+	kernelRegistry, err := cyclicRegistry(l, importedResultPaths(compilation.DraftArtifact()))
 	if err != nil {
 		return equation.OutputClosure{}, 0, err
 	}
@@ -2966,9 +2966,9 @@ func (l *lexicalEvaluator) recordNativeKernelFacts(values []equation.Fact) {
 // A called child contributes its guarded native descriptor rows to the caller
 // closure at the call transaction, just as its return and placement rows do.
 // The declared family set keeps arbitrary child-local values private.
-func nativeKernelProjectionFacts(child front.Compilation, occurrence string, values []equation.Fact) []equation.Fact {
+func nativeKernelProjectionFacts(child front.DraftsBoundaryView, occurrence string, values []equation.Fact) []equation.Fact {
 	var out []equation.Fact
-	anchors := newNativeAnchors(child.Artifact)
+	anchors := newNativeAnchors(child.DraftArtifact())
 	for index, fact := range values {
 		family, declared := factkey.Lookup(fact.Key)
 		if !declared {
@@ -2989,7 +2989,7 @@ func nativeKernelProjectionFacts(child front.Compilation, occurrence string, val
 			key := factkey.BuildKey(
 				factkey.NativeProjection,
 				[]factkey.Part{
-					factkey.OpaquePart(fmt.Sprintf("%x", child.Body)),
+					factkey.OpaquePart(fmt.Sprintf("%x", child.BodyID())),
 					factkey.OpaquePart(fmt.Sprintf("%08d", index)),
 				},
 				occurrence,
@@ -3162,7 +3162,7 @@ func decodeChildEntryWire(value []byte) (childEntryWire, error) {
 			continue
 		}
 		var wire childEntryWire
-		if err := json.Unmarshal(value[len(prefix):], &wire); err != nil || wire.Version != version {
+		if err := front.DecodeRequiredWireJSON(value[len(prefix):], &wire); err != nil || wire.Version != version {
 			return childEntryWire{}, fmt.Errorf("engine: malformed child entry wire")
 		}
 		if err := validateChildEntryWire(&wire); err != nil {
@@ -3445,19 +3445,19 @@ func declaredIndexableContainer(value typ.Type) bool {
 
 // declaredBoundaryTypes indexes the declared type of every boundary cell of a
 // body by its entry term.
-func declaredBoundaryTypes(child front.Compilation) map[string]typ.Type {
-	if child.WIR == nil {
+func declaredBoundaryTypes(child front.BoundaryGraphView) map[string]typ.Type {
+	if child.LoweredBody() == nil {
 		return nil
 	}
-	declared := make(map[string]typ.Type, len(child.Boundary.Parameters)+len(child.Boundary.Captures))
-	for _, parameter := range child.Boundary.Parameters {
+	declared := make(map[string]typ.Type, len(child.BodyBoundary().Parameters)+len(child.BodyBoundary().Captures))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Symbol != 0 && parameter.Type != 0 {
-			declared[boundaryTerm(parameter.Symbol)] = child.WIR.Type(parameter.Type)
+			declared[boundaryTerm(parameter.Symbol)] = child.LoweredBody().Type(parameter.Type)
 		}
 	}
-	for _, capture := range child.Boundary.Captures {
+	for _, capture := range child.BodyBoundary().Captures {
 		if capture.Symbol != 0 && capture.Type != 0 {
-			declared[boundaryTerm(capture.Symbol)] = child.WIR.Type(capture.Type)
+			declared[boundaryTerm(capture.Symbol)] = child.LoweredBody().Type(capture.Type)
 		}
 	}
 	return declared
@@ -3514,7 +3514,7 @@ func closureHandleFor(term []byte, partition equation.Partition) (closureHandle,
 		return closureHandle{}, false
 	}
 	var handle closureHandle
-	return handle, json.Unmarshal(fact.Value, &handle) == nil && validClosureHandle(handle)
+	return handle, front.DecodeRequiredWireJSON(fact.Value, &handle) == nil && validClosureHandle(handle)
 }
 
 // memberCellForTerm resolves the final static member through its current
@@ -3565,7 +3565,7 @@ func memberClosuresFor(term []byte, partition equation.Partition) []memberClosur
 			continue
 		}
 		var wire memberClosureWire
-		if json.Unmarshal(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
+		if front.DecodeRequiredWireJSON(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
 			continue
 		}
 		prior, exists := bySuffix[wire.Suffix]
@@ -3662,7 +3662,7 @@ func returnMemberClosures(term []byte, partition equation.Partition) []memberClo
 			continue
 		}
 		var handle closureHandle
-		if json.Unmarshal(fact.Value, &handle) != nil || !validClosureHandle(handle) {
+		if front.DecodeRequiredWireJSON(fact.Value, &handle) != nil || !validClosureHandle(handle) {
 			continue
 		}
 		if prior, exists := bySuffix[suffix]; exists && prior.key > fact.Key {
@@ -3845,24 +3845,24 @@ func indexAdmissionBody(child front.Compilation) admissionBodyIndex {
 	index := admissionBodyIndex{
 		child:          child,
 		ready:          true,
-		operations:     child.Artifact.Equations,
-		declaredSeeded: child.WIR != nil,
+		operations:     child.DraftArtifact().Equations,
+		declaredSeeded: child.LoweredBody() != nil,
 	}
-	boundary := make(admissionBoundarySet, 0, len(child.Boundary.Parameters)+len(child.Boundary.Captures))
-	for _, operation := range child.Artifact.Equations {
+	boundary := make(admissionBoundarySet, 0, len(child.BodyBoundary().Parameters)+len(child.BodyBoundary().Captures))
+	for _, operation := range child.DraftArtifact().Equations {
 		index.occurrences.include(operation.Occurrence.Kind)
 	}
-	index.explicitAnySeeds = make([]entrySeed, 0, len(child.Boundary.Parameters))
-	index.explicitAnySeeded = child.WIR != nil && len(child.Boundary.Parameters) != 0
-	for _, parameter := range child.Boundary.Parameters {
+	index.explicitAnySeeds = make([]entrySeed, 0, len(child.BodyBoundary().Parameters))
+	index.explicitAnySeeded = child.LoweredBody() != nil && len(child.BodyBoundary().Parameters) != 0
+	for _, parameter := range child.BodyBoundary().Parameters {
 		term := boundaryTerm(parameter.Symbol)
 		boundary = append(boundary, term)
-		if child.WIR == nil || parameter.Vararg || parameter.Type == 0 {
+		if child.LoweredBody() == nil || parameter.Vararg || parameter.Type == 0 {
 			index.declaredSeeded = false
 			index.explicitAnySeeded = false
 			continue
 		}
-		declared := child.WIR.Type(parameter.Type)
+		declared := child.LoweredBody().Type(parameter.Type)
 		if declared == nil {
 			index.declaredSeeded = false
 		}
@@ -3880,16 +3880,16 @@ func indexAdmissionBody(child front.Compilation) admissionBodyIndex {
 		})
 	}
 	index.formals = boundary
-	index.formalSeedsReady = index.declaredSeeded && len(child.Boundary.Parameters) == 0
-	if len(index.explicitAnySeeds) != len(child.Boundary.Parameters) {
+	index.formalSeedsReady = index.declaredSeeded && len(child.BodyBoundary().Parameters) == 0
+	if len(index.explicitAnySeeds) != len(child.BodyBoundary().Parameters) {
 		index.explicitAnySeeded = false
 	}
-	for _, capture := range child.Boundary.Captures {
+	for _, capture := range child.BodyBoundary().Captures {
 		term := boundaryTerm(capture.Symbol)
 		boundary = append(boundary, term)
 	}
-	index.formals = boundary[:len(child.Boundary.Parameters)]
-	index.captures = boundary[len(child.Boundary.Parameters):]
+	index.formals = boundary[:len(child.BodyBoundary().Parameters)]
+	index.captures = boundary[len(child.BodyBoundary().Parameters):]
 	return index
 }
 
@@ -3897,18 +3897,18 @@ func indexAdmissionBody(child front.Compilation) admissionBodyIndex {
 // body. Closure allocations may revisit that body, but its boundary and
 // occurrence inventory are compilation facts and are indexed only once.
 func (l *lexicalEvaluator) admissionBody(child front.Compilation) admissionBodyIndex {
-	if l == nil || child.Body == (equation.BodyID{}) {
+	if l == nil || child.BodyID() == (equation.BodyID{}) {
 		return indexAdmissionBody(child)
 	}
-	if l.admissionBodyOne != nil && l.admissionBodyID == child.Body {
+	if l.admissionBodyOne != nil && l.admissionBodyID == child.BodyID() {
 		return *l.admissionBodyOne
 	}
-	if index, found := l.admissionBodies[child.Body]; found {
+	if index, found := l.admissionBodies[child.BodyID()]; found {
 		return *index
 	}
 	index := indexAdmissionBody(child)
 	if l.admissionBodyOne == nil {
-		l.admissionBodyID = child.Body
+		l.admissionBodyID = child.BodyID()
 		l.admissionBodyOne = &index
 		return index
 	}
@@ -3916,7 +3916,7 @@ func (l *lexicalEvaluator) admissionBody(child front.Compilation) admissionBodyI
 		l.admissionBodies = make(map[equation.BodyID]*admissionBodyIndex)
 		l.admissionBodies[l.admissionBodyID] = l.admissionBodyOne
 	}
-	l.admissionBodies[child.Body] = &index
+	l.admissionBodies[child.BodyID()] = &index
 	return index
 }
 
@@ -3924,16 +3924,16 @@ func (l *lexicalEvaluator) admissionBody(child front.Compilation) admissionBodyI
 // after descriptor selection, so a later allocation of the same catalog body
 // cannot repeat declared-type encoding.
 func (l *lexicalEvaluator) rememberAdmissionBody(index admissionBodyIndex) {
-	if l == nil || index.child.Body == (equation.BodyID{}) {
+	if l == nil || index.child.BodyID() == (equation.BodyID{}) {
 		return
 	}
-	if l.admissionBodyID == index.child.Body {
+	if l.admissionBodyID == index.child.BodyID() {
 		*l.admissionBodyOne = index
 	}
 	if l.admissionBodies != nil {
-		cached := l.admissionBodies[index.child.Body]
+		cached := l.admissionBodies[index.child.BodyID()]
 		if cached == nil {
-			l.admissionBodies[index.child.Body] = &index
+			l.admissionBodies[index.child.BodyID()] = &index
 		} else {
 			*cached = index
 		}
@@ -3961,9 +3961,9 @@ func (index *admissionBodyIndex) declaredSeeds() ([]entrySeed, bool) {
 		return nil, false
 	}
 	if !index.formalSeedsReady {
-		index.formalSeeds = make([]entrySeed, 0, len(index.child.Boundary.Parameters))
-		for position, parameter := range index.child.Boundary.Parameters {
-			declared := index.child.WIR.Type(parameter.Type)
+		index.formalSeeds = make([]entrySeed, 0, len(index.child.BodyBoundary().Parameters))
+		for position, parameter := range index.child.BodyBoundary().Parameters {
+			declared := index.child.LoweredBody().Type(parameter.Type)
 			value, encoded := shapefact.EncodeTarget(declared)
 			if !encoded || declared == nil {
 				index.formalSeeds = nil
@@ -4004,12 +4004,12 @@ func (index *admissionBodyIndex) gradualLogicalCallBoundary() ([]entrySeed, []st
 		return nil, nil, false
 	}
 	child := index.child
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) == 0 || len(child.Boundary.Parameters) != 1 {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Captures) == 0 || len(child.BodyBoundary().Parameters) != 1 {
 		return nil, nil, false
 	}
-	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
-	terms := make([]string, 0, len(child.Boundary.Parameters))
-	for position, parameter := range child.Boundary.Parameters {
+	seeds := make([]entrySeed, 0, len(child.BodyBoundary().Parameters))
+	terms := make([]string, 0, len(child.BodyBoundary().Parameters))
+	for position, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Type != 0 {
 			return nil, nil, false
 		}
@@ -4056,7 +4056,7 @@ func (index *admissionBodyIndex) gradualLogicalCallBoundary() ([]entrySeed, []st
 	if !logical {
 		return nil, nil, false
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -4075,8 +4075,8 @@ func (index *admissionBodyIndex) gradualLogicalCallBoundary() ([]entrySeed, []st
 // admitted on the same terms: the cyclic evaluator solves its recurrence
 // against the recurrence lattice, so what the entry seeds decides that body's
 // surface exactly as it decides a straight-line one's.
-func capturelessFormalBody(child front.Compilation) bool {
-	return child.WIR != nil && len(child.Boundary.Captures) == 0 && len(child.Boundary.Parameters) != 0
+func capturelessFormalBody(child front.BoundaryGraphView) bool {
+	return child.LoweredBody() != nil && len(child.BodyBoundary().Captures) == 0 && len(child.BodyBoundary().Parameters) != 0
 }
 
 // sealedCaptureBoundary admits a parameter-free body whose entire free
@@ -4084,7 +4084,7 @@ func capturelessFormalBody(child front.Compilation) bool {
 // capture-free one: it takes no argument a caller could refine, and its free
 // cells all carry an authority every invocation observes.
 func (ctx admissionLaneContext) sealedCaptureBoundary() bool {
-	if ctx.child.Cyclic != nil || len(ctx.bodyIndex.formals) != 0 {
+	if ctx.child.CyclicDraft() != nil || len(ctx.bodyIndex.formals) != 0 {
 		return false
 	}
 	return ctx.lexical.sealedCaptureEnvironment(ctx.child, lexicalAllocationSite{body: ctx.body, operation: ctx.operation}, ctx.partition, false)
@@ -4099,7 +4099,7 @@ func (ctx admissionLaneContext) sealedCaptureBoundary() bool {
 // recurrence in its own control flow: a loop belongs to the body this allocation
 // closes, not to a refinement a caller could supply.
 func (ctx admissionLaneContext) closedAnyCaptureBoundary() bool {
-	if ctx.lexical == nil || ctx.child.WIR == nil || len(ctx.bodyIndex.captures) == 0 {
+	if ctx.lexical == nil || ctx.child.LoweredBody() == nil || len(ctx.bodyIndex.captures) == 0 {
 		return false
 	}
 	if _, closedAny := ctx.bodyIndex.explicitAnyBoundary(); !closedAny {
@@ -4123,16 +4123,16 @@ func (ctx admissionLaneContext) closedAnyCaptureBoundary() bool {
 //
 // A mutable cell, or a cell with none of those authorities, leaves the body
 // dormant.
-func (l *lexicalEvaluator) sealedCaptureEnvironment(child front.Compilation, allocation lexicalAllocationSite, partition equation.Partition, admitImported bool) bool {
-	if l == nil || child.WIR == nil || len(child.Boundary.Captures) == 0 {
+func (l *lexicalEvaluator) sealedCaptureEnvironment(child front.BoundaryGraphView, allocation lexicalAllocationSite, partition equation.Partition, admitImported bool) bool {
+	if l == nil || child.LoweredBody() == nil || len(child.BodyBoundary().Captures) == 0 {
 		return false
 	}
-	sealedTerms := make(map[string]bool, len(child.Boundary.Captures))
-	for _, capture := range child.Boundary.Captures {
+	sealedTerms := make(map[string]bool, len(child.BodyBoundary().Captures))
+	for _, capture := range child.BodyBoundary().Captures {
 		sealedTerms[boundaryTerm(capture.Symbol)] = true
 	}
 	declared := declaredBoundaryTypes(child)
-	for _, capture := range child.Boundary.Captures {
+	for _, capture := range child.BodyBoundary().Captures {
 		if capture.Mutable {
 			return false
 		}
@@ -4192,7 +4192,7 @@ func (l *lexicalEvaluator) sealedTableCapture(term, value []byte, allocation lex
 		return false
 	}
 	for body, compilation := range l.byBody {
-		for _, item := range compilation.Artifact.Equations {
+		for _, item := range compilation.DraftArtifact().Equations {
 			if item.Occurrence.Kind != "path-replacement" && item.Occurrence.Kind != "environment-write" {
 				continue
 			}
@@ -4223,13 +4223,13 @@ type lexicalAllocationSite struct {
 // declaredFormalSeeds encodes every declared, non-variadic formal of a body as
 // an entry seed. A variadic or unannotated formal, or a declared type with no
 // encodable target, withholds the whole set.
-func declaredFormalSeeds(child front.Compilation) ([]entrySeed, bool) {
-	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
+func declaredFormalSeeds(child front.BoundaryGraphView) ([]entrySeed, bool) {
+	seeds := make([]entrySeed, 0, len(child.BodyBoundary().Parameters))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
 			return nil, false
 		}
-		declared := child.WIR.Type(parameter.Type)
+		declared := child.LoweredBody().Type(parameter.Type)
 		value, ok := shapefact.EncodeTarget(declared)
 		if !ok || declared == nil {
 			return nil, false
@@ -4241,13 +4241,13 @@ func declaredFormalSeeds(child front.Compilation) ([]entrySeed, bool) {
 
 // declaredFormalWitnessSeeds encodes the declared formals of a witness entry,
 // rejecting an `any` formal so a witness carries only a concrete declared shape.
-func declaredFormalWitnessSeeds(child front.Compilation) ([]entrySeed, bool) {
-	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
+func declaredFormalWitnessSeeds(child front.BoundaryGraphView) ([]entrySeed, bool) {
+	seeds := make([]entrySeed, 0, len(child.BodyBoundary().Parameters))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
 			return nil, false
 		}
-		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
+		declared := unwrap.Alias(child.LoweredBody().Type(parameter.Type))
 		if declared == nil || declared.Kind() == kind.Any {
 			return nil, false
 		}
@@ -4266,7 +4266,7 @@ func declaredFormalWitnessSeeds(child front.Compilation) ([]entrySeed, bool) {
 // result is filtered to boundary-free stack witnesses, so no uncalled body can
 // claim a retain, share, or caller-visible graph.
 func cyclicPlacementWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
-	if child.WIR == nil || child.Cyclic == nil || len(child.Boundary.Parameters) == 0 || childCallsFormalFunction(child) {
+	if child.LoweredBody() == nil || child.CyclicDraft() == nil || len(child.BodyBoundary().Parameters) == 0 || childCallsFormalFunction(child) {
 		return nil, false
 	}
 	return declaredFormalWitnessSeeds(child)
@@ -4277,11 +4277,11 @@ func cyclicPlacementWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
 // result slot non-recursive, so the evaluated allocation is a closed function
 // summary rather than a caller-specific reconstruction.
 func placementReturnWitnessEntry(child front.Compilation) ([]entrySeed, bool) {
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 ||
-		len(child.Boundary.DeclaredReturns) != 1 || !hasProjectableTableResult(child) || childCallsFormalFunction(child) {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Captures) != 0 ||
+		len(child.BodyBoundary().DeclaredReturns) != 1 || !hasProjectableTableResult(child) || childCallsFormalFunction(child) {
 		return nil, false
 	}
-	returned := unwrap.Alias(child.WIR.Type(child.Boundary.DeclaredReturns[0]))
+	returned := unwrap.Alias(child.LoweredBody().Type(child.BodyBoundary().DeclaredReturns[0]))
 	if returned == nil {
 		return nil, false
 	}
@@ -4309,7 +4309,7 @@ func scalarPlacementFact(identity string) (equation.Fact, bool) {
 	return equation.Fact{Key: placementAllocationFactKey(identity), Value: encoded}, true
 }
 
-func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equation.OutputClosure) []equation.Fact {
+func placementDeclaredScalarResultWitnesses(child front.DraftsBoundaryView, outcome equation.OutputClosure) []equation.Fact {
 	values := make(map[string]bool)
 	for _, fact := range outcome.Values {
 		if parsed, ok := factkey.Value.ParseKey(fact.Key); ok {
@@ -4317,7 +4317,7 @@ func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equ
 		}
 	}
 	providers := make(map[string]string)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "external-call" {
 			continue
 		}
@@ -4331,7 +4331,7 @@ func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equ
 		}
 	}
 	var facts []equation.Fact
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "call-results" {
 			continue
 		}
@@ -4355,7 +4355,7 @@ func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equ
 			}
 			identity := shapefact.ScalarTextValueString(
 				shapefact.ScalarProvider,
-				base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s/%d", child.Body, operation.Target.Name, index))),
+				base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s/%d", child.BodyID(), operation.Target.Name, index))),
 			)
 			if fact, ok := scalarPlacementFact(identity); ok {
 				facts = append(facts, fact)
@@ -4371,10 +4371,10 @@ func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equ
 // storage is the frame that declares it whatever the body then does with the
 // value. The claim's sealed shape target is the sole authority; a claim without
 // one, or one whose target is not a closed scalar, contributes nothing.
-func placementDeclaredScalarLocalWitnesses(child front.Compilation) []equation.Fact {
+func placementDeclaredScalarLocalWitnesses(child front.DraftsBoundaryView) []equation.Fact {
 	var facts []equation.Fact
 	seen := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "claim" {
 			continue
 		}
@@ -4390,7 +4390,7 @@ func placementDeclaredScalarLocalWitnesses(child front.Compilation) []equation.F
 		}
 		identity := shapefact.ScalarTextValueString(
 			shapefact.ScalarDeclaration,
-			base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s", child.Body, target))),
+			base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s", child.BodyID(), target))),
 		)
 		if seen[identity] {
 			continue
@@ -4411,25 +4411,25 @@ func placementDeclaredScalarLocalWitnesses(child front.Compilation) []equation.F
 // tables. The returned closure keeps its captured state live; the matching
 // store is a prospective shared-input boundary, not a reconstruction from the
 // function's source spelling.
-func placementReturnedClosureWitnesses(child front.Compilation, partition equation.Partition) []equation.Fact {
+func placementReturnedClosureWitnesses(child front.DraftsBoundaryGraphView, partition equation.Partition) []equation.Fact {
 	// This projection reads the child's boundary and its frozen artifact only.
 	// Both are published for every admitted body, so a loop inside the child
 	// changes nothing it inspects: the cyclic signal selects an execution path,
 	// not the availability of the static store evidence.
-	if child.WIR == nil {
+	if child.LoweredBody() == nil {
 		return nil
 	}
-	captures := make(map[string]bool, len(child.Boundary.Captures))
-	for _, capture := range child.Boundary.Captures {
+	captures := make(map[string]bool, len(child.BodyBoundary().Captures))
+	for _, capture := range child.BodyBoundary().Captures {
 		term := boundaryTerm(capture.Symbol)
 		captures[term] = true
 	}
-	formals := make(map[string]typ.Type, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
+	formals := make(map[string]typ.Type, len(child.BodyBoundary().Parameters))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
 			continue
 		}
-		value := unwrap.Alias(child.WIR.Type(parameter.Type))
+		value := unwrap.Alias(child.LoweredBody().Type(parameter.Type))
 		if placementTableWitnessType(value) {
 			formals[boundaryTerm(parameter.Symbol)] = value
 		}
@@ -4439,7 +4439,7 @@ func placementReturnedClosureWitnesses(child front.Compilation, partition equati
 	}
 	var facts []equation.Fact
 	seen := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "index-mutation" {
 			continue
 		}
@@ -4451,7 +4451,7 @@ func placementReturnedClosureWitnesses(child front.Compilation, partition equati
 		if !placementTableWitnessType(formals[string(value)]) && !placementFormalElementWitness(child, string(value), formals) {
 			continue
 		}
-		identity := "formal-store/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s/%s", child.Body, value, operation.Target.Name)))
+		identity := "formal-store/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%s/%s", child.BodyID(), value, operation.Target.Name)))
 		if seen[identity] {
 			continue
 		}
@@ -4485,7 +4485,7 @@ func placementReturnedClosureWitnesses(child front.Compilation, partition equati
 // actor-local capture is a shared-handle retain, exactly like retaining the
 // formal directly. The trace is entirely structural over the child artifact:
 // an iterator that is not an exact ipairs/pairs of a formal stays unmatched.
-func placementFormalElementWitness(child front.Compilation, value string, formals map[string]typ.Type) bool {
+func placementFormalElementWitness(child front.DraftsView, value string, formals map[string]typ.Type) bool {
 	iterator, ok := placementGenericForElementIterator(child, value)
 	if !ok {
 		return false
@@ -4506,8 +4506,8 @@ func placementFormalElementWitness(child front.Compilation, value string, formal
 // generic-for that binds value as its element (value) slot. Only the second
 // loop result is the element; the first is the numeric index or map key, which
 // is never an inbound table handle.
-func placementGenericForElementIterator(child front.Compilation, value string) (string, bool) {
-	for _, operation := range child.Artifact.Equations {
+func placementGenericForElementIterator(child front.DraftsView, value string) (string, bool) {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "generic-for" {
 			continue
 		}
@@ -4526,8 +4526,8 @@ func placementGenericForElementIterator(child front.Compilation, value string) (
 // placementIteratorFormalContainer resolves an iterator term to the container
 // term of its ipairs/pairs call. Any other provider or a spread argument keeps
 // the iteration opaque and unmatched.
-func placementIteratorFormalContainer(child front.Compilation, iterator string) (string, bool) {
-	for _, operation := range child.Artifact.Equations {
+func placementIteratorFormalContainer(child front.DraftsView, iterator string) (string, bool) {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "call-results" {
 			continue
 		}
@@ -4589,7 +4589,7 @@ func (l *lexicalEvaluator) publishesClosureReturn(body equation.BodyID, result s
 	if !found {
 		return false
 	}
-	for _, operation := range parent.Artifact.Equations {
+	for _, operation := range parent.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
@@ -4646,7 +4646,7 @@ func (index *admissionBodyIndex) declaredBoundary() declaredBoundaryAdmission {
 	derivedCells := index.declaredFormalDerivedCells(formals)
 	memberCalls := make(map[string]bool)
 	hasDirectMethod := false
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -4669,7 +4669,7 @@ func (index *admissionBodyIndex) declaredBoundary() declaredBoundaryAdmission {
 	hasDeclaredArithmeticAssignment, hasArithmeticReturnCandidate := false, false
 	localTables := bodyLocalTableTerms(child)
 	assertionOperations := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "apply":
 			if !memberCalls["call/"+operation.Target.Name] {
@@ -4780,9 +4780,9 @@ func bodyLocalTableTerms(child front.Compilation) map[string]bool {
 	return bodyLocalObjectTerms(child, "object-kind/table")
 }
 
-func bodyLocalObjectTerms(child front.Compilation, kind string) map[string]bool {
+func bodyLocalObjectTerms(child front.DraftsView, kind string) map[string]bool {
 	terms := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "object-materialization" {
 			continue
 		}
@@ -4836,7 +4836,7 @@ func (index *admissionBodyIndex) localMemberClosureCall(operation equation.Equat
 		return false
 	}
 	bound := false
-	for _, item := range child.Artifact.Equations {
+	for _, item := range child.DraftArtifact().Equations {
 		switch item.Occurrence.Kind {
 		case "environment-write", "path-replacement":
 		case "index-mutation", "path-invalidation":
@@ -4901,23 +4901,23 @@ func (index *admissionBodyIndex) localClosureCall(operation equation.Equation, l
 // it forwards. The witness is therefore suppressed for these bodies: an actually
 // invoked call-site supplies the concrete closure and evaluates the body soundly.
 func childCallsFormalFunction(child front.Compilation) bool {
-	if child.WIR == nil {
+	if child.LoweredBody() == nil {
 		return false
 	}
 	index := indexAdmissionBody(child)
 	formalFunctions := make(map[string]bool)
-	for _, parameter := range child.Boundary.Parameters {
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Type == 0 {
 			continue
 		}
-		if _, isFunction := functionFormalType(unwrap.Alias(child.WIR.Type(parameter.Type))); isFunction {
+		if _, isFunction := functionFormalType(unwrap.Alias(child.LoweredBody().Type(parameter.Type))); isFunction {
 			formalFunctions[boundaryTerm(parameter.Symbol)] = true
 		}
 	}
 	if len(formalFunctions) == 0 {
 		return false
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if index.declaredFormalFunctionCall(operation, formalFunctions) {
 			return true
 		}
@@ -4933,16 +4933,16 @@ func childCallsFormalFunction(child front.Compilation) bool {
 // with no closure argument fails this gate and stays untouched.
 func (l *lexicalEvaluator) callbackCompositionCall(operands directCallOperands, handle closureHandle, partition equation.Partition) bool {
 	child, arguments, err := l.knownLexicalBoundary(operands, handle)
-	if err != nil || child.WIR == nil {
+	if err != nil || child.LoweredBody() == nil {
 		return false
 	}
 	index := l.admissionBody(child)
 	concreteFormals := make(map[string]bool)
-	for parameterIndex, parameter := range child.Boundary.Parameters {
+	for parameterIndex, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Type == 0 || parameterIndex >= len(arguments) {
 			continue
 		}
-		if _, isFunction := functionFormalType(unwrap.Alias(child.WIR.Type(parameter.Type))); !isFunction {
+		if _, isFunction := functionFormalType(unwrap.Alias(child.LoweredBody().Type(parameter.Type))); !isFunction {
 			continue
 		}
 		if _, found := closureHandleFor(arguments[parameterIndex], partition); found {
@@ -4952,7 +4952,7 @@ func (l *lexicalEvaluator) callbackCompositionCall(operands directCallOperands, 
 	if len(concreteFormals) == 0 {
 		return false
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if index.declaredFormalFunctionCall(operation, concreteFormals) {
 			return true
 		}
@@ -4979,20 +4979,20 @@ func (l *lexicalEvaluator) uncalledDeclaredFormalCallBoundary(index admissionBod
 		return nil, false
 	}
 	child := index.child
-	if child.WIR == nil || len(child.Boundary.Parameters) == 0 {
+	if child.LoweredBody() == nil || len(child.BodyBoundary().Parameters) == 0 {
 		return nil, false
 	}
-	if len(child.Boundary.Captures) != 0 && (child.Cyclic != nil || !l.sealedCaptureEnvironment(child, allocation, partition, false)) {
+	if len(child.BodyBoundary().Captures) != 0 && (child.CyclicDraft() != nil || !l.sealedCaptureEnvironment(child, allocation, partition, false)) {
 		return nil, false
 	}
 	formals := index.formals
-	formalFunctions := make(map[string]bool, len(child.Boundary.Parameters))
+	formalFunctions := make(map[string]bool, len(child.BodyBoundary().Parameters))
 	seeds, seeded := index.declaredSeeds()
 	if !seeded {
 		return nil, false
 	}
-	for _, parameter := range child.Boundary.Parameters {
-		declared := child.WIR.Type(parameter.Type)
+	for _, parameter := range child.BodyBoundary().Parameters {
+		declared := child.LoweredBody().Type(parameter.Type)
 		term := boundaryTerm(parameter.Symbol)
 		if _, isFunction := functionFormalType(declared); isFunction {
 			formalFunctions[term] = true
@@ -5014,7 +5014,7 @@ func (l *lexicalEvaluator) uncalledDeclaredFormalCallBoundary(index admissionBod
 		}
 	}
 	localClosures := bodyLocalClosureTerms(child)
-	for _, capture := range child.Boundary.Captures {
+	for _, capture := range child.BodyBoundary().Captures {
 		term := boundaryTerm(capture.Symbol)
 		if _, found := closureHandleFor([]byte(term), partition); found {
 			localClosures[term] = true
@@ -5043,7 +5043,7 @@ func (l *lexicalEvaluator) uncalledDeclaredFormalCallBoundary(index admissionBod
 	if !hasClosedCall {
 		return nil, false
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "apply":
 			if !memberCalls["call/"+operation.Target.Name] {
@@ -5075,11 +5075,11 @@ func (l *lexicalEvaluator) uncalledDeclaredFormalCallBoundary(index admissionBod
 // calleePrototype resolves the lexical prototype one application dispatches to:
 // a capture or local whose closure handle the allocating partition published, or
 // a closure this same body materialized.
-func (l *lexicalEvaluator) calleePrototype(child front.Compilation, callee []byte, partition equation.Partition) (string, bool) {
+func (l *lexicalEvaluator) calleePrototype(child front.DraftsView, callee []byte, partition equation.Partition) (string, bool) {
 	if handle, found := closureHandleFor(callee, partition); found {
 		return handle.Prototype, true
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "object-materialization" {
 			continue
 		}
@@ -5124,16 +5124,16 @@ func applicationArgumentTerms(operation equation.Equation) [][]byte {
 // of that cell resolves from this body's own evaluation. Reads before the write,
 // and reads of any other cell, still depend on a caller-owned refinement and
 // stay dormant.
-func (l *lexicalEvaluator) formalMemberWriteObligations(child front.Compilation, partition equation.Partition) map[string]bool {
-	if l == nil || child.WIR == nil {
+func (l *lexicalEvaluator) formalMemberWriteObligations(child front.DraftsBoundaryGraphView, partition equation.Partition) map[string]bool {
+	if l == nil || child.LoweredBody() == nil {
 		return nil
 	}
-	formals := make(map[string]bool, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
+	formals := make(map[string]bool, len(child.BodyBoundary().Parameters))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
 	written := make(map[string]string, len(formals))
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -5150,7 +5150,7 @@ func (l *lexicalEvaluator) formalMemberWriteObligations(child front.Compilation,
 			continue
 		}
 		arguments := applicationArgumentTerms(operation)
-		for index, parameter := range callee.Boundary.Parameters {
+		for index, parameter := range callee.BodyBoundary().Parameters {
 			if index >= len(arguments) || !l.parameterWrites[prototype][boundaryTerm(parameter.Symbol)] {
 				continue
 			}
@@ -5167,7 +5167,7 @@ func (l *lexicalEvaluator) formalMemberWriteObligations(child front.Compilation,
 		return nil
 	}
 	obligations := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		for term, writeOperation := range written {
 			if operation.Target.Name <= writeOperation {
 				continue
@@ -5233,18 +5233,18 @@ func declaredFormalCallDiagnostic(key string) bool {
 //
 // Nothing is seeded from an unbound parameter, and a formal the literal
 // declares keeps that declaration as its own authority.
-func (l *lexicalEvaluator) contextualCallbackBoundary(body equation.BodyID, child front.Compilation, result string, partition equation.Partition) ([]entrySeed, []typ.Type, bool) {
-	if l == nil || child.WIR == nil || child.Cyclic != nil || result == "" {
+func (l *lexicalEvaluator) contextualCallbackBoundary(body equation.BodyID, child front.DraftsBoundaryGraphView, result string, partition equation.Partition) ([]entrySeed, []typ.Type, bool) {
+	if l == nil || child.LoweredBody() == nil || child.CyclicDraft() != nil || result == "" {
 		return nil, nil, false
 	}
-	if len(child.Boundary.Parameters) == 0 || len(child.Boundary.Captures) != 0 {
+	if len(child.BodyBoundary().Parameters) == 0 || len(child.BodyBoundary().Captures) != 0 {
 		return nil, nil, false
 	}
 	parent, found := l.byBody[body]
 	if !found {
 		return nil, nil, false
 	}
-	provider, position, arguments, located := contextualCallbackArgument(parent.Artifact, result)
+	provider, position, arguments, located := contextualCallbackArgument(parent.DraftArtifact(), result)
 	if !located {
 		return nil, nil, false
 	}
@@ -5253,7 +5253,7 @@ func (l *lexicalEvaluator) contextualCallbackBoundary(body equation.BodyID, chil
 		return nil, nil, false
 	}
 	expected, callable := unwrap.Alias(function.Params[position].Type).(*typ.Function)
-	if !callable || expected == nil || expected.Variadic != nil || len(expected.Params) != len(child.Boundary.Parameters) {
+	if !callable || expected == nil || expected.Variadic != nil || len(expected.Params) != len(child.BodyBoundary().Parameters) {
 		return nil, nil, false
 	}
 	params := make(map[string]bool, len(function.TypeParams))
@@ -5280,9 +5280,9 @@ func (l *lexicalEvaluator) contextualCallbackBoundary(body equation.BodyID, chil
 			return nil, nil, false
 		}
 	}
-	seeds := make([]entrySeed, 0, len(child.Boundary.Parameters))
-	contextual := make([]typ.Type, 0, len(child.Boundary.Parameters))
-	for index, parameter := range child.Boundary.Parameters {
+	seeds := make([]entrySeed, 0, len(child.BodyBoundary().Parameters))
+	contextual := make([]typ.Type, 0, len(child.BodyBoundary().Parameters))
+	for index, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type != 0 || expected.Params[index].Type == nil {
 			return nil, nil, false
 		}
@@ -5408,21 +5408,21 @@ func (index *admissionBodyIndex) declaredLocalUnionReadBoundary() ([]entrySeed, 
 		return nil, false
 	}
 	child := index.child
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) == 0 {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) == 0 {
 		return nil, false
 	}
 	if !index.declaredSeeded {
 		return nil, false
 	}
 	formals := index.formals
-	for _, parameter := range child.Boundary.Parameters {
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Symbol == 0 {
 			return nil, false
 		}
 	}
 	applications := make(map[string]bool)
 	derived := index.declaredLocalUnionExpressionTerms(formals)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -5460,7 +5460,7 @@ func (index *admissionBodyIndex) declaredLocalUnionReadBoundary() ([]entrySeed, 
 	}
 	paths := make(map[string]bool)
 	reads := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "environment-write" {
 			continue
 		}
@@ -5479,7 +5479,7 @@ func (index *admissionBodyIndex) declaredLocalUnionReadBoundary() ([]entrySeed, 
 			}
 		}
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "entry", "apply", "call-results", "environment-write", "claim", "expression", "publication":
 			continue
@@ -5606,11 +5606,11 @@ func localUnionEntryRoot(term string, results map[string]bool, formals admission
 // published at the enclosing allocation point into the admitted child. The
 // child artifact itself names that path, while closureHandleFor verifies it is
 // a local capability rather than a source-level function spelling.
-func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.Compilation, formalSeeds []entrySeed, partition equation.Partition) ([]byte, bool, error) {
+func (l *lexicalEvaluator) uncalledLocalUnionReadEntry(child front.DraftsView, formalSeeds []entrySeed, partition equation.Partition) ([]byte, bool, error) {
 	seeds := append([]entrySeed(nil), formalSeeds...)
 	closures := make([]entryClosureSeed, 0)
 	seen := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -5648,7 +5648,7 @@ func (l *lexicalEvaluator) uncalledLocalUnionCalleeHasAlternativeReturns(handle 
 		return false
 	}
 	returns := 0
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
@@ -5666,13 +5666,13 @@ func (l *lexicalEvaluator) uncalledLocalUnionCalleeHasAlternativeReturns(handle 
 // enclosing body's branch correlation across the closure boundary. The guarded
 // call remains a possible path, so its parameter mismatch is source-owned; no
 // branch truth, call result, or inferred alias is manufactured here.
-func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.OutputClosure, child front.Compilation, parentOperations []equation.Equation, allocationTarget string, captures []string, partition equation.Partition) {
-	if l == nil || closure == nil || child.Cyclic != nil || len(child.Boundary.Captures) == 0 || len(child.Boundary.Captures) != len(captures) {
+func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.OutputClosure, child front.ProjectionView, parentOperations []equation.Equation, allocationTarget string, captures []string, partition equation.Partition) {
+	if l == nil || closure == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Captures) == 0 || len(child.BodyBoundary().Captures) != len(captures) {
 		return
 	}
 	captured := make(map[string][]byte, len(captures))
 	captureSources := make(map[string][]byte, len(captures))
-	for index, capture := range child.Boundary.Captures {
+	for index, capture := range child.BodyBoundary().Captures {
 		term := captures[index]
 		captureSources[boundaryTerm(capture.Symbol)] = []byte(term)
 		value, known := resolveKnownCurrentValue([]byte(term), partition)
@@ -5680,7 +5680,7 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 			captured[boundaryTerm(capture.Symbol)] = value
 		}
 	}
-	for _, item := range child.Artifact.Equations {
+	for _, item := range child.DraftArtifact().Equations {
 		if item.Occurrence.Kind != "apply" || len(item.Guards) == 0 {
 			continue
 		}
@@ -5702,7 +5702,7 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 			capturedNil := string(captured[string(operand.Term.Encoding)]) == shapefact.ScalarNilWire
 			capturedSource := captureSources[string(operand.Term.Encoding)]
 			capturedUnconditionalNil := latestUnconditionalNilWriteBefore(parentOperations, capturedSource, allocationTarget)
-			childNilWrite := latestPriorWriteIsNilOnCallPath(child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, item.Guards)
+			childNilWrite := latestPriorWriteIsNilOnCallPath(child.DraftArtifact().Equations, operand.Term.Encoding, item.Target.Name, item.Guards)
 			if !stated || !callableContractRejectsNil(contract) || (!capturedNil && !capturedUnconditionalNil && !childNilWrite) {
 				continue
 			}
@@ -5710,8 +5710,8 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 				Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Required: callableContractDisplay(contract), Flags: DiagnosticMayBeNil,
 			})
 			spans := diagnosticSpans(child, []equation.Fact{fact})
-			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
-				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + published.Fact.Key
+			for _, published := range publishedDiagnostics(child.DraftArtifact(), equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpanIndex(), child.CallSpanIndex(), child.BranchSpanIndex(), child.ReturnSpanIndex(), nil, nil) {
+				key := "child/" + fmt.Sprintf("%x", child.BodyID()) + "/" + published.Fact.Key
 				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), published.Fact.Value...)})
 				if published.Span.Valid() {
 					l.diagnosticSpans[key] = published.Span
@@ -5722,13 +5722,13 @@ func (l *lexicalEvaluator) publishStaticNilCallDiagnostic(closure *equation.Outp
 			return
 		}
 	}
-	for _, nested := range child.Nested {
-		for _, item := range child.Artifact.Equations {
-			captures, matches := nestedClosureAllocationCaptures(item, nested.PrototypeName)
+	for _, nested := range child.NestedCompilations() {
+		for _, item := range child.DraftArtifact().Equations {
+			captures, matches := nestedClosureAllocationCaptures(item, nested.PrototypeDisplayName())
 			if !matches {
 				continue
 			}
-			l.publishStaticNilCallDiagnostic(closure, nested, child.Artifact.Equations, item.Target.Name, captures, partition)
+			l.publishStaticNilCallDiagnostic(closure, nested, child.DraftArtifact().Equations, item.Target.Name, captures, partition)
 		}
 	}
 }
@@ -5801,15 +5801,15 @@ func latestUnconditionalNilWriteBefore(operations []equation.Equation, target []
 // captured typed provider. The guarded call is still a possible source path;
 // this helper merely publishes the two existing member contracts without
 // choosing any intervening branch.
-func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *equation.OutputClosure, body equation.BodyID, child front.Compilation, captures []string, partition equation.Partition) {
+func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *equation.OutputClosure, body equation.BodyID, child front.DraftsBoundarySpansView, captures []string, partition equation.Partition) {
 	// This allocation-time projector is deliberately bounded. Large bodies are
 	// evaluated only through ordinary demanded flow so this source-only scan
 	// cannot consume the solver budget needed by their recursive summaries.
-	if l == nil || closure == nil || child.Cyclic != nil || len(child.Artifact.Equations) > 128 || len(child.Boundary.Captures) == 0 || len(child.Boundary.Captures) != len(captures) {
+	if l == nil || closure == nil || child.CyclicDraft() != nil || len(child.DraftArtifact().Equations) > 128 || len(child.BodyBoundary().Captures) == 0 || len(child.BodyBoundary().Captures) != len(captures) {
 		return
 	}
 	captured := make(map[string][]byte, len(captures))
-	for index, capture := range child.Boundary.Captures {
+	for index, capture := range child.BodyBoundary().Captures {
 		value, known := resolveKnownCurrentValue([]byte(captures[index]), partition)
 		if !known || isUnknownScalar(value) {
 			return
@@ -5823,7 +5823,7 @@ func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *
 		}
 		captured[boundaryTerm(capture.Symbol)] = value
 	}
-	for _, item := range child.Artifact.Equations {
+	for _, item := range child.DraftArtifact().Equations {
 		if item.Occurrence.Kind != "apply" || len(item.Guards) == 0 {
 			continue
 		}
@@ -5837,15 +5837,15 @@ func (l *lexicalEvaluator) publishCapturedOptionalMemberCallDiagnostic(closure *
 			if err != nil || index >= len(function.Params) || !callableContractRejectsNil(function.Params[index].Type) {
 				continue
 			}
-			if !capturedCallResultOptionalMember(l, child.Artifact.Equations, operand.Term.Encoding, item.Target.Name, captured, partition) {
+			if !capturedCallResultOptionalMember(l, child.DraftArtifact().Equations, operand.Term.Encoding, item.Target.Name, captured, partition) {
 				continue
 			}
 			fact := diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyCallArgumentType)+item.Target.Name+"/"+indexedCallSubject("argument", index), DiagnosticPayload{
 				Kind: diagnosticCallArgument, Subject: fmt.Sprintf("argument %d", index+1), Required: callableContractDisplay(function.Params[index].Type), Flags: DiagnosticMayBeNil,
 			})
 			spans := diagnosticSpans(child, []equation.Fact{fact})
-			for _, published := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
-				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + published.Fact.Key
+			for _, published := range publishedDiagnostics(child.DraftArtifact(), equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpanIndex(), child.CallSpanIndex(), child.BranchSpanIndex(), child.ReturnSpanIndex(), nil, nil) {
+				key := "child/" + fmt.Sprintf("%x", child.BodyID()) + "/" + published.Fact.Key
 				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), published.Fact.Value...)})
 				if published.Span.Valid() {
 					l.diagnosticSpans[key] = published.Span
@@ -6142,7 +6142,7 @@ func (index *admissionBodyIndex) declaredFormalConcatOperations(memberCalls map[
 func (index *admissionBodyIndex) declaredFormalOrderedComparisonOperations(formals admissionBoundarySet) map[string]bool {
 	child := index.child
 	allowed := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if !declaredOrderedComparisonExpression(operation) {
 			continue
 		}
@@ -6214,7 +6214,7 @@ func (index *admissionBodyIndex) declaredFormalArithmeticTerms(formals admission
 	}
 	for {
 		added := false
-		for _, operation := range child.Artifact.Equations {
+		for _, operation := range child.DraftArtifact().Equations {
 			if operation.Occurrence.Kind != "expression" {
 				continue
 			}
@@ -6373,7 +6373,7 @@ func (index *admissionBodyIndex) declaredFormalDerivedCells(formals admissionBou
 		accounted, declared bool
 	}
 	cells := make(map[string]*cellWrites)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		environmentWrite := operation.Occurrence.Kind == "environment-write" && !declaredCellAllocationWrite(operation)
 		value, hasValue := artifactOperand(operation.Operands, "value")
 		for _, operand := range operation.Operands {
@@ -6508,7 +6508,7 @@ func (index *admissionBodyIndex) declaredFormalAssertion(operation equation.Equa
 // false edge carries no published refinement, and a check on another path
 // leaves term unrefined on an arm the branch may already have excluded; both
 // stay demand-driven.
-func declaredFormalNarrowingEdges(child front.Compilation, operation equation.Equation, term []byte) bool {
+func declaredFormalNarrowingEdges(child front.DraftsView, operation equation.Equation, term []byte) bool {
 	path, rooted := strings.CutPrefix(string(term), "path/")
 	if !rooted || path == "" {
 		return false
@@ -6518,7 +6518,7 @@ func declaredFormalNarrowingEdges(child front.Compilation, operation equation.Eq
 		if len(parts) != 4 || parts[0] != "front" || parts[1] != "branch" || parts[3] != "true" {
 			return false
 		}
-		if !branchChecksPath(child.Artifact.Equations, parts[2], path) {
+		if !branchChecksPath(child.DraftArtifact().Equations, parts[2], path) {
 			return false
 		}
 	}
@@ -6599,12 +6599,12 @@ func (index *admissionBodyIndex) declaredLocalAllocationAssignment(operation equ
 // index reads into tables it allocated itself. They are the unspelled
 // counterpart of a static slot read: the same container, selected at a key no
 // coordinate names.
-func bodyLocalAllocationReadTargets(child front.Compilation, allocations map[string]bool) map[string]bool {
+func bodyLocalAllocationReadTargets(child front.DraftsView, allocations map[string]bool) map[string]bool {
 	if len(allocations) == 0 {
 		return nil
 	}
 	targets := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "dynamic-index-read" {
 			continue
 		}
@@ -6623,11 +6623,11 @@ func bodyLocalAllocationReadTargets(child front.Compilation, allocations map[str
 // no call result, branch result, or inferred local is used as authority.
 func (index *admissionBodyIndex) declaredFormalValue(value []byte) bool {
 	child := index.child
-	for _, parameter := range child.Boundary.Parameters {
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if boundaryTerm(parameter.Symbol) != string(value) || parameter.Type == 0 {
 			continue
 		}
-		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
+		declared := unwrap.Alias(child.LoweredBody().Type(parameter.Type))
 		return declared != nil && declared.Kind() != kind.Any
 	}
 	return false
@@ -6649,7 +6649,7 @@ func (index *admissionBodyIndex) staticAssignmentBoundary() ([]entrySeed, bool) 
 		return nil, false
 	}
 	child := index.child
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) == 0 || len(child.Boundary.Captures) == 0 {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) == 0 || len(child.BodyBoundary().Captures) == 0 {
 		return nil, false
 	}
 	captures := index.captures
@@ -6661,7 +6661,7 @@ func (index *admissionBodyIndex) staticAssignmentBoundary() ([]entrySeed, bool) 
 	capturedCalls := make(map[string]bool)
 	callResults := make(map[string]bool)
 	callPaths := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "apply":
 			callee, arity := "", ""
@@ -6695,7 +6695,7 @@ func (index *admissionBodyIndex) staticAssignmentBoundary() ([]entrySeed, bool) 
 		}
 	}
 	hasAssignment, hasResultCall, hasOptionalMethod := false, false, false
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "claim":
 			for _, operand := range operation.Operands {
@@ -6813,17 +6813,17 @@ func branchDecidedByRoots(operation equation.Equation, admits func(term string) 
 // entry transports the capability itself; no callable, argument, result, or
 // return value is reconstructed from syntax. Branches, dynamic reads, and
 // external calls remain demand-driven.
-func (l *lexicalEvaluator) uncalledStaticCapturedReturnBoundary(child front.Compilation, partition equation.Partition) bool {
-	if l == nil || child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) != 0 || len(child.Boundary.Captures) != 1 || len(child.Boundary.DeclaredReturns) != 1 {
+func (l *lexicalEvaluator) uncalledStaticCapturedReturnBoundary(child front.DraftsBoundaryGraphView, partition equation.Partition) bool {
+	if l == nil || child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) != 0 || len(child.BodyBoundary().Captures) != 1 || len(child.BodyBoundary().DeclaredReturns) != 1 {
 		return false
 	}
-	capture := boundaryTerm(child.Boundary.Captures[0].Symbol)
+	capture := boundaryTerm(child.BodyBoundary().Captures[0].Symbol)
 	if _, found := closureHandleFor([]byte(capture), partition); !found {
 		return false
 	}
 	called := false
 	applications := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "entry", "environment-write", "publication":
 			continue
@@ -6854,13 +6854,13 @@ func (l *lexicalEvaluator) uncalledStaticCapturedReturnBoundary(child front.Comp
 // The body has no branches, dynamic lookup, or writes beyond ordinary call
 // result bindings, so evaluating it at allocation time cannot invent a path
 // condition or a caller-owned heap fact.
-func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(body equation.BodyID, child front.Compilation, partition equation.Partition) bool {
-	if l == nil || child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Parameters) != 0 || len(child.Boundary.Captures) == 0 {
+func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(body equation.BodyID, child front.DraftsBoundaryGraphView, partition equation.Partition) bool {
+	if l == nil || child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) != 0 || len(child.BodyBoundary().Captures) == 0 {
 		return false
 	}
-	captures := make(map[string]bool, len(child.Boundary.Captures))
+	captures := make(map[string]bool, len(child.BodyBoundary().Captures))
 	arithmeticCallees := make(map[string]bool)
-	for _, capture := range child.Boundary.Captures {
+	for _, capture := range child.BodyBoundary().Captures {
 		term := boundaryTerm(capture.Symbol)
 		captures[term] = true
 		if handle, found := closureHandleFor([]byte(term), partition); found {
@@ -6879,7 +6879,7 @@ func (l *lexicalEvaluator) uncalledStaticArithmeticBoundary(body equation.BodyID
 	}
 	foundArithmeticCall := false
 	applications := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "entry", "publication", "environment-write":
 			continue
@@ -6932,13 +6932,13 @@ func (l *lexicalEvaluator) uncalledImportedCaptureBoundary(body equation.BodyID,
 		return nil, false
 	}
 	child := index.child
-	if l == nil || child.WIR == nil || len(child.Boundary.Captures) == 0 {
+	if l == nil || child.LoweredBody() == nil || len(child.BodyBoundary().Captures) == 0 {
 		return nil, false
 	}
 	if childHasChannelLifecycle(child) || childHasResourceLifecycle(child) || childHasSelect(child) {
 		return nil, false
 	}
-	for _, capture := range child.Boundary.Captures {
+	for _, capture := range child.BodyBoundary().Captures {
 		if capture.Mutable {
 			return nil, false
 		}
@@ -6953,17 +6953,17 @@ func (l *lexicalEvaluator) uncalledImportedCaptureBoundary(body equation.BodyID,
 	return index.declaredSeeds()
 }
 
-func unannotatedArithmeticFormal(child front.Compilation) bool {
-	if child.WIR == nil || child.Cyclic != nil {
+func unannotatedArithmeticFormal(child front.DraftsBoundaryGraphView) bool {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil {
 		return false
 	}
 	formals := make(map[string]bool)
-	for _, parameter := range child.Boundary.Parameters {
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if !parameter.Vararg && parameter.Type == 0 {
 			formals[boundaryTerm(parameter.Symbol)] = true
 		}
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "expression" {
 			continue
 		}
@@ -7131,11 +7131,11 @@ func (l *lexicalEvaluator) uncalledCapturedHelperHasOnlyGuardedValidation(callee
 		return false
 	}
 	child, found := l.byPrototype[handle.Prototype]
-	if !found || child.Cyclic != nil {
+	if !found || child.CyclicDraft() != nil {
 		return false
 	}
 	foundValidation := false
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -7169,11 +7169,11 @@ func (l *lexicalEvaluator) uncalledCapturedHelperHasOnlyGuardedNonValidationEffe
 		return false
 	}
 	child, found := l.byPrototype[handle.Prototype]
-	if !found || child.Cyclic != nil || len(child.Boundary.Captures) != 0 {
+	if !found || child.CyclicDraft() != nil || len(child.BodyBoundary().Captures) != 0 {
 		return false
 	}
 	applications := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "entry", "branch-relations":
 			continue
@@ -7227,12 +7227,12 @@ func nonValidatingNoResultStdlibProvider(provider []byte) bool {
 	return true
 }
 
-func (l *lexicalEvaluator) uncalledStaticCapturedCallsAreGuardedValidation(child front.Compilation, partition equation.Partition) bool {
-	captures := make(map[string]bool, len(child.Boundary.Captures))
-	for _, capture := range child.Boundary.Captures {
+func (l *lexicalEvaluator) uncalledStaticCapturedCallsAreGuardedValidation(child front.DraftsBoundaryView, partition equation.Partition) bool {
+	captures := make(map[string]bool, len(child.BodyBoundary().Captures))
+	for _, capture := range child.BodyBoundary().Captures {
 		captures[boundaryTerm(capture.Symbol)] = true
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -7397,13 +7397,13 @@ func (index *admissionBodyIndex) declaredIndexedReadBoundary() ([]entrySeed, boo
 		return nil, false
 	}
 	formals := index.formals
-	for _, parameter := range child.Boundary.Parameters {
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Symbol == 0 {
 			return nil, false
 		}
 	}
 	hasIndexedRead := false
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "dynamic-index-read":
 			container, found := artifactOperand(operation.Operands, "container")
@@ -7459,8 +7459,8 @@ func (index *admissionBodyIndex) declaredIndexedBranch(operation equation.Equati
 // occurrence that could import a caller-owned value. WIR's binder classification
 // is the authority: a global, an upvalue, or a symbol the binder left unresolved
 // names something the entry does not supply.
-func entryEstablishedSymbolPath(child front.Compilation, item string) bool {
-	if child.WIR == nil {
+func entryEstablishedSymbolPath(child front.GraphView, item string) bool {
+	if child.LoweredBody() == nil {
 		return false
 	}
 	root, _, _ := strings.Cut(item, "/")
@@ -7472,7 +7472,7 @@ func entryEstablishedSymbolPath(child front.Compilation, item string) bool {
 	if err != nil {
 		return false
 	}
-	symbol, classified := child.WIR.SymbolKind(wir.SymbolID(id))
+	symbol, classified := child.LoweredBody().SymbolKind(wir.SymbolID(id))
 	return classified && (symbol == wir.SymbolParam || symbol == wir.SymbolLocal)
 }
 
@@ -7662,8 +7662,8 @@ func (index *admissionBodyIndex) declaredExpandedStdlibCall(apply equation.Equat
 // exact declared formal.  Its capability can only come from the receiver's
 // published boundary type, so it is safe to evaluate solely for a missing
 // member or declared-return diagnostic.
-func hasDeclaredFormalMethodCall(child front.Compilation, operation equation.Equation, formals admissionBoundarySet) bool {
-	if child.WIR == nil || operation.Occurrence.Kind != "apply" {
+func hasDeclaredFormalMethodCall(child front.BoundaryGraphView, operation equation.Equation, formals admissionBoundarySet) bool {
+	if child.LoweredBody() == nil || operation.Occurrence.Kind != "apply" {
 		return false
 	}
 	var receiver []byte
@@ -7679,11 +7679,11 @@ func hasDeclaredFormalMethodCall(child front.Compilation, operation equation.Equ
 	if method == "" || !formals.has(string(receiver)) {
 		return false
 	}
-	for _, parameter := range child.Boundary.Parameters {
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if boundaryTerm(parameter.Symbol) != string(receiver) || parameter.Type == 0 {
 			continue
 		}
-		receiverType := child.WIR.Type(parameter.Type)
+		receiverType := child.LoweredBody().Type(parameter.Type)
 		if receiverType == nil {
 			return false
 		}
@@ -7733,9 +7733,9 @@ func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.C
 	// member surface below such a cell is a fact about this allocation site
 	// alone, so it stays out of the entry and the body accrues member state from
 	// its own evaluation instead.
-	axioms := make(map[string]bool, len(child.Boundary.Captures))
-	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
-	for _, capture := range child.Boundary.Captures {
+	axioms := make(map[string]bool, len(child.BodyBoundary().Captures))
+	closureSeeds := make([]entryClosureSeed, 0, len(child.BodyBoundary().Captures))
+	for _, capture := range child.BodyBoundary().Captures {
 		term := boundaryTerm(capture.Symbol)
 		value, known := resolveKnownCurrentValue([]byte(term), partition)
 		if !known || isUnknownScalar(value) {
@@ -7844,7 +7844,7 @@ func (l *lexicalEvaluator) childEntrySeedSet(body equation.BodyID, child front.C
 // arbitrary uncalled helper: any extra operation, an open result tuple, or a
 // missing predicate target leaves the child dormant.
 func (l *lexicalEvaluator) uncalledTypePredicateCaptureBoundary(child front.Compilation, capture string, handle closureHandle) bool {
-	if l == nil || child.Cyclic != nil || capture == "" {
+	if l == nil || child.CyclicDraft() != nil || capture == "" {
 		return false
 	}
 	helper, found := l.byPrototype[handle.Prototype]
@@ -7859,7 +7859,7 @@ func (l *lexicalEvaluator) uncalledTypePredicateCaptureBoundary(child front.Comp
 	application, valueResult, errorResult := "", "", ""
 	valuePath, errorPath := "", ""
 	branch := ""
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "entry":
 			continue
@@ -7944,11 +7944,11 @@ type typePredicateSummary struct {
 // never rebinds its own boundary, and a type-equal check the language decides
 // by runtime tag. A body meeting none of them exports no summary, so a caller
 // narrows nothing.
-func typePredicateBodySummary(child front.Compilation) (typePredicateSummary, bool) {
-	if child.WIR == nil || child.Cyclic != nil || child.RebindsBoundary || len(child.Boundary.Parameters) == 0 {
+func typePredicateBodySummary(child front.DraftsBoundaryGraphView) (typePredicateSummary, bool) {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil || child.BoundaryRebound() || len(child.BodyBoundary().Parameters) == 0 {
 		return typePredicateSummary{}, false
 	}
-	returned, found := singleReturnedTerm(child.Artifact)
+	returned, found := singleReturnedTerm(child.DraftArtifact())
 	if !found {
 		return typePredicateSummary{}, false
 	}
@@ -7956,9 +7956,9 @@ func typePredicateBodySummary(child front.Compilation) (typePredicateSummary, bo
 	// than one write leaves the returned value undecided by the check, so the
 	// chase stops rather than choosing a definition.
 	for depth := 0; depth < 4; depth++ {
-		predicate, recognized := truthyImpliedTypePredicate(child.Artifact, returned)
+		predicate, recognized := truthyImpliedTypePredicate(child.DraftArtifact(), returned)
 		if recognized {
-			for index, parameter := range child.Boundary.Parameters {
+			for index, parameter := range child.BodyBoundary().Parameters {
 				if parameter.Vararg || boundaryTerm(parameter.Symbol) != "path/"+predicate.Path {
 					continue
 				}
@@ -7966,7 +7966,7 @@ func typePredicateBodySummary(child front.Compilation) (typePredicateSummary, bo
 			}
 			return typePredicateSummary{}, false
 		}
-		source, bound := singleBoundSource(child.Artifact, returned)
+		source, bound := singleBoundSource(child.DraftArtifact(), returned)
 		if !bound {
 			return typePredicateSummary{}, false
 		}
@@ -8136,12 +8136,12 @@ func singleBoundSource(artifact equation.Artifact, term string) (string, bool) {
 
 func (index *admissionBodyIndex) typePredicateHelper() bool {
 	child := index.child
-	if child.Cyclic != nil || child.WIR == nil || len(child.Boundary.Captures) != 0 || len(child.Boundary.Parameters) != 1 {
+	if child.CyclicDraft() != nil || child.LoweredBody() == nil || len(child.BodyBoundary().Captures) != 0 || len(child.BodyBoundary().Parameters) != 1 {
 		return false
 	}
 	application, result := "", ""
 	hasTarget, hasReturn := false, false
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "entry":
 			continue
@@ -8205,11 +8205,11 @@ func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equati
 		return
 	}
 	child := index.child
-	if l == nil || closure == nil || child.Cyclic != nil {
+	if l == nil || closure == nil || child.CyclicDraft() != nil {
 		return
 	}
 	formals, explicitAny := index.explicitAnyBoundary()
-	if !explicitAny || len(formals) == 0 || len(captures) != len(child.Boundary.Captures) {
+	if !explicitAny || len(formals) == 0 || len(captures) != len(child.BodyBoundary().Captures) {
 		return
 	}
 	anyFormal := make(map[string]bool, len(formals))
@@ -8234,7 +8234,7 @@ func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equati
 		return
 	}
 	callResultCallee := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "call-results" {
 			continue
 		}
@@ -8248,7 +8248,7 @@ func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equati
 			}
 		}
 	}
-	for _, branch := range child.Artifact.Equations {
+	for _, branch := range child.DraftArtifact().Equations {
 		if branch.Occurrence.Kind != "branch-relations" {
 			continue
 		}
@@ -8262,7 +8262,7 @@ func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equati
 			}
 		}
 		falseEdge := factkey.BranchGuard{Name: branch.Target.Name, Edge: factkey.FalseEdge}.Encoding()
-		for _, claim := range child.Artifact.Equations {
+		for _, claim := range child.DraftArtifact().Equations {
 			if claim.Occurrence.Kind != "claim" || !hasGuardEncoding(claim.Guards, falseEdge) {
 				continue
 			}
@@ -8281,8 +8281,8 @@ func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equati
 			shapeTarget, _ := artifactOperand(claim.Operands, "shape-target")
 			fact := diagnosticFact(diagnosticFamilyPrefix(DiagnosticFamilyAssignment)+claim.Target.Name, assignmentAnyMismatchPayload(display, string(targetType), shapeTarget))
 			spans := diagnosticSpans(child, []equation.Fact{fact})
-			for _, item := range publishedDiagnostics(child.Artifact, equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
-				key := "child/" + fmt.Sprintf("%x", child.Body) + "/" + item.Fact.Key
+			for _, item := range publishedDiagnostics(child.DraftArtifact(), equation.OutputClosure{Diagnostics: []equation.Fact{fact}}, spans, child.ClaimTargetSpanIndex(), child.CallSpanIndex(), child.BranchSpanIndex(), child.ReturnSpanIndex(), nil, nil) {
+				key := "child/" + fmt.Sprintf("%x", child.BodyID()) + "/" + item.Fact.Key
 				closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), item.Fact.Value...)})
 				if item.Span.Valid() {
 					l.diagnosticSpans[key] = item.Span
@@ -8312,7 +8312,7 @@ func hasGuardEncoding(guards []equation.Guard, want string) bool {
 // the exact formal supplied by the enclosing child entry.
 func (index *admissionBodyIndex) readOnlyClosure() bool {
 	child := index.child
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Captures) != 0 {
 		return false
 	}
 	for _, occurrence := range []string{
@@ -8363,7 +8363,7 @@ func (ctx admissionDiagnosticContext) explicitAnyDiagnostic() bool {
 		return true
 	}
 	name, unproven := strings.CutPrefix(diagnostic.Key, diagnosticFamilyPrefix(DiagnosticFamilyUnprovenClaim))
-	if !unproven || typePredicateResultClaim(ctx.child.Artifact, name) {
+	if !unproven || typePredicateResultClaim(ctx.child.DraftArtifact(), name) {
 		return false
 	}
 	for _, operation := range ctx.bodyIndex.operations {
@@ -8453,19 +8453,19 @@ func (index *admissionBodyIndex) typedChannelSendBoundary() bool {
 		return false
 	}
 	child := index.child
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Captures) != 0 {
 		return false
 	}
-	channels := make(map[string]bool, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
+	channels := make(map[string]bool, len(child.BodyBoundary().Parameters))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
 			continue
 		}
-		if _, ok := ambient.ChannelPayloadType(child.WIR.Type(parameter.Type)); ok {
+		if _, ok := ambient.ChannelPayloadType(child.LoweredBody().Type(parameter.Type)); ok {
 			channels[boundaryTerm(parameter.Symbol)] = true
 		}
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -8533,7 +8533,7 @@ func appendNestedCaptureCapabilities(seeds []entrySeed, closureSeeds []entryClos
 // holds a published closure capability over an admitted prototype and no body
 // this call can run rebinds it; anything else leaves the descendant's dispatch
 // exactly as opaque as it is without this transport.
-func (l *lexicalEvaluator) transitiveCaptureCapabilities(child front.Compilation, seeds []entrySeed, closureSeeds []entryClosureSeed, partition equation.Partition) []nestedCaptureSeed {
+func (l *lexicalEvaluator) transitiveCaptureCapabilities(child front.DraftsBoundaryView, seeds []entrySeed, closureSeeds []entryClosureSeed, partition equation.Partition) []nestedCaptureSeed {
 	if l == nil {
 		return nil
 	}
@@ -8541,7 +8541,7 @@ func (l *lexicalEvaluator) transitiveCaptureCapabilities(child front.Compilation
 	for _, seed := range seeds {
 		bound[seed.Term] = true
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "environment-write", "path-replacement":
 			if target, found := artifactOperand(operation.Operands, "target"); found {
@@ -8549,8 +8549,8 @@ func (l *lexicalEvaluator) transitiveCaptureCapabilities(child front.Compilation
 			}
 		}
 	}
-	materialized := make([]string, 0, len(child.Artifact.Equations))
-	for _, operation := range child.Artifact.Equations {
+	materialized := make([]string, 0, len(child.DraftArtifact().Equations))
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "object-materialization" {
 			continue
 		}
@@ -8613,11 +8613,11 @@ func (l *lexicalEvaluator) transitiveCaptureCapabilities(child front.Compilation
 // capture one of those bodies rebinds is a cell rather than a stable
 // capability, so the value read at this entry would be the one held before that
 // write.
-func (l *lexicalEvaluator) reboundTerms(child front.Compilation, prototypes []string) map[string]bool {
+func (l *lexicalEvaluator) reboundTerms(child front.DraftsBoundaryView, prototypes []string) map[string]bool {
 	rebound := make(map[string]bool)
 	visited := make(map[string]bool, len(prototypes)+1)
-	visited[child.PrototypeName] = true
-	pending := []front.Compilation{child}
+	visited[child.PrototypeDisplayName()] = true
+	pending := []front.DraftsBoundaryView{child}
 	admit := func(name string) {
 		if name == "" || visited[name] {
 			return
@@ -8631,7 +8631,7 @@ func (l *lexicalEvaluator) reboundTerms(child front.Compilation, prototypes []st
 		admit(name)
 	}
 	for index := 0; index < len(pending); index++ {
-		for _, operation := range pending[index].Artifact.Equations {
+		for _, operation := range pending[index].DraftArtifact().Equations {
 			switch operation.Occurrence.Kind {
 			case "environment-write", "path-replacement":
 				if target, found := artifactOperand(operation.Operands, "target"); found {
@@ -8659,7 +8659,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	seeds := make([]entrySeed, 0, len(operands.arguments)+len(handle.Captures))
 	gradualAnyTerms := make([]string, 0)
 	closureSeedByTerm := make(map[string]closureHandle)
-	for index, parameter := range child.Boundary.Parameters {
+	for index, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg {
 			return equation.TransactionResult{}, fmt.Errorf("engine: vararg lexical boundary is unsupported")
 		}
@@ -8682,7 +8682,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		// boundary.  Reject it at the caller-owned application while the
 		// declared formal contract and the published boundary fact are both
 		// available.  The child is not entered with a forged typed seed.
-		declared := unwrap.Alias(subst.ExpandInstantiated(child.WIR.Type(parameter.Type)))
+		declared := unwrap.Alias(subst.ExpandInstantiated(child.LoweredBody().Type(parameter.Type)))
 		// A runtime type test is that boundary's own validator, so a proven
 		// edge that decides the declared parameter outright clears it. This is
 		// the same clearance anyBoundaryValue applies to an assignment and a
@@ -8712,19 +8712,19 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			closureSeedByTerm[term] = callback
 		}
 	}
-	for index, capture := range child.Boundary.Captures {
+	for index, capture := range child.BodyBoundary().Captures {
 		value, known := resolveKnownCurrentValue([]byte(handle.Captures[index]), partition)
 		if !known || isUnknownScalar(value) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: incomplete lexical capture %q", capture.Name)
 		}
 		seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: value})
 	}
-	closureSeeds := make([]entryClosureSeed, 0, len(child.Boundary.Captures))
+	closureSeeds := make([]entryClosureSeed, 0, len(child.BodyBoundary().Captures))
 	// A local capability is admitted only from the same closed caller partition
 	// that supplied the capture value: the handle already published for the exact
 	// term this capture binds. A plain scalar/function entry value names no body
 	// and cannot manufacture that edge.
-	for index, capture := range child.Boundary.Captures {
+	for index, capture := range child.BodyBoundary().Captures {
 		if captured, found := closureHandleFor([]byte(handle.Captures[index]), partition); found {
 			closureSeedByTerm[boundaryTerm(capture.Symbol)] = captured
 		}
@@ -8736,10 +8736,10 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	entrySeeds := append([]entrySeed(nil), boundarySeeds...)
 	entrySeeds = append(entrySeeds, childEntryDescendantSeeds(boundarySeeds, partition)...)
 	memberSources := make(map[string][]byte, len(boundarySeeds))
-	for index, parameter := range child.Boundary.Parameters {
+	for index, parameter := range child.BodyBoundary().Parameters {
 		memberSources[boundaryTerm(parameter.Symbol)] = append([]byte(nil), arguments[index]...)
 	}
-	for index, capture := range child.Boundary.Captures {
+	for index, capture := range child.BodyBoundary().Captures {
 		memberSources[boundaryTerm(capture.Symbol)] = []byte(handle.Captures[index])
 	}
 	memberClosureSeeds := childEntryMemberClosureSeeds(entrySeeds, memberSources, partition)
@@ -8822,7 +8822,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	// A returned array whose elements the callee accounted as keys of one of its
 	// formals carries that relation to this application, where the formal names
 	// the caller's own container.
-	if len(child.Boundary.Parameters) != 0 {
+	if len(child.BodyBoundary().Parameters) != 0 {
 		if partitionErr := buildChildPartition(); partitionErr != nil {
 			return equation.TransactionResult{}, partitionErr
 		}
@@ -8865,7 +8865,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child member closure result")
 		}
 		var wire memberClosureWire
-		if json.Unmarshal(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
+		if front.DecodeRequiredWireJSON(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed child member closure handle")
 		}
 		rebound, values, err := rebindEscapingClosure(operation, child, arguments, handle, closure, wire.Handle)
@@ -8880,7 +8880,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		projected.Values = append(projected.Values, values...)
 		projected.Values = append(projected.Values, equation.Fact{Key: fmt.Sprintf("call-member-closure/%s/%08d/%s", strings.TrimPrefix(operation.Target.Name, "call/"), resultIndex, parts[2]), Value: encoded})
 	}
-	for index, capture := range child.Boundary.Captures {
+	for index, capture := range child.BodyBoundary().Captures {
 		value, found := latestClosedValue([]byte(boundaryTerm(capture.Symbol)), closure.Values)
 		if !found {
 			return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q omitted capture cell %q", handle.Prototype, capture.Name)
@@ -8900,7 +8900,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		// spelling of an aliased cell.
 		aliases := []string{handle.Captures[index]}
 		parameterAliasesCapture := false
-		for parameterIndex := range child.Boundary.Parameters {
+		for parameterIndex := range child.BodyBoundary().Parameters {
 			parameterAliasesCapture = parameterAliasesCapture || string(arguments[parameterIndex]) == handle.Captures[index]
 		}
 		for other, term := range handle.Captures {
@@ -8951,7 +8951,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 	// lens; a parameter rebinding is otherwise callee-local. A member the callee
 	// wrote on the argument's own table is a different effect and reaches the
 	// caller through the shared heap identity above.
-	for parameterIndex, parameter := range child.Boundary.Parameters {
+	for parameterIndex, parameter := range child.BodyBoundary().Parameters {
 		value, found := latestClosedValue([]byte(boundaryTerm(parameter.Symbol)), closure.Values)
 		if !found {
 			return equation.TransactionResult{}, fmt.Errorf("engine: lexical child %q omitted parameter cell %q", handle.Prototype, parameter.Name)
@@ -8974,7 +8974,7 @@ func (l *lexicalEvaluator) applyKnown(operation equation.BoundEquation, operands
 		for _, fact := range closure.Values {
 			if strings.HasPrefix(fact.Key, "closure/") {
 				var returned closureHandle
-				if json.Unmarshal(fact.Value, &returned) != nil {
+				if front.DecodeRequiredWireJSON(fact.Value, &returned) != nil {
 					return equation.TransactionResult{}, fmt.Errorf("engine: malformed returned closure handle")
 				}
 				returned, values, err := rebindEscapingClosure(operation, child, arguments, handle, closure, returned)
@@ -9036,7 +9036,7 @@ func childInferredCallableReturn(handleKey string, values []equation.Fact) ([]by
 // particular invocation supplies a concrete true value. The helper consumes
 // the front's nil write, branch guard, and strict claim as one closed witness;
 // it does not extrapolate from a source name or from an uncalled body.
-func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.Compilation) (bool, equation.OutputClosure, error) {
+func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.ProjectionView) (bool, equation.OutputClosure, error) {
 	claims := declaredFalseEdgeNilAssignmentClaims(child)
 	if len(claims) == 0 {
 		return false, equation.OutputClosure{}, nil
@@ -9052,8 +9052,8 @@ func (l *lexicalEvaluator) declaredBranchAssignmentDiagnostics(child front.Compi
 	restateDeclaredFalseEdgeNil(claims, &closure)
 	spans := diagnosticSpans(child, closure.Diagnostics)
 	projected := equation.OutputClosure{}
-	body := fmt.Sprintf("%x", child.Body)
-	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
+	body := fmt.Sprintf("%x", child.BodyID())
+	for _, item := range publishedDiagnostics(child.DraftArtifact(), closure, spans, child.ClaimTargetSpanIndex(), child.CallSpanIndex(), child.BranchSpanIndex(), child.ReturnSpanIndex(), nil, nil) {
 		_, found := claims[item.Fact.Key]
 		if !found {
 			continue
@@ -9115,8 +9115,8 @@ type nilOriginWitness struct {
 // unguarded, so the all-false path carries the original nil into the call.
 // A write this recognizer cannot account for, a branch whose false edge is not
 // feasible, and a guarded use each leave the binding unreported.
-func nilOriginUnsafeUses(child front.Compilation) map[string]nilOriginWitness {
-	if child.WIR == nil || child.Cyclic != nil {
+func nilOriginUnsafeUses(child front.ProjectionView) map[string]nilOriginWitness {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil {
 		return nil
 	}
 	witnesses := nilOriginCandidates(child)
@@ -9124,7 +9124,7 @@ func nilOriginUnsafeUses(child front.Compilation) map[string]nilOriginWitness {
 		return nil
 	}
 	uses := make(map[string]nilOriginWitness)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" || len(operation.Guards) != 0 {
 			continue
 		}
@@ -9156,20 +9156,20 @@ func nilOriginUnsafeUses(child front.Compilation) map[string]nilOriginWitness {
 // one unconditional nil plus true-edge replacements under feasible branches.
 // Any other write invalidates the binding: the recognizer owns the whole cell,
 // never a prefix of its history.
-func nilOriginCandidates(child front.Compilation) map[string]nilOriginWitness {
-	formals := make(map[string]typ.Type, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
+func nilOriginCandidates(child front.ProjectionView) map[string]nilOriginWitness {
+	formals := make(map[string]typ.Type, len(child.BodyBoundary().Parameters))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type == 0 {
 			continue
 		}
-		formals[boundaryTerm(parameter.Symbol)] = child.WIR.Type(parameter.Type)
+		formals[boundaryTerm(parameter.Symbol)] = child.LoweredBody().Type(parameter.Type)
 	}
 	feasibleBranch := make(map[string]bool)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "branch-relations" || len(operation.Guards) != 0 {
 			continue
 		}
-		if !child.BranchJoinSpans[operation.Target.Name].Valid() {
+		if !child.BranchJoinSpanIndex()[operation.Target.Name].Valid() {
 			continue
 		}
 		predicate, found := artifactOperand(operation.Operands, "predicate")
@@ -9190,7 +9190,7 @@ func nilOriginCandidates(child front.Compilation) map[string]nilOriginWitness {
 		feasibleBranch[operation.Target.Name] = true
 	}
 	witnesses := make(map[string]nilOriginWitness)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "environment-write" {
 			continue
 		}
@@ -9250,8 +9250,8 @@ func appendNilOriginJoin(joins []string, branch string) []string {
 // nil into this binding. An unannotated local is deliberately excluded: its
 // merged assignment obligation is already owned by the declared-branch
 // assignment witness.
-func nilOriginDeclaration(child front.Compilation, term string) (string, string, string, bool) {
-	for _, operation := range child.Artifact.Equations {
+func nilOriginDeclaration(child front.DraftsSpansView, term string) (string, string, string, bool) {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "claim" || len(operation.Guards) != 0 {
 			continue
 		}
@@ -9273,7 +9273,7 @@ func nilOriginDeclaration(child front.Compilation, term string) (string, string,
 		if err != nil || !strings.HasSuffix(declared, "?") {
 			continue
 		}
-		if !child.ClaimNameSpans[operation.Target.Name].Valid() || !child.ClaimTargetSpans[operation.Target.Name].Valid() {
+		if !child.ClaimNameSpanIndex()[operation.Target.Name].Valid() || !child.ClaimTargetSpanIndex()[operation.Target.Name].Valid() {
 			continue
 		}
 		display := strings.TrimPrefix(term, "path/")
@@ -9294,8 +9294,8 @@ func nilOriginDeclaration(child front.Compilation, term string) (string, string,
 // binding's own declaration is not such a refinement: the declaration contracts
 // every write to the local, so each write carries it and none of them admits a
 // value the declaration had not already admitted.
-func nilOriginTermEscapes(child front.Compilation, term string, claim string, declared string) bool {
-	for _, operation := range child.Artifact.Equations {
+func nilOriginTermEscapes(child front.DraftsGraphView, term string, claim string, declared string) bool {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "path-replacement", "path-invalidation", "index-mutation", "generic-for", "channel-select", "dynamic-index-read":
 			for _, operand := range operation.Operands {
@@ -9318,8 +9318,8 @@ func nilOriginTermEscapes(child front.Compilation, term string, claim string, de
 			return true
 		}
 	}
-	for _, nested := range child.Nested {
-		for _, capture := range nested.Boundary.Captures {
+	for _, nested := range child.NestedCompilations() {
+		for _, capture := range nested.BodyBoundary().Captures {
 			if boundaryTerm(capture.Symbol) == term {
 				return true
 			}
@@ -9346,7 +9346,7 @@ func nilOriginRestatesDeclaration(operation equation.Equation, declared string) 
 // possibly-nil binding that reaches an unguarded method call. The chain is the
 // binding's birth, the declaration that admitted nil, every merge it survived,
 // and the use itself, each anchored at the front's own source publication.
-func (l *lexicalEvaluator) publishNilOriginUnsafeUse(closure *equation.OutputClosure, child front.Compilation) {
+func (l *lexicalEvaluator) publishNilOriginUnsafeUse(closure *equation.OutputClosure, child front.ProjectionView) {
 	if l == nil || closure == nil || l.sourcePath == "" {
 		return
 	}
@@ -9354,15 +9354,15 @@ func (l *lexicalEvaluator) publishNilOriginUnsafeUse(closure *equation.OutputClo
 	if len(uses) == 0 {
 		return
 	}
-	body := fmt.Sprintf("%x", child.Body)
-	for _, operation := range child.Artifact.Equations {
+	body := fmt.Sprintf("%x", child.BodyID())
+	for _, operation := range child.DraftArtifact().Equations {
 		witness, unsafe := uses[operation.Target.Name]
 		if !unsafe {
 			continue
 		}
-		useSpan := child.CallSpans[operation.Target.Name+"/callee"]
+		useSpan := child.CallSpanIndex()[operation.Target.Name+"/callee"]
 		if !useSpan.Valid() {
-			useSpan = child.CallSpans[operation.Target.Name+"/call"]
+			useSpan = child.CallSpanIndex()[operation.Target.Name+"/call"]
 		}
 		if !useSpan.Valid() {
 			continue
@@ -9377,17 +9377,17 @@ func (l *lexicalEvaluator) publishNilOriginUnsafeUse(closure *equation.OutputClo
 			Span:    useSpan,
 			Message: string(fact.Value),
 			Evidence: []DiagnosticEvidence{{
-				Span: child.ClaimNameSpans[witness.claim], Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven,
-				Message: fmt.Sprintf("%s born nil at %s:%d (else branch had no assignment)", witness.display, l.sourcePath, child.ClaimNameSpans[witness.claim].StartLine),
+				Span: child.ClaimNameSpanIndex()[witness.claim], Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven,
+				Message: fmt.Sprintf("%s born nil at %s:%d (else branch had no assignment)", witness.display, l.sourcePath, child.ClaimNameSpanIndex()[witness.claim].StartLine),
 			}, {
-				Span: child.ClaimTargetSpans[witness.claim], Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed,
+				Span: child.ClaimTargetSpanIndex()[witness.claim], Kind: diag.EvidenceUserAssertion, Trust: diag.TrustClaimed,
 				Message: fmt.Sprintf("%s declared with optional type %s", witness.display, witness.declared),
 			}},
 			Labels: []DiagnosticLabel{{Span: useSpan, Message: "possibly-nil value"}},
 			Help:   fmt.Sprintf("Guard %s against nil before the method call, or assign it on every branch.", witness.display),
 		}
 		for _, join := range witness.joins {
-			joinSpan := child.BranchJoinSpans[join]
+			joinSpan := child.BranchJoinSpanIndex()[join]
 			item.Evidence = append(item.Evidence, DiagnosticEvidence{
 				Span: joinSpan, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven,
 				Message: fmt.Sprintf("%s survives the if/else join at %s:%d (no else assignment)", witness.display, l.sourcePath, joinSpan.StartLine),
@@ -9420,22 +9420,22 @@ type nilOriginFieldWitness struct {
 // The nil possibility is created by the declaration itself, so no body write
 // history is needed; conversely, any write reaching that formal or its field
 // leaves the read unreported, because the recognizer does not model it.
-func (l *lexicalEvaluator) nilOriginOptionalFieldUses(child front.Compilation) map[string]nilOriginFieldWitness {
-	if l == nil || child.WIR == nil || child.Cyclic != nil || len(l.typeFieldSpans) == 0 {
+func (l *lexicalEvaluator) nilOriginOptionalFieldUses(child front.DraftsBoundaryGraphView) map[string]nilOriginFieldWitness {
+	if l == nil || child.LoweredBody() == nil || child.CyclicDraft() != nil || len(l.typeFieldSpans) == 0 {
 		return nil
 	}
-	formals := make(map[string]typ.Type, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
+	formals := make(map[string]typ.Type, len(child.BodyBoundary().Parameters))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Symbol == 0 || parameter.Type == 0 {
 			continue
 		}
-		formals[boundaryTerm(parameter.Symbol)] = child.WIR.Type(parameter.Type)
+		formals[boundaryTerm(parameter.Symbol)] = child.LoweredBody().Type(parameter.Type)
 	}
 	if len(formals) == 0 {
 		return nil
 	}
 	uses := make(map[string]nilOriginFieldWitness)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" || len(operation.Guards) != 0 {
 			continue
 		}
@@ -9507,8 +9507,8 @@ func (l *lexicalEvaluator) declaredFieldNameSpan(declared typ.Type, field string
 // formal at all. Any such write is outside this recognizer's model, so the
 // field read stays unreported rather than being proven against a stale
 // declaration.
-func nilOriginFormalFieldEscapes(child front.Compilation, root string) bool {
-	for _, operation := range child.Artifact.Equations {
+func nilOriginFormalFieldEscapes(child front.DraftsGraphView, root string) bool {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "environment-write", "path-replacement", "path-invalidation", "index-mutation", "generic-for", "channel-select", "dynamic-index-read":
 			for _, operand := range operation.Operands {
@@ -9522,8 +9522,8 @@ func nilOriginFormalFieldEscapes(child front.Compilation, root string) bool {
 			}
 		}
 	}
-	for _, nested := range child.Nested {
-		for _, capture := range nested.Boundary.Captures {
+	for _, nested := range child.NestedCompilations() {
+		for _, capture := range nested.BodyBoundary().Captures {
 			if boundaryTerm(capture.Symbol) == root {
 				return true
 			}
@@ -9534,7 +9534,7 @@ func nilOriginFormalFieldEscapes(child front.Compilation, root string) bool {
 
 // publishNilOriginOptionalFieldUse publishes the declaration-to-use origin
 // trace of an unguarded method call on a declared-optional field.
-func (l *lexicalEvaluator) publishNilOriginOptionalFieldUse(closure *equation.OutputClosure, child front.Compilation) {
+func (l *lexicalEvaluator) publishNilOriginOptionalFieldUse(closure *equation.OutputClosure, child front.ProjectionView) {
 	if l == nil || closure == nil || l.sourcePath == "" {
 		return
 	}
@@ -9542,15 +9542,15 @@ func (l *lexicalEvaluator) publishNilOriginOptionalFieldUse(closure *equation.Ou
 	if len(uses) == 0 {
 		return
 	}
-	body := fmt.Sprintf("%x", child.Body)
-	for _, operation := range child.Artifact.Equations {
+	body := fmt.Sprintf("%x", child.BodyID())
+	for _, operation := range child.DraftArtifact().Equations {
 		witness, unsafe := uses[operation.Target.Name]
 		if !unsafe {
 			continue
 		}
-		useSpan := child.CallSpans[operation.Target.Name+"/callee"]
+		useSpan := child.CallSpanIndex()[operation.Target.Name+"/callee"]
 		if !useSpan.Valid() {
-			useSpan = child.CallSpans[operation.Target.Name+"/call"]
+			useSpan = child.CallSpanIndex()[operation.Target.Name+"/call"]
 		}
 		if !useSpan.Valid() {
 			continue
@@ -9593,12 +9593,12 @@ type declaredNilAssignmentWitness struct {
 // claim that reads it afterwards. Each component is an existing front
 // publication, which keeps imported, captured, and arbitrary branch bodies
 // outside this declaration-only check.
-func declaredFalseEdgeNilAssignmentClaims(child front.Compilation) map[string]declaredNilAssignmentWitness {
+func declaredFalseEdgeNilAssignmentClaims(child front.DraftsBoundaryGraphView) map[string]declaredNilAssignmentWitness {
 	if !capturelessFormalBody(child) {
 		return nil
 	}
-	formals := make(map[string]bool, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
+	formals := make(map[string]bool, len(child.BodyBoundary().Parameters))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Symbol == 0 {
 			return nil
 		}
@@ -9606,7 +9606,7 @@ func declaredFalseEdgeNilAssignmentClaims(child front.Compilation) map[string]de
 	}
 	nilWrites := make(map[string]bool)
 	trueWrites := make(map[string]map[string][]byte)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "environment-write" {
 			continue
 		}
@@ -9635,7 +9635,7 @@ func declaredFalseEdgeNilAssignmentClaims(child front.Compilation) map[string]de
 		return nil
 	}
 	candidates := make(map[string][]byte)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "branch-relations" || len(operation.Guards) != 0 || trueWrites[operation.Target.Name] == nil {
 			continue
 		}
@@ -9657,7 +9657,7 @@ func declaredFalseEdgeNilAssignmentClaims(child front.Compilation) map[string]de
 		return nil
 	}
 	claims := make(map[string]declaredNilAssignmentWitness)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "claim" || len(operation.Guards) != 0 {
 			continue
 		}
@@ -9689,7 +9689,7 @@ func (l *lexicalEvaluator) knownLexicalBoundary(operands directCallOperands, han
 	if operands.receiver != nil {
 		arguments = append([][]byte{operands.receiver}, arguments...)
 	}
-	if operands.spread || len(arguments) != len(child.Boundary.Parameters) || len(handle.Captures) != len(child.Boundary.Captures) {
+	if operands.spread || len(arguments) != len(child.BodyBoundary().Parameters) || len(handle.Captures) != len(child.BodyBoundary().Captures) {
 		return front.Compilation{}, nil, fmt.Errorf("engine: unsupported exact lexical boundary for %q", handle.Prototype)
 	}
 	return child, arguments, nil
@@ -9711,10 +9711,10 @@ func projectCallResults(operation equation.BoundEquation, returns [][]byte, clos
 // The caller's call-results owner already knows how to transport this identity
 // to its result slot, so the hazard remains attached to a real publication
 // rather than to a guessed alias or source name.
-func projectExternalCallbackReturnFacts(operation equation.BoundEquation, child front.Compilation, closure equation.OutputClosure) []equation.Fact {
+func projectExternalCallbackReturnFacts(operation equation.BoundEquation, child front.DraftsView, closure equation.OutputClosure) []equation.Fact {
 	var facts []equation.Fact
 	seen := make(map[string]bool)
-	for _, publication := range child.Artifact.Equations {
+	for _, publication := range child.DraftArtifact().Equations {
 		if publication.Occurrence.Kind != "publication" {
 			continue
 		}
@@ -9754,9 +9754,9 @@ func projectExternalCallbackReturnFacts(operation equation.BoundEquation, child 
 // Only a slot whose current occupant is an exact formal participates: the
 // caller resolves the identity from the argument it supplied, so nothing about
 // the callee's own allocations crosses the boundary.
-func projectReturnMemberIdentities(operation equation.BoundEquation, child front.Compilation, arguments [][]byte, closure equation.OutputClosure, partition equation.Partition) []equation.Fact {
-	formals := make(map[string]int, len(child.Boundary.Parameters))
-	for index, parameter := range child.Boundary.Parameters {
+func projectReturnMemberIdentities(operation equation.BoundEquation, child front.BoundaryView, arguments [][]byte, closure equation.OutputClosure, partition equation.Partition) []equation.Fact {
+	formals := make(map[string]int, len(child.BodyBoundary().Parameters))
+	for index, parameter := range child.BodyBoundary().Parameters {
 		formals[boundaryTerm(parameter.Symbol)] = index
 	}
 	if len(formals) == 0 {
@@ -9793,9 +9793,9 @@ func projectReturnMemberIdentities(operation equation.BoundEquation, child front
 // against its own boundary term, which is the relational form: only the caller
 // knows which container that formal was bound to, and only there does the
 // relation name a table its own reads can be decided against.
-func projectReturnKeysOf(operation equation.BoundEquation, child front.Compilation, arguments [][]byte, written map[string]bool, closure equation.OutputClosure, childPartition equation.Partition) []equation.Fact {
-	formals := make(map[string]int, len(child.Boundary.Parameters))
-	for index, parameter := range child.Boundary.Parameters {
+func projectReturnKeysOf(operation equation.BoundEquation, child front.DraftsBoundaryView, arguments [][]byte, written map[string]bool, closure equation.OutputClosure, childPartition equation.Partition) []equation.Fact {
+	formals := make(map[string]int, len(child.BodyBoundary().Parameters))
+	for index, parameter := range child.BodyBoundary().Parameters {
 		formals[boundaryTerm(parameter.Symbol)] = index
 	}
 	if len(formals) == 0 {
@@ -9803,7 +9803,7 @@ func projectReturnKeysOf(operation equation.BoundEquation, child front.Compilati
 	}
 	var facts []equation.Fact
 	seen := make(map[int]bool)
-	for _, publication := range child.Artifact.Equations {
+	for _, publication := range child.DraftArtifact().Equations {
 		if publication.Occurrence.Kind != "publication" {
 			continue
 		}
@@ -9862,7 +9862,7 @@ func heapHasExternalCallbackFacts(identity []byte, values []equation.Fact) bool 
 	return false
 }
 
-func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClosure, caller equation.BoundEquation, callerOperands directCallOperands, child front.Compilation, handle closureHandle, closure equation.OutputClosure, partition equation.Partition) {
+func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClosure, caller equation.BoundEquation, callerOperands directCallOperands, child front.DraftsBoundarySpansView, handle closureHandle, closure equation.OutputClosure, partition equation.Partition) {
 	// applyKnown reaches this projector only after it has built an exact child
 	// entry from the current caller partition and completed the child run.  That
 	// call evidence is the publication authority; requiresBody is merely an
@@ -9872,11 +9872,11 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 	// used by static-member-read admission. Keep those write-owned facts local;
 	// objectMaterializationKernel publishes them only after its closed formal
 	// seeds have established that boundary.
-	closure.Diagnostics = rootPublishedDiagnostics(child.Artifact, closure.Diagnostics)
-	body := fmt.Sprintf("%x", child.Body)
+	closure.Diagnostics = rootPublishedDiagnostics(child.DraftArtifact(), closure.Diagnostics)
+	body := fmt.Sprintf("%x", child.BodyID())
 	spans := diagnosticSpans(child, closure.Diagnostics)
 	transported := make(map[string]bool)
-	for _, item := range publishedDiagnostics(child.Artifact, closure, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
+	for _, item := range publishedDiagnostics(child.DraftArtifact(), closure, spans, child.ClaimTargetSpanIndex(), child.CallSpanIndex(), child.BranchSpanIndex(), child.ReturnSpanIndex(), nil, nil) {
 		if !childCallDiagnostic(item.Fact) {
 			continue
 		}
@@ -9921,7 +9921,7 @@ func (l *lexicalEvaluator) projectChildDiagnostics(projected *equation.OutputClo
 // formal boundary, call display, and caller argument span are all published
 // front data; aliases, derived expressions, and incomplete spans remain
 // child-local rather than receiving a guessed caller explanation.
-func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEquation, callerOperands directCallOperands, child front.Compilation, item PublishedDiagnostic, partition equation.Partition) (PublishedDiagnostic, bool) {
+func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEquation, callerOperands directCallOperands, child front.DraftsBoundaryView, item PublishedDiagnostic, partition equation.Partition) (PublishedDiagnostic, bool) {
 	code, childOperation, subject, ok := directCallDiagnosticParts(item.Fact.Key)
 	if !ok || code != "argument_type" {
 		return PublishedDiagnostic{}, false
@@ -9932,7 +9932,7 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 	}
 	var application equation.Equation
 	found := false
-	for _, candidate := range child.Artifact.Equations {
+	for _, candidate := range child.DraftArtifact().Equations {
 		if candidate.Target.Name == childOperation && candidate.Occurrence.Kind == "apply" {
 			application, found = candidate, true
 			break
@@ -9956,7 +9956,7 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 		return PublishedDiagnostic{}, false
 	}
 	formal := -1
-	for index, parameter := range child.Boundary.Parameters {
+	for index, parameter := range child.BodyBoundary().Parameters {
 		if string(argumentTerm) == boundaryTerm(parameter.Symbol) {
 			formal = index
 			break
@@ -9974,7 +9974,7 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 	}
 	value, expected := item.Payload.Observed, item.Payload.Required
 	innerArgument := fmt.Sprintf("argument %d", childArgument)
-	if formalName := child.Boundary.Parameters[formal].Name; formalName != "" {
+	if formalName := child.BodyBoundary().Parameters[formal].Name; formalName != "" {
 		innerArgument += " (" + formalName + ")"
 	}
 	outerArgument := formal + 1
@@ -10251,14 +10251,14 @@ func childReturnCandidateValues(closure equation.OutputClosure, prefix string) (
 	return result, nil
 }
 
-func rebindEscapingClosure(operation equation.BoundEquation, child front.Compilation, arguments [][]byte, parent closureHandle, closure equation.OutputClosure, returned closureHandle) (closureHandle, []equation.Fact, error) {
+func rebindEscapingClosure(operation equation.BoundEquation, child front.BoundaryView, arguments [][]byte, parent closureHandle, closure equation.OutputClosure, returned closureHandle) (closureHandle, []equation.Fact, error) {
 	if !validClosureHandle(returned) {
 		return closureHandle{}, nil, fmt.Errorf("malformed escaping closure handle")
 	}
 	projected := make([]equation.Fact, 0)
 	for captureIndex, capture := range returned.Captures {
 		rebound := false
-		for parameterIndex, parameter := range child.Boundary.Parameters {
+		for parameterIndex, parameter := range child.BodyBoundary().Parameters {
 			if capture == boundaryTerm(parameter.Symbol) {
 				returned.Captures[captureIndex] = string(arguments[parameterIndex])
 				rebound = true
@@ -10268,7 +10268,7 @@ func rebindEscapingClosure(operation equation.BoundEquation, child front.Compila
 		if rebound {
 			continue
 		}
-		for boundaryIndex, boundary := range child.Boundary.Captures {
+		for boundaryIndex, boundary := range child.BodyBoundary().Captures {
 			if capture == boundaryTerm(boundary.Symbol) {
 				returned.Captures[captureIndex] = parent.Captures[boundaryIndex]
 				rebound = true
@@ -10382,7 +10382,7 @@ type allocationDisplayWire struct {
 
 func decodeAllocationDisplay(value []byte) (allocationDisplayWire, bool) {
 	var wire allocationDisplayWire
-	if json.Unmarshal(value, &wire) != nil || wire.Version != 1 || wire.Term == "" || wire.Display == "" || wire.Kind == "" {
+	if front.DecodeRequiredWireJSON(value, &wire) != nil || wire.Version != 1 || wire.Term == "" || wire.Display == "" || wire.Kind == "" {
 		return allocationDisplayWire{}, false
 	}
 	return wire, true
@@ -10414,7 +10414,7 @@ type nativeCaptureTransportWire struct {
 
 func decodeNativeCaptureTransport(value []byte) (nativeCaptureTransportWire, bool) {
 	var wire nativeCaptureTransportWire
-	if json.Unmarshal(value, &wire) != nil || wire.Version != 1 || wire.Subject == "" || wire.Content == "" ||
+	if front.DecodeRequiredWireJSON(value, &wire) != nil || wire.Version != 1 || wire.Subject == "" || wire.Content == "" ||
 		wire.Occurrence == "" || wire.Established == "" || wire.Revoked == "" || wire.Event == "" {
 		return nativeCaptureTransportWire{}, false
 	}
@@ -10423,7 +10423,7 @@ func decodeNativeCaptureTransport(value []byte) (nativeCaptureTransportWire, boo
 
 func decodeNativeCaptureEpochRoot(value []byte) (nativeCaptureEpochRootWire, bool) {
 	var wire nativeCaptureEpochRootWire
-	if json.Unmarshal(value, &wire) != nil || wire.Version != 1 || wire.Subject == "" || wire.Content == "" || wire.Occurrence == "" {
+	if front.DecodeRequiredWireJSON(value, &wire) != nil || wire.Version != 1 || wire.Subject == "" || wire.Content == "" || wire.Occurrence == "" {
 		return nativeCaptureEpochRootWire{}, false
 	}
 	return wire, true
@@ -10563,7 +10563,7 @@ func nativeAliasDisjointFact(occurrence []byte, term, identity []byte, subject, 
 
 func decodeNativeAliasDisjoint(value []byte) (nativeAliasDisjointWire, bool) {
 	var wire nativeAliasDisjointWire
-	if json.Unmarshal(value, &wire) != nil || wire.Version != 1 || wire.Subject == "" || wire.Content == "" {
+	if front.DecodeRequiredWireJSON(value, &wire) != nil || wire.Version != 1 || wire.Subject == "" || wire.Content == "" {
 		return nativeAliasDisjointWire{}, false
 	}
 	for _, event := range wire.Events {
@@ -10696,7 +10696,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// branch is not selected at allocation time. This is a path-local fact: a
 	// later write, an opaque callee, or an unclosed capture leaves it dormant.
 	if parent, found := lexical.byBody[operation.Target.Body]; found {
-		lexical.publishStaticNilCallDiagnostic(&closure, child, parent.Artifact.Equations, operation.Target.Name, captures, partition)
+		lexical.publishStaticNilCallDiagnostic(&closure, child, parent.DraftArtifact().Equations, operation.Target.Name, captures, partition)
 	}
 	lexical.publishNilOriginUnsafeUse(&closure, child)
 	lexical.publishNilOriginOptionalFieldUse(&closure, child)
@@ -10757,9 +10757,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 				}
 			}
 		}
-		body := fmt.Sprintf("%x", child.Body)
+		body := fmt.Sprintf("%x", child.BodyID())
 		spans := diagnosticSpans(child, outcome.Diagnostics)
-		claimOwnedReads := claimConsumedStaticReads(child.Artifact)
+		claimOwnedReads := claimConsumedStaticReads(child.DraftArtifact())
 		// A body whose entire formal boundary is declared explicit any is decided
 		// at allocation time whichever lane admitted it: no caller value can be
 		// more precise than the declared any. Its argument and return contract
@@ -10792,7 +10792,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// corresponding source-facing projection alongside the qualified fact so
 		// allocation-time diagnostics retain the evidence published by their
 		// owning claim rather than falling back to an unadorned parent fact.
-		for _, item := range publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil) {
+		for _, item := range publishedDiagnostics(child.DraftArtifact(), outcome, spans, child.ClaimTargetSpanIndex(), child.CallSpanIndex(), child.BranchSpanIndex(), child.ReturnSpanIndex(), nil, nil) {
 			if !admissionDischarges(item.Fact) {
 				continue
 			}
@@ -10818,7 +10818,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		// reconstructions, and a boundary the entry cannot certify still leaves
 		// its own blocker.
 		if admission.Lane.Name == "imported-capture" {
-			closure.Values = append(closure.Values, placementUncalledBodyFacts(child.Artifact.Equations, outcome.Values)...)
+			closure.Values = append(closure.Values, placementUncalledBodyFacts(child.DraftArtifact().Equations, outcome.Values)...)
 		}
 	}
 	// A closure with no formals or captures has a fully closed body at its
@@ -10828,7 +10828,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// This remains fail-closed: any unresolved body evaluation aborts the
 	// constructor, and the child projector accepts only complete allocations
 	// and their own self-contained boundary evidence.
-	if child.Cyclic == nil && len(child.Boundary.Parameters) == 0 && len(child.Boundary.Captures) == 0 {
+	if child.CyclicDraft() == nil && len(child.BodyBoundary().Parameters) == 0 && len(child.BodyBoundary().Captures) == 0 {
 		entry, entryErr := encodeChildEntry(nil)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
@@ -10906,12 +10906,12 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 	// consumed within a declared body needs no caller value to establish its
 	// identity. Publish only those closed facts for otherwise uncalled bodies;
 	// all ordinary diagnostics retain the existing demand-driven boundary.
-	if child.Cyclic == nil && (childHasChannelLifecycle(child) || childHasResourceLifecycle(child)) {
-		seeds := make([]entrySeed, 0, len(child.Boundary.Parameters)+len(child.Boundary.Captures))
-		for _, parameter := range child.Boundary.Parameters {
+	if child.CyclicDraft() == nil && (childHasChannelLifecycle(child) || childHasResourceLifecycle(child)) {
+		seeds := make([]entrySeed, 0, len(child.BodyBoundary().Parameters)+len(child.BodyBoundary().Captures))
+		for _, parameter := range child.BodyBoundary().Parameters {
 			seeds = append(seeds, entrySeed{Term: boundaryTerm(parameter.Symbol), Value: []byte(shapefact.ScalarTopWire)})
 		}
-		for _, capture := range child.Boundary.Captures {
+		for _, capture := range child.BodyBoundary().Captures {
 			seeds = append(seeds, entrySeed{Term: boundaryTerm(capture.Symbol), Value: []byte(shapefact.ScalarTopWire)})
 		}
 		entry, entryErr := encodeChildEntry(seeds)
@@ -10922,7 +10922,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 		if evaluateErr != nil {
 			return equation.TransactionResult{}, fmt.Errorf("engine: lifecycle child %q: %w", prototype, evaluateErr)
 		}
-		body := fmt.Sprintf("%x", child.Body)
+		body := fmt.Sprintf("%x", child.BodyID())
 		for _, diagnostic := range outcome.Diagnostics {
 			if !diagnosticFamilyMatches(diagnostic.Key,
 				DiagnosticFamilyClosedChannelSend,
@@ -10944,18 +10944,18 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			key := "child/" + body + "/" + diagnostic.Key
 			closure.Diagnostics = append(closure.Diagnostics, equation.Fact{Key: key, Value: append([]byte(nil), diagnostic.Value...)})
 			acquire := strings.TrimPrefix(diagnostic.Key, diagnosticFamilyPrefix(DiagnosticFamilyUnreleasedResource))
-			if span, ok := child.CallSpans[acquire+"/call"]; ok {
+			if span, ok := child.CallSpanIndex()[acquire+"/call"]; ok {
 				lexical.diagnosticSpans[key] = span
 			}
 			if close := firstResourceCloseOperation(child); close != "" {
-				if span, ok := child.CallSpans[close+"/call"]; ok {
+				if span, ok := child.CallSpanIndex()[close+"/call"]; ok {
 					lexical.lifecycleEvidence[key] = []DiagnosticEvidence{{Span: span, Kind: diag.EvidenceAbstractFact, Trust: diag.TrustProven, Message: "this call transitions `" + resourceDisplay(child, acquire) + "` in protocol connection from `open` to `closed` on a reachable path"}}
 				}
 			}
 		}
 	}
-	if child.Cyclic == nil && childHasSelect(child) {
-		body := fmt.Sprintf("%x", child.Body)
+	if child.CyclicDraft() == nil && childHasSelect(child) {
+		body := fmt.Sprintf("%x", child.BodyID())
 		entry, entryErr := lexical.selectChildEntry(child, captures, partition)
 		if entryErr != nil {
 			return equation.TransactionResult{}, entryErr
@@ -10965,7 +10965,7 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			return equation.TransactionResult{}, fmt.Errorf("engine: select child %q: %w", prototype, evaluateErr)
 		}
 		spans := diagnosticSpans(child, outcome.Diagnostics)
-		childPublished := publishedDiagnostics(child.Artifact, outcome, spans, child.ClaimTargetSpans, child.CallSpans, child.BranchSpans, child.ReturnSpans, nil, nil)
+		childPublished := publishedDiagnostics(child.DraftArtifact(), outcome, spans, child.ClaimTargetSpanIndex(), child.CallSpanIndex(), child.BranchSpanIndex(), child.ReturnSpanIndex(), nil, nil)
 		for _, diagnostic := range outcome.Diagnostics {
 			if !selectChildDiagnostic(diagnostic.Key) {
 				continue
@@ -11070,11 +11070,11 @@ func (index *admissionBodyIndex) staticMemberReadSeeds() ([]entrySeed, bool) {
 		return nil, false
 	}
 	child := index.child
-	if child.WIR == nil || child.Cyclic != nil || len(child.Boundary.Captures) != 0 {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil || len(child.BodyBoundary().Captures) != 0 {
 		return nil, false
 	}
 	formals := index.formals
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "environment-write" {
 			continue
 		}
@@ -11133,12 +11133,12 @@ func closedImportEntrySeeds(partition equation.Partition) []entrySeed {
 // every contract they carry is lost. Only a currently published callable value
 // and its admitted prototype cross; mutable state and unavailable bindings stay
 // out of the private entry.
-func (l *lexicalEvaluator) closedBodyCalleeSeeds(child front.Compilation, seeds []entrySeed, partition equation.Partition) ([]entrySeed, []entryClosureSeed) {
+func (l *lexicalEvaluator) closedBodyCalleeSeeds(child front.DraftsView, seeds []entrySeed, partition equation.Partition) ([]entrySeed, []entryClosureSeed) {
 	bound := make(map[string]bool, len(seeds))
 	for _, seed := range seeds {
 		bound[seed.Term] = true
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "environment-write" {
 			continue
 		}
@@ -11146,9 +11146,9 @@ func (l *lexicalEvaluator) closedBodyCalleeSeeds(child front.Compilation, seeds 
 			bound[string(target)] = true
 		}
 	}
-	callees := make([]string, 0, len(child.Artifact.Equations))
-	seen := make(map[string]bool, len(child.Artifact.Equations))
-	for _, operation := range child.Artifact.Equations {
+	callees := make([]string, 0, len(child.DraftArtifact().Equations))
+	seen := make(map[string]bool, len(child.DraftArtifact().Equations))
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -11192,14 +11192,14 @@ func (l *lexicalEvaluator) closedBodyCalleeSeeds(child front.Compilation, seeds 
 // every root the child can read has either its exact captured value/capability
 // or an explicit Top seed.  Absence is reserved for a malformed entry packet,
 // never used to represent an unknown lexical value.
-func (l *lexicalEvaluator) selectChildEntry(child front.Compilation, captures []string, partition equation.Partition) ([]byte, error) {
+func (l *lexicalEvaluator) selectChildEntry(child front.DraftsBoundaryView, captures []string, partition equation.Partition) ([]byte, error) {
 	byTerm := make(map[string]entrySeed)
 	sources := make(map[string][]byte)
 	for _, seed := range closedImportEntrySeeds(partition) {
 		byTerm[seed.Term] = seed
 	}
 	closureByTerm := make(map[string]closureHandle)
-	for index, capture := range child.Boundary.Captures {
+	for index, capture := range child.BodyBoundary().Captures {
 		term := boundaryTerm(capture.Symbol)
 		value := []byte(shapefact.ScalarTopWire)
 		if index < len(captures) {
@@ -11221,7 +11221,7 @@ func (l *lexicalEvaluator) selectChildEntry(child front.Compilation, captures []
 	// by select lowering) without coupling entry construction to publication
 	// order. Descendants inherit their root's entry state and are evaluated only
 	// after their own body write, as usual.
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		for _, operand := range operation.Operands {
 			term := selectChildRootTerm(string(operand.Term.Encoding))
 			if term == "" {
@@ -11293,8 +11293,8 @@ func selectChildRootTerm(term string) string {
 	return "path/" + path
 }
 
-func childHasChannelLifecycle(child front.Compilation) bool {
-	for _, operation := range child.Artifact.Equations {
+func childHasChannelLifecycle(child front.DraftsView) bool {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -11307,8 +11307,8 @@ func childHasChannelLifecycle(child front.Compilation) bool {
 	return false
 }
 
-func childHasSelect(child front.Compilation) bool {
-	for _, operation := range child.Artifact.Equations {
+func childHasSelect(child front.DraftsView) bool {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind == "channel-select" {
 			return true
 		}
@@ -11316,8 +11316,8 @@ func childHasSelect(child front.Compilation) bool {
 	return false
 }
 
-func childHasResourceLifecycle(child front.Compilation) bool {
-	for _, operation := range child.Artifact.Equations {
+func childHasResourceLifecycle(child front.DraftsView) bool {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
 		}
@@ -11400,8 +11400,8 @@ func resourceUnreleasedDiagnostics(child front.Compilation, closure equation.Out
 	return diagnostics
 }
 
-func childHasResourceClose(child front.Compilation) bool {
-	for _, operation := range child.Artifact.Equations {
+func childHasResourceClose(child front.DraftsView) bool {
+	for _, operation := range child.DraftArtifact().Equations {
 		for _, operand := range operation.Operands {
 			if operand.Role == "callee-display" && string(operand.Term.Encoding) == "resource.close" {
 				return true
@@ -11411,8 +11411,8 @@ func childHasResourceClose(child front.Compilation) bool {
 	return false
 }
 
-func firstResourceCloseOperation(child front.Compilation) string {
-	for _, operation := range child.Artifact.Equations {
+func firstResourceCloseOperation(child front.DraftsView) string {
+	for _, operation := range child.DraftArtifact().Equations {
 		for _, operand := range operation.Operands {
 			if operand.Role == "callee-display" && string(operand.Term.Encoding) == "resource.close" {
 				return operation.Target.Name
@@ -11422,8 +11422,8 @@ func firstResourceCloseOperation(child front.Compilation) string {
 	return ""
 }
 
-func childHasPCall(child front.Compilation) bool {
-	for _, operation := range child.Artifact.Equations {
+func childHasPCall(child front.DraftsView) bool {
+	for _, operation := range child.DraftArtifact().Equations {
 		for _, operand := range operation.Operands {
 			if operand.Role == "callee-display" && string(operand.Term.Encoding) == "pcall" {
 				return true
@@ -11433,8 +11433,8 @@ func childHasPCall(child front.Compilation) bool {
 	return false
 }
 
-func childHasNestedResourceClose(child front.Compilation) bool {
-	for _, nested := range child.Nested {
+func childHasNestedResourceClose(child front.GraphView) bool {
+	for _, nested := range child.NestedCompilations() {
 		if childHasResourceClose(nested) || childHasNestedResourceClose(nested) {
 			return true
 		}
@@ -11442,9 +11442,9 @@ func childHasNestedResourceClose(child front.Compilation) bool {
 	return false
 }
 
-func resourceDisplay(child front.Compilation, acquire string) string {
+func resourceDisplay(child front.DraftsView, acquire string) string {
 	application := "call/" + acquire
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "call-results" {
 			continue
 		}
@@ -11465,7 +11465,7 @@ func resourceDisplay(child front.Compilation, acquire string) string {
 			continue
 		}
 		path := target[index+1:]
-		for _, write := range child.Artifact.Equations {
+		for _, write := range child.DraftArtifact().Equations {
 			if write.Occurrence.Kind != "environment-write" {
 				continue
 			}
@@ -11961,8 +11961,8 @@ func expandTableTail(table *shapefact.Table, partition equation.Partition) bool 
 // undeclaredPrototypeReturn reports that a child body states no return type of
 // its own. Only such a body needs a derived result: a declared signature is
 // already the callable contract every consumer reads.
-func undeclaredPrototypeReturn(child front.Compilation) bool {
-	return child.WIR != nil && len(child.WIR.DeclaredReturnTypes()) == 0
+func undeclaredPrototypeReturn(child front.GraphView) bool {
+	return child.LoweredBody() != nil && len(child.LoweredBody().DeclaredReturnTypes()) == 0
 }
 
 // stableCaptureBoundary reports that nothing a closure closes over can change
@@ -11970,14 +11970,14 @@ func undeclaredPrototypeReturn(child front.Compilation) bool {
 // resource makes the body's result depend on when it runs, so no allocation-time
 // derivation describes it. A non-cyclic body over immutable captures does not
 // have that dependence.
-func stableCaptureBoundary(lexical *lexicalEvaluator, body equation.BodyID, child front.Compilation, partition equation.Partition) bool {
-	if lexical == nil || child.WIR == nil || child.Cyclic != nil {
+func stableCaptureBoundary(lexical *lexicalEvaluator, body equation.BodyID, child front.DraftsBoundaryGraphView, partition equation.Partition) bool {
+	if lexical == nil || child.LoweredBody() == nil || child.CyclicDraft() != nil {
 		return false
 	}
 	if childHasChannelLifecycle(child) || childHasResourceLifecycle(child) || childHasSelect(child) {
 		return false
 	}
-	for _, capture := range child.Boundary.Captures {
+	for _, capture := range child.BodyBoundary().Captures {
 		if capture.Mutable {
 			return false
 		}
@@ -12705,7 +12705,7 @@ const opaqueMemberWriteMarker = "unresolved-key"
 
 func decodeOpaqueMemberWrite(value []byte) (opaqueMemberWriteWire, bool) {
 	var wire opaqueMemberWriteWire
-	if json.Unmarshal(value, &wire) != nil || wire.Marker != opaqueMemberWriteMarker {
+	if front.DecodeRequiredWireJSON(value, &wire) != nil || wire.Marker != opaqueMemberWriteMarker {
 		return opaqueMemberWriteWire{}, false
 	}
 	kept := wire.Handles[:0]
@@ -14725,11 +14725,11 @@ func declarationSlotIsItsOwnDefault(lexical *lexicalEvaluator, operation equatio
 		return true
 	}
 	child, known := lexical.byBody[operation.Target.Body]
-	if !known || child.Artifact.Equations == nil {
+	if !known || child.DraftArtifact().Equations == nil {
 		return true
 	}
 	publisher := factOperation(published.Key)
-	for _, candidate := range child.Artifact.Equations {
+	for _, candidate := range child.DraftArtifact().Equations {
 		if candidate.Target.Name != publisher {
 			continue
 		}
@@ -15149,7 +15149,7 @@ func guardedLocalCallResultClaim(lexical *lexicalEvaluator, operation equation.B
 	result := string(source)
 	if strings.HasPrefix(result, "path/") {
 		result = ""
-		for _, candidate := range compilation.Artifact.Equations {
+		for _, candidate := range compilation.DraftArtifact().Equations {
 			if candidate.Occurrence.Kind != "environment-write" {
 				continue
 			}
@@ -15164,7 +15164,7 @@ func guardedLocalCallResultClaim(lexical *lexicalEvaluator, operation equation.B
 	if result == "" {
 		return false
 	}
-	for _, candidate := range compilation.Artifact.Equations {
+	for _, candidate := range compilation.DraftArtifact().Equations {
 		if candidate.Occurrence.Kind != "call-results" {
 			continue
 		}
@@ -15173,7 +15173,7 @@ func guardedLocalCallResultClaim(lexical *lexicalEvaluator, operation equation.B
 		}
 		for _, operand := range candidate.Operands {
 			if _, semantic := operand.Role.SemanticResult(); semantic && string(operand.Term.Encoding) == result {
-				return !guardWindowHasMutation(compilation.Artifact, operation, candidate.Target.Name)
+				return !guardWindowHasMutation(compilation.DraftArtifact(), operation, candidate.Target.Name)
 			}
 		}
 	}
@@ -15517,7 +15517,7 @@ func lexicalMemberCallableSurface(lexical *lexicalEvaluator, source []byte, targ
 		return nil, shapeUnknown
 	}
 	child, found := lexical.byPrototype[handle.Prototype]
-	if !found || child.Cyclic != nil || len(child.Boundary.Parameters) != 0 || len(handle.Captures) != len(child.Boundary.Captures) {
+	if !found || child.CyclicDraft() != nil || len(child.BodyBoundary().Parameters) != 0 || len(handle.Captures) != len(child.BodyBoundary().Captures) {
 		return nil, shapeUnknown
 	}
 	operation := equation.BoundEquation{Target: equation.Coordinate{Name: "member-surface"}}
@@ -20212,7 +20212,7 @@ func selectBranchClosure(operation equation.BoundEquation, partition equation.Pa
 		return equation.OutputClosure{}, false, nil
 	}
 	var meta selectMetaWire
-	if json.Unmarshal(metaFact, &meta) != nil || meta.Cases <= 0 {
+	if front.DecodeRequiredWireJSON(metaFact, &meta) != nil || meta.Cases <= 0 {
 		return equation.OutputClosure{}, false, nil
 	}
 	other, ok := resolveCurrentIdentity([]byte("path/"+channelPath), partition)
@@ -20226,7 +20226,7 @@ func selectBranchClosure(operation equation.BoundEquation, partition equation.Pa
 			return equation.OutputClosure{}, false, nil
 		}
 		var arm selectArmWire
-		if json.Unmarshal(fact, &arm) != nil || arm.Index != index || arm.Identity == "" {
+		if front.DecodeRequiredWireJSON(fact, &arm) != nil || arm.Index != index || arm.Identity == "" {
 			return equation.OutputClosure{}, false, nil
 		}
 		identity, decodeErr := base64.RawURLEncoding.DecodeString(arm.Identity)
@@ -20983,22 +20983,22 @@ func typedCalleeParameterAt(function *typ.Function, index int) (typ.Type, bool) 
 // contract.  Unknown values and malformed/inexact boundaries remain silent.
 func (l *lexicalEvaluator) boundaryArgumentRefutation(operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) (equation.TransactionResult, bool) {
 	child, exists := l.byPrototype[handle.Prototype]
-	if !exists || child.WIR == nil || operands.spread {
+	if !exists || child.LoweredBody() == nil || operands.spread {
 		return equation.TransactionResult{}, false
 	}
 	arguments := operands.arguments
 	if operands.receiver != nil {
 		arguments = append([][]byte{operands.receiver}, arguments...)
 	}
-	if len(arguments) != len(child.Boundary.Parameters) {
+	if len(arguments) != len(child.BodyBoundary().Parameters) {
 		return equation.TransactionResult{}, false
 	}
-	for index, parameter := range child.Boundary.Parameters {
+	for index, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Type == 0 {
 			continue
 		}
 		argument, known := resolveKnownCurrentValue(arguments[index], partition)
-		expected := child.WIR.Type(parameter.Type)
+		expected := child.LoweredBody().Type(parameter.Type)
 		// An any/unknown value is the opaque top. Its shape may look concrete,
 		// but that shape crossed a precision boundary without validation, so it
 		// discharges no concrete parameter contract. A top-like parameter
@@ -21027,17 +21027,17 @@ func (l *lexicalEvaluator) boundaryArgumentRefutation(operation equation.BoundEq
 // opaque expression or unresolved capture.
 func (l *lexicalEvaluator) boundaryArithmeticOperandRefutation(operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) (equation.TransactionResult, bool) {
 	child, exists := l.byPrototype[handle.Prototype]
-	if !exists || child.WIR == nil || operands.spread {
+	if !exists || child.LoweredBody() == nil || operands.spread {
 		return equation.TransactionResult{}, false
 	}
 	arguments := operands.arguments
 	if operands.receiver != nil {
 		arguments = append([][]byte{operands.receiver}, arguments...)
 	}
-	if len(arguments) != len(child.Boundary.Parameters) {
+	if len(arguments) != len(child.BodyBoundary().Parameters) {
 		return equation.TransactionResult{}, false
 	}
-	for index, parameter := range child.Boundary.Parameters {
+	for index, parameter := range child.BodyBoundary().Parameters {
 		if parameter.Vararg || parameter.Type != 0 {
 			continue
 		}
@@ -21046,7 +21046,7 @@ func (l *lexicalEvaluator) boundaryArithmeticOperandRefutation(operation equatio
 			continue
 		}
 		formal := []byte(boundaryTerm(parameter.Symbol))
-		for _, expression := range child.Artifact.Equations {
+		for _, expression := range child.DraftArtifact().Equations {
 			if expression.Occurrence.Kind != "expression" {
 				continue
 			}
@@ -21136,7 +21136,7 @@ func (l *lexicalEvaluator) memberRelayEntry(operation equation.BoundEquation, op
 			continue
 		}
 		var wire memberClosureWire
-		if json.Unmarshal(fact.Value, &wire) == nil && wire.Suffix == "."+method && validClosureHandle(wire.Handle) {
+		if front.DecodeRequiredWireJSON(fact.Value, &wire) == nil && wire.Suffix == "."+method && validClosureHandle(wire.Handle) {
 			return true
 		}
 	}
@@ -21948,11 +21948,11 @@ func declaredTypeForTerm(term []byte, partition equation.Partition) (typ.Type, b
 // that names the same symbol, assigns the formal. The entry states one type for
 // the whole body, while an assignment to an undeclared formal may leave it
 // holding an unrelated type, so a rebound formal takes no instantiation.
-func boundaryFormalRebound(child front.Compilation, symbol wir.SymbolID) bool {
-	if child.WIR != nil && child.WIR.SymbolHasWrite(symbol) {
+func boundaryFormalRebound(child front.GraphView, symbol wir.SymbolID) bool {
+	if child.LoweredBody() != nil && child.LoweredBody().SymbolHasWrite(symbol) {
 		return true
 	}
-	for _, nested := range child.Nested {
+	for _, nested := range child.NestedCompilations() {
 		if boundaryFormalRebound(nested, symbol) {
 			return true
 		}
@@ -22324,7 +22324,7 @@ func currentMemberCell(identity []byte, suffix string, partition equation.Partit
 		return memberCellWire{}, false
 	}
 	var cell memberCellWire
-	if json.Unmarshal(encoded, &cell) != nil || len(cell.Value) == 0 || (cell.Handle != nil && !validClosureHandle(*cell.Handle)) {
+	if front.DecodeRequiredWireJSON(encoded, &cell) != nil || len(cell.Value) == 0 || (cell.Handle != nil && !validClosureHandle(*cell.Handle)) {
 		return memberCellWire{}, false
 	}
 	return cell, true
@@ -22333,14 +22333,14 @@ func currentMemberCell(identity []byte, suffix string, partition equation.Partit
 // childMutatesHeapMembers reports whether a callee body contains any operation
 // that can advance a heap cell. It is a structural artifact question, so an
 // unrelated call never pays for the child snapshot the writeback needs.
-func (l *lexicalEvaluator) childMutatesHeapMembers(child front.Compilation) bool {
-	if l != nil && child.PrototypeName != "" {
-		if cached, known := l.heapMutators[child.PrototypeName]; known {
+func (l *lexicalEvaluator) childMutatesHeapMembers(child front.DraftsBoundaryView) bool {
+	if l != nil && child.PrototypeDisplayName() != "" {
+		if cached, known := l.heapMutators[child.PrototypeDisplayName()]; known {
 			return cached
 		}
 	}
 	mutates := false
-	for _, item := range child.Artifact.Equations {
+	for _, item := range child.DraftArtifact().Equations {
 		switch item.Occurrence.Kind {
 		case "path-replacement", "index-mutation", "path-invalidation":
 			mutates = true
@@ -22349,8 +22349,8 @@ func (l *lexicalEvaluator) childMutatesHeapMembers(child front.Compilation) bool
 			break
 		}
 	}
-	if l != nil && child.PrototypeName != "" {
-		l.heapMutators[child.PrototypeName] = mutates
+	if l != nil && child.PrototypeDisplayName() != "" {
+		l.heapMutators[child.PrototypeDisplayName()] = mutates
 	}
 	return mutates
 }
@@ -22448,7 +22448,7 @@ func childMemberWritebacks(identities [][]byte, childPartition equation.Partitio
 				continue
 			}
 			var cell memberCellWire
-			if json.Unmarshal(latest[encodedSuffix].encoded, &cell) != nil || len(cell.Value) == 0 {
+			if front.DecodeRequiredWireJSON(latest[encodedSuffix].encoded, &cell) != nil || len(cell.Value) == 0 {
 				continue
 			}
 			suffix := string(suffixBytes)
@@ -22900,7 +22900,7 @@ func sealedIndexChain(lexical *lexicalEvaluator, operation equation.BoundEquatio
 	for _, link := range chain {
 		linked[string(link)] = true
 	}
-	for _, item := range compilation.Artifact.Equations {
+	for _, item := range compilation.DraftArtifact().Equations {
 		if item.Occurrence.Kind != "path-replacement" && item.Occurrence.Kind != "environment-write" {
 			continue
 		}
@@ -24269,7 +24269,7 @@ func callableSignature(value []byte) (callableShape, bool) {
 		return callableShape{}, false
 	}
 	var signature callableShape
-	if err := json.Unmarshal(wire, &signature); err != nil || signature.Required < 0 || signature.Required > len(signature.Params) || signature.Variadic != (signature.VariadicType != "") {
+	if err := front.DecodeRequiredWireJSON(wire, &signature); err != nil || signature.Required < 0 || signature.Required > len(signature.Params) || signature.Variadic != (signature.VariadicType != "") {
 		return callableShape{}, false
 	}
 	for _, parameter := range signature.Params {
@@ -24706,10 +24706,10 @@ func opaqueCallbackCaptureEffects(lexical *lexicalEvaluator, provider []byte, ar
 	for _, argument := range arguments {
 		for _, handle := range opaqueArgumentCallbacks(argument, partition) {
 			child, found := lexical.byPrototype[handle.Prototype]
-			if !found || len(handle.Captures) != len(child.Boundary.Captures) {
+			if !found || len(handle.Captures) != len(child.BodyBoundary().Captures) {
 				continue
 			}
-			for index, capture := range child.Boundary.Captures {
+			for index, capture := range child.BodyBoundary().Captures {
 				if !childWritesCapture(child, boundaryTerm(capture.Symbol)) {
 					continue
 				}
@@ -24813,10 +24813,10 @@ func publishedMemberSuffixes(identity []byte, partition equation.Partition) []st
 // comes from the callback's own lowered operand; one the body does not close is
 // unknown and joins to the unknown scalar rather than leaving the caller's proof
 // standing. A cell the caller never proved has nothing to weaken.
-func opaqueCallbackMemberJoins(child front.Compilation, capture string, identity []byte, operation string, partition equation.Partition) []equation.Fact {
+func opaqueCallbackMemberJoins(child front.DraftsView, capture string, identity []byte, operation string, partition equation.Partition) []equation.Fact {
 	written := make(map[string][]byte)
 	order := make([]string, 0)
-	for _, item := range child.Artifact.Equations {
+	for _, item := range child.DraftArtifact().Equations {
 		switch item.Occurrence.Kind {
 		case "environment-write", "path-replacement", "index-mutation", "path-invalidation":
 		default:
@@ -24864,8 +24864,8 @@ func opaqueCallbackMemberJoins(child front.Compilation, capture string, identity
 	return facts
 }
 
-func childWritesCapture(child front.Compilation, capture string) bool {
-	for _, operation := range child.Artifact.Equations {
+func childWritesCapture(child front.DraftsView, capture string) bool {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "environment-write", "path-replacement", "index-mutation", "path-invalidation":
 			target, found := artifactOperand(operation.Operands, "target")
@@ -25479,7 +25479,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				continue
 			}
 			var wire memberClosureWire
-			if json.Unmarshal(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
+			if front.DecodeRequiredWireJSON(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call member closure")
 			}
 			values = append(values, equation.Fact{Key: "member-closure/" + string(result) + "/" + operation.Target.Name + "/" + strings.TrimPrefix(fact.Key, memberPrefix), Value: fact.Value})
@@ -25824,7 +25824,7 @@ func (l *lexicalEvaluator) placementContainedArgumentFacts(operation equation.Bo
 
 func placementClosedLocalSummaryFacts(lexical *lexicalEvaluator, operation equation.BoundEquation, operands directCallOperands, handle closureHandle, partition equation.Partition) []equation.Fact {
 	child, found := lexical.byPrototype[handle.Prototype]
-	if !found || child.Cyclic != nil || len(handle.Captures) != 0 || len(child.Boundary.Captures) != 0 {
+	if !found || child.CyclicDraft() != nil || len(handle.Captures) != 0 || len(child.BodyBoundary().Captures) != 0 {
 		return nil
 	}
 	if closedLocalParameterSummary(child) {
@@ -25852,16 +25852,16 @@ func placementClosedLocalSummaryFacts(lexical *lexicalEvaluator, operation equat
 // global/upvalue write can carry a formal past the frame, so those keep the
 // opaque boundary. The static shape only selects which bodies are worth
 // evaluating; the evaluated escape check remains the containment authority.
-func containedFormalWriteBody(child front.Compilation) bool {
-	if child.WIR == nil || child.Cyclic != nil {
+func containedFormalWriteBody(child front.DraftsBoundaryGraphView) bool {
+	if child.LoweredBody() == nil || child.CyclicDraft() != nil {
 		return false
 	}
-	formals := make(map[string]bool, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
+	formals := make(map[string]bool, len(child.BodyBoundary().Parameters))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
 	wroteFormal := false
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "apply", "external-call", "call-results", "environment-write", "path-invalidation":
 			return false
@@ -25896,12 +25896,12 @@ func writeRootedAtFormal(target string, formals map[string]bool) bool {
 // to retain, return, or mutate a formal. Its finite body artifact is the
 // authority; calls, writes, index operations, and publications of a formal
 // all keep the caller-side opaque boundary intact.
-func closedLocalParameterSummary(child front.Compilation) bool {
-	formals := make(map[string]bool, len(child.Boundary.Parameters))
-	for _, parameter := range child.Boundary.Parameters {
+func closedLocalParameterSummary(child front.DraftsBoundaryView) bool {
+	formals := make(map[string]bool, len(child.BodyBoundary().Parameters))
+	for _, parameter := range child.BodyBoundary().Parameters {
 		formals[boundaryTerm(parameter.Symbol)] = true
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		switch operation.Occurrence.Kind {
 		case "apply", "external-call", "call-results", "environment-write", "path-replacement", "index-mutation":
 			return false
@@ -26077,14 +26077,14 @@ func inferredLocalCallableResultType(lexical *lexicalEvaluator, callee []byte, i
 // through it.
 func declaredClosureResultAtIndex(lexical *lexicalEvaluator, handle closureHandle, index int) typ.Type {
 	child, found := lexical.byPrototype[handle.Prototype]
-	if !found || child.WIR == nil || index < 0 || index >= len(child.Boundary.DeclaredReturns) {
+	if !found || child.LoweredBody() == nil || index < 0 || index >= len(child.BodyBoundary().DeclaredReturns) {
 		return nil
 	}
-	reference := child.Boundary.DeclaredReturns[index]
+	reference := child.BodyBoundary().DeclaredReturns[index]
 	if reference == 0 {
 		return nil
 	}
-	return unwrap.Alias(child.WIR.Type(reference))
+	return unwrap.Alias(child.LoweredBody().Type(reference))
 }
 
 // declaredCalleeResultType reads the return type this application's callee
@@ -26219,11 +26219,11 @@ func inferredClosureResultAtIndex(lexical *lexicalEvaluator, handle closureHandl
 		return nil, false
 	}
 	child, found := lexical.byPrototype[handle.Prototype]
-	if !found || child.Cyclic != nil {
+	if !found || child.CyclicDraft() != nil {
 		return nil, false
 	}
 	values := make(map[string][]byte)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "environment-write" {
 			continue
 		}
@@ -26237,7 +26237,7 @@ func inferredClosureResultAtIndex(lexical *lexicalEvaluator, handle closureHandl
 		}
 	}
 	returns := make([]typ.Type, 0)
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
@@ -26269,10 +26269,10 @@ func inferredClosureResultAtIndex(lexical *lexicalEvaluator, handle closureHandl
 // this path; they already ride the closure's canonical signature.
 func inferredClosureSingleReturn(lexical *lexicalEvaluator, handle closureHandle) (typ.Type, bool) {
 	child, found := lexical.byPrototype[handle.Prototype]
-	if lexical == nil || len(handle.Captures) != 0 || !found || child.Cyclic != nil {
+	if lexical == nil || len(handle.Captures) != 0 || !found || child.CyclicDraft() != nil {
 		return nil, false
 	}
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
@@ -26312,7 +26312,7 @@ func inferredReturnMemberSummaries(lexical *lexicalEvaluator, values []equation.
 			continue
 		}
 		var wire memberClosureWire
-		if json.Unmarshal(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
+		if front.DecodeRequiredWireJSON(fact.Value, &wire) != nil || wire.Suffix == "" || !validClosureHandle(wire.Handle) {
 			continue
 		}
 		returnType, ok := inferredClosureSingleReturn(lexical, wire.Handle)
@@ -29155,7 +29155,7 @@ func correlationConeCurrentValue(term []byte, partition equation.Partition) ([]b
 			continue
 		}
 		var wire correlationConeValue
-		if json.Unmarshal(fact.Value, &wire) != nil || len(wire.Value) == 0 || len(wire.Epochs) == 0 || !correlationConeEpochsCurrent(wire.Epochs, partition) {
+		if front.DecodeRequiredWireJSON(fact.Value, &wire) != nil || len(wire.Value) == 0 || len(wire.Epochs) == 0 || !correlationConeEpochsCurrent(wire.Epochs, partition) {
 			continue
 		}
 		if !shapefact.IsForm(wire.Value, shapefact.PayloadShapeTarget) {
@@ -29443,7 +29443,7 @@ func handleCaptureRow(handle closureHandle) []string {
 // established.
 func mergeRecurrentMemberCell(left, right []byte, values func(left, right []byte) ([]byte, bool)) ([]byte, bool) {
 	var first, second memberCellWire
-	if json.Unmarshal(left, &first) != nil || json.Unmarshal(right, &second) != nil {
+	if front.DecodeRequiredWireJSON(left, &first) != nil || front.DecodeRequiredWireJSON(right, &second) != nil {
 		return nil, false
 	}
 	value, ok := values(first.Value, second.Value)
@@ -29723,7 +29723,7 @@ func selectConstrainedArms(selectID []byte, cases int, partition equation.Partit
 			continue
 		}
 		var constraint selectConstraintWire
-		if json.Unmarshal(fact.Value, &constraint) != nil || constraint.Select != string(selectID) || constraint.Default {
+		if front.DecodeRequiredWireJSON(fact.Value, &constraint) != nil || constraint.Select != string(selectID) || constraint.Default {
 			continue
 		}
 		allowed := make(map[int]bool, len(constraint.Arms))
@@ -29762,7 +29762,7 @@ func selectPayloadValue(term []byte, partition equation.Partition) ([]byte, bool
 		return nil, false
 	}
 	var meta selectMetaWire
-	if json.Unmarshal(metaFact, &meta) != nil || meta.Cases <= 0 {
+	if front.DecodeRequiredWireJSON(metaFact, &meta) != nil || meta.Cases <= 0 {
 		return nil, false
 	}
 	arms, ok := selectConstrainedArms(selectID, meta.Cases, partition)
@@ -29779,7 +29779,7 @@ func selectPayloadValue(term []byte, partition equation.Partition) ([]byte, bool
 			return nil, false
 		}
 		var wire selectArmWire
-		if json.Unmarshal(fact, &wire) != nil || wire.Index != arm || wire.Payload == "" {
+		if front.DecodeRequiredWireJSON(fact, &wire) != nil || wire.Index != arm || wire.Payload == "" {
 			return nil, false
 		}
 		encoded, err := base64.RawURLEncoding.DecodeString(wire.Payload)

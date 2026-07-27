@@ -4,11 +4,21 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
+)
+
+var (
+	// ErrWireAbsent is returned only by required decodes of an empty transport
+	// slot. It is distinct from a present wire whose JSON is malformed.
+	ErrWireAbsent = errors.New("front: wire absent")
+	// ErrWireMalformed identifies a present transport value that cannot be
+	// decoded as the schema selected by its owning role or fact family.
+	ErrWireMalformed = errors.New("front: malformed wire")
 )
 
 const (
@@ -227,8 +237,43 @@ func validateBranchChainPath(path BranchChainPathWire, predicateKey string) erro
 	return nil
 }
 
+// DecodeWireJSON is the single JSON admission primitive for analysis wires.
+// Empty bytes mean that the selected transport slot is absent. Any non-empty
+// bytes are present, and malformed JSON is returned as an error rather than
+// being reinterpreted by a consumer as absence.
+func DecodeWireJSON(encoded []byte, destination any) (present bool, err error) {
+	if len(encoded) == 0 {
+		return false, nil
+	}
+	if err := json.Unmarshal(encoded, destination); err != nil {
+		return true, fmt.Errorf("%w: %v", ErrWireMalformed, err)
+	}
+	return true, nil
+}
+
+// DecodeRequiredWireJSON is used after a role, key, or fact lookup has already
+// established presence. Both absence and malformed content remain explicit
+// errors, so a consumer can fail closed without collapsing the two cases.
+func DecodeRequiredWireJSON(encoded []byte, destination any) error {
+	present, err := DecodeWireJSON(encoded, destination)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return ErrWireAbsent
+	}
+	return nil
+}
+
 func decodeDraftJSON(encoded []byte, destination any) error {
-	return json.Unmarshal(encoded, destination)
+	present, err := DecodeWireJSON(encoded, destination)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return ErrWireAbsent
+	}
+	return nil
 }
 
 // EncodeBranchPredicateWire is the sole constructor of predicate wire bytes.

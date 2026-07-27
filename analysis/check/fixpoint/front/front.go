@@ -79,11 +79,11 @@ type Compilation struct {
 	// assembled Compilation values.
 	draftWiresValidated bool
 	Cyclic              *equation.CyclicArtifact
-	// Frozen is retained for every admitted body, including acyclic bodies.
+	// frozen is retained for every admitted body, including acyclic bodies.
 	// Cyclic remains the execution-path signal; consumers that need a stable
 	// interprocedural identity must use this certificate instead of rebuilding
 	// a schedule from the artifact.
-	Frozen equation.CyclicArtifact
+	frozen equation.CyclicArtifact
 	// WIR is the immutable lowered body that owns source topology.  Consumers
 	// may inspect it only as descriptive input; evaluation remains exclusively
 	// owned by Artifact and the engine kernels.
@@ -99,62 +99,62 @@ type Compilation struct {
 	PrototypeName string
 	LexicalPath   []uint32
 	Boundary      wir.BodyBoundary
-	// RebindsBoundary records ordinary assignment to a formal or captured
+	// rebindsBoundary records ordinary assignment to a formal or captured
 	// declaration. Member/index writes are deliberately excluded: their heap
 	// transport is a separate interprocedural boundary concern.
-	RebindsBoundary bool
-	// Nested holds the independently admitted lexical bodies owned by closure
+	rebindsBoundary bool
+	// nested holds the independently admitted lexical bodies owned by closure
 	// allocations in Artifact. They retain the same WIR-derived equation form
 	// and publication path as the enclosing body; a caller decides which body
 	// entries are available to evaluate.
-	Nested           []Compilation
-	ClaimSpans       map[string]wir.Span
-	ClaimTargetSpans map[string]wir.Span
-	// ClaimNameSpans anchor an annotation claim at the declared name itself.
-	// ClaimTargetSpans prefer the declared type, so a diagnostic that explains
+	nested           []Compilation
+	claimSpans       map[string]wir.Span
+	claimTargetSpans map[string]wir.Span
+	// claimNameSpans anchor an annotation claim at the declared name itself.
+	// claimTargetSpans prefer the declared type, so a diagnostic that explains
 	// where a binding was born needs this separate channel.
-	ClaimNameSpans map[string]wir.Span
-	// BranchJoinSpans anchor a branch at the closing `end` where its arms
-	// rejoin. BranchSpans own the condition; a merge is a different location.
-	BranchJoinSpans map[string]wir.Span
-	CallSpans       map[string]wir.Span
-	BranchSpans     map[string]wir.Span
-	EffectSpans     map[string]wir.Span
-	ExpressionSpans map[string]wir.Span
-	ReturnSpans     map[string]wir.Span
-	// TableMemberValueSpans is lowering-owned constructor metadata keyed by
+	claimNameSpans map[string]wir.Span
+	// branchJoinSpans anchor a branch at the closing `end` where its arms
+	// rejoin. branchSpans own the condition; a merge is a different location.
+	branchJoinSpans map[string]wir.Span
+	callSpans       map[string]wir.Span
+	branchSpans     map[string]wir.Span
+	effectSpans     map[string]wir.Span
+	expressionSpans map[string]wir.Span
+	returnSpans     map[string]wir.Span
+	// tableMemberValueSpans is lowering-owned constructor metadata keyed by
 	// the closed table term and canonical member suffix. Diagnostic projection
 	// consumes it without revisiting WIR.
-	TableMemberValueSpans     map[string]map[string]wir.Span
-	QualifiedClaimSpans       map[SpanKey]wir.Span
-	QualifiedClaimTargetSpans map[SpanKey]wir.Span
-	QualifiedCallSpans        map[SpanKey]wir.Span
-	QualifiedBranchSpans      map[SpanKey]wir.Span
-	QualifiedEffectSpans      map[SpanKey]wir.Span
-	// Catalog on the root indexes every complete lexical body. It remains
+	tableMemberValueSpans     map[string]map[string]wir.Span
+	qualifiedClaimSpans       map[SpanKey]wir.Span
+	qualifiedClaimTargetSpans map[SpanKey]wir.Span
+	qualifiedCallSpans        map[SpanKey]wir.Span
+	qualifiedBranchSpans      map[SpanKey]wir.Span
+	qualifiedEffectSpans      map[SpanKey]wir.Span
+	// catalog on the root indexes every complete lexical body. It remains
 	// passive until child admission is enabled by the engine.
-	Catalog BodyCatalog
-	// ControlDiagnostics are parser-admitted, lexical control facts. They are
+	catalog BodyCatalog
+	// controlDiagnostics are parser-admitted, lexical control facts. They are
 	// retained with the compiled body so the engine can publish them through the
 	// same source-diagnostic boundary as equation facts.
-	ControlDiagnostics []ControlDiagnostic
-	// PolicyDiagnostics are complete lexical facts that are returned to the
+	controlDiagnostics []ControlDiagnostic
+	// policyDiagnostics are complete lexical facts that are returned to the
 	// project adapter but never enter the engine's unconditional diagnostic
 	// stream. The adapter applies the caller's explicit diagnostic policy.
-	PolicyDiagnostics []ControlDiagnostic
-	// TypeDefinitions are the top-level declarations resolved by the exact
+	policyDiagnostics []ControlDiagnostic
+	// typeDefinitions are the top-level declarations resolved by the exact
 	// resolver that lowered WIR. Module publication uses these values directly:
 	// reconstructing them with a second resolver would allocate a different
 	// recursive identity graph from the declaration that annotates exported
 	// values.
-	TypeDefinitions map[string]typ.Type
-	// TypeFieldSpans records where each field of a top-level record declaration
+	typeDefinitions map[string]typ.Type
+	// typeFieldSpans records where each field of a top-level record declaration
 	// was named. It is source metadata for diagnostics that must cite where an
 	// optional field was declared; the resolved type stays the sole authority.
-	TypeFieldSpans map[string]map[string]wir.Span
-	// NativeContracts is binder-derived lexical topology. It is descriptive
+	typeFieldSpans map[string]map[string]wir.Span
+	// nativeContracts is binder-derived lexical topology. It is descriptive
 	// input to the engine's ordinary fact publication, never a second evaluator.
-	NativeContracts []NativeContract
+	nativeContracts []NativeContract
 }
 
 // recordFieldNameSpans retains the authored field-name token of every
@@ -287,19 +287,19 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	if err != nil {
 		return Compilation{}, err
 	}
-	compilation.Nested = nested
-	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, adviceControlDiagnostics(body, built.Graph)...)
-	compilation.PolicyDiagnostics = append(compilation.PolicyDiagnostics, advicePolicyDiagnostics(body, built.Graph)...)
+	compilation.nested = nested
+	compilation.controlDiagnostics = append(compilation.controlDiagnostics, adviceControlDiagnostics(body, built.Graph)...)
+	compilation.policyDiagnostics = append(compilation.policyDiagnostics, advicePolicyDiagnostics(body, built.Graph)...)
 	for _, child := range nested {
-		compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, child.ControlDiagnostics...)
-		compilation.PolicyDiagnostics = append(compilation.PolicyDiagnostics, child.PolicyDiagnostics...)
+		compilation.controlDiagnostics = append(compilation.controlDiagnostics, child.controlDiagnostics...)
+		compilation.policyDiagnostics = append(compilation.policyDiagnostics, child.policyDiagnostics...)
 	}
-	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, controlDiagnostics...)
-	compilation.ControlDiagnostics = append(compilation.ControlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
-	compilation.TypeDefinitions = typeDefinitions
-	compilation.TypeFieldSpans = recordFieldNameSpans(stmts)
-	compilation.NativeContracts = append(nativeContracts(stmts, bindings, nativeCaptureTransportCounts(compilation)), nativeWIRContracts(compilation)...)
-	artifact, err = appendNativeContractPublications(compilation.Artifact, compilation.NativeContracts)
+	compilation.controlDiagnostics = append(compilation.controlDiagnostics, controlDiagnostics...)
+	compilation.controlDiagnostics = append(compilation.controlDiagnostics, unresolvedReferenceDiagnostics(stmts, bindings, resolver)...)
+	compilation.typeDefinitions = typeDefinitions
+	compilation.typeFieldSpans = recordFieldNameSpans(stmts)
+	compilation.nativeContracts = append(nativeContracts(stmts, bindings, nativeCaptureTransportCounts(compilation)), nativeWIRContracts(compilation)...)
+	artifact, err = appendNativeContractPublications(compilation.Artifact, compilation.nativeContracts)
 	if err != nil {
 		return Compilation{}, err
 	}
@@ -311,7 +311,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	if err != nil {
 		return Compilation{}, err
 	}
-	compilation.Frozen = cyclic
+	compilation.frozen = cyclic
 	if graphHasCycle(built.Graph) {
 		compilation.Cyclic = &cyclic
 	}
@@ -319,7 +319,7 @@ func CompileWithResolver(source string, external typeannotation.Resolver) (Compi
 	if err != nil {
 		return Compilation{}, err
 	}
-	compilation.Catalog = catalog
+	compilation.catalog = catalog
 	return compilation, nil
 }
 
@@ -459,16 +459,16 @@ func AppendNativeProjections(compilation Compilation, rows []NativeProjection) (
 	if err != nil {
 		return Compilation{}, err
 	}
-	compilation.Frozen = frozen
+	compilation.frozen = frozen
 	compilation.Cyclic = nil
 	if graphHasCycle(compilation.Graph) {
-		compilation.Cyclic = &compilation.Frozen
+		compilation.Cyclic = &compilation.frozen
 	}
 	catalog, err := catalogBodies(compilation)
 	if err != nil {
 		return Compilation{}, err
 	}
-	compilation.Catalog = catalog
+	compilation.catalog = catalog
 	return compilation, nil
 }
 
@@ -956,18 +956,18 @@ func visitNestedFunctions(expr ast.Expr, visit func([]ast.Stmt)) {
 func newCompilation(body equation.BodyID, prototype wir.FunctionSymbolID, prototypeName string, lexicalPath []uint32, boundary wir.BodyBoundary, wirBody *wir.Body, artifact equation.Artifact, claims, claimTargets, calls, branches, effects, expressions map[string]wir.Span) Compilation {
 	return Compilation{
 		Artifact: artifact, WIR: wirBody, Body: body, Prototype: prototype, PrototypeName: prototypeName,
-		LexicalPath: append([]uint32(nil), lexicalPath...), Boundary: boundary, RebindsBoundary: bodyRebindsBoundary(wirBody, boundary),
-		ClaimSpans: claims, ClaimTargetSpans: claimTargets, CallSpans: calls,
-		BranchSpans: branches, EffectSpans: effects, ExpressionSpans: expressions,
-		ReturnSpans:               returnSpans(wirBody, artifact),
-		TableMemberValueSpans:     tableMemberValueSpans(wirBody),
-		ClaimNameSpans:            claimNameSpans(wirBody, artifact),
-		BranchJoinSpans:           branchJoinSpans(wirBody, artifact),
-		QualifiedClaimSpans:       qualifySpans(body, claims),
-		QualifiedClaimTargetSpans: qualifySpans(body, claimTargets),
-		QualifiedCallSpans:        qualifySpans(body, calls),
-		QualifiedBranchSpans:      qualifySpans(body, branches),
-		QualifiedEffectSpans:      qualifySpans(body, effects),
+		LexicalPath: append([]uint32(nil), lexicalPath...), Boundary: boundary, rebindsBoundary: bodyRebindsBoundary(wirBody, boundary),
+		claimSpans: claims, claimTargetSpans: claimTargets, callSpans: calls,
+		branchSpans: branches, effectSpans: effects, expressionSpans: expressions,
+		returnSpans:               returnSpans(wirBody, artifact),
+		tableMemberValueSpans:     tableMemberValueSpans(wirBody),
+		claimNameSpans:            claimNameSpans(wirBody, artifact),
+		branchJoinSpans:           branchJoinSpans(wirBody, artifact),
+		qualifiedClaimSpans:       qualifySpans(body, claims),
+		qualifiedClaimTargetSpans: qualifySpans(body, claimTargets),
+		qualifiedCallSpans:        qualifySpans(body, calls),
+		qualifiedBranchSpans:      qualifySpans(body, branches),
+		qualifiedEffectSpans:      qualifySpans(body, effects),
 	}
 }
 
@@ -1048,8 +1048,8 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 		effects := effectSpans(proto.Body, artifact)
 		child := newCompilation(childBody, proto.Symbol, prototypeIdentity(proto), proto.LexicalPath, proto.Boundary, proto.Body, artifact, mergeSpans(claimSpans, effectValueSpans(proto.Body, artifact)), mergeSpans(claimTargetSpans, effectTargetSpans(proto.Body, artifact)), callSpans(proto.Body, artifact), branchSpans(proto.Body, artifact), effects, expressionSpans(proto.Body, artifact))
 		child.Graph = proto.Graph
-		child.NativeContracts = nativeConstantPublications(child)
-		artifact, err = appendNativeContractPublications(child.Artifact, child.NativeContracts)
+		child.nativeContracts = nativeConstantPublications(child)
+		artifact, err = appendNativeContractPublications(child.Artifact, child.nativeContracts)
 		if err != nil {
 			return nil, fmt.Errorf("front: nested body %q native constants: %w", proto.Name, err)
 		}
@@ -1060,19 +1060,19 @@ func compileNestedBodies(parent *wir.Body, root equation.BodyID) ([]Compilation,
 		if err != nil {
 			return nil, fmt.Errorf("front: nested body %q: %w", proto.Name, err)
 		}
-		child.Frozen = cyclic
+		child.frozen = cyclic
 		if graphHasCycle(proto.Graph) {
 			child.Cyclic = &cyclic
 		}
-		child.Nested, err = compileNestedBodies(proto.Body, root)
+		child.nested, err = compileNestedBodies(proto.Body, root)
 		if err != nil {
 			return nil, err
 		}
-		child.ControlDiagnostics = append(child.ControlDiagnostics, adviceControlDiagnostics(proto.Body, proto.Graph)...)
-		child.PolicyDiagnostics = append(child.PolicyDiagnostics, advicePolicyDiagnostics(proto.Body, proto.Graph)...)
-		for _, nested := range child.Nested {
-			child.ControlDiagnostics = append(child.ControlDiagnostics, nested.ControlDiagnostics...)
-			child.PolicyDiagnostics = append(child.PolicyDiagnostics, nested.PolicyDiagnostics...)
+		child.controlDiagnostics = append(child.controlDiagnostics, adviceControlDiagnostics(proto.Body, proto.Graph)...)
+		child.policyDiagnostics = append(child.policyDiagnostics, advicePolicyDiagnostics(proto.Body, proto.Graph)...)
+		for _, nested := range child.nested {
+			child.controlDiagnostics = append(child.controlDiagnostics, nested.controlDiagnostics...)
+			child.policyDiagnostics = append(child.policyDiagnostics, nested.policyDiagnostics...)
 		}
 		children = append(children, child)
 	}
@@ -1096,7 +1096,7 @@ func catalogBodies(root Compilation) (BodyCatalog, error) {
 			return fmt.Errorf("front: duplicate lexical body identity")
 		}
 		catalog[compilation.Body] = BodyCatalogEntry{Body: compilation.Body, Prototype: compilation.Prototype, PrototypeName: compilation.PrototypeName, LexicalPath: append([]uint32(nil), compilation.LexicalPath...), Boundary: compilation.Boundary, Artifact: compilation.Artifact, Cyclic: compilation.Cyclic}
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.nested {
 			if err := add(child); err != nil {
 				return err
 			}
@@ -1180,7 +1180,7 @@ func effectSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 }
 
 // effectTargetSpans retain the assignment-target side of a dynamic mutation.
-// ClaimTargetSpans is the existing secondary-label channel, so merging these
+// claimTargetSpans is the existing secondary-label channel, so merging these
 // source-only anchors keeps effect diagnostics equally precise without adding
 // a parallel diagnostic publication path.
 func effectTargetSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
@@ -1219,7 +1219,7 @@ func effectTargetSpans(body *wir.Body, artifact equation.Artifact) map[string]wi
 
 // effectValueSpans supply the primary source anchor for type assignments that
 // are owned by an index-mutation operation. Other effect diagnostics retain
-// their container anchor through EffectSpans.
+// their container anchor through effectSpans.
 func effectValueSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
 	if body == nil {
 		return nil
@@ -1438,7 +1438,7 @@ func branchSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 }
 
 // claimNameSpans retains the declared-name anchor of every annotation claim.
-// It is the birth location of a binding, which ClaimTargetSpans deliberately
+// It is the birth location of a binding, which claimTargetSpans deliberately
 // replaces with the declared type once an annotation supplies one.
 func claimNameSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
 	if body == nil {
@@ -2343,7 +2343,7 @@ func assignmentSnapshotStarts(stmts []ast.Stmt, built *cfgbuild.Result) map[cfg.
 func readBeforeTerm(current operation, operations []operation, snapshots map[cfg.Point]cfg.Point) (equation.Term, error) {
 	start, found := snapshots[current.instruction.Point]
 	if !found {
-		// Nested WIR bodies are already source-normalized but intentionally do
+		// nested WIR bodies are already source-normalized but intentionally do
 		// not retain an AST statement-point sidecar. Their assignment point is
 		// therefore the exact snapshot boundary; its predecessor remains the
 		// same admitted operation-order seam used by root-body assignments.
@@ -3810,7 +3810,7 @@ func nativeCaptureTransportCounts(root Compilation) map[wir.FunctionSymbolID]int
 		if compilation.Prototype != 0 {
 			counts[compilation.Prototype] = len(seen)
 		}
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.nested {
 			visit(child)
 		}
 	}

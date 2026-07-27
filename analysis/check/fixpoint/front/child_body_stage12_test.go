@@ -29,8 +29,8 @@ end
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if len(compilation.Catalog) != 4 {
-		t.Fatalf("catalog bodies = %d, want root plus three lexical children", len(compilation.Catalog))
+	if len(compilation.CompilationCatalog()) != 4 {
+		t.Fatalf("catalog bodies = %d, want root plus three lexical children", len(compilation.CompilationCatalog()))
 	}
 	if !compilation.Body.Valid() || len(compilation.LexicalPath) != 0 {
 		t.Fatalf("root lexical identity = %x / %v", compilation.Body, compilation.LexicalPath)
@@ -50,7 +50,7 @@ end
 		if !body.body.Body.Valid() || !reflect.DeepEqual(body.body.LexicalPath, body.path) {
 			t.Fatalf("%s identity = %x / %v, want valid / %v", body.name, body.body.Body, body.body.LexicalPath, body.path)
 		}
-		entry, exists := compilation.Catalog[body.body.Body]
+		entry, exists := compilation.CompilationCatalog()[body.body.Body]
 		if !exists || entry.Body != body.body.Body || !reflect.DeepEqual(entry.LexicalPath, body.path) {
 			t.Fatalf("catalog[%s] = %#v, want matching body entry", body.name, entry)
 		}
@@ -66,10 +66,10 @@ end
 	if got := inner.Boundary.Captures; len(got) != 3 || got[0].Name != "shared" || !got[0].Mutable || got[1].Name != "first" || got[2].Name != "second" {
 		t.Fatalf("inner boundary captures = %#v, want ordered mutable shared cell lens candidates", got)
 	}
-	if len(inner.QualifiedClaimSpans) != len(inner.ClaimSpans) || len(inner.QualifiedClaimSpans) == 0 {
-		t.Fatalf("qualified child claim spans = %#v; legacy = %#v", inner.QualifiedClaimSpans, inner.ClaimSpans)
+	if len(inner.QualifiedClaimSpanIndex()) != len(inner.ClaimSpanIndex()) || len(inner.QualifiedClaimSpanIndex()) == 0 {
+		t.Fatalf("qualified child claim spans = %#v; legacy = %#v", inner.QualifiedClaimSpanIndex(), inner.ClaimSpanIndex())
 	}
-	for key := range inner.QualifiedClaimSpans {
+	for key := range inner.QualifiedClaimSpanIndex() {
 		if key.Body != inner.Body {
 			t.Fatalf("child claim span key body = %x, want %x", key.Body, inner.Body)
 		}
@@ -120,7 +120,7 @@ func TestCaptureMutabilityTracksEveryLexicalRebindForm(t *testing.T) {
 						found = &copy
 					}
 				}
-				for _, nested := range body.Nested {
+				for _, nested := range body.NestedCompilations() {
 					visit(nested)
 				}
 			}
@@ -139,8 +139,8 @@ func TestCaptureMutabilityTracksEveryLexicalRebindForm(t *testing.T) {
 
 func onlyChild(t *testing.T, compilation front.Compilation) front.Compilation {
 	t.Helper()
-	if len(compilation.Nested) != 1 {
-		t.Fatalf("nested bodies = %d, want one: %#v", len(compilation.Nested), compilation)
+	if len(compilation.NestedCompilations()) != 1 {
+		t.Fatalf("nested bodies = %d, want one: %#v", len(compilation.NestedCompilations()), compilation)
 	}
-	return compilation.Nested[0]
+	return compilation.NestedCompilations()[0]
 }

@@ -49,8 +49,8 @@ func nativeWIRContracts(root Compilation) []NativeContract {
 		contracts = append(contracts, nativePublicationIdentityContracts(compilation)...)
 		contracts = append(contracts, nativeShapeContracts(compilation)...)
 		contracts = append(contracts, nativeDiscriminantContracts(compilation.WIR)...)
-		contracts = append(contracts, nativeRecursiveIdentityContracts(compilation.WIR, compilation.TypeDefinitions)...)
-		for _, child := range compilation.Nested {
+		contracts = append(contracts, nativeRecursiveIdentityContracts(compilation.WIR, compilation.typeDefinitions)...)
+		for _, child := range compilation.nested {
 			visit(child)
 		}
 	}
@@ -113,7 +113,7 @@ func nativeCallSCCContracts(root Compilation) []NativeContract {
 				}
 				proto := body.Proto(instruction.Func)
 				name := body.Path(wir.PathRef(instruction.Dst.Ref)).String()
-				for _, child := range compilation.Nested {
+				for _, child := range compilation.nested {
 					if child.Prototype == proto.Symbol && name != "" {
 						byName[name] = child
 						break
@@ -121,7 +121,7 @@ func nativeCallSCCContracts(root Compilation) []NativeContract {
 				}
 			}
 		}
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.nested {
 			inventory(child)
 		}
 	}

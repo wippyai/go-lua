@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
@@ -123,7 +124,7 @@ func encodePlacementAllocation(fact placementAllocationFact) ([]byte, error) {
 
 func decodePlacementAllocation(fact equation.Fact) (placementAllocationFact, bool) {
 	var allocation placementAllocationFact
-	return allocation, strings.HasPrefix(fact.Key, placementAllocationPrefix) && json.Unmarshal(fact.Value, &allocation) == nil && allocation.Identity != ""
+	return allocation, strings.HasPrefix(fact.Key, placementAllocationPrefix) && front.DecodeRequiredWireJSON(fact.Value, &allocation) == nil && allocation.Identity != ""
 }
 
 func placementProvenFactParts(fact equation.Fact) ([]string, bool) {
@@ -381,7 +382,7 @@ func placementAllocationInPartition(identity, result string, partition equation.
 	allocations := partition.IterateValuesPrefix(placementAllocationPrefix)
 	for fact, ok := allocations.Next(); ok; fact, ok = allocations.Next() {
 		var allocation placementAllocationFact
-		if json.Unmarshal(fact.Value, &allocation) == nil && allocation.Identity != "" &&
+		if front.DecodeRequiredWireJSON(fact.Value, &allocation) == nil && allocation.Identity != "" &&
 			(identity != "" && allocation.Identity == identity || result != "" && allocation.Result == result) {
 			return allocation, true
 		}
@@ -409,7 +410,7 @@ func placementAllocation(identity, result string, facts []equation.Fact) (placem
 			continue
 		}
 		var allocation placementAllocationFact
-		if json.Unmarshal(fact.Value, &allocation) == nil && allocation.Identity != "" &&
+		if front.DecodeRequiredWireJSON(fact.Value, &allocation) == nil && allocation.Identity != "" &&
 			(identity != "" && allocation.Identity == identity || result != "" && allocation.Result == result) {
 			return allocation, true
 		}

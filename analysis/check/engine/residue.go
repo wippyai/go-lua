@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -117,7 +118,7 @@ func publishedResidueWindow(term []byte, partition equation.Partition) (residueW
 		return residueWindow{}, false
 	}
 	var wire residueWindowWire
-	if json.Unmarshal(latest.Value, &wire) != nil {
+	if front.DecodeRequiredWireJSON(latest.Value, &wire) != nil {
 		return residueWindow{}, false
 	}
 	return residueWindow{Low: wire.Low, High: wire.High, Container: wire.Container}, true

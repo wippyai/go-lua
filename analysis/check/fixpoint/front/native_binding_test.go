@@ -12,7 +12,7 @@ func nativeOpenEffectCount(t *testing.T, source string) int {
 		t.Fatalf("compile: %v", err)
 	}
 	count := 0
-	for _, contract := range compilation.NativeContracts {
+	for _, contract := range compilation.nativeContracts {
 		if contract.Family == "effect_row" && contract.Value == "exhaustive=false" {
 			count++
 		}
@@ -80,7 +80,7 @@ return registered, unregistered`)
 		t.Fatalf("compile: %v", err)
 	}
 	var allocationRows int
-	for _, contract := range compilation.NativeContracts {
+	for _, contract := range compilation.nativeContracts {
 		if contract.Family == "effect_row" && strings.Contains(contract.Value, "allocation=present") {
 			allocationRows++
 		}

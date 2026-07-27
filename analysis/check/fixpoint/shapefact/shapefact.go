@@ -8,10 +8,35 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+var admittedTargets = struct {
+	sync.RWMutex
+	byWire map[string]typ.Type
+}{byWire: make(map[string]typ.Type)}
+
+func admittedTarget(encoded []byte) (typ.Type, bool) {
+	admittedTargets.RLock()
+	target, ok := admittedTargets.byWire[string(encoded)]
+	admittedTargets.RUnlock()
+	return target, ok
+}
+
+func admitTarget(encoded []byte, target typ.Type) typ.Type {
+	admittedTargets.Lock()
+	key := string(encoded)
+	if admitted, ok := admittedTargets.byWire[key]; ok {
+		target = admitted
+	} else {
+		admittedTargets.byWire[key] = target
+	}
+	admittedTargets.Unlock()
+	return target
+}
 
 const (
 	tablePrefix  = "shape/table/v1/"
@@ -105,10 +130,27 @@ func EncodeTarget(target typ.Type) ([]byte, bool) {
 	if err != nil || len(wire) == 0 {
 		return nil, false
 	}
-	return []byte(targetPrefix + base64.RawURLEncoding.EncodeToString(wire)), true
+	encoded := []byte(targetPrefix + base64.RawURLEncoding.EncodeToString(wire))
+	// A target becomes immutable protocol data at this boundary. Retain the
+	// structural handle beside its exact wire spelling so every downstream read
+	// can prove identity by admission lookup instead of reconstructing and
+	// re-encoding the type graph. The admitted handle must be the structural
+	// decoder's representative, not the source declaration handle: shape wires
+	// deliberately do not transport recursive declaration identity.
+	if _, admitted := admittedTarget(encoded); !admitted {
+		structural, decodeErr := typ.DecodeCanonicalStructural(context.Background(), wire)
+		if decodeErr != nil || structural == nil {
+			return nil, false
+		}
+		admitTarget(encoded, structural)
+	}
+	return encoded, true
 }
 
 func DecodeTarget(value []byte) (typ.Type, bool) {
+	if admitted, ok := admittedTarget(value); ok {
+		return admitted, true
+	}
 	encoded := strings.TrimPrefix(string(value), targetPrefix)
 	if encoded == string(value) || encoded == "" {
 		return nil, false
@@ -131,5 +173,5 @@ func DecodeTarget(value []byte) (typ.Type, bool) {
 	if base64.RawURLEncoding.EncodeToString(wire) != encoded {
 		return nil, false
 	}
-	return target, true
+	return admitTarget(value, target), true
 }

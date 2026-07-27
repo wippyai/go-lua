@@ -18,7 +18,7 @@ import (
 // tableNativeFacts projects the resolved table topology the front already
 // publishes. It never reconstructs a table from source text: a missing maker,
 // exact member window, loop iterator, or call operand leaves the native row
-// absent. Nested lexical bodies contribute drafts to the same publication tail.
+// absent. nested lexical bodies contribute drafts to the same publication tail.
 func tableNativeFacts(root Compilation) []NativeProjection {
 	var rows []NativeProjection
 	forEachNativeBody(root, func(compilation Compilation) {

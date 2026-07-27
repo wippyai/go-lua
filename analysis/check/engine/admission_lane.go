@@ -65,7 +65,7 @@ func admissionDiagnosticDischarged(ctx admissionDiagnosticContext, closedAnyForm
 	diagnostic := ctx.diagnostic
 	switch ctx.decision.Lane.Name {
 	case "static-assignment":
-		return ctx.lexical.uncalledStaticAssignmentDiagnostic(ctx.child.Artifact, diagnostic.Key, ctx.partition) ||
+		return ctx.lexical.uncalledStaticAssignmentDiagnostic(ctx.child.DraftArtifact(), diagnostic.Key, ctx.partition) ||
 			ctx.staticOptionalMethodDiagnostic() ||
 			ctx.staticResultCallDiagnostic()
 	case "typed-channel-send":
@@ -252,7 +252,7 @@ func (lane *admissionLane) admitExplicitAny(ctx *admissionLaneContext) (admissio
 	}
 	closedCapture := ctx.closedAnyCaptureBoundary()
 	root := admissionRootCaptured
-	if len(ctx.child.Boundary.Captures) == 0 {
+	if len(ctx.child.BodyBoundary().Captures) == 0 {
 		root = admissionRootClosedBody
 	} else if closedCapture {
 		root = admissionRootClosedAnyCapture
@@ -336,7 +336,7 @@ func (lane *admissionLane) admitDeclaredFormalCall(ctx *admissionLaneContext) (a
 	if !admitted {
 		return admissionLaneDecision{}, false
 	}
-	if len(ctx.child.Boundary.Captures) == 0 {
+	if len(ctx.child.BodyBoundary().Captures) == 0 {
 		return admissionLaneDecision{Seeds: seeds, Root: admissionRootDeclared}, true
 	}
 	operations := ctx.lexical.formalMemberWriteObligations(ctx.child, ctx.partition)
@@ -357,7 +357,7 @@ func (lane *admissionLane) admitImportedCapture(ctx *admissionLaneContext) (admi
 }
 
 func (lane *admissionLane) admitSealedCapture(ctx *admissionLaneContext) (admissionLaneDecision, bool) {
-	if len(ctx.child.Boundary.Parameters) == 0 && len(ctx.child.Boundary.Captures) == 0 {
+	if len(ctx.child.BodyBoundary().Parameters) == 0 && len(ctx.child.BodyBoundary().Captures) == 0 {
 		return admissionLaneDecision{Root: admissionRootClosedBody}, true
 	}
 	admitted := ctx.sealedCaptureBoundary()
@@ -397,7 +397,7 @@ func admissionRootSealedEnvironment(ctx admissionLaneContext, decision admission
 }
 
 func admissionRootGradualLogical(ctx admissionLaneContext, decision admissionLaneDecision) ([]byte, bool, error) {
-	if len(ctx.child.Boundary.Captures) == 0 {
+	if len(ctx.child.BodyBoundary().Captures) == 0 {
 		entry, err := encodeChildEntryWithCapabilities(decision.Seeds, nil, nil, nil, nil, decision.GradualLogicalTerms)
 		return entry, true, err
 	}

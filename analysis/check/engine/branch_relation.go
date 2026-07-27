@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -343,7 +342,7 @@ func branchResidueClassRefutes(predicate branchPredicateWire, partition equation
 			continue
 		}
 		var established branchResidueClassWire
-		if json.Unmarshal(fact.Payload, &established) != nil || established.Modulus <= 0 || established.Negated {
+		if front.DecodeRequiredWireJSON(fact.Payload, &established) != nil || established.Modulus <= 0 || established.Negated {
 			continue
 		}
 		if established.Modulus != predicate.Modulus {

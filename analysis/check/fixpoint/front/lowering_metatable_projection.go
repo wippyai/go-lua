@@ -41,7 +41,7 @@ func forEachNativeBody(root Compilation, visit func(Compilation)) {
 		if compilation.WIR != nil {
 			visit(compilation)
 		}
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.nested {
 			walk(child)
 		}
 	}

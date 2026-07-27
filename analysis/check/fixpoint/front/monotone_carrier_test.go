@@ -29,7 +29,7 @@ func monotoneCarrierCount(t *testing.T, source string) int {
 				}
 			}
 		}
-		for _, nested := range item.Nested {
+		for _, nested := range item.NestedCompilations() {
 			walk(nested)
 		}
 	}

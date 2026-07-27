@@ -2,7 +2,6 @@ package engine
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -143,7 +142,7 @@ func exportedFunctionHandles(values []equation.Fact) map[string]closureHandle {
 			continue
 		}
 		var wire memberClosureWire
-		if json.Unmarshal(fact.Value, &wire) != nil || !validClosureHandle(wire.Handle) {
+		if front.DecodeRequiredWireJSON(fact.Value, &wire) != nil || !validClosureHandle(wire.Handle) {
 			continue
 		}
 		name := strings.TrimPrefix(wire.Suffix, ".")
@@ -269,7 +268,7 @@ func completeReturnTemplates(child front.Compilation, outcome equation.OutputClo
 	return templates
 }
 
-func completeReturnTemplateMap(child front.Compilation, outcome equation.OutputClosure, origins map[string]int) map[string]exportrelation.Value {
+func completeReturnTemplateMap(child front.DraftsBoundaryView, outcome equation.OutputClosure, origins map[string]int) map[string]exportrelation.Value {
 	candidates := make(map[string][]byte)
 	for _, fact := range outcome.Outcomes {
 		parts := strings.Split(fact.Key, "/")
@@ -281,7 +280,7 @@ func completeReturnTemplateMap(child front.Compilation, outcome equation.OutputC
 		return nil
 	}
 	publications := 0
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind == "publication" {
 			publications++
 		}
@@ -316,13 +315,13 @@ func completeReturnTemplateMap(child front.Compilation, outcome equation.OutputC
 	return templates
 }
 
-func conditionalReturnForPrototype(child front.Compilation, outcome equation.OutputClosure, origins map[string]int) *exportrelation.ConditionalReturn {
+func conditionalReturnForPrototype(child front.DraftsBoundaryView, outcome equation.OutputClosure, origins map[string]int) *exportrelation.ConditionalReturn {
 	templates := completeReturnTemplateMap(child, outcome, origins)
 	if len(templates) != 2 {
 		return nil
 	}
-	formals := make(map[string]int, len(child.Boundary.Parameters))
-	for index, parameter := range child.Boundary.Parameters {
+	formals := make(map[string]int, len(child.BodyBoundary().Parameters))
+	for index, parameter := range child.BodyBoundary().Parameters {
 		term := boundaryTerm(parameter.Symbol)
 		formals[term] = index
 		formals[strings.TrimPrefix(term, "path/")] = index
@@ -330,7 +329,7 @@ func conditionalReturnForPrototype(child front.Compilation, outcome equation.Out
 	branchName := ""
 	parameter := -1
 	literal := ""
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "branch-relations" {
 			continue
 		}
@@ -348,7 +347,7 @@ func conditionalReturnForPrototype(child front.Compilation, outcome equation.Out
 	}
 	var match, otherwise exportrelation.Value
 	haveMatch, haveOtherwise := false, false
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		template, returned := templates[operation.Target.Name]
 		if !returned || operation.Occurrence.Kind != "publication" {
 			continue
@@ -411,7 +410,7 @@ func relationSurfaceTemplate(encoded []byte, origins map[string]int, prefix stri
 	return value, len(value.Table) != 0
 }
 
-func singleReturnMemberOrigins(child front.Compilation, outcome equation.OutputClosure) map[string]int {
+func singleReturnMemberOrigins(child front.BoundaryView, outcome equation.OutputClosure) map[string]int {
 	candidate := ""
 	for _, fact := range outcome.Outcomes {
 		parts := strings.Split(fact.Key, "/")
@@ -426,8 +425,8 @@ func singleReturnMemberOrigins(child front.Compilation, outcome equation.OutputC
 	if candidate == "" {
 		return nil
 	}
-	formals := make(map[string]int, len(child.Boundary.Parameters))
-	for index, parameter := range child.Boundary.Parameters {
+	formals := make(map[string]int, len(child.BodyBoundary().Parameters))
+	for index, parameter := range child.BodyBoundary().Parameters {
 		formals[boundaryTerm(parameter.Symbol)] = index
 	}
 	if len(formals) == 0 {
@@ -453,12 +452,12 @@ func singleReturnMemberOrigins(child front.Compilation, outcome equation.OutputC
 	return origins
 }
 
-func singleForwardedReturn(child front.Compilation, tuples [][][]byte, values []equation.Fact) (exportrelation.Value, bool) {
+func singleForwardedReturn(child front.DraftsBoundaryView, tuples [][][]byte, values []equation.Fact) (exportrelation.Value, bool) {
 	if len(tuples) != 1 || len(tuples[0]) != 1 {
 		return exportrelation.Value{}, false
 	}
 	returned := ""
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
@@ -491,11 +490,11 @@ func singleForwardedReturn(child front.Compilation, tuples [][][]byte, values []
 		return exportrelation.Value{}, false
 	}
 	var wire importedReturnRelationWire
-	if json.Unmarshal(encoded, &wire) != nil {
+	if front.DecodeRequiredWireJSON(encoded, &wire) != nil {
 		return exportrelation.Value{}, false
 	}
-	formals := make(map[string]int, len(child.Boundary.Parameters))
-	for index, parameter := range child.Boundary.Parameters {
+	formals := make(map[string]int, len(child.BodyBoundary().Parameters))
+	for index, parameter := range child.BodyBoundary().Parameters {
 		formals[boundaryTerm(parameter.Symbol)] = index
 	}
 	var compose func(exportrelation.Value) (exportrelation.Value, bool)
@@ -529,7 +528,7 @@ func singleForwardedReturn(child front.Compilation, tuples [][][]byte, values []
 		return out, true
 	}
 	forwarded, ok := compose(wire.Template)
-	return forwarded, ok && forwarded.Valid(len(child.Boundary.Parameters))
+	return forwarded, ok && forwarded.Valid(len(child.BodyBoundary().Parameters))
 }
 
 // allocatedReturnGraph reports whether the evaluated body returns a graph that
@@ -559,17 +558,17 @@ func allocatedReturnGraph(values []equation.Fact, identities map[int]string) boo
 // is value-copied and cannot escape by reference, so it carries no allocation
 // and stays a borrow.
 func (l *lexicalEvaluator) escapeChildEntry(body equation.BodyID, child front.Compilation, partition equation.Partition) ([]byte, map[int]string, bool) {
-	if child.WIR == nil || len(child.Boundary.Parameters) == 0 {
+	if child.LoweredBody() == nil || len(child.BodyBoundary().Parameters) == 0 {
 		return nil, nil, false
 	}
 	formalSeeds, ok := declaredFormalWitnessSeeds(child)
 	if !ok {
 		return nil, nil, false
 	}
-	placementSeeds := make([]entryPlacementSeed, 0, len(child.Boundary.Parameters))
-	identities := make(map[int]string, len(child.Boundary.Parameters))
-	for index, parameter := range child.Boundary.Parameters {
-		declared := unwrap.Alias(child.WIR.Type(parameter.Type))
+	placementSeeds := make([]entryPlacementSeed, 0, len(child.BodyBoundary().Parameters))
+	identities := make(map[int]string, len(child.BodyBoundary().Parameters))
+	for index, parameter := range child.BodyBoundary().Parameters {
+		declared := unwrap.Alias(child.LoweredBody().Type(parameter.Type))
 		if placementClosedScalarType(declared) {
 			continue
 		}
@@ -596,8 +595,8 @@ func (l *lexicalEvaluator) escapeChildEntry(body equation.BodyID, child front.Co
 	return entry, identities, true
 }
 
-func escapeParameterIdentity(child front.Compilation, index int) string {
-	return "escape-param/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%d", child.Body, index)))
+func escapeParameterIdentity(child front.BoundaryView, index int) string {
+	return "escape-param/" + base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%x/%d", child.BodyID(), index)))
 }
 
 // classifyEscapeParameters reads the disposition of each formal from the
@@ -605,15 +604,15 @@ func escapeParameterIdentity(child front.Compilation, index int) string {
 // body published no owned event, no shared event, no opaque-call blocker, and no
 // return escape for its identity. An unseeded (closed-scalar) formal is a borrow
 // by construction.
-func classifyEscapeParameters(child front.Compilation, values []equation.Fact, identities map[int]string) []signature.ParamRelation {
+func classifyEscapeParameters(child front.DraftsBoundaryView, values []equation.Fact, identities map[int]string) []signature.ParamRelation {
 	parsed := parsePublishedPlacement(values)
 	// Containment carries an escaping container's disposition to the elements it
 	// holds, so a formal stored behind an intermediate table is not mistaken for
 	// a borrow.
 	propagatePublishedPlacement(parsed)
-	opKinds := childOperationKinds(child.Artifact)
-	relations := make([]signature.ParamRelation, 0, len(child.Boundary.Parameters))
-	for index := range child.Boundary.Parameters {
+	opKinds := childOperationKinds(child.DraftArtifact())
+	relations := make([]signature.ParamRelation, 0, len(child.BodyBoundary().Parameters))
+	for index := range child.BodyBoundary().Parameters {
 		relation := signature.ParamRelation{Param: index, EscapeClass: signature.EscapeBorrow, PlacementConsequence: signature.PlacementConsequenceKeep}
 		if identity, seeded := identities[index]; seeded {
 			relation = classifyEscapeIdentity(index, identity, parsed, values, opKinds, identities)
@@ -623,13 +622,13 @@ func classifyEscapeParameters(child front.Compilation, values []equation.Fact, i
 	return relations
 }
 
-func soleDirectReturnFormal(child front.Compilation) (int, bool) {
-	formals := make(map[string]int, len(child.Boundary.Parameters))
-	for index, parameter := range child.Boundary.Parameters {
+func soleDirectReturnFormal(child front.DraftsBoundaryView) (int, bool) {
+	formals := make(map[string]int, len(child.BodyBoundary().Parameters))
+	for index, parameter := range child.BodyBoundary().Parameters {
 		formals[boundaryTerm(parameter.Symbol)] = index
 	}
 	returned, seen := -1, false
-	for _, operation := range child.Artifact.Equations {
+	for _, operation := range child.DraftArtifact().Equations {
 		if operation.Occurrence.Kind == "entry" {
 			continue
 		}

@@ -105,7 +105,7 @@ func (l *lexicalEvaluator) admitSCC(child front.Compilation, rawEntry []byte, se
 	if err != nil {
 		return interproc.InstanceKey{}, lexicalSCCAdmission{}, err
 	}
-	if len(seeds) != len(child.Boundary.Parameters)+len(child.Boundary.Captures) {
+	if len(seeds) != len(child.BodyBoundary().Parameters)+len(child.BodyBoundary().Captures) {
 		return interproc.InstanceKey{}, lexicalSCCAdmission{}, fmt.Errorf("engine: incomplete lexical SCC boundary")
 	}
 	classes := make(map[string]uint64)
@@ -142,7 +142,7 @@ func (l *lexicalEvaluator) admitSCC(child front.Compilation, rawEntry []byte, se
 	admission := lexicalSCCAdmission{compilation: child, artifact: artifact, entry: append([]byte(nil), rawEntry...)}
 	id := lexicalSCCMapKey(key)
 	if prior, exists := l.admissions[id]; exists {
-		if string(prior.entry) != string(admission.entry) || prior.compilation.Body != child.Body {
+		if string(prior.entry) != string(admission.entry) || prior.compilation.BodyID() != child.BodyID() {
 			return interproc.InstanceKey{}, lexicalSCCAdmission{}, fmt.Errorf("engine: non-identical lexical entry collided after certification")
 		}
 		return key, prior, nil
@@ -155,16 +155,16 @@ func lexicalSCCSelector(index int) interproc.EntrySelector {
 	return interproc.EntrySelector(fmt.Sprintf("boundary/%08d", index))
 }
 
-func lexicalSCCArtifact(compilation front.Compilation) (interproc.DemandedBodyArtifact, error) {
-	if !compilation.Body.Valid() || compilation.Frozen.CanonicalBytes() == nil {
+func lexicalSCCArtifact(compilation front.DraftsBoundaryView) (interproc.DemandedBodyArtifact, error) {
+	if !compilation.BodyID().Valid() || compilation.FrozenDraft().CanonicalBytes() == nil {
 		return interproc.DemandedBodyArtifact{}, fmt.Errorf("engine: lexical body lacks frozen SCC artifact")
 	}
-	n := len(compilation.Boundary.Parameters) + len(compilation.Boundary.Captures)
+	n := len(compilation.BodyBoundary().Parameters) + len(compilation.BodyBoundary().Captures)
 	selectors := make([]interproc.EntrySelector, n)
 	for index := range selectors {
 		selectors[index] = lexicalSCCSelector(index)
 	}
-	schema, err := interproc.NewParameterSchema("lexical/"+fmt.Sprintf("%x", compilation.Body), selectors)
+	schema, err := interproc.NewParameterSchema("lexical/"+fmt.Sprintf("%x", compilation.BodyID()), selectors)
 	if err != nil {
 		return interproc.DemandedBodyArtifact{}, err
 	}
@@ -172,13 +172,13 @@ func lexicalSCCArtifact(compilation front.Compilation) (interproc.DemandedBodyAr
 	if err != nil {
 		return interproc.DemandedBodyArtifact{}, err
 	}
-	bodyID := interproc.ContentIDFromCanonicalBytes(compilation.Frozen.CanonicalBytes())
+	bodyID := interproc.ContentIDFromCanonicalBytes(compilation.FrozenDraft().CanonicalBytes())
 	manifest, err := interproc.NewDependencyManifest([]interproc.Dependency{{Kind: "lexical-frozen-body", ID: bodyID}})
 	if err != nil {
 		return interproc.DemandedBodyArtifact{}, err
 	}
 	solver := interproc.ContentIDFromCanonicalBytes([]byte("engine/lexical-scc-lattice/v1"))
-	return interproc.NewDemandedBodyArtifact(compilation.Frozen, schema, lexicalSCCDemand, certificate, solver, manifest, nil)
+	return interproc.NewDemandedBodyArtifact(compilation.FrozenDraft(), schema, lexicalSCCDemand, certificate, solver, manifest, nil)
 }
 
 type lexicalSCCEvaluator struct{ lexical *lexicalEvaluator }
@@ -230,8 +230,8 @@ func lexicalSCCTopClosure(operands directCallOperands, target string) equation.O
 	return closure
 }
 
-func encodeLexicalSCCOutcome(compilation front.Compilation, closure equation.OutputClosure) (interproc.ClosedOutcome, error) {
-	if compilation.Body.Valid() {
+func encodeLexicalSCCOutcome(compilation front.BoundaryView, closure equation.OutputClosure) (interproc.ClosedOutcome, error) {
+	if compilation.BodyID().Valid() {
 		closure = lexicalSCCSummary(compilation, closure)
 	}
 	wire := lexicalSCCWire{Version: 1, Values: lexicalSCCFacts(closure.Values), Outcomes: lexicalSCCFacts(closure.Outcomes)}
@@ -248,12 +248,12 @@ func encodeLexicalSCCOutcome(compilation front.Compilation, closure equation.Out
 // are all existing publications; allocation and diagnostic detail remains
 // replay-only and therefore cannot make a recursive coordinate grow with
 // caller history.
-func lexicalSCCSummary(compilation front.Compilation, closure equation.OutputClosure) equation.OutputClosure {
-	boundary := make([]string, 0, len(compilation.Boundary.Parameters)+len(compilation.Boundary.Captures))
-	for _, parameter := range compilation.Boundary.Parameters {
+func lexicalSCCSummary(compilation front.BoundaryView, closure equation.OutputClosure) equation.OutputClosure {
+	boundary := make([]string, 0, len(compilation.BodyBoundary().Parameters)+len(compilation.BodyBoundary().Captures))
+	for _, parameter := range compilation.BodyBoundary().Parameters {
 		boundary = append(boundary, boundaryTerm(parameter.Symbol))
 	}
-	for _, capture := range compilation.Boundary.Captures {
+	for _, capture := range compilation.BodyBoundary().Captures {
 		boundary = append(boundary, boundaryTerm(capture.Symbol))
 	}
 	matchBoundary := func(key string) bool {
@@ -374,7 +374,7 @@ func lexicalSCCHeapChildIdentity(fact equation.Fact) ([]byte, bool) {
 		return nil, false
 	}
 	var cell memberCellWire
-	if json.Unmarshal(fact.Value, &cell) != nil || len(cell.MemberIdentity) == 0 {
+	if front.DecodeRequiredWireJSON(fact.Value, &cell) != nil || len(cell.MemberIdentity) == 0 {
 		return nil, false
 	}
 	return append([]byte(nil), cell.MemberIdentity...), true
@@ -382,7 +382,7 @@ func lexicalSCCHeapChildIdentity(fact equation.Fact) ([]byte, bool) {
 
 func decodeLexicalSCCOutcome(outcome interproc.ClosedOutcome) (equation.OutputClosure, error) {
 	var wire lexicalSCCWire
-	if !outcome.Valid() || json.Unmarshal(outcome.CanonicalBytes(), &wire) != nil || wire.Version != 1 {
+	if !outcome.Valid() || front.DecodeRequiredWireJSON(outcome.CanonicalBytes(), &wire) != nil || wire.Version != 1 {
 		return equation.OutputClosure{}, fmt.Errorf("engine: malformed recursive lexical summary")
 	}
 	values, err := lexicalSCCDecodeFacts(wire.Values)
@@ -418,10 +418,10 @@ func lexicalSCCDecodeFacts(facts []lexicalSCCFact) ([]equation.Fact, error) {
 
 type lexicalSCCLattice struct{ height uint64 }
 
-func lexicalSCCHeight(compilation front.Compilation) uint64 {
+func lexicalSCCHeight(compilation front.DraftsBoundaryView) uint64 {
 	// The frozen body supplies a finite coordinate inventory.  Each coordinate
 	// may move bottom -> exact -> top, hence two strict ascents.
-	n := len(compilation.Frozen.Artifact.Equations)*8 + len(compilation.Boundary.Parameters) + len(compilation.Boundary.Captures) + 1
+	n := len(compilation.FrozenDraft().Artifact.Equations)*8 + len(compilation.BodyBoundary().Parameters) + len(compilation.BodyBoundary().Captures) + 1
 	return uint64(2 * n)
 }
 func (l lexicalSCCLattice) Height() uint64 { return l.height }

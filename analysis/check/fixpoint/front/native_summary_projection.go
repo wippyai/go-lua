@@ -20,7 +20,7 @@ func summaryNativeFacts(root Compilation) []NativeProjection {
 	var rows []NativeProjection
 	var visit func(Compilation)
 	visit = func(compilation Compilation) {
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.nested {
 			if row, published := summaryBodyFact(child); published {
 				rows = append(rows, row)
 			}

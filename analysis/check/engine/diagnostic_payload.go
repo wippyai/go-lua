@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 )
 
 const diagnosticPayloadPrefix = "engine/diagnostic/v1/"
@@ -85,7 +86,7 @@ func decodeDiagnosticPayload(value []byte) (DiagnosticPayload, bool) {
 		return DiagnosticPayload{}, false
 	}
 	var payload DiagnosticPayload
-	if err := json.Unmarshal(value[len(diagnosticPayloadPrefix):], &payload); err != nil || payload.Version != 1 {
+	if err := front.DecodeRequiredWireJSON(value[len(diagnosticPayloadPrefix):], &payload); err != nil || payload.Version != 1 {
 		return DiagnosticPayload{}, false
 	}
 	if err := validateDiagnosticPayload(payload); err != nil {

@@ -247,8 +247,8 @@ func closedNativeKernelProjectionFacts(root front.Compilation, facts []equation.
 	anchors := make(map[string]*nativeAnchors)
 	var visit func(front.Compilation)
 	visit = func(compilation front.Compilation) {
-		anchors[fmt.Sprintf("%x", compilation.Body)] = newNativeAnchors(compilation.Artifact)
-		for _, child := range compilation.Nested {
+		anchors[fmt.Sprintf("%x", compilation.BodyID())] = newNativeAnchors(compilation.DraftArtifact())
+		for _, child := range compilation.NestedCompilations() {
 			visit(child)
 		}
 	}
@@ -263,7 +263,7 @@ func closedNativeKernelProjectionFacts(root front.Compilation, facts []equation.
 			}
 		}
 		if owner == nil {
-			owner = newNativeAnchors(root.Artifact)
+			owner = newNativeAnchors(root.DraftArtifact())
 		}
 		projection := nativeProjectionFromFact(owner.project(NativeLaneValues, fact))
 		encoded, err := front.EncodeNativeProjection(projection)
@@ -273,7 +273,7 @@ func closedNativeKernelProjectionFacts(root front.Compilation, facts []equation.
 		key := factkey.BuildKey(
 			factkey.NativeProjection,
 			[]factkey.Part{
-				factkey.OpaquePart(fmt.Sprintf("%x", root.Body)),
+				factkey.OpaquePart(fmt.Sprintf("%x", root.BodyID())),
 				factkey.OpaquePart(fmt.Sprintf("%08d", index)),
 			},
 			"published",

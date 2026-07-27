@@ -44,7 +44,7 @@ type nativeElementOrigin struct {
 // read may take. Every input is lowering-owned topology; an unresolved producer,
 // an intervening opaque call, or a non-uniform store leaves the row absent.
 //
-// Nested lexical bodies are independently frozen WIR publications and are
+// nested lexical bodies are independently frozen WIR publications and are
 // visited exactly as the table projection visits them. A container established
 // by an enclosing body travels down that walk so a child body can read an
 // element of shared state it did not construct.
@@ -54,7 +54,7 @@ func elementNativeFacts(root Compilation) []NativeProjection {
 	visit = func(compilation Compilation, inherited map[wir.SymbolID]nativeElementOrigin) {
 		rows = append(rows, elementBodyFacts(compilation, inherited)...)
 		nested := nativeInheritedElementOrigins(compilation.WIR, inherited)
-		for _, child := range compilation.Nested {
+		for _, child := range compilation.nested {
 			visit(child, nested)
 		}
 	}

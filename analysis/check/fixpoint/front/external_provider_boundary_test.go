@@ -46,13 +46,13 @@ return local_callee, global_callee
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if len(compilation.Nested) != 3 {
-		t.Fatalf("nested bodies = %d, want helper plus two callers", len(compilation.Nested))
+	if len(compilation.NestedCompilations()) != 3 {
+		t.Fatalf("nested bodies = %d, want helper plus two callers", len(compilation.NestedCompilations()))
 	}
-	if providers := providerTerms(compilation.Nested[1].Artifact); len(providers) != 0 {
+	if providers := providerTerms(compilation.NestedCompilations()[1].Artifact); len(providers) != 0 {
 		t.Fatalf("local callee providers = %v, want no external boundary", providers)
 	}
-	providers := providerTerms(compilation.Nested[2].Artifact)
+	providers := providerTerms(compilation.NestedCompilations()[2].Artifact)
 	if len(providers) != 1 || providers[0] != `provider/global/"unresolved_provider"` {
 		t.Fatalf("global callee providers = %v, want the host boundary", providers)
 	}

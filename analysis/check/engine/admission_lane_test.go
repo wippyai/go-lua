@@ -197,10 +197,10 @@ return validate`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(compilation.Nested) != 1 {
-		t.Fatalf("nested bodies = %d, want 1", len(compilation.Nested))
+	if len(compilation.NestedCompilations()) != 1 {
+		t.Fatalf("nested bodies = %d, want 1", len(compilation.NestedCompilations()))
 	}
-	child := compilation.Nested[0]
+	child := compilation.NestedCompilations()[0]
 	bodyIndex := indexAdmissionBody(child)
 	ctx := admissionLaneContext{child: child, bodyIndex: bodyIndex}
 	decision, admitted := selectAdmissionLane(&ctx)

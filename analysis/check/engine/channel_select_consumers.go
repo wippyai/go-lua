@@ -25,14 +25,14 @@ type selectConsumerDiagnostic struct {
 
 // channelSelectCoverageConsumers proves complete authored elseif chains against evaluated select catalogs.
 // Missing facts, mixed predicates, unresolved aliases, and a final else fail closed.
-func channelSelectCoverageConsumers(compilation front.Compilation) []selectConsumerDiagnostic {
-	catalog := selectCatalog(compilation.Artifact)
+func channelSelectCoverageConsumers(compilation front.DraftsBoundaryView) []selectConsumerDiagnostic {
+	catalog := selectCatalog(compilation.DraftArtifact())
 	if !catalog.published || len(catalog.cases) < 2 {
 		return nil
 	}
 	var out []selectConsumerDiagnostic
-	for _, chain := range selectBranchChains(compilation.Artifact) {
-		if diagnostic, ok := channelSelectCoverageConsumer(compilation.Body, chain, catalog.cases); ok {
+	for _, chain := range selectBranchChains(compilation.DraftArtifact()) {
+		if diagnostic, ok := channelSelectCoverageConsumer(compilation.BodyID(), chain, catalog.cases); ok {
 			out = append(out, diagnostic)
 		}
 	}
@@ -235,14 +235,14 @@ func selectDiscriminantHandled(literal typ.Type, handled []typ.Type) bool {
 
 // channelSelectUnionConsumers uses a select arm's closed payload type for nested literal-discriminant chains.
 // It rejects mixed chains and payloads without a finite registered origin family.
-func channelSelectUnionConsumers(compilation front.Compilation) []selectConsumerDiagnostic {
-	catalog := selectCatalog(compilation.Artifact)
+func channelSelectUnionConsumers(compilation front.DraftsBoundaryView) []selectConsumerDiagnostic {
+	catalog := selectCatalog(compilation.DraftArtifact())
 	if len(catalog.payloads) == 0 {
 		return nil
 	}
 	var out []selectConsumerDiagnostic
-	for _, chain := range selectBranchChains(compilation.Artifact) {
-		if diagnostic, ok := channelSelectUnionConsumer(compilation.Body, chain, catalog.payloads); ok {
+	for _, chain := range selectBranchChains(compilation.DraftArtifact()) {
+		if diagnostic, ok := channelSelectUnionConsumer(compilation.BodyID(), chain, catalog.payloads); ok {
 			out = append(out, diagnostic)
 		}
 	}

@@ -14,10 +14,10 @@ func declaredChildBoundary(t *testing.T, source string) (front.Compilation, admi
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if len(compilation.Nested) != 1 {
-		t.Fatalf("nested bodies = %d, want 1", len(compilation.Nested))
+	if len(compilation.NestedCompilations()) != 1 {
+		t.Fatalf("nested bodies = %d, want 1", len(compilation.NestedCompilations()))
 	}
-	child := compilation.Nested[0]
+	child := compilation.NestedCompilations()[0]
 	formals := make(admissionBoundarySet, 0, len(child.Boundary.Parameters))
 	for _, parameter := range child.Boundary.Parameters {
 		formals = append(formals, boundaryTerm(parameter.Symbol))

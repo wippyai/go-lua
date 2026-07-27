@@ -129,11 +129,11 @@ for i = 1, limit do end`,
 				t.Fatalf("Compile: %v", err)
 			}
 			want := name != "dynamic bound"
-			if got := len(compilation.ControlDiagnostics) != 0; got != want {
-				t.Fatalf("ControlDiagnostics = %#v, want diagnostic=%t", compilation.ControlDiagnostics, want)
+			if got := len(compilation.ControlDiagnosticDrafts()) != 0; got != want {
+				t.Fatalf("controlDiagnostics = %#v, want diagnostic=%t", compilation.ControlDiagnosticDrafts(), want)
 			}
-			if want && compilation.ControlDiagnostics[0].Key != "control.numeric_for_bound_type" {
-				t.Fatalf("control diagnostic = %#v", compilation.ControlDiagnostics[0])
+			if want && compilation.ControlDiagnosticDrafts()[0].Key != "control.numeric_for_bound_type" {
+				t.Fatalf("control diagnostic = %#v", compilation.ControlDiagnosticDrafts()[0])
 			}
 		})
 	}
@@ -147,10 +147,10 @@ end
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if compilation.Cyclic == nil || compilation.Cyclic.Plan == nil {
+	if compilation.CyclicDraft() == nil || compilation.CyclicDraft().Plan == nil {
 		t.Fatalf("Compile did not retain a cyclic certificate: %#v", compilation)
 	}
-	if compilation.Cyclic.Plan.ComponentCount() == 0 {
+	if compilation.CyclicDraft().Plan.ComponentCount() == 0 {
 		t.Fatal("cyclic certificate has no WTO component")
 	}
 }
@@ -182,7 +182,7 @@ end`,
 			if err != nil {
 				t.Fatalf("Compile: %v", err)
 			}
-			if compilation.Cyclic == nil || compilation.Cyclic.Plan == nil {
+			if compilation.CyclicDraft() == nil || compilation.CyclicDraft().Plan == nil {
 				t.Fatalf("cyclic claim body has no frozen certificate: %#v", compilation)
 			}
 		})
@@ -563,10 +563,10 @@ end
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if len(compilation.Nested) != 1 {
-		t.Fatalf("nested compilations = %d, want one", len(compilation.Nested))
+	if len(compilation.NestedCompilations()) != 1 {
+		t.Fatalf("nested compilations = %d, want one", len(compilation.NestedCompilations()))
 	}
-	byKind := equationsByKind(compilation.Nested[0].Artifact)
+	byKind := equationsByKind(compilation.NestedCompilations()[0].Artifact)
 	if len(byKind["allocation-template"]) != 1 || len(byKind["object-materialization"]) != 1 {
 		t.Fatalf("nested allocation lowering = %#v", byKind)
 	}
