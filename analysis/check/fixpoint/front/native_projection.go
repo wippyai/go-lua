@@ -15,11 +15,7 @@ type NativeProjection struct {
 	Term        string                       `json:"term,omitempty"`
 	Subject     string                       `json:"subject,omitempty"`
 	Occurrence  string                       `json:"occurrence,omitempty"`
-	Established string                       `json:"established,omitempty"`
-	Revoked     string                       `json:"revoked,omitempty"`
-	Event       string                       `json:"event,omitempty"`
 	Revocations []NativeProjectionRevocation `json:"revocations,omitempty"`
-	HostGlobal  *NativeHostGlobalRequirement `json:"host_global,omitempty"`
 }
 
 type NativeHostGlobalRequirement struct {

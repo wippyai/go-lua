@@ -1,16 +1,10 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
 	"go/ast"
-	"go/importer"
-	"go/parser"
 	"go/token"
 	"go/types"
-	"io"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -29,14 +23,6 @@ var sanctionedWIRTraversalFiles = map[string]map[string]bool{
 
 const nativeTopologyDraftEmitterFile = "native_wir_topology_drafts.go"
 
-type listedGoPackage struct {
-	ImportPath string
-	Dir        string
-	GoFiles    []string
-	CgoFiles   []string
-	Export     string
-}
-
 type wirTraversalViolation struct {
 	file string
 	line int
@@ -44,60 +30,22 @@ type wirTraversalViolation struct {
 }
 
 func TestProductionWIRTraversalIsConfinedToLoweringFront(t *testing.T) {
-	moduleRoot := moduleRootForGuard(t)
-	packages := listedPackagesForGuard(t, moduleRoot)
-	exports := make(map[string]string, len(packages))
-	for _, item := range packages {
-		if item.Export != "" {
-			exports[item.ImportPath] = item.Export
-		}
-	}
-	fset := token.NewFileSet()
-	imports := importer.ForCompiler(fset, "gc", func(path string) (io.ReadCloser, error) {
-		export := exports[path]
-		if export == "" {
-			return nil, fmt.Errorf("no export data for %s", path)
-		}
-		return os.Open(export)
-	})
+	loader := newFencePackageLoader(t, "./analysis/check/...")
 	var violations []wirTraversalViolation
-	for _, item := range packages {
-		if !strings.HasPrefix(item.ImportPath, "github.com/wippyai/go-lua/analysis/check") {
-			continue
-		}
-		files := append(append([]string(nil), item.GoFiles...), item.CgoFiles...)
-		syntax := make([]*ast.File, 0, len(files))
-		fileNames := make(map[*ast.File]string, len(files))
-		for _, name := range files {
-			parsed, err := parser.ParseFile(fset, filepath.Join(item.Dir, name), nil, 0)
-			if err != nil {
-				t.Fatalf("parse %s/%s: %v", item.ImportPath, name, err)
-			}
-			syntax = append(syntax, parsed)
-			fileNames[parsed] = name
-		}
-		info := &types.Info{
-			Types:      make(map[ast.Expr]types.TypeAndValue),
-			Defs:       make(map[*ast.Ident]types.Object),
-			Uses:       make(map[*ast.Ident]types.Object),
-			Selections: make(map[*ast.SelectorExpr]*types.Selection),
-		}
-		config := types.Config{Importer: imports}
-		if _, err := config.Check(item.ImportPath, fset, syntax, info); err != nil {
-			t.Fatalf("type-check %s: %v", item.ImportPath, err)
-		}
-		for _, file := range syntax {
-			name := fileNames[file]
-			if wirTraversalSanctioned(item.ImportPath, name) {
+	for _, meta := range loader.modulePackages("/analysis/check") {
+		typed := loader.load(meta)
+		for index, file := range typed.files {
+			name := meta.GoFiles[index]
+			if wirTraversalSanctioned(meta.ImportPath, name) {
 				continue
 			}
-			if item.ImportPath == modulePath+"/analysis/check/fixpoint/front" &&
+			if meta.ImportPath == modulePath+"/analysis/check/fixpoint/front" &&
 				name == nativeTopologyDraftEmitterFile {
 				violations = append(violations,
-					findTypedTopologyDraftTraversalViolations(fset, name, file, info)...)
+					findTypedTopologyDraftTraversalViolations(typed.fset, name, file, typed.info)...)
 				continue
 			}
-			violations = append(violations, findWIRTraversalViolations(fset, name, file, info)...)
+			violations = append(violations, findWIRTraversalViolations(typed.fset, name, file, typed.info)...)
 		}
 	}
 	sort.Slice(violations, func(i, j int) bool {
@@ -362,41 +310,4 @@ func isWIRNamed(value types.Type, name string) bool {
 		return false
 	}
 	return named.Obj().Name() == name && named.Obj().Pkg().Path() == wirPackagePath
-}
-
-func moduleRootForGuard(t *testing.T) string {
-	t.Helper()
-	command := exec.Command("go", "env", "GOMOD")
-	output, err := command.Output()
-	if err != nil {
-		t.Fatalf("go env GOMOD: %v", err)
-	}
-	mod := strings.TrimSpace(string(output))
-	if mod == "" || mod == os.DevNull {
-		t.Fatalf("go env GOMOD returned %q", mod)
-	}
-	return filepath.Dir(mod)
-}
-
-func listedPackagesForGuard(t *testing.T, moduleRoot string) []listedGoPackage {
-	t.Helper()
-	command := exec.Command("go", "list", "-json", "-export", "-deps", "./analysis/check/...")
-	command.Dir = moduleRoot
-	output, err := command.Output()
-	if err != nil {
-		t.Fatalf("go list production package graph: %v", err)
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(output)))
-	var packages []listedGoPackage
-	for {
-		var item listedGoPackage
-		if err := decoder.Decode(&item); err != nil {
-			if err == io.EOF {
-				break
-			}
-			t.Fatalf("decode go list package graph: %v", err)
-		}
-		packages = append(packages, item)
-	}
-	return packages
 }

@@ -305,21 +305,21 @@ func correlatedEqualityTargets(source string, equal map[string]map[string]bool) 
 // with the edge it was published on and its polarity there. The narrower
 // true-edge reader remains the default; a consumer that must also read the
 // false edge of an inequality uses this one.
-func branchEvidencePredicateOnEdge(operand equation.BoundOperand) (branchPredicateWire, bool, bool, bool, error) {
+func branchEvidencePredicateOnEdge(operand equation.BoundOperand) (front.BranchPredicateWire, bool, bool, bool, error) {
 	if predicate, edge, polarity, present, err := front.DecodeBranchEvidenceWire(operand.Value); err != nil {
-		return branchPredicateWire{}, false, false, false, err
+		return front.BranchPredicateWire{}, false, false, false, err
 	} else if present {
 		return predicate, edge, polarity, true, nil
 	}
 	if operand.Role.Wire() != "predicate" {
-		return branchPredicateWire{}, false, false, false, nil
+		return front.BranchPredicateWire{}, false, false, false, nil
 	}
 	predicate, present, err := front.DecodeBranchPredicateWire(operand.Value)
 	if err != nil {
-		return branchPredicateWire{}, false, false, false, err
+		return front.BranchPredicateWire{}, false, false, false, err
 	}
 	if !present {
-		return branchPredicateWire{}, false, false, false, fmt.Errorf("engine: predicate role has no predicate wire")
+		return front.BranchPredicateWire{}, false, false, false, fmt.Errorf("engine: predicate role has no predicate wire")
 	}
 	return predicate, true, true, true, nil
 }

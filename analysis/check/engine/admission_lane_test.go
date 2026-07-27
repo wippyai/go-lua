@@ -41,9 +41,6 @@ func TestAdmissionLanePrecedencePinned(t *testing.T) {
 		if lane.Name != want[index] {
 			t.Fatalf("admission lane %d = %q, want %q", index, lane.Name, want[index])
 		}
-		if lane.Precedence != index {
-			t.Fatalf("admission lane %q precedence = %d, want slice index %d", lane.Name, lane.Precedence, index)
-		}
 		if seen[lane.Name] {
 			t.Fatalf("duplicate admission lane %q", lane.Name)
 		}

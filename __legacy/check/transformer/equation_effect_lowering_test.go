@@ -211,7 +211,7 @@ func TestEffectEquationLoweringAuditsDeclaredAccessAndRejectsHiddenAccess(t *tes
 				Advances: append([]formal.LexicalClassID(nil), contract.Advances...), Outcomes: append([]OutcomeKind(nil), contract.Outcomes...),
 				Dependencies: append([]ContractDependency(nil), contract.Dependencies...),
 			}
-			execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+			execution := Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
 			if err := VerifyLoweredOperatorAccess(contract, execution); err != nil {
 				t.Fatalf("declared effect access: %v", err)
 			}
@@ -229,7 +229,7 @@ func TestEffectEquationLoweringRejectsPartialPublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution := equation.Execution{Complete: false, Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: contract.Kind, Occurrence: contract.Occurrence}}}
+	execution := Execution{Complete: false, Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: contract.Kind, Occurrence: contract.Occurrence}}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err == nil {
 		t.Fatal("partial effect transaction was published")
 	}

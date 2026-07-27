@@ -134,13 +134,7 @@ func (loader *fencePackageLoader) load(meta fenceGoListPackage) *fenceTypedPacka
 		}
 		files = append(files, file)
 	}
-	info := &types.Info{
-		Types:      make(map[ast.Expr]types.TypeAndValue),
-		Defs:       make(map[*ast.Ident]types.Object),
-		Uses:       make(map[*ast.Ident]types.Object),
-		Selections: make(map[*ast.SelectorExpr]*types.Selection),
-		Scopes:     make(map[ast.Node]*types.Scope),
-	}
+	info := newFenceTypesInfo()
 	config := types.Config{Importer: loader.imports}
 	pkg, err := config.Check(meta.ImportPath, fset, files, info)
 	if err != nil {
@@ -156,13 +150,7 @@ func (loader *fencePackageLoader) source(importPath, source string) *fenceTypedP
 	if err != nil {
 		loader.t.Fatalf("parse semantic mutation: %v", err)
 	}
-	info := &types.Info{
-		Types:      make(map[ast.Expr]types.TypeAndValue),
-		Defs:       make(map[*ast.Ident]types.Object),
-		Uses:       make(map[*ast.Ident]types.Object),
-		Selections: make(map[*ast.SelectorExpr]*types.Selection),
-		Scopes:     make(map[ast.Node]*types.Scope),
-	}
+	info := newFenceTypesInfo()
 	config := types.Config{Importer: loader.imports}
 	pkg, err := config.Check(importPath, fset, []*ast.File{file}, info)
 	if err != nil {
@@ -174,6 +162,16 @@ func (loader *fencePackageLoader) source(importPath, source string) *fenceTypedP
 		files: []*ast.File{file},
 		info:  info,
 		pkg:   pkg,
+	}
+}
+
+func newFenceTypesInfo() *types.Info {
+	return &types.Info{
+		Types:      make(map[ast.Expr]types.TypeAndValue),
+		Defs:       make(map[*ast.Ident]types.Object),
+		Uses:       make(map[*ast.Ident]types.Object),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+		Scopes:     make(map[ast.Node]*types.Scope),
 	}
 }
 

@@ -803,8 +803,8 @@ uncommitted rewrite):
   `analysis/engine/factapply/objects_test.go` and
   `TestReturnedFreshObjectGraphNeverContainsStack`. The file is deleted in
   the working tree; no test of that name exists anywhere in the repository.
-  The underlying production logic (`EscapeTransitionReturn` in
-  [`analysis/domain/placement/policy.go`](../domain/placement/policy.go),
+  The underlying production logic (`placement.Return` in
+  [`analysis/domain/placement/vocabulary.go`](../domain/placement/vocabulary.go),
   `applyReturn` in
   [`analysis/engine/factapply/return_resolved_transaction.go`](../engine/factapply/return_resolved_transaction.go))
   still exists and is indirectly exercised by

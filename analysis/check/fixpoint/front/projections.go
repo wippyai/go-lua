@@ -80,18 +80,8 @@ type DraftsGraphView interface {
 	GraphView
 }
 
-type BoundarySpansView interface {
-	BoundaryView
-	SpansView
-}
-
 type BoundaryGraphView interface {
 	BoundaryView
-	GraphView
-}
-
-type SpansGraphView interface {
-	SpansView
 	GraphView
 }
 
@@ -104,18 +94,6 @@ type DraftsBoundarySpansView interface {
 type DraftsBoundaryGraphView interface {
 	DraftsView
 	BoundaryView
-	GraphView
-}
-
-type DraftsSpansGraphView interface {
-	DraftsView
-	SpansView
-	GraphView
-}
-
-type BoundarySpansGraphView interface {
-	BoundaryView
-	SpansView
 	GraphView
 }
 

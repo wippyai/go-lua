@@ -36,10 +36,6 @@ func TestEngineDoesNotParseDiagnosticMessageContent(t *testing.T) {
 				t.Errorf("%s:%d parses diagnostic Message content: %q", entry.Name(), line, source[match[0]:match[1]])
 			}
 		}
-		removedSentinel := "assignment-map-read-" + "missing/v1/"
-		if strings.Contains(string(source), removedSentinel) {
-			t.Errorf("%s retains the removed assignment sentinel channel", entry.Name())
-		}
 	}
 }
 

@@ -95,14 +95,14 @@ func escapeEventPlacement(kind callboundary.EscapeEventKind) (placement.Value, b
 	return escapeEventTransition(kind).Placement()
 }
 
-var escapeEventTransitions = map[callboundary.EscapeEventKind]placement.EscapeTransition{
-	callboundary.EscapeEventRetain: placement.EscapeTransitionRetain,
-	callboundary.EscapeEventStore:  placement.EscapeTransitionStore,
-	callboundary.EscapeEventSend:   placement.EscapeTransitionSend,
-	callboundary.EscapeEventExport: placement.EscapeTransitionExport,
-	callboundary.EscapeEventOpaque: placement.EscapeTransitionOpaque,
+var escapeEventTransitions = map[callboundary.EscapeEventKind]placement.Escape{
+	callboundary.EscapeEventRetain: placement.Retain,
+	callboundary.EscapeEventStore:  placement.Store,
+	callboundary.EscapeEventSend:   placement.Send,
+	callboundary.EscapeEventExport: placement.Export,
+	callboundary.EscapeEventOpaque: placement.Opaque,
 }
 
-func escapeEventTransition(kind callboundary.EscapeEventKind) placement.EscapeTransition {
+func escapeEventTransition(kind callboundary.EscapeEventKind) placement.Escape {
 	return escapeEventTransitions[kind]
 }

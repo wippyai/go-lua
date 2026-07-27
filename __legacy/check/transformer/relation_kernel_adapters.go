@@ -42,7 +42,7 @@ func (b *RealRelationBodyBinding) KernelRegistry(kernels map[uint64]RelationOccu
 				return boundKernel(boundOccurrence, bound, partition)
 			}),
 			Verify: func(access equation.AccessRecord) error {
-				return VerifyLoweredOperatorAccess(boundContract, equation.Execution{Complete: true, Access: access})
+				return VerifyLoweredOperatorAccess(boundContract, Execution{Complete: true, Access: access})
 			},
 		})
 	}

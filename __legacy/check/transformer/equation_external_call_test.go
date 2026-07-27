@@ -159,7 +159,7 @@ func TestExternalCallLoweringAuditsCompleteFactapplyAccess(t *testing.T) {
 		Outcomes: append([]OutcomeKind(nil), contract.Outcomes...), Dependencies: append([]ContractDependency(nil), contract.Dependencies...),
 		Diagnostics: []string{contract.DiagnosticOutputs[0].Candidate},
 	}
-	execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+	execution := Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
 	if err := VerifyExternalCallLoweredAccess(contract, execution); err != nil {
 		t.Fatalf("external-call audit: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestExternalCallLoweringAuditsCompleteFactapplyAccess(t *testing.T) {
 	if err := VerifyExternalCallLoweredAccess(contract, execution); err == nil {
 		t.Fatal("external-call audit accepted undeclared read")
 	}
-	execution = equation.Execution{Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: contract.Kind, Occurrence: contract.Occurrence}}}
+	execution = Execution{Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: contract.Kind, Occurrence: contract.Occurrence}}}
 	if err := VerifyExternalCallLoweredAccess(contract, execution); err == nil {
 		t.Fatal("external-call lowering published an incomplete transaction")
 	}

@@ -27,7 +27,7 @@ func TestEnvironmentWriteLoweringAuditsRecordedExecution(t *testing.T) {
 	contract.Writes = []ContractSelector{{Role: AccessState, Name: "target"}}
 
 	access := OperatorAccess{Kind: OperatorEnvironmentWrite, Occurrence: occurrence, Reads: append([]ContractSelector(nil), contract.Reads...), Writes: append([]ContractSelector(nil), contract.Writes...)}
-	execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+	execution := Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err != nil {
 		t.Fatalf("environment-write audit: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestApplyLoweringAuditsCompleteFactApplyAccess(t *testing.T) {
 		Outcomes:     append([]OutcomeKind(nil), contract.Outcomes...),
 		Dependencies: append([]ContractDependency(nil), contract.Dependencies...),
 	}
-	execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+	execution := Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err != nil {
 		t.Fatalf("apply audit: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestApplyLoweringAuditsCompleteFactApplyAccess(t *testing.T) {
 
 	// A factapply transaction is full-result-or-nothing: the audit harness must
 	// reject a record that claims to publish any incomplete transaction.
-	execution = equation.Execution{Complete: false, Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: OperatorApply, Occurrence: occurrence}}}
+	execution = Execution{Complete: false, Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: OperatorApply, Occurrence: occurrence}}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err == nil {
 		t.Fatal("apply audit accepted partial publication")
 	}
@@ -143,7 +143,7 @@ func TestChannelSelectLoweringAuditsExistingFactapplyExecution(t *testing.T) {
 		},
 		Writes: []ContractSelector{{Role: AccessState, Name: "channel-facts"}},
 	}
-	execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+	execution := Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err != nil {
 		t.Fatalf("channel-select audit: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestChannelSelectLoweringAuditsExistingFactapplyExecution(t *testing.T) {
 		t.Fatal("channel-select audit accepted undeclared read")
 	}
 
-	execution = equation.Execution{Complete: false, Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: OperatorChannelSelect, Occurrence: occurrence}}}
+	execution = Execution{Complete: false, Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: OperatorChannelSelect, Occurrence: occurrence}}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err == nil {
 		t.Fatal("channel-select lowering published a partial transaction")
 	}
@@ -182,7 +182,7 @@ func TestRootAssignmentLoweringAuditsRecordedExecution(t *testing.T) {
 		Reads: append([]ContractSelector(nil), contract.Reads...), Writes: append([]ContractSelector(nil), contract.Writes...),
 		Outcomes: append([]OutcomeKind(nil), contract.Outcomes...),
 	}
-	execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+	execution := Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err != nil {
 		t.Fatalf("root-assignment audit: %v", err)
 	}

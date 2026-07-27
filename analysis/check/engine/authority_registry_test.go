@@ -141,23 +141,6 @@ func TestAuthorityPrecedencePinned(t *testing.T) {
 	}
 }
 
-// TestInheritedValueAuthoritySwapPinned states the unexplained inherited
-// difference explicitly: value-at-read asks typed-path before reconverged,
-// while value-current asks reconverged before typed-path. Unifying the two
-// orders must therefore change this test and the registry data together.
-func TestInheritedValueAuthoritySwapPinned(t *testing.T) {
-	atRead := authorityNames(valueAtReadAuthorities)
-	current := authorityNames(currentValueAuthorities)
-	atReadTyped, atReadReconverged := slices.Index(atRead, "typed-path"), slices.Index(atRead, "reconverged")
-	currentTyped, currentReconverged := slices.Index(current, "typed-path"), slices.Index(current, "reconverged")
-	if atReadTyped+1 != atReadReconverged {
-		t.Fatalf("value-at-read swap rows = typed-path:%d reconverged:%d, want typed-path immediately first", atReadTyped, atReadReconverged)
-	}
-	if currentReconverged+1 != currentTyped {
-		t.Fatalf("value-current swap rows = reconverged:%d typed-path:%d, want reconverged immediately first", currentReconverged, currentTyped)
-	}
-}
-
 // TestCurrentValueConsumerFailsClosedOnUnknownAuthority mutates the registry
 // data presented to the real current-value consumer. A derived path normally
 // reaches the conservative Top fallback; an unknown rule must stop that

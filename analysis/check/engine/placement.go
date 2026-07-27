@@ -378,34 +378,6 @@ func placementAllocationInPartition(identity, result string, partition equation.
 	return placementAllocationFact{}, false
 }
 
-// placementAllocationInFacts resolves a term against one already-read partition
-// snapshot. Reading the partition is the dominant cost of a placement lookup, so
-// a caller resolving several terms of the same operation reads it once and every
-// resolution shares that snapshot.
-func placementAllocationInFacts(term string, facts []equation.Fact) (placementAllocationFact, bool) {
-	if term == "" {
-		return placementAllocationFact{}, false
-	}
-	if identity, found := placementBindingInFacts(term, facts); found {
-		return placementAllocation(identity, "", facts)
-	}
-	return placementAllocation("", term, facts)
-}
-
-func placementAllocation(identity, result string, facts []equation.Fact) (placementAllocationFact, bool) {
-	for _, fact := range facts {
-		if !factkey.PlacementAllocation.Owns(fact.Key) {
-			continue
-		}
-		var allocation placementAllocationFact
-		if front.DecodeRequiredWireJSON(fact.Value, &allocation) == nil && allocation.Identity != "" &&
-			(identity != "" && allocation.Identity == identity || result != "" && allocation.Result == result) {
-			return allocation, true
-		}
-	}
-	return placementAllocationFact{}, false
-}
-
 // placementImportedReturnFacts instantiates the finite table graph carried by
 // an exact imported return relation. The relation is admitted only after the
 // module exporter has validated its callable surface, and call-results has
@@ -651,17 +623,6 @@ func placementBindingForTerm(term []byte, partition equation.Partition) (string,
 		return "", false
 	}
 	return string(fact.Value), true
-}
-
-func placementBindingInFacts(term string, facts []equation.Fact) (string, bool) {
-	prefix := factkey.PlacementBinding.Key().String() + base64.RawURLEncoding.EncodeToString([]byte(term)) + "/"
-	latest, identity := "", ""
-	for _, fact := range facts {
-		if factkey.OwnsPrefix(prefix, fact.Key) && fact.Key > latest && len(fact.Value) != 0 {
-			latest, identity = fact.Key, string(fact.Value)
-		}
-	}
-	return identity, identity != ""
 }
 
 // placementApplyFacts marks only named retaining boundaries. Every other call

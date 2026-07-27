@@ -175,7 +175,7 @@ func TestBranchRelationsLoweringAuditsExistingKernelAccess(t *testing.T) {
 		Reads:      append([]ContractSelector(nil), contract.Reads...),
 		Writes:     append([]ContractSelector(nil), contract.Writes...),
 	}
-	execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+	execution := Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err != nil {
 		t.Fatalf("branch-relations audit: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestBranchRelationsLoweringAuditsExistingKernelAccess(t *testing.T) {
 	if err := VerifyLoweredOperatorAccess(contract, execution); err == nil {
 		t.Fatal("branch-relations audit accepted undeclared read")
 	}
-	execution = equation.Execution{Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: OperatorBranchRelations, Occurrence: binding.Occurrence}}}
+	execution = Execution{Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: OperatorBranchRelations, Occurrence: binding.Occurrence}}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err == nil {
 		t.Fatal("branch-relations lowering published a partial transaction")
 	}

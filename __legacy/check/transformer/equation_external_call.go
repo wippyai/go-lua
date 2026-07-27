@@ -96,7 +96,7 @@ func ExternalCallEquationLowerer() equation.Lowerer {
 // VerifyExternalCallLoweredAccess verifies a dynamic audit record emitted
 // around the existing external-call kernel.  The audit is post-execution and
 // therefore cannot change which result is computed or published.
-func VerifyExternalCallLoweredAccess(contract OperatorContract, execution equation.Execution) error {
+func VerifyExternalCallLoweredAccess(contract OperatorContract, execution Execution) error {
 	if contract.Kind != OperatorExternalCall {
 		return fmt.Errorf("transformer: external-call audit received %q contract", contract.Kind)
 	}

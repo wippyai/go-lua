@@ -190,16 +190,3 @@ const (
 	BoundaryLocal        Boundary = "local"
 	BoundaryContains     Boundary = "contains"
 )
-
-// ParseBoundary admits exactly the frozen placement/contract wire labels.
-func ParseBoundary(wire string) (Boundary, bool) {
-	boundary := Boundary(wire)
-	switch boundary {
-	case BoundaryBorrow, BoundaryRetain, BoundarySend, BoundaryMutate,
-		BoundaryMetatable, BoundaryIdentity, BoundaryDynamicIndex,
-		BoundaryIterator, BoundaryLocal, BoundaryContains:
-		return boundary, true
-	default:
-		return "", false
-	}
-}

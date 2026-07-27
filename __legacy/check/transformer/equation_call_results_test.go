@@ -112,7 +112,7 @@ func TestCallResultsLoweringAuditsRecordedExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	access := OperatorAccess{Kind: OperatorCallResults, Occurrence: occurrence, Reads: append([]ContractSelector(nil), contract.Reads...), Writes: append([]ContractSelector(nil), contract.Writes...)}
-	execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+	execution := Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err != nil {
 		t.Fatalf("call-results audit: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestCallResultsLoweringAuditsRecordedExecution(t *testing.T) {
 		t.Fatal("call-results audit accepted undeclared read")
 	}
 
-	execution = equation.Execution{Complete: false, Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: OperatorCallResults, Occurrence: occurrence}}}
+	execution = Execution{Complete: false, Published: true, Access: equation.AccessRecord{Payload: OperatorAccess{Kind: OperatorCallResults, Occurrence: occurrence}}}
 	if err := VerifyLoweredOperatorAccess(contract, execution); err == nil {
 		t.Fatal("call-results lowering published a partial transaction")
 	}

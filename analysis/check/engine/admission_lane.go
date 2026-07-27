@@ -11,7 +11,6 @@ import (
 // entry and the obligations that entry may discharge.
 type admissionLane struct {
 	Name       string
-	Precedence int
 	Admit      func(*admissionLane, *admissionLaneContext) admissionLaneResult
 	Discharges DiagnosticFamilySet
 }
@@ -38,7 +37,6 @@ type admissionLaneDecision struct {
 	ContextualParameters []typ.Type
 	FormalMemberWrites   map[string]bool
 	SealedEnvironment    bool
-	ClosedAnyCapture     bool
 }
 
 // admissionLaneResult is the only value an admission descriptor can return.
@@ -125,26 +123,22 @@ func admissionDiagnosticDischarged(ctx admissionDiagnosticContext, closedAnyForm
 var admissionLanes = []admissionLane{
 	{
 		Name:       "gradual-logical-call",
-		Precedence: 0,
 		Admit:      (*admissionLane).admitGradualLogicalCall,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyCallArgumentType),
 	},
 	{
 		Name:       "declared-local-union-read",
-		Precedence: 1,
 		Admit:      (*admissionLane).admitDeclaredLocalUnionRead,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyAssignment, DiagnosticFamilyMissingMember),
 	},
 	{
 		Name:       "declared-indexed-read",
-		Precedence: 2,
 		Admit:      (*admissionLane).admitDeclaredIndexedRead,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyAssignment, DiagnosticFamilyReturnContract),
 	},
 	{
-		Name:       "static-assignment",
-		Precedence: 3,
-		Admit:      (*admissionLane).admitStaticAssignment,
+		Name:  "static-assignment",
+		Admit: (*admissionLane).admitStaticAssignment,
 		Discharges: NewDiagnosticFamilySet(
 			DiagnosticFamilyAssignment,
 			DiagnosticFamilyOptionalCallReceiver,
@@ -154,14 +148,12 @@ var admissionLanes = []admissionLane{
 	},
 	{
 		Name:       "typed-channel-send",
-		Precedence: 4,
 		Admit:      (*admissionLane).admitTypedChannelSend,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyCallArgumentType),
 	},
 	{
-		Name:       "declared",
-		Precedence: 5,
-		Admit:      (*admissionLane).admitDeclared,
+		Name:  "declared",
+		Admit: (*admissionLane).admitDeclared,
 		Discharges: NewDiagnosticFamilySet(
 			DiagnosticFamilyMissingMember,
 			DiagnosticFamilyReturnContract,
@@ -175,32 +167,27 @@ var admissionLanes = []admissionLane{
 	},
 	{
 		Name:       "explicit-any",
-		Precedence: 6,
 		Admit:      (*admissionLane).admitExplicitAny,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyAssignment, DiagnosticFamilyUnprovenClaim),
 	},
 	{
 		Name:       "static-captured-return",
-		Precedence: 7,
 		Admit:      (*admissionLane).admitStaticCapturedReturn,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyReturnContract, DiagnosticFamilyCallTooFewArguments, DiagnosticFamilyCallTooManyArguments),
 	},
 	{
 		Name:       "static-arithmetic",
-		Precedence: 8,
 		Admit:      (*admissionLane).admitStaticArithmetic,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyCallArgumentType),
 	},
 	{
 		Name:       "static-member-read",
-		Precedence: 9,
 		Admit:      (*admissionLane).admitStaticMemberRead,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyMissingMember),
 	},
 	{
-		Name:       "declared-formal-call",
-		Precedence: 10,
-		Admit:      (*admissionLane).admitDeclaredFormalCall,
+		Name:  "declared-formal-call",
+		Admit: (*admissionLane).admitDeclaredFormalCall,
 		Discharges: NewDiagnosticFamilySet(
 			DiagnosticFamilyMissingMember,
 			DiagnosticFamilyAssignment,
@@ -215,19 +202,16 @@ var admissionLanes = []admissionLane{
 	},
 	{
 		Name:       "imported-capture",
-		Precedence: 11,
 		Admit:      (*admissionLane).admitImportedCapture,
 		Discharges: NewDiagnosticFamilySet(DiagnosticFamilyAssignment, DiagnosticFamilyMissingMember),
 	},
 	{
 		Name:       "sealed-capture",
-		Precedence: 12,
 		Admit:      (*admissionLane).admitSealedCapture,
 		Discharges: RegisteredDiagnosticFamilies(),
 	},
 	{
 		Name:       "contextual-callback",
-		Precedence: 13,
 		Admit:      (*admissionLane).admitContextualCallback,
 		Discharges: RegisteredDiagnosticFamilies(),
 	},
@@ -276,7 +260,7 @@ func (lane *admissionLane) admitExplicitAny(ctx *admissionLaneContext) admission
 	} else if closedCapture {
 		root = admissionRootClosedAnyCapture
 	}
-	return lane.admission(admissionLaneDecision{Seeds: seeds, Root: root, ClosedAnyCapture: closedCapture})
+	return lane.admission(admissionLaneDecision{Seeds: seeds, Root: root})
 }
 
 func (lane *admissionLane) admitGradualLogicalCall(ctx *admissionLaneContext) admissionLaneResult {

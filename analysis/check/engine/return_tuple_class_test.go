@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/module/exportrelation"
 )
 
@@ -96,21 +97,21 @@ func TestOccupiedSlotDecidesOnlyTheNilClasses(t *testing.T) {
 // publishes, and negation is left to the edge rather than changing the set.
 func TestBranchClassNamesTheSetThePredicateDecides(t *testing.T) {
 	for _, item := range []struct {
-		predicate branchPredicateWire
+		predicate front.BranchPredicateWire
 		want      returnTupleClass
 	}{
-		{branchPredicateWire{Kind: "nil"}, returnTupleLiteralClass("scalar/nil")},
-		{branchPredicateWire{Kind: "nil", Negated: true}, returnTupleLiteralClass("scalar/nil")},
-		{branchPredicateWire{Kind: "not-nil"}, returnTupleClassNotNil},
-		{branchPredicateWire{Kind: "truthy"}, returnTupleClassTruthy},
-		{branchPredicateWire{Kind: "literal-equal", Literal: "scalar/bool/false"}, returnTupleLiteralClass("scalar/bool/false")},
+		{front.BranchPredicateWire{Kind: "nil"}, returnTupleLiteralClass("scalar/nil")},
+		{front.BranchPredicateWire{Kind: "nil", Negated: true}, returnTupleLiteralClass("scalar/nil")},
+		{front.BranchPredicateWire{Kind: "not-nil"}, returnTupleClassNotNil},
+		{front.BranchPredicateWire{Kind: "truthy"}, returnTupleClassTruthy},
+		{front.BranchPredicateWire{Kind: "literal-equal", Literal: "scalar/bool/false"}, returnTupleLiteralClass("scalar/bool/false")},
 	} {
 		class, decides := returnTupleBranchClass(item.predicate)
 		if !decides || class != item.want {
 			t.Errorf("predicate %q decided class %q (%v), want %q", item.predicate.Kind, class, decides, item.want)
 		}
 	}
-	for _, predicate := range []branchPredicateWire{
+	for _, predicate := range []front.BranchPredicateWire{
 		{Kind: "literal-equal"},
 		{Kind: "len-ge"},
 		{Kind: "type-equal", TypeName: "string"},

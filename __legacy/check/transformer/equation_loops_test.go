@@ -176,7 +176,7 @@ func TestLoopEquationLoweringAuditFailsClosed(t *testing.T) {
 			contract.Reads, contract.Writes, contract.GuardAtoms = test.reads, test.writes, test.guard
 			contract.Dependencies = []ContractDependency{{Kind: test.dep, ID: contentID([]byte(test.dep))}}
 			access := OperatorAccess{Kind: test.kind, Occurrence: contract.Occurrence, Reads: append([]ContractSelector(nil), test.reads...), Writes: append([]ContractSelector(nil), test.writes...), Dependencies: append([]ContractDependency(nil), contract.Dependencies...)}
-			execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+			execution := Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
 			if err := VerifyLoweredOperatorAccess(contract, execution); err != nil {
 				t.Fatalf("audit: %v", err)
 			}

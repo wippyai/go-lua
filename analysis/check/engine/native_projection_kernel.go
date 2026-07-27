@@ -455,7 +455,6 @@ func nativeHostGlobalFact(
 		Value: "identity=published managed=true ownership=published release=published rooting=published " +
 			"type=published used_order=published value_carrier=published",
 		Subject: subject, Occurrence: occurrence,
-		Established: occurrence, Revoked: "write.global", Event: "write.global",
 		Revocations: []front.NativeProjectionRevocation{
 			{Established: occurrence, Revoked: "write.global", Event: "write.global"},
 			{Established: "contract", Revoked: "contract/load.dynamic", Event: "load.dynamic"},
@@ -579,7 +578,6 @@ func nativeTableLengthFact(
 		return nativeProjectionFact(operation, front.NativeProjection{
 			Key: key, Value: value,
 			Subject: nativeProjectionOperand(operands, equation.MustOperandRole("native-length-subject")), Occurrence: occurrence,
-			Established: occurrence, Revoked: event, Event: event,
 			Revocations: []front.NativeProjectionRevocation{{
 				Established: occurrence, Revoked: event, Event: event,
 			}},
@@ -598,7 +596,7 @@ func nativeTableLengthFact(
 	return nativeProjectionFact(operation, front.NativeProjection{
 		Key: key, Value: "border_algorithm=canonical dense_prefix=true disposition=raw",
 		Subject: nativeProjectionOperand(operands, equation.MustOperandRole("native-length-subject")), Occurrence: occurrence,
-		Established: occurrence, Revoked: events[0], Event: events[0], Revocations: revocations,
+		Revocations: revocations,
 	})
 }
 
@@ -653,7 +651,6 @@ func nativeTableGrowthFact(
 	}
 	if len(operands[equation.MustOperandRole("native-growth-capacity")]) == 0 {
 		events := []string{"escape", "meta.set", "call.opaque", "load.dynamic"}
-		row.Established, row.Revoked, row.Event = occurrence, events[0], events[0]
 		for _, event := range events {
 			row.Revocations = append(row.Revocations, front.NativeProjectionRevocation{
 				Established: occurrence, Revoked: event, Event: event,
@@ -697,7 +694,6 @@ func nativeNilabilityFacts(
 	row := func(content string) front.NativeProjection {
 		projection := front.NativeProjection{
 			Key: key, Value: content, Subject: subject, Occurrence: occurrence,
-			Established: "contract", Revoked: "contract/nilability", Event: events[0],
 		}
 		for _, event := range events {
 			projection.Revocations = append(projection.Revocations, front.NativeProjectionRevocation{
@@ -773,7 +769,6 @@ func nativeMetatableReadFactFor(
 	return nativeProjectionFact(operation, front.NativeProjection{
 		Key: key, Value: "index_chain=elided metatable=absent",
 		Subject: nativeProjectionOperand(operands, equation.MustOperandRole(prefix+"-subject")), Occurrence: occurrence,
-		Established: occurrence, Revoked: "meta.set", Event: "meta.set",
 		Revocations: []front.NativeProjectionRevocation{{
 			Established: occurrence, Revoked: "meta.set", Event: "meta.set",
 		}},
@@ -822,7 +817,6 @@ func nativeMetatableInstallFact(
 	row := front.NativeProjection{
 		Key: key, Value: "index_table=" + indexDisplay + " sealed=true",
 		Subject: nativeProjectionOperand(operands, equation.MustOperandRole("native-metatable-install-subject")), Occurrence: occurrence,
-		Established: occurrence, Revoked: "meta.set,meta.mutate", Event: events[0],
 	}
 	for _, event := range events {
 		row.Revocations = append(row.Revocations, front.NativeProjectionRevocation{
@@ -862,7 +856,6 @@ func nativeProjectionWithEvents(
 	}
 	row := front.NativeProjection{
 		Key: key, Value: content, Subject: subject, Occurrence: occurrence,
-		Established: occurrence, Revoked: strings.Join(events, ","), Event: events[0],
 	}
 	for _, event := range events {
 		row.Revocations = append(row.Revocations, front.NativeProjectionRevocation{

@@ -178,7 +178,7 @@ func TestOutcomeFamilyAuditIsFailClosed(t *testing.T) {
 		}
 		access := OperatorAccess{Kind: kind, Occurrence: contract.Occurrence, Reads: contract.Reads, Writes: contract.Writes,
 			Advances: contract.Advances, Outcomes: contract.Outcomes, Diagnostics: []string{diagnostic.Candidate}, Dependencies: contract.Dependencies}
-		execution := equation.Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
+		execution := Execution{Complete: true, Published: true, Access: equation.AccessRecord{Payload: access}}
 		if err := AuditOutcomeFamilyExecution(contract, execution); err != nil {
 			t.Fatalf("%s declared audit: %v", kind, err)
 		}
@@ -187,9 +187,5 @@ func TestOutcomeFamilyAuditIsFailClosed(t *testing.T) {
 		if err := AuditOutcomeFamilyExecution(contract, execution); err == nil {
 			t.Fatalf("%s audit accepted undeclared read", kind)
 		}
-	}
-	partial := equation.Execution{Complete: false, Published: true}
-	if err := equation.RunAndVerify(func() (equation.Execution, error) { return partial, nil }, func(equation.AccessRecord) error { return nil }); err == nil {
-		t.Fatal("outcome family audit accepted partial publication")
 	}
 }

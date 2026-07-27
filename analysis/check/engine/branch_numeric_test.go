@@ -23,7 +23,7 @@ func residueWindowPartition(t *testing.T, path string, window string) equation.P
 
 // encodeEvidence renders one implied check in the front's closed branch
 // evidence encoding, on the requested edge and polarity.
-func encodeEvidence(t *testing.T, edge, polarity string, predicate branchPredicateWire) []byte {
+func encodeEvidence(t *testing.T, edge, polarity string, predicate front.BranchPredicateWire) []byte {
 	t.Helper()
 	encoded, err := front.EncodeBranchEvidenceWire(predicate, edge == "true", polarity == "true")
 	if err != nil {
@@ -35,7 +35,7 @@ func encodeEvidence(t *testing.T, edge, polarity string, predicate branchPredica
 func TestNumericEdgeSatisfiableRefutesAnInfeasibleConjunction(t *testing.T) {
 	// `x >= 5 and x <= 2`: the front normalizes the ceiling as a negated floor,
 	// so the true edge asserts x >= 5 together with x < 3.
-	predicates := []branchPredicateWire{
+	predicates := []front.BranchPredicateWire{
 		{Kind: "num-ge", Path: "x", NumFloor: 5},
 		{Kind: "num-ge", Path: "x", NumFloor: 3, Negated: true},
 	}
@@ -45,7 +45,7 @@ func TestNumericEdgeSatisfiableRefutesAnInfeasibleConjunction(t *testing.T) {
 }
 
 func TestNumericEdgeSatisfiableAdmitsASatisfiableRange(t *testing.T) {
-	predicates := []branchPredicateWire{
+	predicates := []front.BranchPredicateWire{
 		{Kind: "num-ge", Path: "x", NumFloor: 2},
 		{Kind: "num-ge", Path: "x", NumFloor: 6, Negated: true},
 	}
@@ -59,7 +59,7 @@ func TestNumericEdgeSatisfiableRelaxesAStrictBoundRatherThanTighteningIt(t *test
 	// form still refutes x >= 5 and must not refute x >= 3: a tightened bound
 	// would report the second conjunction as dead on integrality this predicate
 	// does not carry.
-	relaxed := []branchPredicateWire{
+	relaxed := []front.BranchPredicateWire{
 		{Kind: "num-ge", Path: "x", NumFloor: 3},
 		{Kind: "num-ge", Path: "x", NumFloor: 3, Negated: true},
 	}
@@ -70,7 +70,7 @@ func TestNumericEdgeSatisfiableRelaxesAStrictBoundRatherThanTighteningIt(t *test
 
 func TestNumericEdgeSatisfiableRefutesALiteralOutsideTheResidueWindow(t *testing.T) {
 	partition := residueWindowPartition(t, "y", `{"low":0,"high":3}`)
-	predicates := []branchPredicateWire{{Kind: "literal-equal", Path: "y", Literal: "scalar/number/5"}}
+	predicates := []front.BranchPredicateWire{{Kind: "literal-equal", Path: "y", Literal: "scalar/number/5"}}
 	if numericEdgeSatisfiable(predicates, nil, partition) {
 		t.Fatal("5 lies outside [0, 3], so the equality has no model")
 	}
@@ -78,7 +78,7 @@ func TestNumericEdgeSatisfiableRefutesALiteralOutsideTheResidueWindow(t *testing
 
 func TestNumericEdgeSatisfiableAdmitsALiteralInsideTheResidueWindow(t *testing.T) {
 	partition := residueWindowPartition(t, "y", `{"low":0,"high":3}`)
-	predicates := []branchPredicateWire{{Kind: "literal-equal", Path: "y", Literal: "scalar/number/1"}}
+	predicates := []front.BranchPredicateWire{{Kind: "literal-equal", Path: "y", Literal: "scalar/number/1"}}
 	if !numericEdgeSatisfiable(predicates, nil, partition) {
 		t.Fatal("1 lies inside [0, 3], so the window decides nothing")
 	}
@@ -86,7 +86,7 @@ func TestNumericEdgeSatisfiableAdmitsALiteralInsideTheResidueWindow(t *testing.T
 
 func TestNumericEdgeSatisfiableRefutesACeilingBelowAShiftedWindow(t *testing.T) {
 	partition := residueWindowPartition(t, "y", `{"low":10,"high":12}`)
-	predicates := []branchPredicateWire{{Kind: "num-le", Path: "y", NumCeil: 5, HasNumCeil: true}}
+	predicates := []front.BranchPredicateWire{{Kind: "num-le", Path: "y", NumCeil: 5, HasNumCeil: true}}
 	if numericEdgeSatisfiable(predicates, nil, partition) {
 		t.Fatal("a shifted window at [10, 12] admits no value at or below five")
 	}
@@ -94,7 +94,7 @@ func TestNumericEdgeSatisfiableRefutesACeilingBelowAShiftedWindow(t *testing.T) 
 
 func TestNumericEdgeSatisfiableRefutesAResidueClassOutsideTheWindow(t *testing.T) {
 	partition := residueWindowPartition(t, "y", `{"low":0,"high":1}`)
-	predicates := []branchPredicateWire{{Kind: "mod-residue", Path: "y", Modulus: 4, Residue: 3}}
+	predicates := []front.BranchPredicateWire{{Kind: "mod-residue", Path: "y", Modulus: 4, Residue: 3}}
 	if numericEdgeSatisfiable(predicates, nil, partition) {
 		t.Fatal("the class 3 (mod 4) holds no member of [0, 1]")
 	}
@@ -102,14 +102,14 @@ func TestNumericEdgeSatisfiableRefutesAResidueClassOutsideTheWindow(t *testing.T
 
 func TestNumericEdgeSatisfiableAdmitsAResidueClassInsideTheWindow(t *testing.T) {
 	partition := residueWindowPartition(t, "y", `{"low":0,"high":1}`)
-	predicates := []branchPredicateWire{{Kind: "mod-residue", Path: "y", Modulus: 4, Residue: 1}}
+	predicates := []front.BranchPredicateWire{{Kind: "mod-residue", Path: "y", Modulus: 4, Residue: 1}}
 	if !numericEdgeSatisfiable(predicates, nil, partition) {
 		t.Fatal("1 lies in both the class and the window, so nothing is decided")
 	}
 }
 
 func TestNumericEdgeSatisfiableAdmitsAPathWithNoPublishedWindow(t *testing.T) {
-	predicates := []branchPredicateWire{{Kind: "mod-residue", Path: "y", Modulus: 4, Residue: 3}}
+	predicates := []front.BranchPredicateWire{{Kind: "mod-residue", Path: "y", Modulus: 4, Residue: 3}}
 	if !numericEdgeSatisfiable(predicates, nil, equation.Partition{}) {
 		t.Fatal("a subject the authorities carry no fact about decides nothing")
 	}
@@ -145,7 +145,7 @@ func TestResidueClassWindowVerdictIntersectsTheClassWithTheWindow(t *testing.T) 
 
 func TestTrueEdgeNumericPredicatesRejectFalseEdgeEvidence(t *testing.T) {
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: equation.MustOperandRole("implied-00000000"), Value: encodeEvidence(t, "false", "false", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
+		{Role: equation.MustOperandRole("implied-00000000"), Value: encodeEvidence(t, "false", "false", front.BranchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 	}}
 	if predicates, err := trueEdgeNumericPredicates(operation); err != nil || len(predicates) != 0 {
 		t.Fatalf("false-edge evidence asserts nothing on the true edge, got %v", predicates)
@@ -156,8 +156,8 @@ func TestTrueEdgeNumericPredicatesIgnoreAnUnknownRole(t *testing.T) {
 	// A role this vocabulary does not name is an orthogonal marker, not an
 	// assertion, so it neither enters the set nor blocks the roles that do.
 	operation := equation.BoundEquation{Operands: []equation.BoundOperand{
-		{Role: equation.MustOperandRole("recurrence"), Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
-		{Role: equation.MustOperandRole("implied-00000000"), Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
+		{Role: equation.MustOperandRole("recurrence"), Value: encodeEvidence(t, "true", "true", front.BranchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
+		{Role: equation.MustOperandRole("implied-00000000"), Value: encodeEvidence(t, "true", "true", front.BranchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 	}}
 	predicates, err := trueEdgeNumericPredicates(operation)
 	if err != nil {
@@ -171,7 +171,7 @@ func TestTrueEdgeNumericPredicatesIgnoreAnUnknownRole(t *testing.T) {
 func TestNegatableBranchSelectorRefusesACompoundCondition(t *testing.T) {
 	compound := equation.BoundEquation{Operands: []equation.BoundOperand{
 		{Role: equation.MustOperandRole("condition"), Value: []byte("temp/0")},
-		{Role: equation.MustOperandRole("implied-00000000"), Value: encodeEvidence(t, "true", "true", branchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
+		{Role: equation.MustOperandRole("implied-00000000"), Value: encodeEvidence(t, "true", "true", front.BranchPredicateWire{Kind: "num-ge", Path: "x", NumFloor: 5})},
 	}}
 	if _, single, err := negatableBranchSelector(compound); err != nil || single {
 		t.Fatal("a compound condition's false edge refutes no individual conjunct")
@@ -179,7 +179,7 @@ func TestNegatableBranchSelectorRefusesACompoundCondition(t *testing.T) {
 }
 
 func TestBranchNumericTruthProvesTheTrueEdgeOfABoundInsideItsWindow(t *testing.T) {
-	predicate, err := front.EncodeBranchPredicateWire(branchPredicateWire{Kind: "num-ge", Path: "y", NumFloor: 0})
+	predicate, err := front.EncodeBranchPredicateWire(front.BranchPredicateWire{Kind: "num-ge", Path: "y", NumFloor: 0})
 	if err != nil {
 		t.Fatalf("encoding predicate: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestBranchNumericTruthProvesTheTrueEdgeOfABoundInsideItsWindow(t *testing.T
 }
 
 func TestBranchNumericTruthLeavesAnUndecidedBoundAlone(t *testing.T) {
-	predicate, err := front.EncodeBranchPredicateWire(branchPredicateWire{Kind: "num-ge", Path: "y", NumFloor: 2})
+	predicate, err := front.EncodeBranchPredicateWire(front.BranchPredicateWire{Kind: "num-ge", Path: "y", NumFloor: 2})
 	if err != nil {
 		t.Fatalf("encoding predicate: %v", err)
 	}

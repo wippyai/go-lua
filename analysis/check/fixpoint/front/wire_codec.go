@@ -163,29 +163,13 @@ func ValidateDraftWires(artifact equation.Artifact) error {
 
 // EncodeBranchChainWire is the sole constructor for authored chain topology.
 func EncodeBranchChainWire(wire BranchChainWire) ([]byte, error) {
-	if err := validateBranchChainWire(wire); err != nil {
-		return nil, err
-	}
-	encoded, err := json.Marshal(wire)
-	if err != nil {
-		return nil, fmt.Errorf("front: encode branch chain: %w", err)
-	}
-	return append([]byte(branchChainPrefix), encoded...), nil
+	return encodePrefixedWire(wire, branchChainPrefix, "branch chain", validateBranchChainWire)
 }
 
 // DecodeBranchChainWire distinguishes an unrelated operand from a malformed
 // chain publication.
 func DecodeBranchChainWire(encoded []byte) (wire BranchChainWire, present bool, err error) {
-	if !bytes.HasPrefix(encoded, []byte(branchChainPrefix)) {
-		return BranchChainWire{}, false, nil
-	}
-	if err := decodeDraftJSON(encoded[len(branchChainPrefix):], &wire); err != nil {
-		return BranchChainWire{}, true, fmt.Errorf("front: decode branch chain: %w", err)
-	}
-	if err := validateBranchChainWire(wire); err != nil {
-		return BranchChainWire{}, true, err
-	}
-	return wire, true, nil
+	return decodePrefixedWire(encoded, branchChainPrefix, "branch chain", validateBranchChainWire)
 }
 
 func validateBranchChainWire(wire BranchChainWire) error {
@@ -271,31 +255,39 @@ func decodeDraftJSON(encoded []byte, destination any) error {
 	return nil
 }
 
-// EncodeBranchPredicateWire is the sole constructor of predicate wire bytes.
-func EncodeBranchPredicateWire(wire BranchPredicateWire) ([]byte, error) {
-	if err := validateBranchPredicateWire(wire); err != nil {
+func encodePrefixedWire[T any](wire T, prefix, label string, validate func(T) error) ([]byte, error) {
+	if err := validate(wire); err != nil {
 		return nil, err
 	}
 	encoded, err := json.Marshal(wire)
 	if err != nil {
-		return nil, fmt.Errorf("front: encode branch predicate: %w", err)
+		return nil, fmt.Errorf("front: encode %s: %w", label, err)
 	}
-	return append([]byte(branchPredicatePrefix), encoded...), nil
+	return append([]byte(prefix), encoded...), nil
+}
+
+func decodePrefixedWire[T any](encoded []byte, prefix, label string, validate func(T) error) (wire T, present bool, err error) {
+	if !bytes.HasPrefix(encoded, []byte(prefix)) {
+		return wire, false, nil
+	}
+	if err := decodeDraftJSON(encoded[len(prefix):], &wire); err != nil {
+		return wire, true, fmt.Errorf("front: decode %s: %w", label, err)
+	}
+	if err := validate(wire); err != nil {
+		return wire, true, err
+	}
+	return wire, true, nil
+}
+
+// EncodeBranchPredicateWire is the sole constructor of predicate wire bytes.
+func EncodeBranchPredicateWire(wire BranchPredicateWire) ([]byte, error) {
+	return encodePrefixedWire(wire, branchPredicatePrefix, "branch predicate", validateBranchPredicateWire)
 }
 
 // DecodeBranchPredicateWire distinguishes an unrelated value (present=false)
 // from a malformed predicate value (present=true, err!=nil).
 func DecodeBranchPredicateWire(encoded []byte) (wire BranchPredicateWire, present bool, err error) {
-	if !bytes.HasPrefix(encoded, []byte(branchPredicatePrefix)) {
-		return BranchPredicateWire{}, false, nil
-	}
-	if err := decodeDraftJSON(encoded[len(branchPredicatePrefix):], &wire); err != nil {
-		return BranchPredicateWire{}, true, fmt.Errorf("front: decode branch predicate: %w", err)
-	}
-	if err := validateBranchPredicateWire(wire); err != nil {
-		return BranchPredicateWire{}, true, err
-	}
-	return wire, true, nil
+	return decodePrefixedWire(encoded, branchPredicatePrefix, "branch predicate", validateBranchPredicateWire)
 }
 
 func validateBranchPredicateWire(wire BranchPredicateWire) error {
@@ -396,28 +388,12 @@ func DecodeBranchEvidenceWire(encoded []byte) (wire BranchPredicateWire, edge, p
 
 // EncodeBranchDiffWire is the sole constructor of difference wire bytes.
 func EncodeBranchDiffWire(wire BranchDiffWire) ([]byte, error) {
-	if err := validateBranchDiffWire(wire); err != nil {
-		return nil, err
-	}
-	encoded, err := json.Marshal(wire)
-	if err != nil {
-		return nil, fmt.Errorf("front: encode branch difference: %w", err)
-	}
-	return append([]byte(branchDiffPrefix), encoded...), nil
+	return encodePrefixedWire(wire, branchDiffPrefix, "branch difference", validateBranchDiffWire)
 }
 
 // DecodeBranchDiffWire distinguishes absence from a malformed descriptor.
 func DecodeBranchDiffWire(encoded []byte) (wire BranchDiffWire, present bool, err error) {
-	if !bytes.HasPrefix(encoded, []byte(branchDiffPrefix)) {
-		return BranchDiffWire{}, false, nil
-	}
-	if err := decodeDraftJSON(encoded[len(branchDiffPrefix):], &wire); err != nil {
-		return BranchDiffWire{}, true, fmt.Errorf("front: decode branch difference: %w", err)
-	}
-	if err := validateBranchDiffWire(wire); err != nil {
-		return BranchDiffWire{}, true, err
-	}
-	return wire, true, nil
+	return decodePrefixedWire(encoded, branchDiffPrefix, "branch difference", validateBranchDiffWire)
 }
 
 func validateBranchDiffWire(wire BranchDiffWire) error {

@@ -495,6 +495,17 @@ func nativeTopologyOperandDisplay(body *wir.Body, operand wir.Operand) string {
 	return body.Path(wir.PathRef(operand.Ref)).String()
 }
 
+func nativeTopologyOperandKey(body *wir.Body, operand wir.Operand) string {
+	switch operand.Kind {
+	case wir.OperandPath:
+		return string(body.Path(wir.PathRef(operand.Ref)).Key())
+	case wir.OperandTemp:
+		return fmt.Sprintf("temp/%d", operand.Ref)
+	default:
+		return ""
+	}
+}
+
 func nativeRecordUses(bodyID [32]byte, body *wir.Body) map[int]nativeRecordUseTopology {
 	rootKey := func(operand wir.Operand) string {
 		if operand.Kind != wir.OperandPath {
@@ -565,16 +576,6 @@ func nativeShapeTransitionTopologyDrafts(compilation Compilation) []NativeTopolo
 		return nil
 	}
 	shapes := make(map[string][]NativeShapeFieldDraft)
-	key := func(operand wir.Operand) string {
-		switch operand.Kind {
-		case wir.OperandPath:
-			return string(body.Path(wir.PathRef(operand.Ref)).Key())
-		case wir.OperandTemp:
-			return fmt.Sprintf("temp/%d", operand.Ref)
-		default:
-			return ""
-		}
-	}
 	var drafts []NativeTopologyDraft
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
@@ -596,11 +597,12 @@ func nativeShapeTransitionTopologyDrafts(compilation Compilation) []NativeTopolo
 				}
 			}
 			if valid && len(fields) != 0 {
-				shapes[key(instruction.Dst)] = fields
+				shapes[nativeTopologyOperandKey(body, instruction.Dst)] = fields
 			}
 		case wir.OpAssign:
-			if source, found := shapes[key(instruction.A)]; found && key(instruction.Dst) != "" {
-				shapes[key(instruction.Dst)] = append([]NativeShapeFieldDraft(nil), source...)
+			if source, found := shapes[nativeTopologyOperandKey(body, instruction.A)]; found &&
+				nativeTopologyOperandKey(body, instruction.Dst) != "" {
+				shapes[nativeTopologyOperandKey(body, instruction.Dst)] = append([]NativeShapeFieldDraft(nil), source...)
 			}
 		case wir.OpStaticMemberWrite:
 			if instruction.Dst.Kind != wir.OperandPath {
@@ -735,23 +737,13 @@ func nativeConstantTopologyDrafts(compilation Compilation) []NativeTopologyDraft
 		return nil
 	}
 	bodyID := [32]byte(compilation.Body)
-	key := func(operand wir.Operand) string {
-		switch operand.Kind {
-		case wir.OperandPath:
-			return string(body.Path(wir.PathRef(operand.Ref)).Key())
-		case wir.OperandTemp:
-			return fmt.Sprintf("temp/%d", operand.Ref)
-		default:
-			return ""
-		}
-	}
 	writes := make(map[string][]NativeInstructionReference)
 	captures := make(map[string][]NativeInstructionReference)
 	for index := 0; index < body.Len(); index++ {
 		instruction := body.Instr(index)
 		site := NativeInstructionReference{Body: bodyID, Position: uint32(index)}
 		count := func(operand wir.Operand) {
-			if name := key(operand); name != "" {
+			if name := nativeTopologyOperandKey(body, operand); name != "" {
 				writes[name] = append(writes[name], site)
 			}
 		}
@@ -768,7 +760,7 @@ func nativeConstantTopologyDrafts(compilation Compilation) []NativeTopologyDraft
 		}
 		if instruction.Op == wir.OpClosure {
 			for _, capture := range body.Operands(instruction.List) {
-				if name := key(capture); name != "" {
+				if name := nativeTopologyOperandKey(body, capture); name != "" {
 					captures[name] = append(captures[name], site)
 				}
 			}
@@ -803,7 +795,7 @@ func nativeConstantTopologyDrafts(compilation Compilation) []NativeTopologyDraft
 				inputs = []wir.Operand{instruction.A, instruction.B}
 			}
 		}
-		name := key(instruction.Dst)
+		name := nativeTopologyOperandKey(body, instruction.Dst)
 		if operator == 0 || name == "" {
 			continue
 		}

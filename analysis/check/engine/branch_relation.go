@@ -36,8 +36,8 @@ type branchResidueClassWire struct {
 
 // trueEdgeBranchDifferences collects the difference descriptors this branch
 // proves on its true edge.
-func trueEdgeBranchDifferences(operation equation.BoundEquation) ([]branchDiffWire, error) {
-	var out []branchDiffWire
+func trueEdgeBranchDifferences(operation equation.BoundEquation) ([]front.BranchDiffWire, error) {
+	var out []front.BranchDiffWire
 	for _, operand := range operation.Operands {
 		if !operand.Role.InFamily(equation.RoleFamilyDifference) {
 			continue
@@ -88,7 +88,7 @@ func relationVariable(pathKey string, isLength bool) pathdom.PathKey {
 // into the numeric constraint IR the solver portfolio consumes: a normalized
 // floor becomes GeConst, an index-in-range predicate becomes value <= len, and
 // each difference descriptor becomes its Le or bounded-sum form.
-func relationAssertions(predicates []branchPredicateWire, differences []branchDiffWire) []numeric.NumericConstraint {
+func relationAssertions(predicates []front.BranchPredicateWire, differences []front.BranchDiffWire) []numeric.NumericConstraint {
 	asserted := make([]numeric.NumericConstraint, 0, len(predicates)+len(differences))
 	for _, predicate := range predicates {
 		if predicate.Negated || predicate.Path == "" {
@@ -129,7 +129,7 @@ func relationAssertions(predicates []branchPredicateWire, differences []branchDi
 // relationContainers lists the arrays whose length the branch's relations bound
 // something against. A container that never appears as a length operand cannot
 // be the subject of an in-range proof, so the candidate set is complete.
-func relationContainers(predicates []branchPredicateWire, differences []branchDiffWire) []string {
+func relationContainers(predicates []front.BranchPredicateWire, differences []front.BranchDiffWire) []string {
 	seen := make(map[string]bool)
 	add := func(name string, isLength bool) {
 		if isLength && name != "" {
@@ -166,7 +166,7 @@ type relationalIndexPair struct{ index, container string }
 // The portfolio is the single constraint path. Difference logic answers the
 // transitive and length-equality goals; the exact linear backend answers the
 // bounded-sum residue difference logic cannot express.
-func relationalIndexUpperBounds(predicates []branchPredicateWire, differences []branchDiffWire, indexes []string) []relationalIndexPair {
+func relationalIndexUpperBounds(predicates []front.BranchPredicateWire, differences []front.BranchDiffWire, indexes []string) []relationalIndexPair {
 	if len(differences) == 0 || len(indexes) == 0 {
 		return nil
 	}
@@ -222,7 +222,7 @@ func branchNumericTruth(operation equation.BoundEquation, partition equation.Par
 		return false, false, selectorErr
 	} else if single {
 		predicate.Negated = !predicate.Negated
-		if !numericEdgeSatisfiable([]branchPredicateWire{predicate}, nil, partition) {
+		if !numericEdgeSatisfiable([]front.BranchPredicateWire{predicate}, nil, partition) {
 			return true, true, nil
 		}
 	}
@@ -236,8 +236,8 @@ func branchNumericTruth(operation equation.BoundEquation, partition equation.Par
 // check on the same edge and their conjunction describes no execution at all.
 // A refutation reads necessary conditions only, so those roles, and any role
 // this vocabulary does not name, stay out of the assertion set.
-func trueEdgeNumericPredicates(operation equation.BoundEquation) ([]branchPredicateWire, error) {
-	predicates := make([]branchPredicateWire, 0, len(operation.Operands))
+func trueEdgeNumericPredicates(operation equation.BoundEquation) ([]front.BranchPredicateWire, error) {
+	predicates := make([]front.BranchPredicateWire, 0, len(operation.Operands))
 	for _, operand := range operation.Operands {
 		if operand.Role != equation.RolePredicate && !operand.Role.InFamily(equation.RoleFamilyImplied) {
 			continue
@@ -258,18 +258,18 @@ func trueEdgeNumericPredicates(operation equation.BoundEquation) ([]branchPredic
 // exactly the branch's false edge. A branch that also carries a scalar
 // condition is selected by that condition, and a compound condition's false
 // edge refutes no individual conjunct, so neither form yields one.
-func negatableBranchSelector(operation equation.BoundEquation) (branchPredicateWire, bool, error) {
+func negatableBranchSelector(operation equation.BoundEquation) (front.BranchPredicateWire, bool, error) {
 	for _, operand := range operation.Operands {
 		if operand.Role.Wire() == "condition" {
-			return branchPredicateWire{}, false, nil
+			return front.BranchPredicateWire{}, false, nil
 		}
 	}
 	predicate, found, err := soleBranchPredicate(operation)
 	if err != nil {
-		return branchPredicateWire{}, false, err
+		return front.BranchPredicateWire{}, false, err
 	}
 	if !found || predicate.Path == "" {
-		return branchPredicateWire{}, false, nil
+		return front.BranchPredicateWire{}, false, nil
 	}
 	return predicate, true, nil
 }
@@ -279,7 +279,7 @@ func negatableBranchSelector(operation equation.BoundEquation) (branchPredicateW
 // refutation seam: a false answer is a proof that the edge is never taken, and
 // every path the authorities carry no fact about simply contributes no
 // constraint, so an unconstrained edge always remains satisfiable.
-func numericEdgeSatisfiable(predicates []branchPredicateWire, differences []branchDiffWire, partition equation.Partition) bool {
+func numericEdgeSatisfiable(predicates []front.BranchPredicateWire, differences []front.BranchDiffWire, partition equation.Partition) bool {
 	for _, predicate := range predicates {
 		if predicate.Kind != "mod-residue" {
 			continue
@@ -326,7 +326,7 @@ func numericEdgeSatisfiable(predicates []branchPredicateWire, differences []bran
 // modulo m; the current predicate is therefore refuted exactly when its truth
 // value on that established class is false. A later epoch names a different
 // subject value and invalidates the row.
-func branchResidueClassRefutes(predicate branchPredicateWire, partition equation.Partition) bool {
+func branchResidueClassRefutes(predicate front.BranchPredicateWire, partition equation.Partition) bool {
 	term := []byte("path/" + predicate.Path)
 	values := partition.FamilyValues(factkey.BuildKey(
 		factkey.BranchResidueClass,
@@ -366,7 +366,7 @@ func branchResidueClassRefutes(predicate branchPredicateWire, partition equation
 // refutation over the relaxed set refutes the exact one. A check outside the
 // affine fragment - a disequality, a residue class - states nothing here and is
 // answered by its own authority.
-func numericPredicateConstraints(predicate branchPredicateWire) []numeric.NumericConstraint {
+func numericPredicateConstraints(predicate front.BranchPredicateWire) []numeric.NumericConstraint {
 	value := relationVariable(predicate.Path, false)
 	switch predicate.Kind {
 	case "num-ge":
@@ -548,7 +548,7 @@ func integerConstantOperand(value []byte) (int64, bool) {
 // term the branch never saw - a shifted term computed inside the arm - is
 // discharged against these same relations later, so the branch keeps them
 // available instead of collapsing them into the boolean pairs it can name now.
-func indexRelationFacts(predicates []branchPredicateWire, differences []branchDiffWire, operationName string, guards []equation.Guard) []equation.Fact {
+func indexRelationFacts(predicates []front.BranchPredicateWire, differences []front.BranchDiffWire, operationName string, guards []equation.Guard) []equation.Fact {
 	facts := make([]equation.Fact, 0, len(predicates)+len(differences))
 	for _, predicate := range predicates {
 		if predicate.Negated || predicate.Path == "" {
@@ -588,7 +588,7 @@ func indexRelationFacts(predicates []branchPredicateWire, differences []branchDi
 // relationPaths lists every path a republished relation constrains. A write to
 // any of them replaces a value the relation was stated about, so the relation
 // stops holding at that point.
-func relationPaths(predicate branchPredicateWire, difference branchDiffWire, isPredicate bool) []string {
+func relationPaths(predicate front.BranchPredicateWire, difference front.BranchDiffWire, isPredicate bool) []string {
 	if isPredicate {
 		return []string{predicate.Path, predicate.OtherPath}
 	}
@@ -598,7 +598,7 @@ func relationPaths(predicate branchPredicateWire, difference branchDiffWire, isP
 // provenNumericFloor returns the largest constant lower bound the relations
 // state directly on a path. The floor is a normalized constant, not a goal, so
 // it is read back rather than re-derived.
-func provenNumericFloor(predicates []branchPredicateWire, path string) (int64, bool) {
+func provenNumericFloor(predicates []front.BranchPredicateWire, path string) (int64, bool) {
 	floor, found := int64(0), false
 	for _, predicate := range predicates {
 		if predicate.Kind != "num-ge" || predicate.Negated || predicate.Path != path {
@@ -617,7 +617,7 @@ func provenNumericFloor(predicates []branchPredicateWire, path string) (int64, b
 // base - len(container) <= -offset. The lower side is the base's own constant
 // floor shifted by the same offset, which is why i >= 1 admits i + 1 but never
 // i - 1.
-func affineIndexInRange(predicates []branchPredicateWire, differences []branchDiffWire, base, container string, offset int64) bool {
+func affineIndexInRange(predicates []front.BranchPredicateWire, differences []front.BranchDiffWire, base, container string, offset int64) bool {
 	if base == "" || container == "" || offset == math.MinInt64 {
 		return false
 	}

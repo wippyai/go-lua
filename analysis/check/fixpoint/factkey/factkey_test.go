@@ -201,3 +201,11 @@ func TestFamiliesAreCompleteRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestFamilyRegistryOrderMatchesStableIDs(t *testing.T) {
+	for index, family := range Families() {
+		if want := FamilyID(index + 1); family.ID != want {
+			t.Fatalf("family registry row %d has ID %d, want %d", index, family.ID, want)
+		}
+	}
+}

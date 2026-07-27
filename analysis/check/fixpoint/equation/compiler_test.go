@@ -30,20 +30,3 @@ func TestEnvironmentWriteExemplarBindsExistingKernel(t *testing.T) {
 		t.Fatalf("unexpected lowered artifact: %#v", artifact)
 	}
 }
-
-func TestAuditHarnessRejectsPartialPublication(t *testing.T) {
-	verified := false
-	err := RunAndVerify(
-		func() (Execution, error) { return Execution{Published: true}, nil },
-		func(AccessRecord) error {
-			verified = true
-			return nil
-		},
-	)
-	if err != ErrPartialExecution {
-		t.Fatalf("Complete=false, Published=true, err=nil produced %v, want %v", err, ErrPartialExecution)
-	}
-	if verified {
-		t.Fatal("partial execution reached audit verification")
-	}
-}

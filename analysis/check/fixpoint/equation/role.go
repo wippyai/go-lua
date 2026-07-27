@@ -138,7 +138,7 @@ func ParseOperandRole(spelling string) (OperandRole, bool) {
 }
 
 // MustOperandRole constructs a statically declared producer role. Dynamic
-// families should prefer IndexedRole, SuffixedRole, and Subrole.
+// families should prefer IndexedRole and SuffixedRole.
 func MustOperandRole(spelling string) OperandRole {
 	return mustOperandRole(spelling)
 }
@@ -170,14 +170,6 @@ func SuffixedRole(family OperandRoleFamily, suffix string) OperandRole {
 		return OperandRole{}
 	}
 	return mustOperandRole(name + "-" + suffix)
-}
-
-// Subrole appends one closed component to an already-typed parent role.
-func Subrole(parent OperandRole, suffix string) OperandRole {
-	if !parent.Valid() || suffix == "" || strings.ContainsAny(suffix, "/-") {
-		return OperandRole{}
-	}
-	return mustOperandRole(parent.Wire() + "-" + suffix)
 }
 
 // Valid reports whether the role came through an owner constructor.

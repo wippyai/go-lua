@@ -98,7 +98,7 @@ func TestExactResultTypeRefusesOpenShapes(t *testing.T) {
 		"readonlymap": typ.NewReadonlyMap(typ.String, typ.String),
 		"tuple":       typ.NewTuple(typ.String, typ.Integer),
 	} {
-		if !nativeExactResultType(item) {
+		if !nativeTopologyExactResultType(item) {
 			t.Errorf("%s is exact-capable but was refused", name)
 		}
 	}
@@ -111,7 +111,7 @@ func TestExactResultTypeRefusesOpenShapes(t *testing.T) {
 		"reference":    typ.NewRef("other", "Named"),
 		"meta":         typ.NewMeta(typ.String),
 	} {
-		if nativeExactResultType(item) {
+		if nativeTopologyExactResultType(item) {
 			t.Errorf("%s describes more than one layout but was reported exact", name)
 		}
 	}

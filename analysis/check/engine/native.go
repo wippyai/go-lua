@@ -236,7 +236,6 @@ func nativeFactFromProjection(projection front.NativeProjection) NativeFact {
 		Key: projection.Key, Value: projection.Value,
 		Term: projection.Term, Subject: projection.Subject,
 		Occurrence: projection.Occurrence, Trust: NativeTrustProven,
-		Established: projection.Established, Revoked: projection.Revoked, Event: projection.Event,
 		Revocations: make([]NativeRevocation, 0, len(projection.Revocations)),
 	}
 	for _, revocation := range projection.Revocations {
@@ -245,6 +244,11 @@ func nativeFactFromProjection(projection front.NativeProjection) NativeFact {
 			Revoked:     revocation.Revoked,
 			Event:       revocation.Event,
 		})
+	}
+	if len(row.Revocations) != 0 {
+		row.Established = row.Revocations[0].Established
+		row.Revoked = row.Revocations[0].Revoked
+		row.Event = row.Revocations[0].Event
 	}
 	return row
 }
@@ -312,13 +316,20 @@ func closedNativeKernelProjectionFacts(root front.Compilation, facts []equation.
 }
 
 func nativeProjectionFromFact(row NativeFact) front.NativeProjection {
+	revocations := row.Revocations
+	if len(revocations) == 0 && (row.Established != "" || row.Revoked != "" || row.Event != "") {
+		revocations = []NativeRevocation{{
+			Established: row.Established,
+			Revoked:     row.Revoked,
+			Event:       row.Event,
+		}}
+	}
 	projection := front.NativeProjection{
 		Key: row.Key, Value: row.Value, Term: row.Term, Subject: row.Subject,
-		Occurrence: row.Occurrence, Established: row.Established,
-		Revoked: row.Revoked, Event: row.Event,
-		Revocations: make([]front.NativeProjectionRevocation, 0, len(row.Revocations)),
+		Occurrence:  row.Occurrence,
+		Revocations: make([]front.NativeProjectionRevocation, 0, len(revocations)),
 	}
-	for _, revocation := range row.Revocations {
+	for _, revocation := range revocations {
 		projection.Revocations = append(projection.Revocations, front.NativeProjectionRevocation{
 			Established: revocation.Established,
 			Revoked:     revocation.Revoked,

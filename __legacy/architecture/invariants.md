@@ -64,7 +64,7 @@ fresh tables.
 **Where enforced.** `TestReturnEscapeAppliesOwnedHeapToDeeplyNestedFreshGraph`
 drives a three-level-deep fresh literal graph through `PlanReturnTransaction`
 and `ReturnAuthority.Apply` and asserts every reachable identity reads
-`OwnedHeap`, never `Stack`. `EscapeTransitionReturn` is owned-heap policy;
+`OwnedHeap`, never `Stack`. `placement.Return` is owned-heap policy;
 `ApplyReturnFactorTransaction` walks the exact reachable-identity graph across
 every registered coordinate family and publishes it through
 `ProductDomain.PublishCoordinateReturnIdentity`, which targets `OwnedHeap`.

@@ -135,6 +135,6 @@ func (o OutcomeFamilyOccurrence) Draft() (equation.Draft, OperatorContract, erro
 // AuditOutcomeFamilyExecution verifies the access observed around the
 // canonical transformer/factapply transaction.  Evaluation has already
 // happened when this is called; verification is audit-only.
-func AuditOutcomeFamilyExecution(contract OperatorContract, execution equation.Execution) error {
+func AuditOutcomeFamilyExecution(contract OperatorContract, execution Execution) error {
 	return VerifyLoweredOperatorAccess(contract, execution)
 }

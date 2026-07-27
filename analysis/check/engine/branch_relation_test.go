@@ -12,7 +12,7 @@ import (
 
 // encodeDifference produces the closed descriptor encoding the front publishes
 // for one normalized difference-logic branch relation.
-func encodeDifference(t *testing.T, wire branchDiffWire) []byte {
+func encodeDifference(t *testing.T, wire front.BranchDiffWire) []byte {
 	t.Helper()
 	encoded, err := front.EncodeBranchDiffWire(wire)
 	if err != nil {
@@ -22,7 +22,7 @@ func encodeDifference(t *testing.T, wire branchDiffWire) []byte {
 }
 
 func TestDecodeBranchDifferenceRejectsAnEmptyOperand(t *testing.T) {
-	if _, err := front.EncodeBranchDiffWire(branchDiffWire{CoHi: 1, HiPath: "i", Edge: true}); err == nil {
+	if _, err := front.EncodeBranchDiffWire(front.BranchDiffWire{CoHi: 1, HiPath: "i", Edge: true}); err == nil {
 		t.Fatal("a descriptor without a low operand must be rejected")
 	}
 	if _, present, err := front.DecodeBranchDiffWire([]byte("front/branch-predicate/v1/{}")); present || err != nil {
@@ -31,18 +31,18 @@ func TestDecodeBranchDifferenceRejectsAnEmptyOperand(t *testing.T) {
 }
 
 func TestArtifactTrueEdgeLengthRelationAdmitsOnlyLengthBearingTrueEdgeRelations(t *testing.T) {
-	lengthRelation := encodeDifference(t, branchDiffWire{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1, Edge: true})
+	lengthRelation := encodeDifference(t, front.BranchDiffWire{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1, Edge: true})
 	if holds, err := artifactTrueEdgeLengthRelation(equation.IndexedRole(equation.RoleFamilyDifference, 0), lengthRelation); err != nil || !holds {
 		t.Fatal("i + 1 <= #xs relates an index to an array length on the true edge")
 	}
 	if holds, err := artifactTrueEdgeLengthRelation(equation.RolePredicate, lengthRelation); err != nil || holds {
 		t.Fatal("only a difference operand carries a relation")
 	}
-	falseEdge := encodeDifference(t, branchDiffWire{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1})
+	falseEdge := encodeDifference(t, front.BranchDiffWire{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1})
 	if holds, err := artifactTrueEdgeLengthRelation(equation.IndexedRole(equation.RoleFamilyDifference, 0), falseEdge); err != nil || holds {
 		t.Fatal("a false-edge relation proves nothing on the guarded arm")
 	}
-	valuesOnly := encodeDifference(t, branchDiffWire{CoHi: 1, HiPath: "q", LoPath: "r", Edge: true})
+	valuesOnly := encodeDifference(t, front.BranchDiffWire{CoHi: 1, HiPath: "q", LoPath: "r", Edge: true})
 	if holds, err := artifactTrueEdgeLengthRelation(equation.IndexedRole(equation.RoleFamilyDifference, 0), valuesOnly); err != nil || holds {
 		t.Fatal("a relation between two values bounds no array")
 	}
@@ -50,11 +50,11 @@ func TestArtifactTrueEdgeLengthRelationAdmitsOnlyLengthBearingTrueEdgeRelations(
 
 func TestRelationalIndexUpperBoundsProvesTransitiveOrdering(t *testing.T) {
 	// i >= 1 and i < j and j <= #xs prove i <= #xs.
-	predicates := []branchPredicateWire{
+	predicates := []front.BranchPredicateWire{
 		{Kind: "num-ge", Path: "i", NumFloor: 1},
 		{Kind: "index-in-range", Path: "j", OtherPath: "xs"},
 	}
-	differences := []branchDiffWire{
+	differences := []front.BranchDiffWire{
 		{CoHi: 1, HiPath: "i", LoPath: "j", C: -1, Edge: true},
 		{CoHi: 1, HiPath: "j", LoPath: "xs", LoIsLen: true, Edge: true},
 	}
@@ -66,11 +66,11 @@ func TestRelationalIndexUpperBoundsProvesTransitiveOrdering(t *testing.T) {
 
 func TestRelationalIndexUpperBoundsCarriesACrossVariableLengthEquality(t *testing.T) {
 	// #a == #b and i >= 1 and i <= #a prove i <= #b.
-	predicates := []branchPredicateWire{
+	predicates := []front.BranchPredicateWire{
 		{Kind: "num-ge", Path: "i", NumFloor: 1},
 		{Kind: "index-in-range", Path: "i", OtherPath: "a"},
 	}
-	differences := []branchDiffWire{
+	differences := []front.BranchDiffWire{
 		{CoHi: 1, HiPath: "a", HiIsLen: true, LoPath: "b", LoIsLen: true, Edge: true},
 		{CoHi: 1, HiPath: "b", HiIsLen: true, LoPath: "a", LoIsLen: true, Edge: true},
 		{CoHi: 1, HiPath: "i", LoPath: "a", LoIsLen: true, Edge: true},
@@ -88,11 +88,11 @@ func TestRelationalIndexUpperBoundsCarriesACrossVariableLengthEquality(t *testin
 func TestRelationalIndexUpperBoundsDischargesABoundedSum(t *testing.T) {
 	// i >= 1 and j >= 0 and i + j <= #xs prove i <= #xs. The bound side is a
 	// variable length, so this leaves difference logic for the linear backend.
-	predicates := []branchPredicateWire{
+	predicates := []front.BranchPredicateWire{
 		{Kind: "num-ge", Path: "i", NumFloor: 1},
 		{Kind: "num-ge", Path: "j", NumFloor: 0},
 	}
-	differences := []branchDiffWire{
+	differences := []front.BranchDiffWire{
 		{CoHi: 1, HiPath: "i", CoHi2: 1, Hi2Path: "j", HasHi2: true, LoPath: "xs", LoIsLen: true, Edge: true},
 	}
 	proven := relationalIndexUpperBounds(predicates, differences, []string{"i"})
@@ -103,8 +103,8 @@ func TestRelationalIndexUpperBoundsDischargesABoundedSum(t *testing.T) {
 
 func TestRelationalIndexUpperBoundsWithholdsASumWhoseOtherOperandHasNoFloor(t *testing.T) {
 	// Without j >= 0 the sum i + j <= #xs does not bound i: j may be negative.
-	predicates := []branchPredicateWire{{Kind: "num-ge", Path: "i", NumFloor: 1}}
-	differences := []branchDiffWire{
+	predicates := []front.BranchPredicateWire{{Kind: "num-ge", Path: "i", NumFloor: 1}}
+	differences := []front.BranchDiffWire{
 		{CoHi: 1, HiPath: "i", CoHi2: 1, Hi2Path: "j", HasHi2: true, LoPath: "xs", LoIsLen: true, Edge: true},
 	}
 	if proven := relationalIndexUpperBounds(predicates, differences, []string{"i"}); len(proven) != 0 {
@@ -114,8 +114,8 @@ func TestRelationalIndexUpperBoundsWithholdsASumWhoseOtherOperandHasNoFloor(t *t
 
 func TestRelationalIndexUpperBoundsSeparatesValueFromLength(t *testing.T) {
 	// i <= a as values says nothing about #a, so no in-range conclusion exists.
-	predicates := []branchPredicateWire{{Kind: "num-ge", Path: "i", NumFloor: 1}}
-	differences := []branchDiffWire{{CoHi: 1, HiPath: "i", LoPath: "a", Edge: true}}
+	predicates := []front.BranchPredicateWire{{Kind: "num-ge", Path: "i", NumFloor: 1}}
+	differences := []front.BranchDiffWire{{CoHi: 1, HiPath: "i", LoPath: "a", Edge: true}}
 	if proven := relationalIndexUpperBounds(predicates, differences, []string{"i"}); len(proven) != 0 {
 		t.Fatalf("a value relation must not be read as a length bound, got %v", proven)
 	}
@@ -183,8 +183,8 @@ func TestAffineExpressionTermWithholdsTermsOffTheSlotLattice(t *testing.T) {
 
 func TestAffineIndexInRangeShiftsBothSidesOfTheGuard(t *testing.T) {
 	// i >= 1 and i + 1 <= #xs put i + 1 in range but leave i + 2 past the end.
-	predicates := []branchPredicateWire{{Kind: "num-ge", Path: "i", NumFloor: 1}}
-	differences := []branchDiffWire{{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1, Edge: true}}
+	predicates := []front.BranchPredicateWire{{Kind: "num-ge", Path: "i", NumFloor: 1}}
+	differences := []front.BranchDiffWire{{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1, Edge: true}}
 	if !affineIndexInRange(predicates, differences, "i", "xs", 1) {
 		t.Fatal("i + 1 <= #xs is exactly the shifted upper bound")
 	}
@@ -198,7 +198,7 @@ func TestAffineIndexInRangeShiftsBothSidesOfTheGuard(t *testing.T) {
 
 func TestAffineIndexInRangeTakesANegativeOffsetsFloorFromTheBase(t *testing.T) {
 	// i >= 2 and i <= #xs put i - 1 in range.
-	predicates := []branchPredicateWire{
+	predicates := []front.BranchPredicateWire{
 		{Kind: "num-ge", Path: "i", NumFloor: 2},
 		{Kind: "index-in-range", Path: "i", OtherPath: "xs"},
 	}
@@ -212,11 +212,11 @@ func TestAffineIndexInRangeTakesANegativeOffsetsFloorFromTheBase(t *testing.T) {
 
 func TestAffineIndexInRangeRequiresAProvenFloor(t *testing.T) {
 	// Without a floor on i, i + 1 <= #xs still admits a non-positive index.
-	differences := []branchDiffWire{{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1, Edge: true}}
+	differences := []front.BranchDiffWire{{CoHi: 1, HiPath: "i", LoPath: "xs", LoIsLen: true, C: -1, Edge: true}}
 	if affineIndexInRange(nil, differences, "i", "xs", 1) {
 		t.Fatal("an upper bound alone proves no slot")
 	}
-	if affineIndexInRange([]branchPredicateWire{{Kind: "num-ge", Path: "j", NumFloor: 1}}, differences, "i", "xs", 1) {
+	if affineIndexInRange([]front.BranchPredicateWire{{Kind: "num-ge", Path: "j", NumFloor: 1}}, differences, "i", "xs", 1) {
 		t.Fatal("a floor on another path does not floor i")
 	}
 }

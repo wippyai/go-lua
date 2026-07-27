@@ -1822,7 +1822,7 @@ func branchOperation(artifact equation.Artifact, name string) (equation.Equation
 }
 
 func branchPredicateDescription(operation equation.Equation) (string, bool) {
-	var predicate branchPredicateWire
+	var predicate front.BranchPredicateWire
 	display := ""
 	for _, operand := range operation.Operands {
 		switch operand.Role.Wire() {
@@ -7924,31 +7924,31 @@ func typePredicateBodySummary(child front.DraftsBoundaryGraphView) (typePredicat
 // argument this call passed. The callee is resolved through the closure handle
 // its cell currently holds, so a rebound binding names whatever body it now
 // holds and a cell carrying a claim rather than an allocation names none.
-func (l *lexicalEvaluator) typePredicateCallRelation(callee []byte, arguments map[int][]byte, partition equation.Partition) (branchPredicateWire, bool) {
+func (l *lexicalEvaluator) typePredicateCallRelation(callee []byte, arguments map[int][]byte, partition equation.Partition) (front.BranchPredicateWire, bool) {
 	if l == nil || len(callee) == 0 {
-		return branchPredicateWire{}, false
+		return front.BranchPredicateWire{}, false
 	}
 	handle, local := closureHandleFor(callee, partition)
 	if !local {
-		return branchPredicateWire{}, false
+		return front.BranchPredicateWire{}, false
 	}
 	child, admitted := l.byPrototype[handle.Prototype]
 	if !admitted {
-		return branchPredicateWire{}, false
+		return front.BranchPredicateWire{}, false
 	}
 	summary, exported := typePredicateBodySummary(child)
 	if !exported {
-		return branchPredicateWire{}, false
+		return front.BranchPredicateWire{}, false
 	}
 	argument, passed := arguments[summary.Parameter]
 	if !passed {
-		return branchPredicateWire{}, false
+		return front.BranchPredicateWire{}, false
 	}
 	path, rooted := strings.CutPrefix(string(argument), "path/")
 	if !rooted || path == "" {
-		return branchPredicateWire{}, false
+		return front.BranchPredicateWire{}, false
 	}
-	return branchPredicateWire{Kind: "type-equal", Path: path, TypeName: summary.TypeName}, true
+	return front.BranchPredicateWire{Kind: "type-equal", Path: path, TypeName: summary.TypeName}, true
 }
 
 // singleReturnedTerm names the term a body returns when it has exactly one
@@ -7978,8 +7978,8 @@ func singleReturnedTerm(artifact equation.Artifact) (string, bool) {
 // failed, so a truthy result is only reachable through the edge on which it
 // held. Both shapes require the term to have that single definition; a term any
 // other operation also defines states nothing here.
-func truthyImpliedTypePredicate(artifact equation.Artifact, term string) (branchPredicateWire, bool) {
-	predicate, definitions := branchPredicateWire{}, 0
+func truthyImpliedTypePredicate(artifact equation.Artifact, term string) (front.BranchPredicateWire, bool) {
+	predicate, definitions := front.BranchPredicateWire{}, 0
 	for _, operation := range artifact.Equations {
 		switch operation.Occurrence.Kind {
 		case "expression":
@@ -7998,11 +7998,11 @@ func truthyImpliedTypePredicate(artifact equation.Artifact, term string) (branch
 			}
 			bypass, hasBypass := artifactOperand(operation.Operands, equation.MustOperandRole("short-circuit-bypass"))
 			if !hasBypass || string(bypass) != shapefact.ScalarFalseWire {
-				return branchPredicateWire{}, false
+				return front.BranchPredicateWire{}, false
 			}
 			wire, ok := runtimeTypeEqualPredicate(operation.Operands, equation.MustOperandRole("predicate"))
 			if !ok {
-				return branchPredicateWire{}, false
+				return front.BranchPredicateWire{}, false
 			}
 			// The bypass edge carries the guard's own false value, so the arms
 			// this region writes into the result cell are reachable only on the
@@ -8019,17 +8019,17 @@ func truthyImpliedTypePredicate(artifact equation.Artifact, term string) (branch
 // runtimeTypeEqualPredicate reads one operand as an un-negated type-equal check
 // against a name Lua's type() reports. A comparison against another path names
 // no static kind, and a negated check states what the value is not.
-func runtimeTypeEqualPredicate(operands []equation.Operand, role equation.OperandRole) (branchPredicateWire, bool) {
+func runtimeTypeEqualPredicate(operands []equation.Operand, role equation.OperandRole) (front.BranchPredicateWire, bool) {
 	encoded, found := artifactOperand(operands, role)
 	if !found {
-		return branchPredicateWire{}, false
+		return front.BranchPredicateWire{}, false
 	}
 	wire, present, err := front.DecodeBranchPredicateWire(encoded)
 	if err != nil || !present || wire.Kind != "type-equal" || wire.Negated || wire.Path == "" || wire.OtherPath != "" {
-		return branchPredicateWire{}, false
+		return front.BranchPredicateWire{}, false
 	}
 	if !runtimeTypeProofName(wire.TypeName) {
-		return branchPredicateWire{}, false
+		return front.BranchPredicateWire{}, false
 	}
 	return wire, true
 }
@@ -14606,9 +14606,9 @@ func affineIndexIdentity(index []byte, partition equation.Partition) ([]byte, in
 // hold here, together with the earliest point any of them was proved. A
 // relation whose own operands have been replaced since it was published is
 // dropped rather than carried into the goal.
-func currentIndexRelations(partition equation.Partition) ([]branchPredicateWire, []branchDiffWire, string) {
-	var predicates []branchPredicateWire
-	var differences []branchDiffWire
+func currentIndexRelations(partition equation.Partition) ([]front.BranchPredicateWire, []front.BranchDiffWire, string) {
+	var predicates []front.BranchPredicateWire
+	var differences []front.BranchDiffWire
 	provenAt := ""
 	values := partition.FamilyValues(factkey.BuildKey(factkey.HeapIndexRelation, nil, ""))
 	for {
@@ -16357,20 +16357,6 @@ func gradualAnySourceFact(source []byte, partition equation.Partition) ([]byte, 
 	}
 }
 
-// sourceHasGradualLogicalBoundary identifies the exact untyped formal whose
-// published gradual boundary reached an argument through a logical result.
-// The marker is attached only by the guarded uncalled admission above; a
-// general explicit-any boundary keeps its established diagnostic projection.
-func sourceHasGradualLogicalBoundary(source []byte, partition equation.Partition) bool {
-	root, found := gradualAnySourceFact(source, partition)
-	if !found {
-		return false
-	}
-	prefix := factkey.GradualLogical.Key().String() + string(root) + "/"
-	fact, found := partition.LatestValuePrefix(prefix)
-	return found && string(fact.Value) == string(root)
-}
-
 // explicitAnySourceFact returns only an already-published exact source or
 // ancestor fact. It is used to retain a precision boundary through a closed
 // equation handoff, never to infer a value for an unrecorded member read.
@@ -16560,10 +16546,6 @@ func assignmentTargetRequiresProof(targetType string) bool {
 	return err == nil && target != ""
 }
 
-func assignmentAnyMismatchMessage(source string, targetType string, shapeTarget []byte) string {
-	return renderDiagnosticPayload(assignmentAnyMismatchPayload(source, targetType, shapeTarget))
-}
-
 func assignmentAnyMismatchPayload(source string, targetType string, shapeTarget []byte) DiagnosticPayload {
 	declared, err := strconv.Unquote(strings.TrimPrefix(targetType, "claim-type/"))
 	if err != nil {
@@ -16587,10 +16569,6 @@ func structuralAssignmentTarget(shapeTarget []byte) bool {
 	}
 	_, record := assignmentRecordTarget(target)
 	return record
-}
-
-func assignmentMismatchMessage(target string, value []byte, targetType string) string {
-	return renderDiagnosticPayload(assignmentMismatchPayload(target, value, targetType))
 }
 
 func assignmentMismatchPayload(target string, value []byte, targetType string) DiagnosticPayload {
@@ -17729,7 +17707,7 @@ func residueClassBranchFacts(operation equation.BoundEquation) ([]equation.Fact,
 // constants, types, residue constraints, or CFG reachability.
 func nativeBranchPublicationFacts(operation equation.BoundEquation, partition equation.Partition, values []equation.Fact) ([]equation.Fact, error) {
 	var partitionKey, truthinessKey []byte
-	var predicate branchPredicateWire
+	var predicate front.BranchPredicateWire
 	hasTruthinessPredicate := false
 	for _, operand := range operation.Operands {
 		switch operand.Role.Wire() {
@@ -18130,7 +18108,7 @@ func branchSelectionKernel(operation equation.BoundEquation, partition equation.
 // unknown conjunct leaves both edges unselected.
 func compoundTypeEqualityBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
 	hasTypeEquality, hasUnknown, predicates := false, false, 0
-	typePredicates := make([]branchPredicateWire, 0)
+	typePredicates := make([]front.BranchPredicateWire, 0)
 	for _, operand := range operation.Operands {
 		if !operand.Role.InFamily(equation.RoleFamilyImplied) {
 			continue
@@ -18178,7 +18156,7 @@ func compoundTypeEqualityBranchClosure(operation equation.BoundEquation, partiti
 	return closure, true, nil
 }
 
-func compoundTypeName(predicate branchPredicateWire, partition equation.Partition) (string, error) {
+func compoundTypeName(predicate front.BranchPredicateWire, partition equation.Partition) (string, error) {
 	if predicate.TypeName != "" {
 		return predicate.TypeName, nil
 	}
@@ -18531,7 +18509,7 @@ func impliedTrueEdgeNarrowings(operation equation.BoundEquation, partition equat
 
 // nilabilityProjection selects the side of witness that a truthiness or nil
 // check keeps on the edge where it holds.
-func nilabilityProjection(predicate branchPredicateWire, witness typ.Type) (typ.Type, bool) {
+func nilabilityProjection(predicate front.BranchPredicateWire, witness typ.Type) (typ.Type, bool) {
 	holds := !predicate.Negated
 	var selected typ.Type
 	switch predicate.Kind {
@@ -18656,24 +18634,24 @@ func typeWitnessBranchClosure(operation equation.BoundEquation, partition equati
 
 // soleBranchPredicate returns the branch's single predicate operand. A branch
 // carrying more than one predicate has no single selector to project.
-func soleBranchPredicate(operation equation.BoundEquation) (branchPredicateWire, bool, error) {
-	var predicate branchPredicateWire
+func soleBranchPredicate(operation equation.BoundEquation) (front.BranchPredicateWire, bool, error) {
+	var predicate front.BranchPredicateWire
 	found := false
 	for _, operand := range operation.Operands {
 		if operand.Role.Wire() != "predicate" {
 			continue
 		}
 		if found {
-			return branchPredicateWire{}, false, nil
+			return front.BranchPredicateWire{}, false, nil
 		}
 		var present bool
 		var err error
 		predicate, present, err = front.DecodeBranchPredicateWire(operand.Value)
 		if err != nil {
-			return branchPredicateWire{}, false, err
+			return front.BranchPredicateWire{}, false, err
 		}
 		if !present {
-			return branchPredicateWire{}, false, fmt.Errorf("engine: predicate role has no predicate wire")
+			return front.BranchPredicateWire{}, false, fmt.Errorf("engine: predicate role has no predicate wire")
 		}
 		found = true
 	}
@@ -18772,7 +18750,7 @@ func appendClosedGuardAdvice(closure equation.OutputClosure, operation equation.
 // under the front-owned branch guard, so a write on another epoch cannot leak
 // the refinement past this branch.
 func typedNilBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
-	var predicate branchPredicateWire
+	var predicate front.BranchPredicateWire
 	found := false
 	for _, operand := range operation.Operands {
 		if operand.Role.Wire() != "predicate" {
@@ -18965,7 +18943,7 @@ func correlationConeFacts(equal map[string]map[string]bool, nonNil map[string]bo
 // predicate is about, only which edge asserts it, so the caller reads the class
 // here and the edge separately. A predicate that decides no such set carries no
 // correlation.
-func returnTupleBranchClass(predicate branchPredicateWire) (returnTupleClass, bool) {
+func returnTupleBranchClass(predicate front.BranchPredicateWire) (returnTupleClass, bool) {
 	switch predicate.Kind {
 	case "nil":
 		return returnTupleLiteralClass(shapefact.ScalarNilWire), true
@@ -19185,8 +19163,8 @@ func runtimeTypeBranchProofs(operation equation.BoundEquation, partition equatio
 // relation its condition term carries when that condition is the result of a
 // call to an exported one-sided type predicate. Both are the same closed
 // descriptor, so every true-edge consumer reads one list.
-func branchTrueEdgePredicates(operation equation.BoundEquation, partition equation.Partition) ([]branchPredicateWire, error) {
-	predicates := make([]branchPredicateWire, 0, len(operation.Operands)+1)
+func branchTrueEdgePredicates(operation equation.BoundEquation, partition equation.Partition) ([]front.BranchPredicateWire, error) {
+	predicates := make([]front.BranchPredicateWire, 0, len(operation.Operands)+1)
 	for _, operand := range operation.Operands {
 		predicate, trueEdge, recognized, err := branchEvidencePredicate(operand)
 		if err != nil {
@@ -19209,14 +19187,14 @@ func branchTrueEdgePredicates(operation equation.BoundEquation, partition equati
 // carries. call-results published it against the exact argument the call
 // passed, so the descriptor names a path in this body and the true edge decides
 // it exactly as an in-body check does.
-func branchConditionTypePredicate(operation equation.BoundEquation, partition equation.Partition) (branchPredicateWire, bool, error) {
+func branchConditionTypePredicate(operation equation.BoundEquation, partition equation.Partition) (front.BranchPredicateWire, bool, error) {
 	condition := boundOperandValue(operation.Operands, equation.RoleCondition)
 	if len(condition) == 0 {
-		return branchPredicateWire{}, false, nil
+		return front.BranchPredicateWire{}, false, nil
 	}
 	encoded, found := currentEpochFact(factkey.TypePredicateRelation.Key().String(), condition, partition)
 	if !found {
-		return branchPredicateWire{}, false, nil
+		return front.BranchPredicateWire{}, false, nil
 	}
 	predicate, present, err := front.DecodeBranchPredicateWire(encoded)
 	return predicate, present, err
@@ -19508,13 +19486,6 @@ func containerTableEscaped(container []byte, partition equation.Partition) bool 
 	return false
 }
 
-// heapContainerHasIndexProof reports whether the container currently holds a
-// length-floor or in-bounds element presence proof that a later escape would
-// leave stale. Both proof families share the same revocation subject.
-func heapContainerHasIndexProof(container []byte, partition equation.Partition) bool {
-	return subjectHasIndexProof(heapIndexSubject(container, partition), partition)
-}
-
 func subjectHasIndexProof(subject factkey.Part, partition equation.Partition) bool {
 	if subjectLengthFloorProven(subject, partition) > 0 {
 		return true
@@ -19691,7 +19662,7 @@ func runtimeTypeProofAdmitsTarget(name string, target typ.Type) bool {
 // existing table identity (or, when no identity is available, its exact path).
 func typedIndexBranchClosure(operation equation.BoundEquation, partition equation.Partition) (equation.OutputClosure, bool, error) {
 	hasConsumer := false
-	predicates := make([]branchPredicateWire, 0, len(operation.Operands))
+	predicates := make([]front.BranchPredicateWire, 0, len(operation.Operands))
 	for _, operand := range operation.Operands {
 		if operand.Role.Wire() == "index-presence-consumer" && string(operand.Value) == shapefact.ScalarTrueWire {
 			hasConsumer = true
@@ -19939,7 +19910,7 @@ func densityBranchRelations(operands []equation.BoundOperand) []densityBranchRel
 // from the floor this edge proves for its counter. The relation is an equality,
 // so the counter's floor is the container's floor; an edge that bounds no
 // counter states no length.
-func densityLengthFloorProofs(relations []densityBranchRelation, predicates []branchPredicateWire) []lengthFloorBranchProof {
+func densityLengthFloorProofs(relations []densityBranchRelation, predicates []front.BranchPredicateWire) []lengthFloorBranchProof {
 	proofs := make([]lengthFloorBranchProof, 0, len(relations))
 	for _, relation := range relations {
 		floor := int64(0)
@@ -20027,24 +19998,24 @@ func publishedIndexRelations(partition equation.Partition) (map[string][]byte, m
 	return lower, upper
 }
 
-func branchEvidencePredicate(operand equation.BoundOperand) (branchPredicateWire, bool, bool, error) {
+func branchEvidencePredicate(operand equation.BoundOperand) (front.BranchPredicateWire, bool, bool, error) {
 	if predicate, edge, polarity, present, err := front.DecodeBranchEvidenceWire(operand.Value); err != nil {
-		return branchPredicateWire{}, false, false, err
+		return front.BranchPredicateWire{}, false, false, err
 	} else if present {
 		if !edge || !polarity {
-			return branchPredicateWire{}, false, false, nil
+			return front.BranchPredicateWire{}, false, false, nil
 		}
 		return predicate, true, true, nil
 	}
 	if operand.Role.Wire() != "predicate" {
-		return branchPredicateWire{}, false, false, nil
+		return front.BranchPredicateWire{}, false, false, nil
 	}
 	predicate, present, err := front.DecodeBranchPredicateWire(operand.Value)
 	if err != nil {
-		return branchPredicateWire{}, false, false, err
+		return front.BranchPredicateWire{}, false, false, err
 	}
 	if !present {
-		return branchPredicateWire{}, false, false, fmt.Errorf("engine: predicate role has no predicate wire")
+		return front.BranchPredicateWire{}, false, false, fmt.Errorf("engine: predicate role has no predicate wire")
 	}
 	return predicate, true, true, nil
 }
@@ -22295,13 +22266,6 @@ func memberCellFactKey(identity []byte, suffix, operation string) string {
 	return factkey.BuildKey(factkey.HeapMemberCell, []factkey.Part{
 		factkey.IdentityPart(identity), factkey.EncodedOpaquePart(suffix),
 	}, operation).String()
-}
-
-// memberCellFactWithIdentity publishes a slot cell whose value is its own
-// source. It confers no callable capability: a sealed value describes a shape
-// and names no body.
-func memberCellFactWithIdentity(identity []byte, suffix, operation string, value, memberIdentity []byte, partition equation.Partition) (equation.Fact, bool, error) {
-	return memberCellFactWithSource(identity, suffix, operation, value, value, memberIdentity, partition)
 }
 
 // memberCellFactWithSource publishes one slot cell. The value is what the slot
@@ -28313,13 +28277,6 @@ func tableFamilyValue(value []byte) bool {
 	return ok && containerTypeKind(target)
 }
 
-// publicationKernel resolves every selected return slot before publishing any
-// output.  A false or unknown guard contributes no tuple; a selected guard
-// contributes the complete indexed tuple, including nil-valued slots.
-func publicationKernel(operation equation.BoundEquation, partition equation.Partition) (equation.TransactionResult, error) {
-	return publicationKernelWithGlobals(operation, partition, nil)
-}
-
 func publicationKernelWithGlobals(operation equation.BoundEquation, partition equation.Partition, lexical *lexicalEvaluator) (equation.TransactionResult, error) {
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
@@ -28571,7 +28528,7 @@ func evaluateBranchPredicate(encoded []byte, partition equation.Partition) (bool
 	return evaluateBranchPredicateWire(predicate, partition)
 }
 
-func evaluateBranchPredicateWire(predicate branchPredicateWire, partition equation.Partition) (bool, error) {
+func evaluateBranchPredicateWire(predicate front.BranchPredicateWire, partition equation.Partition) (bool, error) {
 	value, err := branchPathValue(predicate.Path, partition)
 	if err != nil {
 		return false, err
@@ -28874,27 +28831,6 @@ func scalarNumber(value []byte) (float64, error) {
 	return parsed, nil
 }
 
-func operandsByRole(operands []equation.BoundOperand, roles ...string) (map[string][]byte, error) {
-	wanted := make(map[string]bool, len(roles))
-	for _, role := range roles {
-		wanted[role] = true
-	}
-	result := make(map[string][]byte, len(roles))
-	for _, operand := range operands {
-		role := operand.Role.Wire()
-		if !wanted[role] || result[role] != nil {
-			return nil, fmt.Errorf("engine: malformed operand role %q", operand.Role)
-		}
-		result[role] = operand.Value
-	}
-	for _, role := range roles {
-		if len(result[role]) == 0 {
-			return nil, fmt.Errorf("engine: missing operand %q", role)
-		}
-	}
-	return result, nil
-}
-
 // boundOperandValue selects one bound operand by role. Operand order is
 // presentation-dependent, so every slot lookup goes through its role.
 func boundOperandValue(operands []equation.BoundOperand, role equation.OperandRole) []byte {
@@ -28906,8 +28842,7 @@ func boundOperandValue(operands []equation.BoundOperand, role equation.OperandRo
 	return nil
 }
 
-// requiredOperandsByRole is the structural counterpart to operandsByRole: it
-// checks required roles exactly once while allowing the allocation family to
+// requiredOperandsByRole checks required roles exactly once while allowing the
 // carry its sealed member/capture inventory as additional closed operands.
 func requiredOperandsByRole(operands []equation.BoundOperand, roles ...string) (map[string][]byte, error) {
 	wanted := make(map[string]bool, len(roles))

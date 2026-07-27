@@ -25,7 +25,7 @@ const (
 
 // Canonical fixed payload spellings are exported for consumers that compare
 // or transport an already-decoded sentinel. Parameterized spellings must be
-// built with ScalarValue or ClaimValue so no other package owns wire assembly.
+// built with the dedicated constructors so no other package owns wire assembly.
 const (
 	ScalarTopWire                   = "scalar/top"
 	ScalarNilWire                   = "scalar/nil"
@@ -136,15 +136,12 @@ type Claim struct {
 }
 
 // Payload is the typed sum for every fact value owned by this codec.
-// encoded aliases the immutable input and exists solely to preserve its exact
-// wire spelling when Encode is used for a decode/encode round trip.
 type Payload struct {
-	Form    PayloadForm
-	Scalar  Scalar
-	Table   Table
-	Target  typ.Type
-	Claim   Claim
-	encoded []byte
+	Form   PayloadForm
+	Scalar Scalar
+	Table  Table
+	Target typ.Type
+	Claim  Claim
 }
 
 // Decode recognizes exactly one declared value-payload form. Unknown scalar
@@ -156,19 +153,19 @@ func Decode(value []byte) (Payload, bool) {
 		if !ok {
 			return Payload{}, false
 		}
-		return Payload{Form: PayloadShapeTable, Table: table, encoded: value}, true
+		return Payload{Form: PayloadShapeTable, Table: table}, true
 	case bytes.HasPrefix(value, []byte(targetPrefix)):
 		target, ok := DecodeTarget(value)
 		if !ok {
 			return Payload{}, false
 		}
-		return Payload{Form: PayloadShapeTarget, Target: target, encoded: value}, true
+		return Payload{Form: PayloadShapeTarget, Target: target}, true
 	case bytes.HasPrefix(value, []byte(memberMissingPrefix)):
 		target, ok := DecodeTarget(value[len(memberMissingPrefix):])
 		if !ok {
 			return Payload{}, false
 		}
-		return Payload{Form: PayloadMemberMissing, Target: target, encoded: value}, true
+		return Payload{Form: PayloadMemberMissing, Target: target}, true
 	case bytes.HasPrefix(value, []byte(scalarClaimPrefix)):
 		return decodeClaim(value)
 	default:
@@ -176,7 +173,7 @@ func Decode(value []byte) (Payload, bool) {
 		if !ok {
 			return Payload{}, false
 		}
-		return Payload{Form: PayloadScalar, Scalar: scalar, encoded: value}, true
+		return Payload{Form: PayloadScalar, Scalar: scalar}, true
 	}
 }
 
@@ -195,9 +192,8 @@ func decodeClaim(value []byte) (Payload, bool) {
 		return Payload{}, false
 	}
 	return Payload{
-		Form:    PayloadClaim,
-		Claim:   Claim{Kind: wir.ClaimKind(digit - '0'), Target: target},
-		encoded: value,
+		Form:  PayloadClaim,
+		Claim: Claim{Kind: wir.ClaimKind(digit - '0'), Target: target},
 	}, true
 }
 
@@ -219,63 +215,6 @@ func decodeScalar(value []byte) (Scalar, bool) {
 	return Scalar{}, false
 }
 
-// Encode returns the canonical wire form. A decoded payload preserves its
-// original bytes exactly; a constructed payload is checked by decoding the
-// generated spelling before it is returned.
-func Encode(payload Payload) ([]byte, bool) {
-	if len(payload.encoded) != 0 {
-		decoded, ok := Decode(payload.encoded)
-		if !ok || decoded.Form != payload.Form {
-			return nil, false
-		}
-		return append([]byte(nil), payload.encoded...), true
-	}
-	var encoded []byte
-	switch payload.Form {
-	case PayloadShapeTable:
-		return EncodeTable(payload.Table)
-	case PayloadShapeTarget:
-		return EncodeTarget(payload.Target)
-	case PayloadMemberMissing:
-		target, ok := EncodeTarget(payload.Target)
-		if !ok {
-			return nil, false
-		}
-		encoded = append([]byte(memberMissingPrefix), target...)
-	case PayloadClaim:
-		if payload.Claim.Kind < wir.ClaimCast || payload.Claim.Kind > wir.ClaimAssertsPredicate || len(payload.Claim.Target) == 0 {
-			return nil, false
-		}
-		encoded = append(encoded, scalarClaimPrefix...)
-		encoded = append(encoded, "claim-kind/"...)
-		encoded = append(encoded, byte('0'+payload.Claim.Kind), '/')
-		encoded = append(encoded, payload.Claim.Target...)
-	case PayloadScalar:
-		encoded = encodeScalar(payload.Scalar)
-	default:
-		return nil, false
-	}
-	if len(encoded) == 0 {
-		return nil, false
-	}
-	_, ok := Decode(encoded)
-	return encoded, ok
-}
-
-func encodeScalar(scalar Scalar) []byte {
-	if scalar.Kind == ScalarBool {
-		return []byte("scalar/bool/" + strconv.FormatBool(scalar.Bool))
-	}
-	form, ok := scalarFormForKind(scalar.Kind)
-	if !ok || len(scalar.Data) == 0 && form.emptyWire == "" {
-		return nil
-	}
-	if !form.dataBearing || len(scalar.Data) == 0 {
-		return []byte(form.emptyWire)
-	}
-	return append([]byte(form.wire), scalar.Data...)
-}
-
 func scalarFormForKind(kind ScalarKind) (scalarForm, bool) {
 	for _, form := range scalarForms {
 		if form.kind == kind {
@@ -283,23 +222,6 @@ func scalarFormForKind(kind ScalarKind) (scalarForm, bool) {
 		}
 	}
 	return scalarForm{}, false
-}
-
-// ScalarValue is the sole constructor for a parameterized scalar wire value.
-// Invalid scalar data fails closed as nil rather than emitting an undeclared
-// payload spelling.
-func ScalarValue(scalar Scalar) []byte {
-	encoded, ok := Encode(Payload{Form: PayloadScalar, Scalar: scalar})
-	if !ok {
-		return nil
-	}
-	return encoded
-}
-
-// ScalarValueString is the string projection for string-valued carrier fields.
-// Empty means the scalar was not encodable.
-func ScalarValueString(scalar Scalar) string {
-	return string(ScalarValue(scalar))
 }
 
 // BooleanValue returns an immutable canonical boolean payload. The shared
@@ -521,7 +443,11 @@ func (payload Payload) FunctionType() (typ.Type, bool) {
 }
 
 func EncodeMemberMissing(target typ.Type) ([]byte, bool) {
-	return Encode(Payload{Form: PayloadMemberMissing, Target: target})
+	encoded, ok := EncodeTarget(target)
+	if !ok {
+		return nil, false
+	}
+	return append([]byte(memberMissingPrefix), encoded...), true
 }
 
 func DecodeMemberMissing(value []byte) (typ.Type, bool) {
