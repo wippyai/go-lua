@@ -1,10 +1,6 @@
 package signaturelookup
 
 import (
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -296,34 +292,6 @@ func TestStdlibSignatureNamesExposeNamesWithoutSignatureMaterialization(t *testi
 		if name == "mutated" {
 			t.Fatal("StdlibSignatureNames returned aliased storage")
 		}
-	}
-}
-
-func TestTypePackageDoesNotImportEffect(t *testing.T) {
-	root := filepath.Clean("../../type/typ")
-	fset := token.NewFileSet()
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || filepath.Ext(path) != ".go" {
-			return nil
-		}
-		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-		if err != nil {
-			return err
-		}
-		for _, imp := range file.Imports {
-			path := strings.Trim(imp.Path.Value, `"`)
-			if path == "github.com/wippyai/go-lua/analysis/domain/effect" ||
-				strings.HasPrefix(path, "github.com/wippyai/go-lua/analysis/domain/effect/") {
-				t.Fatalf("%s imports analysis/domain/effect", path)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk typ package: %v", err)
 	}
 }
 

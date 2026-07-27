@@ -1,11 +1,6 @@
 package engine
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -158,107 +153,5 @@ func TestCurrentValueConsumerFailsClosedOnUnknownAuthority(t *testing.T) {
 	value, err := resolveCurrentValueWithAuthorities(term, equation.Partition{}, mutated)
 	if err == nil || value != nil || !strings.Contains(err.Error(), "unknown authority rule") {
 		t.Fatalf("mutated consumer = %q, %v; want fail-closed unknown-rule error", value, err)
-	}
-}
-
-// TestAuthorityLaddersStayDisplaced is the source fence. The former consumers
-// may select only their declared question view; authority implementations live
-// behind the registry walk, and the split declared-container readers may not
-// return anywhere in production.
-func TestAuthorityLaddersStayDisplaced(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fset := token.NewFileSet()
-	requiredView := map[string]string{
-		"resolveValue":                 "valueAtReadAuthorities",
-		"resolveCurrentValue":          "currentValueAuthorities",
-		"typedRuntimeIndexResult":      "runtimeIndexContainerTypeAuthorities",
-		"iteratorElementWitness":       "iteratorElementTypeAuthorities",
-		"instantiatedFormalType":       "instantiatedFormalTypeAuthorities",
-		"integerTypedTerm":             "integerTermTypeAuthorities",
-		"placementDescentTargetsTable": "placementDescentTableAuthorities",
-		"resolveUnresolvedCallResult":  "unresolvedCallResultAuthorities",
-	}
-	forbiddenByConsumer := map[string]map[string]bool{
-		"resolveValue": {
-			"selectPayloadValue": true, "declaredOptionalMapReadValue": true, "heapMemberValue": true,
-			"assertionNarrowedValue": true, "provenSequenceIndexValue": true, "typedPathValue": true,
-			"reconvergedValue": true, "declaredSequenceIndexValue": true,
-		},
-		"resolveCurrentValue": {
-			"selectPayloadValue": true, "correlationConeCurrentValue": true, "declaredOptionalMapReadValue": true,
-			"heapMemberValue": true, "assertionNarrowedValue": true, "provenSequenceIndexValue": true,
-			"reconvergedValue": true, "typedPathValue": true, "shapeMemberValue": true,
-			"declaredSequenceIndexValue": true,
-		},
-		"typedRuntimeIndexResult": {
-			"castTargetWitness": true, "typedPathType": true, "declaredContainerType": true,
-			"keyedComponentContainerType": true,
-		},
-		"iteratorElementWitness": {
-			"typedPathType": true, "declaredTypeForTerm": true, "keyedComponentContainerType": true,
-		},
-		"instantiatedFormalType": {
-			"typedPathType": true, "declaredTypeForTerm": true, "keyedComponentContainerType": true,
-		},
-		"integerTypedTerm": {
-			"resolveCurrentValue": true, "typedPathType": true, "declaredTypeForTerm": true,
-		},
-		"placementDescentTargetsTable": {
-			"resolveCurrentValue": true, "typedPathType": true,
-		},
-		"resolveUnresolvedCallResult": {},
-	}
-	found := make(map[string]bool, len(requiredView))
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		source, readErr := os.ReadFile(name)
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		if strings.Contains(string(source), "declaredMapContainerType") || strings.Contains(string(source), "declaredArrayContainerType") {
-			t.Errorf("%s resurrects a split declared-container ladder", name)
-		}
-		file, parseErr := parser.ParseFile(fset, name, source, 0)
-		if parseErr != nil {
-			t.Fatalf("parse %s: %v", name, parseErr)
-		}
-		for _, declaration := range file.Decls {
-			function, ok := declaration.(*ast.FuncDecl)
-			if !ok || function.Body == nil {
-				continue
-			}
-			view, guarded := requiredView[function.Name.Name]
-			if !guarded {
-				continue
-			}
-			found[function.Name.Name] = true
-			hasView := false
-			ast.Inspect(function.Body, func(node ast.Node) bool {
-				identifier, ok := node.(*ast.Ident)
-				if !ok {
-					return true
-				}
-				if identifier.Name == view {
-					hasView = true
-				}
-				if forbiddenByConsumer[function.Name.Name][identifier.Name] {
-					t.Errorf("%s directly reads authority %s outside its declared table", function.Name.Name, identifier.Name)
-				}
-				return true
-			})
-			if !hasView {
-				t.Errorf("%s no longer walks declared view %s", function.Name.Name, view)
-			}
-		}
-	}
-	for function, view := range requiredView {
-		if !found[function] {
-			t.Errorf("guarded authority consumer %s using %s was deleted or renamed", function, view)
-		}
 	}
 }

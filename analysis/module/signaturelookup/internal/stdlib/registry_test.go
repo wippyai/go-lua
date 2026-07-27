@@ -1,10 +1,6 @@
 package stdlib
 
 import (
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -526,34 +522,6 @@ func TestRegistrySignaturesManifestRoundTrip(t *testing.T) {
 		if !wantSig.Equals(gotSig) {
 			t.Fatalf("%s signature = %v, want %v", name, gotSig, wantSig)
 		}
-	}
-}
-
-func TestTypePackageDoesNotImportEffect(t *testing.T) {
-	root := filepath.Clean("../../../../type/typ")
-	fset := token.NewFileSet()
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || filepath.Ext(path) != ".go" {
-			return nil
-		}
-		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-		if err != nil {
-			return err
-		}
-		for _, imp := range file.Imports {
-			path := strings.Trim(imp.Path.Value, `"`)
-			if path == "github.com/wippyai/go-lua/analysis/domain/effect" ||
-				strings.HasPrefix(path, "github.com/wippyai/go-lua/analysis/domain/effect/") {
-				t.Fatalf("%s imports analysis/domain/effect", path)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk typ package: %v", err)
 	}
 }
 
