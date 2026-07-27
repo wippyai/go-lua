@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,6 +24,8 @@ var n7DisplacedScannerPatterns = []string{
 	`"typed_producer"`,
 	`"table_construction_bound"`,
 }
+
+const engineWIRInstructionLoopCeiling = 36
 
 func n7DisplacedScanner(source []byte) string {
 	for _, pattern := range n7DisplacedScannerPatterns {
@@ -59,12 +63,30 @@ func TestN7SoundPrefixScannersStayDisplaced(t *testing.T) {
 			t.Errorf("%s resurrects an N7 sound-prefix scanner via %q", name, pattern)
 		}
 	}
+	assertEngineWIRInstructionLoopCeiling(t, engineDir)
 }
 
 func TestN7SoundPrefixFenceRejectsRenamedScanner(t *testing.T) {
 	mutated := []byte("package engine\nfunc typedProducerNativeFacts() {}\n")
 	if pattern := n7DisplacedScanner(mutated); pattern == "" {
 		t.Fatal("pattern-over-all-files fence accepted a renamed scanner file")
+	}
+}
+
+func TestNativeFencesRejectGenericWIRInstructionWalk(t *testing.T) {
+	file, err := fenceParseSource(`package engine
+func numericNativeFacts(root Compilation) {
+	if root.WIR != nil {
+		for index := 0; index < root.WIR.Len(); index++ {
+			_ = root.WIR.Instr(index)
+		}
+	}
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fenceWIRInstructionLoopCount(file); got != 1 {
+		t.Fatalf("generic WIR mutation matched %d instruction loops, want 1", got)
 	}
 }
 
@@ -132,6 +154,7 @@ func TestNativeProjectionHasNoWIRConsumers(t *testing.T) {
 			}
 		}
 	}
+	assertEngineWIRInstructionLoopCeiling(t, engineDir)
 
 	engineSource, err := os.ReadFile(filepath.Join(engineDir, "engine.go"))
 	if err != nil {
@@ -152,5 +175,28 @@ func TestNativeProjectionHasNoWIRConsumers(t *testing.T) {
 	}
 	if strings.Contains(string(astContracts), `Family: "call_scc"`) {
 		t.Error("AST native contracts resurrect the displaced call_scc recognizer")
+	}
+}
+
+func assertEngineWIRInstructionLoopCeiling(t *testing.T, engineDir string) {
+	t.Helper()
+	entries, err := os.ReadDir(engineDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, parseErr := parser.ParseFile(token.NewFileSet(), filepath.Join(engineDir, name), nil, 0)
+		if parseErr != nil {
+			t.Fatalf("parse %s: %v", name, parseErr)
+		}
+		count += fenceWIRInstructionLoopCount(file)
+	}
+	if count > engineWIRInstructionLoopCeiling {
+		t.Errorf("engine contains %d indexed WIR instruction walks, ceiling is %d; native projections must consume published facts", count, engineWIRInstructionLoopCeiling)
 	}
 }

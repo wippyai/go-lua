@@ -119,6 +119,7 @@ func TestAdmissionHelpersStayDescriptorOwned(t *testing.T) {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
+	var parsedFiles []*ast.File
 	for _, name := range files {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
@@ -127,6 +128,7 @@ func TestAdmissionHelpersStayDescriptorOwned(t *testing.T) {
 		if parseErr != nil {
 			t.Fatalf("parse %s: %v", name, parseErr)
 		}
+		parsedFiles = append(parsedFiles, file)
 		for _, declaration := range file.Decls {
 			function, ok := declaration.(*ast.FuncDecl)
 			if !ok || function.Recv != nil || !strings.HasPrefix(function.Name.Name, "uncalled") {
@@ -134,6 +136,25 @@ func TestAdmissionHelpersStayDescriptorOwned(t *testing.T) {
 			}
 			t.Errorf("%s: freestanding admission helper %s must be a descriptor query", fset.Position(function.Pos()), function.Name.Name)
 		}
+	}
+	for _, helper := range fenceFreestandingBoolCalls(parsedFiles, "selectAdmissionLane") {
+		t.Errorf("selectAdmissionLane calls freestanding boolean helper %s; admission decisions must route through descriptor callbacks", helper)
+	}
+}
+
+func TestAdmissionFenceRejectsRenamedFreestandingHelper(t *testing.T) {
+	file, err := fenceParseSource(`package engine
+func admissionRegressionHelper() bool { return false }
+func selectAdmissionLane() bool {
+	_ = admissionRegressionHelper()
+	return false
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := fenceFreestandingBoolCalls([]*ast.File{file}, "selectAdmissionLane")
+	if len(calls) != 1 || calls[0] != "admissionRegressionHelper" {
+		t.Fatalf("renamed admission helper calls = %v, want admissionRegressionHelper", calls)
 	}
 }
 

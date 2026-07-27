@@ -6,7 +6,6 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -40,21 +39,11 @@ func TestFrontDraftWireOwnershipStaysDisplaced(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse %s: %v", path, err)
 			}
+			if prefix := fenceFoldedStringContains(file, prefixes); prefix != "" {
+				t.Errorf("%s constructs or parses front draft wire prefix %q outside its codec", path, prefix)
+			}
 			ast.Inspect(file, func(node ast.Node) bool {
 				switch item := node.(type) {
-				case *ast.BasicLit:
-					if item.Kind != token.STRING {
-						return true
-					}
-					value, err := strconv.Unquote(item.Value)
-					if err != nil {
-						return true
-					}
-					for _, prefix := range prefixes {
-						if strings.Contains(value, prefix) {
-							t.Errorf("%s:%d constructs or parses front draft wire prefix %q outside its codec", path, item.Pos(), prefix)
-						}
-					}
 				case *ast.TypeSpec:
 					if _, structType := item.Type.(*ast.StructType); structType {
 						switch item.Name.Name {
@@ -67,6 +56,19 @@ func TestFrontDraftWireOwnershipStaysDisplaced(t *testing.T) {
 				return true
 			})
 		}
+	}
+}
+
+func TestFrontDraftWireFenceRejectsSplitLiteralReconstruction(t *testing.T) {
+	file, err := fenceParseSource(`package engine
+func mutation(value string) bool {
+	return strings.HasPrefix(value, "front/" + "branch-predicate/v1/")
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fenceFoldedStringContains(file, []string{"front/branch-predicate/v1/"}); got == "" {
+		t.Fatal("wire ownership predicate accepted split-literal prefix reconstruction")
 	}
 }
 
