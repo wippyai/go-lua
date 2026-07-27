@@ -41,7 +41,7 @@ func TestCompileWIRLowersOrderedChannelSelectCases(t *testing.T) {
 	}
 	roles := make(map[string]string, len(selectEquation.Operands))
 	for _, operand := range selectEquation.Operands {
-		roles[operand.Role] = string(operand.Term.Encoding)
+		roles[operand.Role.String()] = string(operand.Term.Encoding)
 	}
 	if roles["default"] != "select/default/true" {
 		t.Fatalf("select default = %q, want true marker", roles["default"])

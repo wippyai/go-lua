@@ -82,7 +82,7 @@ func artifactOperandsByRole(operands []equation.Operand, roles ...string) (map[s
 	out := make(map[string][]byte, len(roles))
 	for _, role := range roles {
 		for _, operand := range operands {
-			if operand.Role == role && !operand.Term.Entry {
+			if operand.Role.String() == role && !operand.Term.Entry {
 				out[role] = operand.Term.Encoding
 				break
 			}

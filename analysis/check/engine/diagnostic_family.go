@@ -584,7 +584,7 @@ func narrateFrozenMutation(item PublishedDiagnostic, context diagnosticNarration
 	}
 	display, callMutation := "", operation.Occurrence.Kind == "apply"
 	for _, operand := range operation.Operands {
-		if operand.Role == "write-container-display" || (callMutation && operand.Role == "argument-display-00000000") {
+		if operand.Role == "write-container-display" || (callMutation && operand.Role == equation.IndexedRole(equation.RoleFamilyArgumentDisplay, 0)) {
 			display = string(operand.Term.Encoding)
 		}
 	}
@@ -629,7 +629,7 @@ func narrateDirectCall(item PublishedDiagnostic, context diagnosticNarrationCont
 	if !found {
 		return item, true
 	}
-	operands := make(map[string]string, len(operation.Operands))
+	operands := make(map[equation.OperandRole]string, len(operation.Operands))
 	for _, operand := range operation.Operands {
 		operands[operand.Role] = string(operand.Term.Encoding)
 	}
@@ -686,7 +686,7 @@ func narrateDirectCall(item PublishedDiagnostic, context diagnosticNarrationCont
 	return item, true
 }
 
-func narrateCallArgument(builder *diagnosticExplanationBuilder, callee, subject string, operands map[string]string, values []equation.Fact) (PublishedDiagnostic, bool) {
+func narrateCallArgument(builder *diagnosticExplanationBuilder, callee, subject string, operands map[equation.OperandRole]string, values []equation.Fact) (PublishedDiagnostic, bool) {
 	argumentIndex, suffix, ok := callArgumentSubject(subject)
 	if !ok {
 		return builder.item, true
@@ -708,10 +708,10 @@ func narrateCallArgument(builder *diagnosticExplanationBuilder, callee, subject 
 		value = "may be nil"
 	}
 	argument := fmt.Sprintf("argument %d", argumentIndex) + suffix
-	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
+	if display := operands[equation.IndexedRole(equation.RoleFamilyArgumentDisplay, argumentIndex-1)]; display != "" {
 		argument += " (" + display + ")"
 	}
-	argumentTerm := []byte(operands[fmt.Sprintf("argument-%08d", argumentIndex-1)])
+	argumentTerm := []byte(operands[equation.IndexedRole(equation.RoleFamilyArgument, argumentIndex-1)])
 	if summaryTypeIsAnyInFacts(argumentTerm, values) || sourceHasGradualLogicalBoundaryInFacts(argumentTerm, values) {
 		display := strings.TrimPrefix(argument, fmt.Sprintf("argument %d (", argumentIndex))
 		display = strings.TrimSuffix(display, ")")
@@ -727,7 +727,7 @@ func narrateCallArgument(builder *diagnosticExplanationBuilder, callee, subject 
 		return builder.build(fmt.Sprintf("Validate or narrow `%s` before passing it; any/unknown values do not prove parameter contracts.", display))
 	}
 	if nilable {
-		display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]
+		display := operands[equation.IndexedRole(equation.RoleFamilyArgumentDisplay, argumentIndex-1)]
 		builder.message(fmt.Sprintf("cannot pass %s because it may be nil", argument))
 		if display != "" {
 			builder.message(fmt.Sprintf("cannot pass %s as argument %d because it may be nil", display, argumentIndex))
@@ -747,7 +747,7 @@ func narrateCallArgument(builder *diagnosticExplanationBuilder, callee, subject 
 	}
 	parameter := fmt.Sprintf("%s parameter %d", callee, argumentIndex) + suffix
 	missingProof := fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", argument)
-	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
+	if display := operands[equation.IndexedRole(equation.RoleFamilyArgumentDisplay, argumentIndex-1)]; display != "" {
 		missingProof = fmt.Sprintf("no proof on this path shows %s satisfies the parameter type", display)
 	}
 	if field, record := firstRequiredRecordField(expected); record {
@@ -760,7 +760,7 @@ func narrateCallArgument(builder *diagnosticExplanationBuilder, callee, subject 
 	builder.evidenceAt(wir.Span{}, diagnostic.EvidenceUserAssertion, diagnostic.TrustClaimed, diagnostic.EvidenceReasonUnspecified, fmt.Sprintf("%s expects %s", parameter, expected))
 	builder.evidence(diagnostic.EvidenceMissingProof, diagnostic.TrustRefuted, diagnostic.EvidenceReasonUnspecified, missingProof)
 	builder.label("argument value " + value)
-	if display := operands[fmt.Sprintf("argument-display-%08d", argumentIndex-1)]; display != "" {
+	if display := operands[equation.IndexedRole(equation.RoleFamilyArgumentDisplay, argumentIndex-1)]; display != "" {
 		return builder.build(fmt.Sprintf("Pass `%s` as a value compatible with the parameter type, or change the callee signature if that argument is valid.", display))
 	}
 	return builder.build(fmt.Sprintf("Pass a value for argument %d that satisfies the parameter type, or change the callee signature if that argument is valid.", argumentIndex))
@@ -806,7 +806,7 @@ func narrateConcatOperand(item PublishedDiagnostic, context diagnosticNarrationC
 	}
 	display := "value"
 	for _, operand := range operation.Operands {
-		if operand.Role == fmt.Sprintf("value-display-%08d", index) && len(operand.Term.Encoding) != 0 {
+		if operand.Role == equation.IndexedRole(equation.RoleFamilyValueDisplay, index) && len(operand.Term.Encoding) != 0 {
 			display = string(operand.Term.Encoding)
 			break
 		}
@@ -832,10 +832,10 @@ func narrateRedundantClaim(item PublishedDiagnostic, context diagnosticNarration
 		var argument []byte
 		value := "value"
 		for _, operand := range operation.Operands {
-			if operand.Role == "argument-00000000" {
+			if operand.Role == equation.IndexedRole(equation.RoleFamilyArgument, 0) {
 				argument = operand.Term.Encoding
 			}
-			if operand.Role == "argument-display-00000000" {
+			if operand.Role == equation.IndexedRole(equation.RoleFamilyArgumentDisplay, 0) {
 				value = string(operand.Term.Encoding)
 			}
 		}
@@ -964,14 +964,14 @@ func narrateReturnContract(item PublishedDiagnostic, context diagnosticNarration
 	}
 	display := ""
 	for _, operand := range operation.Operands {
-		if operand.Role == fmt.Sprintf("return-display-%08d", index) {
+		if operand.Role == equation.IndexedRole(equation.RoleFamilyReturnDisplay, index) {
 			display = string(operand.Term.Encoding)
 			break
 		}
 	}
 	var declaredTarget typ.Type
 	for _, operand := range operation.Operands {
-		if operand.Role != fmt.Sprintf("declared-return-%08d", index) {
+		if operand.Role != equation.IndexedRole(equation.RoleFamilyDeclaredReturn, index) {
 			continue
 		}
 		if target, ok := shapefact.DecodeTarget(operand.Term.Encoding); ok && target != nil {

@@ -192,7 +192,7 @@ func publishedProviderRelations(result engine.Result) map[string]exportrelation.
 
 func operationOperand(operands []equation.Operand, role string) string {
 	for _, operand := range operands {
-		if operand.Role == role && !operand.Term.Entry {
+		if operand.Role.String() == role && !operand.Term.Entry {
 			return string(operand.Term.Encoding)
 		}
 	}
@@ -446,7 +446,7 @@ func returnRoot(artifact equation.Artifact, candidate string) (string, bool) {
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if operand.Role == "return-value-00000000" && strings.HasPrefix(string(operand.Term.Encoding), "path/") {
+			if operand.Role == equation.IndexedRole(equation.RoleFamilyReturnValue, 0) && strings.HasPrefix(string(operand.Term.Encoding), "path/") {
 				return string(operand.Term.Encoding), true
 			}
 		}

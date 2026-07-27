@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -89,28 +90,28 @@ func branchOperands(body *wir.Body, instruction wir.Instruction, bypass shortCir
 		if err != nil {
 			return nil, fmt.Errorf("implied check %d: %w", index, err)
 		}
-		operands = append(operands, equation.Operand{Role: fmt.Sprintf("implied-%08d", index), Term: term})
+		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyImplied, index), Term: term})
 	}
 	for index, sufficient := range body.SufficientChecks(instruction.SufficientChecks) {
 		term, err := branchEvidenceTerm(sufficient)
 		if err != nil {
 			return nil, fmt.Errorf("sufficient check %d: %w", index, err)
 		}
-		operands = append(operands, equation.Operand{Role: fmt.Sprintf("sufficient-%08d", index), Term: term})
+		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilySufficient, index), Term: term})
 	}
 	for _, edge := range []struct {
 		name string
 		arms wir.ArmRange
 	}{{"true", instruction.SufficientCheckArmsTrue}, {"false", instruction.SufficientCheckArmsFalse}} {
 		for armIndex, arm := range body.SufficientCheckArms(edge.arms) {
-			armRole := fmt.Sprintf("sufficient-arm-%s-%08d", edge.name, armIndex)
+			armRole := equation.SuffixedRole(equation.RoleFamilySufficientArm, fmt.Sprintf("%s-%08d", edge.name, armIndex))
 			operands = append(operands, equation.Operand{Role: armRole, Term: equation.ClosedTerm([]byte(branchArmEncoding))})
 			for checkIndex, sufficient := range arm {
 				term, err := branchEvidenceTerm(sufficient)
 				if err != nil {
 					return nil, fmt.Errorf("sufficient %s arm %d check %d: %w", edge.name, armIndex, checkIndex, err)
 				}
-				operands = append(operands, equation.Operand{Role: fmt.Sprintf("%s-check-%08d", armRole, checkIndex), Term: term})
+				operands = append(operands, equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilySufficientArm, fmt.Sprintf("%s-%08d-check-%08d", edge.name, armIndex, checkIndex)), Term: term})
 			}
 		}
 	}
@@ -119,7 +120,7 @@ func branchOperands(body *wir.Body, instruction wir.Instruction, bypass shortCir
 		if err != nil {
 			return nil, fmt.Errorf("difference constraint %d: %w", index, err)
 		}
-		operands = append(operands, equation.Operand{Role: fmt.Sprintf("difference-%08d", index), Term: term})
+		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyDifference, index), Term: term})
 	}
 	if isShortCircuit {
 		result, err := scalarTerm(body, bypass.result)
@@ -137,6 +138,99 @@ func branchOperands(body *wir.Body, instruction wir.Instruction, bypass shortCir
 		)
 	}
 	return operands, nil
+}
+
+// branchChainOperands freezes authored if/elseif topology into the branch
+// equations that own its checks. Engine consumers group these publications
+// after canonicalization; they never need WIR chain or branch-check reads.
+func branchChainOperands(body *wir.Body) (map[cfg.Point]equation.Term, error) {
+	out := make(map[cfg.Point]equation.Term)
+	var firstErr error
+	body.ForEachIfChainDescriptor(func(chain wir.IfChainDescriptor) bool {
+		// Both consumers require an authored if/elseif chain. A single if has
+		// no coverage relation to publish and stays on its ordinary predicate
+		// operand only.
+		if len(chain.Branches) < 2 {
+			return true
+		}
+		published := make(map[cfg.Point]equation.Term, len(chain.Branches))
+		complete := true
+		for position, branch := range chain.Branches {
+			checks := body.BranchChecks(branch.Point)
+			wiredChecks := make([]BranchChainCheckWire, 0, len(checks))
+			for _, check := range checks {
+				if _, supported := branchCheckKind(check.Kind); !supported || check.Kind == wir.CheckNone {
+					complete = false
+					break
+				}
+				predicate, err := branchPredicateWireForCheck(check)
+				if err != nil {
+					firstErr = err
+					return false
+				}
+				wired := BranchChainCheckWire{
+					Predicate: predicate,
+					Path:      branchChainPathWire(check.Path),
+					OtherPath: branchChainPathWire(check.OtherPath),
+				}
+				if check.Kind == wir.CheckLiteralEqual || check.Kind == wir.CheckLiteralNot {
+					target, encoded := shapefact.EncodeTarget(check.Literal)
+					if !encoded {
+						firstErr = fmt.Errorf("branch chain literal has no canonical target")
+						return false
+					}
+					wired.LiteralTarget = string(target)
+				}
+				wiredChecks = append(wiredChecks, wired)
+			}
+			if !complete {
+				break
+			}
+			encoded, err := EncodeBranchChainWire(BranchChainWire{
+				ID: chain.ID, Position: uint32(position), Count: uint32(len(chain.Branches)),
+				HasElse: chain.HasElse, HeadSpan: chain.HeadSpan, Checks: wiredChecks,
+			})
+			if err != nil {
+				firstErr = err
+				return false
+			}
+			if _, duplicate := out[branch.Point]; duplicate {
+				firstErr = fmt.Errorf("branch point %d belongs to multiple authored chains", branch.Point)
+				return false
+			}
+			published[branch.Point] = equation.ClosedTerm(encoded)
+		}
+		if complete {
+			for point, term := range published {
+				out[point] = term
+			}
+		}
+		return true
+	})
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return out, nil
+}
+
+func branchChainPathWire(value path.Path) BranchChainPathWire {
+	if value.IsEmpty() {
+		return BranchChainPathWire{}
+	}
+	wire := BranchChainPathWire{Key: string(value.Key()), Display: value.String()}
+	if len(value.Segments) == 0 {
+		return wire
+	}
+	last := value.Segments[len(value.Segments)-1]
+	if last.Kind != segment.SegmentField {
+		return wire
+	}
+	parent := value
+	parent.Segments = append([]segment.Segment(nil), value.Segments[:len(value.Segments)-1]...)
+	wire.FinalField = last.Name
+	wire.ParentKey = string(parent.Key())
+	wire.ParentDisplay = parent.String()
+	return wire
 }
 
 func branchEvidenceTerm(check wir.ImpliedCheck) (equation.Term, error) {

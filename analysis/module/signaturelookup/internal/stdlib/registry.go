@@ -507,7 +507,13 @@ var registry = map[string]signature.Function{
 		ownership.Send{FromParam: 0}),
 
 	// os library.
-	"os.clock": sig(typ.Func().Returns(typ.Number).Build()),
+	// os.clock crosses the host clock boundary. Its return type is exact, but
+	// the effect row is deliberately open: absence of labels does not prove
+	// that a host call is a closed, pure Lua operation.
+	"os.clock": {
+		Type:   typ.Func().Returns(typ.Number).Build(),
+		Effect: effect.Open("stdlib.os.clock"),
+	},
 	"os.date": sig(typ.Func().
 		OptParam("format", typ.String).
 		OptParam("time", typ.Integer).

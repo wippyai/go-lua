@@ -34,7 +34,7 @@ type residueWindowWire struct {
 // integer dividend opens a window; a constant addition or subtraction shifts an
 // open one. Every other shape publishes nothing, so a term with no window is
 // simply a term this domain says nothing about.
-func residueExpressionFacts(operator wir.Operator, operands map[string][]byte, result, operation string, partition equation.Partition) []equation.Fact {
+func residueExpressionFacts(operator wir.Operator, operands map[equation.OperandRole][]byte, result, operation string, partition equation.Partition) []equation.Fact {
 	window, ok := residueExpressionWindow(operator, operands, partition)
 	if !ok {
 		return nil
@@ -46,7 +46,7 @@ func residueExpressionFacts(operator wir.Operator, operands map[string][]byte, r
 	return []equation.Fact{{Key: residueWindowPrefix + result + "/" + operation, Value: encoded}}
 }
 
-func residueExpressionWindow(operator wir.Operator, operands map[string][]byte, partition equation.Partition) (residueWindow, bool) {
+func residueExpressionWindow(operator wir.Operator, operands map[equation.OperandRole][]byte, partition equation.Partition) (residueWindow, bool) {
 	left, right := operands["left"], operands["right"]
 	switch operator {
 	case wir.BinAdd, wir.BinSub:

@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
 	"github.com/wippyai/go-lua/analysis/diagnostic"
-	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
@@ -27,43 +26,41 @@ type selectConsumerDiagnostic struct {
 // channelSelectCoverageConsumers proves complete authored elseif chains against evaluated select catalogs.
 // Missing facts, mixed predicates, unresolved aliases, and a final else fail closed.
 func channelSelectCoverageConsumers(compilation front.Compilation) []selectConsumerDiagnostic {
-	catalog, body := selectCatalog(compilation.Artifact), compilation.WIR
-	if body == nil || !catalog.published || len(catalog.cases) < 2 {
+	catalog := selectCatalog(compilation.Artifact)
+	if !catalog.published || len(catalog.cases) < 2 {
 		return nil
 	}
 	var out []selectConsumerDiagnostic
-	body.ForEachIfChainDescriptor(func(chain wir.IfChainDescriptor) bool {
-		if diagnostic, ok := channelSelectCoverageConsumer(body, compilation.Body, chain, catalog.cases); ok {
+	for _, chain := range selectBranchChains(compilation.Artifact) {
+		if diagnostic, ok := channelSelectCoverageConsumer(compilation.Body, chain, catalog.cases); ok {
 			out = append(out, diagnostic)
 		}
-		return true
-	})
+	}
 	return out
 }
 
-func channelSelectCoverageConsumer(body *wir.Body, identity [32]byte, chain wir.IfChainDescriptor, cases []string) (selectConsumerDiagnostic, bool) {
-	if chain.HasElse || len(chain.Branches) < 2 {
+func channelSelectCoverageConsumer(identity [32]byte, chain selectBranchChain, cases []string) (selectConsumerDiagnostic, bool) {
+	if chain.HasElse || len(chain.Checks) < 2 {
 		return selectConsumerDiagnostic{}, false
 	}
-	handled, result := make(map[string]bool, len(chain.Branches)), ""
-	for _, branch := range chain.Branches {
-		checks := body.BranchChecks(branch.Point)
-		if len(checks) != 1 || checks[0].Kind != wir.CheckPathEqual {
+	handled, resultKey, resultDisplay := make(map[string]bool, len(chain.Checks)), "", ""
+	for _, branch := range chain.Checks {
+		if len(branch.Checks) != 1 || branch.Checks[0].Predicate.Kind != "path-equal" {
 			return selectConsumerDiagnostic{}, false
 		}
-		check := checks[0]
-		selected, candidate := "", ""
-		if strings.HasSuffix(check.Path.String(), ".channel") {
-			selected, candidate = strings.TrimSuffix(check.Path.String(), ".channel"), check.OtherPath.String()
-		} else if strings.HasSuffix(check.OtherPath.String(), ".channel") {
-			selected, candidate = strings.TrimSuffix(check.OtherPath.String(), ".channel"), check.Path.String()
+		check := branch.Checks[0]
+		selectedKey, selectedDisplay, candidate := "", "", ""
+		if check.Path.FinalField == "channel" {
+			selectedKey, selectedDisplay, candidate = check.Path.ParentKey, check.Path.ParentDisplay, check.OtherPath.Display
+		} else if check.OtherPath.FinalField == "channel" {
+			selectedKey, selectedDisplay, candidate = check.OtherPath.ParentKey, check.OtherPath.ParentDisplay, check.Path.Display
 		} else {
 			return selectConsumerDiagnostic{}, false
 		}
-		if result == "" {
-			result = selected
+		if resultKey == "" {
+			resultKey, resultDisplay = selectedKey, selectedDisplay
 		}
-		if result != selected || !containsSelectCase(cases, candidate) {
+		if resultKey != selectedKey || !containsSelectCase(cases, candidate) {
 			return selectConsumerDiagnostic{}, false
 		}
 		handled[candidate] = true
@@ -74,11 +71,64 @@ func channelSelectCoverageConsumer(body *wir.Body, identity [32]byte, chain wir.
 	}
 	span := chain.HeadSpan
 	return selectConsumerDiagnostic{Key: fmt.Sprintf(diagnosticFamilyPrefix(DiagnosticFamilyChannelSelectExhaustiveness)+"%x/%d", identity, chain.ID), Message: "channel select is not exhaustive; missing " + caseWord(missing) + ": " + quotedCases(missing), Span: span, Evidence: []DiagnosticEvidence{
-		{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "branch chain checks channel `" + result + ".channel`"},
+		{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "branch chain checks channel `" + resultDisplay + ".channel`"},
 		{Span: span, Kind: diagnostic.EvidenceAbstractFact, Trust: diagnostic.TrustProven, Message: "handled cases: " + quotedCases(covered)},
 		{Span: span, Kind: diagnostic.EvidenceMissingProof, Trust: diagnostic.TrustUnknown, Message: "missing cases: " + quotedCases(missing)},
 		{Span: span, Kind: diagnostic.EvidenceMissingProof, Trust: diagnostic.TrustUnknown, Message: "no default case handles the remaining channel cases"},
 	}}, true
+}
+
+type selectBranchChain struct {
+	front.BranchChainWire
+	Checks []front.BranchChainWire
+}
+
+// selectBranchChains admits a chain only when every published position is
+// present exactly once and all copies agree on its closed topology.
+func selectBranchChains(artifact equation.Artifact) []selectBranchChain {
+	byID := make(map[uint32][]front.BranchChainWire)
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "branch-relations" {
+			continue
+		}
+		for _, operand := range operation.Operands {
+			if operand.Role != equation.RoleBranchChain {
+				continue
+			}
+			chain, present, err := front.DecodeBranchChainWire(operand.Term.Encoding)
+			if err == nil && present {
+				byID[chain.ID] = append(byID[chain.ID], chain)
+			}
+		}
+	}
+	ids := make([]uint32, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := make([]selectBranchChain, 0, len(ids))
+	for _, id := range ids {
+		copies := byID[id]
+		if len(copies) == 0 || int(copies[0].Count) != len(copies) {
+			continue
+		}
+		ordered := make([]front.BranchChainWire, len(copies))
+		valid := true
+		for _, chain := range copies {
+			if chain.ID != id || chain.Count != copies[0].Count || chain.HasElse != copies[0].HasElse ||
+				chain.HeadSpan != copies[0].HeadSpan || int(chain.Position) >= len(ordered) ||
+				ordered[chain.Position].ID != 0 {
+				valid = false
+				break
+			}
+			ordered[chain.Position] = chain
+		}
+		if !valid {
+			continue
+		}
+		out = append(out, selectBranchChain{BranchChainWire: copies[0], Checks: ordered})
+	}
+	return out
 }
 
 type selectCatalogFact struct {
@@ -95,16 +145,16 @@ func selectCatalog(artifact equation.Artifact) (catalog selectCatalogFact) {
 		}
 		caseCount, payloadCount := 0, 0
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "case-") && !strings.HasPrefix(operand.Role, "case-display-") {
+			if _, ok := operand.Role.Index(equation.RoleFamilyCase); ok {
 				caseCount++
 			}
-			if strings.HasPrefix(operand.Role, "payload-type-") {
+			if _, ok := operand.Role.Index(equation.RoleFamilyPayloadType); ok {
 				payloadCount++
 				if payload, ok := shapefact.DecodeTarget(operand.Term.Encoding); ok && payload != nil {
 					catalog.payloads = append(catalog.payloads, payload)
 				}
 			}
-			if !casesSet && strings.HasPrefix(operand.Role, "case-display-") && len(operand.Term.Encoding) != 0 {
+			if _, ok := operand.Role.Index(equation.RoleFamilyCaseDisplay); !casesSet && ok && len(operand.Term.Encoding) != 0 {
 				catalog.cases = append(catalog.cases, string(operand.Term.Encoding))
 			}
 		}
@@ -159,12 +209,8 @@ const selectDiscriminantName = "kind"
 // selectDiscriminantField reports whether a branch chain tests the union's
 // discriminant member. The final segment carries that decision, so the path is
 // read by its segments rather than by its rendering.
-func selectDiscriminantField(subject path.Path) bool {
-	if len(subject.Segments) == 0 {
-		return false
-	}
-	last := subject.Segments[len(subject.Segments)-1]
-	return last.Kind == segment.SegmentField && last.Name == selectDiscriminantName
+func selectDiscriminantField(subject front.BranchChainPathWire) bool {
+	return subject.FinalField == selectDiscriminantName
 }
 
 // selectDiscriminantCase pairs one union case's discriminant with the spelling
@@ -190,43 +236,46 @@ func selectDiscriminantHandled(literal typ.Type, handled []typ.Type) bool {
 // channelSelectUnionConsumers uses a select arm's closed payload type for nested literal-discriminant chains.
 // It rejects mixed chains and payloads without a finite registered origin family.
 func channelSelectUnionConsumers(compilation front.Compilation) []selectConsumerDiagnostic {
-	catalog, body := selectCatalog(compilation.Artifact), compilation.WIR
-	if body == nil || len(catalog.payloads) == 0 {
+	catalog := selectCatalog(compilation.Artifact)
+	if len(catalog.payloads) == 0 {
 		return nil
 	}
 	var out []selectConsumerDiagnostic
-	body.ForEachIfChainDescriptor(func(chain wir.IfChainDescriptor) bool {
-		if diagnostic, ok := channelSelectUnionConsumer(body, compilation.Body, chain, catalog.payloads); ok {
+	for _, chain := range selectBranchChains(compilation.Artifact) {
+		if diagnostic, ok := channelSelectUnionConsumer(compilation.Body, chain, catalog.payloads); ok {
 			out = append(out, diagnostic)
 		}
-		return true
-	})
+	}
 	return out
 }
 
-func channelSelectUnionConsumer(body *wir.Body, identity [32]byte, chain wir.IfChainDescriptor, payloads []typ.Type) (selectConsumerDiagnostic, bool) {
-	if chain.HasElse || len(chain.Branches) < 2 || !chain.HeadSpan.Valid() {
+func channelSelectUnionConsumer(identity [32]byte, chain selectBranchChain, payloads []typ.Type) (selectConsumerDiagnostic, bool) {
+	if chain.HasElse || len(chain.Checks) < 2 || !chain.HeadSpan.Valid() {
 		return selectConsumerDiagnostic{}, false
 	}
-	var discriminant path.Path
-	handled := make([]typ.Type, 0, len(chain.Branches))
-	for position, branch := range chain.Branches {
-		checks := body.BranchChecks(branch.Point)
-		if len(checks) != 1 || checks[0].Kind != wir.CheckLiteralEqual || checks[0].Literal == nil {
+	var discriminant front.BranchChainPathWire
+	handled := make([]typ.Type, 0, len(chain.Checks))
+	for position, branch := range chain.Checks {
+		if len(branch.Checks) != 1 || branch.Checks[0].Predicate.Kind != "literal-equal" {
+			return selectConsumerDiagnostic{}, false
+		}
+		check := branch.Checks[0]
+		literal, ok := shapefact.DecodeTarget([]byte(check.LiteralTarget))
+		if !ok || literal == nil {
 			return selectConsumerDiagnostic{}, false
 		}
 		if position == 0 {
-			discriminant = checks[0].Path
+			discriminant = check.Path
 		}
-		if !discriminant.Equal(checks[0].Path) {
+		if discriminant.Key != check.Path.Key {
 			return selectConsumerDiagnostic{}, false
 		}
-		handled = append(handled, checks[0].Literal)
+		handled = append(handled, literal)
 	}
 	if !selectDiscriminantField(discriminant) {
 		return selectConsumerDiagnostic{}, false
 	}
-	spelling := discriminant.String()
+	spelling := discriminant.Display
 	for _, payload := range payloads {
 		_, cases, ok := variant.OriginCasesOfType(payload)
 		if !ok || len(cases) < 2 {

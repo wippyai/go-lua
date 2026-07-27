@@ -718,10 +718,10 @@ func newNativeAnchors(artifact equation.Artifact) *nativeAnchors {
 		anchors.operations[operation.Target.Name] = operation.Occurrence.Kind
 		byRole := make(map[string][]byte, len(operation.Operands))
 		for _, operand := range operation.Operands {
-			if operand.Term.Entry || len(operand.Term.Encoding) == 0 || strings.HasPrefix(operand.Role, "native-") {
+			if operand.Term.Entry || len(operand.Term.Encoding) == 0 || operand.Role.InFamily(equation.RoleFamilyNative) {
 				continue
 			}
-			byRole[operand.Role] = operand.Term.Encoding
+			byRole[operand.Role.String()] = operand.Term.Encoding
 			term := string(operand.Term.Encoding)
 			if _, known := anchors.terms[term]; !known {
 				anchors.terms[term] = ""

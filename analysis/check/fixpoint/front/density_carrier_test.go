@@ -1,9 +1,9 @@
 package front_test
 
 import (
-	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 )
 
@@ -17,7 +17,7 @@ func densityRelationStated(t *testing.T, source string) bool {
 	}
 	for _, operation := range artifact.Equations {
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "density-relation-") {
+			if operand.Role.InFamily(equation.RoleFamilyDensityRelation) {
 				return true
 			}
 		}
@@ -202,7 +202,7 @@ end
 		}
 		carried := false
 		for _, operand := range operation.Operands {
-			carried = carried || strings.HasPrefix(operand.Role, "density-relation-")
+			carried = carried || operand.Role.InFamily(equation.RoleFamilyDensityRelation)
 		}
 		if carried {
 			stated++

@@ -40,7 +40,7 @@ type branchResidueClassWire struct {
 func trueEdgeBranchDifferences(operation equation.BoundEquation) ([]branchDiffWire, error) {
 	var out []branchDiffWire
 	for _, operand := range operation.Operands {
-		if !strings.HasPrefix(operand.Role, "difference-") {
+		if !operand.Role.InFamily(equation.RoleFamilyDifference) {
 			continue
 		}
 		wire, present, err := front.DecodeBranchDiffWire(operand.Value)
@@ -60,8 +60,8 @@ func trueEdgeBranchDifferences(operation equation.BoundEquation) ([]branchDiffWi
 // artifactTrueEdgeLengthRelation reports a published difference descriptor that
 // relates an operand to an array length on the branch's true edge. It reads the
 // artifact form of the operand, before the partition binds it.
-func artifactTrueEdgeLengthRelation(role string, encoding []byte) (bool, error) {
-	if !strings.HasPrefix(role, "difference-") {
+func artifactTrueEdgeLengthRelation(role equation.OperandRole, encoding []byte) (bool, error) {
+	if !role.InFamily(equation.RoleFamilyDifference) {
 		return false, nil
 	}
 	wire, present, err := front.DecodeBranchDiffWire(encoding)
@@ -240,7 +240,7 @@ func branchNumericTruth(operation equation.BoundEquation, partition equation.Par
 func trueEdgeNumericPredicates(operation equation.BoundEquation) ([]branchPredicateWire, error) {
 	predicates := make([]branchPredicateWire, 0, len(operation.Operands))
 	for _, operand := range operation.Operands {
-		if operand.Role != "predicate" && !strings.HasPrefix(operand.Role, "implied-") {
+		if operand.Role != equation.RolePredicate && !operand.Role.InFamily(equation.RoleFamilyImplied) {
 			continue
 		}
 		predicate, trueEdge, recognized, err := branchEvidencePredicate(operand)

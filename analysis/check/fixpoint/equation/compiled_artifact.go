@@ -176,7 +176,7 @@ func serializeCompiledEquations(result *CompiledArtifact, ordered []Equation) er
 			KernelOffset: kernelOffset, KernelLength: kernelLength, ContractID: equation.Occurrence.ContractID,
 			OperandStart: uint32(len(result.operands)), GuardStart: uint32(len(result.guards)), DependencyStart: uint32(len(result.deps))}
 		for _, operand := range equation.Operands {
-			roleOffset, roleLength := appendText(operand.Role)
+			roleOffset, roleLength := appendText(operand.Role.String())
 			valueOffset, valueLength := appendBytes(operand.Term.Encoding)
 			kind := OperandCanonicalConstant
 			if operand.Term.Entry {
@@ -317,7 +317,7 @@ func (a CompiledArtifact) ReferenceArtifact() (Artifact, error) {
 			if operand.Kind != OperandCanonicalConstant && operand.Kind != OperandEntryProjection {
 				return Artifact{}, fmt.Errorf("equation: compiled operand kind %d cannot be reconstructed", operand.Kind)
 			}
-			equation.Operands = append(equation.Operands, Operand{Role: string(a.rangeBytes(operand.RoleOffset, operand.RoleLength)), Term: Term{Encoding: a.rangeBytes(operand.ValueOffset, operand.ValueLength), Entry: operand.Kind == OperandEntryProjection}})
+			equation.Operands = append(equation.Operands, Operand{Role: OperandRole(a.rangeBytes(operand.RoleOffset, operand.RoleLength)), Term: Term{Encoding: a.rangeBytes(operand.ValueOffset, operand.ValueLength), Entry: operand.Kind == OperandEntryProjection}})
 		}
 		for _, dependency := range a.deps[op.DependencyStart:endDependencies] {
 			if dependency >= uint32(len(targets)) {

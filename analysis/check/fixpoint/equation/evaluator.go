@@ -28,7 +28,7 @@ func (b EntryBinding) valid() bool { return b.Parameter.valid() && len(b.Value) 
 // BoundOperand is an operand after the artifact's sole formal parameter has
 // been substituted.  Kernels never receive an open Term.
 type BoundOperand struct {
-	Role  string
+	Role  OperandRole
 	Value []byte
 }
 

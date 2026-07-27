@@ -235,7 +235,7 @@ func (a CompiledArtifact) bindOperation(op CompiledOp, entry EntryBinding, frame
 		if !ok || role == "" {
 			return BoundEquation{}, fmt.Errorf("equation: compiled operand role is invalid")
 		}
-		operands[index] = BoundOperand{Role: role, Value: value}
+		operands[index] = BoundOperand{Role: OperandRole(role), Value: value}
 	}
 	guards := frame.guards[:guardCount]
 	for index, descriptor := range a.guards[op.GuardStart : op.GuardStart+op.GuardCount] {

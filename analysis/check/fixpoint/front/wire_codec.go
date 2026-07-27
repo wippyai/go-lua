@@ -5,15 +5,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/shapefact"
+	"github.com/wippyai/go-lua/analysis/ir/wir"
 )
 
 const (
 	branchPredicatePrefix = "front/branch-predicate/v1/"
 	branchEvidencePrefix  = "front/branch-evidence/v1/"
 	branchDiffPrefix      = "front/branch-diff/v1/"
+	branchChainPrefix     = "front/branch-chain/v1/"
 	moduleProviderPrefix  = "provider/module/v1/"
 )
 
@@ -51,6 +53,40 @@ type BranchDiffWire struct {
 	LoIsLen  bool   `json:"lo_is_len,omitempty"`
 	C        int64  `json:"c,omitempty"`
 	Edge     bool   `json:"edge,omitempty"`
+}
+
+// BranchChainPathWire is the structural path publication needed by consumers
+// of one authored if/elseif chain. Parent is populated only when FinalField
+// names the path's final static field; consumers never recover that relation
+// by trimming a display string.
+type BranchChainPathWire struct {
+	Key           string `json:"key"`
+	Display       string `json:"display"`
+	ParentKey     string `json:"parent_key,omitempty"`
+	ParentDisplay string `json:"parent_display,omitempty"`
+	FinalField    string `json:"final_field,omitempty"`
+}
+
+// BranchChainCheckWire couples the already-normalized predicate with the
+// structural path metadata that its compact predicate wire intentionally
+// omits.
+type BranchChainCheckWire struct {
+	Predicate     BranchPredicateWire `json:"predicate"`
+	Path          BranchChainPathWire `json:"path"`
+	OtherPath     BranchChainPathWire `json:"other_path,omitempty"`
+	LiteralTarget string              `json:"literal_target,omitempty"`
+}
+
+// BranchChainWire publishes complete authored chain topology on every branch
+// equation. The branch position makes the set self-validating after equation
+// canonicalization has discarded source order.
+type BranchChainWire struct {
+	ID       uint32                 `json:"id"`
+	Position uint32                 `json:"position"`
+	Count    uint32                 `json:"count"`
+	HasElse  bool                   `json:"has_else,omitempty"`
+	HeadSpan wir.Span               `json:"head_span"`
+	Checks   []BranchChainCheckWire `json:"checks"`
 }
 
 // ModuleProviderWire binds a provider to one resolved require module and
@@ -94,20 +130,99 @@ func ValidateDraftWires(artifact equation.Artifact) error {
 			if providerErr != nil {
 				return fmt.Errorf("front: operation %q role %q: %w", operation.Target.Name, operand.Role, providerErr)
 			}
+			_, chainPresent, chainErr := DecodeBranchChainWire(encoded)
+			if chainErr != nil {
+				return fmt.Errorf("front: operation %q role %q: %w", operation.Target.Name, operand.Role, chainErr)
+			}
 			switch {
 			case operand.Role == "predicate" && !predicatePresent:
 				return fmt.Errorf("front: operation %q predicate role has no predicate wire", operation.Target.Name)
-			case strings.HasPrefix(operand.Role, "difference-") && !differencePresent:
+			case operand.Role.InFamily(equation.RoleFamilyDifference) && !differencePresent:
 				return fmt.Errorf("front: operation %q difference role %q has no difference wire", operation.Target.Name, operand.Role)
-			case strings.HasPrefix(operand.Role, "implied-") && !evidencePresent:
+			case operand.Role.InFamily(equation.RoleFamilyImplied) && !evidencePresent:
 				return fmt.Errorf("front: operation %q implied role %q has no evidence wire", operation.Target.Name, operand.Role)
-			case strings.HasPrefix(operand.Role, "sufficient-") &&
-				!strings.HasPrefix(operand.Role, "sufficient-arm-") && !evidencePresent:
+			case func() bool {
+				_, indexed := operand.Role.Index(equation.RoleFamilySufficient)
+				return indexed
+			}() && !evidencePresent:
 				return fmt.Errorf("front: operation %q sufficient role %q has no evidence wire", operation.Target.Name, operand.Role)
-			case strings.Contains(operand.Role, "-check-") && !evidencePresent:
+			case operand.Role.IsCheckEvidence() && !evidencePresent:
 				return fmt.Errorf("front: operation %q check role %q has no evidence wire", operation.Target.Name, operand.Role)
+			case operand.Role == "branch-chain" && !chainPresent:
+				return fmt.Errorf("front: operation %q branch-chain role has no chain wire", operation.Target.Name)
 			}
 		}
+	}
+	return nil
+}
+
+// EncodeBranchChainWire is the sole constructor for authored chain topology.
+func EncodeBranchChainWire(wire BranchChainWire) ([]byte, error) {
+	if err := validateBranchChainWire(wire); err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return nil, fmt.Errorf("front: encode branch chain: %w", err)
+	}
+	return append([]byte(branchChainPrefix), encoded...), nil
+}
+
+// DecodeBranchChainWire distinguishes an unrelated operand from a malformed
+// chain publication.
+func DecodeBranchChainWire(encoded []byte) (wire BranchChainWire, present bool, err error) {
+	if !bytes.HasPrefix(encoded, []byte(branchChainPrefix)) {
+		return BranchChainWire{}, false, nil
+	}
+	if err := decodeDraftJSON(encoded[len(branchChainPrefix):], &wire); err != nil {
+		return BranchChainWire{}, true, fmt.Errorf("front: decode branch chain: %w", err)
+	}
+	if err := validateBranchChainWire(wire); err != nil {
+		return BranchChainWire{}, true, err
+	}
+	return wire, true, nil
+}
+
+func validateBranchChainWire(wire BranchChainWire) error {
+	if wire.ID == 0 || wire.Count == 0 || wire.Position >= wire.Count || !wire.HeadSpan.Valid() || len(wire.Checks) == 0 {
+		return fmt.Errorf("front: malformed branch chain identity")
+	}
+	for _, check := range wire.Checks {
+		if err := validateBranchPredicateWire(check.Predicate); err != nil {
+			return fmt.Errorf("front: branch chain predicate: %w", err)
+		}
+		if err := validateBranchChainPath(check.Path, check.Predicate.Path); err != nil {
+			return err
+		}
+		if check.Predicate.OtherPath != "" {
+			if err := validateBranchChainPath(check.OtherPath, check.Predicate.OtherPath); err != nil {
+				return err
+			}
+		}
+		literal := check.Predicate.Kind == "literal-equal" || check.Predicate.Kind == "literal-not"
+		if literal {
+			if target, ok := shapefact.DecodeTarget([]byte(check.LiteralTarget)); !ok || target == nil {
+				return fmt.Errorf("front: literal branch chain check has no typed target")
+			}
+		} else if check.LiteralTarget != "" {
+			return fmt.Errorf("front: non-literal branch chain check has a literal target")
+		}
+	}
+	return nil
+}
+
+func validateBranchChainPath(path BranchChainPathWire, predicateKey string) error {
+	if path.Key == "" || path.Display == "" || path.Key != predicateKey {
+		return fmt.Errorf("front: malformed branch chain path")
+	}
+	if path.FinalField == "" {
+		if path.ParentKey != "" || path.ParentDisplay != "" {
+			return fmt.Errorf("front: root branch chain path has a parent")
+		}
+		return nil
+	}
+	if path.ParentKey == "" || path.ParentDisplay == "" {
+		return fmt.Errorf("front: field branch chain path has no parent")
 	}
 	return nil
 }

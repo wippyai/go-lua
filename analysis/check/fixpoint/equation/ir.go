@@ -103,12 +103,12 @@ func (o Occurrence) valid() bool { return o.Kind != "" && o.ContractID.Valid() }
 
 // Operand binds one mandatory contract role to a closed term.
 type Operand struct {
-	Role string
+	Role OperandRole
 	Term Term
 }
 
 func (o Operand) validFor(entry EntryParameter) bool { return o.Role != "" && o.Term.validFor(entry) }
-func (o Operand) less(other Operand) bool            { return o.Role < other.Role }
+func (o Operand) less(other Operand) bool            { return o.Role.String() < other.Role.String() }
 
 // Equation is one guarded equation over a body coordinate.  Every equation
 // explicitly retains its body's formal entry parameter; it has no concrete
@@ -237,7 +237,7 @@ func appendEquation(out []byte, equation Equation) []byte {
 	}
 	out = appendU64(out, uint64(len(equation.Operands)))
 	for _, operand := range equation.Operands {
-		out = appendText(out, operand.Role)
+		out = appendText(out, operand.Role.String())
 		if operand.Term.Entry {
 			out = append(out, 1)
 		} else {

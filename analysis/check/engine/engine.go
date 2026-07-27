@@ -847,7 +847,7 @@ func structuralReturnMemberDiagnosticSpans(compilation front.Compilation, diagno
 		}
 		term := ""
 		for _, operand := range operation.Operands {
-			if operand.Role == fmt.Sprintf("return-value-%08d", index) {
+			if operand.Role == equation.IndexedRole(equation.RoleFamilyReturnValue, index) {
 				term = string(operand.Term.Encoding)
 				break
 			}
@@ -1445,7 +1445,10 @@ func callResultDisplay(artifact equation.Artifact, result []byte) (string, strin
 		application := ""
 		for _, operand := range operation.Operands {
 			switch {
-			case strings.HasPrefix(operand.Role, "result-") && string(operand.Term.Encoding) == string(result):
+			case func() bool {
+				_, semantic := operand.Role.SemanticResult()
+				return semantic
+			}() && string(operand.Term.Encoding) == string(result):
 				matched = true
 			case operand.Role == "result-display":
 				display = string(operand.Term.Encoding)
@@ -1613,8 +1616,11 @@ func directCallResultSlot(artifact equation.Artifact, result []byte) (string, in
 				application = strings.TrimPrefix(string(operand.Term.Encoding), "call/")
 				continue
 			}
-			if slot, value, indexed := indexedRoleValue(operand.Role, "result-", operand.Term.Encoding); indexed && value == string(result) {
-				index, matched = slot, true
+			if semantic, ok := operand.Role.SemanticResult(); ok {
+				slot, indexed := semantic.Index()
+				if indexed && string(operand.Term.Encoding) == string(result) {
+					index, matched = slot, true
+				}
 			}
 		}
 		if matched && application != "" {
@@ -2643,7 +2649,7 @@ func forwardedStaticMemberContractBoundary(compilation front.Compilation) bool {
 			}
 			forwardsFormal := false
 			for _, operand := range operation.Operands {
-				if strings.HasPrefix(operand.Role, "argument-") && !strings.HasPrefix(operand.Role, "argument-display-") {
+				if _, argument := operand.Role.Index(equation.RoleFamilyArgument); argument {
 					forwardsFormal = forwardsFormal || formals[string(operand.Term.Encoding)]
 				}
 			}
@@ -3225,10 +3231,12 @@ func entryKernel(operation equation.BoundEquation, _ equation.Partition) (equati
 				return equation.TransactionResult{}, fmt.Errorf("engine: duplicate entry operand")
 			}
 			entryValue = operand.Value
-		case strings.HasPrefix(operand.Role, "declared-root-"):
-			declaredRoots[strings.TrimPrefix(operand.Role, "declared-root-")] = operand.Value
-		case strings.HasPrefix(operand.Role, "declared-type-"):
-			declaredTypes[strings.TrimPrefix(operand.Role, "declared-type-")] = operand.Value
+		case operand.Role.InFamily(equation.RoleFamilyDeclaredRoot):
+			suffix, _ := operand.Role.Suffix(equation.RoleFamilyDeclaredRoot)
+			declaredRoots[suffix] = operand.Value
+		case operand.Role.InFamily(equation.RoleFamilyDeclaredType):
+			suffix, _ := operand.Role.Suffix(equation.RoleFamilyDeclaredType)
+			declaredTypes[suffix] = operand.Value
 		default:
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed entry operand %q", operand.Role)
 		}
@@ -4053,7 +4061,7 @@ func (index *admissionBodyIndex) gradualLogicalCallBoundary() ([]entrySeed, []st
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "argument-") && !strings.HasPrefix(operand.Role, "argument-display-") && tainted[string(operand.Term.Encoding)] {
+			if _, argument := operand.Role.Index(equation.RoleFamilyArgument); argument && tainted[string(operand.Term.Encoding)] {
 				return seeds, terms, true
 			}
 		}
@@ -4337,11 +4345,12 @@ func placementDeclaredScalarResultWitnesses(child front.Compilation, outcome equ
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if !strings.HasPrefix(operand.Role, "result-") || operand.Role == "result-display" {
+			semantic, ok := operand.Role.SemanticResult()
+			if !ok {
 				continue
 			}
-			index, err := strconv.Atoi(strings.TrimPrefix(operand.Role, "result-"))
-			if err != nil || index < 0 || index >= len(signature.Type.Returns) || !values[string(operand.Term.Encoding)] || !placementClosedScalarType(signature.Type.Returns[index]) {
+			index, indexed := semantic.Index()
+			if !indexed || index >= len(signature.Type.Returns) || !values[string(operand.Term.Encoding)] || !placementClosedScalarType(signature.Type.Returns[index]) {
 				continue
 			}
 			identity := shapefact.ScalarTextValueString(
@@ -4502,7 +4511,7 @@ func placementGenericForElementIterator(child front.Compilation, value string) (
 		if operation.Occurrence.Kind != "generic-for" {
 			continue
 		}
-		element, ok := artifactOperand(operation.Operands, "result-00000001")
+		element, ok := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyResult, 1))
 		if !ok || string(element) != value {
 			continue
 		}
@@ -4522,7 +4531,7 @@ func placementIteratorFormalContainer(child front.Compilation, iterator string) 
 		if operation.Occurrence.Kind != "call-results" {
 			continue
 		}
-		result, ok := artifactOperand(operation.Operands, "result-00000000")
+		result, ok := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyResult, 0))
 		if !ok || string(result) != iterator {
 			continue
 		}
@@ -4534,7 +4543,7 @@ func placementIteratorFormalContainer(child front.Compilation, iterator string) 
 		if !ok || (name != "ipairs" && name != "pairs") {
 			return "", false
 		}
-		container, ok := artifactOperand(operation.Operands, "argument-00000000")
+		container, ok := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyArgument, 0))
 		if !ok {
 			return "", false
 		}
@@ -4585,7 +4594,7 @@ func (l *lexicalEvaluator) publishesClosureReturn(body equation.BodyID, result s
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "return-value-") && string(operand.Term.Encoding) == result {
+			if operand.Role.InFamily(equation.RoleFamilyReturnValue) && string(operand.Term.Encoding) == result {
 				return true
 			}
 		}
@@ -5089,11 +5098,8 @@ func applicationArgumentTerms(operation equation.Equation) [][]byte {
 	byIndex := make(map[int][]byte)
 	highest := -1
 	for _, operand := range operation.Operands {
-		if !strings.HasPrefix(operand.Role, "argument-") || strings.HasPrefix(operand.Role, "argument-display-") {
-			continue
-		}
-		index, err := callArgumentIndex(operand.Role)
-		if err != nil {
+		index, ok := operand.Role.Index(equation.RoleFamilyArgument)
+		if !ok {
 			continue
 		}
 		byIndex[index] = operand.Term.Encoding
@@ -5313,11 +5319,8 @@ func contextualCallbackArgument(artifact equation.Artifact, term string) ([]byte
 		terms := make(map[int][]byte)
 		at := -1
 		for _, operand := range operation.Operands {
-			if !strings.HasPrefix(operand.Role, "argument-") {
-				continue
-			}
-			index, err := callArgumentIndex(operand.Role)
-			if err != nil {
+			index, ok := operand.Role.FixedIndex(equation.RoleFamilyArgument, 8)
+			if !ok {
 				continue
 			}
 			terms[index] = append([]byte(nil), operand.Term.Encoding...)
@@ -5429,10 +5432,7 @@ func (index *admissionBodyIndex) declaredLocalUnionReadBoundary() ([]entrySeed, 
 			return nil, false
 		}
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "argument-") {
-				if _, err := callArgumentIndex(operand.Role); err != nil {
-					continue
-				}
+			if _, argument := operand.Role.FixedIndex(equation.RoleFamilyArgument, 8); argument {
 				if !formals.has(string(operand.Term.Encoding)) && !derived[string(operand.Term.Encoding)] {
 					return nil, false
 				}
@@ -5452,7 +5452,7 @@ func (index *admissionBodyIndex) declaredLocalUnionReadBoundary() ([]entrySeed, 
 		if !found || !applications[string(application)] {
 			return nil, false
 		}
-		result, found := artifactOperand(operation.Operands, "result-00000000")
+		result, found := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyResult, 0))
 		if !found {
 			return nil, false
 		}
@@ -5652,7 +5652,7 @@ func (l *lexicalEvaluator) uncalledLocalUnionCalleeHasAlternativeReturns(handle 
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
-		if _, found := artifactOperand(operation.Operands, "return-value-00000000"); found {
+		if _, found := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, 0)); found {
 			returns++
 		}
 	}
@@ -5751,12 +5751,9 @@ func nestedClosureAllocationCaptures(operation equation.Equation, prototype stri
 	}
 	items := make([]captureOperand, 0)
 	for _, operand := range operation.Operands {
-		if !strings.HasPrefix(operand.Role, "capture-") {
+		index, ok := operand.Role.Index(equation.RoleFamilyCapture)
+		if !ok {
 			continue
-		}
-		index, err := strconv.Atoi(strings.TrimPrefix(operand.Role, "capture-"))
-		if err != nil || index < 0 {
-			return nil, false
 		}
 		items = append(items, captureOperand{index: index, value: string(operand.Term.Encoding)})
 	}
@@ -5920,7 +5917,7 @@ func capturedCallResultOptionalMember(lexical *lexicalEvaluator, operations []eq
 			continue
 		}
 		application, hasApplication := artifactOperand(result.Operands, "application")
-		resultValue, hasResult := artifactOperand(result.Operands, "result-00000000")
+		resultValue, hasResult := artifactOperand(result.Operands, equation.IndexedRole(equation.RoleFamilyResult, 0))
 		if !hasApplication || !hasResult || !bytes.Equal(resultValue, value) {
 			continue
 		}
@@ -6097,7 +6094,7 @@ func (index *admissionBodyIndex) declaredFormalConcatOperations(memberCalls map[
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "result-") {
+			if _, semantic := operand.Role.SemanticResult(); semantic {
 				results[string(operand.Term.Encoding)] = true
 			}
 		}
@@ -6121,12 +6118,12 @@ func (index *admissionBodyIndex) declaredFormalConcatOperations(memberCalls map[
 		operands := 0
 		directOperands := make([]string, 0, 1)
 		for _, operand := range operation.Operands {
-			if _, valid := concatOperandIndex(operand.Role); !valid {
+			if _, valid := operand.Role.Index(equation.RoleFamilyValue); !valid {
 				continue
 			}
 			operands++
 			if paths[string(operand.Term.Encoding)] {
-				directOperands = append(directOperands, operand.Role)
+				directOperands = append(directOperands, operand.Role.String())
 			}
 		}
 		if operands >= 2 {
@@ -6279,7 +6276,7 @@ func (index *admissionBodyIndex) declaredFormalArithmeticReturn(operation equati
 		return false
 	}
 	for _, operand := range operation.Operands {
-		if strings.HasPrefix(operand.Role, "return-value-") && arithmeticTerms[string(operand.Term.Encoding)] {
+		if operand.Role.InFamily(equation.RoleFamilyReturnValue) && arithmeticTerms[string(operand.Term.Encoding)] {
 			return true
 		}
 	}
@@ -6440,13 +6437,19 @@ func (index *admissionBodyIndex) declaredFormalDerivedCells(formals admissionBou
 // position. The roles are over-approximated on purpose: a role read as a write
 // can only withhold a cell from the derived set, while a write role missed
 // would admit one this body does not account for.
-func declaredCellWriteRole(role string) bool {
+func declaredCellWriteRole(role equation.OperandRole) bool {
 	switch {
-	case role == "target", role == "result", role == "allocation-result",
-		strings.HasPrefix(role, "target-"), strings.HasPrefix(role, "result-"):
+	case role == equation.RoleTarget, role == equation.RoleAllocationResult,
+		role.InFamily(equation.RoleFamilyTarget):
+		return true
+	case role.IsDisplay(), role == equation.RoleResultArity, role == equation.RoleResultSpread:
+		// Presentation and shape metadata are not semantic results. They still
+		// conservatively block this write-accounting proof, matching its stated
+		// over-approximation without admitting them to SemanticResultRole.
 		return true
 	default:
-		return false
+		_, semanticResult := role.SemanticResult()
+		return semanticResult
 	}
 }
 
@@ -6679,7 +6682,7 @@ func (index *admissionBodyIndex) staticAssignmentBoundary() ([]entrySeed, bool) 
 				continue
 			}
 			for _, operand := range operation.Operands {
-				if strings.HasPrefix(operand.Role, "result-") && operand.Role != "result-display" {
+				if _, semantic := operand.Role.SemanticResult(); semantic {
 					callResults[string(operand.Term.Encoding)] = true
 				}
 			}
@@ -7102,7 +7105,7 @@ func (l *lexicalEvaluator) uncalledStaticAssignmentDiagnostic(artifact equation.
 			continue
 		}
 		for _, operand := range candidate.Operands {
-			if strings.HasPrefix(operand.Role, "argument-") && string(operand.Term.Encoding) == source {
+			if _, argument := operand.Role.Index(equation.RoleFamilyArgument); argument && string(operand.Term.Encoding) == source {
 				callee, hasCallee := artifactOperand(candidate.Operands, "callee")
 				if hasCallee && (l.uncalledCapturedHelperHasOnlyGuardedValidation(callee, partition) ||
 					l.uncalledCapturedHelperHasOnlyGuardedNonValidationEffect(callee, partition)) {
@@ -7256,7 +7259,7 @@ func (ctx admissionDiagnosticContext) staticResultCallDiagnostic() bool {
 	}
 	operationName := diagnosticOperationName(key)
 	published := ctx.bodyIndex.publishedStdlibCalls()
-	resultPaths := ctx.bodyIndex.publishedResultPaths(published)
+	resultPaths := ctx.bodyIndex.uncalledPublishedResultPaths(published)
 	for _, operation := range ctx.bodyIndex.operations {
 		if operation.Occurrence.Kind != "apply" {
 			continue
@@ -7265,7 +7268,7 @@ func (ctx admissionDiagnosticContext) staticResultCallDiagnostic() bool {
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "argument-") && resultPaths[string(operand.Term.Encoding)] {
+			if _, argument := operand.Role.Index(equation.RoleFamilyArgument); argument && resultPaths[string(operand.Term.Encoding)] {
 				return true
 			}
 		}
@@ -7293,7 +7296,7 @@ func (ctx admissionDiagnosticContext) declaredProviderResultDiagnostic() bool {
 			applications["call/"+operation.Target.Name] = true
 		}
 	}
-	paths := ctx.bodyIndex.publishedResultPaths(applications)
+	paths := ctx.bodyIndex.uncalledPublishedResultPaths(applications)
 	if len(paths) == 0 {
 		return false
 	}
@@ -7320,12 +7323,12 @@ func (ctx admissionDiagnosticContext) declaredProviderResultDiagnostic() bool {
 	return false
 }
 
-// publishedResultPaths names every term holding one of the given
+// uncalledPublishedResultPaths names every term holding one of the given
 // applications' published results: the result slots themselves and the locals
 // written from them. A result consumed straight out of its slot carries the
 // same published contract as one bound to a local first, so both spellings of
 // the same value answer this question identically.
-func (index *admissionBodyIndex) publishedResultPaths(applications map[string]bool) map[string]bool {
+func (index *admissionBodyIndex) uncalledPublishedResultPaths(applications map[string]bool) map[string]bool {
 	results := make(map[string]bool)
 	for _, operation := range index.operations {
 		if operation.Occurrence.Kind != "call-results" {
@@ -7336,7 +7339,7 @@ func (index *admissionBodyIndex) publishedResultPaths(applications map[string]bo
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "result-") {
+			if _, semantic := operand.Role.SemanticResult(); semantic {
 				results[string(operand.Term.Encoding)] = true
 			}
 		}
@@ -7368,7 +7371,7 @@ func (index *admissionBodyIndex) publishedResultPaths(applications map[string]bo
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "result-") {
+			if _, semantic := operand.Role.SemanticResult(); semantic {
 				paths[string(operand.Term.Encoding)] = true
 			}
 		}
@@ -7477,8 +7480,8 @@ func entryEstablishedSymbolPath(child front.Compilation, item string) bool {
 // mentions, on either edge. A predicate descriptor names its subject and its
 // relatum; a difference descriptor names its normalized operands. Every other
 // operand carries a term, an arm marker, or display text and states no path.
-func branchEvidencePaths(role string, encoding []byte) ([]string, bool) {
-	if strings.HasPrefix(role, "difference-") {
+func branchEvidencePaths(role equation.OperandRole, encoding []byte) ([]string, bool) {
+	if role.InFamily(equation.RoleFamilyDifference) {
 		wire, present, err := front.DecodeBranchDiffWire(encoding)
 		if err != nil || !present {
 			return nil, false
@@ -7513,7 +7516,7 @@ func branchEvidencePaths(role string, encoding []byte) ([]string, bool) {
 	return paths, len(paths) != 0
 }
 
-func artifactOperand(operands []equation.Operand, role string) ([]byte, bool) {
+func artifactOperand(operands []equation.Operand, role equation.OperandRole) ([]byte, bool) {
 	for _, operand := range operands {
 		if operand.Role == role {
 			return append([]byte(nil), operand.Term.Encoding...), true
@@ -7877,8 +7880,8 @@ func (l *lexicalEvaluator) uncalledTypePredicateCaptureBoundary(child front.Comp
 			if !found || application == "" || string(candidate) != application || valueResult != "" || errorResult != "" {
 				return false
 			}
-			value, hasValue := artifactOperand(operation.Operands, "result-00000000")
-			err, hasError := artifactOperand(operation.Operands, "result-00000001")
+			value, hasValue := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyResult, 0))
+			err, hasError := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyResult, 1))
 			if !hasValue || !hasError {
 				return false
 			}
@@ -8012,11 +8015,11 @@ func singleReturnedTerm(artifact equation.Artifact) (string, bool) {
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
-		value, found := artifactOperand(operation.Operands, "return-value-00000000")
+		value, found := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, 0))
 		if term != "" || !found {
 			return "", false
 		}
-		if _, more := artifactOperand(operation.Operands, "return-value-00000001"); more {
+		if _, more := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, 1)); more {
 			return "", false
 		}
 		term = string(value)
@@ -8071,7 +8074,7 @@ func truthyImpliedTypePredicate(artifact equation.Artifact, term string) (branch
 // runtimeTypeEqualPredicate reads one operand as an un-negated type-equal check
 // against a name Lua's type() reports. A comparison against another path names
 // no static kind, and a negated check states what the value is not.
-func runtimeTypeEqualPredicate(operands []equation.Operand, role string) (branchPredicateWire, bool) {
+func runtimeTypeEqualPredicate(operands []equation.Operand, role equation.OperandRole) (branchPredicateWire, bool) {
 	encoded, found := artifactOperand(operands, role)
 	if !found {
 		return branchPredicateWire{}, false
@@ -8120,7 +8123,9 @@ func singleBoundSource(artifact equation.Artifact, term string) (string, bool) {
 			continue
 		default:
 			for _, operand := range operation.Operands {
-				if strings.HasPrefix(operand.Role, "result") && string(operand.Term.Encoding) == term {
+				_, semantic := operand.Role.SemanticResult()
+				resultMetadata := operand.Role.IsDisplay() || operand.Role == equation.RoleResultArity || operand.Role == equation.RoleResultSpread
+				if (semantic || resultMetadata) && string(operand.Term.Encoding) == term {
 					return "", false
 				}
 			}
@@ -8153,7 +8158,7 @@ func (index *admissionBodyIndex) typePredicateHelper() bool {
 			}
 		case "call-results":
 			candidate, found := artifactOperand(operation.Operands, "application")
-			value, hasValue := artifactOperand(operation.Operands, "result-00000000")
+			value, hasValue := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyResult, 0))
 			target, hasTargetOperand := artifactOperand(operation.Operands, "type-predicate-error-target")
 			if !found || application == "" || string(candidate) != application || !hasValue || result != "" || !hasTargetOperand {
 				return false
@@ -8163,7 +8168,7 @@ func (index *admissionBodyIndex) typePredicateHelper() bool {
 			}
 			result, hasTarget = string(value), true
 		case "publication":
-			value, found := artifactOperand(operation.Operands, "return-value-00000000")
+			value, found := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, 0))
 			if hasReturn || !found || result == "" || string(value) != result {
 				return false
 			}
@@ -8238,7 +8243,7 @@ func (l *lexicalEvaluator) publishUncalledFalseEdgeAnyAssignment(closure *equati
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if operand.Role == "result-00000000" {
+			if operand.Role == equation.IndexedRole(equation.RoleFamilyResult, 0) {
 				callResultCallee[string(operand.Term.Encoding)] = true
 			}
 		}
@@ -8428,7 +8433,7 @@ func typePredicateResultClaim(artifact equation.Artifact, claim string) bool {
 			switch operand.Role {
 			case "type-predicate-error-target":
 				predicate = true
-			case "result-00000000":
+			case equation.OperandRole("result-00000000"):
 				firstResult = string(operand.Term.Encoding)
 			}
 		}
@@ -8550,7 +8555,7 @@ func (l *lexicalEvaluator) transitiveCaptureCapabilities(child front.Compilation
 			continue
 		}
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "capture-") {
+			if operand.Role.InFamily(equation.RoleFamilyCapture) {
 				materialized = append(materialized, string(operand.Term.Encoding))
 			}
 		}
@@ -9507,7 +9512,7 @@ func nilOriginFormalFieldEscapes(child front.Compilation, root string) bool {
 		switch operation.Occurrence.Kind {
 		case "environment-write", "path-replacement", "path-invalidation", "index-mutation", "generic-for", "channel-select", "dynamic-index-read":
 			for _, operand := range operation.Operands {
-				if operand.Role != "target" && !strings.HasPrefix(operand.Role, "target-") && operand.Role != "container" {
+				if operand.Role != equation.RoleTarget && !operand.Role.InFamily(equation.RoleFamilyTarget) && operand.Role != equation.RoleContainer {
 					continue
 				}
 				encoding := string(operand.Term.Encoding)
@@ -9714,11 +9719,8 @@ func projectExternalCallbackReturnFacts(operation equation.BoundEquation, child 
 			continue
 		}
 		for _, operand := range publication.Operands {
-			if !strings.HasPrefix(operand.Role, "return-value-") {
-				continue
-			}
-			index, err := strconv.Atoi(strings.TrimPrefix(operand.Role, "return-value-"))
-			if err != nil || index < 0 {
+			index, ok := operand.Role.Index(equation.RoleFamilyReturnValue)
+			if !ok {
 				continue
 			}
 			identity, found := closureTableIdentity(operand.Term.Encoding, closure.Values)
@@ -9806,11 +9808,8 @@ func projectReturnKeysOf(operation equation.BoundEquation, child front.Compilati
 			continue
 		}
 		for _, operand := range publication.Operands {
-			if !strings.HasPrefix(operand.Role, "return-value-") {
-				continue
-			}
-			index, err := strconv.Atoi(strings.TrimPrefix(operand.Role, "return-value-"))
-			if err != nil || index < 0 || seen[index] {
+			index, ok := operand.Role.Index(equation.RoleFamilyReturnValue)
+			if !ok || seen[index] {
 				continue
 			}
 			identity, resolved := closureTableIdentity(operand.Term.Encoding, closure.Values)
@@ -9943,7 +9942,7 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 		return PublishedDiagnostic{}, false
 	}
 	argumentTerm := []byte(nil)
-	argumentRole := fmt.Sprintf("argument-%08d", childArgument-1)
+	argumentRole := equation.IndexedRole(equation.RoleFamilyArgument, childArgument-1)
 	callee := ""
 	for _, operand := range application.Operands {
 		switch operand.Role {
@@ -9983,7 +9982,7 @@ func (l *lexicalEvaluator) projectSummaryCallDiagnostic(caller equation.BoundEqu
 	if sourceHasAnyBoundary(callerOperands.arguments[formal], partition) {
 		display := "argument " + strconv.Itoa(outerArgument)
 		for _, operand := range caller.Operands {
-			if operand.Role == fmt.Sprintf("argument-display-%08d", formal) && len(operand.Value) != 0 {
+			if operand.Role == equation.IndexedRole(equation.RoleFamilyArgumentDisplay, formal) && len(operand.Value) != 0 {
 				display = string(operand.Value)
 				break
 			}
@@ -10317,7 +10316,7 @@ func allocationTemplateKernel(operation equation.BoundEquation, partition equati
 			if string(operand.Value) != shapefact.ScalarFalseWire {
 				complete, decomposable = false, false
 			}
-		case strings.HasPrefix(operand.Role, "value-"):
+		case operand.Role.InFamily(equation.RoleFamilyValue):
 			if shapefact.IsScalar(operand.Value) {
 				continue
 			}
@@ -10431,25 +10430,25 @@ func decodeNativeCaptureEpochRoot(value []byte) (nativeCaptureEpochRootWire, boo
 }
 
 func nativeCaptureEpochRootFacts(operation equation.BoundEquation) ([]equation.Fact, error) {
-	byRole := make(map[string][]byte, len(operation.Operands))
+	byRole := make(map[equation.OperandRole][]byte, len(operation.Operands))
 	for _, operand := range operation.Operands {
-		if strings.HasPrefix(operand.Role, "native-capture-root-") {
+		if operand.Role.InFamily(equation.RoleFamilyNativeCaptureRoot) {
 			byRole[operand.Role] = operand.Value
 		}
 	}
 	var out []equation.Fact
 	for index := 0; ; index++ {
 		slot := fmt.Sprintf("%08d", index)
-		key := byRole["native-capture-root-key-"+slot]
+		key := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "key-"+slot)]
 		if len(key) == 0 {
 			if index == 0 {
 				return nil, nil
 			}
 			break
 		}
-		subject := byRole["native-capture-root-subject-"+slot]
-		content := byRole["native-capture-root-content-"+slot]
-		occurrence := byRole["native-capture-root-occurrence-"+slot]
+		subject := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "subject-"+slot)]
+		content := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "content-"+slot)]
+		occurrence := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "occurrence-"+slot)]
 		if len(subject) == 0 || len(content) == 0 || len(occurrence) == 0 {
 			return nil, fmt.Errorf("engine: incomplete capture epoch root descriptor %d", index)
 		}
@@ -10465,26 +10464,26 @@ func nativeCaptureEpochRootFacts(operation equation.BoundEquation) ([]equation.F
 }
 
 func nativeCaptureTransportFacts(operation equation.BoundEquation, partition equation.Partition) ([]equation.Fact, error) {
-	byRole := make(map[string][]byte, len(operation.Operands))
+	byRole := make(map[equation.OperandRole][]byte, len(operation.Operands))
 	for _, operand := range operation.Operands {
-		if strings.HasPrefix(operand.Role, "native-capture-transport-") {
+		if operand.Role.InFamily(equation.RoleFamilyNativeCaptureTransport) {
 			byRole[operand.Role] = operand.Value
 		}
 	}
 	var out []equation.Fact
 	for index := 0; ; index++ {
 		slot := fmt.Sprintf("%08d", index)
-		term := byRole["native-capture-transport-term-"+slot]
+		term := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "term-"+slot)]
 		if len(term) == 0 {
 			if index == 0 {
 				return nil, nil
 			}
 			break
 		}
-		subject := byRole["native-capture-transport-subject-"+slot]
-		occurrence := byRole["native-capture-transport-occurrence-"+slot]
-		content := byRole["native-capture-transport-content-"+slot]
-		body := byRole["native-capture-transport-body-"+slot]
+		subject := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "subject-"+slot)]
+		occurrence := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "occurrence-"+slot)]
+		content := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "content-"+slot)]
+		body := byRole[equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "body-"+slot)]
 		if len(subject) == 0 || len(occurrence) == 0 || len(content) == 0 || len(body) == 0 {
 			return nil, fmt.Errorf("engine: incomplete capture transport descriptor %d", index)
 		}
@@ -10647,9 +10646,9 @@ func objectMaterializationKernel(lexical *lexicalEvaluator, operation equation.B
 			prototype = strings.TrimPrefix(string(operand.Value), "prototype/")
 		case operand.Role == "result":
 			result = string(operand.Value)
-		case strings.HasPrefix(operand.Role, "member-"):
+		case operand.Role.InFamily(equation.RoleFamilyMember):
 			memberOperands = append(memberOperands, operand.Value)
-		case strings.HasPrefix(operand.Role, "capture-"):
+		case operand.Role.InFamily(equation.RoleFamilyCapture):
 			captures = append(captures, string(operand.Value))
 		}
 	}
@@ -11454,7 +11453,7 @@ func resourceDisplay(child front.Compilation, acquire string) string {
 			if operand.Role == "application" {
 				matches = string(operand.Term.Encoding) == application
 			}
-			if operand.Role == "target-00000000" {
+			if operand.Role == equation.IndexedRole(equation.RoleFamilyTarget, 0) {
 				target = string(operand.Term.Encoding)
 			}
 		}
@@ -12125,7 +12124,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	if !guardsHold(operation.Guards, partition) {
 		return equation.TransactionResult{Complete: true}, nil
 	}
-	by := map[string][]byte{}
+	by := map[equation.OperandRole][]byte{}
 	for _, operand := range operation.Operands {
 		by[operand.Role] = operand.Value
 	}
@@ -12138,7 +12137,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	if e1 != nil || e2 != nil {
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed expression")
 	}
-	resolve := func(role string) ([]byte, error) {
+	resolve := func(role equation.OperandRole) ([]byte, error) {
 		value, ok := by[role]
 		if !ok {
 			return nil, fmt.Errorf("engine: missing expression operand %q", role)
@@ -12239,7 +12238,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	case wir.OpConcat:
 		var b strings.Builder
 		for i := 0; ; i++ {
-			term, found := by[fmt.Sprintf("value-%08d", i)]
+			term, found := by[equation.IndexedRole(equation.RoleFamilyValue, i)]
 			if !found {
 				if i < 2 {
 					err = fmt.Errorf("engine: missing concat operand")
@@ -12441,7 +12440,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 	// proven leave the result clean.
 	if wir.Op(kind) == wir.OpConcat {
 		for i := 0; ; i++ {
-			term, found := by[fmt.Sprintf("value-%08d", i)]
+			term, found := by[equation.IndexedRole(equation.RoleFamilyValue, i)]
 			if !found {
 				break
 			}
@@ -12467,14 +12466,14 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 		// result. Carry only the already-published boundary to the comparison
 		// result so branch evaluation can retain the possible arm; the boundary
 		// is not a type proof for either operand.
-		for _, role := range []string{"left", "right"} {
+		for _, role := range []equation.OperandRole{"left", "right"} {
 			if root, _, found := explicitAnySourceFact(by[role], partition); found {
 				values = append(values, equation.Fact{Key: "gradual-any/" + string(result) + "/" + operation.Target.Name, Value: root})
 				break
 			}
 		}
 		closedComparison := closedPlacementIdentityComparison(by["left"], by["right"], partition)
-		for _, role := range []string{"left", "right"} {
+		for _, role := range []equation.OperandRole{"left", "right"} {
 			if allocation, found := placementAllocationForTerm(by[role], partition); found {
 				if !closedComparison {
 					values = append(values, placementBlockerFact(allocation.Identity, operation.Target.Name, "identity-compare"))
@@ -12491,7 +12490,7 @@ func expressionKernel(operation equation.BoundEquation, partition equation.Parti
 // values the expression kernel consumed. Primitive concatenation is licensed
 // only when every operand is a non-nil string or number carrier; any other
 // value withholds the row because a metamethod may participate.
-func nativeConcatSitePublication(operation equation.BoundEquation, operands map[string][]byte, partition equation.Partition) (equation.Fact, bool) {
+func nativeConcatSitePublication(operation equation.BoundEquation, operands map[equation.OperandRole][]byte, partition equation.Partition) (equation.Fact, bool) {
 	key := operands["native-concat-site-key"]
 	if len(key) == 0 {
 		return equation.Fact{}, false
@@ -12499,7 +12498,7 @@ func nativeConcatSitePublication(operation equation.BoundEquation, operands map[
 	classes := make([]string, 0)
 	formatting := "not_applicable"
 	for index := 0; ; index++ {
-		term, found := operands[fmt.Sprintf("value-%08d", index)]
+		term, found := operands[equation.IndexedRole(equation.RoleFamilyValue, index)]
 		if !found {
 			break
 		}
@@ -13335,12 +13334,12 @@ func sealedSequenceLength(table shapefact.Table) (int64, bool) {
 	return int64(len(table.Members)), true
 }
 
-func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[string][]byte, partition equation.Partition) ([]byte, bool) {
+func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[equation.OperandRole][]byte, partition equation.Partition) ([]byte, bool) {
 	// Exact scalar arithmetic already has a concrete evaluator. This fallback
 	// exists only to carry a sealed type witness across the expression seam;
 	// applying it to plain scalar coercions would replace their intentionally
 	// conservative Top result with an inferred static contract.
-	hasWitness := func(role string) bool {
+	hasWitness := func(role equation.OperandRole) bool {
 		term, found := operands[role]
 		if !found {
 			return false
@@ -13359,7 +13358,7 @@ func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[stri
 		witnessed = hasWitness("value")
 	case wir.OpConcat:
 		for index := 0; ; index++ {
-			role := fmt.Sprintf("value-%08d", index)
+			role := equation.IndexedRole(equation.RoleFamilyValue, index)
 			if _, found := operands[role]; !found {
 				break
 			}
@@ -13369,7 +13368,7 @@ func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[stri
 	if !witnessed {
 		return nil, false
 	}
-	resolveType := func(role string) (typ.Type, bool) {
+	resolveType := func(role equation.OperandRole) (typ.Type, bool) {
 		term, found := operands[role]
 		if !found {
 			return nil, false
@@ -13406,7 +13405,7 @@ func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[stri
 		result, ok = typeoperator.UnaryOp(operatorText, value)
 	case wir.OpConcat:
 		for index := 0; ; index++ {
-			value, valueOK := resolveType(fmt.Sprintf("value-%08d", index))
+			value, valueOK := resolveType(equation.IndexedRole(equation.RoleFamilyValue, index))
 			if !valueOK {
 				return nil, false
 			}
@@ -13418,7 +13417,7 @@ func typedExpressionResult(kind wir.Op, operator wir.Operator, operands map[stri
 			if !ok {
 				return nil, false
 			}
-			if _, next := operands[fmt.Sprintf("value-%08d", index+1)]; !next {
+			if _, next := operands[equation.IndexedRole(equation.RoleFamilyValue, index+1)]; !next {
 				break
 			}
 		}
@@ -15173,7 +15172,7 @@ func guardedLocalCallResultClaim(lexical *lexicalEvaluator, operation equation.B
 			continue
 		}
 		for _, operand := range candidate.Operands {
-			if strings.HasPrefix(operand.Role, "result-") && string(operand.Term.Encoding) == result {
+			if _, semantic := operand.Role.SemanticResult(); semantic && string(operand.Term.Encoding) == result {
 				return !guardWindowHasMutation(compilation.Artifact, operation, candidate.Target.Name)
 			}
 		}
@@ -15254,7 +15253,7 @@ func importedResultPaths(artifact equation.Artifact) map[string]bool {
 				case "container":
 					container = string(operand.Term.Encoding)
 				default:
-					if operand.Role != "result-display" && strings.HasPrefix(operand.Role, "result-") {
+					if _, semantic := operand.Role.SemanticResult(); semantic {
 						result = string(operand.Term.Encoding)
 					}
 				}
@@ -17290,8 +17289,13 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 	}
 	values := make([]equation.Fact, 0)
 	for _, operand := range operation.Operands {
-		if !strings.HasPrefix(operand.Role, "result-") {
+		semantic, ok := operand.Role.SemanticResult()
+		if !ok {
 			continue
+		}
+		index, indexed := semantic.Index()
+		if !indexed {
+			return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
 		}
 		result := string(operand.Value)
 		if !strings.HasPrefix(result, "path/") {
@@ -17299,10 +17303,6 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 		}
 		resultValue := value
 		if keyedIterator {
-			index, indexErr := strconv.Atoi(strings.TrimPrefix(operand.Role, "result-"))
-			if indexErr != nil {
-				return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
-			}
 			if index == 0 {
 				resultValue = iteratorKey
 				if enumeratedSource {
@@ -17313,10 +17313,6 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 				resultValue = iteratorElement
 			}
 		} else if indexedIterator {
-			index, indexErr := strconv.Atoi(strings.TrimPrefix(operand.Role, "result-"))
-			if indexErr != nil {
-				return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
-			}
 			if index == 0 {
 				var encoded bool
 				resultValue, encoded = shapefact.EncodeTarget(typ.Integer)
@@ -17330,10 +17326,6 @@ func genericForKernel(operation equation.BoundEquation, partition equation.Parti
 				}
 			}
 		} else if len(iteratorReturns) != 0 {
-			index, indexErr := strconv.Atoi(strings.TrimPrefix(operand.Role, "result-"))
-			if indexErr != nil {
-				return equation.TransactionResult{}, fmt.Errorf("engine: malformed generic-for result %q", operand.Role)
-			}
 			if index < len(iteratorReturns) {
 				bound := iteratorReturns[index]
 				if index == 0 {
@@ -17508,21 +17500,30 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 	cases := make(map[string]*selectCase)
 	for _, operand := range operation.Operands {
 		switch {
-		case strings.HasPrefix(operand.Role, "case-") && !strings.HasPrefix(operand.Role, "case-display-"):
-			name := strings.TrimPrefix(operand.Role, "case-")
+		case func() bool {
+			_, indexed := operand.Role.Index(equation.RoleFamilyCase)
+			return indexed
+		}():
+			name, _ := operand.Role.Suffix(equation.RoleFamilyCase)
 			if cases[name] != nil || !strings.HasPrefix(string(operand.Value), "path/") {
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed select case")
 			}
 			cases[name] = &selectCase{term: string(operand.Value)}
-		case strings.HasPrefix(operand.Role, "case-display-"):
-			name := strings.TrimPrefix(operand.Role, "case-display-")
+		case func() bool {
+			_, indexed := operand.Role.Index(equation.RoleFamilyCaseDisplay)
+			return indexed
+		}():
+			name, _ := operand.Role.Suffix(equation.RoleFamilyCaseDisplay)
 			item := cases[name]
 			if item == nil || item.display != "" || len(operand.Value) == 0 {
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed select case display")
 			}
 			item.display = string(operand.Value)
-		case strings.HasPrefix(operand.Role, "payload-type-"):
-			name := strings.TrimPrefix(operand.Role, "payload-type-")
+		case func() bool {
+			_, indexed := operand.Role.Index(equation.RoleFamilyPayloadType)
+			return indexed
+		}():
+			name, _ := operand.Role.Suffix(equation.RoleFamilyPayloadType)
 			item := cases[name]
 			if item == nil || item.payload != nil {
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed select payload")
@@ -17532,7 +17533,7 @@ func channelSelectKernel(operation equation.BoundEquation, partition equation.Pa
 				return unrefined, nil
 			}
 			item.payload = payload
-		case operand.Role == "result" || operand.Role == "default" || strings.HasPrefix(operand.Role, "suspension-live-"):
+		case operand.Role == equation.RoleResult || operand.Role == equation.RoleDefault || operand.Role.InFamily(equation.RoleFamilySuspensionLive):
 		default:
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed channel select role %q", operand.Role)
 		}
@@ -18121,7 +18122,7 @@ func compoundTypeEqualityBranchClosure(operation equation.BoundEquation, partiti
 	hasTypeEquality, hasUnknown, predicates := false, false, 0
 	typePredicates := make([]branchPredicateWire, 0)
 	for _, operand := range operation.Operands {
-		if !strings.HasPrefix(operand.Role, "implied-") {
+		if !operand.Role.InFamily(equation.RoleFamilyImplied) {
 			continue
 		}
 		predicate, trueEdge, recognized, err := branchEvidencePredicate(operand)
@@ -19903,7 +19904,7 @@ type densityBranchRelation struct{ counter, container string }
 func densityBranchRelations(operands []equation.BoundOperand) []densityBranchRelation {
 	relations := make([]densityBranchRelation, 0, len(operands))
 	for _, operand := range operands {
-		if !strings.HasPrefix(operand.Role, "density-relation-") {
+		if !operand.Role.InFamily(equation.RoleFamilyDensityRelation) {
 			continue
 		}
 		rest, stated := strings.CutPrefix(string(operand.Value), densityRelationPrefix)
@@ -19953,7 +19954,7 @@ func densityLengthFloorProofs(relations []densityBranchRelation, predicates []br
 func monotoneFloorOperands(operands []equation.BoundOperand) [][]byte {
 	var carriers [][]byte
 	for _, operand := range operands {
-		if !strings.HasPrefix(operand.Role, "monotone-floor-") || !strings.HasPrefix(string(operand.Value), "path/") {
+		if !operand.Role.InFamily(equation.RoleFamilyMonotoneFloor) || !strings.HasPrefix(string(operand.Value), "path/") {
 			continue
 		}
 		carriers = append(carriers, append([]byte(nil), operand.Value...))
@@ -21380,7 +21381,7 @@ func freezeCallEpoch(operation equation.BoundEquation, partition equation.Partit
 		switch operand.Role {
 		case "callee-display":
 			callee = string(operand.Value)
-		case "argument-00000000":
+		case equation.OperandRole("argument-00000000"):
 			subject = operand.Value
 		}
 	}
@@ -22234,7 +22235,7 @@ func heapIdentityFact(term, operation string, identity []byte) equation.Fact {
 
 func operationOperand(operands []equation.BoundOperand, role string) ([]byte, bool) {
 	for _, operand := range operands {
-		if operand.Role == role {
+		if operand.Role.String() == role {
 			return append([]byte(nil), operand.Value...), true
 		}
 	}
@@ -23654,7 +23655,7 @@ func channelLifecycleDisplayFact(receiver []byte, operation string, display []by
 }
 
 func callArgumentDisplay(operands []equation.BoundOperand, index int) string {
-	want := fmt.Sprintf("argument-display-%08d", index)
+	want := equation.IndexedRole(equation.RoleFamilyArgumentDisplay, index)
 	for _, operand := range operands {
 		if operand.Role == want {
 			return string(operand.Value)
@@ -23876,9 +23877,9 @@ func callOperands(operands []equation.BoundOperand) (directCallOperands, error) 
 				return directCallOperands{}, fmt.Errorf("engine: malformed asserted call path")
 			}
 			result.assertedPath = append([]byte(nil), operand.Value...)
-		case strings.HasPrefix(operand.Role, "argument-display-"):
+		case operand.Role.InFamily(equation.RoleFamilyArgumentDisplay):
 			continue
-		case strings.HasPrefix(operand.Role, "argument-"):
+		case operand.Role.InFamily(equation.RoleFamilyArgument):
 			index, err := callArgumentIndex(operand.Role)
 			if err != nil || arguments[index] != nil {
 				return directCallOperands{}, fmt.Errorf("engine: malformed call argument role %q", operand.Role)
@@ -24078,12 +24079,12 @@ func priorSealedTableValue(term []byte, partition equation.Partition) ([]byte, b
 	return prior.Value, true
 }
 
-func callArgumentIndex(role string) (int, error) {
-	text := strings.TrimPrefix(role, "argument-")
-	if len(text) != 8 {
+func callArgumentIndex(role equation.OperandRole) (int, error) {
+	index, ok := role.FixedIndex(equation.RoleFamilyArgument, 8)
+	if !ok {
 		return 0, fmt.Errorf("invalid index")
 	}
-	return strconv.Atoi(text)
+	return index, nil
 }
 
 // spreadArgumentRefutation decides the positions a spread call already names.
@@ -24165,7 +24166,7 @@ func callDiagnostic(operation equation.BoundEquation, code, subject string, payl
 
 func sendIsolationPayload(operation equation.Equation) ([]byte, string) {
 	for _, operand := range operation.Operands {
-		if operand.Role != "argument-00000002" {
+		if operand.Role != equation.IndexedRole(equation.RoleFamilyArgument, 2) {
 			continue
 		}
 		if strings.HasPrefix(string(operand.Term.Encoding), "temp/") {
@@ -24662,7 +24663,7 @@ func externalCallKernel(lexical *lexicalEvaluator, operation equation.BoundEquat
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external result arity")
 	}
 	for _, operand := range operation.Operands {
-		if strings.HasPrefix(operand.Role, "argument-") || operand.Role == "receiver" || operand.Role == "method" || operand.Role == "application" || operand.Role == "provider" || operand.Role == "argument-spread" || operand.Role == "result-arity" || operand.Role == "result-spread" || operand.Role == "context" {
+		if operand.Role.InFamily(equation.RoleFamilyArgument) || operand.Role == "receiver" || operand.Role == "method" || operand.Role == "application" || operand.Role == "provider" || operand.Role == "argument-spread" || operand.Role == "result-arity" || operand.Role == "result-spread" || operand.Role == "context" {
 			continue
 		}
 		return equation.TransactionResult{}, fmt.Errorf("engine: malformed external call role %q", operand.Role)
@@ -24941,7 +24942,7 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result callee")
 			}
 			callee = operand.Value
-		case strings.HasPrefix(operand.Role, "argument-"):
+		case operand.Role.InFamily(equation.RoleFamilyArgument):
 			index, err := callArgumentIndex(operand.Role)
 			if err != nil || argumentTerms[index] != nil {
 				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result argument %q", operand.Role)
@@ -24971,10 +24972,22 @@ func callResultsKernel(lexical *lexicalEvaluator, operation equation.BoundEquati
 				return equation.TransactionResult{}, fmt.Errorf("engine: duplicate native builtin call key")
 			}
 			nativeBuiltinKey = operand.Value
-		case strings.HasPrefix(operand.Role, "result-"):
-			resultTerms[strings.TrimPrefix(operand.Role, "result-")] = operand.Value
-		case strings.HasPrefix(operand.Role, "target-"):
-			targetTerms[strings.TrimPrefix(operand.Role, "target-")] = operand.Value
+		case operand.Role.InFamily(equation.RoleFamilyResult):
+			semantic, ok := operand.Role.SemanticResult()
+			if !ok {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result role %q", operand.Role)
+			}
+			suffix, indexed := semantic.OperandRole().Suffix(equation.RoleFamilyResult)
+			if !indexed {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result role %q", operand.Role)
+			}
+			resultTerms[suffix] = operand.Value
+		case operand.Role.InFamily(equation.RoleFamilyTarget):
+			suffix, indexed := operand.Role.Suffix(equation.RoleFamilyTarget)
+			if !indexed {
+				return equation.TransactionResult{}, fmt.Errorf("engine: malformed call target role %q", operand.Role)
+			}
+			targetTerms[suffix] = operand.Value
 		default:
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed call result role %q", operand.Role)
 		}
@@ -25860,7 +25873,7 @@ func containedFormalWriteBody(child front.Compilation) bool {
 			wroteFormal = true
 		case "publication":
 			for _, operand := range operation.Operands {
-				if strings.HasPrefix(operand.Role, "return-value-") && formals[string(operand.Term.Encoding)] {
+				if operand.Role.InFamily(equation.RoleFamilyReturnValue) && formals[string(operand.Term.Encoding)] {
 					return false
 				}
 			}
@@ -25894,7 +25907,7 @@ func closedLocalParameterSummary(child front.Compilation) bool {
 			return false
 		case "publication":
 			for _, operand := range operation.Operands {
-				if strings.HasPrefix(operand.Role, "return-value-") && formals[string(operand.Term.Encoding)] {
+				if operand.Role.InFamily(equation.RoleFamilyReturnValue) && formals[string(operand.Term.Encoding)] {
 					return false
 				}
 			}
@@ -26228,7 +26241,7 @@ func inferredClosureResultAtIndex(lexical *lexicalEvaluator, handle closureHandl
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
-		term, found := artifactOperand(operation.Operands, fmt.Sprintf("return-value-%08d", index))
+		term, found := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, index))
 		if !found {
 			continue
 		}
@@ -26263,7 +26276,7 @@ func inferredClosureSingleReturn(lexical *lexicalEvaluator, handle closureHandle
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
-		if _, multi := artifactOperand(operation.Operands, "return-value-00000001"); multi {
+		if _, multi := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, 1)); multi {
 			return nil, false
 		}
 	}
@@ -28222,19 +28235,6 @@ func returnValueSubject(index int, display string) string {
 	return fmt.Sprintf("returned value %d (%s)", index+1, display)
 }
 
-// indexedRoleValue decodes an operand whose role carries a slot index.
-func indexedRoleValue(role, prefix string, value []byte) (int, string, bool) {
-	suffix, ok := strings.CutPrefix(role, prefix)
-	if !ok {
-		return 0, "", false
-	}
-	index, err := strconv.Atoi(suffix)
-	if err != nil || index < 0 {
-		return 0, "", false
-	}
-	return index, string(value), true
-}
-
 func hasValue(partition equation.Partition, key string) bool {
 	item, found := partition.Value(key)
 	return found && string(item.Value) == shapefact.ScalarBooleanWire
@@ -28432,17 +28432,11 @@ func publicationKernelWithGlobals(operation equation.BoundEquation, partition eq
 	displays := make(map[int]string)
 	sources := make(map[int][]byte)
 	for _, operand := range operation.Operands {
-		const prefix = "return-value-"
-		if index, display, ok := indexedRoleValue(operand.Role, "return-display-", operand.Value); ok {
-			displays[index] = display
+		if index, ok := operand.Role.Index(equation.RoleFamilyReturnDisplay); ok {
+			displays[index] = string(operand.Value)
 			continue
 		}
-		if strings.HasPrefix(operand.Role, "declared-return-") {
-			indexText := strings.TrimPrefix(operand.Role, "declared-return-")
-			index, err := strconv.Atoi(indexText)
-			if err != nil || index < 0 {
-				return equation.TransactionResult{}, fmt.Errorf("engine: malformed declared return operand role %q", operand.Role)
-			}
+		if index, ok := operand.Role.Index(equation.RoleFamilyDeclaredReturn); ok {
 			declaredType, ok := shapefact.DecodeTarget(operand.Value)
 			if !ok || declaredType == nil {
 				// A generic declaration may have a canonical type-parameter edge
@@ -28464,15 +28458,8 @@ func publicationKernelWithGlobals(operation equation.BoundEquation, partition eq
 			declared[index] = declaredType
 			continue
 		}
-		if !strings.HasPrefix(operand.Role, prefix) {
-			return equation.TransactionResult{}, fmt.Errorf("engine: malformed return operand role %q", operand.Role)
-		}
-		indexText := strings.TrimPrefix(operand.Role, prefix)
-		if len(indexText) != 8 {
-			return equation.TransactionResult{}, fmt.Errorf("engine: malformed return operand role %q", operand.Role)
-		}
-		index, err := strconv.Atoi(indexText)
-		if err != nil || index < 0 || (index < len(values) && values[index] != nil) {
+		index, ok := operand.Role.FixedIndex(equation.RoleFamilyReturnValue, 8)
+		if !ok || (index < len(values) && values[index] != nil) {
 			return equation.TransactionResult{}, fmt.Errorf("engine: malformed return operand role %q", operand.Role)
 		}
 		for len(values) <= index {
@@ -28553,7 +28540,7 @@ func publicationKernelWithGlobals(operation equation.BoundEquation, partition eq
 			Key:   fmt.Sprintf("return-relation-surface/%s/%08d", operation.Target.Name, index),
 			Value: relationSurfaces[index],
 		})
-		source := boundOperandValue(operation.Operands, fmt.Sprintf("return-value-%08d", index))
+		source := boundOperandValue(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, index).String())
 		for _, origin := range liveMemberOrigins(source, partition) {
 			projected = append(projected, equation.Fact{
 				Key:   fmt.Sprintf("return-member-origin/%s/%08d/%s", operation.Target.Name, index, base64.RawURLEncoding.EncodeToString([]byte(origin.Suffix))),
@@ -28628,7 +28615,7 @@ func branchTruth(operands []equation.BoundOperand, partition equation.Partition)
 			// the arm that leaves one, and the cell a short-circuit result
 			// occupies are closed branch metadata. They are intentionally not
 			// alternate selectors.
-			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && !strings.HasPrefix(operand.Role, "implied-") && !strings.HasPrefix(operand.Role, "sufficient-") && !strings.HasPrefix(operand.Role, "difference-") && !strings.HasPrefix(operand.Role, "monotone-floor-") && !strings.HasPrefix(operand.Role, "density-relation-") && !strings.HasPrefix(operand.Role, "short-circuit-") && !strings.HasPrefix(operand.Role, "native-") {
+			if operand.Role != "predicate-display" && operand.Role != "index-presence-consumer" && operand.Role != "recurrence" && operand.Role != "recurrence-exit" && operand.Role != equation.RoleBranchChain && !operand.Role.InFamily(equation.RoleFamilyImplied) && !operand.Role.InFamily(equation.RoleFamilySufficient) && !operand.Role.InFamily(equation.RoleFamilyDifference) && !operand.Role.InFamily(equation.RoleFamilyMonotoneFloor) && !operand.Role.InFamily(equation.RoleFamilyDensityRelation) && !operand.Role.InFamily(equation.RoleFamilyShortCircuit) && !operand.Role.InFamily(equation.RoleFamilyNative) {
 				return false, false, fmt.Errorf("engine: malformed branch operand role %q", operand.Role)
 			}
 		}
@@ -28979,10 +28966,11 @@ func operandsByRole(operands []equation.BoundOperand, roles ...string) (map[stri
 	}
 	result := make(map[string][]byte, len(roles))
 	for _, operand := range operands {
-		if !wanted[operand.Role] || result[operand.Role] != nil {
+		role := operand.Role.String()
+		if !wanted[role] || result[role] != nil {
 			return nil, fmt.Errorf("engine: malformed operand role %q", operand.Role)
 		}
-		result[operand.Role] = operand.Value
+		result[role] = operand.Value
 	}
 	for _, role := range roles {
 		if len(result[role]) == 0 {
@@ -28996,7 +28984,7 @@ func operandsByRole(operands []equation.BoundOperand, roles ...string) (map[stri
 // presentation-dependent, so every slot lookup goes through its role.
 func boundOperandValue(operands []equation.BoundOperand, role string) []byte {
 	for _, operand := range operands {
-		if operand.Role == role {
+		if operand.Role.String() == role {
 			return operand.Value
 		}
 	}
@@ -29013,13 +29001,14 @@ func requiredOperandsByRole(operands []equation.BoundOperand, roles ...string) (
 	}
 	result := make(map[string][]byte, len(roles))
 	for _, operand := range operands {
-		if !wanted[operand.Role] {
+		role := operand.Role.String()
+		if !wanted[role] {
 			continue
 		}
-		if result[operand.Role] != nil {
+		if result[role] != nil {
 			return nil, fmt.Errorf("engine: duplicate operand role %q", operand.Role)
 		}
-		result[operand.Role] = operand.Value
+		result[role] = operand.Value
 	}
 	for _, role := range roles {
 		if len(result[role]) == 0 {
@@ -30525,11 +30514,12 @@ func artifactOperandsByRole(operands []equation.Operand, roles ...string) (map[s
 		if operand.Term.Entry {
 			return nil, fmt.Errorf("engine: unexpected entry operand")
 		}
-		if wanted[operand.Role] {
-			if result[operand.Role] != nil {
+		role := operand.Role.String()
+		if wanted[role] {
+			if result[role] != nil {
 				return nil, fmt.Errorf("engine: duplicate artifact operand %q", operand.Role)
 			}
-			result[operand.Role] = operand.Term.Encoding
+			result[role] = operand.Term.Encoding
 		}
 	}
 	for _, role := range roles {

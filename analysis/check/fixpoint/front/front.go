@@ -88,9 +88,9 @@ type Compilation struct {
 	// may inspect it only as descriptive input; evaluation remains exclusively
 	// owned by Artifact and the engine kernels.
 	WIR *wir.Body
-	// Graph is the source-owned CFG for WIR. It is the authoritative control
-	// topology a consumer must use for reachability questions (loop membership,
-	// backedges); it is never reconstructed from instruction order.
+	// Graph is the source-owned CFG for WIR. Front-owned publishers use it to
+	// freeze reachability relations into Artifact; downstream consumers read
+	// those operands rather than re-deriving reachability.
 	Graph cfg.Graph
 	// Body is the stable lexical identity for this independently admitted WIR
 	// body. Evaluation still starts exclusively at the root artifact.
@@ -1297,13 +1297,13 @@ func returnSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span
 			}
 			for index, meta := range body.ReturnValueMeta(returns[returnIndex].ReturnValues) {
 				if meta.Span.Valid() {
-					out[operation.Target.Name+"/"+indexedRole("return-value", index)] = meta.Span
+					out[operation.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyReturnValue, index).String()] = meta.Span
 				}
 			}
 		}
 		for index, span := range declared {
 			if span.Valid() {
-				out[operation.Target.Name+"/"+indexedRole("declared-return", index)] = span
+				out[operation.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyDeclaredReturn, index).String()] = span
 			}
 		}
 		returnIndex++
@@ -1335,7 +1335,7 @@ func expressionSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.
 		expressionIndex++
 		for index, meta := range body.ConcatOperandMeta(instruction.ConcatOperands) {
 			if meta.Span.Valid() {
-				out[operation.Target.Name+"/"+indexedRole("value", index)] = meta.Span
+				out[operation.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyValue, index).String()] = meta.Span
 			}
 		}
 	}
@@ -1396,7 +1396,7 @@ func callSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
 		}
 		for index, argument := range body.CallArgumentMeta(call.CallArgs) {
 			if argument.Span.Valid() {
-				out[item.Target.Name+"/"+indexedRole("argument", index)] = argument.Span
+				out[item.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyArgument, index).String()] = argument.Span
 			}
 		}
 		for index, argument := range body.Operands(call.List) {
@@ -1404,7 +1404,7 @@ func callSpans(body *wir.Body, artifact equation.Artifact) map[string]wir.Span {
 				continue
 			}
 			for suffix, span := range literalMembers[argument.Ref] {
-				out[item.Target.Name+"/"+indexedRole("argument", index)+suffix] = span
+				out[item.Target.Name+"/"+equation.IndexedRole(equation.RoleFamilyArgument, index).String()+suffix] = span
 			}
 		}
 		callIndex++
@@ -1710,6 +1710,10 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 	monotoneCarriers := monotoneFloorCarriers(body, operations, recurrentPoints)
 	densityCarriers := densitySequenceCarriers(body, instructionOrder, recurrentPoints, graph, guardReachability, bodyID, branchTargets)
 	suspensionLives := suspensionLiveAllocations(body, graph, guardReachability)
+	branchChains, err := branchChainOperands(body)
+	if err != nil {
+		return equation.Artifact{}, fmt.Errorf("front: branch chains: %w", err)
+	}
 	for index, operation := range operations {
 		instruction := operation.instruction
 		draft := equation.Draft{Target: operation.target, Entry: entry}
@@ -2001,6 +2005,9 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 			if hasDynamicIndexRead {
 				operands = append(operands, equation.Operand{Role: "index-presence-consumer", Term: equation.ClosedTerm([]byte(shapefact.ScalarTrueWire))})
 			}
+			if chain, published := branchChains[instruction.Point]; published {
+				operands = append(operands, equation.Operand{Role: "branch-chain", Term: chain})
+			}
 			// A decision one arm of which leaves a loop states which arm that is.
 			// The arm that stays inside republishes on every trip, so a point the
 			// leaving arm alone reaches stands after all of them: what the loop
@@ -2048,7 +2055,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				}
 				for liveIndex, term := range suspensionLives[instruction.Point] {
 					operands = append(operands, equation.Operand{
-						Role: "suspension-live-" + fmt.Sprintf("%08d", liveIndex),
+						Role: equation.IndexedRole(equation.RoleFamilySuspensionLive, liveIndex),
 						Term: term,
 					})
 				}
@@ -2109,16 +2116,16 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 				}
 				caseName := fmt.Sprintf("%08d", caseIndex)
 				operands = append(operands,
-					equation.Operand{Role: "case-" + caseName, Term: channel},
-					equation.Operand{Role: "case-display-" + caseName, Term: equation.ClosedTerm([]byte(selectCaseDisplay(body, candidate)))},
+					equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyCase, caseName), Term: channel},
+					equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyCaseDisplay, caseName), Term: equation.ClosedTerm([]byte(selectCaseDisplay(body, candidate)))},
 				)
 				if payload, ok := selectCasePayloadTerm(body, candidate); ok {
-					operands = append(operands, equation.Operand{Role: "payload-type-" + caseName, Term: payload})
+					operands = append(operands, equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyPayloadType, caseName), Term: payload})
 				}
 			}
 			for liveIndex, term := range suspensionLives[instruction.Point] {
 				operands = append(operands, equation.Operand{
-					Role: "suspension-live-" + fmt.Sprintf("%08d", liveIndex),
+					Role: equation.IndexedRole(equation.RoleFamilySuspensionLive, liveIndex),
 					Term: term,
 				})
 			}
@@ -2149,7 +2156,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 		if recurrentPoints[instruction.Point] && draft.Occurrence.Kind == "branch-relations" {
 			for carrierIndex, carrier := range monotoneCarriers {
 				draft.Operands = append(draft.Operands, equation.Operand{
-					Role: "monotone-floor-" + fmt.Sprintf("%08d", carrierIndex),
+					Role: equation.IndexedRole(equation.RoleFamilyMonotoneFloor, carrierIndex),
 					Term: equation.ClosedTerm([]byte(carrier)),
 				})
 			}
@@ -2164,7 +2171,7 @@ func compileWIRForBody(bodyID equation.BodyID, body *wir.Body, graph cfg.Graph, 
 					continue
 				}
 				draft.Operands = append(draft.Operands, equation.Operand{
-					Role: "density-relation-" + fmt.Sprintf("%08d", carrierIndex),
+					Role: equation.IndexedRole(equation.RoleFamilyDensityRelation, carrierIndex),
 					Term: equation.ClosedTerm(densityRelationTerm(carrier)),
 				})
 			}
@@ -2555,7 +2562,7 @@ func genericForOperands(body *wir.Body, instruction wir.Instruction, bindings []
 	if len(sources) == 0 {
 		return nil, fmt.Errorf("iterator has no source values")
 	}
-	roles := []string{"iterator", "state", "control"}
+	roles := []equation.OperandRole{"iterator", "state", "control"}
 	operands := make([]equation.Operand, 0, len(roles)+1+2*len(bindings))
 	operands = append(operands, equation.Operand{Role: "iteration-kind", Term: equation.ClosedTerm([]byte("iteration-kind/generic"))})
 	for index, role := range roles {
@@ -2577,8 +2584,8 @@ func genericForOperands(body *wir.Body, instruction wir.Instruction, bindings []
 	for index, binding := range bindings {
 		name := fmt.Sprintf("%08d", index)
 		operands = append(operands,
-			equation.Operand{Role: "result-" + name, Term: binding.term},
-			equation.Operand{Role: "display-" + name, Term: equation.ClosedTerm([]byte(binding.display))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyResult, name), Term: binding.term},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyDisplay, name), Term: equation.ClosedTerm([]byte(binding.display))},
 		)
 	}
 	return operands, nil
@@ -2595,7 +2602,7 @@ func numericForOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 	}
 	operands := make([]equation.Operand, 0, 6)
 	operands = append(operands, equation.Operand{Role: "iteration-kind", Term: equation.ClosedTerm([]byte("iteration-kind/numeric"))})
-	for index, role := range []string{"iterator", "state", "control"} {
+	for index, role := range []equation.OperandRole{"iterator", "state", "control"} {
 		term, err := scalarTerm(body, sources[index])
 		if err != nil {
 			return nil, fmt.Errorf("%s bound: %w", role, err)
@@ -2607,8 +2614,8 @@ func numericForOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 		return nil, fmt.Errorf("numeric binding: %w", err)
 	}
 	return append(operands,
-		equation.Operand{Role: "result-00000000", Term: result},
-		equation.Operand{Role: "display-00000000", Term: equation.ClosedTerm([]byte(display))},
+		equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyResult, 0), Term: result},
+		equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyDisplay, 0), Term: equation.ClosedTerm([]byte(display))},
 	), nil
 }
 
@@ -2664,8 +2671,8 @@ func entryDeclaredOperands(body *wir.Body) []equation.Operand {
 		}
 		name := fmt.Sprintf("%08d", index)
 		operands = append(operands,
-			equation.Operand{Role: "declared-root-" + name, Term: equation.ClosedTerm([]byte(item.term))},
-			equation.Operand{Role: "declared-type-" + name, Term: equation.ClosedTerm(encoded)},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyDeclaredRoot, name), Term: equation.ClosedTerm([]byte(item.term))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyDeclaredType, name), Term: equation.ClosedTerm(encoded)},
 		)
 	}
 	return operands
@@ -2815,7 +2822,7 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 		}
 		operands = append(operands, equation.Operand{Role: "predicate", Term: predicate})
 	}
-	appendOperand := func(role string, value wir.Operand) error {
+	appendOperand := func(role equation.OperandRole, value wir.Operand) error {
 		if value.Kind == wir.OperandNone {
 			// This is an unrepresentable source operand, not Lua nil. Keep the
 			// expression transaction complete with Top so it cannot invent a
@@ -2859,11 +2866,11 @@ func expressionOperands(body *wir.Body, instruction wir.Instruction) ([]equation
 			return nil, fmt.Errorf("concat has %d operand anchors for %d operands", len(meta), len(values))
 		}
 		for i, value := range values {
-			if err := appendOperand(indexedRole("value", i), value); err != nil {
+			if err := appendOperand(equation.IndexedRole(equation.RoleFamilyValue, i), value); err != nil {
 				return nil, err
 			}
 			if len(meta) != 0 && meta[i].Label != "" {
-				operands = append(operands, equation.Operand{Role: indexedRole("value-display", i), Term: equation.ClosedTerm([]byte(meta[i].Label))})
+				operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyValueDisplay, i), Term: equation.ClosedTerm([]byte(meta[i].Label))})
 			}
 		}
 	default:
@@ -2988,10 +2995,10 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 		if err != nil {
 			return nil, fmt.Errorf("argument %d: %w", index, err)
 		}
-		operands = append(operands, equation.Operand{Role: indexedRole("argument", index), Term: term})
+		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyArgument, index), Term: term})
 		if argument.Kind == wir.OperandPath {
 			if display := body.Path(wir.PathRef(argument.Ref)).String(); display != "" {
-				operands = append(operands, equation.Operand{Role: indexedRole("argument-display", index), Term: equation.ClosedTerm([]byte(display))})
+				operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyArgumentDisplay, index), Term: equation.ClosedTerm([]byte(display))})
 			}
 		}
 	}
@@ -3007,7 +3014,7 @@ func applyOperands(body *wir.Body, instruction wir.Instruction) ([]equation.Oper
 		if typeName == "" {
 			return nil, fmt.Errorf("empty type argument %d", index)
 		}
-		operands = append(operands, equation.Operand{Role: indexedRole("type-argument", index), Term: equation.ClosedTerm([]byte("type/" + strconv.Quote(typeName)))})
+		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyTypeArgument, index), Term: equation.ClosedTerm([]byte("type/" + strconv.Quote(typeName)))})
 	}
 	if instruction.Check != 0 {
 		check, err := callCheckTerm(body.Check(instruction.Check))
@@ -3216,7 +3223,7 @@ func externalCallOperands(body *wir.Body, instruction wir.Instruction, apply equ
 		if err != nil {
 			return nil, fmt.Errorf("argument %d: %w", index, err)
 		}
-		operands = append(operands, equation.Operand{Role: indexedRole("argument", index), Term: term})
+		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyArgument, index), Term: term})
 	}
 	if instruction.Call.Method != 0 {
 		receiver, err := scalarTerm(body, instruction.Call.Receiver)
@@ -3250,9 +3257,9 @@ func publicationOperands(body *wir.Body, instruction wir.Instruction) ([]equatio
 		if err != nil {
 			return nil, fmt.Errorf("value %d: %w", index, err)
 		}
-		operands = append(operands, equation.Operand{Role: indexedRole("return-value", index), Term: term})
+		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyReturnValue, index), Term: term})
 		if index < len(meta) && meta[index].Label != "" {
-			operands = append(operands, equation.Operand{Role: indexedRole("return-display", index), Term: equation.ClosedTerm([]byte(meta[index].Label))})
+			operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyReturnDisplay, index), Term: equation.ClosedTerm([]byte(meta[index].Label))})
 		}
 	}
 	for index, declaredType := range declared {
@@ -3260,7 +3267,7 @@ func publicationOperands(body *wir.Body, instruction wir.Instruction) ([]equatio
 		if !ok {
 			continue
 		}
-		operands = append(operands, equation.Operand{Role: indexedRole("declared-return", index), Term: equation.ClosedTerm(encoded)})
+		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyDeclaredReturn, index), Term: equation.ClosedTerm(encoded)})
 	}
 	return operands, nil
 }
@@ -3303,7 +3310,7 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 			if err != nil {
 				return nil, fmt.Errorf("provider argument %d: %w", index, err)
 			}
-			operands = append(operands, equation.Operand{Role: indexedRole("argument", index), Term: term})
+			operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyArgument, index), Term: term})
 		}
 	}
 	// A result temporary has no authored spelling of its own. Preserve a direct
@@ -3335,13 +3342,13 @@ func callResultOperands(body *wir.Body, instruction wir.Instruction, apply equat
 		if err != nil {
 			return nil, fmt.Errorf("result %d: %w", index, err)
 		}
-		operands = append(operands, equation.Operand{Role: indexedRole("result", index), Term: term})
+		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyResult, index), Term: term})
 		if completeTargets {
 			target, err := callResultTargetTerm(targets[index])
 			if err != nil {
 				return nil, fmt.Errorf("result target %d: %w", index, err)
 			}
-			operands = append(operands, equation.Operand{Role: indexedRole("target", index), Term: target})
+			operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyTarget, index), Term: target})
 		}
 	}
 	return operands, nil
@@ -3396,8 +3403,6 @@ func directCallDisplay(body *wir.Body, instruction wir.Instruction) (string, boo
 	// arbitrary expressions and are not source-facing diagnostic authority.
 	return callee + "(...)", true
 }
-
-func indexedRole(prefix string, index int) string { return fmt.Sprintf("%s-%08d", prefix, index) }
 
 func boolTerm(value bool) equation.Term {
 	return equation.ClosedTerm([]byte(shapefact.BooleanValueString(value)))
@@ -3528,7 +3533,7 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 				continue
 			}
 			sets.materialization = append(sets.materialization, equation.Operand{
-				Role: fmt.Sprintf("member-%08d", index),
+				Role: equation.IndexedRole(equation.RoleFamilyMember, index),
 				Term: equation.ClosedTerm([]byte("member/" + segment.FormatSegments(entry.Suffix.Segments) + "/" + string(value.Encoding))),
 			})
 		}
@@ -3538,7 +3543,7 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 				return allocationOperandSets{}, fmt.Errorf("table value %d: %w", index, err)
 			}
 			sets.template = append(sets.template, equation.Operand{
-				Role: fmt.Sprintf("value-%08d", index), Term: value,
+				Role: equation.IndexedRole(equation.RoleFamilyValue, index), Term: value,
 			})
 		}
 	case wir.OpClosure:
@@ -3560,7 +3565,7 @@ func allocationOperands(body *wir.Body, instruction wir.Instruction, allocationS
 				return allocationOperandSets{}, fmt.Errorf("closure capture %d: %w", index, err)
 			}
 			sets.materialization = append(sets.materialization, equation.Operand{
-				Role: fmt.Sprintf("capture-%08d", index), Term: value,
+				Role: equation.IndexedRole(equation.RoleFamilyCapture, index), Term: value,
 			})
 		}
 	default:
@@ -3694,10 +3699,10 @@ func nativeCaptureEpochRootOperands(bodyID equation.BodyID, body *wir.Body, inst
 			strconv.Itoa(index),
 		)
 		operands = append(operands,
-			equation.Operand{Role: "native-capture-root-key-" + slot, Term: equation.ClosedTerm([]byte(key.String()))},
-			equation.Operand{Role: "native-capture-root-subject-" + slot, Term: equation.ClosedTerm([]byte(captured.String()))},
-			equation.Operand{Role: "native-capture-root-content-" + slot, Term: equation.ClosedTerm([]byte(content))},
-			equation.Operand{Role: "native-capture-root-occurrence-" + slot, Term: equation.ClosedTerm([]byte(occurrence + "/" + strconv.Itoa(index)))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "key-"+slot), Term: equation.ClosedTerm([]byte(key.String()))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "subject-"+slot), Term: equation.ClosedTerm([]byte(captured.String()))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "content-"+slot), Term: equation.ClosedTerm([]byte(content))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureRoot, "occurrence-"+slot), Term: equation.ClosedTerm([]byte(occurrence + "/" + strconv.Itoa(index)))},
 		)
 	}
 	return operands
@@ -3727,11 +3732,11 @@ func nativeCaptureTransportOperands(bodyID equation.BodyID, body *wir.Body, inst
 		slot := fmt.Sprintf("%08d", len(operands)/5)
 		term := "path/" + root.Key()
 		operands = append(operands,
-			equation.Operand{Role: "native-capture-transport-term-" + slot, Term: equation.ClosedTerm([]byte(term))},
-			equation.Operand{Role: "native-capture-transport-subject-" + slot, Term: equation.ClosedTerm([]byte(root.String()))},
-			equation.Operand{Role: "native-capture-transport-occurrence-" + slot, Term: equation.ClosedTerm([]byte(occurrence))},
-			equation.Operand{Role: "native-capture-transport-content-" + slot, Term: equation.ClosedTerm([]byte(nativeCaptureTransportContent))},
-			equation.Operand{Role: "native-capture-transport-body-" + slot, Term: equation.ClosedTerm([]byte(fmt.Sprintf("%x", bodyID)))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "term-"+slot), Term: equation.ClosedTerm([]byte(term))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "subject-"+slot), Term: equation.ClosedTerm([]byte(root.String()))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "occurrence-"+slot), Term: equation.ClosedTerm([]byte(occurrence))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "content-"+slot), Term: equation.ClosedTerm([]byte(nativeCaptureTransportContent))},
+			equation.Operand{Role: equation.SuffixedRole(equation.RoleFamilyNativeCaptureTransport, "body-"+slot), Term: equation.ClosedTerm([]byte(fmt.Sprintf("%x", bodyID)))},
 		)
 	}
 	return operands
@@ -3796,7 +3801,7 @@ func nativeCaptureTransportCounts(root Compilation) map[wir.FunctionSymbolID]int
 		seen := make(map[string]bool)
 		for _, operation := range compilation.Artifact.Equations {
 			for _, operand := range operation.Operands {
-				if !strings.HasPrefix(operand.Role, "native-capture-transport-term-") || operand.Term.Entry {
+				if _, termRole := operand.Role.Component(equation.RoleFamilyNativeCaptureTransport, "term"); !termRole || operand.Term.Entry {
 					continue
 				}
 				seen[string(operand.Term.Encoding)] = true

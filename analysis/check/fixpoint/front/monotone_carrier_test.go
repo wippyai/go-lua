@@ -1,9 +1,9 @@
 package front_test
 
 import (
-	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/front"
 )
 
@@ -24,7 +24,7 @@ func monotoneCarrierCount(t *testing.T, source string) int {
 				continue
 			}
 			for _, operand := range operation.Operands {
-				if strings.HasPrefix(operand.Role, "monotone-floor-") {
+				if operand.Role.InFamily(equation.RoleFamilyMonotoneFloor) {
 					carriers++
 				}
 			}

@@ -8,8 +8,12 @@ package front
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/ir/wir"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/module/signature"
+	"github.com/wippyai/go-lua/analysis/module/signaturelookup"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -45,7 +49,7 @@ func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Resul
 				walkExpr(operand, scope, inLoop)
 			}
 		case *ast.FuncCallExpr:
-			nativeEffectCall(x, scope, add)
+			nativeEffectCall(bindings, x, scope, add)
 			walkExpr(x.Func, scope, inLoop)
 			walkExpr(x.Receiver, scope, inLoop)
 			for _, arg := range x.Args {
@@ -65,7 +69,7 @@ func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Resul
 				}
 			}
 		case *ast.FunctionExpr:
-			nativeFunctionEffect(x, add)
+			nativeFunctionEffect(bindings, x, add)
 			symbol, _ := bindings.FunctionSymbol(x)
 			for range captureTransports[wir.FunctionSymbolID(symbol)] {
 				add("capture_transport", "carried_through=closure_construction element_class=number initialization=complete presence=dense_prefix", "write.element", "write.length", "grow")
@@ -82,7 +86,7 @@ func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Resul
 					walkExpr(expr, scope, inLoop)
 					if i < len(s.Names) {
 						if _, function := expr.(*ast.FunctionExpr); function {
-							if nativeFunctionHasOpenCall(expr.(*ast.FunctionExpr)) {
+							if nativeFunctionHasOpenCall(bindings, expr.(*ast.FunctionExpr)) {
 								scope.types[s.Names[i]] = "function-open"
 							} else {
 								scope.types[s.Names[i]] = "function"
@@ -91,7 +95,7 @@ func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Resul
 						}
 						if typ := nativeTypeAt(s.Types, i); typ != "" {
 							scope.types[s.Names[i]] = typ
-						} else if typ, ok := nativeOperandClass(expr, scope); ok {
+						} else if typ, ok := nativeOperandClass(bindings, expr, scope); ok {
 							scope.types[s.Names[i]] = typ
 						}
 					}
@@ -107,7 +111,7 @@ func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Resul
 				if s.Func != nil {
 					if s.Name != nil {
 						if id, ok := s.Name.Func.(*ast.IdentExpr); ok {
-							if nativeFunctionHasOpenCall(s.Func) {
+							if nativeFunctionHasOpenCall(bindings, s.Func) {
 								scope.types[id.Value] = "function-open"
 							} else {
 								scope.types[id.Value] = "function"
@@ -156,7 +160,7 @@ func nativeOperationContractsWithTostring(stmts []ast.Stmt, bindings *bind.Resul
 // nativeFunctionEffect audits the admitted lexical body itself.  The closed
 // rows are deliberately limited to bodies whose every operation is in this
 // small, inspectable set; an unlabelled host call stays open.
-func nativeFunctionEffect(fn *ast.FunctionExpr, add func(string, string, ...string)) {
+func nativeFunctionEffect(bindings *bind.Result, fn *ast.FunctionExpr, add func(string, string, ...string)) {
 	if fn == nil {
 		return
 	}
@@ -166,16 +170,18 @@ func nativeFunctionEffect(fn *ast.FunctionExpr, add func(string, string, ...stri
 	walkExpr = func(expr ast.Expr) {
 		switch x := expr.(type) {
 		case *ast.FuncCallExpr:
-			if nativeDirectCall(x, "error") {
+			if _, ok := nativeBoundStdlibCall(bindings, x, "error"); ok {
 				hasError = true
 			}
-			if nativeMemberCall(x, "os", "clock") || nativeDirectCall(x, "load") {
+			if nativeStdlibCallIsOpen(bindings, x, "os.clock") || nativeStdlibCallIsOpen(bindings, x, "load") {
 				hasOpen = true
 			}
-			if x.Method == "upper" || nativeMemberCall(x, "string", "upper") || nativeMemberCall(x, "string", "gsub") {
+			if nativeRegisteredMethod(x, "string.upper") ||
+				nativeBoundStdlibMemberCall(bindings, x, "string.upper") ||
+				nativeBoundStdlibMemberCall(bindings, x, "string.gsub") {
 				hasAllocation = true
 			}
-			if nativeDirectCall(x, "pcall") {
+			if nativeStdlibCallIsOpen(bindings, x, "pcall") {
 				hasOpen = true
 			}
 			walkExpr(x.Func)
@@ -259,7 +265,7 @@ func nativeFunctionEffect(fn *ast.FunctionExpr, add func(string, string, ...stri
 	add("effect_row", "allocation="+allocation+" error="+errorState+" exhaustive=true yield=absent")
 }
 
-func nativeFunctionHasOpenCall(fn *ast.FunctionExpr) bool {
+func nativeFunctionHasOpenCall(bindings *bind.Result, fn *ast.FunctionExpr) bool {
 	if fn == nil {
 		return true
 	}
@@ -268,7 +274,9 @@ func nativeFunctionHasOpenCall(fn *ast.FunctionExpr) bool {
 	walk = func(expr ast.Expr) {
 		switch item := expr.(type) {
 		case *ast.FuncCallExpr:
-			if nativeMemberCall(item, "os", "clock") || nativeDirectCall(item, "load") || nativeDirectCall(item, "pcall") {
+			if nativeStdlibCallIsOpen(bindings, item, "os.clock") ||
+				nativeStdlibCallIsOpen(bindings, item, "load") ||
+				nativeStdlibCallIsOpen(bindings, item, "pcall") {
 				open = true
 			}
 			walk(item.Func)
@@ -308,35 +316,35 @@ func nativeFunctionHasOpenCall(fn *ast.FunctionExpr) bool {
 	return open
 }
 
-func nativeEffectCall(call *ast.FuncCallExpr, scope nativeOperationScope, add func(string, string, ...string)) {
+func nativeEffectCall(bindings *bind.Result, call *ast.FuncCallExpr, scope nativeOperationScope, add func(string, string, ...string)) {
 	if call == nil {
 		return
 	}
-	if nativeMemberCall(call, "channel", "select") {
+	if nativeBoundMemberCall(bindings, call, "channel", "select") {
 		add("effect_row", "exhaustive=true safepoint=required suspension=published yield=present")
 		return
 	}
-	if nativeMemberCall(call, "coroutine", "yield") {
+	if nativeBoundStdlibMemberCall(bindings, call, "coroutine.yield") {
 		add("effect_row", "control_transfer=suspend exhaustive=true suspension=published yield=present")
 		return
 	}
-	if nativeMemberCall(call, "coroutine", "resume") {
+	if nativeBoundStdlibMemberCall(bindings, call, "coroutine.resume") {
 		add("effect_row", "control_transfer=resume exhaustive=true safepoint=required suspension=published yield=present")
 		return
 	}
-	if nativeMemberCall(call, "string", "gsub") && len(call.Args) >= 3 {
+	if nativeBoundStdlibMemberCall(bindings, call, "string.gsub") && len(call.Args) >= 3 {
 		add("effect_row", "allocation=present composed_from_callback=true control_transfer=callback exhaustive=true")
 		return
 	}
-	if nativeMemberCall(call, "table", "sort") && len(call.Args) >= 2 {
+	if nativeBoundStdlibMemberCall(bindings, call, "table.sort") && len(call.Args) >= 2 {
 		add("effect_row", "control_transfer=callback error=present exhaustive=true safepoint=required")
 		return
 	}
-	if nativeDirectCall(call, "load") {
+	if _, ok := nativeBoundStdlibCall(bindings, call, "load"); ok {
 		add("effect_row", "exhaustive=false module_loading=present")
 		return
 	}
-	if nativeDirectCall(call, "pcall") {
+	if _, ok := nativeBoundStdlibCall(bindings, call, "pcall"); ok {
 		if len(call.Args) != 0 {
 			if _, ok := call.Args[0].(*ast.IdentExpr); ok && nativeKnownFunction(call.Args[0], scope) {
 				add("effect_row", "composed_from_callback=true error=absent exhaustive=true")
@@ -353,29 +361,116 @@ func nativeEffectCall(call *ast.FuncCallExpr, scope nativeOperationScope, add fu
 		add("effect_row", "allocation=absent error=absent exhaustive=true safepoint=not_required yield=absent")
 		return
 	}
-	if nativeMemberCall(call, "os", "clock") {
+	if nativeStdlibCallIsOpen(bindings, call, "os.clock") {
 		add("effect_row", "exhaustive=false")
 	}
 }
 
-func nativeDirectCall(call *ast.FuncCallExpr, name string) bool {
+var nativeStdlibSignatures = signaturelookup.Source{IncludeStdlib: true}
+var nativeStdlibGlobals = func() map[string]struct{} {
+	names := signaturelookup.StdlibBareGlobals()
+	out := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		out[name] = struct{}{}
+	}
+	return out
+}()
+
+// nativeBoundStdlibCall recognizes a standard-library operation only when the
+// binder resolves the callee to the corresponding global and the owning
+// signature registry declares that operation. Source spelling alone is not a
+// binding and therefore cannot license a native contract.
+func nativeBoundStdlibCall(bindings *bind.Result, call *ast.FuncCallExpr, name string) (signature.Function, bool) {
+	if call == nil || bindings == nil || name == "" || strings.Contains(name, ".") {
+		return signature.Function{}, false
+	}
 	id, ok := call.Func.(*ast.IdentExpr)
-	return ok && id.Value == name
+	if !ok || !bindings.ResolvesToGlobal(id, name) {
+		return signature.Function{}, false
+	}
+	if stdlib, registered := nativeStdlibSignatures.LookupView(name); registered {
+		return stdlib, true
+	}
+	_, declared := nativeStdlibGlobals[name]
+	if !declared {
+		return signature.Function{}, false
+	}
+	// A declared bare global without a modeled signature is an open boundary.
+	return signature.Function{Effect: effect.Unknown}, true
 }
-func nativeMemberCall(call *ast.FuncCallExpr, object, method string) bool {
+
+// nativeBoundStdlibMemberCall is the member counterpart: both the global root
+// binding and the complete registered provider name must agree.
+func nativeBoundStdlibMemberCall(bindings *bind.Result, call *ast.FuncCallExpr, name string) bool {
+	object, method, ok := strings.Cut(name, ".")
+	if !ok || object == "" || method == "" || strings.Contains(method, ".") {
+		return false
+	}
+	if _, registered := nativeStdlibSignatures.LookupView(name); !registered {
+		return false
+	}
+	return nativeBoundMemberCall(bindings, call, object, method)
+}
+
+func nativeBoundMemberCall(bindings *bind.Result, call *ast.FuncCallExpr, object, method string) bool {
+	if call == nil || bindings == nil {
+		return false
+	}
 	attr, ok := call.Func.(*ast.AttrGetExpr)
 	if !ok || ast.KeyName(attr.Key) != method {
 		return false
 	}
 	id, ok := attr.Object.(*ast.IdentExpr)
-	return ok && id.Value == object
+	return ok && bindings.ResolvesToGlobal(id, object)
+}
+
+func nativeStdlibCallIsOpen(bindings *bind.Result, call *ast.FuncCallExpr, name string) bool {
+	var stdlib signature.Function
+	var ok bool
+	if strings.Contains(name, ".") {
+		if !nativeBoundStdlibMemberCall(bindings, call, name) {
+			return false
+		}
+		stdlib, ok = nativeStdlibSignatures.LookupView(name)
+	} else {
+		stdlib, ok = nativeBoundStdlibCall(bindings, call, name)
+	}
+	return ok && (stdlib.Effect.IsOpen() || nativeSignatureCallsCallback(stdlib))
+}
+
+func nativeSignatureCallsCallback(stdlib signature.Function) bool {
+	for _, label := range stdlib.Effect.Labels {
+		result, ok := label.(returns.Return)
+		if !ok {
+			continue
+		}
+		if _, ok := result.Transform.(returns.CallbackReturn); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// nativeRegisteredMethod covers colon calls whose receiver is the runtime
+// value rather than a global library table. The method name is accepted only
+// through the standard-library registry.
+func nativeRegisteredMethod(call *ast.FuncCallExpr, name string) bool {
+	if call == nil || call.Method == "" {
+		return false
+	}
+	_, method, ok := strings.Cut(name, ".")
+	if !ok || call.Method != method {
+		return false
+	}
+	_, registered := nativeStdlibSignatures.LookupView(name)
+	return registered
 }
 func nativeKnownFunction(expr ast.Expr, scope nativeOperationScope) bool {
 	id, ok := expr.(*ast.IdentExpr)
 	return ok && scope.types[id.Value] == "function"
 }
 
-func nativeOperandClass(expr ast.Expr, scope nativeOperationScope) (string, bool) {
+func nativeOperandClass(bindings *bind.Result, expr ast.Expr, scope nativeOperationScope) (string, bool) {
 	switch x := expr.(type) {
 	case *ast.StringExpr:
 		return nativeString, true
@@ -388,11 +483,11 @@ func nativeOperandClass(expr ast.Expr, scope nativeOperationScope) (string, bool
 		typ := scope.types[x.Value]
 		return typ, typ == nativeString || typ == nativeInteger || typ == nativeNumber
 	case *ast.LogicalOpExpr:
-		left, lok := nativeOperandClass(x.Lhs, scope)
-		right, rok := nativeOperandClass(x.Rhs, scope)
+		left, lok := nativeOperandClass(bindings, x.Lhs, scope)
+		right, rok := nativeOperandClass(bindings, x.Rhs, scope)
 		return left, lok && rok && left == right
 	case *ast.FuncCallExpr:
-		if nativeDirectCall(x, "tostring") {
+		if _, ok := nativeBoundStdlibCall(bindings, x, "tostring"); ok {
 			return nativeString, true
 		}
 	}
@@ -440,52 +535,6 @@ func nativeScopeCopy(scope nativeOperationScope) nativeOperationScope {
 		out.types[k] = v
 	}
 	return out
-}
-
-func nativeWritesGlobal(stmts []ast.Stmt, name string) bool {
-	var writes func([]ast.Stmt) bool
-	writes = func(body []ast.Stmt) bool {
-		for _, stmt := range body {
-			switch s := stmt.(type) {
-			case *ast.AssignStmt:
-				for _, lhs := range s.Lhs {
-					if id, ok := lhs.(*ast.IdentExpr); ok && id.Value == name {
-						return true
-					}
-				}
-			case *ast.IfStmt:
-				if writes(s.Then) || writes(s.Else) {
-					return true
-				}
-			case *ast.DoBlockStmt:
-				if writes(s.Stmts) {
-					return true
-				}
-			case *ast.WhileStmt:
-				if writes(s.Stmts) {
-					return true
-				}
-			case *ast.RepeatStmt:
-				if writes(s.Stmts) {
-					return true
-				}
-			case *ast.NumberForStmt:
-				if writes(s.Stmts) {
-					return true
-				}
-			case *ast.GenericForStmt:
-				if writes(s.Stmts) {
-					return true
-				}
-			case *ast.FuncDefStmt:
-				if s.Func != nil && writes(s.Func.Stmts) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return writes(stmts)
 }
 
 func nativeDecimal(value int) string {

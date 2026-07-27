@@ -27,13 +27,8 @@ func providerCallEquation(name, provider string, arguments ...string) equation.E
 	}
 }
 
-func callArgumentRole(index int) string {
-	digits := []byte("00000000")
-	for position := len(digits) - 1; position >= 0 && index > 0; position-- {
-		digits[position] = byte('0' + index%10)
-		index /= 10
-	}
-	return "argument-" + string(digits)
+func callArgumentRole(index int) equation.OperandRole {
+	return equation.IndexedRole(equation.RoleFamilyArgument, index)
 }
 
 func TestContextualCallbackArgumentSelectsTheConsumingPosition(t *testing.T) {

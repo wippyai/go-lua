@@ -111,7 +111,7 @@ func concatExpression(result string, terms ...string) equation.BoundEquation {
 		{Role: "operator", Value: []byte("0")},
 	}
 	for index, term := range terms {
-		operands = append(operands, equation.BoundOperand{Role: "value-" + strconv.Itoa(index + 100000000)[1:], Value: []byte(term)})
+		operands = append(operands, equation.BoundOperand{Role: equation.IndexedRole(equation.RoleFamilyValue, index), Value: []byte(term)})
 	}
 	return equation.BoundEquation{Target: equation.Coordinate{Name: "op-00000002"}, Operands: operands}
 }

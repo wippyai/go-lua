@@ -2,7 +2,6 @@ package engine
 
 import (
 	"encoding/json"
-	"fmt"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check/fixpoint/equation"
@@ -24,7 +23,7 @@ func materializationEquation(name string, prototype string, captures ...string) 
 		{Role: "result", Term: equation.ClosedTerm([]byte("path/sym9"))},
 	}
 	for index, capture := range captures {
-		operands = append(operands, equation.Operand{Role: fmt.Sprintf("capture-%08d", index), Term: equation.ClosedTerm([]byte(capture))})
+		operands = append(operands, equation.Operand{Role: equation.IndexedRole(equation.RoleFamilyCapture, index), Term: equation.ClosedTerm([]byte(capture))})
 	}
 	return equation.Equation{
 		Target:     equation.Coordinate{Name: name},

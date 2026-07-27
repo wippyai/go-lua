@@ -269,7 +269,7 @@ end
 			for _, operation := range artifact.Equations {
 				operands := make(map[string]string, len(operation.Operands))
 				for _, operand := range operation.Operands {
-					operands[operand.Role] = string(operand.Term.Encoding)
+					operands[operand.Role.String()] = string(operand.Term.Encoding)
 				}
 				switch operation.Occurrence.Kind {
 				case "apply":
@@ -602,15 +602,15 @@ func TestTableAllocationRepresentsNilAsAbsenceAndContiguousFloor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileBody: %v", err)
 	}
-	for _, equation := range artifact.Equations {
-		if equation.Occurrence.Kind != "object-materialization" {
+	for _, operation := range artifact.Equations {
+		if operation.Occurrence.Kind != "object-materialization" {
 			continue
 		}
-		if got := string(operand(equation.Operands, "list-floor").Term.Encoding); got != "list-floor/1" {
+		if got := string(operand(operation.Operands, "list-floor").Term.Encoding); got != "list-floor/1" {
 			t.Fatalf("list floor = %q, want contiguous exact prefix of one", got)
 		}
-		for _, candidate := range equation.Operands {
-			if strings.HasPrefix(candidate.Role, "member-") && strings.Contains(string(candidate.Term.Encoding), ".missing/") {
+		for _, candidate := range operation.Operands {
+			if candidate.Role.InFamily(equation.RoleFamilyMember) && strings.Contains(string(candidate.Term.Encoding), ".missing/") {
 				t.Fatalf("nil field was materialized as a member: %#v", candidate)
 			}
 		}
@@ -684,7 +684,7 @@ func equationsByKind(artifact equation.Artifact) map[string][]equation.Equation 
 	return result
 }
 
-func operand(operands []equation.Operand, role string) *equation.Operand {
+func operand(operands []equation.Operand, role equation.OperandRole) *equation.Operand {
 	for index := range operands {
 		if operands[index].Role == role {
 			return &operands[index]
@@ -873,7 +873,7 @@ func TestCompileBodyAdmitsUnknownDynamicIndexWriteContainers(t *testing.T) {
 func operands(equation equation.Equation) map[string]string {
 	result := make(map[string]string, len(equation.Operands))
 	for _, operand := range equation.Operands {
-		result[operand.Role] = string(operand.Term.Encoding)
+		result[operand.Role.String()] = string(operand.Term.Encoding)
 	}
 	return result
 }
@@ -884,10 +884,10 @@ func operands(equation equation.Equation) map[string]string {
 func valueOperands(equation equation.Equation) map[string]string {
 	result := make(map[string]string, len(equation.Operands))
 	for _, operand := range equation.Operands {
-		if strings.Contains(operand.Role, "-display-") || strings.HasSuffix(operand.Role, "-display") {
+		if operand.Role.IsDisplay() {
 			continue
 		}
-		result[operand.Role] = string(operand.Term.Encoding)
+		result[operand.Role.String()] = string(operand.Term.Encoding)
 	}
 	return result
 }

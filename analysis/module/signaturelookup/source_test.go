@@ -339,3 +339,13 @@ func hasLabel(row effect.Row, want effect.Label) bool {
 		return want.Equals(got)
 	})
 }
+
+func TestStdlibClockIsAnOpenHostBoundary(t *testing.T) {
+	clock, found := (Source{IncludeStdlib: true}).LookupView("os.clock")
+	if !found {
+		t.Fatal("stdlib registry omitted os.clock")
+	}
+	if !clock.Effect.IsOpen() {
+		t.Fatalf("os.clock effect = %#v, want an open host boundary", clock.Effect)
+	}
+}

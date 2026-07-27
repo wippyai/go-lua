@@ -312,7 +312,7 @@ func placementGlobalProviderName(provider []byte) (string, bool) {
 
 func operationOperandValue(operation equation.BoundEquation, role string) []byte {
 	for _, operand := range operation.Operands {
-		if operand.Role == role {
+		if operand.Role.String() == role {
 			return operand.Value
 		}
 	}
@@ -322,7 +322,7 @@ func operationOperandValue(operation equation.BoundEquation, role string) []byte
 func placementExternalArguments(operation equation.BoundEquation) ([][]byte, bool) {
 	indexed := make(map[int][]byte)
 	for _, operand := range operation.Operands {
-		if !strings.HasPrefix(operand.Role, "argument-") || operand.Role == "argument-spread" || strings.HasPrefix(operand.Role, "argument-display-") {
+		if !operand.Role.InFamily(equation.RoleFamilyArgument) || operand.Role == equation.RoleArgumentSpread || operand.Role.InFamily(equation.RoleFamilyArgumentDisplay) {
 			continue
 		}
 		index, err := callArgumentIndex(operand.Role)
@@ -746,11 +746,11 @@ func placementSuspensionFacts(operation equation.BoundEquation, operands directC
 func placementSuspendedLiveFacts(operation equation.BoundEquation, partition equation.Partition) []equation.Fact {
 	live := make(map[int][]byte)
 	for _, operand := range operation.Operands {
-		if !strings.HasPrefix(operand.Role, "suspension-live-") {
+		index, ok := operand.Role.Index(equation.RoleFamilySuspensionLive)
+		if !ok {
 			continue
 		}
-		index, err := strconv.Atoi(strings.TrimPrefix(operand.Role, "suspension-live-"))
-		if err != nil || index < 0 || live[index] != nil {
+		if live[index] != nil {
 			return nil
 		}
 		live[index] = operand.Value

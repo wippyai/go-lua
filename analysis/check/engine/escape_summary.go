@@ -462,12 +462,12 @@ func singleForwardedReturn(child front.Compilation, tuples [][][]byte, values []
 		if operation.Occurrence.Kind != "publication" {
 			continue
 		}
-		value, found := artifactOperand(operation.Operands, "return-value-00000000")
+		value, found := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, 0))
 		if !found {
 			return exportrelation.Value{}, false
 		}
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "return-value-") && operand.Role != "return-value-00000000" {
+			if operand.Role.InFamily(equation.RoleFamilyReturnValue) && operand.Role != equation.IndexedRole(equation.RoleFamilyReturnValue, 0) {
 				return exportrelation.Value{}, false
 			}
 		}
@@ -636,12 +636,12 @@ func soleDirectReturnFormal(child front.Compilation) (int, bool) {
 		if operation.Occurrence.Kind != "publication" {
 			return 0, false
 		}
-		value, found := artifactOperand(operation.Operands, "return-value-00000000")
+		value, found := artifactOperand(operation.Operands, equation.IndexedRole(equation.RoleFamilyReturnValue, 0))
 		if !found {
 			return 0, false
 		}
 		for _, operand := range operation.Operands {
-			if strings.HasPrefix(operand.Role, "return-value-") && operand.Role != "return-value-00000000" {
+			if operand.Role.InFamily(equation.RoleFamilyReturnValue) && operand.Role != equation.IndexedRole(equation.RoleFamilyReturnValue, 0) {
 				return 0, false
 			}
 		}
