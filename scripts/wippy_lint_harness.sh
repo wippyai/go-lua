@@ -21,7 +21,6 @@ LINT_SAMPLE_LIMIT="${LINT_SAMPLE_LIMIT:-3}"
 LINT_EXTRA_FLAGS="${LINT_EXTRA_FLAGS:-}"
 LINT_NAMESPACE_MODE="${LINT_NAMESPACE_MODE:-auto}"
 TARGET_LIMIT="${TARGET_LIMIT:-0}"
-STRICT="${STRICT:-0}"
 RUN_GOLUA_TESTS="${RUN_GOLUA_TESTS:-1}"
 RUN_WIPPY_BUILD="${RUN_WIPPY_BUILD:-1}"
 RUN_WIPPY_INSTALL="${RUN_WIPPY_INSTALL:-1}"
@@ -336,7 +335,7 @@ section "harness"
 printf 'go-lua: %s\n' "$GO_LUA_DIR"
 printf 'wippy:  %s\n' "$WIPPY_DIR"
 printf 'out:    %s\n' "$OUT_DIR"
-printf 'limits: timeout=%s rss=%sMB GOMEMLIMIT=%s GOGC=%s strict=%s install=%s ns=%s delta=%s\n' "$LINT_TIMEOUT" "$LINT_RSS_LIMIT_MB" "$GOMEMLIMIT" "$GOGC" "$STRICT" "$RUN_WIPPY_INSTALL" "$LINT_NAMESPACE_MODE" "$LINT_DELTA"
+printf 'limits: timeout=%s rss=%sMB GOMEMLIMIT=%s GOGC=%s install=%s ns=%s delta=%s\n' "$LINT_TIMEOUT" "$LINT_RSS_LIMIT_MB" "$GOMEMLIMIT" "$GOGC" "$RUN_WIPPY_INSTALL" "$LINT_NAMESPACE_MODE" "$LINT_DELTA"
 
 if [[ "$LINT_DELTA" == "1" ]] && ! has_jq; then
 	die "LINT_DELTA requires jq to normalize current diagnostics"
@@ -353,8 +352,8 @@ status=0
 delta_status=0
 
 if [[ "$RUN_GOLUA_TESTS" == "1" ]]; then
-	section "go-lua compiler/check tests"
-	if ! (cd "$GO_LUA_DIR" && go test ./compiler/check/... -count=1); then
+	section "go-lua analysis/check tests"
+	if ! (cd "$GO_LUA_DIR" && go test ./analysis/check/... -count=1); then
 		status=1
 	fi
 fi
@@ -489,10 +488,4 @@ if [[ "$LINT_DELTA" == "1" ]]; then
 	printf '%s\n' "$DELTA_REPORT"
 fi
 
-if [[ "$STRICT" == "1" ]]; then
-	exit "$status"
-fi
-if [[ "$LINT_DELTA_FAIL_ON_NEW" == "1" && "$delta_status" -ne 0 ]]; then
-	exit "$delta_status"
-fi
-exit 0
+exit "$status"

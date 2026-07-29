@@ -5,7 +5,6 @@ SEAM_DIR="${WIPPY_GOLUA_SEAM_DIR:-${WIPPY_ROOT:?set WIPPY_ROOT}/wippy-golua-seam
 GOLUA_DIR="${GOLUA_DIR:-${WIPPY_ROOT:?set WIPPY_ROOT}/go-lua}"
 GOCACHE="${GOCACHE:-/tmp/go-build-cache-wippy-golua-seam}"
 LOG="${LOG:-/tmp/wippy-golua-seam-check.log}"
-EXPECT_FAIL="${EXPECT_FAIL:-1}"
 SEAM_PACKAGES="${SEAM_PACKAGES:-./runtime/lua/code/...}"
 SEAM_MODE="${SEAM_MODE:-test}"
 
@@ -51,15 +50,6 @@ set -e
 
 if [[ "$status" -eq 0 ]]; then
 	echo "wippy/go-lua seam passed on $branch"
-	exit 0
-fi
-
-if [[ "$EXPECT_FAIL" == "1" ]]; then
-	echo "wippy/go-lua seam captured expected failure on $branch"
-	echo "mode: $SEAM_MODE"
-	echo "packages: $SEAM_PACKAGES"
-	echo "log: $LOG"
-	sed -n '1,80p' "$LOG"
 	exit 0
 fi
 
