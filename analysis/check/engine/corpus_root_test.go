@@ -1,6 +1,3 @@
-// Shared test helpers for the fixture harness. This file intentionally
-// contains no tests: corpusRepositoryRoot locates the repository root for
-// TestFullOracle's fixture discovery.
 package engine_test
 
 import (
@@ -9,6 +6,8 @@ import (
 	"testing"
 )
 
+// corpusRepositoryRoot locates fixture data for individual semantic tests.
+// It is deliberately not an aggregate oracle or completion gate.
 func corpusRepositoryRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

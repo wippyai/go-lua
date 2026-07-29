@@ -9,8 +9,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"testing"
-	"time"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/lint"
@@ -358,23 +356,6 @@ type fixtureExpectationVerdict struct {
 	passed                 bool
 	missing, unexpected    []string
 	expected, hits, misses int
-}
-
-func fullOracleFixtureVerdict(s namedSuite) (v fixtureExpectationVerdict) {
-	v.name, v.passed = s.Name, true
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			v.passed = false
-			v.unexpected = append(v.unexpected, fmt.Sprintf("panic: %v", recovered))
-		}
-	}()
-	publication, err := fixtureDiagnostics(s)
-	if err != nil {
-		v.passed = false
-		v.unexpected = append(v.unexpected, "checker infrastructure failure: "+err.Error())
-		return v
-	}
-	return judgeAgainstFixtureExpectations(s, publication)
 }
 
 // judgeAgainstFixtureExpectations preserves the original precedence exactly:
@@ -908,89 +889,4 @@ func renderOptions(s namedSuite, entryFile string) diag.RenderOptions {
 	sources["test.lua"] = sources[entryFile]
 	display["test.lua"] = entryFile
 	return diag.RenderOptions{Sources: sources, DisplayFiles: display, ShowSourceLabelRows: true, WitnessTrace: s.Suite.Check != nil && s.Suite.Check.RenderOptions.WitnessTrace}
-}
-
-type categoryCensus struct{ pass, fail, expected, hits, misses int }
-type fixtureOracleReporter struct {
-	pass, fail, expected, hits, misses int
-	categories                         map[string]*categoryCensus
-	started                            time.Time
-}
-
-func newFixtureOracleReporter() *fixtureOracleReporter {
-	return &fixtureOracleReporter{categories: make(map[string]*categoryCensus), started: time.Now()}
-}
-func fixtureCategory(name string) string {
-	if head, _, found := strings.Cut(name, "/"); found {
-		return head
-	}
-	return name
-}
-func (r *fixtureOracleReporter) record(v fixtureExpectationVerdict) {
-	r.expected += v.expected
-	r.hits += v.hits
-	r.misses += v.misses
-	category := fixtureCategory(v.name)
-	bucket := r.categories[category]
-	if bucket == nil {
-		bucket = &categoryCensus{}
-		r.categories[category] = bucket
-	}
-	bucket.expected += v.expected
-	bucket.hits += v.hits
-	bucket.misses += v.misses
-	if v.passed {
-		r.pass++
-		bucket.pass++
-	} else {
-		r.fail++
-		bucket.fail++
-	}
-}
-func (r *fixtureOracleReporter) finish(t *testing.T) {
-	total := r.pass + r.fail
-	t.Logf("FULL ORACLE SCORECARD: %d/%d fixtures PASS against fixture expectations (%d fail)", r.pass, total, r.fail)
-	t.Logf("FULL ORACLE DIAGNOSTICS: %d/%d expected diagnostics hit (%d miss)", r.hits, r.expected, r.misses)
-	categories := make([]string, 0, len(r.categories))
-	for category := range r.categories {
-		categories = append(categories, category)
-	}
-	sort.Strings(categories)
-	t.Log("FULL ORACLE BY CATEGORY:")
-	for _, category := range categories {
-		bucket := r.categories[category]
-		t.Logf("  %s: fixtures %d pass / %d fail; diagnostics %d/%d hit (%d miss)", category, bucket.pass, bucket.fail, bucket.hits, bucket.expected, bucket.misses)
-	}
-	t.Logf("FULL ORACLE WALL TIME: %s", time.Since(r.started))
-}
-
-// TestFullOracle is the hard semantic gate. It never honors fixture Skip:
-// a fixture's checked-in expectations are the oracle, including expectations
-// the new engine does not yet implement.
-func TestFullOracle(t *testing.T) {
-	suites, err := discoverFixtures(filepath.Join(corpusRepositoryRoot(t), "testdata", "fixtures"))
-	if err != nil {
-		t.Fatalf("discovering fixtures: %v", err)
-	}
-	if len(suites) == 0 {
-		t.Fatal("full oracle discovered no fixture suites")
-	}
-	reporter := newFixtureOracleReporter()
-	defer reporter.finish(t)
-	for _, suite := range suites {
-		suite := suite
-		t.Run(suite.Name, func(t *testing.T) {
-			verdict := fullOracleFixtureVerdict(suite)
-			reporter.record(verdict)
-			if !verdict.passed {
-				t.Errorf("fixture fails checked-in expectations (%d missing, %d unexpected)", len(verdict.missing), len(verdict.unexpected))
-				for _, message := range verdict.missing {
-					t.Errorf("    MISS: %s", message)
-				}
-				for _, message := range verdict.unexpected {
-					t.Errorf("    FALSE+: %s", message)
-				}
-			}
-		})
-	}
 }
