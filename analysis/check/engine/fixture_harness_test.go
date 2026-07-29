@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"testing"
+	"time"
 
 	"github.com/wippyai/go-lua/analysis/check/engine"
 	"github.com/wippyai/go-lua/analysis/check/lint"
@@ -889,4 +891,62 @@ func renderOptions(s namedSuite, entryFile string) diag.RenderOptions {
 	sources["test.lua"] = sources[entryFile]
 	display["test.lua"] = entryFile
 	return diag.RenderOptions{Sources: sources, DisplayFiles: display, ShowSourceLabelRows: true, WitnessTrace: s.Suite.Check != nil && s.Suite.Check.RenderOptions.WitnessTrace}
+}
+
+type fixtureLedger struct {
+	suites, passed, expected, hits, misses, unexpected int
+	started                                           time.Time
+}
+
+func fixtureLedgerVerdict(s namedSuite) (v fixtureExpectationVerdict) {
+	v.name, v.passed = s.Name, true
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			v.passed = false
+			v.unexpected = append(v.unexpected, fmt.Sprintf("checker infrastructure failure: %v", recovered))
+		}
+	}()
+	publication, err := fixtureDiagnostics(s)
+	if err != nil {
+		v.passed = false
+		v.unexpected = append(v.unexpected, "checker infrastructure failure: "+err.Error())
+		return v
+	}
+	return judgeAgainstFixtureExpectations(s, publication)
+}
+
+// TestFixtureLedger is the diagnostic-fixture ledger only. It is not a
+// repository completion gate: the complete verification command must compose
+// this ledger with internal tests, laws, and the explicit performance gates.
+func TestFixtureLedger(t *testing.T) {
+	suites, err := discoverFixtures(filepath.Join(corpusRepositoryRoot(t), "testdata", "fixtures"))
+	if err != nil {
+		t.Fatalf("fixture ledger discovery: %v", err)
+	}
+	if len(suites) == 0 {
+		t.Fatal("fixture ledger discovered no fixture directories")
+	}
+	ledger := fixtureLedger{suites: len(suites), started: time.Now()}
+	for _, suite := range suites {
+		suite := suite
+		t.Run(suite.Name, func(t *testing.T) {
+			verdict := fixtureLedgerVerdict(suite)
+			ledger.expected += verdict.expected
+			ledger.hits += verdict.hits
+			ledger.misses += verdict.misses
+			ledger.unexpected += len(verdict.unexpected)
+			if verdict.passed {
+				ledger.passed++
+				return
+			}
+			t.Errorf("fixture ledger mismatch (%d missing, %d unexpected)", len(verdict.missing), len(verdict.unexpected))
+			for _, message := range verdict.missing {
+				t.Errorf("    MISSING: %s", message)
+			}
+			for _, message := range verdict.unexpected {
+				t.Errorf("    UNEXPECTED: %s", message)
+			}
+		})
+	}
+	t.Logf("FIXTURE LEDGER: suites=%d passed=%d expected=%d hit=%d missing=%d unexpected=%d elapsed=%s", ledger.suites, ledger.passed, ledger.expected, ledger.hits, ledger.misses, ledger.unexpected, time.Since(ledger.started))
 }
