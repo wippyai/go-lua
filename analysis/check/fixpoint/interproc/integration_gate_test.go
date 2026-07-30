@@ -353,7 +353,7 @@ func gateArtifact(t *testing.T, module string, source interproc.ContentID) inter
 		t.Fatal(err)
 	}
 	body, err := equation.NewCyclicArtifact(plain, map[equation.Coordinate]equation.CellID{plain.Equations[0].Target: "result"}, plan, nil,
-		[]equation.OutputSelector{{ID: "gate-return", Cells: []equation.CellID{"result"}}}, []equation.CellID{"result"}, nil)
+		[]equation.OutputSelector{{ID: "gate-return", Cells: []equation.CellID{"result"}}}, []equation.CellID{"result"})
 	if err != nil {
 		t.Fatal(err)
 	}

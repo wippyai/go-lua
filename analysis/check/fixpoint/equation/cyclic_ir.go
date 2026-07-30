@@ -72,7 +72,6 @@ type CyclicArtifact struct {
 	Dependencies   []SemanticDependency
 	Selectors      []OutputSelector
 	ParameterCells []CellID
-	WidenCells     []CellID
 }
 
 // NewCyclicArtifact validates a complete, closed graph certificate.  The
@@ -86,7 +85,6 @@ func NewCyclicArtifact(
 	dependencies []SemanticDependency,
 	selectors []OutputSelector,
 	parameterCells []CellID,
-	widenCells []CellID,
 ) (CyclicArtifact, error) {
 	if artifact.CanonicalBytes() == nil || len(artifact.Equations) == 0 || plan == nil {
 		return CyclicArtifact{}, fmt.Errorf("equation: malformed cyclic artifact")
@@ -141,13 +139,8 @@ func NewCyclicArtifact(
 			return CyclicArtifact{}, fmt.Errorf("equation: parameter footprint has foreign cell")
 		}
 	}
-	for _, cell := range widenCells {
-		if _, ok := seen[cell]; !ok {
-			return CyclicArtifact{}, fmt.Errorf("equation: widening bitmap has foreign cell")
-		}
-	}
 	out := CyclicArtifact{Artifact: artifact, CellForTarget: make(map[Coordinate]CellID, len(cellForTarget)), Plan: plan,
-		Dependencies: append([]SemanticDependency(nil), dependencies...), Selectors: cloneSelectors(selectors), ParameterCells: append([]CellID(nil), parameterCells...), WidenCells: append([]CellID(nil), widenCells...)}
+		Dependencies: append([]SemanticDependency(nil), dependencies...), Selectors: cloneSelectors(selectors), ParameterCells: append([]CellID(nil), parameterCells...)}
 	for target, cell := range cellForTarget {
 		out.CellForTarget[target] = cell
 	}
@@ -164,7 +157,6 @@ func NewCyclicArtifact(
 		return out.Dependencies[i].Evidence < out.Dependencies[j].Evidence
 	})
 	sort.Slice(out.ParameterCells, func(i, j int) bool { return out.ParameterCells[i] < out.ParameterCells[j] })
-	sort.Slice(out.WidenCells, func(i, j int) bool { return out.WidenCells[i] < out.WidenCells[j] })
 	return out, nil
 }
 
@@ -249,7 +241,7 @@ func (a CyclicArtifact) CanonicalBytes() []byte {
 	// Re-run the constructor's closed-world checks before publishing an
 	// identity.  CyclicArtifact has exported fields for the benefit of the VM,
 	// so an invalid manually-built value must never acquire a content ID.
-	canonical, err := NewCyclicArtifact(a.Artifact, a.CellForTarget, a.Plan, a.Dependencies, a.Selectors, a.ParameterCells, a.WidenCells)
+	canonical, err := NewCyclicArtifact(a.Artifact, a.CellForTarget, a.Plan, a.Dependencies, a.Selectors, a.ParameterCells)
 	if err != nil {
 		return nil
 	}
@@ -258,7 +250,7 @@ func (a CyclicArtifact) CanonicalBytes() []byte {
 	if artifact == nil {
 		return nil
 	}
-	out := appendText(nil, "cyclic-equation-artifact/content-v1")
+	out := appendText(nil, "cyclic-equation-artifact/content-v2")
 	out = appendBytes(out, artifact)
 
 	type cellTarget struct {
@@ -313,8 +305,7 @@ func (a CyclicArtifact) CanonicalBytes() []byte {
 			out = appendText(out, string(cell))
 		}
 	}
-	out = appendCellIDs(out, a.ParameterCells)
-	return appendCellIDs(out, a.WidenCells)
+	return appendCellIDs(out, a.ParameterCells)
 }
 
 // ContentID identifies the complete frozen graph and schedule, not merely its

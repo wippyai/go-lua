@@ -128,12 +128,27 @@ type WTOPlan[Cell comparable] struct {
 	rank           map[Cell]int
 	edges          map[edge[Cell]]struct{}
 	componentCount int
+	// componentHeads is the exact, immutable widening cut set of this plan.
+	// Each structured WTO component contributes its vertex, including nested
+	// components.  Looking a cell up here allocates nothing on the solve path.
+	componentHeads map[Cell]struct{}
 	// component is the outermost stabilization component each cell belongs to,
 	// as the half-open rank span of that component. Cells outside every
 	// component are absent. Two cells that share a span are re-evaluated by the
 	// same stabilization loop, which is what makes a read between them a
 	// chaotic-iteration read rather than an unplanned recurrence.
 	component map[Cell]componentSpan
+}
+
+// IsComponentHead reports whether cell is the head of a structured WTO
+// component. These are precisely the feedback vertices selected by this
+// immutable plan; cyclic artifact evaluators use them as their widening sites.
+func (p *WTOPlan[Cell]) IsComponentHead(cell Cell) bool {
+	if p == nil || p.componentHeads == nil {
+		return false
+	}
+	_, ok := p.componentHeads[cell]
+	return ok
 }
 
 // componentSpan is the half-open rank interval a stabilization component
@@ -166,6 +181,33 @@ func componentSpans[Cell comparable](elements []WTOElement[Cell]) map[Cell]compo
 	}
 	walk(elements, componentSpan{}, false)
 	return out
+}
+
+// componentHeadSet derives every component head without recursive traversal.
+// Plans can contain nested components, so all component vertices, not only
+// top-level ones, are feedback cut points.
+func componentHeadSet[Cell comparable](elements []WTOElement[Cell]) map[Cell]struct{} {
+	var heads map[Cell]struct{}
+	stack := make([][]WTOElement[Cell], 0, 1)
+	stack = append(stack, elements)
+	for len(stack) != 0 {
+		last := len(stack) - 1
+		items := stack[last]
+		stack = stack[:last]
+		for index := range items {
+			item := items[index]
+			if item.IsComponent() {
+				if heads == nil {
+					heads = make(map[Cell]struct{})
+				}
+				heads[item.Vertex] = struct{}{}
+			}
+			if item.Body != nil {
+				stack = append(stack, item.Body)
+			}
+		}
+	}
+	return heads
 }
 
 func countWTOCells[Cell comparable](items []WTOElement[Cell]) int {
@@ -275,7 +317,9 @@ func flattenWTOElements[Cell comparable](elements []WTOElement[Cell]) []Cell {
 // FreezeWTOPlan validates and freezes a caller-computed WTO without running a
 // second graph decomposition. elements must cover cells exactly once.
 // Influences must be forward in the structured order or backedges to an
-// enclosing component head. Inputs are copied before publication.
+// enclosing component head. Every caller-authored component must also be a
+// genuine strongly connected region of those influences. Inputs are copied
+// before publication.
 func FreezeWTOPlan[Cell comparable](cells []Cell, elements []WTOElement[Cell], influences []WTOInfluence[Cell]) (*WTOPlan[Cell], error) {
 	canonical := append([]Cell(nil), cells...)
 	index := make(map[Cell]int, len(canonical))
@@ -328,10 +372,82 @@ func FreezeWTOPlan[Cell comparable](cells []Cell, elements []WTOElement[Cell], i
 		}
 		edges[edge[Cell]{from: influence.From, to: influence.To}] = struct{}{}
 	}
+	if !componentsStronglyConnected(canonical, index, edges, componentEnd) {
+		return nil, ErrWTOInvalidFrozenPlan
+	}
 	return &WTOPlan[Cell]{
 		cells: canonical, elements: frozen, index: index, rank: index, edges: edges,
-		componentCount: componentCount, component: componentSpans(frozen),
+		componentCount: componentCount, componentHeads: componentHeadSet(frozen), component: componentSpans(frozen),
 	}, nil
+}
+
+// componentsStronglyConnected validates only the component membership the
+// caller declared; it does not derive a replacement WTO. For each component,
+// two iterative graph walks establish that its head reaches every member and
+// every member returns to its head, restricted to that component's contiguous
+// canonical span. A singleton component additionally needs an explicit self
+// edge, because reflexive zero-length reachability alone is not a recurrence.
+//
+// The construction-time cost is O(sum(Vc + Ec)) across declared components.
+// Properly nested components can therefore revisit enclosing edges, but no
+// solve-path work or allocation is added and ordinary shallow plans remain
+// linear in their frozen graph.
+func componentsStronglyConnected[Cell comparable](
+	cells []Cell,
+	index map[Cell]int,
+	edges map[edge[Cell]]struct{},
+	componentEnd map[Cell]int,
+) bool {
+	if len(componentEnd) == 0 {
+		return true
+	}
+	forward := make(map[Cell][]Cell, len(cells))
+	reverse := make(map[Cell][]Cell, len(cells))
+	for item := range edges {
+		forward[item.from] = append(forward[item.from], item.to)
+		reverse[item.to] = append(reverse[item.to], item.from)
+	}
+	marks := make([]uint32, len(cells))
+	stack := make([]Cell, 0, len(cells))
+	mark := uint32(0)
+	reachesSpan := func(head Cell, start, end int, graph map[Cell][]Cell) bool {
+		if mark == ^uint32(0) {
+			clear(marks)
+			mark = 0
+		}
+		mark++
+		stack = append(stack[:0], head)
+		marks[start] = mark
+		visited := 0
+		for len(stack) != 0 {
+			last := len(stack) - 1
+			current := stack[last]
+			stack = stack[:last]
+			visited++
+			for _, next := range graph[current] {
+				nextIndex := index[next]
+				if nextIndex < start || nextIndex >= end || marks[nextIndex] == mark {
+					continue
+				}
+				marks[nextIndex] = mark
+				stack = append(stack, next)
+			}
+		}
+		return visited == end-start
+	}
+	for head, end := range componentEnd {
+		start := index[head]
+		if end-start == 1 {
+			if _, selfEdge := edges[edge[Cell]{from: head, to: head}]; !selfEdge {
+				return false
+			}
+			continue
+		}
+		if !reachesSpan(head, start, end, forward) || !reachesSpan(head, start, end, reverse) {
+			return false
+		}
+	}
+	return true
 }
 
 func cloneWTOElements[Cell comparable](in []WTOElement[Cell]) []WTOElement[Cell] {
@@ -383,7 +499,7 @@ func NewWTOPlan[Cell comparable](cells []Cell, successors func(Cell) []Cell) *WT
 		}
 	}
 	assign(elements)
-	return &WTOPlan[Cell]{cells: canonical, elements: elements, index: index, rank: rank, edges: edges, componentCount: componentCount, component: componentSpans(elements)}
+	return &WTOPlan[Cell]{cells: canonical, elements: elements, index: index, rank: rank, edges: edges, componentCount: componentCount, componentHeads: componentHeadSet(elements), component: componentSpans(elements)}
 }
 
 func weakTopologicalOrder[Cell comparable](cells []Cell, declared map[Cell]int, successors func(Cell) []Cell) []WTOElement[Cell] {

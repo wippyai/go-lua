@@ -236,5 +236,5 @@ func cloneCyclicArtifact(in equation.CyclicArtifact) (equation.CyclicArtifact, e
 	for target, cell := range in.CellForTarget {
 		cells[target] = cell
 	}
-	return equation.NewCyclicArtifact(artifact, cells, in.Plan, in.Dependencies, in.Selectors, in.ParameterCells, in.WidenCells)
+	return equation.NewCyclicArtifact(artifact, cells, in.Plan, in.Dependencies, in.Selectors, in.ParameterCells)
 }

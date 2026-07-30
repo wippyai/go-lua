@@ -415,10 +415,6 @@ func (vm *CyclicVM) Evaluate(ctx context.Context, bound BoundCyclicArtifact, sel
 		seenEdge[key] = true
 		predecessors[edge.To] = append(predecessors[edge.To], edge.From)
 	}
-	widenAt := make(map[CellID]bool, len(bound.Artifact.WidenCells))
-	for _, cell := range bound.Artifact.WidenCells {
-		widenAt[cell] = true
-	}
 	var trace []WideningTrace
 	var executionErr error
 	transactions := 0
@@ -432,7 +428,7 @@ func (vm *CyclicVM) Evaluate(ctx context.Context, bound BoundCyclicArtifact, sel
 		},
 	}
 	values, err := solve.SolveWTOContext(ctx, solve.EquationSystem[CellID, GuardedPartition]{
-		Lattice: domain, Cells: cells, WidenAt: func(cell CellID) bool { return widenAt[cell] },
+		Lattice: domain, Cells: cells, WidenAt: plan.IsComponentHead,
 		Evaluate: func(cell CellID, read func(CellID) GuardedPartition) GuardedPartition {
 			if executionErr != nil {
 				return GuardedPartition{}
@@ -479,7 +475,7 @@ func (vm *CyclicVM) Evaluate(ctx context.Context, bound BoundCyclicArtifact, sel
 			return GuardedPartition{Leaves: []GuardedLeaf{{Guard: guardKey(equation.Equation.Guards), Closure: closure}}}
 		},
 		UpdateObserver: func(cell CellID, update solve.UpdateEvent[GuardedPartition]) {
-			if !widenAt[cell] {
+			if !plan.IsComponentHead(cell) {
 				return
 			}
 			trace = append(trace, WideningTrace{Cell: cell, Visit: update.Visit, Widened: update.Widened, Previous: partitionBytes(update.Previous), Joined: partitionBytes(update.Joined), Result: partitionBytes(update.Result)})

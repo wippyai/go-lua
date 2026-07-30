@@ -14,9 +14,9 @@ func TestCyclicArtifactContentCommitsToFrozenSchedule(t *testing.T) {
 	}
 
 	changed := cyclic
-	changed.WidenCells = nil
+	changed.Plan = solve.NewWTOPlan([]CellID{"seed"}, func(CellID) []CellID { return []CellID{"seed"} })
 	if string(first) == string(changed.CanonicalBytes()) || cyclic.ContentID() == changed.ContentID() {
-		t.Fatal("cyclic content omitted widening policy")
+		t.Fatal("cyclic content omitted component-head widening authority")
 	}
 }
 
@@ -41,7 +41,7 @@ func TestCyclicArtifactContentCanonicalizesMutableDirectoryOrder(t *testing.T) {
 	}
 	cyclic, err := NewCyclicArtifact(artifact, map[Coordinate]CellID{artifact.Equations[0].Target: "a", artifact.Equations[1].Target: "b"}, plan,
 		[]SemanticDependency{{From: "a", To: "b", Reason: EdgeContractRead, Evidence: "first"}, {From: "a", To: "b", Reason: EdgeContractOutcome, Evidence: "second"}},
-		[]OutputSelector{{ID: "a", Cells: []CellID{"a"}}, {ID: "b", Cells: []CellID{"b"}}}, []CellID{"a", "b"}, nil)
+		[]OutputSelector{{ID: "a", Cells: []CellID{"a"}}, {ID: "b", Cells: []CellID{"b"}}}, []CellID{"a", "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func cyclicContentFixture(t *testing.T) CyclicArtifact {
 		t.Fatal(err)
 	}
 	cyclic, err := NewCyclicArtifact(artifact, map[Coordinate]CellID{artifact.Equations[0].Target: "seed"}, plan,
-		nil, []OutputSelector{{ID: "normal", Cells: []CellID{"seed"}}}, []CellID{"seed"}, []CellID{"seed"})
+		nil, []OutputSelector{{ID: "normal", Cells: []CellID{"seed"}}}, []CellID{"seed"})
 	if err != nil {
 		t.Fatal(err)
 	}

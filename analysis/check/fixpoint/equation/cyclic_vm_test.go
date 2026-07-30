@@ -31,7 +31,7 @@ func cyclicVMFixture(t *testing.T) (CyclicArtifact, EntryBinding, []ContentID) {
 	}
 	cyclic, err := NewCyclicArtifact(artifact, map[Coordinate]CellID{artifact.Equations[0].Target: "seed", artifact.Equations[1].Target: "loop"}, plan,
 		[]SemanticDependency{{From: "seed", To: "loop", Reason: EdgeContractRead}, {From: "loop", To: "loop", Reason: EdgeContractAdvance}},
-		[]OutputSelector{{ID: "normal", Cells: []CellID{"loop"}}}, []CellID{"seed", "loop"}, []CellID{"loop"})
+		[]OutputSelector{{ID: "normal", Cells: []CellID{"loop"}}}, []CellID{"seed", "loop"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +78,9 @@ func TestCyclicVMStabilizesConcretePartitionsAndRecordsWidening(t *testing.T) {
 	}
 	widened := false
 	for _, trace := range evaluation.WideningTrace {
+		if trace.Cell != "loop" {
+			t.Fatalf("non-head cell widened: %#v", evaluation.WideningTrace)
+		}
 		widened = widened || trace.Widened
 	}
 	if !widened {
@@ -196,7 +199,7 @@ func TestCyclicVMStampsPublicationsWithProducerGuards(t *testing.T) {
 	}
 	cyclic, err := NewCyclicArtifact(artifact, map[Coordinate]CellID{artifact.Equations[0].Target: "seed", artifact.Equations[1].Target: "arm"}, plan,
 		[]SemanticDependency{{From: "seed", To: "arm", Reason: EdgeContractRead}, {From: "arm", To: "arm", Reason: EdgeContractAdvance}},
-		[]OutputSelector{{ID: "normal", Cells: []CellID{"seed", "arm"}}}, []CellID{"seed", "arm"}, []CellID{"seed", "arm"})
+		[]OutputSelector{{ID: "normal", Cells: []CellID{"seed", "arm"}}}, []CellID{"seed", "arm"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -120,7 +120,7 @@ func TestCondensationWTOPlanValidatesCanonicalDAG(t *testing.T) {
 
 func TestFreezeWTOPlanOwnsExactNestedSchedule(t *testing.T) {
 	elements := []WTOElement[int]{{Vertex: 0, Body: []WTOElement[int]{{Vertex: 1}}}}
-	influences := []WTOInfluence[int]{{From: 1, To: 0}}
+	influences := []WTOInfluence[int]{{From: 0, To: 1}, {From: 1, To: 0}}
 	plan, err := FreezeWTOPlan([]int{0, 1}, elements, influences)
 	if err != nil {
 		t.Fatal(err)
@@ -137,6 +137,64 @@ func TestFreezeWTOPlanOwnsExactNestedSchedule(t *testing.T) {
 	}
 }
 
+func TestWTOPlanComponentHeadsAreExactAndAllocationFree(t *testing.T) {
+	acyclic := NewWTOPlan([]int{0, 1}, func(cell int) []int {
+		if cell == 0 {
+			return []int{1}
+		}
+		return nil
+	})
+	for _, cell := range []int{0, 1} {
+		if acyclic.IsComponentHead(cell) {
+			t.Fatalf("acyclic cell %d was marked as a component head", cell)
+		}
+	}
+
+	selfLoop := NewWTOPlan([]int{7}, func(int) []int { return []int{7} })
+	if !selfLoop.IsComponentHead(7) {
+		t.Fatal("self-loop head was not selected")
+	}
+	if allocations := testing.AllocsPerRun(1000, func() { _ = selfLoop.IsComponentHead(7) }); allocations != 0 {
+		t.Fatalf("IsComponentHead allocations = %f, want zero", allocations)
+	}
+}
+
+func TestFreezeWTOPlanPreservesEveryNestedComponentHead(t *testing.T) {
+	cells := []int{0, 1, 2, 3, 4}
+	elements := []WTOElement[int]{
+		{Vertex: 0, Body: []WTOElement[int]{
+			{Vertex: 1, Body: []WTOElement[int]{{Vertex: 2}}},
+			{Vertex: 3},
+		}},
+		{Vertex: 4},
+	}
+	plan, err := FreezeWTOPlan(cells, elements, []WTOInfluence[int]{
+		{From: 0, To: 1}, {From: 1, To: 2}, {From: 2, To: 1}, {From: 1, To: 3}, {From: 3, To: 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cell := range []int{0, 1} {
+		if !plan.IsComponentHead(cell) {
+			t.Fatalf("nested component head %d was not selected", cell)
+		}
+	}
+	for _, cell := range []int{2, 3, 4} {
+		if plan.IsComponentHead(cell) {
+			t.Fatalf("body-only or acyclic cell %d was marked as a component head", cell)
+		}
+	}
+
+	// Freeze owns a clone of the schedule; later caller mutation cannot alter
+	// the exact widening cut set it derived at construction time.
+	elements[0].Vertex = 9
+	for _, cell := range []int{0, 1} {
+		if !plan.IsComponentHead(cell) {
+			t.Fatalf("caller mutation changed frozen component head %d", cell)
+		}
+	}
+}
+
 func TestFreezeWTOPlanRejectsInexactCoverageAndNonHeadBackedge(t *testing.T) {
 	if _, err := FreezeWTOPlan([]int{0, 1}, []WTOElement[int]{{Vertex: 0}}, nil); !errors.Is(err, ErrWTOInvalidFrozenPlan) {
 		t.Fatalf("missing-cell error=%v", err)
@@ -150,6 +208,17 @@ func TestFreezeWTOPlanRejectsInexactCoverageAndNonHeadBackedge(t *testing.T) {
 	}
 }
 
+func TestFreezeWTOPlanRejectsAcyclicFakeComponent(t *testing.T) {
+	_, err := FreezeWTOPlan(
+		[]int{0, 1},
+		[]WTOElement[int]{{Vertex: 0, Body: []WTOElement[int]{{Vertex: 1}}}},
+		[]WTOInfluence[int]{{From: 0, To: 1}},
+	)
+	if !errors.Is(err, ErrWTOInvalidFrozenPlan) {
+		t.Fatalf("acyclic fake component error = %v, want %v", err, ErrWTOInvalidFrozenPlan)
+	}
+}
+
 func TestRestrictWTOPlanClosesDemandOverEnclosingSCCWithoutReplanning(t *testing.T) {
 	plan, err := FreezeWTOPlan(
 		[]int{0, 1, 2, 3, 4},
@@ -157,7 +226,7 @@ func TestRestrictWTOPlanClosesDemandOverEnclosingSCCWithoutReplanning(t *testing
 			{Vertex: 0},
 			{Vertex: 1, Body: []WTOElement[int]{{Vertex: 2, Body: []WTOElement[int]{{Vertex: 3}}}, {Vertex: 4}}},
 		},
-		[]WTOInfluence[int]{{From: 3, To: 2}, {From: 4, To: 1}},
+		[]WTOInfluence[int]{{From: 1, To: 2}, {From: 2, To: 3}, {From: 3, To: 2}, {From: 2, To: 4}, {From: 4, To: 1}},
 	)
 	if err != nil {
 		t.Fatal(err)

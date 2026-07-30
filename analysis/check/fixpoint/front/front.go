@@ -5900,7 +5900,7 @@ func freezeCyclicArtifact(artifact equation.Artifact, body *wir.Body, graph cfg.
 	})
 	cyclic, err := equation.NewCyclicArtifact(artifact, byTarget, plan, dependencies,
 		[]equation.OutputSelector{{ID: "published", Cells: append([]equation.CellID(nil), cells...)}},
-		[]equation.CellID{cells[0]}, append([]equation.CellID(nil), cells...))
+		[]equation.CellID{cells[0]})
 	if err != nil {
 		return equation.CyclicArtifact{}, fmt.Errorf("front: freeze cyclic artifact: %w", err)
 	}

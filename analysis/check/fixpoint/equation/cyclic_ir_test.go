@@ -27,7 +27,7 @@ func TestCyclicArtifactDemandRetainsContractReverseReachability(t *testing.T) {
 		{From: "seed", To: "loop", Reason: EdgeContractRead, Evidence: "contract/read"},
 		{From: "loop", To: "loop", Reason: EdgeContractAdvance, Evidence: "contract/advance"},
 		{From: "loop", To: "result", Reason: EdgeContractOutcome, Evidence: "contract/outcome"},
-	}, []OutputSelector{{ID: "normal", Cells: []CellID{"result"}}}, []CellID{"seed", "loop"}, []CellID{"loop"})
+	}, []OutputSelector{{ID: "normal", Cells: []CellID{"result"}}}, []CellID{"seed", "loop"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestCyclicArtifactRejectsUnscheduleableContractEdge(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = NewCyclicArtifact(artifact, map[Coordinate]CellID{artifact.Equations[0].Target: "a", artifact.Equations[1].Target: "b"}, plan,
-		[]SemanticDependency{{From: "b", To: "a", Reason: EdgeContractRead}}, nil, nil, nil)
+		[]SemanticDependency{{From: "b", To: "a", Reason: EdgeContractRead}}, nil, nil)
 	if err == nil {
 		t.Fatal("unscheduled backward contract edge was accepted")
 	}

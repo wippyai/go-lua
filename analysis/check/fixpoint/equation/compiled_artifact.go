@@ -441,7 +441,7 @@ func CompileCyclicArtifact(artifact CyclicArtifact) (CompiledCyclicArtifact, err
 	if _, _, err := appendPlan(artifact.Plan.Elements()); err != nil {
 		return CompiledCyclicArtifact{}, err
 	}
-	canonical, err := NewCyclicArtifact(artifact.Artifact, artifact.CellForTarget, artifact.Plan, artifact.Dependencies, artifact.Selectors, artifact.ParameterCells, artifact.WidenCells)
+	canonical, err := NewCyclicArtifact(artifact.Artifact, artifact.CellForTarget, artifact.Plan, artifact.Dependencies, artifact.Selectors, artifact.ParameterCells)
 	if err != nil {
 		return CompiledCyclicArtifact{}, err
 	}

@@ -140,7 +140,7 @@ func interprocCyclicFixture(t testing.TB) equation.CyclicArtifact {
 		t.Fatal(err)
 	}
 	cyclic, err := equation.NewCyclicArtifact(plain, map[equation.Coordinate]equation.CellID{plain.Equations[0].Target: "result"}, plan,
-		nil, []equation.OutputSelector{{ID: "normal-return", Cells: []equation.CellID{"result"}}}, []equation.CellID{"result"}, nil)
+		nil, []equation.OutputSelector{{ID: "normal-return", Cells: []equation.CellID{"result"}}}, []equation.CellID{"result"})
 	if err != nil {
 		t.Fatal(err)
 	}
