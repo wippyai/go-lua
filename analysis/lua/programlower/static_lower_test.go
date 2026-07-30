@@ -3,6 +3,8 @@ package programlower_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/programlower"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/program"
@@ -173,5 +175,119 @@ func TestLowerStaticContainerAnnotationsFailClosed(t *testing.T) {
 		if _, err := lowerSource(source); err == nil {
 			t.Fatalf("Lower(%q) accepted unsupported static annotation", source)
 		}
+	}
+}
+
+func TestLowerStaticFunctionTypeAndAssertion(t *testing.T) {
+	p := parseBindLower(t, `type Predicate = fun(any, value: any, ... number): (asserts value is string, number)`)
+	alias, ok := p.TypeAliasAt(0)
+	if !ok {
+		t.Fatal("Predicate alias")
+	}
+	_, target, _, ok := p.TypeAlias(alias)
+	if !ok {
+		t.Fatal("Predicate alias query")
+	}
+	scope, variadic, returnsKnown, ok := p.Signature(target)
+	if !ok || scope != alias || !returnsKnown {
+		t.Fatalf("signature=%v/%v/%v/%v", scope, variadic, returnsKnown, ok)
+	}
+	if kind, ok := p.Primitive(variadic); !ok || kind != program.PrimitiveNumber {
+		t.Fatalf("variadic=%v/%v", kind, ok)
+	}
+	if count, ok := p.SignatureParamCount(target); !ok || count != 2 {
+		t.Fatalf("param count=%d/%v", count, ok)
+	}
+	anonymous, _, ok := p.SignatureParamAt(target, 0)
+	if !ok || anonymous != 0 {
+		t.Fatalf("anonymous param=%v/%v", anonymous, ok)
+	}
+	name, parameterType, ok := p.SignatureParamAt(target, 1)
+	if !ok || name == 0 {
+		t.Fatalf("named param=%v/%v", name, ok)
+	}
+	if kind, ok := p.Primitive(parameterType); !ok || kind != program.PrimitiveAny {
+		t.Fatalf("parameter type=%v/%v", kind, ok)
+	}
+	if count, ok := p.SignatureReturnCount(target); !ok || count != 2 {
+		t.Fatalf("return count=%d/%v", count, ok)
+	}
+	assertion, ok := p.SignatureReturnAt(target, 0)
+	if !ok {
+		t.Fatal("assertion return")
+	}
+	assertedName, ordinal, narrow, ok := p.Assertion(assertion)
+	if !ok || assertedName != name || ordinal != 1 {
+		t.Fatalf("assertion=%v/%d/%v", assertedName, ordinal, ok)
+	}
+	if kind, ok := p.Primitive(narrow); !ok || kind != program.PrimitiveString {
+		t.Fatalf("assertion narrow=%v/%v", kind, ok)
+	}
+	second, ok := p.SignatureReturnAt(target, 1)
+	if !ok {
+		t.Fatal("second return")
+	}
+	if kind, ok := p.Primitive(second); !ok || kind != program.PrimitiveNumber {
+		t.Fatalf("second return=%v/%v", kind, ok)
+	}
+}
+
+func TestLowerStaticFunctionTypePreservesAbsentAndEmptyReturns(t *testing.T) {
+	p := parseBindLower(t, "type Absent = fun()\ntype Empty = fun(): ()")
+	for index, wantKnown := range []bool{false, true} {
+		alias, ok := p.TypeAliasAt(index)
+		if !ok {
+			t.Fatalf("alias[%d]", index)
+		}
+		_, target, _, ok := p.TypeAlias(alias)
+		if !ok {
+			t.Fatalf("alias[%d] query", index)
+		}
+		scope, _, known, ok := p.Signature(target)
+		if !ok || scope != alias || known != wantKnown {
+			t.Fatalf("signature[%d]=%v/%v/%v", index, scope, known, ok)
+		}
+		if count, ok := p.SignatureReturnCount(target); !ok || count != 0 {
+			t.Fatalf("returns[%d]=%d/%v", index, count, ok)
+		}
+	}
+}
+
+func TestLowerStaticFunctionTypeGenericIdentity(t *testing.T) {
+	constraint := &ast.PrimitiveTypeExpr{Name: "string"}
+	parameterRef := &ast.TypeRefExpr{Path: []string{"T"}}
+	returnRef := &ast.TypeRefExpr{Path: []string{"T"}}
+	function := &ast.FunctionTypeExpr{
+		TypeParams: []ast.TypeParamExpr{{Name: "T", Constraint: constraint}},
+		Params:     []ast.FunctionParamExpr{{Name: "value", Type: parameterRef}},
+		Returns:    []ast.TypeExpr{returnRef},
+	}
+	stmts := []ast.Stmt{&ast.TypeDefStmt{Name: "Identity", Type: function}}
+	p, err := programlower.Lower("fixture.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias, _ := p.TypeAliasAt(0)
+	_, signature, _, _ := p.TypeAlias(alias)
+	if count, ok := p.SignatureGenericCount(signature); !ok || count != 1 {
+		t.Fatalf("generic count=%d/%v", count, ok)
+	}
+	generic, _ := p.SignatureGenericAt(signature, 0)
+	owner, _, genericConstraint, ok := p.TypeParam(generic)
+	if !ok || owner != signature {
+		t.Fatalf("generic owner=%v/%v", owner, ok)
+	}
+	if kind, ok := p.Primitive(genericConstraint); !ok || kind != program.PrimitiveString {
+		t.Fatalf("generic constraint=%v/%v", kind, ok)
+	}
+	_, parameterType, _ := p.SignatureParamAt(signature, 0)
+	state, target, _, _, ok := p.TypeRef(parameterType)
+	if !ok || state != program.TypeRefDeclaration || target != generic {
+		t.Fatalf("parameter generic ref=%v/%v/%v", state, target, ok)
+	}
+	returnType, _ := p.SignatureReturnAt(signature, 0)
+	state, target, _, _, ok = p.TypeRef(returnType)
+	if !ok || state != program.TypeRefDeclaration || target != generic {
+		t.Fatalf("return generic ref=%v/%v/%v", state, target, ok)
 	}
 }

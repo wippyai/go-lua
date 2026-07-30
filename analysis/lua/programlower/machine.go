@@ -148,6 +148,12 @@ const (
 	stepFinishStaticMapKey
 	stepFinishStaticMap
 	stepStaticRecordFields
+	stepStaticSignatureGenerics
+	stepStaticSignatureParams
+	stepFinishStaticSignatureVariadic
+	stepStaticSignatureReturns
+	stepFinishStaticSignature
+	stepFinishStaticAssertion
 )
 
 // step is a closed, phase-private instruction. Its AST fields keep the
@@ -577,6 +583,53 @@ func (l *lowerer) run() error {
 				return fmt.Errorf("programlower: invalid static record-field cursor")
 			}
 			l.push(step{kind: stepStaticRecordFields, node: expr, index: current.index + 1, staticMark: current.staticMark, typeHost: current.typeHost}, step{kind: stepAppendStaticType}, step{kind: stepStaticType, typeExpr: expr.Fields[current.index].Type, typeHost: current.typeHost})
+		case stepStaticSignatureGenerics:
+			if err := l.runStaticSignatureGenerics(current); err != nil {
+				return err
+			}
+		case stepStaticSignatureParams:
+			if err := l.runStaticSignatureParams(current); err != nil {
+				return err
+			}
+		case stepFinishStaticSignatureVariadic:
+			expr, ok := current.node.(*ast.FunctionTypeExpr)
+			if !ok || expr == nil {
+				return fmt.Errorf("programlower: invalid function type variadic continuation")
+			}
+			l.push(step{
+				kind:       stepStaticSignatureReturns,
+				node:       expr,
+				typeBase:   current.typeBase,
+				condition:  l.result,
+				ordinal:    current.ordinal,
+				staticMark: current.staticMark,
+				mark:       l.static.Mark(),
+				typeHost:   current.typeHost,
+			})
+		case stepStaticSignatureReturns:
+			if err := l.runStaticSignatureReturns(current); err != nil {
+				return err
+			}
+		case stepFinishStaticSignature:
+			expr, ok := current.node.(*ast.FunctionTypeExpr)
+			if !ok || expr == nil {
+				return fmt.Errorf("programlower: invalid function type continuation")
+			}
+			term, err := l.static.FinishSignature(expr, current.typeBase, current.staticMark, current.ordinal, current.mark, len(expr.Returns), current.condition)
+			if err != nil {
+				return err
+			}
+			l.result = term
+		case stepFinishStaticAssertion:
+			expr, ok := current.node.(*ast.AssertsTypeExpr)
+			if !ok || expr == nil {
+				return fmt.Errorf("programlower: invalid assertion type continuation")
+			}
+			term, err := l.static.Assertion(expr, l.result)
+			if err != nil {
+				return err
+			}
+			l.result = term
 		default:
 			return fmt.Errorf("programlower: invalid lowering step %d", current.kind)
 		}
@@ -758,6 +811,39 @@ func (l *lowerer) runStaticType(current step) error {
 		return fmt.Errorf("programlower: absent static type expression")
 	}
 	switch expr := current.typeExpr.(type) {
+	case *ast.FunctionTypeExpr:
+		fixedCount, variadic, err := staticlower.FunctionTypeShape(expr)
+		if err != nil {
+			return err
+		}
+		signature, params, err := l.static.BeginSignature(expr, current.typeHost)
+		if err != nil {
+			return err
+		}
+		l.push(step{
+			kind:       stepStaticSignatureGenerics,
+			node:       expr,
+			typeBase:   signature,
+			typeExpr:   variadic,
+			typeParams: params,
+			ordinal:    fixedCount,
+			typeHost:   signature,
+		})
+		return nil
+	case *ast.AssertsTypeExpr:
+		if expr.NarrowTo == nil {
+			term, err := l.static.Assertion(expr, 0)
+			if err != nil {
+				return err
+			}
+			l.result = term
+			return nil
+		}
+		l.push(
+			step{kind: stepFinishStaticAssertion, node: expr},
+			step{kind: stepStaticType, typeExpr: expr.NarrowTo, typeHost: current.typeHost},
+		)
+		return nil
 	case *ast.ArrayTypeExpr:
 		l.push(step{kind: stepFinishStaticArray, node: expr}, step{kind: stepStaticType, typeExpr: expr.Element, typeHost: current.typeHost})
 		return nil
@@ -817,6 +903,116 @@ func (l *lowerer) runStaticType(current step) error {
 		l.result = term
 		return nil
 	}
+}
+
+func (l *lowerer) runStaticSignatureGenerics(current step) error {
+	expr, ok := current.node.(*ast.FunctionTypeExpr)
+	if !ok || expr == nil {
+		return fmt.Errorf("programlower: invalid function type generic cursor")
+	}
+	if current.index == len(current.typeParams) {
+		l.push(step{
+			kind:       stepStaticSignatureParams,
+			node:       expr,
+			typeBase:   current.typeBase,
+			typeExpr:   current.typeExpr,
+			ordinal:    current.ordinal,
+			staticMark: l.static.Mark(),
+			typeHost:   current.typeHost,
+		})
+		return nil
+	}
+	if current.index < 0 || current.index > len(current.typeParams) {
+		return fmt.Errorf("programlower: invalid function type generic cursor")
+	}
+	param := current.typeParams[current.index]
+	if param.ID == 0 || param.Kind != bind.TypeDeclParam || current.index >= len(expr.TypeParams) {
+		return fmt.Errorf("programlower: invalid function type parameter binding")
+	}
+	current.index++
+	if param.Constraint == nil {
+		if err := l.static.FinishParam(param, 0); err != nil {
+			return err
+		}
+		l.push(current)
+		return nil
+	}
+	host, ok := l.static.Host(param)
+	if !ok {
+		return fmt.Errorf("programlower: function type parameter was not predeclared")
+	}
+	l.push(
+		current,
+		step{kind: stepFinishTypeParam, typeParam: param},
+		step{kind: stepStaticType, typeExpr: param.Constraint, typeHost: host},
+	)
+	return nil
+}
+
+func (l *lowerer) runStaticSignatureParams(current step) error {
+	expr, ok := current.node.(*ast.FunctionTypeExpr)
+	if !ok || expr == nil {
+		return fmt.Errorf("programlower: invalid function type parameter cursor")
+	}
+	if current.index == current.ordinal {
+		returnMark := l.static.Mark()
+		if current.typeExpr == nil {
+			l.push(step{
+				kind:       stepStaticSignatureReturns,
+				node:       expr,
+				typeBase:   current.typeBase,
+				ordinal:    current.ordinal,
+				staticMark: current.staticMark,
+				mark:       returnMark,
+				typeHost:   current.typeHost,
+			})
+			return nil
+		}
+		l.push(
+			step{kind: stepFinishStaticSignatureVariadic, node: expr, typeBase: current.typeBase, ordinal: current.ordinal, staticMark: current.staticMark, typeHost: current.typeHost},
+			step{kind: stepStaticType, typeExpr: current.typeExpr, typeHost: current.typeHost},
+		)
+		return nil
+	}
+	if current.index < 0 || current.index > current.ordinal || current.index >= len(expr.Params) {
+		return fmt.Errorf("programlower: invalid function type parameter cursor")
+	}
+	param := expr.Params[current.index]
+	if param.Type == nil || param.Name == "..." {
+		return fmt.Errorf("programlower: invalid function type fixed parameter")
+	}
+	current.index++
+	l.push(
+		current,
+		step{kind: stepAppendStaticType},
+		step{kind: stepStaticType, typeExpr: param.Type, typeHost: current.typeHost},
+	)
+	return nil
+}
+
+func (l *lowerer) runStaticSignatureReturns(current step) error {
+	expr, ok := current.node.(*ast.FunctionTypeExpr)
+	if !ok || expr == nil {
+		return fmt.Errorf("programlower: invalid function type return cursor")
+	}
+	if current.index == len(expr.Returns) {
+		l.push(step{kind: stepFinishStaticSignature, node: expr, typeBase: current.typeBase, condition: current.condition, ordinal: current.ordinal, staticMark: current.staticMark, mark: current.mark})
+		return nil
+	}
+	if current.index < 0 || current.index > len(expr.Returns) {
+		return fmt.Errorf("programlower: invalid function type return cursor")
+	}
+	returnType := expr.Returns[current.index]
+	if returnType == nil {
+		return fmt.Errorf("programlower: absent function type return at index %d", current.index)
+	}
+	current.index++
+	l.push(
+		current,
+		step{kind: stepAppendStaticType},
+		step{kind: stepStaticType, typeExpr: returnType, typeHost: current.typeHost},
+	)
+	return nil
 }
 
 func (l *lowerer) runStaticTypeList(current step) error {

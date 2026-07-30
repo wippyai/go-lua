@@ -19,6 +19,8 @@ type Writer struct {
 	terms      map[bind.TypeDeclID]program.Term
 	children   []program.Term
 	fields     []program.RecordField
+	params     []program.Parameter
+	generics   []program.Term
 }
 
 // Mark starts one LIFO ordered child range for an iterative type walk.
@@ -49,7 +51,9 @@ func (w *Writer) Take(mark int) (program.Term, error) {
 }
 
 // Clean reports whether the iterative type-child scratch is empty.
-func (w *Writer) Clean() bool { return w != nil && len(w.children) == 0 }
+func (w *Writer) Clean() bool {
+	return w != nil && len(w.children) == 0 && len(w.fields) == 0 && len(w.params) == 0 && len(w.generics) == 0
+}
 
 // New creates a static writer over an unfinished Program builder.
 func New(builder *program.Builder, binding *bind.Result, sourceName string) *Writer {
@@ -155,6 +159,132 @@ func (w *Writer) FinishAlias(def *ast.TypeDefStmt, target program.Term) error {
 		return fmt.Errorf("programlower: could not finalize type alias %q", decl.Name)
 	}
 	return nil
+}
+
+// BeginSignature reserves a source-only callable under scope, then declares
+// its exact bound generic identities beneath that signature host. The returned
+// declarations remain in source order for the iterative caller to fill their
+// constraints through FinishParam.
+func (w *Writer) BeginSignature(expr *ast.FunctionTypeExpr, scope program.Term) (program.Term, []bind.TypeDecl, error) {
+	if w == nil || w.builder == nil || w.binding == nil || expr == nil {
+		return 0, nil, fmt.Errorf("programlower: invalid function type")
+	}
+	if _, _, err := FunctionTypeShape(expr); err != nil {
+		return 0, nil, err
+	}
+	params := w.binding.FunctionTypeParams(expr)
+	if len(params) != len(expr.TypeParams) {
+		return 0, nil, fmt.Errorf("programlower: missing function type parameter bindings")
+	}
+	signature := w.builder.DeclareSignature(w.span(expr), scope)
+	if signature == 0 {
+		return 0, nil, fmt.Errorf("programlower: could not declare function type")
+	}
+	if len(w.generics) != 0 {
+		return 0, nil, fmt.Errorf("programlower: unfinished function-type generic scratch")
+	}
+	for index, param := range params {
+		if param.ID == 0 || param.Kind != bind.TypeDeclParam || param.Name == "" || param.Name != expr.TypeParams[index].Name {
+			return 0, nil, fmt.Errorf("programlower: invalid function type parameter binding")
+		}
+		if _, exists := w.terms[param.ID]; exists {
+			return 0, nil, fmt.Errorf("programlower: duplicate type parameter identity %q", param.Name)
+		}
+		term := w.builder.DeclareTypeParam(w.span(expr), signature, param.Name)
+		if term == 0 {
+			return 0, nil, fmt.Errorf("programlower: could not declare function type parameter %q", param.Name)
+		}
+		w.terms[param.ID] = term
+		w.generics = append(w.generics, term)
+	}
+	if !w.builder.SetSignatureGenerics(signature, w.generics) {
+		return 0, nil, fmt.Errorf("programlower: could not set function type parameters")
+	}
+	w.generics = w.generics[:0]
+	return signature, params, nil
+}
+
+// FinishSignature completes a source-only callable from fixed parameter and
+// return child ranges accumulated by the iterative lowerer. Descriptor scratch
+// belongs to Writer, so no per-signature parameter allocation is needed.
+func (w *Writer) FinishSignature(expr *ast.FunctionTypeExpr, signature program.Term, paramMark, fixedCount, returnMark, returnCount int, variadic program.Term) (program.Term, error) {
+	if w == nil || w.builder == nil || expr == nil || returnCount != len(expr.Returns) {
+		return 0, fmt.Errorf("programlower: invalid function type completion")
+	}
+	expectedFixed, expectedVariadic, err := FunctionTypeShape(expr)
+	if err != nil || fixedCount != expectedFixed || (expectedVariadic == nil) != (variadic == 0) {
+		return 0, fmt.Errorf("programlower: invalid function type variadic child")
+	}
+	returns, err := w.rangeTerms(returnMark, returnCount)
+	if err != nil {
+		return 0, err
+	}
+	fixed, err := w.rangeTerms(paramMark, fixedCount)
+	if err != nil {
+		return 0, err
+	}
+	if len(w.params) != 0 {
+		return 0, fmt.Errorf("programlower: unfinished function-type parameter scratch")
+	}
+	for index, param := range expr.Params[:fixedCount] {
+		key := program.Key(0)
+		if param.Name != "" {
+			key = w.builder.TypeKey(param.Name)
+			if key == 0 {
+				w.params = w.params[:0]
+				return 0, fmt.Errorf("programlower: invalid function type parameter name %q", param.Name)
+			}
+		}
+		w.params = append(w.params, program.Parameter{Name: key, Type: fixed[index]})
+	}
+	if !w.builder.FillSignature(signature, w.params, variadic, expr.Returns != nil, returns) {
+		w.params = w.params[:0]
+		return 0, fmt.Errorf("programlower: could not finalize function type")
+	}
+	w.params = w.params[:0]
+	return signature, nil
+}
+
+// FunctionTypeShape separates ordinary fixed parameters from the parser's
+// terminal Name=="..." encoding. Manually-authored ASTs use Variadic instead;
+// the two encodings must never be combined.
+func FunctionTypeShape(expr *ast.FunctionTypeExpr) (fixedCount int, variadic ast.TypeExpr, err error) {
+	if expr == nil {
+		return 0, nil, fmt.Errorf("programlower: nil function type")
+	}
+	fixedCount = len(expr.Params)
+	for index, param := range expr.Params {
+		if param.Type == nil {
+			return 0, nil, fmt.Errorf("programlower: function type parameter %d has no type", index)
+		}
+		if param.Name != "..." {
+			continue
+		}
+		if index != len(expr.Params)-1 || variadic != nil || expr.Variadic != nil {
+			return 0, nil, fmt.Errorf("programlower: invalid function type variadic parameter")
+		}
+		fixedCount, variadic = index, param.Type
+	}
+	if variadic == nil {
+		variadic = expr.Variadic
+	}
+	if variadic == nil {
+		return fixedCount, nil, nil
+	}
+	return fixedCount, variadic, nil
+}
+
+// Assertion lowers one return-position assertion with its exact binder
+// immediate-formal ordinal. An unresolved source name is retained as -1.
+func (w *Writer) Assertion(expr *ast.AssertsTypeExpr, narrow program.Term) (program.Term, error) {
+	if w == nil || w.builder == nil || w.binding == nil || expr == nil || (expr.NarrowTo == nil) != (narrow == 0) {
+		return 0, fmt.Errorf("programlower: invalid assertion type")
+	}
+	ordinal := -1
+	if bound, ok := w.binding.AssertedParam(expr); ok {
+		ordinal = bound
+	}
+	return w.term(w.builder.Assertion(w.span(expr), expr.ParamName, ordinal, narrow), "assertion type")
 }
 
 // Leaf lowers one static type leaf. handled is false for structural and typeof
