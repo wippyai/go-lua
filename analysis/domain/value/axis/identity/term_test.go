@@ -9,10 +9,10 @@ import (
 
 func TestRelationalIdentityTermIsTypedAndStructurallyFinite(t *testing.T) {
 	body := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-term-schema")), 1)
-	schema := NewFormalSchemaID(body, 7)
-	in := NewFormalVar(schema, formal.Input)
-	out := in.In(formal.Output)
-	if !schema.Valid() || !in.Valid() || !out.Valid() || in == out || in.Schema() != out.Schema() {
+	in := formal.NewRoot(body, 7, formal.Input)
+	out := formal.NewRoot(body, 7, formal.Output)
+	if !in.Valid() || !out.Valid() || in == out ||
+		in.Owner() != out.Owner() || in.Ordinal() != out.Ordinal() {
 		t.Fatal("vocabulary rename did not preserve one finite structural schema coordinate")
 	}
 	concreteID := ID{Kind: "test.object", Site: "identity-term", Index: 1}
@@ -28,12 +28,27 @@ func TestRelationalIdentityTermIsTypedAndStructurallyFinite(t *testing.T) {
 	}
 }
 
+func TestFormalIdentityTermRetainsNeutralRootExactly(t *testing.T) {
+	body := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-term-root")), 3)
+	for _, vocabulary := range []formal.Vocabulary{formal.Input, formal.Middle, formal.Output} {
+		root := formal.NewRoot(body, 1<<40+29, vocabulary)
+		term := FormalTerm(root)
+		got, ok := term.Formal()
+		if !ok || got != root ||
+			got.Owner() != body ||
+			got.Ordinal() != root.Ordinal() ||
+			got.Vocabulary() != vocabulary {
+			t.Fatalf("formal term root = %#v/%t, want exact %#v", got, ok, root)
+		}
+	}
+}
+
 func TestFormalIdentitySubstitutionPreservesBottomSingletonTop(t *testing.T) {
 	body := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-term-substitution")), 1)
-	vars := []FormalVar{
-		NewFormalVar(NewFormalSchemaID(body, 1), formal.Input),
-		NewFormalVar(NewFormalSchemaID(body, 2), formal.Input),
-		NewFormalVar(NewFormalSchemaID(body, 3), formal.Input),
+	vars := []formal.Root{
+		formal.NewRoot(body, 1, formal.Input),
+		formal.NewRoot(body, 2, formal.Input),
+		formal.NewRoot(body, 3, formal.Input),
 	}
 	exact := ID{Kind: "test.object", Site: "identity-substitution", Index: 1}
 	substitution, ok := NewSubstitution([]Binding{
@@ -63,14 +78,44 @@ func TestFormalIdentitySubstitutionPreservesBottomSingletonTop(t *testing.T) {
 	}
 }
 
+func TestFormalIdentitySubstitutionKeysByCompleteNeutralRoot(t *testing.T) {
+	firstBody := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-substitution-owner-a")), 1)
+	secondBody := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-substitution-owner-b")), 1)
+	roots := []formal.Root{
+		formal.NewRoot(firstBody, 9, formal.Input),
+		formal.NewRoot(firstBody, 10, formal.Input),
+		formal.NewRoot(firstBody, 9, formal.Output),
+		formal.NewRoot(secondBody, 9, formal.Input),
+	}
+	ids := []ID{
+		{Kind: "test.object", Site: "owner-a-ordinal-9-input", Index: 1},
+		{Kind: "test.object", Site: "owner-a-ordinal-10-input", Index: 2},
+		{Kind: "test.object", Site: "owner-a-ordinal-9-output", Index: 3},
+		{Kind: "test.object", Site: "owner-b-ordinal-9-input", Index: 4},
+	}
+	bindings := make([]Binding, len(roots))
+	for index := range roots {
+		bindings[index] = Binding{Variable: roots[index], Image: Singleton(ids[index])}
+	}
+	substitution, ok := NewSubstitution(bindings)
+	if !ok {
+		t.Fatal("complete-root substitution rejected")
+	}
+	for index, root := range roots {
+		got, found := substitution.Substitute(FormalTerm(root))
+		if !found || !Equal(got, Singleton(ids[index])) {
+			t.Fatalf("root %d image = %v/%t, want %v", index, got, found, ids[index])
+		}
+	}
+}
+
 func TestCanonicalIdentityTermDistinguishesOwnerVocabularyAndAlternative(t *testing.T) {
 	firstBody := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-term-owner-a")), 1)
 	secondBody := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-term-owner-b")), 1)
-	firstSchema := NewFormalSchemaID(firstBody, 1)
 	values := []Value{
-		SingletonTerm(FormalTerm(NewFormalVar(firstSchema, formal.Input))),
-		SingletonTerm(FormalTerm(NewFormalVar(firstSchema, formal.Output))),
-		SingletonTerm(FormalTerm(NewFormalVar(NewFormalSchemaID(secondBody, 1), formal.Input))),
+		SingletonTerm(FormalTerm(formal.NewRoot(firstBody, 1, formal.Input))),
+		SingletonTerm(FormalTerm(formal.NewRoot(firstBody, 1, formal.Output))),
+		SingletonTerm(FormalTerm(formal.NewRoot(secondBody, 1, formal.Input))),
 		SingletonTerm(AllocationTerm(ManifestAllocationTemplate(firstBody, 1, 1))),
 	}
 	seen := make(map[string]struct{}, len(values))
@@ -86,8 +131,8 @@ func TestCanonicalIdentityTermDistinguishesOwnerVocabularyAndAlternative(t *test
 func TestIdentityTermStructuralOrderIncludesLexicalOwner(t *testing.T) {
 	firstBody := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-term-order-a")), 1)
 	secondBody := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-term-order-b")), 1)
-	first := FormalTerm(NewFormalVar(NewFormalSchemaID(firstBody, 1), formal.Input))
-	second := FormalTerm(NewFormalVar(NewFormalSchemaID(secondBody, 1), formal.Input))
+	first := FormalTerm(formal.NewRoot(firstBody, 1, formal.Input))
+	second := FormalTerm(formal.NewRoot(secondBody, 1, formal.Input))
 	if first == second || Less(first, second) == Less(second, first) {
 		t.Fatal("formal identity order omitted distinct lexical owners")
 	}

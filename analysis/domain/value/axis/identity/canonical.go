@@ -103,7 +103,7 @@ func decodeCanonicalTerm(reader *canonical.Reader) (Term, error) {
 			return Term{}, fmt.Errorf("identity: invalid formal owner")
 		}
 		copy(body[:], owner)
-		term := FormalTerm(NewFormalVar(NewFormalSchemaID(body, ordinal), formal.Vocabulary(vocabulary)))
+		term := FormalTerm(formal.NewRoot(body, ordinal, formal.Vocabulary(vocabulary)))
 		if !term.Valid() {
 			return Term{}, fmt.Errorf("identity: invalid canonical formal term")
 		}
@@ -155,7 +155,7 @@ func encodeCanonicalTerm(writer *canonical.Writer, term Term) error {
 		}
 		return writer.Uint(term.concrete.Index)
 	case TermFormal:
-		root := term.formal.root
+		root := term.formal
 		owner := root.Owner()
 		if err := writer.Bytes(owner[:]); err != nil {
 			return err

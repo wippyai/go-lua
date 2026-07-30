@@ -16,8 +16,8 @@ import (
 func TestCanonicalFormalOrdinalPreservesFullUint64(t *testing.T) {
 	body := lexicalidentity.FunctionBody(lexicalidentity.UnitNamespaceFromContent([]byte("identity-formal-wide-ordinal")), 1)
 	wide := uint64(math.MaxUint32) + 17
-	value := SingletonTerm(FormalTerm(NewFormalVar(NewFormalSchemaID(body, wide), formal.Output)))
-	narrow := SingletonTerm(FormalTerm(NewFormalVar(NewFormalSchemaID(body, 17), formal.Output)))
+	value := SingletonTerm(FormalTerm(formal.NewRoot(body, wide, formal.Output)))
+	narrow := SingletonTerm(FormalTerm(formal.NewRoot(body, 17, formal.Output)))
 	encoded := canonicalBytes(t, value)
 	if bytes.Equal(encoded, canonicalBytes(t, narrow)) {
 		t.Fatal("formal ordinal was truncated to uint32")
@@ -34,8 +34,8 @@ func TestCanonicalFormalOrdinalPreservesFullUint64(t *testing.T) {
 		t.Fatal(err)
 	}
 	term, exact := decoded.Term()
-	variable, isFormal := term.Formal()
-	if !exact || !isFormal || variable.Schema().Ordinal() != wide || variable.Vocabulary() != formal.Output {
+	root, isFormal := term.Formal()
+	if !exact || !isFormal || root.Owner() != body || root.Ordinal() != wide || root.Vocabulary() != formal.Output {
 		t.Fatalf("wide formal round trip = %#v", decoded)
 	}
 }
