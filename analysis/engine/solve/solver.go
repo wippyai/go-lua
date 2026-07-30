@@ -446,7 +446,11 @@ func (s *solveState[Cell, State]) recordWidenChange(c Cell) {
 	s.widenChanges[c]++
 }
 
-func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error {
+func (s *solveState[Cell, State]) runNarrowing(
+	cancel *cancellationGuard,
+	plan *WTOPlan[Cell],
+	evaluate bool,
+) error {
 	if s.domain.Narrow == nil || !s.hasWiden || len(s.cells) == 0 {
 		return nil
 	}
@@ -454,7 +458,7 @@ func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error 
 		if err := cancel.err(iteration * uint64(cancellationCheckInterval)); err != nil {
 			return err
 		}
-		candidate, candidateOnlyOrder, err := s.narrowingCandidate(cancel)
+		candidate, candidateOnlyOrder, err := s.narrowingCandidate(cancel, plan, evaluate)
 		if err != nil {
 			return err
 		}
@@ -495,7 +499,11 @@ func (s *solveState[Cell, State]) runNarrowing(cancel *cancellationGuard) error 
 	}
 }
 
-func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) (map[Cell]State, []Cell, error) {
+func (s *solveState[Cell, State]) narrowingCandidate(
+	cancel *cancellationGuard,
+	plan *WTOPlan[Cell],
+	evaluate bool,
+) (map[Cell]State, []Cell, error) {
 	candidate := make(map[Cell]State, len(s.cur))
 	// candidateOnlyOrder records keys that are first created by an emit during
 	// this candidate pass. They are absent from cur, so they cannot appear in
@@ -517,10 +525,17 @@ func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) 
 		candidate[c] = value
 		return value
 	}
+	uncovered := false
 	read := func(d Cell) State {
+		if !plan.allowsRead(d, s.active, evaluate) {
+			uncovered = true
+		}
 		return s.curOf(d)
 	}
 	emit := func(d Cell, v State) {
+		if !plan.coversEmission(s.active, d) {
+			uncovered = true
+		}
 		_, candidateExists := candidate[d]
 		_, declared := s.order[d]
 		_, present := s.cur[d]
@@ -549,6 +564,9 @@ func (s *solveState[Cell, State]) narrowingCandidate(cancel *cancellationGuard) 
 		}
 		if err := cancel.err(0); err != nil {
 			return nil, nil, err
+		}
+		if uncovered {
+			return nil, nil, ErrWTOPlanUncovered
 		}
 	}
 	s.active = zero

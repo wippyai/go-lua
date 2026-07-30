@@ -12,6 +12,7 @@ import (
 func TestWTOPlanNestedLoopsVisitsEveryCellOnce(t *testing.T) {
 	edges := map[int][]int{0: {1}, 1: {2, 5}, 2: {3, 4}, 3: {1}, 4: {2}}
 	plan := NewWTOPlan([]int{0, 1, 2, 4, 3, 5}, func(cell int) []int { return edges[cell] })
+	elements := plan.Elements()
 	seen := map[int]int{}
 	maxDepth := 0
 	var walk func([]WTOElement[int], int)
@@ -24,10 +25,10 @@ func TestWTOPlanNestedLoopsVisitsEveryCellOnce(t *testing.T) {
 			walk(item.Body, depth+1)
 		}
 	}
-	walk(plan.elements, 0)
+	walk(elements, 0)
 	for cell := 0; cell <= 5; cell++ {
 		if seen[cell] != 1 {
-			t.Fatalf("cell %d appears %d times in %#v", cell, seen[cell], plan.elements)
+			t.Fatalf("cell %d appears %d times in %#v", cell, seen[cell], elements)
 		}
 	}
 	if maxDepth < 2 {
@@ -219,6 +220,118 @@ func TestFreezeWTOPlanRejectsAcyclicFakeComponent(t *testing.T) {
 	}
 }
 
+func TestFreezeWTOPlanRejectsAlternateInvalidNesting(t *testing.T) {
+	cells := []int{0, 1, 2, 3}
+	influences := []WTOInfluence[int]{
+		{From: 0, To: 1},
+		{From: 1, To: 2},
+		{From: 2, To: 1},
+		{From: 1, To: 3},
+		{From: 3, To: 0},
+	}
+	canonical := []WTOElement[int]{{Vertex: 0, Body: []WTOElement[int]{
+		{Vertex: 1, Body: []WTOElement[int]{{Vertex: 2}}},
+		{Vertex: 3},
+	}}}
+	if _, err := FreezeWTOPlan(cells, canonical, influences); err != nil {
+		t.Fatalf("canonical nesting was rejected: %v", err)
+	}
+	alternate := []WTOElement[int]{{Vertex: 0, Body: []WTOElement[int]{
+		{Vertex: 1},
+		{Vertex: 2, Body: []WTOElement[int]{{Vertex: 3}}},
+	}}}
+	if _, err := FreezeWTOPlan(cells, alternate, influences); !errors.Is(err, ErrWTOInvalidFrozenPlan) {
+		t.Fatalf("alternate nesting error = %v, want %v", err, ErrWTOInvalidFrozenPlan)
+	}
+}
+
+func TestWTOPlanningIsStackSafeAndReadsEachSuccessorRowOnce(t *testing.T) {
+	const count = 100_000
+	cells := make([]int, count)
+	calls := make([]int, count)
+	for index := range cells {
+		cells[index] = index
+	}
+	plan := NewWTOPlan(cells, func(cell int) []int {
+		calls[cell]++
+		if cell+1 == count {
+			return nil
+		}
+		return []int{cell + 1, cell + 1}
+	})
+	if plan.ComponentCount() != 0 || len(plan.Elements()) != count {
+		t.Fatalf("deep acyclic plan has components=%d elements=%d", plan.ComponentCount(), len(plan.Elements()))
+	}
+	for cell, callCount := range calls {
+		if callCount != 1 {
+			t.Fatalf("successors(%d) called %d times, want exactly once", cell, callCount)
+		}
+	}
+	frozen, err := FreezeWTOPlan(cells, plan.Elements(), plan.Influences())
+	if err != nil {
+		t.Fatalf("deep acyclic canonical freeze: %v", err)
+	}
+	if frozen.ComponentCount() != 0 || len(frozen.Elements()) != count {
+		t.Fatalf("deep frozen plan has components=%d elements=%d", frozen.ComponentCount(), len(frozen.Elements()))
+	}
+}
+
+func TestWTOPlanningAndFreezeAreStackSafeForDeepNesting(t *testing.T) {
+	const count = 4_096
+	cells := make([]int, count)
+	for index := range cells {
+		cells[index] = index
+	}
+	plan := NewWTOPlan(cells, func(cell int) []int {
+		if cell+1 < count {
+			return []int{cell + 1}
+		}
+		backedges := make([]int, count-1)
+		for index := range backedges {
+			backedges[index] = index
+		}
+		return backedges
+	})
+	if plan.ComponentCount() != count-1 {
+		t.Fatalf("deep plan components = %d, want %d", plan.ComponentCount(), count-1)
+	}
+	frozen, err := FreezeWTOPlan(cells, plan.Elements(), plan.Influences())
+	if err != nil {
+		t.Fatalf("deep canonical freeze: %v", err)
+	}
+	if frozen.ComponentCount() != plan.ComponentCount() {
+		t.Fatalf("frozen components = %d, want %d", frozen.ComponentCount(), plan.ComponentCount())
+	}
+
+	calls := 0
+	result, err := SolveWTOContext(context.Background(), EquationSystem[int, int]{
+		Lattice: capLattice{top: 1}.joinOnly(),
+		Cells:   cells,
+		Initial: func(int) int { return 0 },
+		Evaluate: func(int, func(int) int) int {
+			calls++
+			return 0
+		},
+	}, frozen)
+	if err != nil {
+		t.Fatalf("deep iterative solve: %v", err)
+	}
+	if len(result) != count || calls != count {
+		t.Fatalf("deep iterative solve cells=%d calls=%d, want %d/%d", len(result), calls, count, count)
+	}
+}
+
+func TestWTOPlanIgnoresDuplicateAndPermutedSuccessorSpellings(t *testing.T) {
+	cells := []int{0, 1, 2, 3, 4}
+	first := map[int][]int{0: {3, 1, 3, 2}, 1: {4}, 2: {4}, 3: {4}, 4: {0}}
+	second := map[int][]int{0: {2, 1, 3}, 1: {4, 4}, 2: {4}, 3: {4}, 4: {0, 0}}
+	left := NewWTOPlan(cells, func(cell int) []int { return first[cell] })
+	right := NewWTOPlan(cells, func(cell int) []int { return second[cell] })
+	if !reflect.DeepEqual(left.Elements(), right.Elements()) || !reflect.DeepEqual(left.Influences(), right.Influences()) {
+		t.Fatalf("equivalent graphs produced different canonical schedules")
+	}
+}
+
 func TestRestrictWTOPlanClosesDemandOverEnclosingSCCWithoutReplanning(t *testing.T) {
 	plan, err := FreezeWTOPlan(
 		[]int{0, 1, 2, 3, 4},
@@ -246,6 +359,155 @@ func TestRestrictWTOPlanClosesDemandOverEnclosingSCCWithoutReplanning(t *testing
 	}
 }
 
+func TestRestrictedWTOPlanFailsClosedForExcludedCells(t *testing.T) {
+	plan := NewWTOPlan([]int{0, 1}, nil)
+	restricted, err := RestrictWTOPlan(plan, []int{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restricted.CoversInfluence(0, 1) || restricted.CoversEmission(1, 0) {
+		t.Fatal("restricted plan admitted an influence crossing its retained membership")
+	}
+	if got := restricted.AppendCells(nil); !reflect.DeepEqual(got, []int{1}) {
+		t.Fatalf("restricted execution cells = %v, want [1]", got)
+	}
+}
+
+func TestRestrictWTOPlanNoncontiguousRootsOwnDenseMembership(t *testing.T) {
+	plan := NewWTOPlan([]int{0, 1, 2, 3}, nil)
+	restricted, err := RestrictWTOPlan(plan, []int{3, 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := restricted.AppendCells(nil); !reflect.DeepEqual(got, []int{1, 3}) {
+		t.Fatalf("restricted execution cells = %v, want [1 3]", got)
+	}
+	if !restricted.Matches([]int{1, 3}) {
+		t.Fatal("restricted plan does not match its exact local cell order")
+	}
+	for index, cell := range []int{1, 3} {
+		got, ok := restricted.CanonicalIndex(cell)
+		if !ok || got != index {
+			t.Fatalf("CanonicalIndex(%d) = %d/%v, want %d/true", cell, got, ok, index)
+		}
+	}
+	for _, excluded := range []int{0, 2} {
+		if _, ok := restricted.CanonicalIndex(excluded); ok ||
+			restricted.CoversInfluence(excluded, excluded) ||
+			restricted.CoversEmission(excluded, excluded) ||
+			restricted.CoversInfluence(excluded, 3) ||
+			restricted.CoversEmission(3, excluded) {
+			t.Fatalf("excluded cell %d retained authority in restricted plan", excluded)
+		}
+	}
+	var calls []int
+	result, solveErr := SolveWTOContext(context.Background(), EquationSystem[int, int]{
+		Lattice: capLattice{top: 8}.joinOnly(), Cells: []int{1, 3},
+		Evaluate: func(cell int, _ func(int) int) int {
+			calls = append(calls, cell)
+			return cell
+		},
+	}, restricted)
+	if solveErr != nil || !reflect.DeepEqual(calls, []int{1, 3}) || !reflect.DeepEqual(result, map[int]int{1: 1, 3: 3}) {
+		t.Fatalf("noncontiguous execution calls=%v result=%v error=%v", calls, result, solveErr)
+	}
+}
+
+func TestRestrictWTOPlanRejectsExcludedDemandFromCurrentView(t *testing.T) {
+	plan := NewWTOPlan([]int{0, 1, 2}, nil)
+	restricted, err := RestrictWTOPlan(plan, []int{2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, demand := range [][]int{{0}, {2, 0}} {
+		got, restrictErr := RestrictWTOPlan(restricted, demand)
+		if !errors.Is(restrictErr, ErrWTOPlanRestrictionUncovered) || got != nil {
+			t.Fatalf("demand %v produced plan=%v error=%v, want nil/uncovered", demand, got, restrictErr)
+		}
+	}
+}
+
+func BenchmarkRestrictWTOPlanNested(b *testing.B) {
+	const count = 256
+	cells := make([]int, count)
+	for index := range cells {
+		cells[index] = index
+	}
+	plan := NewWTOPlan(cells, func(cell int) []int {
+		if cell+1 < count {
+			return []int{cell + 1}
+		}
+		backedges := make([]int, count-1)
+		for index := range backedges {
+			backedges[index] = index
+		}
+		return backedges
+	})
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if _, err := RestrictWTOPlan(plan, []int{count - 1}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkRestrictedWTOPlanMembershipManyRoots(b *testing.B) {
+	const count = 4_096
+	cells := make([]int, count)
+	for index := range cells {
+		cells[index] = index
+	}
+	plan := NewWTOPlan(cells, nil)
+	restricted, err := RestrictWTOPlan(plan, cells)
+	if err != nil {
+		b.Fatal(err)
+	}
+	cell := count / 2
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		if index, ok := restricted.CanonicalIndex(cell); !ok || index < 0 {
+			b.Fatal("retained cell is absent")
+		}
+		if !restricted.CoversInfluence(cell, cell) {
+			b.Fatal("retained self read is absent")
+		}
+	}
+}
+
+func TestRestrictWTOPlanAllocationCountDoesNotGrowWithNestingDepth(t *testing.T) {
+	makePlan := func(count int) *WTOPlan[int] {
+		cells := make([]int, count)
+		for index := range cells {
+			cells[index] = index
+		}
+		return NewWTOPlan(cells, func(cell int) []int {
+			if cell+1 < count {
+				return []int{cell + 1}
+			}
+			backedges := make([]int, count-1)
+			for index := range backedges {
+				backedges[index] = index
+			}
+			return backedges
+		})
+	}
+	small, large := makePlan(64), makePlan(1_024)
+	smallAllocs := testing.AllocsPerRun(20, func() {
+		if _, err := RestrictWTOPlan(small, []int{63}); err != nil {
+			panic(err)
+		}
+	})
+	largeAllocs := testing.AllocsPerRun(20, func() {
+		if _, err := RestrictWTOPlan(large, []int{1_023}); err != nil {
+			panic(err)
+		}
+	})
+	if largeAllocs > smallAllocs*2 {
+		t.Fatalf("restriction allocations grew with nesting: small=%f large=%f", smallAllocs, largeAllocs)
+	}
+}
+
 func TestSolveWTOFiniteLatticeExactSolution(t *testing.T) {
 	edges := map[int][]int{0: {1}, 1: {2, 3}, 2: {1}, 3: {4}}
 	sys := EquationSystem[int, int]{
@@ -269,6 +531,35 @@ func TestSolveWTOFiniteLatticeExactSolution(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("SolveWTO = %#v, want %#v", got, want)
+	}
+}
+
+func TestSolveWTOFlatScheduleReplaysNestedComponentsExactly(t *testing.T) {
+	edges := map[int][]int{0: {1}, 1: {2}, 2: {1, 0}}
+	plan := NewWTOPlan([]int{0, 1, 2}, func(cell int) []int { return edges[cell] })
+	calls := make([]int, 0)
+	result, err := SolveWTOContext(context.Background(), EquationSystem[int, int]{
+		Lattice: capLattice{top: 2}.joinOnly(),
+		Cells:   []int{0, 1, 2},
+		Initial: func(int) int { return 0 },
+		Evaluate: func(cell int, read func(int) int) int {
+			calls = append(calls, cell)
+			switch cell {
+			case 0:
+				return min(2, read(2)+1)
+			case 1:
+				return min(2, read(1)+1)
+			default:
+				return read(1)
+			}
+		},
+	}, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCalls := []int{0, 1, 2, 1, 2, 1, 2, 0, 1, 2, 0, 1, 2}
+	if !reflect.DeepEqual(calls, wantCalls) || !reflect.DeepEqual(result, map[int]int{0: 2, 1: 2, 2: 2}) {
+		t.Fatalf("calls=%v result=%v, want calls=%v and all cells at 2", calls, result, wantCalls)
 	}
 }
 
@@ -328,6 +619,106 @@ func TestSolveWTORejectsUnplannedBackwardDynamicRead(t *testing.T) {
 	}
 }
 
+func TestSolveWTONarrowingUsesFrozenReadAudit(t *testing.T) {
+	t.Run("excluded", func(t *testing.T) {
+		full := NewWTOPlan([]int{0, 1}, func(cell int) []int {
+			if cell == 0 {
+				return []int{0}
+			}
+			return nil
+		})
+		plan, err := RestrictWTOPlan(full, []int{0})
+		if err != nil {
+			t.Fatal(err)
+		}
+		domain := capLattice{top: 8}.lattice()
+		domain.Narrow = mini
+		calls := 0
+		result, solveErr := SolveWTOContext(context.Background(), EquationSystem[int, int]{
+			Lattice: domain, Cells: []int{0}, WidenAt: plan.IsComponentHead,
+			Evaluate: func(_ int, read func(int) int) int {
+				calls++
+				if calls >= 3 {
+					return read(1)
+				}
+				return 1
+			},
+		}, plan)
+		if !errors.Is(solveErr, ErrWTOPlanUncovered) || result != nil {
+			t.Fatalf("result=%v error=%v calls=%d, want nil/uncovered during narrowing", result, solveErr, calls)
+		}
+	})
+
+	t.Run("backward", func(t *testing.T) {
+		plan := NewWTOPlan([]int{0, 1}, nil)
+		domain := capLattice{top: 8}.lattice()
+		domain.Narrow = mini
+		calls := [2]int{}
+		result, err := SolveWTOContext(context.Background(), EquationSystem[int, int]{
+			Lattice: domain, Cells: []int{0, 1}, WidenAt: func(cell int) bool { return cell == 0 },
+			Evaluate: func(cell int, read func(int) int) int {
+				calls[cell]++
+				if cell == 0 && calls[cell] > 1 {
+					return read(1)
+				}
+				return 1
+			},
+		}, plan)
+		if !errors.Is(err, ErrWTOPlanUncovered) || result != nil {
+			t.Fatalf("result=%v error=%v calls=%v, want nil/uncovered during narrowing", result, err, calls)
+		}
+	})
+
+	t.Run("self", func(t *testing.T) {
+		plan := NewWTOPlan([]int{0}, nil)
+		domain := capLattice{top: 8}.lattice()
+		domain.Narrow = mini
+		calls := 0
+		result, err := SolveWTOContext(context.Background(), EquationSystem[int, int]{
+			Lattice: domain, Cells: []int{0}, WidenAt: func(int) bool { return true },
+			Evaluate: func(cell int, read func(int) int) int {
+				calls++
+				if calls > 1 {
+					return read(cell)
+				}
+				return 1
+			},
+		}, plan)
+		if !errors.Is(err, ErrWTOPlanUncovered) || result != nil {
+			t.Fatalf("result=%v error=%v calls=%d, want nil/uncovered during narrowing", result, err, calls)
+		}
+	})
+}
+
+func TestSolveWTONarrowingUsesFrozenEmissionAudit(t *testing.T) {
+	full := NewWTOPlan([]int{0, 1}, func(cell int) []int {
+		if cell == 0 {
+			return []int{0}
+		}
+		return nil
+	})
+	plan, err := RestrictWTOPlan(full, []int{0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	domain := capLattice{top: 8}.lattice()
+	domain.Narrow = mini
+	calls := 0
+	result, solveErr := SolveWTOContext(context.Background(), EquationSystem[int, int]{
+		Lattice: domain, Cells: []int{0}, WidenAt: plan.IsComponentHead,
+		Transfer: func(_ int, _ func(int) int, emit func(int, int)) {
+			calls++
+			emit(0, 1)
+			if calls >= 3 {
+				emit(1, 1)
+			}
+		},
+	}, plan)
+	if !errors.Is(solveErr, ErrWTOPlanUncovered) || result != nil {
+		t.Fatalf("result=%v error=%v calls=%d, want nil/uncovered during narrowing", result, solveErr, calls)
+	}
+}
+
 func TestSolveWTORejectsDuplicateEquationCellsAgainstExactPlan(t *testing.T) {
 	sys := EquationSystem[int, int]{
 		Lattice:  capLattice{top: 8}.joinOnly(),
@@ -352,6 +743,30 @@ func TestSolveWTOCanceledPublishesNothing(t *testing.T) {
 	result, err := SolveWTOContext(ctx, sys, NewWTOPlan(sys.Cells, nil))
 	if !errors.Is(err, ErrCanceled) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want cancellation", err)
+	}
+	if result != nil {
+		t.Fatalf("canceled result = %#v, want nil", result)
+	}
+}
+
+func TestSolveWTOCancellationDuringNarrowingPublishesNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	domain := capLattice{top: 8}.lattice()
+	domain.Narrow = mini
+	calls := 0
+	sys := EquationSystem[int, int]{
+		Lattice: domain, Cells: []int{0}, WidenAt: func(int) bool { return true },
+		Evaluate: func(_ int, _ func(int) int) int {
+			calls++
+			if calls > 1 {
+				cancel()
+			}
+			return 1
+		},
+	}
+	result, err := SolveWTOContext(ctx, sys, NewWTOPlan(sys.Cells, nil))
+	if !errors.Is(err, ErrCanceled) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want cancellation during narrowing", err)
 	}
 	if result != nil {
 		t.Fatalf("canceled result = %#v, want nil", result)
@@ -422,7 +837,7 @@ func TestSolveWTOComputesReachabilityAcrossSmallDirectedGraphs(t *testing.T) {
 		}
 		secondPlan := NewWTOPlan(cells, func(cell int) []int { return edges[cell] })
 		second, err := SolveWTOContext(context.Background(), sys, secondPlan)
-		if err != nil || !reflect.DeepEqual(plan.elements, secondPlan.elements) || !reflect.DeepEqual(wto, second) {
+		if err != nil || !reflect.DeepEqual(plan.Elements(), secondPlan.Elements()) || !reflect.DeepEqual(wto, second) {
 			t.Fatalf("n=%d mask=%x duplicate=%v: nondeterministic plan/result", n, mask, duplicate)
 		}
 	}
@@ -469,8 +884,9 @@ func TestSolveWTOTerminatesWhenWideningPointDiffersFromWTOHead(t *testing.T) {
 		WidenAt: func(cell int) bool { return cell == 1 },
 	}
 	plan := NewWTOPlan(sys.Cells, func(cell int) []int { return edges[cell] })
-	if len(plan.elements) != 1 || !plan.elements[0].IsComponent() || plan.elements[0].Vertex == 1 {
-		t.Fatalf("plan = %#v, want component headed away from widening cell 1", plan.elements)
+	elements := plan.Elements()
+	if len(elements) != 1 || !elements[0].IsComponent() || elements[0].Vertex == 1 {
+		t.Fatalf("plan = %#v, want component headed away from widening cell 1", elements)
 	}
 	result, err := SolveWTOContext(context.Background(), sys, plan)
 	if err != nil {
@@ -505,7 +921,7 @@ func TestSolveWTOForwardDynamicInfluencesReachPostFixedPoint(t *testing.T) {
 			Transfer: func(cell int, read func(int) uint16, emit func(int, uint16)) {
 				value := read(cell)
 				for _, other := range cells {
-					if plan.rank[other] < plan.rank[cell] {
+					if plan.core.rank[other] < plan.core.rank[cell] {
 						value |= read(other)
 					}
 				}
@@ -524,7 +940,7 @@ func TestSolveWTOForwardDynamicInfluencesReachPostFixedPoint(t *testing.T) {
 			}
 			value := wto[cell]
 			for _, other := range cells {
-				if plan.rank[other] < plan.rank[cell] {
+				if plan.core.rank[other] < plan.core.rank[cell] {
 					value |= wto[other]
 				}
 			}
