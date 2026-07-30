@@ -146,6 +146,20 @@ func makeTerm(tag uint8, index uint32) Term { return Term(index<<tagBits | uint3
 func (t Term) tag() uint8                   { return uint8(uint32(t) & tagMask) }
 func (t Term) index() uint32                { return uint32(t) >> tagBits }
 
+func encodeGlobalCellOrdinal(length int) (Term, bool) {
+	if length < 0 || uint64(length) >= uint64(indexMax) {
+		return 0, false
+	}
+	return makeTerm(tagInvalid, uint32(length+1)), true
+}
+
+func decodeGlobalCellOrdinal(storage Term) (uint32, bool) {
+	if storage.tag() != tagInvalid || storage.index() == 0 {
+		return 0, false
+	}
+	return storage.index() - 1, true
+}
+
 // Span identifies a 1-based source line/column extent. Zero end coordinates
 // mean that the extent is point-like or unknown. An all-zero coordinate set is
 // valid for generated code.
@@ -202,7 +216,11 @@ type bodyRow struct {
 	roots  termRange
 	filled bool
 }
-type cellRow struct{ body Term }
+
+// cellRow retains one 32-bit storage discriminator. A lexical Cell stores its
+// owning Body. A global Cell stores an encoded 1-based ordinal into the sparse
+// globalKeys/globalCells slices.
+type cellRow struct{ storage Term }
 type readRow struct{ owner, source Term }
 type varargRow struct{ owner, cell Term }
 type unaryRow struct {
@@ -321,6 +339,8 @@ type Program struct {
 	tables         []tableRow
 	tableFields    []tableFieldRow
 	keys           []keyRow
+	globalKeys     []Key
+	globalCells    []Term
 	exactKeys      []exactKey
 }
 
@@ -379,6 +399,9 @@ type Builder struct {
 	tables         []tableRow
 	tableFields    []tableFieldRow
 	keys           []keyRow
+	globalKeys     []Key
+	globalCells    []Term
+	globalLookup   map[Key]Term
 	exactKeys      []exactKey
 	exactLookup    map[exactKey]Key
 }
@@ -804,12 +827,12 @@ func (b *Builder) SetEntry(body Term) bool {
 	return true
 }
 
-// Cell is lexical storage owned by one Body. Read observes a Cell or a Lens.
+// Cell is lexical storage owned by one Body.
 func (b *Builder) Cell(span Span, body Term) Term {
 	if !b.require(b.has(body, tagBody)) {
 		return 0
 	}
-	b.cells = append(b.cells, cellRow{body: body})
+	b.cells = append(b.cells, cellRow{storage: body})
 	term := b.mint(tagCell, span, b.familyIndex(len(b.cells)))
 	if term == 0 {
 		b.cells = b.cells[:len(b.cells)-1]
@@ -817,10 +840,50 @@ func (b *Builder) Cell(span Span, body Term) Term {
 	return term
 }
 
-// Read observes a lexical Cell or an evaluated Lens. Reading a Cell has no
-// evaluation predecessor; reading a Lens evaluates that Lens exactly once.
+// Global returns the one Program-scoped Cell for name. Its canonical exact
+// string Key is shared with every equal field/literal key. Repeated selections
+// preserve the first source span and return the same dense Cell; every supplied
+// span is still validated before the interned identity can be observed.
+func (b *Builder) Global(span Span, name string) Term {
+	if b == nil || b.poison || name == "" || !validSpan(span) {
+		if b != nil {
+			b.poison = true
+		}
+		return 0
+	}
+	key := b.internExact(exactKey{kind: exactString, text: name})
+	if key == 0 {
+		return 0
+	}
+	if term, ok := b.globalLookup[key]; ok {
+		return term
+	}
+	ordinal, ok := encodeGlobalCellOrdinal(len(b.globalKeys))
+	if !ok {
+		b.poison = true
+		return 0
+	}
+	if b.globalLookup == nil {
+		b.globalLookup = make(map[Key]Term)
+	}
+	b.globalKeys = append(b.globalKeys, key)
+	b.cells = append(b.cells, cellRow{storage: ordinal})
+	term := b.mint(tagCell, span, b.familyIndex(len(b.cells)))
+	if term == 0 {
+		b.cells = b.cells[:len(b.cells)-1]
+		b.globalKeys = b.globalKeys[:len(b.globalKeys)-1]
+		return 0
+	}
+	b.globalCells = append(b.globalCells, term)
+	b.globalLookup[key] = term
+	return term
+}
+
+// Read observes a Cell or evaluated Lens. Reading storage has no evaluation
+// predecessor; reading a Lens evaluates that Lens exactly once.
 func (b *Builder) Read(span Span, owner, source Term) Term {
-	if !b.require(b.has(owner, tagBody) && (b.has(source, tagCell) || b.has(source, tagLensExact) || b.has(source, tagLensKey))) {
+	if !b.require(b.has(owner, tagBody) && (b.has(source, tagCell) ||
+		b.has(source, tagLensExact) || b.has(source, tagLensKey))) {
 		return 0
 	}
 	b.reads = append(b.reads, readRow{owner: owner, source: source})
@@ -836,7 +899,7 @@ func (b *Builder) Read(span Span, owner, source Term) Term {
 // Cell. It is an occurrence, not a scalar Cell read, so Values may retain it
 // as its final open tail.
 func (b *Builder) Vararg(span Span, owner, cell Term) Term {
-	if !b.require(b.has(owner, tagBody) && b.has(cell, tagCell)) {
+	if !b.require(b.has(owner, tagBody) && b.lexicalCell(cell)) {
 		return 0
 	}
 	b.varargs = append(b.varargs, varargRow{owner: owner, cell: cell})
@@ -899,7 +962,7 @@ func (b *Builder) Bind(span Span, owner Term, cells []Term, values Term) Term {
 		return 0
 	}
 	for _, cell := range cells {
-		if !b.require(b.has(cell, tagCell)) {
+		if !b.require(b.lexicalCell(cell)) {
 			return 0
 		}
 	}
@@ -917,14 +980,17 @@ func (b *Builder) Bind(span Span, owner Term, cells []Term, values Term) Term {
 	return term
 }
 
-// Assign evaluates its Cells/Lenses from left to right, then RHS Values. The
-// typed row represents the delayed commit after those operands.
+// Assign retains targets in source order. It resolves static storage without
+// evaluation, evaluates Lens addresses from left to right, then evaluates RHS
+// Values. Once addresses and values are fixed, Lua 5.1 commits targets in
+// reverse source order; the later Rule applies that law to this ordered row.
 func (b *Builder) Assign(span Span, owner Term, targets []Term, values Term) Term {
 	if !b.require(b.has(owner, tagBody) && len(targets) != 0 && b.has(values, tagValues)) {
 		return 0
 	}
 	for _, target := range targets {
-		if !b.require(b.has(target, tagCell) || b.has(target, tagLensExact) || b.has(target, tagLensKey)) {
+		if !b.require(b.has(target, tagCell) ||
+			b.has(target, tagLensExact) || b.has(target, tagLensKey)) {
 			return 0
 		}
 	}
@@ -948,16 +1014,16 @@ func (b *Builder) Function(span Span, owner, body Term, formals []Term, vararg T
 	if !b.require(b.has(owner, tagBody) && b.has(body, tagBody) && owner != body) {
 		return 0
 	}
-	if vararg != 0 && !b.require(b.has(vararg, tagCell)) {
+	if vararg != 0 && !b.require(b.lexicalCell(vararg)) {
 		return 0
 	}
 	for _, formal := range formals {
-		if !b.require(b.has(formal, tagCell)) {
+		if !b.require(b.lexicalCell(formal)) {
 			return 0
 		}
 	}
 	for _, capture := range captures {
-		if !b.require(b.has(capture.Inner, tagCell) && b.has(capture.Outer, tagCell)) {
+		if !b.require(b.lexicalCell(capture.Inner) && b.lexicalCell(capture.Outer)) {
 			return 0
 		}
 	}
@@ -1056,7 +1122,7 @@ func (b *Builder) Loop(span Span, owner, body, control Term, cells []Term, kind 
 		return 0
 	}
 	for _, cell := range cells {
-		if !b.require(b.has(cell, tagCell)) {
+		if !b.require(b.lexicalCell(cell)) {
 			return 0
 		}
 	}
@@ -1606,7 +1672,8 @@ func (b *Builder) Seal() (*Program, error) {
 		}
 	}
 	for i, row := range b.reads {
-		if !b.has(row.source, tagCell) && !b.has(row.source, tagLensExact) && !b.has(row.source, tagLensKey) {
+		if !b.has(row.source, tagCell) &&
+			!b.has(row.source, tagLensExact) && !b.has(row.source, tagLensKey) {
 			return nil, errors.New("program: invalid Read")
 		}
 		if !b.has(row.source, tagCell) {
@@ -1901,28 +1968,71 @@ func (b *Builder) proveBodyForest(
 	return pre, post, activation, postorder, true
 }
 
+func (b *Builder) lexicalCell(cell Term) bool {
+	return b.has(cell, tagCell) && b.has(b.cells[cell.index()-1].storage, tagBody)
+}
+
+func (b *Builder) globalCellKey(cell Term) (Key, bool) {
+	if !b.has(cell, tagCell) {
+		return 0, false
+	}
+	ordinal, ok := decodeGlobalCellOrdinal(b.cells[cell.index()-1].storage)
+	if !ok || int(ordinal) >= len(b.globalKeys) {
+		return 0, false
+	}
+	key := b.globalKeys[ordinal]
+	if key == 0 || uint64(key) > uint64(len(b.exactKeys)) || b.exactKeys[key-1].kind != exactString {
+		return 0, false
+	}
+	return key, true
+}
+
 func (b *Builder) validateCells(
 	pre, post []uint32,
 	activation []Term,
 	direct []Term,
 	claims [tagCount][]sealClaimSlot,
 ) error {
-	visible := func(owner, cellBody Term) bool {
-		return b.has(owner, tagBody) && b.has(cellBody, tagBody) && activation[owner.index()] == activation[cellBody.index()] && pre[cellBody.index()] <= pre[owner.index()] && post[owner.index()] <= post[cellBody.index()]
-	}
-	for _, cell := range b.cells {
-		if !b.has(cell.body, tagBody) {
-			return errors.New("program: Cell requires Body")
+	visible := func(owner, cell Term) bool {
+		if !b.has(owner, tagBody) || !b.lexicalCell(cell) {
+			return false
 		}
+		body := b.cells[cell.index()-1].storage
+		return activation[owner.index()] == activation[body.index()] &&
+			pre[body.index()] <= pre[owner.index()] && post[owner.index()] <= post[body.index()]
 	}
 	roles := make([]uint8, len(b.cells)+1)
+	if len(b.globalKeys) != len(b.globalCells) || len(b.globalLookup) != len(b.globalCells) {
+		return errors.New("program: invalid Global Cell index")
+	}
+	for ordinal, cell := range b.globalCells {
+		key, ok := b.globalCellKey(cell)
+		if !ok || int(cell.index()) >= len(roles) || roles[cell.index()] != 0 ||
+			key != b.globalKeys[ordinal] || b.globalLookup[key] != cell {
+			return errors.New("program: invalid Global Cell")
+		}
+		storedOrdinal, _ := decodeGlobalCellOrdinal(b.cells[cell.index()-1].storage)
+		if int(storedOrdinal) != ordinal {
+			return errors.New("program: invalid Global Cell ordinal")
+		}
+		roles[cell.index()] = 1
+	}
+	for index := range b.cells {
+		term := makeTerm(tagCell, uint32(index+1))
+		if b.lexicalCell(term) {
+			continue
+		}
+		if _, ok := b.globalCellKey(term); !ok {
+			return errors.New("program: invalid Cell storage")
+		}
+	}
 	for _, row := range b.binds {
 		if row.cells.start == row.cells.end {
 			return errors.New("program: Bind requires Cells")
 		}
 		for i := row.cells.start; i < row.cells.end; i++ {
 			cell := b.bindTerms[i]
-			if !b.has(cell, tagCell) || b.cells[cell.index()-1].body != row.owner || roles[cell.index()] != 0 {
+			if !b.lexicalCell(cell) || b.cells[cell.index()-1].storage != row.owner || roles[cell.index()] != 0 {
 				return errors.New("program: invalid Bind Cell role")
 			}
 			roles[cell.index()] = 1
@@ -1932,23 +2042,21 @@ func (b *Builder) validateCells(
 		body := b.loopBodies[loopIndex]
 		for i := cells.start; i < cells.end; i++ {
 			cell := b.loopCells[i]
-			if !b.has(cell, tagCell) || b.cells[cell.index()-1].body != body || roles[cell.index()] != 0 {
+			if !b.lexicalCell(cell) || b.cells[cell.index()-1].storage != body || roles[cell.index()] != 0 {
 				return errors.New("program: invalid Loop Cell role")
 			}
 			roles[cell.index()] = 1
 		}
 	}
 	for _, row := range b.reads {
-		if b.has(row.source, tagCell) &&
-			!visible(row.owner, b.cells[row.source.index()-1].body) {
+		if b.lexicalCell(row.source) && !visible(row.owner, row.source) {
 			return errors.New("program: Read Cell is not active at occurrence")
 		}
 	}
 	for _, row := range b.assigns {
 		for i := row.targets.start; i < row.targets.end; i++ {
 			target := b.assignTerms[i]
-			if b.has(target, tagCell) &&
-				!visible(row.owner, b.cells[target.index()-1].body) {
+			if b.lexicalCell(target) && !visible(row.owner, target) {
 				return errors.New("program: Assign Cell is not active at occurrence")
 			}
 		}
@@ -1958,7 +2066,7 @@ func (b *Builder) validateCells(
 	for i, marker := range direct {
 		callee := b.calls[i].callee
 		needCellDirect = needCellDirect || marker != 0 &&
-			b.has(callee, tagRead) && b.has(b.reads[callee.index()-1].source, tagCell)
+			b.has(callee, tagRead) && b.lexicalCell(b.reads[callee.index()-1].source)
 	}
 	var bindingFunction []Term
 	var unstableBinding []bool
@@ -1979,23 +2087,23 @@ func (b *Builder) validateCells(
 	for functionIndex, row := range b.functions {
 		for i := row.formals.start; i < row.formals.end; i++ {
 			cell := b.formalTerms[i]
-			if !b.has(cell, tagCell) || b.cells[cell.index()-1].body != row.body || roles[cell.index()] != 0 {
+			if !b.lexicalCell(cell) || b.cells[cell.index()-1].storage != row.body || roles[cell.index()] != 0 {
 				return errors.New("program: invalid formal Cell role")
 			}
 			roles[cell.index()] = 1
 		}
 		if row.vararg != 0 {
 			cell := row.vararg
-			if !b.has(cell, tagCell) || b.cells[cell.index()-1].body != row.body || roles[cell.index()] != 0 {
+			if !b.lexicalCell(cell) || b.cells[cell.index()-1].storage != row.body || roles[cell.index()] != 0 {
 				return errors.New("program: invalid vararg Cell role")
 			}
 			roles[cell.index()] = 1
 		}
 		for i := row.captures.start; i < row.captures.end; i++ {
 			rowCapture := b.captures[i]
-			if !b.has(rowCapture.inner, tagCell) || !b.has(rowCapture.outer, tagCell) ||
-				b.cells[rowCapture.inner.index()-1].body != row.body ||
-				!visible(row.owner, b.cells[rowCapture.outer.index()-1].body) ||
+			if !b.lexicalCell(rowCapture.inner) || !b.lexicalCell(rowCapture.outer) ||
+				b.cells[rowCapture.inner.index()-1].storage != row.body ||
+				!visible(row.owner, rowCapture.outer) ||
 				roles[rowCapture.inner.index()] != 0 {
 				return errors.New("program: invalid lexical Capture")
 			}
@@ -2046,7 +2154,7 @@ func (b *Builder) validateCells(
 			}
 			for i := row.targets.start; i < row.targets.end; i++ {
 				target := b.assignTerms[i]
-				if !b.has(target, tagCell) {
+				if !b.lexicalCell(target) {
 					continue
 				}
 				base := terminal[target.index()]
@@ -2057,7 +2165,7 @@ func (b *Builder) validateCells(
 		}
 	}
 	for _, row := range b.varargs {
-		if !b.has(row.cell, tagCell) || !visible(row.owner, b.cells[row.cell.index()-1].body) {
+		if !b.lexicalCell(row.cell) || !visible(row.owner, row.cell) {
 			return errors.New("program: invalid Vararg")
 		}
 		function := activation[row.owner.index()]
@@ -2089,7 +2197,7 @@ func (b *Builder) validateCells(
 		expected := Term(0)
 		if b.has(row.callee, tagFunction) {
 			expected = row.callee
-		} else if b.has(row.callee, tagRead) && b.has(b.reads[row.callee.index()-1].source, tagCell) {
+		} else if b.has(row.callee, tagRead) && b.lexicalCell(b.reads[row.callee.index()-1].source) {
 			cell := b.reads[row.callee.index()-1].source
 			base := terminal[cell.index()]
 			if base != 0 && !unstableBinding[base.index()] {
@@ -2121,11 +2229,11 @@ func (b *Builder) sourceControl(
 	hasDirectCandidate := false
 	for _, row := range b.calls {
 		hasDirectCandidate = hasDirectCandidate || b.has(row.callee, tagFunction) ||
-			(b.has(row.callee, tagRead) && b.has(b.reads[row.callee.index()-1].source, tagCell))
+			(b.has(row.callee, tagRead) && b.lexicalCell(b.reads[row.callee.index()-1].source))
 	}
 	hasReadFrontier := false
 	for _, row := range b.reads {
-		hasReadFrontier = hasReadFrontier || b.has(row.source, tagCell)
+		hasReadFrontier = hasReadFrontier || b.lexicalCell(row.source)
 	}
 	hasFunctionFrontier := false
 	for _, row := range b.functions {
@@ -2134,7 +2242,7 @@ func (b *Builder) sourceControl(
 	hasAssignFrontier := false
 	for _, row := range b.assigns {
 		for at := row.targets.start; at < row.targets.end; at++ {
-			if b.has(b.assignTerms[at], tagCell) {
+			if b.lexicalCell(b.assignTerms[at]) {
 				hasAssignFrontier = true
 				break
 			}
@@ -2364,7 +2472,7 @@ func (b *Builder) sourceControl(
 		return scopeAt[node], true
 	}
 	for i, row := range b.reads {
-		if !b.has(row.source, tagCell) {
+		if !b.lexicalCell(row.source) {
 			continue
 		}
 		root, err := containingRoot(claims, makeTerm(tagRead, uint32(i+1)))
@@ -2415,7 +2523,7 @@ func (b *Builder) sourceControl(
 		row := b.assigns[i]
 		hasCell := false
 		for at := row.targets.start; at < row.targets.end; at++ {
-			hasCell = hasCell || b.has(b.assignTerms[at], tagCell)
+			hasCell = hasCell || b.lexicalCell(b.assignTerms[at])
 		}
 		if !hasCell {
 			continue
@@ -2425,7 +2533,7 @@ func (b *Builder) sourceControl(
 		}
 		for at := row.targets.start; at < row.targets.end; at++ {
 			target := b.assignTerms[at]
-			if b.has(target, tagCell) && !contains(target, scopeAt[node]) {
+			if b.lexicalCell(target) && !contains(target, scopeAt[node]) {
 				return mu, errors.New("program: Assign Cell is not active at occurrence")
 			}
 		}
@@ -2557,7 +2665,7 @@ func (b *Builder) sourceControl(
 	}
 	for i, row := range b.calls {
 		if !(b.has(row.callee, tagFunction) ||
-			(b.has(row.callee, tagRead) && b.has(b.reads[row.callee.index()-1].source, tagCell))) {
+			(b.has(row.callee, tagRead) && b.lexicalCell(b.reads[row.callee.index()-1].source))) {
 			continue
 		}
 		root, err := containingRoot(claims, makeTerm(tagCall, uint32(i+1)))
@@ -3023,6 +3131,8 @@ func (b *Builder) snapshot(
 		tables:         append([]tableRow(nil), b.tables...),
 		tableFields:    append([]tableFieldRow(nil), b.tableFields...),
 		keys:           append([]keyRow(nil), b.keys...),
+		globalKeys:     append([]Key(nil), b.globalKeys...),
+		globalCells:    copyTerms(b.globalCells),
 		exactKeys:      append([]exactKey(nil), b.exactKeys...),
 	}
 	for tag := uint8(1); tag < tagCount; tag++ {
@@ -3311,11 +3421,42 @@ func (p *Program) Root(term Term, index int) (Term, bool) {
 	return p.bodyTerms[r.start+uint32(index)], true
 }
 
+// Cell reports membership in the one storage family. It returns the owning
+// Body for a lexical Cell and zero for a global Cell; Global selects the
+// latter's canonical atom.
 func (p *Program) Cell(term Term) (Term, bool) {
 	if !p.has(term, tagCell) {
 		return 0, false
 	}
-	return p.cells[term.index()-1].body, true
+	storage := p.cells[term.index()-1].storage
+	if _, global := decodeGlobalCellOrdinal(storage); global {
+		return 0, true
+	}
+	if !p.has(storage, tagBody) {
+		return 0, false
+	}
+	return storage, true
+}
+
+// Global returns a Program-scoped global Cell's canonical exact-string atom in
+// O(1). Lexical Cells do not select this relation.
+func (p *Program) Global(term Term) (name string, key Key, ok bool) {
+	if !p.has(term, tagCell) {
+		return "", 0, false
+	}
+	ordinal, global := decodeGlobalCellOrdinal(p.cells[term.index()-1].storage)
+	if !global || int(ordinal) >= len(p.globalKeys) {
+		return "", 0, false
+	}
+	key = p.globalKeys[ordinal]
+	if key == 0 || uint64(key) > uint64(len(p.exactKeys)) {
+		return "", 0, false
+	}
+	exact := p.exactKeys[key-1]
+	if exact.kind != exactString {
+		return "", 0, false
+	}
+	return exact.text, key, true
 }
 
 func (p *Program) Read(term Term) (owner, source Term, ok bool) {
@@ -3695,6 +3836,18 @@ func (p *Program) CellCount() int {
 	return len(p.cells)
 }
 func (p *Program) CellAt(index int) (Term, bool) { return familyTerm(tagCell, p.CellCount(), index) }
+func (p *Program) GlobalCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.globalCells)
+}
+func (p *Program) GlobalAt(index int) (Term, bool) {
+	if p == nil || index < 0 || index >= len(p.globalCells) {
+		return 0, false
+	}
+	return p.globalCells[index], true
+}
 func (p *Program) ReadCount() int {
 	if p == nil {
 		return 0
