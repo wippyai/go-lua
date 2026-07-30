@@ -346,6 +346,84 @@ t[k], t[2] = 3, 4`)
 	}
 }
 
+func TestParallelAssignmentEvaluatesTargetsBeforeRHSAndPreservesCommitOrder(t *testing.T) {
+	p := parseBindLower(t, `target()[key()], other()[index()] = value(), tail()`)
+	roots := entryRoots(t, p)
+	if len(roots) != 1 {
+		t.Fatalf("Entry roots = %v, want one Assign", roots)
+	}
+	assign := roots[0]
+	if count, ok := p.AssignLen(assign); !ok || count != 2 {
+		t.Fatalf("AssignLen = %d, %v; want two ordered targets", count, ok)
+	}
+
+	if p.CallCount() != 6 {
+		t.Fatalf("CallCount = %d; want six source evaluations", p.CallCount())
+	}
+	calls := make([]program.Term, 6)
+	for i, wantName := range []string{"target", "key", "other", "index", "value", "tail"} {
+		call, ok := p.CallAt(i)
+		if !ok {
+			t.Fatalf("CallAt(%d) failed", i)
+		}
+		calls[i] = call
+		_, callee, receiver, _, direct, ok := p.Call(call)
+		if !ok || receiver != 0 || direct != 0 {
+			t.Fatalf(
+				"CallAt(%d) = callee %v receiver %v direct %v ok %v",
+				i,
+				callee,
+				receiver,
+				direct,
+				ok,
+			)
+		}
+		_, source, ok := p.Read(callee)
+		if !ok {
+			t.Fatalf("CallAt(%d) callee %v is not a Read", i, callee)
+		}
+		name, _, ok := p.Global(source)
+		if !ok || name != wantName {
+			t.Fatalf("CallAt(%d) global = %q, %v; want %q", i, name, ok, wantName)
+		}
+	}
+
+	for i, want := range [][2]program.Term{
+		{calls[0], calls[1]},
+		{calls[2], calls[3]},
+	} {
+		target := mustTarget(t, p, assign, i)
+		_, base, key, kind, _, ok := p.Lens(target)
+		if !ok || base != want[0] || key != want[1] || kind != program.FieldKey {
+			t.Fatalf(
+				"Target(%d) = base %v key %v kind %v ok %v; want %v/%v/%v",
+				i,
+				base,
+				key,
+				kind,
+				ok,
+				want[0],
+				want[1],
+				program.FieldKey,
+			)
+		}
+	}
+
+	_, values, ok := p.Assign(assign)
+	if !ok {
+		t.Fatalf("Entry root %v is not Assign", assign)
+	}
+	if count, ok := p.ValuesLen(values); !ok || count != 1 {
+		t.Fatalf("RHS fixed prefix = %d, %v; want one value", count, ok)
+	}
+	if got := valueAt(t, p, values, 0); got != calls[4] {
+		t.Fatalf("RHS fixed value = %v; want value() Call %v", got, calls[4])
+	}
+	if tail := valuesTail(t, p, values); tail != calls[5] {
+		t.Fatalf("RHS tail = %v; want tail() Call %v", tail, calls[5])
+	}
+}
+
 func mustTarget(t *testing.T, p *program.Program, assign program.Term, index int) program.Term {
 	t.Helper()
 	target, ok := p.Target(assign, index)
