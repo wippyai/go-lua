@@ -19,10 +19,9 @@ const (
 	LTThread
 	LTTable
 	LTChannel
-	LTType
 )
 
-var lValueNames = [...]string{"nil", "boolean", "number", "number", "string", "function", "userdata", "thread", "table", "channel", "type"}
+var lValueNames = [...]string{"nil", "boolean", "number", "number", "string", "function", "userdata", "thread", "table", "channel"}
 
 func (vt LValueType) String() string {
 	return lValueNames[vt]

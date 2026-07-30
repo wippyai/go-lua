@@ -1,0 +1,212 @@
+path,query_id,response,completion_tokens,latency_ms,error
+.engine-compare/old/types/constraint/intern.go,q0,NONE,2,584,
+.engine-compare/old/types/constraint/expr_compare.go,q0,NONE,2,1275,
+.engine-compare/old/types/constraint/path_helpers.go,q0,NONE,2,1277,
+.engine-compare/old/types/constraint/doc.go,q0,NONE,2,1275,
+.engine-compare/old/types/constraint/numeric.go,q0,NONE,2,1276,
+.engine-compare/old/types/cfg/versioned.go,q0,NONE,2,1277,
+.engine-compare/old/types/cfg/identity.go,q0,NONE,2,1277,
+.engine-compare/old/types/constraint/effect.go,q0,NONE,2,1279,
+.engine-compare/old/types/cfg/cfg.go,q0,NONE,2,1444,
+.engine-compare/old/types/cfg/ssa.go,q0,NONE,2,1786,
+.engine-compare/old/types/constraint/atom.go,q0,NONE,2,1784,
+.engine-compare/old/types/constraint/constraint.go,q0,NONE,2,1908,
+.engine-compare/old/types/constraint/path.go,q0,NONE,2,2210,
+.engine-compare/old/types/db/input.go,q0,NONE,2,475,
+.engine-compare/old/types/constraint/theory/modular.go,q0,NONE,2,1868,
+.engine-compare/old/types/constraint/sort.go,q0,NONE,2,1870,
+.engine-compare/old/types/constraint/theory/result.go,q0,NONE,2,1868,
+.engine-compare/old/types/constraint/theory/doc.go,q0,NONE,2,1870,
+.engine-compare/old/types/constraint/path_visit.go,q0,"FUNC VisitPaths, LINE 7, handles multiple unrelated responsibilities",14,3798,
+.engine-compare/old/types/db/db.go,q0,"FUNC Intern, LINE 178, complex locking and logic",14,2521,
+.engine-compare/old/types/db/query.go,q0,"FUNC Get, LINE 243, handles complex cycle logic",14,1848,
+.engine-compare/old/types/constraint/expr.go,q0,"FUNC Simplify, 315, handles complex constant folding
+FUNC ExprEquals, 175, deep nested control flow",27,4577,
+.engine-compare/old/types/db/attachment.go,q0,NONE,2,3007,
+.engine-compare/old/types/diag/types.go,q0,NONE,2,2138,
+.engine-compare/old/types/effect/param_ref.go,q0,NONE,2,897,
+.engine-compare/old/types/constraint/theory/difference.go,q0,"FUNC solve, START 178, handles shortest paths and cycles",15,4312,
+.engine-compare/old/types/diag/render.go,q0,"FUNC render, LINE 76, handles multiple rendering responsibilities",14,2494,
+.engine-compare/old/types/contract/spec.go,q0,"FUNC Equals, LINE 238, handles many structural comparisons",14,3855,
+.engine-compare/old/types/effect/compose.go,q0,NONE,2,1301,
+.engine-compare/old/types/constraint/theory/egraph.go,q0,"FUNC propagateCongruence, start 176, handles multiple unrelated responsibilities",18,4406,
+.engine-compare/old/types/diag/collector.go,q0,"FUNC ContextualHelp, LINE 143, handles multiple unrelated responsibilities",17,2582,
+.engine-compare/old/types/effect/label.go,q0,NONE,2,1610,
+.engine-compare/old/types/constraint/solver.go,q0,"FUNC applySingleConstraint, LINE 253, handles many unrelated constraints
+FUNC applyConstraint, LINE 365, handles many unrelated constraints",31,4808,
+.engine-compare/old/types/effect/linflow.go,q0,NONE,2,1891,
+.engine-compare/old/types/flow/domain/helpers.go,q0,NONE,2,1431,
+.engine-compare/old/types/flow/graph_readonly.go,q0,NONE,2,1374,
+.engine-compare/old/types/flow/flow.go,q0,NONE,2,1685,
+.engine-compare/old/types/effect/row.go,q0,NONE,2,2598,
+.engine-compare/old/types/flow/domain/domain.go,q0,NONE,2,2295,
+.engine-compare/old/types/flow/edge.go,q0,NONE,2,2664,
+.engine-compare/old/types/effect/registry.go,q0,"FUNC LabelKey, 115, handles multiple unrelated responsibilities",15,4005,
+.engine-compare/old/types/flow/domain/shape_domain.go,q0,"FUNC ApplyConstraint, start 105, handles narrowing and propagation",15,3213,
+.engine-compare/old/types/flow/path.go,q0,NONE,2,646,
+.engine-compare/old/types/flow/numeric/domain.go,q0,"FUNC ApplyAtom, LINE 94, handles multiple unrelated responsibilities",15,1912,
+.engine-compare/old/types/constraint/infer.go,q0,"FUNC unifyCircularDependencies, start LINE 148, long complex algorithm
+FUNC solve, start LINE 111, complex type inference logic
+FUNC applyInferSubst, start LINE 463, long complex recursion
+FUNC matchDepth, start LINE 595, long complex recursion",63,9373,
+.engine-compare/old/types/flow/pathkey/format.go,q0,NONE,2,621,
+.engine-compare/old/types/flow/pathkey/root.go,q0,NONE,2,213,
+.engine-compare/old/types/flow/pathkey/util.go,q0,NONE,2,660,
+.engine-compare/old/types/constraint/condition.go,q0,"FUNC substituteConstraint, LINE 455, handles many unrelated constraints
+FUNC normalizeCondition, LINE 615, handles sorting and subsumption
+FUNC NegateConstraint, LINE 735, handles many unrelated constraints",47,10277,
+.engine-compare/old/types/constraint/visit.go,q0,"FUNC VisitConstraint, start 38, longer than 80 lines
+FUNC VisitNumericConstraint, start 178, longer than 80 lines
+FUNC VisitExpr, start 276, longer than 80 lines",51,9020,
+.engine-compare/old/types/flow/normalize.go,q0,"FUNC Normalize, start 13, handles multiple unrelated responsibilities",14,3438,
+.engine-compare/old/types/effect/codecs.go,q0,"FUNC writeReturnType, 313, handles many return types
+FUNC readReturnType, 378, handles many return types
+FUNC writeExpr, 465, handles many expression types
+FUNC readExpr, 554, handles many expression types",56,7445,
+.engine-compare/old/types/flow/inference.go,q0,"FUNC inferFunctionRefinementCore, 145, handles complex CFG traversal
+FUNC substitutePathsInConstraint, 365, handles many constraint types",34,4699,
+.engine-compare/old/types/flow/pathkey/key.go,q0,"FUNC parseSuffixSlow, LINE 76, deep nested control flow
+FUNC constraintAnyPathMatches, LINE 313, multiple unrelated responsibilities",32,1982,
+.engine-compare/old/types/flow/numeric/theory.go,q0,"FUNC AddConstraintWithResolver, LINE 183, handles multiple constraint types
+FUNC TightenWithTheory, LINE 335, handles multiple unrelated responsibilities",35,2952,
+.engine-compare/old/types/io/manifest_lookup.go,q0,NONE,2,290,
+.engine-compare/old/types/flow/domain/type_domain.go,q0,"FUNC applyTruthy, LINE 168, handles narrowing and parent-field-narrowing
+FUNC applyFalsy, LINE 201, handles narrowing and parent-field-narrowing",42,5830,
+.engine-compare/old/types/flow/join/join.go,q0,"FUNC CoalesceRecordMapComponents, 185, handles grouping, merging, and rebuilding
+FUNC CoalesceRecordOpenness, 145, handles record openness and field rebuilding",41,5153,
+.engine-compare/old/types/flow/propagate/propagate.go,q0,"FUNC computeConditionAtPoint, LINE 186, handles multiple unrelated responsibilities",18,2605,
+.engine-compare/old/types/kind/kind.go,q0,NONE,2,834,
+.engine-compare/old/types/narrow/doc.go,q0,NONE,2,166,
+.engine-compare/old/types/flow/product_domain.go,q0,"FUNC ApplyConjunction, START 185, handles multiple domain responsibilities
+FUNC ApplyCondition, START 435, handles multiple domain responsibilities",33,3882,
+.engine-compare/old/types/io/writer.go,q0,"FUNC writeTypeData, LINE 111, handles many type variants",16,1772,
+.engine-compare/old/types/flow/numeric/state.go,q0,"FUNC ApplyConstraintWithResolver, LINE 226, handles multiple constraint types
+FUNC Join, LINE 165, handles multiple state properties
+FUNC Equals, LINE 465, handles multiple state properties
+FUNC Rekey, LINE 565, handles multiple state properties",60,6010,
+.engine-compare/old/types/io/serialize.go,q0,NONE,2,1940,
+.engine-compare/old/types/effect/visit.go,q0,"FUNC VisitLabel, start 43, Too many lines and responsibilities
+FUNC VisitTransform, start 185, Too many lines and responsibilities
+FUNC VisitReturnType, start 237, Too many lines and responsibilities",50,7980,
+.engine-compare/old/types/flow/pathkey/resolver.go,q0,"FUNC segmentStringLen, LINE 215, complex nested switch logic
+FUNC parseKey, LINE 315, multiple parsing responsibilities
+FUNC parseNonNegativeUintComponent, LINE 378, complex loop and switch",49,4459,
+.engine-compare/old/types/io/predicates.go,q0,"FUNC writeConstraint, LINE 34, handles many constraint types
+FUNC readConstraint, LINE 235, handles many constraint types",29,2667,
+.engine-compare/old/types/query/core/codegen.go,q0,NONE,2,418,
+.engine-compare/old/types/flow/numeric.go,q0,"FUNC checkNumericConstraints, LINE 51, handles analysis and satisfiability
+FUNC computeRelevantPoints, LINE 125, handles seeding and propagation
+FUNC computeNumericStateAt, LINE 185, handles joining and rekeying",52,6250,
+.engine-compare/old/types/narrow/resolver.go,q0,NONE,2,788,
+.engine-compare/old/types/narrow/type_key.go,q0,NONE,2,788,
+.engine-compare/old/types/io/reader.go,q0,"FUNC readType, start 95, handles many type kinds",14,3330,
+.engine-compare/old/types/flow/type_facts.go,q0,"FUNC EffectiveTypeAt, start LINE 133, handles complex subtype validation",17,3911,
+.engine-compare/old/types/narrow/key_narrow.go,q0,NONE,2,1495,
+.engine-compare/old/types/narrow/match.go,q0,NONE,2,1448,
+.engine-compare/old/types/io/manifest.go,q0,"FUNC enrichTopLevelTypeWithSummaries, 265, handles multiple type structures
+FUNC ApplyFunctionSummary, 335, handles multiple type properties",34,4076,
+.engine-compare/old/types/flow/transfer.go,q0,"FUNC processAssignmentReturnChangedKeys, LINE 68, handles multiple assignment types
+FUNC processJoinReturnChangedKeys, LINE 495, handles phi nodes and suffixes",36,4351,
+.engine-compare/old/types/query/core/doc.go,q0,NONE,2,791,
+.engine-compare/old/types/query/core/ops.go,q0,NONE,2,855,
+.engine-compare/old/types/query/core/cycle.go,q0,"FUNC canFormCycleVisited, LINE 83, handles many type cases",16,2244,
+.engine-compare/old/types/query/core/resolver.go,q0,NONE,2,499,
+.engine-compare/old/types/query/core/index.go,q0,"FUNC indexDepth, 38, handles many container types",13,1924,
+.engine-compare/old/types/query/core/discriminator.go,q0,"FUNC findDiscriminatorCandidates, 88, nested control flow deep",15,2293,
+.engine-compare/old/types/flow/solver.go,q0,"FUNC buildPointValueMap, start LINE 178, handles multiple unrelated responsibilities
+FUNC mergeFieldAssignments, start LINE 510, handles multiple unrelated responsibilities",37,6231,
+.engine-compare/old/types/query/core/engine.go,q0,NONE,2,2354,
+.engine-compare/old/types/query/core/special_access.go,q0,NONE,2,598,
+.engine-compare/old/types/numparse/numparse.go,q0,"FUNC ParseNumberLiteral, 85, handles multiple unrelated responsibilities",15,3401,
+.engine-compare/old/types/query/core/traverse.go,q0,NONE,2,554,
+.engine-compare/old/types/narrow/narrow.go,q0,"FUNC Intersect, start 365, handles multiple complex logic branches",16,3932,
+.engine-compare/old/types/subtype/variance.go,q0,NONE,2,1054,
+.engine-compare/old/types/query/core/union.go,q0,NONE,2,1655,
+.engine-compare/old/types/subtype/guard.go,q0,NONE,2,1486,
+.engine-compare/old/types/query/core/table_match.go,q0,NONE,2,1916,
+.engine-compare/old/types/typ/capture.go,q0,NONE,2,467,
+.engine-compare/old/types/typ/container.go,q0,NONE,2,467,
+.engine-compare/old/types/query/core/field.go,q0,"FUNC fieldDepth, LINE 41, handles many type cases
+FUNC fieldInRecordDepth, LINE 145, multiple fallback strategies used",31,4143,
+.engine-compare/old/types/typ/annotated.go,q0,"FUNC String, LINE 61, handles multiple unrelated responsibilities",14,562,
+.engine-compare/old/types/flow/solver_helpers.go,q0,"FUNC buildAssignmentDependencies, start LINE 215, handles multiple assignment types
+FUNC buildEdgeConditionDependencies, start LINE 253, deep nested control flow
+FUNC addDependentPoints, start LINE 301, more than 5 parameters",53,8199,
+.engine-compare/old/types/subtype/widen.go,q0,"FUNC widenForInferenceDepth, LINE 101, handles many complex types",18,1370,
+.engine-compare/old/types/typ/dedup.go,q0,NONE,2,597,
+.engine-compare/old/types/typ/deferred.go,q0,NONE,2,307,
+.engine-compare/old/types/query/core/method.go,q0,"FUNC methodDepth, LINE 95, handles many type constructors
+FUNC callableDepth, LINE 243, handles many type constructors",29,4254,
+.engine-compare/old/types/typ/field_shape.go,q0,NONE,2,780,
+.engine-compare/old/types/typ/generic.go,q0,NONE,2,966,
+.engine-compare/old/types/typ/function_arity.go,q0,NONE,2,967,
+.engine-compare/old/types/query/core/instantiate.go,q0,"FUNC substituteVisited, LINE 94, handles multiple unrelated responsibilities
+FUNC collectTypeParamsVisited, LINE 313, handles multiple unrelated responsibilities",33,4948,
+.engine-compare/old/types/typ/guard.go,q0,NONE,2,932,
+.engine-compare/old/types/typ/info.go,q0,NONE,2,738,
+.engine-compare/old/types/query/core/reach.go,q0,"FUNC findReachableFields, LINE 76, Deeply nested control flow
+FUNC canContainWithVisited, LINE 215, Deeply nested control flow",35,5180,
+.engine-compare/old/types/typ/optional.go,q0,NONE,2,468,
+.engine-compare/old/types/typ/metamethod.go,q0,NONE,2,513,
+.engine-compare/old/types/subtype/subtype.go,q0,"FUNC check, LINE 74, handles many type rules
+FUNC canWidenTo, LINE 365, handles many widening rules",30,3447,
+.engine-compare/old/types/typ/format.go,q0,"FUNC formatType, LINE 101, handles many type variants",15,1778,
+.engine-compare/old/types/typ/literal.go,q0,"FUNC TypeMatchesLiteral, LINE 141, Deeply nested control flow",17,779,
+.engine-compare/old/types/typ/intersection.go,q0,"FUNC NewIntersection, 41, handles flattening, nil-logic, and deduplication",19,1139,
+.engine-compare/old/types/narrow/filter.go,q0,"FUNC fieldCanBeTruthy, LINE 123, handles multiple type structures
+FUNC fieldCanBeFalsy, LINE 151, handles multiple type structures
+FUNC filterNarrow, LINE 185, handles multiple type variants
+FUNC filterExclude, LINE 231, handles multiple type variants",66,7420,
+.engine-compare/old/types/typ/ref.go,q0,NONE,2,546,
+.engine-compare/old/types/typ/equals.go,q0,"FUNC typeEqualsGuard, LINE 26, function is too long",15,2736,
+.engine-compare/old/types/typ/function.go,q0,"FUNC Build, LINE 118, takes more than 5 parameters",16,2721,
+.engine-compare/old/types/query/core/operator.go,q0,"FUNC binaryOpCompute, LINE 23, handles many operator types
+FUNC falsyPart, LINE 468, complex recursive type traversal
+FUNC truthyPart, LINE 531, complex recursive type traversal",47,6524,
+.engine-compare/old/types/subtype/normalize.go,q0,"FUNC normalizeIntersectionDepth, LINE 115, complex recursive distribution logic
+FUNC incompatiblePrimitives, LINE 265, multiple unrelated type checks",31,4664,
+.engine-compare/old/types/typ/recursive.go,q0,"FUNC hashBodyWithVisited, LINE 111, handles multiple type structures",17,1099,
+.engine-compare/old/types/typ/predicates.go,q0,NONE,2,1359,
+.engine-compare/old/types/typ/join/join.go,q0,"FUNC WithReturns, LINE 48, handles multiple unrelated responsibilities
+FUNC WithReturnsOrUnknown, LINE 83, handles multiple unrelated responsibilities",32,2141,
+.engine-compare/old/types/typ/string_cache.go,q0,NONE,2,530,
+.engine-compare/old/types/typ/unwrap/unwrap.go,q0,NONE,2,424,
+.engine-compare/old/types/typ/policy.go,q0,"FUNC JoinCompatibleRecords, LINE 101, handles complex record merging",16,2255,
+.engine-compare/old/types/typ/record_extend.go,q0,"FUNC ExtendRecordWithField, 7, handles multiple unrelated responsibilities",15,2119,
+.engine-compare/old/types/typ/union/union.go,q0,"FUNC MergeFunctions, start 61, handles complex signature merging",14,1030,
+.engine-compare/old/types/typ/rebuild.go,q0,"FUNC buildFunctionType, LINE 18, Too many parameters
+FUNC buildRecordType, LINE 76, Too many parameters",28,2469,
+.engine-compare/old/types/typ/soft_flags.go,q0,NONE,2,1476,
+.engine-compare/old/types/typ/type.go,q0,NONE,2,1783,
+.engine-compare/old/types/flow/query.go,q0,"FUNC TypeAt, LINE 21, handles complex type derivation
+FUNC conditionAtFallback, LINE 101, deep recursive control flow
+FUNC NarrowedTypeAt, LINE 265, handles caching and derivation
+FUNC baseTypeAt, LINE 311, complex type comparison logic
+FUNC derivedTypeAt, LINE 355, deep recursive path walking
+FUNC applyCondition, LINE 395, handles DNF disjunct narrowing
+FUNC applyConstraints, LINE 421, multiple complex responsibilities
+FUNC deriveFromNarrowedAncestors, LINE 478, complex ancestor projection
+FUNC filterByChildNarrowings, LINE 541, complex union filtering",147,13373,
+.engine-compare/old/types/typ/record.go,q0,"FUNC: Build, LINE: 134, REASON: Takes more than 5 parameters
+FUNC: String, LINE: 141, REASON: Handles multiple unrelated responsibilities",41,3313,
+.engine-compare/old/types/typ/rewrite.go,q0,"FUNC rewriteDepth, LINE 61, handles many type cases
+FUNC rewriteFunction, LINE 255, handles multiple type components
+FUNC rewriteRecord, LINE 325, handles multiple type components",44,3156,
+.engine-compare/old/types/typ/soft.go,q0,"FUNC pruneSoftUnionMembersMemo, 133, too many parameters
+FUNC pruneSoftFunction, 255, too many parameters
+FUNC pruneSoftRecord, 335, too many parameters",44,3046,
+.engine-compare/old/types/typ/nominal.go,q0,"FUNC: String, LINE: 54, REASON: Nested control flow depth
+FUNC: Equals, LINE: 85, REASON: Nested control flow depth
+FUNC: String, LINE: 135, REASON: Nested control flow depth
+FUNC: Equals, LINE: 156, REASON: Nested control flow depth",74,4916,
+.engine-compare/old/types/typ/visit.go,q0,"FUNC Visit, 41, handles many unrelated types",12,2806,
+.engine-compare/old/types/typ/union.go,q0,"FUNC NewUnion, start 44, handles many complex responsibilities",15,3299,
+.engine-compare/old/types/typ/subst/subst.go,q0,"FUNC expandInstantiatedCore, start 135, handles many type cases",17,3973,
+.engine-compare/old/types/query/core/util.go,q0,"FUNC allFieldsDepth, LINE 54, handles many type variants
+FUNC allFieldTypesDepth, LINE 176, handles many type variants
+FUNC allMethodsDepth, LINE 315, handles many type variants
+FUNC iterableDepth, LINE 435, handles many type variants
+FUNC orderedDepth, LINE 495, handles many type variants
+FUNC elementTypeDepth, LINE 565, handles many type variants
+FUNC keyTypeDepth, LINE 643, handles many type variants
+FUNC valueTypeDepth, LINE 725, handles many type variants",125,10890,

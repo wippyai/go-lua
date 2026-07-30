@@ -338,38 +338,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			}
 
-		case OP_LOADTYPE:
-			reg := L.reg
-			lbase := cf.LocalBase
-			A := int(inst>>18) & 0xff //GETA
-			RA := int(lbase) + A
-			Bx := int(inst & 0x3ffff) //GETBX
-			name := cf.Fn.Proto.stringConstants[Bx]
-			v := cf.Fn.Proto.runtimeTypeValueByName(name)
-			if v == nil {
-				L.RaiseError("unknown type %s", name)
-			}
-			// this section is inlined by go-inline
-			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
-			{
-				rg := reg
-				regi := RA
-				vali := v
-				newSize := regi + 1
-				// this section is inlined by go-inline
-				// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
-				{
-					requiredSize := newSize
-					if requiredSize > cap(rg.array) {
-						rg.resize(requiredSize)
-					}
-				}
-				rg.array[regi] = vali
-				if regi >= rg.top {
-					rg.top = regi + 1
-				}
-			}
-
 		case OP_GETTABLE:
 			reg := L.reg
 			lbase := cf.LocalBase
@@ -1690,8 +1658,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				switch lhs.Type() {
 				case LTString:
 					ret = strCmp(string(lhs.(LString)), string(rhs.(LString))) <= 0
-				case LTType:
-					ret = TypeIsSubtype(lhs.(*LType), rhs.(*LType))
 				default:
 					switch objectRational(L, lhs, rhs, "__le") {
 					case 1:
@@ -1783,12 +1749,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 			lv := reg.Get(RA)
 			nret := C - 1
-
-			// Fast path: LType call - native dispatch, no call frame
-			if lt, ok := lv.(*LType); ok {
-				L.typeCall(lt, RA, nargs, nret)
-				continue
-			}
 
 			var callable *LFunction
 			var goFunc LGoFunc
@@ -1918,17 +1878,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				nargs = reg.Top() - (RA + 1)
 			}
 			lv := reg.Get(RA)
-			if lt, ok := lv.(*LType); ok {
-				L.typeCall(lt, RA, nargs, int(cf.NRet))
-				b := int(cf.NRet) + 1
-				if cf.NRet == MultRet {
-					b = 0
-				}
-				if returnFromTailcall(L, baseframe, cf, RA, b) {
-					return
-				}
-				continue
-			}
 			var callable *LFunction
 			var goFunc LGoFunc
 			var meta bool
@@ -3375,10 +3324,6 @@ func lessThan(L *LState, lhs, rhs LValue) bool {
 	switch lhs.Type() {
 	case LTString:
 		ret = strCmp(string(lhs.(LString)), string(rhs.(LString))) < 0
-	case LTType:
-		l := lhs.(*LType)
-		r := rhs.(*LType)
-		ret = TypeIsSubtype(l, r) && !TypeEquals(l, r)
 	default:
 		ret = objectRationalWithError(L, lhs, rhs, "__lt")
 	}
@@ -3440,8 +3385,6 @@ func equals(L *LState, lhs, rhs LValue, raw bool) bool {
 			// Compare function pointers via their string representation
 			ret = ok && fmt.Sprintf("%p", l) == fmt.Sprintf("%p", r)
 		}
-	case LTType:
-		ret = TypeEquals(lhs.(*LType), rhs.(*LType))
 	default:
 		ret = lhs == rhs
 	}

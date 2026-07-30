@@ -3,7 +3,6 @@ package lua
 import (
 	"fmt"
 	"strings"
-	"sync"
 )
 
 const VarArgIsVarArg uint8 = 2
@@ -36,16 +35,7 @@ type FunctionProto struct {
 	DbgCalls           []DbgCall
 	DbgUpvalues        []string
 
-	// TypeInfo holds encoded type manifest for this module.
-	// Use analysis/module/manifest Encode/Decode to work with this data.
-	// Stored on the root FunctionProto and propagated to nested functions.
-	TypeInfo []byte
-
 	stringConstants []string
-
-	typeInfoOnce       sync.Once
-	typeBindings       []typeBinding
-	typeBindingsByName map[string]*LType
 }
 
 /* Upvalue {{{ */
@@ -122,23 +112,6 @@ func (fp *FunctionProto) RebuildStringConstants() {
 	for i, c := range fp.Constants {
 		if s, ok := c.(LString); ok {
 			fp.stringConstants[i] = string(s)
-		}
-	}
-}
-
-// GetTypeInfo returns the encoded type manifest bytes.
-func (fp *FunctionProto) GetTypeInfo() []byte {
-	return fp.TypeInfo
-}
-
-// SetTypeInfo sets the encoded type manifest bytes.
-func (fp *FunctionProto) SetTypeInfo(data []byte) {
-	fp.TypeInfo = data
-	// Propagate to nested prototypes so type values are available
-	// inside nested functions at runtime.
-	for _, child := range fp.FunctionPrototypes {
-		if child != nil {
-			child.SetTypeInfo(data)
 		}
 	}
 }

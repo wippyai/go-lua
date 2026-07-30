@@ -1,0 +1,736 @@
+path,query_id,response,completion_tokens,latency_ms,error
+analysis/check/body/module_type_alias.go,q0,NONE,2,692,
+analysis/check/body/object_literal_sourcevalue.go,q0,NONE,2,1094,
+analysis/check/body/call_identity.go,q0,NONE,2,1106,
+analysis/check/body/expression_operation.go,q0,NONE,2,1106,
+analysis/check/body/entry_state.go,q0,NONE,2,1107,
+analysis/check/body/config.go,q0,NONE,2,1105,
+analysis/check/body/result_parameter_readmodel.go,q0,NONE,2,1107,
+analysis/check/body/internal/readexpr/readexpr.go,q0,NONE,2,1154,
+analysis/check/body/return_type_values.go,q0,NONE,2,105,
+analysis/check/body/import_outcomes.go,q0,NONE,2,1433,
+analysis/check/body/read_boundary_state.go,q0,NONE,2,1435,
+analysis/check/body/result_accessors.go,q0,NONE,2,1521,
+analysis/check/body/api.go,q0,NONE,2,1523,
+analysis/check/diagnostics/assignment_call_owner.go,q0,NONE,2,399,
+analysis/check/body/visibility.go,q0,NONE,2,611,
+analysis/check/checktest/checktest.go,q0,NONE,2,611,
+analysis/check/body/signature_return_type_ops.go,q0,NONE,2,611,
+analysis/check/diagnostics/call_param_obligation.go,q0,NONE,2,374,
+analysis/check/diagnostics/channel_select_exhaustiveness.go,q0,NONE,2,374,
+analysis/check/body/run.go,q0,NONE,2,849,
+analysis/check/diagnostics/assignment.go,q0,NONE,2,844,
+analysis/check/diagnostics/condition_reachability.go,q0,NONE,2,932,
+analysis/check/diagnostics/assignment_diagnostic.go,q0,NONE,2,1096,
+analysis/check/diagnostics/assignment_projection.go,q0,NONE,2,1139,
+analysis/check/diagnostics/dead_assignment.go,q0,NONE,2,1233,
+analysis/check/diagnostics/diagnostics.go,q0,NONE,2,1233,
+analysis/check/diagnostics/direct_call.go,q0,NONE,2,1738,
+analysis/check/diagnostics/evidence.go,q0,NONE,2,1559,
+analysis/check/diagnostics/member_call.go,q0,NONE,2,1210,
+analysis/check/diagnostics/expression_type.go,q0,NONE,2,1960,
+analysis/check/diagnostics/guard_env.go,q0,NONE,2,1946,
+analysis/check/diagnostics/resolver.go,q0,NONE,2,999,
+analysis/check/diagnostics/object_literal_mismatch.go,q0,NONE,2,999,
+analysis/check/exportmanifest/effect_boundary.go,q0,NONE,2,183,
+analysis/check/body/read_boundary.go,q0,"41: `readableConcreteType` should live in `analysis/domain/value/typevalue` (or a similar domain/type package). It is a domain-logic helper that determines if a `product.Value` is a ""readable concrete type"" by inspecting its type and evidence; this logic is a property of the value/type system rather than the specific `body` check/engine layer.",84,4133,
+analysis/check/body/generic_for_transfer.go,q0,"38, signatureIdentityResolver, analysis/engine/transfer + This type is used as a parameter in `genericForNodeTransfer` and `genericForVariableValue` to resolve names for call sites. Since it is used to bridge the gap between `transfer` logic and `signaturelookup`, and is passed through the transfer function chain, it is a component of the transfer engine's state/context rather than a specific check implementation.",89,4179,
+analysis/check/diagnostics/return_contract.go,q0,NONE,2,1038,
+analysis/check/diagnostics/trust.go,q0,NONE,2,881,
+analysis/check/diagnostics/type_reference.go,q0,NONE,2,809,
+analysis/check/diagnostics/unused_local.go,q0,NONE,2,764,
+analysis/check/exportmanifest/product_type.go,q0,NONE,2,458,
+analysis/check/exportmanifest/function_signatures.go,q0,NONE,2,868,
+analysis/check/body/function_value_types.go,q0,"21, FunctionValueContext, analysis/domain/value/function (or similar domain package) + This type couples a domain concept (`typ.Function`) with an engine-level execution state (`state.State`). Because it is used to store snapshots of the engine state to validate type applicability, it represents a domain-level ""contextual type"" that should be defined in the domain layer to prevent the `body` check layer from being the sole owner of this logic.",97,5045,
+analysis/check/fixpoint/program/internal/projectsummary/project.go,q0,NONE,2,135,
+analysis/check/body/result_return_readmodel.go,q0,"68, openTailReturnCallSources, analysis/engine/factflow, This is a low-level logic helper that performs structural analysis on `factflow.ValueSource` slices (checking kinds, call points, and result indices). Since it is a pure transformation/query logic based on the internal structure of `factflow` types, it should reside in the `factflow` package or a dedicated engine utility, rather than in a high-level `check/body` readmodel implementation.",102,4398,
+analysis/check/fixpoint/program/internal/projectsummary/project_heap_table_objects.go,q0,NONE,2,131,
+analysis/check/fixpoint/program/internal/projectsummary/project_normal_reachability.go,q0,NONE,2,131,
+analysis/check/fixpoint/program/internal/projectsummary/project_normal_return_equalities.go,q0,NONE,2,165,
+analysis/check/fixpoint/program/internal/projectsummary/project_normal_return_conditions.go,q0,NONE,2,208,
+analysis/check/fixpoint/program/internal/projectsummary/project_normal_return_params.go,q0,NONE,2,164,
+analysis/check/fixpoint/program/internal/projectsummary/project_normal_return_facts.go,q0,NONE,2,281,
+analysis/check/checktest/internal/precheck/precheck.go,q0,"14, CodeBreakOutsideLoop, 15, CodeDuplicateLabel, 16, CodeGotoUndefinedLabel: should move to `analysis/diagnostic/` (or a dedicated constants package) because these are domain-specific error codes used to identify diagnostic types, and defining them in an internal `precheck` package prevents other analysis passes from using them or referencing them without circular dependencies.",81,4524,
+analysis/check/exportmanifest/type_defs.go,q0,NONE,2,1177,
+analysis/check/body/entry_contextual_function.go,q0,"46: returnPositionIndex | analysis/lua/ast (or a similar AST utility package) | This is a structural traversal helper that performs deep inspection of `ast.Stmt` and `ast.FunctionExpr` to find indices within return statements. Since it is a generic tree-walking utility based on AST structure rather than specific type-checking logic, it belongs in a package that handles AST manipulation or a utility layer for the compiler/analysis, rather than being buried in a specific `body` check implementation.",105,5891,
+analysis/check/fixpoint/program/internal/projectsummary/project_return_condition_refinements.go,q0,NONE,2,747,
+analysis/check/exportmanifest/source_type.go,q0,NONE,2,1823,
+analysis/check/fixpoint/program/internal/callresult/provider.go,q0,NONE,2,1823,
+analysis/check/fixpoint/program/method_receiver_context.go,q0,NONE,2,803,
+analysis/check/fixpoint/program/internal/projectsummary/project_param_obligations.go,q0,NONE,2,1472,
+analysis/check/fixpoint/ref/ref.go,q0,NONE,2,712,
+analysis/check/exportmanifest/object_type.go,q0,"214, reachesPoint, analysis/check/body, This is a low-level graph reachability utility (traversing a CFG) that is used here to support a high-level check. It should be a method on `cfg.Graph` or a utility in the `analysis/ir/cfg` package to avoid duplicating graph traversal logic in specific check implementations.",78,3223,
+analysis/check/diagnostics/value_reference.go,q0,"146, isAmbientLuaGlobal, analysis/lua/typeannotation (or a similar domain/language package) + This function contains a hardcoded list of Lua's ambient/predeclared global identifiers. This is a core language domain concept. Defining it inside a specific diagnostic check makes it difficult to reuse for other analysis passes (like type checking or linting) and couples the diagnostic layer to the language specification.",86,3451,
+analysis/check/fixpoint/program/program.go,q0,NONE,2,1906,
+analysis/check/fixpoint/summary/heap_table_objects.go,q0,NONE,2,130,
+analysis/check/fixpoint/summary/escape_event_facts.go,q0,"25, pathHasPrefix, analysis/domain/path, This is a low-level structural comparison utility for `pathdom.Path`. It performs deep segment-by-segment equality/prefix logic that is a property of the path data structure itself and should be a method on `pathdom.Path` or a utility in the `path` package, rather than being defined in a specific fixpoint summary implementation.",86,1000,
+analysis/check/diagnostics/numeric_for.go,q0,"48, definitelyNotNumber, analysis/type/typ (or a related type package) + This function performs deep inspection of the type system (checking for `Any`, `Unknown`, `Never`, and subtyping against `Number`) to determine type properties. This logic is a type-system concern and should be a method on `typ.Type` or a utility in the `analysis/type` package, rather than being embedded in a specific diagnostic checker.
+
+57, mayContainNumber, analysis/type/typ (or a related type package) + Similar to `definitelyNotNumber`, this is a complex recursive type traversal that inspects `Alias`, `Optional`, `Union`, and `Instantiated` types. This is core type-system logic (type refinement/querying) and belongs in the type package to allow other checkers or the compiler to reuse it without depending on the `diagnostics` package.",190,5871,
+analysis/check/fixpoint/query/query.go,q0,"33: Stats, analysis/check/fixpoint/query/query.go -> analysis/engine/solve/solve.go
+Why: `Stats` contains `solve.Stats`. This creates a circular dependency or a tight coupling where a high-level query package is responsible for defining the structure of the statistics used by the low-level solver. The `solve.Stats` should be the primary driver of telemetry, and the query layer should either consume it or define its own independent metrics without embedding the solver's internal stats type.",111,2043,
+analysis/check/diagnostics/internal/readmodel/readmodel.go,q0,"234, ProjectionHasNil, analysis/type/typ + This is a type-level predicate (checking if a type includes `Nil`) that relies heavily on the internal structure of `typ.Type` (unwrapping, kind checking, and recursion). It is a general type utility that should be part of the `typ` package rather than a specific diagnostic readmodel implementation.
+
+258, projectionWithoutNil, analysis/type/typ + This is a type transformation helper that uses `typetable` to manipulate type structures. It is a low-level type utility that belongs in the `typ` or `typetable` package.",135,6597,
+analysis/check/fixpoint/summary/channel_select_facts.go,q0,"21: `channelSelectLane`, `analysis/engine/state/channelselectfact`, This variable defines the lattice semantics (intersection/must-analysis) for `callboundary.ChannelSelectFact`. Since it dictates how the engine's state facts are joined and validated, this logic is a core part of the state definition/engine layer rather than the `summary` (check) layer.
+
+38: `optionalPlaceholderPath`, `analysis/domain/path`, This is a predicate checking properties of a `pathdom.Path`. Such domain-specific property checks belong in the `path` domain package to prevent leaking path implementation details into the analysis/check layers.",138,2106,
+analysis/check/fixpoint/summary/param_obligation.go,q0,NONE,2,442,
+analysis/check/fixpoint/summary/param_condition.go,q0,NONE,2,530,
+analysis/check/fixpoint/summary/proof_facts.go,q0,NONE,2,110,
+analysis/check/fixpoint/summary/path_invalidation_facts.go,q0,NONE,2,111,
+analysis/check/fixpoint/program/internal/projectsummary/project_return_presence_relations.go,q0,"15, returnSourceValueReader, analysis/check/fixpoint/summary + This is a private interface used to bridge the gap between the `ResultReader` (an engine/check concern) and the `summary` package. Since it is only used to facilitate the construction of `summary.ReturnPresenceRelation` objects within this projection logic, it is a helper for the summary generation process.",81,3670,
+analysis/check/fixpoint/program/internal/projectsummary/project_return_slots.go,q0,"31, joinDeclaredReturnValue, analysis/domain/value/product, This function contains core lattice join logic for `product.Value` (handling presence, runtimekind, evidence, typewitness, and variantorigin). This logic is a domain concern for how product values merge and should be a method or helper within the `product` package rather than a private helper in a specific check implementation.",80,3499,
+analysis/check/fixpoint/summary/snapshot.go,q0,NONE,2,87,
+analysis/check/fixpoint/summary/return_presence_relation.go,q0,NONE,2,130,
+analysis/check/fixpoint/summary/return_condition.go,q0,NONE,2,131,
+analysis/check/fixpoint/summary/store_relation_facts.go,q0,NONE,2,105,
+analysis/check/fixpoint/summary/summary_key.go,q0,NONE,2,377,
+analysis/check/fixpoint/summary/summary.go,q0,NONE,2,379,
+analysis/check/fixpoint/summary/summary_lattice.go,q0,NONE,2,422,
+analysis/check/fixpoint/program/param_inference.go,q0,"148, seedReachableHeapFromValue, analysis/engine/state, This is a low-level heap manipulation utility that performs deep traversal of heap objects and identity tracking. It is a core engine concern that should be part of the state or heap management layer rather than being defined inside a specific fixpoint/program analysis package.
+
+166, seedReachableHeapFromID, analysis/engine/state, Similar to `seedReachableHeapFromValue`, this is a low-level engine utility for propagating heap identities and object domains. It belongs in the engine/state layer to avoid leaking engine implementation details into the analysis layer.",132,4022,
+analysis/diagnostic/evidence.go,q0,NONE,2,91,
+analysis/check/diagnostics/runtime_guard.go,q0,"14: runtimeTypeName | analysis/type/typ | This helper maps string names to `typ.Type` constants. Since it maps domain-level type names to the core type system, it is a type-system concern and should reside in the `typ` package to allow other parts of the analysis to resolve types from strings without depending on the `diagnostics` package.
+
+39: runtimeTypeGuardRejectCond | analysis/lua/branchcond | This function maps `branchcond.CheckKind` to a boolean property. This logic is a property of the branch condition itself; it should be a method on `branchcond.CheckKind` or a helper within the `branchcond` package to avoid leaking the internal logic of how branch conditions behave into the diagnostics layer.
+
+58: reachable | analysis/ir/cfg | This is a generic graph traversal utility (DFS/reachability) on a `cfg.Graph`. It is a low-level utility that should be a method on the `cfg.Graph` type or a helper in the `cfg` package, rather than being defined in a high-level diagnostics package.",234,6589,
+analysis/diagnostic/policy.go,q0,NONE,2,90,
+analysis/diagnostic/types.go,q0,NONE,2,95,
+analysis/domain/constraint/decision/result.go,q0,NONE,2,101,
+analysis/check/internal/sourcebridge/source_value.go,q0,NONE,2,803,
+analysis/diagnostic/assertion.go,q0,NONE,2,758,
+analysis/domain/constraint/expr/expr.go,q0,NONE,2,271,
+analysis/check/fixpoint/summary/dynamic_index_facts.go,q0,"14: dynamicIndexFactKey: analysis/engine/callboundary: This is a private key type used exclusively to index `callboundary.DynamicIndexFact` within a `factmap`. Since it is a structural component of how `callboundary` facts are mapped and compared, it should be defined in the package that owns the fact type to prevent the `summary` (check/fixpoint) layer from needing to know the internal indexing mechanics of the engine's facts.
+
+21: dynamicIndexMap: analysis/engine/callboundary: This function defines the lattice structure (the `factmap.Map`) for `callboundary.DynamicIndexFact`. The logic for how these facts are merged, cloned, and validated is a property of the fact's domain/engine definition. Placing it in `summary` forces the high-level fixpoint engine to implement low-level lattice mechanics that should be encapsulated within the `callboundary` or `dynamicindex` packages.",200,3791,
+analysis/check/diagnostics/member_read.go,q0,"148, unionArmRejectsFieldRead, analysis/type/typ + This is a type-system logic function that determines if a specific type structure (a multi-arm union with specific field presence properties) violates safety rules. It operates on `typ.Type` and uses `access` and `unwrap` packages, making it a core part of the type system's reasoning rather than a specific diagnostic check.
+
+173, isMultiArmUnion, analysis/type/typ + This is a structural query about the nature of a type (whether it is a union of multiple members). Such predicates belong in the type package to allow other parts of the compiler to reason about type shapes without duplicating logic.
+
+178, multiArmUnionDepth, analysis/type/typ + This is a private helper for `isMultiArmUnion` that performs recursive type traversal. It is a low-level type utility.
+
+198, fieldProvablyAbsent, analysis/type/typ + This is a high-level type property check (determining if a field is missing across all possible types in a union/record). This is a fundamental type-checking concept that should be part of the type system's capability set.
+
+214, closedRecordLacksField, analysis/type/typ + This is a recursive type traversal helper used to verify structural properties of records and unions. It belongs in the type package.
+
+236, closedRecord",300,7987,
+analysis/check/fixpoint/program/internal/projectsummary/project_return_param_aliases.go,q0,"14, objectLiteralExprReader, analysis/check/fixpoint/summary (or a shared interface package): This interface is used to bridge the gap between the `projectsummary` implementation and the `factflow` engine. Since it is used to satisfy requirements for `summary.ReturnParamPathAlias` generation and is passed into recursive functions that are part of the summary logic, it is a specialized reader for the summary process.
+
+18, expressionPathRefReader, analysis/check/fixpoint/summary (or a shared interface package): Similar to `objectLiteralExprReader`, this is a narrow interface used to extract domain paths from engine expressions. It is a helper interface used to decouple the `projectsummary` package from the concrete `ResultReader` implementation, but it defines the contract for how summaries are built.",168,5235,
+analysis/check/fixpoint/summary/param_equality.go,q0,"13, ParamEquality, analysis/domain/value/..., because it is a core domain concept (a relation between parameter roots) used to define the state of a `Summary`. Its definition and the lattice logic governing it (`paramEqualityLane`) represent the semantic rules of the data, which should reside in the domain layer rather than the `analysis/check` (engine/logic) layer.",81,2182,
+analysis/check/exportmanifest/export.go,q0,"48, hasRecordMembers, analysis/type/typ + This is a type-system property check (determining if a type is a record or a union with record members) that operates on the core `typ.Type` domain. It should be a method on `typ.Type` or a utility in the `analysis/type` package to avoid leaking type-traversal logic into the `exportmanifest` package.
+
+78, mergeRecordMembers, analysis/type/typ + This function performs domain-level type merging (reconciling two record types). This is a core type-system operation that belongs in the `analysis/type` package, as other parts of the engine may need to merge types during analysis.
+
+89, mergeFields, analysis/type/typ + This is a low-level slice manipulation utility for `typ.Field` objects. It is a domain-specific helper for type construction and should reside in the `analysis/type` package.
+
+105, mergeStaticMembers, analysis/type/typ + Similar to `mergeFields`, this is a domain-specific helper for reconciling `typ.StaticMember` collections and belongs in the `analysis/type` package.
+
+125, staticMemberKey, analysis/type/typ + This is a private key used for indexing type members. It is a low-level implementation detail of type manipulation and should be moved to the `analysis/type` package.",300,6544,
+analysis/check/fixpoint/summary/frozen_table_facts.go,q0,"14, frozenTableFactKey, analysis/engine/callboundary, This type is a type alias/wrapper for `pathdom.PathKey` used specifically to index `callboundary.FrozenTableFact` within a lattice. Since the key's logic and purpose are tied directly to the structure of `callboundary.FrozenTableFact`, it is a domain concern of the `callboundary` package. Defining it in `analysis/check/fixpoint/summary` leaks the internal indexing strategy of the engine into the check layer.
+
+18, frozenTableLane, analysis/engine/callboundary, This is a specific lattice configuration (a `factset.Set`) for `callboundary.FrozenTableFact`. Because it defines the core algebraic properties (Key, Equal, Less, Valid, Clone) of how `FrozenTableFact` behaves in a set, this logic belongs in the package that defines the fact itself (`callboundary`) to ensure encapsulation and prevent the `summary` layer from needing to know the internal comparison/cloning mechanics of engine facts.",218,3320,
+analysis/check/fixpoint/summary/effect_delta_facts.go,q0,"16: effectDeltaKey, analysis/engine/callboundary, This key is used as the primary index for the `factmap.Map` which stores `callboundary.EffectDelta` objects. Since the key's structure is inextricably linked to the fields of `callboundary.EffectDelta` (Target, Site, Kind), it is a data structure that defines the identity of a callboundary concept and should reside in the `callboundary` package to avoid circular dependencies or leaking engine-specific indexing logic into the summary layer.
+
+21: effectDeltaMap, analysis/engine/callboundary, This function defines the lattice properties (Key, Value, Less, Valid, CloneFact) for `callboundary.EffectDelta`. This is a domain-specific lattice definition for a type defined in `callboundary`. Defining the lattice logic in the `summary` package (a higher-level check layer) forces the `summary` layer to know the internal mechanics of how `callboundary` types are indexed and merged.",208,3900,
+analysis/domain/effect/capability/capability.go,q0,NONE,2,199,
+analysis/domain/constraint/expr/expr_equal.go,q0,NONE,2,936,
+analysis/domain/constraint/expr/expr_ref.go,q0,NONE,2,887,
+analysis/domain/constraint/expr/expr_arith.go,q0,NONE,2,1049,
+analysis/domain/constraint/expr/expr_simplify.go,q0,NONE,2,828,
+analysis/domain/constraint/expr/expr_minmax.go,q0,NONE,2,889,
+analysis/domain/constraint/expr/expr_compare.go,q0,NONE,2,1050,
+analysis/domain/effect/dispatch/labels.go,q0,NONE,2,147,
+analysis/domain/effect/iteration/labels.go,q0,NONE,2,146,
+analysis/domain/effect/compose.go,q0,NONE,2,148,
+analysis/domain/effect/label.go,q0,NONE,2,146,
+analysis/domain/effect/dispatch/reserved.go,q0,NONE,2,147,
+analysis/domain/effect/control/reserved.go,q0,NONE,2,148,
+analysis/domain/constraint/numeric/numeric.go,q0,NONE,2,880,
+analysis/domain/constraint/numeric/modular/modular.go,q0,NONE,2,923,
+analysis/domain/effect/mutation/transforms.go,q0,NONE,2,231,
+analysis/domain/effect/param_ref.go,q0,NONE,2,231,
+analysis/domain/effect/postcondition/labels.go,q0,NONE,2,231,
+analysis/domain/effect/mutation/labels.go,q0,NONE,2,231,
+analysis/domain/effect/ownership/labels.go,q0,NONE,2,231,
+analysis/domain/effect/mutation/active.go,q0,NONE,2,232,
+analysis/domain/constraint/equality/egraph.go,q0,"138: segmentKey, analysis/domain/path/segment, This is a low-level utility that converts a single segment into a string key for map lookups. Since it is a specialized formatting operation for segments, it should be a method on the `segment.Segment` type or a helper within the `segment` package to avoid leaking segment-to-string logic into the `equality` package.",85,1688,
+analysis/domain/effect/returns/reserved.go,q0,NONE,2,285,
+analysis/domain/lattice/lift/product.go,q0,NONE,2,154,
+analysis/domain/path/address/address.go,q0,NONE,2,218,
+analysis/domain/path/address/key.go,q0,NONE,2,222,
+analysis/domain/path/address/local.go,q0,NONE,2,157,
+analysis/domain/effect/row.go,q0,NONE,2,527,
+analysis/domain/lattice/lattice.go,q0,NONE,2,526,
+analysis/domain/lattice/factmap/factmap.go,q0,NONE,2,586,
+analysis/domain/lattice/factset/factset.go,q0,NONE,2,586,
+analysis/domain/lattice/lift/must.go,q0,NONE,2,586,
+analysis/domain/lattice/lift/map.go,q0,NONE,2,631,
+analysis/check/fixpoint/summary/summary_slots.go,q0,"41, UsefulParamObligation, analysis/domain/value/product, This is a domain logic predicate that determines if a `product.Value` is ""useful"" (neither Top nor Bottom). Since it operates purely on the properties of `product.Value` and `axis.Registry`, it is a domain concern that should live in the `product` or `axis` package to avoid leaking `summary` (a check/engine layer concept) into the domain logic.
+
+49, UsefulNormalReturnParam, analysis/domain/value/product, Same as above. This is a domain-level check for whether a value carries meaningful information. It should be a method or helper within the `product` package rather than being defined in the `summary` package.",158,3475,
+analysis/check/fixpoint/summary/param_obligation_lattice.go,q0,"11, paramMemberCallObligationLane, analysis/domain/lattice, This is a definition of a canonical lattice (a mathematical/domain structure) for a specific domain concept. Lattice definitions should reside in the domain layer so that other analysis components can reference the same ordering and validity rules without depending on the `summary` (fixpoint/engine) layer.
+
+29, paramMemberReturnSlotLane, analysis/domain/lattice, This is a canonical lattice definition. It defines the properties of a domain concept (`ParamMemberReturnSlot`) and should be moved to the domain layer to prevent the engine layer from owning domain logic.
+
+53, returnParamPathAliasLane, analysis/domain/lattice, This is a canonical lattice definition. It defines the properties of a domain concept (`ReturnParamPathAlias`) and should be moved to the domain layer to prevent the engine layer from owning domain logic.",184,4121,
+analysis/domain/constraint/numeric/diff/difference.go,q0,"51, safeAddInt64, analysis/internal/math (or similar low-level utility package) + This is a generic integer arithmetic helper that performs overflow-clamping logic. It is not specific to the domain of ""difference logic"" or ""graphs"" and should be moved to a low-level utility package to avoid duplication and to keep the domain package focused on its specific logic.",82,2179,
+analysis/domain/path/placeholder_path.go,q0,NONE,2,102,
+analysis/domain/path/segment/segment.go,q0,NONE,2,156,
+analysis/domain/placement/placement.go,q0,NONE,2,159,
+analysis/domain/path/address/root.go,q0,NONE,2,971,
+analysis/domain/path/identity.go,q0,NONE,2,817,
+analysis/domain/path/address/root_suffix.go,q0,NONE,2,923,
+analysis/domain/path/address/parser.go,q0,NONE,2,1028,
+analysis/domain/path/address/structural_key.go,q0,NONE,2,922,
+analysis/domain/path/format.go,q0,NONE,2,863,
+analysis/domain/path/construction.go,q0,NONE,2,863,
+analysis/domain/path/address/suffix.go,q0,NONE,2,864,
+analysis/domain/path/path.go,q0,NONE,2,575,
+analysis/domain/path/placeholder.go,q0,NONE,2,568,
+analysis/check/fixpoint/summary/normal_return_facts.go,q0,"11, normalizeNormalReturnFacts, engine/callboundary, This function performs normalization on `callboundary.NormalReturnFacts`. Since the type itself is defined in the `engine/callboundary` package, the logic for how that type should be normalized or ""cleaned"" is a property of the type itself and should be moved to the package where the type is defined to avoid leaking implementation details and to keep the domain model cohesive.
+
+28, cloneNormalReturnFacts, engine/callboundary, Similar to normalization, cloning logic for a specific type is a fundamental operation of that type. Moving this to `engine/callboundary` allows the `summary` package to remain a consumer of the facts rather than a manager of their lifecycle.
+
+45, normalReturnFactsEqual, engine/callboundary, Equality logic for `NormalReturnFacts` should be a method on the type in the `engine/callboundary` package. This prevents the `summary` package from needing to know the internal field-by-field comparison logic of the engine's types.
+
+60, normalReturnFactsLessOrEq, engine/callboundary, Lattice operations (like LessOrEq, Join, and Widen) are intrinsic properties of the data type's mathematical structure. These should be defined in `engine/callboundary` so that any package using these facts can perform lattice arithmetic without importing the `summary` package.
+
+77, joinNormalReturnFacts, engine/callboundary",300,5383,
+analysis/domain/effect/returns/labels.go,q0,"43, TypeProjection, analysis/domain/effect/returns, This type depends on `analysis/type/projection`. While it is used within the `returns` package, it represents a specific mapping between an effect and a type projection. If `returns` is intended to be a pure domain package for effect labels, having a concrete dependency on the `type/projection` package suggests this specific implementation of a return type might be better suited in a layer that bridges effects and types, or the `TypeProjection` struct is leaking type-system concerns into the effect domain.",117,2155,
+analysis/domain/state/key/value.go,q0,NONE,2,575,
+analysis/domain/value/axis/variantorigin/variantorigin.go,q0,NONE,2,142,
+analysis/domain/value/product/domain.go,q0,NONE,2,219,
+analysis/domain/value/axis/key.go,q0,NONE,2,915,
+analysis/domain/value/axis/reducer.go,q0,NONE,2,914,
+analysis/domain/value/product/intern.go,q0,NONE,2,292,
+analysis/domain/value/axis/evidence/evidence.go,q0,NONE,2,1000,
+analysis/domain/value/axis/escape/escape.go,q0,NONE,2,1001,
+analysis/domain/value/axis/registry.go,q0,NONE,2,1000,
+analysis/domain/value/axis/assertion/assertion.go,q0,NONE,2,1001,
+analysis/domain/value/axis/runtimekind/runtimekind.go,q0,NONE,2,951,
+analysis/domain/value/axis/spec.go,q0,NONE,2,966,
+analysis/domain/value/axis/presence/presence.go,q0,NONE,2,1015,
+analysis/domain/value/axis/typewitness/typewitness.go,q0,NONE,2,784,
+analysis/domain/value/product/reduce.go,q0,NONE,2,275,
+analysis/domain/value/product/runtime_canonical.go,q0,NONE,2,221,
+analysis/domain/value/product/registry.go,q0,NONE,2,264,
+analysis/domain/value/product/runtime.go,q0,NONE,2,264,
+analysis/check/placementplan/plan.go,q0,"14, Target, domain/placement, The `Target` type and its associated constants/methods represent the intended location of a value within the memory model. This is a core domain concept that describes the ""where"" of a value, which should be defined in the `domain/placement` package so that other layers (like `check`) can consume it without depending on the `placementplan` (which is a high-level analysis result).
+
+29, Reason, domain/placement, Similar to `Target`, the `Reason` for a placement (e.g., `ReasonSharedEscape`) is a domain-level classification of why a value is in a certain state.
+
+38, Obligation, domain/placement, `Obligation` defines requirements imposed by the memory model (e.g., `ObligationSealBeforeShare`). This is a domain rule/concept.
+
+43, Blocker, domain/placement, `Blocker` represents domain-level constraints or invalid states (e.g., `BlockerMissingExitState`). While used to report issues in a plan, the definition of what constitutes a blocker is a domain concern.",237,5200,
+analysis/check/fixpoint/summary/path_facts.go,q0,"14, pathValueFactKey, analysis/engine/callboundary, This type is a type alias/wrapper for `pathdom.PathKey` used specifically to index `callboundary.PathValueFact` within a `factmap`. Since the map itself is constructed using types from the `callboundary` package, this key is a detail of how `callboundary` facts are organized in a lattice.
+
+49, normalizePathValueFacts, analysis/engine/callboundary, This helper function performs normalization on `callboundary.PathValueFact` slices. Since it is a specialized utility for a specific engine-layer type, it should be a method on the fact type or a helper within the `callboundary` package to avoid the `summary` package having to know the internal mechanics of how to normalize engine facts.
+
+53, normalizePathStaticMemberFacts, analysis/engine/callboundary, Same as above; this is a specialized utility for `callboundary.PathStaticMemberFact`.
+
+57, clonePathValueFacts, analysis/engine/callboundary, This is a low-level utility for deep-copying engine-layer facts. It belongs in the `callboundary` package.
+
+68, clonePathStaticMemberFacts, analysis/engine/callboundary, Same as above; this is a low-level utility for deep-copying engine-layer facts.
+
+79, pathValueFactsEqual, analysis/engine/callboundary",300,5999,
+analysis/domain/value/typevalue/reconstruct.go,q0,NONE,2,104,
+analysis/domain/value/typevalue/reconstruct_evidence.go,q0,NONE,2,104,
+analysis/domain/value/product/runtime_hash.go,q0,NONE,2,762,
+analysis/domain/value/product/runtime_compare.go,q0,NONE,2,762,
+analysis/domain/value/product/value.go,q0,NONE,2,763,
+analysis/domain/value/product/runtime_validation.go,q0,NONE,2,763,
+analysis/domain/value/typevalue/literal.go,q0,NONE,2,747,
+analysis/domain/value/typevalue/materialize.go,q0,NONE,2,702,
+analysis/domain/value/returnpresence/returnpresence.go,q0,NONE,2,748,
+analysis/domain/value/typevalue/cache.go,q0,NONE,2,748,
+analysis/domain/value/typevalue/structural.go,q0,NONE,2,143,
+analysis/domain/value/typevalue/presence.go,q0,NONE,2,663,
+analysis/domain/value/typevalue/normalize.go,q0,NONE,2,663,
+analysis/domain/value/variant/origin.go,q0,NONE,2,213,
+analysis/domain/value/variant/origin_catalog.go,q0,NONE,2,258,
+analysis/domain/value/variant/internal/discriminant/conflict.go,q0,NONE,2,489,
+analysis/domain/value/variant/internal/discriminant/presence.go,q0,NONE,2,488,
+analysis/domain/value/variant/internal/discriminant/detector.go,q0,NONE,2,488,
+analysis/domain/value/variant/internal/discriminant/paths.go,q0,NONE,2,488,
+analysis/domain/value/variant/narrow.go,q0,NONE,2,488,
+analysis/domain/value/variant/internal/discriminant/tags.go,q0,NONE,2,488,
+analysis/domain/value/variant/internal/discriminant/residual.go,q0,NONE,2,489,
+analysis/domain/value/variant/cache.go,q0,NONE,2,491,
+analysis/domain/effect/capability/label/label.go,q0,"17, IDFor, analysis/domain/effect, This function acts as a central registry/mapping that knows about every specific sub-type of effect (returns, ownership, mutation, etc.). This creates a circular dependency or a ""god-package"" smell where the `label` package must import every single effect sub-package to perform a type switch. The logic for mapping a specific effect type to its capability ID should be decentralized; each effect sub-package (e.g., `mutation`, `ownership`) should ideally provide its own mapping or implement an interface that `label` can call without knowing the concrete types.
+
+68, IDForReturnTransform, analysis/domain/effect/returns, Similar to `IDFor`, this function is a massive type switch over `returns.ReturnType`. This logic is highly coupled to the internal implementation details of the `returns` package. The mapping from a `ReturnType` to a capability ID belongs within the `returns` package itself to maintain encapsulation and prevent the `label` package from needing to import the entire `returns` hierarchy.",221,4374,
+analysis/domain/value/variant/origin_ints.go,q0,NONE,2,578,
+analysis/engine/effectlowering/module_load.go,q0,NONE,2,113,
+analysis/engine/effectlowering/postconditions.go,q0,NONE,2,84,
+analysis/engine/effectlowering/provider.go,q0,NONE,2,161,
+analysis/engine/effectlowering/callable_value.go,q0,NONE,2,643,
+analysis/domain/value/refinement/refinement.go,q0,"24: typeAdmitsFalse; analysis/type/typ; This is a low-level type property check that performs structural inspection of `typ.Type` (handling `*typ.Optional`, `*typ.Union`, etc.). It belongs in the `typ` package or a specialized type-querying utility, rather than the `refinement` domain layer which should focus on value-level logic.",85,2156,
+analysis/engine/callproducer/callproducer.go,q0,NONE,2,1059,
+analysis/domain/value/variant/origin_project.go,q0,NONE,2,1061,
+analysis/domain/value/variant/origin_family.go,q0,NONE,2,1257,
+analysis/engine/calloutcome/merge.go,q0,NONE,2,1104,
+analysis/domain/value/axis/identity/identity.go,q0,"26: LuaFunction: analysis/domain/value/axis/identity/identity.go (or a specific Lua-aware package): This is a domain-specific factory function that embeds ""lua"" string literals and specific Lua semantics into a generic identity package. The `identity` package should provide the primitive `ID` type, but the logic for constructing identities specifically for Lua functions belongs in a layer that understands the Lua AST or binder.
+
+36: LuaTableLiteral: analysis/domain/value/axis/identity/identity.go (or a specific Lua-aware package): Similar to `LuaFunction`, this function leaks Lua-specific implementation details (like `graphID` and `exprRef` semantics) into the generic identity domain. It also depends on `internal/hash` to construct a specific Lua-related hash, which couples the generic identity axis to Lua-specific value construction.",184,3358,
+analysis/domain/value/typevalue/presence_projection.go,q0,"26: typeIncludesNil, analysis/domain/value/typ, because this is a fundamental property check of a `typ.Type` that relies on `unwrap` and `kind` logic; it should be a method on the `Type` interface or a utility in the core type package rather than a projection-specific helper.
+
+34: projectionHasNil, analysis/domain/value/typ, because this is a structural traversal of the type tree to determine nil-membership; this logic is a core type property and belongs in the type definition/utility layer to avoid leaking type-traversal implementation details into the projection layer.",131,2858,
+analysis/engine/effectlowering/provider_operational.go,q0,NONE,2,995,
+analysis/engine/dynamicindex/dynamicindex.go,q0,"24, Fact, domain/, because `Fact` defines the core data structure and lattice properties (via the `Domain` function) that represent the semantic state of the analysis. Since it is used to construct a `lattice.Lattice[Fact]`, it is a domain concept that should be defined in the domain layer to allow other engine components or analysis passes to reference the type without depending on the `engine/dynamicindex` implementation.",90,2114,
+analysis/engine/factapply/call_outcome.go,q0,NONE,2,513,
+analysis/engine/factapply/call_materialize.go,q0,NONE,2,599,
+analysis/engine/calloutcome/authority.go,q0,"14, HasAuthoritativePostReturnEvidence, analysis/domain/calloutcome (or similar domain package), This function implements core business/domain logic regarding what constitutes ""authority"" in a call outcome. Since it operates on `callpayload.CallOutcome` and determines the semantic state of the analysis results, it is a domain rule rather than an engine implementation detail. Moving it to a domain layer allows other parts of the system to query the authority of an outcome without depending on the `engine` package.",103,2574,
+analysis/engine/factapply/branch_refinement.go,q0,NONE,2,1495,
+analysis/engine/factapply/channel_select_branch.go,q0,NONE,2,258,
+analysis/engine/factapply/branch_presence.go,q0,NONE,2,1540,
+analysis/engine/factapply/applicator.go,q0,NONE,2,1540,
+analysis/engine/factapply/call_edges.go,q0,NONE,2,1496,
+analysis/engine/factapply/branch_path.go,q0,NONE,2,1541,
+analysis/engine/factapply/call_outcome_apply.go,q0,NONE,2,839,
+analysis/engine/factapply/channel_select_fact.go,q0,NONE,2,571,
+analysis/domain/value/typevalue/runtime_kind.go,q0,"12, RuntimeKindFromType, analysis/domain/value/typevalue/ (or a mapping layer), This function performs a heavy structural mapping between the `typ` (Type System) layer and the `runtimekind` (Runtime/Value) layer. Because it contains deep knowledge of the internal structure of `typ.Type` (e.g., `*typ.Literal`, `*typ.Union`, `*typ.Instantiated`, `*typ.Alias`), it acts as a bridge between two different domain models. Placing it in `typevalue` (a domain package) forces the domain layer to depend on the specific implementation details of the type system's AST/structure, which is a leak of the type-engine's internals into the value-domain. It should ideally live in a service or conversion layer that orchestrates the two.",177,3588,
+analysis/engine/factapply/channel_select_result.go,q0,NONE,2,491,
+analysis/engine/factapply/objects.go,q0,NONE,2,573,
+analysis/engine/factapply/paths.go,q0,NONE,2,572,
+analysis/engine/factapply/postconditions.go,q0,NONE,2,572,
+analysis/engine/factapply/path_fact_apply.go,q0,NONE,2,577,
+analysis/engine/factapply/path_presence_implication.go,q0,NONE,2,577,
+analysis/engine/factapply/path_state.go,q0,NONE,2,577,
+analysis/domain/value/variant/path_access.go,q0,"14, FieldAtPath, analysis/type/typ, This function performs deep structural traversal and unwrapping of `typ.Type` (handling `Alias`, `Recursive`, `Optional`, `Instantiated`, `Union`, and `Record`). This logic is a core type-system operation that belongs in the `analysis/type/typ` package (or a sub-package of `type/`) rather than `domain/value/variant/`. The `variant` package should ideally consume type-system capabilities, not define the fundamental mechanics of how types are traversed and unwrapped.",119,3179,
+analysis/engine/effectlowering/provider_facts.go,q0,"188, `callArgumentSourceCanBindPath`, `analysis/engine/factflow`, because it is a helper that performs a check on a `factflow.ValueSource` type, which is a domain/engine concept belonging to the `factflow` package.",57,2815,
+analysis/engine/factapply/source_read.go,q0,NONE,2,687,
+analysis/engine/factflow/assignment.go,q0,NONE,2,821,
+analysis/engine/factapply/roots.go,q0,NONE,2,823,
+analysis/engine/factflow/branch.go,q0,NONE,2,734,
+analysis/engine/factflow/dynamic_index.go,q0,NONE,2,155,
+analysis/engine/factflow/call_producer.go,q0,NONE,2,622,
+analysis/engine/callpayload/call_outcome.go,q0,"41, CallOutcome, analysis/engine/callboundary, CallOutcome is a ""generic payload produced at a call boundary"" and contains `callboundary.NormalReturnFacts`. It acts as a bridge between the engine's internal state and the boundary, but its heavy reliance on engine-specific types (like `heapidentity.TableObject` and `state.State` in its provider) suggests it is an engine-layer DTO that is leaking engine-specific implementation details (like heap identity and specific state structures) into a package intended to be a ""generic call-boundary payload"" package.
+
+48, CallOutcome, analysis/engine/callboundary, Similar to above, the inclusion of `heapidentity.TableObject` and `placement.Value` inside a ""generic payload"" package violates the abstraction of a generic DTO; these are low-level engine/domain details that should be encapsulated within the engine layers or a more specific boundary package.",197,4179,
+analysis/engine/factflow/branch_path_evidence.go,q0,NONE,2,1016,
+analysis/engine/factflow/call_target.go,q0,NONE,2,1011,
+analysis/engine/factflow/branch_relation.go,q0,NONE,2,1015,
+analysis/engine/factflow/call_site.go,q0,NONE,2,1054,
+analysis/domain/value/variant/narrow_truthy.go,q0,"14, isTruthySentinel, analysis/type/typ (or a similar type-querying utility), This is a low-level predicate that inspects the internal structure of a `typ.Type` (checking for specific `kind.Boolean` and `true` values). It is a type-property query that belongs in the type system layer rather than a specific domain value package.
+
+31, typeCanBeTruthy, analysis/type/typ, This is a fundamental type-system property (inhabitation/truthiness) that operates on the core `typ.Type` definitions. It performs deep recursion over `typ.Alias`, `typ.Union`, etc., which is a core type-logic concern.
+
+65, typeCanBeFalsy, analysis/type/typ, Similar to `typeCanBeTruthy`, this is a core type-system property regarding the inhabitability of `nil` or `false` within a type structure. It should be a method or helper in the type package to avoid leaking type-traversal logic into the domain layer.",222,4837,
+analysis/engine/factflow/static_member.go,q0,NONE,2,74,
+analysis/engine/factflow/value_source.go,q0,NONE,2,140,
+analysis/engine/factquery/root_declaration.go,q0,NONE,2,97,
+analysis/engine/factflow/expression_operation.go,q0,NONE,2,994,
+analysis/engine/factflow/expression_condition.go,q0,NONE,2,995,
+analysis/engine/factflow/object.go,q0,NONE,2,975,
+analysis/engine/factflow/expression_refinement.go,q0,NONE,2,975,
+analysis/engine/factflow/postcondition.go,q0,NONE,2,620,
+analysis/engine/factflow/facts.go,q0,NONE,2,1010,
+analysis/engine/factflow/path_copy.go,q0,NONE,2,631,
+analysis/engine/factflow/return_presence_relation.go,q0,NONE,2,578,
+analysis/engine/factflow/return.go,q0,NONE,2,620,
+analysis/engine/factflow/refs.go,q0,NONE,2,620,
+analysis/engine/effectlowering/provider_returns.go,q0,"22, ReturnTypeOps, analysis/engine/effectlowering/provider_returns.go (or a shared engine interface) + why: This type is a collection of function pointers used to inject type-system capabilities into the effect-lowering logic. While it is used here, it acts as a bridge between the engine and the type system. If this pattern is used by other lowering or analysis components, it should be moved to a more central `engine` or `analysis` package to avoid circular dependencies or to provide a standard interface for type-system-aware engine components.",120,4068,
+analysis/engine/solve/solver.go,q0,NONE,2,387,
+analysis/engine/state/channel_select.go,q0,NONE,2,497,
+analysis/engine/state/heap_table_lane.go,q0,NONE,2,85,
+analysis/engine/state/heap_table.go,q0,NONE,2,565,
+analysis/engine/state/internal/floor/floor.go,q0,NONE,2,86,
+analysis/engine/state/len_floor_lane.go,q0,NONE,2,90,
+analysis/engine/sourcevalue/path_read.go,q0,NONE,2,1084,
+analysis/engine/state/effect_delta.go,q0,NONE,2,1048,
+analysis/engine/state/effect_delta_lane.go,q0,NONE,2,1048,
+analysis/engine/sourcevalue/source_floor.go,q0,NONE,2,1085,
+analysis/engine/state/dynamic_index.go,q0,NONE,2,1049,
+analysis/engine/state/dynamic_index_lane.go,q0,NONE,2,1049,
+analysis/engine/state/channelselectfact/channelselectfact.go,q0,NONE,2,1050,
+analysis/engine/sourcevalue/source_values.go,q0,NONE,2,1085,
+analysis/engine/factflow/call_result.go,q0,"46: copyCallResultValueMap, analysis/engine/factflow (or a dedicated internal utility package), because it is a specialized helper that couples the `factflow` package logic to `cfg.Point`. While it is used within this file, its signature is highly specific to the data structures of this package and should not be considered a general utility; however, if it is only used by the engine logic within this package, it is correctly placed here, but it is a ""leaky"" helper if intended for broader use.
+
+Actually, looking closer at the file structure:
+
+NONE",122,2741,
+analysis/engine/callboundary/normal_return_facts.go,q0,"43, PathInvalidationEffectSite, analysis/engine/state/effectdelta, This constant and its associated helper functions are specific to the `effectdelta` mechanism. Since `callboundary` is a high-level package defining payload schemas, these low-level effect-site identifiers should be managed within the `effectdelta` package or a dedicated constants package to avoid leaking engine-state implementation details into the boundary definitions.
+
+81, FrozenTableEffectSite, analysis/engine/state/effectdelta, Similar to the path invalidation site, this constant and its helpers are low-level effect-site identifiers that belong in the `effectdelta` package.
+
+113, EscapeEventEffectSite, analysis/engine/state/effectdelta, This function generates `effectdelta.Site` values based on `EscapeEventKind`. The logic for mapping domain concepts (EscapeEvents) to effect-delta strings is a concern of the `effectdelta` layer or the domain layer, not the boundary payload layer.
+
+118, EscapeEventFromEffectSite, analysis/engine/state/effectdelta, This function performs string parsing to reverse-engineer an `effectdelta.Site` back into a domain concept. This is a low-level utility for the `effectdelta` package and should not be part of the `callboundary` payload definition.",278,6047,
+analysis/engine/state/len_floors.go,q0,NONE,2,392,
+analysis/engine/factflow/branch_path_relation.go,q0,"12, BranchPathRelationKind, analysis/domain/factflow, This type defines a domain concept (a relation kind) used to describe properties of paths. Since `BranchPathRelation` (a domain object) depends on it, the kind should be co-located in the domain layer to prevent the engine layer from defining the core vocabulary of the analysis.
+
+19, BranchPathRelation, analysis/domain/factflow, This is a core domain model describing a relationship between paths. It should reside in a domain package rather than an engine/factflow package, as the engine should consume these relations rather than defining their structure.
+
+28, BranchPathRelationSet, analysis/domain/factflow, This is a domain collection type used to group relations. It belongs in the domain layer alongside `BranchPathRelation`.",169,3170,
+analysis/engine/state/pathevidence/refinement.go,q0,NONE,2,99,
+analysis/engine/state/pathevidence/snapshot.go,q0,NONE,2,101,
+analysis/engine/state/pathevidence/static_member.go,q0,NONE,2,75,
+analysis/engine/state/placement.go,q0,NONE,2,73,
+analysis/engine/state/placement_lane.go,q0,NONE,2,77,
+analysis/engine/state/numbound/numbound.go,q0,NONE,2,1022,
+analysis/engine/state/num_floors.go,q0,NONE,2,1023,
+analysis/engine/state/pathevidence/lane.go,q0,NONE,2,1033,
+analysis/engine/state/lenbound/lenbound.go,q0,NONE,2,1221,
+analysis/engine/state/num_floor_lane.go,q0,NONE,2,1220,
+analysis/engine/state/pathevidence/domain.go,q0,NONE,2,1220,
+analysis/engine/state/pathevidence/invalidation.go,q0,NONE,2,1188,
+analysis/engine/state/path_evidence.go,q0,NONE,2,1247,
+analysis/engine/state/pathevidence/path_presence_implication.go,q0,"14: PathPresenceImplication | analysis/domain/path | This is a core domain concept representing a logical relationship between two path presences. Since it is used as a key in maps and passed through various layers, it should be defined in the domain layer to prevent the engine layer from leaking its internal representation of implications to other parts of the system.",73,922,
+analysis/engine/state/frozen_table.go,q0,"48, identityIDLess, analysis/domain/value/axis/identity (or a common utility package): This is a comparison function for `identity.ID`. Since `identity.ID` is a domain type, the logic for how to order or compare these IDs should be encapsulated within the `identity` package itself (e.g., as a `Less` method or a package-level helper) rather than being redefined in the `engine/state` layer.",97,2210,
+analysis/engine/state/heapidentity/heapidentity.go,q0,"114, ObjectDomain, domain/heapidentity, The `ObjectDomain` function defines a `lattice.Lattice[TableObject]`. In this architecture, the definition of a lattice (the mathematical properties of the domain) is a core domain concept. While `TableObject` is the data structure, the logic for `Join`, `LessOrEq`, and `Widen` constitutes the domain's semantic rules and should reside in the `domain/` layer rather than the `engine/` layer.",106,1889,
+analysis/engine/state/effectdelta/effectdelta.go,q0,"23, Key, analysis/domain/effectdelta, Key is a domain concept representing a specific change event (Target, Site, Kind) and should be defined in the domain layer so other domain components can reference it without depending on the engine's effectdelta implementation.
+
+29, Value, analysis/domain/effectdelta, Value represents the state transition of a domain value and is a core domain concept used to describe the ""delta"" in the lattice; it should reside in the domain layer.
+
+34, Domain, analysis/domain/effectdelta, The definition of the lattice domain for `Value` is a domain-level mathematical property and should be moved to the domain layer.",142,2481,
+analysis/engine/factflow/channel_select.go,q0,"11, ChannelSelectID, analysis/domain/factflow, This is a domain identity type used to describe facts/evidence in the factflow space; it should be defined in the domain layer rather than the engine/analysis layer to allow other domain components to reference it without importing the engine.
+
+14, ChannelSelectKind, analysis/domain/factflow, This is a domain concept (an enumeration of fact types) that defines the nature of the evidence being collected; it belongs in the domain layer.
+
+21, ChannelSelectConfig, analysis/domain/factflow, This is a data transfer object/configuration for a domain concept (ChannelSelect); it should reside in the domain layer alongside the type it constructs.
+
+38, ChannelSelect, analysis/domain/factflow, This is a core domain entity representing ""evidence"" or ""facts"" about a program's execution; it should be in the domain layer so that analysis results can be passed to other layers (like reporting or solvers) without a dependency on the `engine` package.
+
+58, ChannelSelectSet, analysis/domain/factflow, This is a collection of domain facts; it belongs in the domain layer.",247,4022,
+analysis/engine/state/state.go,q0,NONE,2,784,
+analysis/engine/state/snapshot.go,q0,NONE,2,894,
+analysis/ir/dominance/doc.go,q0,NONE,2,91,
+analysis/ir/dominance/frontier.go,q0,NONE,2,127,
+analysis/ir/dominance/dominators.go,q0,NONE,2,127,
+analysis/internal/mapedit/mapedit.go,q0,NONE,2,928,
+analysis/internal/hash/hash.go,q0,NONE,2,1005,
+analysis/internal/recursion/recursion.go,q0,NONE,2,981,
+analysis/engine/visibility/visibility.go,q0,NONE,2,1121,
+analysis/engine/visibility/resolver.go,q0,NONE,2,1148,
+analysis/engine/visibility/flow.go,q0,NONE,2,1148,
+analysis/engine/transfer/transfer.go,q0,NONE,2,1148,
+analysis/internal/keycodec/codec.go,q0,NONE,2,1121,
+analysis/ir/cfg/cfg.go,q0,NONE,2,937,
+analysis/engine/state/value_lane.go,q0,NONE,2,1149,
+analysis/engine/state/pathevidence/branch_proof.go,q0,"14, BranchProof, analysis/domain/path, BranchProof is a domain concept representing a logical fact about path relationships (equality, range, presence) used to drive analysis. Defining it in the `engine/state` layer forces the engine to own the definition of a core domain fact, whereas the engine should merely consume these facts.
+
+14, BranchProofKind, analysis/domain/path, The enumeration of proof types is a domain-level classification of path relationships.",99,2574,
+analysis/ir/dominance/info.go,q0,NONE,2,644,
+analysis/ir/dominance/helpers.go,q0,NONE,2,724,
+analysis/ir/dominance/immediate.go,q0,NONE,2,688,
+analysis/lua/cfgbuild/builder_statements.go,q0,NONE,2,280,
+analysis/engine/state/store_relation.go,q0,"14: StoreRelation, analysis/domain/path, it is a domain concept representing a relationship between two paths; defining it in the engine/state layer forces the engine to define the core semantics of the analysis domain.
+
+49: StoreRelationsSnapshot, analysis/domain/path, this is a data transfer object/snapshot of domain relations; it should live in the domain layer to allow higher-level consumers to interact with state information without depending on the engine's internal state implementation.",101,1881,
+analysis/lua/cfgbuild/builder_edges.go,q0,NONE,2,436,
+analysis/lua/branchcond/branch_condition.go,q0,NONE,2,443,
+analysis/engine/state/map_lane.go,q0,"13, sortedSetValues, analysis/internal/mapedit (or a general internal utility package), This is a generic low-level utility for sorting map keys that is used only within this file's logic; it should be a reusable utility in an internal package rather than a private helper in a high-level engine state package.
+
+68, wrapDomain, analysis/domain/lattice, This is a higher-order function that performs lattice isomorphism/lifting. It is a pure domain-logic transformation that operates on the `lattice.Lattice` interface and should be defined in the `domain/lattice` package to allow other domain types to use it, rather than being trapped in the `engine/state` layer.",149,3320,
+analysis/lua/cfgbuild/cfgbuild.go,q0,NONE,2,520,
+analysis/lua/cfgbuild/builder_symbols.go,q0,NONE,2,523,
+analysis/lua/cfgfacts/assignments.go,q0,NONE,2,156,
+analysis/lua/cfgfacts/copy.go,q0,NONE,2,141,
+analysis/lua/cfgfacts/declarations.go,q0,NONE,2,136,
+analysis/lua/cfgfacts/doc.go,q0,NONE,2,85,
+analysis/lua/bind/result_copy.go,q0,NONE,2,1379,
+analysis/lua/bind/name_normalization.go,q0,NONE,2,1380,
+analysis/lua/bind/walk.go,q0,NONE,2,1379,
+analysis/ir/dominance/postdominance.go,q0,NONE,2,1497,
+analysis/lua/bind/result.go,q0,NONE,2,1380,
+analysis/lua/bind/bind.go,q0,NONE,2,1381,
+analysis/lua/bind/types.go,q0,NONE,2,1381,
+analysis/ir/ssa/ssa.go,q0,NONE,2,1499,
+analysis/lua/semantics/branch_condition.go,q0,NONE,2,89,
+analysis/lua/cfgfacts/metadata.go,q0,NONE,2,429,
+analysis/lua/cfgbuild/expr_support.go,q0,NONE,2,1024,
+analysis/lua/channelruntime/channel_runtime.go,q0,NONE,2,457,
+analysis/lua/semantics/extract_assign.go,q0,NONE,2,315,
+analysis/lua/semantics/call_fact.go,q0,NONE,2,859,
+analysis/lua/pathexpr/object_literal.go,q0,NONE,2,860,
+analysis/lua/pathexpr/table_field.go,q0,NONE,2,860,
+analysis/lua/semantics/channel_select.go,q0,NONE,2,859,
+analysis/lua/semantics/extract.go,q0,NONE,2,858,
+analysis/lua/pathexpr/path.go,q0,NONE,2,860,
+analysis/lua/semantics/extract_call_return.go,q0,NONE,2,728,
+analysis/lua/semantics/extract_branch.go,q0,NONE,2,728,
+analysis/lua/semantics/extract_metadata.go,q0,NONE,2,698,
+analysis/lua/semantics/facts.go,q0,NONE,2,655,
+analysis/lua/semantics/result.go,q0,NONE,2,254,
+analysis/lua/semantics/object_literal.go,q0,NONE,2,254,
+analysis/lua/semantics/result_index.go,q0,NONE,2,254,
+analysis/lua/semantics/result_metadata.go,q0,NONE,2,254,
+analysis/lua/semantics/sem.go,q0,NONE,2,254,
+analysis/lua/semantics/value_list.go,q0,NONE,2,138,
+analysis/lua/sourceprovenance/expr_nil.go,q0,NONE,2,137,
+analysis/lua/sourceprovenance/shape.go,q0,NONE,2,196,
+analysis/lua/callorder/callorder.go,q0,"46, LuaOptions, `analysis/lua/bind`, because this function is a factory for `Options` that injects logic specifically tied to `bind.Result` and `channelruntime`. By including `LuaOptions` here, the `callorder` package (which is intended to be a general-purpose utility for determining evaluation order) is forced to depend on high-level semantic packages like `bind` and `channelruntime`. This creates a circular dependency risk and leaks semantic/type-checking concerns into a structural analysis package. The `Options` struct and the `ValueList`/`Expr` functions should remain in `callorder`, but the specific implementation of `LuaOptions` belongs in the layer that actually performs the semantic binding.",152,2685,
+analysis/lua/transferfacts/branch_path_relations.go,q0,NONE,2,551,
+analysis/lua/transferfacts/branch_refinement_edges.go,q0,NONE,2,86,
+analysis/lua/transferfacts/assert_postconditions.go,q0,NONE,2,1074,
+analysis/lua/sourcevalue/iterator.go,q0,NONE,2,1074,
+analysis/lua/transferfacts/assertions.go,q0,NONE,2,1032,
+analysis/lua/bind/symbols.go,q0,"14, LocalOrigin, compiler/ast (or a dedicated domain package) — `LocalOrigin` contains a pointer to `ast.LocalAssignStmt`. This leaks the high-level AST structure into the `bind` package's result/analysis types. While `bind` uses the AST to perform its work, a ""Result"" or ""Symbol"" type should ideally be decoupled from specific AST node implementations to allow the analysis results to be used by other layers (like a type checker or linter) without forcing a dependency on the full AST structure.",114,3614,
+analysis/lua/sourcevalue/expression_operation.go,q0,NONE,2,1127,
+analysis/lua/sourceprovenance/source.go,q0,NONE,2,1127,
+analysis/lua/transferfacts/branch_guard_proofs.go,q0,NONE,2,984,
+analysis/lua/cfgbuild/loopfacts.go,q0,"49: appendLoopWrite, should live in cfgbuild (internal helper) or a general symbol utility package; it is a low-level slice/map manipulation helper that is highly specific to the logic of this file and should not be exported, but its current placement is fine if it's unexported. However, looking at the file structure, the functions `appendLoopWrite`, `addLoopSymbols`, and `addLoopSymbol` (lines 86-107) are generic collection helpers for `symbol.ID` sets. While they are unexported, they are ""utility"" functions that don't contain domain logic, just set management.
+
+Actually, looking closely at the logic:
+NONE",147,3303,
+analysis/lua/transferfacts/branch_root_refinements.go,q0,NONE,2,908,
+analysis/lua/transferfacts/branches.go,q0,NONE,2,873,
+analysis/lua/transferfacts/calls.go,q0,NONE,2,829,
+analysis/lua/transferfacts/expr_refs.go,q0,NONE,2,820,
+analysis/lua/transferfacts/call_targets.go,q0,NONE,2,873,
+analysis/lua/transferfacts/channel_selects.go,q0,NONE,2,866,
+analysis/lua/transferfacts/lower.go,q0,NONE,2,585,
+analysis/lua/transferfacts/return_presence.go,q0,NONE,2,386,
+analysis/lua/transferfacts/path_static_value.go,q0,NONE,2,387,
+analysis/lua/sourceprovenance/producer.go,q0,"43, AssertionInner, analysis/lua/sourceprovenance/ (or a general AST utility package), because it is a structural AST traversal helper that unwraps specific AST node types (`CastExpr`, `NonNilAssertExpr`). This logic is a general-purpose AST manipulation utility rather than a core part of the ""source provenance"" domain logic.
+
+78, ProofInner, analysis/lua/sourceprovenance/ (or a general AST utility package), because like `AssertionInner`, it is a low-level AST traversal helper that unwraps specific node types. It performs structural analysis of the AST tree which is a utility concern, not a provenance-specific concern.",140,2477,
+analysis/lua/transferfacts/type_refs.go,q0,NONE,2,71,
+analysis/lua/transferfacts/symbol_types.go,q0,NONE,2,551,
+analysis/lua/transferfacts/type_cast_calls.go,q0,NONE,2,503,
+analysis/lua/transferfacts/values_source.go,q0,NONE,2,151,
+analysis/lua/transferfacts/values_expression.go,q0,NONE,2,296,
+analysis/lua/transferfacts/type_is_recognition.go,q0,NONE,2,645,
+analysis/lua/transferfacts/type_is_active_in.go,q0,NONE,2,647,
+analysis/lua/typeannotation/typeannotation.go,q0,NONE,2,235,
+analysis/lua/bind/functions.go,q0,"11, ParamSlot, analysis/symbol + This type describes the runtime layout of function parameters (symbols, types, and indices). This is a core semantic/symbolic concept that should be part of the symbol table or a dedicated semantic model rather than the binding/analysis layer.
+
+23, Capture, analysis/symbol + A `Capture` represents a relationship between a function and its lexical environment (a symbol being captured). This is a fundamental property of the symbol table/scope analysis and should live in the `symbol` package.
+
+33, FunctionOriginKind, analysis/symbol + This is a classification of how a symbol was introduced. Since it defines the nature of a symbol's existence, it belongs in the `symbol` package.
+
+39, FunctionOrigin, analysis/symbol + This structure tracks the metadata of how a function was introduced into the symbol table. It is a piece of symbol metadata and should be moved to the `symbol` package to avoid the `bind` package leaking its internal tracking logic to consumers.",213,5522,
+analysis/lua/sourcevalue/object_literal.go,q0,"48, ObjectLiteralEntryHasUntrustedTopOrigin, analysis/domain/value/axis/evidence, This function performs a domain-level check on `product.Value` using `evidence.Key` to determine if a value has a specific origin property. Since it is a logic check based on domain evidence/origin, it belongs in the domain layer (likely near `evidence` or `product`) rather than the `lua/sourcevalue` package, which is a high-level projection/analysis layer.",105,3070,
+analysis/lua/semantics/result_copy.go,q0,"14, copyExprs, compiler/ast, This is a generic slice-copying helper for `ast.Expr`. Since it is a low-level utility that performs a shallow copy of a slice of AST nodes, it should reside in the `compiler/ast` package or a general utility package rather than the high-level `semantics` analysis layer.
+
+19, copyTypeExprs, compiler/ast, Similar to `copyExprs`, this is a low-level slice utility for `ast.TypeExpr` and belongs in the package that defines the type.
+
+27, copyStrings, general utility/internal, This is a generic slice-copying helper for `[]string`. It is a low-level utility that does not belong in a semantic analysis package.
+
+35, copySymbols, analysis/symbol, This helper specifically handles `symbol.ID` slices. It is a low-level utility for the symbol package and should be moved there to avoid the `semantics` package depending on `symbol` just for a slice copy.",219,3497,
+analysis/lua/transferfacts/branch_value_constraints.go,q0,"46: scalarTypeForTag | `analysis/domain/value/runtimekind` | This function maps a `runtimekind.Tag` to a `typ.Type`. Since it defines the relationship between a runtime kind and a domain type, it is a domain mapping logic that belongs in the `runtimekind` package (or a dedicated mapping layer) rather than in a specific `transferfacts` implementation.",84,2215,
+analysis/lua/cfgfacts/control.go,q0,"38, NumericForFact, analysis/lua/ast (or similar), This struct contains high-level AST nodes (`*ast.NumberForStmt`, `ast.Expr`) and specific compiler-level syntax details (Init, Limit, Step). `cfgfacts` is a lower-level analysis layer that should ideally deal with CFG points and symbol IDs; leaking `ast` types into facts makes the analysis layer tightly coupled to the specific syntax of the compiler's AST.
+
+58, GenericForFact, analysis/lua/ast (or similar), Similar to `NumericForFact`, this struct leaks `*ast.GenericForStmt` and `ast.Expr` into the analysis layer. The facts should represent the *result* of the analysis (e.g., which symbols are being iterated) rather than holding direct references to the high-level AST nodes.
+
+76, LabelFact, analysis/lua/ast (or similar), This struct holds a `*ast.LabelStmt`. This is a leak of the AST layer into the CFG facts layer.
+
+82, GotoFact, analysis/lua/ast (or similar), This struct holds a `*ast.GotoStmt`. This is a leak of the AST layer into the CFG facts layer.",264,4838,
+analysis/lua/typecall/callable.go,q0,NONE,2,484,
+analysis/lua/typecall/callable_return.go,q0,NONE,2,483,
+analysis/lua/typeoperator/arithmetic.go,q0,NONE,2,91,
+analysis/lua/transferfacts/path_literal_narrowing.go,q0,"83: narrowAnchor, should live in `analysis/domain/variant/` (or a similar domain package), because it performs complex structural traversal and logic on `typ.Type` and `path.Path` to identify narrowing points, which is a core domain concern for type refinement rather than a specific implementation detail of the `transferfacts` engine.",73,1586,
+analysis/lua/typeoperator/comparison.go,q0,NONE,2,110,
+analysis/lua/typeoperator/logical.go,q0,NONE,2,132,
+analysis/lua/typeoperator/concat.go,q0,NONE,2,153,
+analysis/lua/typeoperator/numeric_literals.go,q0,NONE,2,92,
+analysis/lua/typeoperator/metamethod.go,q0,NONE,2,136,
+analysis/lua/typeoperator/operand_predicates.go,q0,NONE,2,221,
+analysis/lua/typeoperator/operator.go,q0,NONE,2,299,
+analysis/lua/typeoperator/unary.go,q0,NONE,2,300,
+analysis/lua/typeprojection/constructor_path.go,q0,NONE,2,175,
+analysis/lua/typeprojection/object_literal_expected.go,q0,NONE,2,200,
+analysis/lua/typeresolve/binding_lookup.go,q0,NONE,2,195,
+analysis/lua/typecall/member_call.go,q0,NONE,2,1135,
+analysis/lua/typecall/metamethod.go,q0,NONE,2,963,
+analysis/lua/typecall/shared.go,q0,NONE,2,916,
+analysis/lua/typecall/distribute.go,q0,NONE,2,1179,
+analysis/lua/typecall/generic_call.go,q0,NONE,2,1180,
+analysis/lua/moduleidentity/projection.go,q0,"211, staticSignatureSuffix, analysis/domain/path + This is a low-level utility that performs string formatting and validation on `segment.Segment` slices. Since it operates directly on the internal structure of path segments to produce a string representation, it is a domain-level concern for the `path` package rather than a projection-layer concern.
+
+225, staticPathSegments, analysis/domain/path + This is a validation utility for `segment.Segment` slices. It belongs in the `path` or `segment` package as it defines what constitutes a ""static"" path structure within the domain model.
+
+238, pathRemainder, analysis/domain/path + This is a fundamental path manipulation utility (calculating the difference between two paths). It should be a method on `path.Path` or a helper in the `path` package.
+
+253, pathHasPrefix, analysis/domain/path + This is a core path comparison logic. It belongs in the `path` package to allow other layers to compare paths without re-implementing the segment-matching logic.
+
+269, appendPathSegments, analysis/domain/path + This is a basic path manipulation utility. It should be a method on the `path.Path` type in the `path` package.",273,5440,
+analysis/lua/typeannotation/annotation.go,q0,"29, annotationArg, compiler/ast (or a dedicated conversion layer) — This helper function performs a direct mapping from `ast.Expr` types to `annotation.Payload`. Because it contains a type switch over `ast.Expr` (a compiler/AST concern) to produce `annotation.Payload` (a type analysis concern), it creates a circular dependency risk or a tight coupling between the compiler and the analysis layers. This logic is essentially a ""lowering"" or ""conversion"" step that belongs closer to the AST definition or in a bridge package that handles the transformation from syntax to semantic types.",124,2120,
+analysis/module/importlookup/source.go,q0,NONE,2,713,
+analysis/module/manifest/effect_codec_returns.go,q0,NONE,2,176,
+analysis/module/manifest/effect_codec_refinement.go,q0,NONE,2,717,
+analysis/lua/valueexpr/classify.go,q0,NONE,2,895,
+analysis/module/manifest/effect_codec_support.go,q0,NONE,2,140,
+analysis/lua/typeresolve/type_name_walk.go,q0,NONE,2,939,
+analysis/module/manifest/effect_codec_projection.go,q0,NONE,2,854,
+analysis/lua/typeresolve/resolver.go,q0,NONE,2,1043,
+analysis/lua/visibilityfacts/visibility.go,q0,NONE,2,856,
+analysis/module/manifest/effect_codec_expr.go,q0,NONE,2,855,
+analysis/module/manifest/effect_codec.go,q0,NONE,2,899,
+analysis/lua/transferfacts/values_exprref.go,q0,"15: `sourceExprRefKey` should live in `analysis/lua/sourceprovenance/` because it is a specialized implementation detail of how `sourceprovenance.ASTSource` is mapped to facts, and it is being used to wrap/reconstruct that domain concept.
+
+39: `sourceScopedExprRef` should live in `analysis/lua/sourceprovenance/` because it contains domain logic regarding the semantics of `ASTSource` (specifically determining if a source is ""scoped"" based on its `Kind` and the underlying `ast.Expr` type).
+
+49: `isAssertionWrapper` should live in `analysis/compiler/ast/` (or a sub-package of `ast`) because it performs type-checking on `ast.Expr` to identify specific AST node patterns, which is a property of the AST structure itself, not the transfer facts analysis.",186,3012,
+analysis/module/signaturelookup/source.go,q0,NONE,2,86,
+analysis/lua/typeprojection/apply.go,q0,"65, SegmentKeyType, analysis/domain/path/segment (or a type-specific utility package) — This function maps a domain `segment.Segment` directly to a `typ.Type`. It is a bridge between the domain layer (path segments) and the type system layer. Since it contains logic that defines how a domain concept translates into a type concept, it is a ""leaky"" utility. It should either live in the `segment` package (if the segment package is allowed to know about types) or, more ideally, in a package that handles the interaction between paths and types, rather than sitting in the `typeprojection` implementation package.",137,2019,
+analysis/module/manifest/type_wire.go,q0,NONE,2,637,
+analysis/module/manifest/type_codec.go,q0,NONE,2,638,
+analysis/module/manifest/effect_wire.go,q0,NONE,2,707,
+analysis/module/signature/function.go,q0,NONE,2,637,
+analysis/module/typelookup/source.go,q0,NONE,2,102,
+analysis/type/access/access.go,q0,NONE,2,427,
+analysis/test/value/standard/registry.go,q0,NONE,2,427,
+analysis/symbol/symbol.go,q0,NONE,2,437,
+analysis/type/access/distribute.go,q0,NONE,2,427,
+analysis/test/laws/lattice/laws.go,q0,NONE,2,480,
+analysis/type/access/field_descent.go,q0,NONE,2,478,
+analysis/module/manifest/type_codec_structured.go,q0,NONE,2,1441,
+analysis/module/manifest/type_codec_primitives.go,q0,NONE,2,1442,
+analysis/module/manifest/manifest.go,q0,NONE,2,1462,
+analysis/lua/transferfacts/fact_set_append.go,q0,"11, appendPostconditionRefinements, transferfacts, This helper function is a specialized mutation utility for a map of `factflow.PostconditionRefinementSet`. Since it is tightly coupled to the internal structure of `factflow` types and is likely only used to facilitate updates within the transfer analysis, it should be a method on a collection type within the `factflow` package or a utility within the `transferfacts` package if it were more generic. As it stands, it is a ""leaky"" helper that performs logic on `factflow` domain objects.
+
+19, appendBranchRefinement, transferfacts, This helper function is a specialized mutation utility for a map of `factflow.BranchRefinementSet`. It should live in the `factflow` package as a method on a collection type to encapsulate the logic of merging refinements and preserving `LenRefinements`.
+
+29, appendBranchLenRefinement, transferfacts, This helper function is a specialized mutation utility for a map of `factflow.BranchRefinementSet`. It should live in the `factflow` package to encapsulate the logic of updating `LenRefinements`.
+
+36, appendBranchPathEvidence, transferfacts, This helper function is a specialized mutation utility for a map of `factflow.BranchPathEvidenceSet`. It should live in the `factflow` package to encapsulate the logic of appending evidence to a set.
+
+45, appendBranchPresence",300,5418,
+analysis/module/signaturelookup/internal/stdlib/registry.go,q0,NONE,2,1728,
+analysis/module/signature/operational_effects.go,q0,NONE,2,1772,
+analysis/module/manifest/operational_effects_codec.go,q0,NONE,2,1788,
+analysis/type/access/index_composite.go,q0,NONE,2,721,
+analysis/type/access/field_projection.go,q0,NONE,2,722,
+analysis/type/access/index.go,q0,NONE,2,722,
+analysis/type/access/index_map.go,q0,NONE,2,624,
+analysis/type/access/index_key.go,q0,NONE,2,671,
+analysis/type/access/index_array.go,q0,NONE,2,723,
+analysis/type/annotation/annotation.go,q0,NONE,2,135,
+analysis/type/ambient/types.go,q0,NONE,2,135,
+analysis/lua/transferfacts/assignments.go,q0,"61, reachesArray, analysis/type/typ, This is a type-querying helper that performs deep inspection of the `typ.Type` hierarchy (handling aliases and recursion). It should be a method on `typ.Type` or a utility in the `analysis/type` package rather than in the `transferfacts` package.
+
+79, tableConstructorExpr, analysis/lua/semantics or analysis/lua/typecall, This helper checks if an `ast.Expr` is a table constructor. Since it relies on `sourceprovenance` to unwrap the AST, it is a semantic/structural check that is likely useful to other parts of the analysis and shouldn't be private to a specific fact-lowering implementation.
+
+89, reachesArrayDepth, analysis/type/typ, Same as `reachesArray`. This is a structural traversal of the type system.
+
+107, recordWithCallableField, analysis/type/typ, Same as `reachesArray`. This is a type-system property (checking if a record contains callables) and belongs in the type package.
+
+111, recordWithCallableFieldDepth, analysis/type/typ, Same as `reachesArrayDepth`.",256,6971,
+analysis/type/access/index_tuple.go,q0,NONE,2,590,
+analysis/type/access/wrappers.go,q0,NONE,2,639,
+analysis/type/access/missing_field.go,q0,NONE,2,680,
+analysis/type/access/index_record.go,q0,NONE,2,681,
+analysis/type/inspect/seen.go,q0,NONE,2,244,
+analysis/type/format/format_container.go,q0,NONE,2,363,
+analysis/type/format/format_function.go,q0,NONE,2,364,
+analysis/type/format/format_recursive.go,q0,NONE,2,363,
+analysis/type/format/format_union.go,q0,NONE,2,363,
+analysis/type/channelselect/schema.go,q0,NONE,2,365,
+analysis/lua/transferfacts/objects.go,q0,"85, reachesRecord, analysis/type/typ (or a similar type-query utility package) + This is a type-system predicate that performs structural inspection of `typ.Type`. It is a low-level type utility being implemented inside a high-level `transferfacts` (lowering/analysis) package.
+
+88, reachesTableContract, analysis/type/typ (or a similar type-query utility package) + This is a type-system predicate that performs structural inspection of `typ.Type`. It is a low-level type utility being implemented inside a high-level `transferfacts` package.
+
+91, reachesTableContractDepth, analysis/type/typ (or a similar type-query utility package) + This is a recursive type-system predicate. It belongs in the type definition/logic layer, not in the analysis/lowering layer.
+
+126, reachesRecordDepth, analysis/type/typ (or a similar type-query utility package) + This is a recursive type-system predicate. It belongs in the type definition/logic layer, not in the analysis/lowering layer.",235,5713,
+analysis/type/internal/nodeid/nodeid.go,q0,NONE,2,476,
+analysis/type/subst/expand.go,q0,NONE,2,118,
+analysis/type/subst/expand_collections.go,q0,NONE,2,164,
+analysis/type/subst/expand_function.go,q0,NONE,2,89,
+analysis/type/subst/expand_generic.go,q0,NONE,2,88,
+analysis/type/subst/expand_memo.go,q0,NONE,2,87,
+analysis/type/subst/expand_record.go,q0,NONE,2,109,
+analysis/type/subst/expand_walk.go,q0,NONE,2,117,
+analysis/lua/transferfacts/path_presence_narrowing.go,q0,"35, narrowTypeByPathPresence, analysis/type/typ (or a specialized sub-package in analysis/type), This function performs complex type manipulation and structural narrowing based on type definitions. It is a type-level operation that relies heavily on the internal structure of `typ.Type` (Alias, Optional, Union). Placing it in `transferfacts` (an engine/analysis layer) leaks type-system logic into the analysis engine. This logic belongs in the type system layer where it can be reused by other components performing type refinement.
+
+48, pathCanBePresent, analysis/type/typ (or a specialized sub-package in analysis/type), Similar to `narrowTypeByPathPresence`, this is a type-logic predicate that determines if a type structure is compatible with a specific path. It uses `luatypeprojection`, which is a type-system utility. This logic should be part of the type system's capability to reason about its own structure.
+
+56, typeCanBePresent, analysis/type/typ (or a specialized sub-package in analysis/type), This is a pure type-system predicate used to check for the existence/non-emptiness of a type. It is a low-level type utility that belongs in the `analysis/type` package.",269,6246,
+analysis/type/inspect/walk.go,q0,NONE,2,1224,
+analysis/type/inspect/visit.go,q0,NONE,2,1305,
+analysis/type/kind/kind.go,q0,NONE,2,1134,
+analysis/type/literal/literal.go,q0,NONE,2,1135,
+analysis/type/normalize/intersection.go,q0,NONE,2,1106,
+analysis/type/projection/projection.go,q0,NONE,2,1105,
+analysis/type/normalize/union.go,q0,NONE,2,1106,
+analysis/type/refinement/free_type_param.go,q0,NONE,2,1105,
+analysis/type/refinement/annotation.go,q0,NONE,2,1106,
+analysis/type/inspect/scan.go,q0,"44, trackConcreteNodeIdentity, analysis/type/typ, This function is a type-switch predicate that determines which types in the `typ` package are considered ""concrete nodes"" for identity tracking. Because it must have exhaustive knowledge of all concrete implementations of `typ.Type` to function correctly, it is a domain-level concern for the `typ` package. Placing it in `inspect` creates a circular dependency risk or a leak where the inspection layer must know the internal implementation details of every type in the domain layer.",109,1395,
+analysis/type/subst/params.go,q0,NONE,2,630,
+analysis/type/subst/self.go,q0,NONE,2,578,
+analysis/type/table/constructor_sort.go,q0,NONE,2,100,
+analysis/type/table/constructor_node.go,q0,NONE,2,135,
+analysis/type/format/format.go,q0,"63: minInt -> analysis/type/format/format_test.go (or a low-level math/util package)
+Why: `minInt` is a generic, low-level integer utility function. In a package dedicated to high-level type formatting, such a utility is a ""low-level utility sitting in a high-level package."" It should be moved to a common utility package or, if only used for testing edge cases, kept in a test file.",101,1939,
+analysis/type/table/doc.go,q0,NONE,2,35,
+analysis/type/subtype/subtype.go,q0,NONE,2,545,
+analysis/type/table/metatable.go,q0,NONE,2,78,
+analysis/type/table/nil_projection.go,q0,NONE,2,98,
+analysis/type/projection/container.go,q0,"26: descendContainerDepth; analysis/type/typ; This is a low-level recursive traversal utility that performs type switching on core `typ.Type` implementations (Annotated, Alias, Optional, Recursive, Instantiated). Such structural traversal logic is a fundamental property of the type system and should reside in the `typ` package to avoid circular dependencies and to provide a reusable mechanism for other type-related packages.",86,1988,
+analysis/type/format/format_record.go,q0,"63: writeStaticMemberKey, analysis/type/format, This helper function is a low-level string manipulation utility specifically for formatting `typ.StaticMember` types. Since it is only used within this file to assist the `formatter` in generating string representations, it should be a private unexported helper within this package (which it currently is) or, if the logic for ""how a static member key looks"" is considered part of the type's definition, it should be moved to the `typ` package. However, as it currently stands, it is a formatting detail that is correctly scoped to the `format` package, but it is tightly coupled to the internal structure of `typ.StaticMember`.
+
+NONE",149,2413,
+analysis/type/table/construct.go,q0,NONE,2,1178,
+analysis/type/subtype/records.go,q0,NONE,2,1179,
+analysis/type/table/field_shape.go,q0,NONE,2,711,
+analysis/type/table/key_domain.go,q0,NONE,2,711,
+analysis/type/subtype/guard.go,q0,NONE,2,1180,
+analysis/type/subtype/containers.go,q0,NONE,2,1182,
+analysis/type/table/constructor.go,q0,NONE,2,1137,
+analysis/type/table/key_admission.go,q0,NONE,2,713,
+analysis/type/subst/self_ref.go,q0,NONE,2,1309,
+analysis/type/subtype/widen.go,q0,NONE,2,1223,
+analysis/type/subtype/core.go,q0,NONE,2,1225,
+analysis/type/table/table_key.go,q0,NONE,2,91,
+analysis/type/typ/equality_identity.go,q0,NONE,2,91,
+analysis/type/typ/equality_cycle.go,q0,NONE,2,91,
+analysis/type/typ/equality_prefilter.go,q0,NONE,2,89,
+analysis/type/typ/equality_unwrap.go,q0,NONE,2,110,
+analysis/type/typ/equals.go,q0,NONE,2,113,
+analysis/type/table/record_normalization.go,q0,NONE,2,645,
+analysis/type/table/record_builder.go,q0,NONE,2,706,
+analysis/type/typ/equals_recursive.go,q0,NONE,2,228,
+analysis/type/typ/flags_cached.go,q0,NONE,2,250,
+analysis/type/typ/flags_aggregates.go,q0,NONE,2,253,
+analysis/type/table/top_marker.go,q0,NONE,2,548,
+analysis/type/typ/flags_dynamic.go,q0,NONE,2,153,
+analysis/type/typ/flags_cached_recursive.go,q0,NONE,2,153,
+analysis/type/typ/flags_cached_open_recursive.go,q0,NONE,2,154,
+analysis/type/transform/rewrite.go,q0,NONE,2,660,
+analysis/type/typ/dedup.go,q0,NONE,2,658,
+analysis/type/table/record_tail.go,q0,NONE,2,661,
+analysis/type/typ/children.go,q0,NONE,2,659,
+analysis/type/typ/annotated.go,q0,NONE,2,660,
+analysis/type/typ/container.go,q0,NONE,2,702,
+analysis/type/typ/flags_field_typeparam.go,q0,NONE,2,461,
+analysis/type/typ/function.go,q0,NONE,2,504,
+analysis/type/typ/rebuild_function.go,q0,NONE,2,107,
+analysis/type/typ/rebuild_record.go,q0,NONE,2,125,
+analysis/type/subtype/table.go,q0,"87: readonlyStaticMemberKeyType | analysis/type/typ | This is a helper function that performs logic on `typ.StaticMember` to extract a key type. Since it operates directly on the internal structure/kinds of a domain type and is a specialized transformation of that type's properties, it belongs in the `typ` package to keep the domain logic encapsulated.",78,2309,
+analysis/type/typ/record.go,q0,NONE,2,157,
+analysis/type/typ/record_member_flags.go,q0,NONE,2,177,
+analysis/type/typ/record_static_member.go,q0,NONE,2,177,
+analysis/type/typ/recursive.go,q0,NONE,2,156,
+analysis/type/typ/recursive_graph_closed.go,q0,NONE,2,147,
+analysis/type/typ/recursive_contains.go,q0,NONE,2,148,
+analysis/type/typ/predicates.go,q0,NONE,2,796,
+analysis/type/typ/members.go,q0,NONE,2,797,
+analysis/type/typ/optional.go,q0,NONE,2,796,
+analysis/type/typ/literal.go,q0,NONE,2,797,
+analysis/type/typ/nominal.go,q0,NONE,2,797,
+analysis/type/typ/instantiated.go,q0,NONE,2,896,
+analysis/type/typ/primitive_names.go,q0,NONE,2,754,
+analysis/type/typ/intersection.go,q0,NONE,2,896,
+analysis/type/typ/generic.go,q0,NONE,2,911,
+analysis/type/typ/recursive_hash.go,q0,NONE,2,141,
+analysis/type/typ/recursive_hash_scratch.go,q0,NONE,2,288,
+analysis/type/typ/recursive_type_children.go,q0,NONE,2,286,
+analysis/type/typ/recursive_hash_deps.go,q0,NONE,2,289,
+analysis/type/typ/ref.go,q0,NONE,2,292,
+analysis/type/typ/recursive_hash_traversal.go,q0,NONE,2,293,
+analysis/type/subtype/functions.go,q0,"43, minRequiredArgs, analysis/type/typ (or a domain-level method on `typ.Function`), because this is a domain logic calculation regarding the properties of a `typ.Function` (calculating its minimum required arguments) rather than a type-checking engine concern. It should be a method on the `Function` type itself so that any part of the system can determine the required argument count without duplicating this logic.",90,2931,
+analysis/type/typ/union.go,q0,NONE,2,311,
+analysis/type/typ/unwrap_internal.go,q0,NONE,2,311,
+analysis/type/typ/union_normalize.go,q0,NONE,2,311,
+analysis/type/typeexpr/typeexpr.go,q0,NONE,2,311,
+analysis/type/typ/type.go,q0,NONE,2,312,
+analysis/type/typ/typeparam.go,q0,NONE,2,353,
+analysis/type/table/optional_payload.go,q0,"20: withOptionalPayloadsSplit: analysis/type/table/ (or a generic internal utility package): This is a generic slice transformation helper that uses a ""copy-on-change"" pattern. It is not specific to the logic of ""optional payloads"" or ""tables,"" but rather a generic functional programming utility for slices. It should be moved to a more general utility package or kept in a package where it can be reused by other type-processing logic.",96,2409,
+analysis/type/transform/rewrite_nodes.go,q0,"46: rewriteKey: should live in `analysis/type/typ` (or a shared internal package). It is used as a map key for memoization within the transformation logic, but it is a type that defines the identity of a `typ.Type` during traversal. Since `rewriteDepth` (implied) and other transformation functions use it to track visited nodes, it is a structural detail of the type system's traversal/transformation logic rather than a local helper for this specific file.",103,2095,
+analysis/type/unwrap/unwrap.go,q0,NONE,2,623,
+analysis/type/typ/guard.go,q0,"11, DefaultRecursionDepth, analysis/internal/recursion, This constant is used exclusively to initialize the `recursion.Guard` within this package and is passed into the `recursion` package. Since it defines the ""canonical"" behavior for the recursion logic, it is a configuration detail of the recursion mechanism and should live in the `recursion` package to avoid leaking implementation details of the guard into the `typ` package.",87,1732,

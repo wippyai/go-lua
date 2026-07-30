@@ -197,7 +197,6 @@ func TestLValueTypeString(t *testing.T) {
 		{LTThread, "thread"},
 		{LTTable, "table"},
 		{LTChannel, "channel"},
-		{LTType, "type"},
 	}
 
 	for _, tt := range tests {

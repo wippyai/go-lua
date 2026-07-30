@@ -1070,14 +1070,6 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 }
 
 func (ls *LState) getField(obj LValue, key LValue) LValue {
-	// Fast path: LType - native dispatch, no metatable
-	if lt, ok := obj.(*LType); ok {
-		if str, ok := key.(LString); ok {
-			return ls.typeGetField(lt, string(str))
-		}
-		return LNil
-	}
-
 	// Fast path: table without metatable - skip __index check
 	if tb, ok := obj.(*LTable); ok && tb.Metatable == LNil {
 		return tb.RawGet(key)
@@ -1116,11 +1108,6 @@ func (ls *LState) getField(obj LValue, key LValue) LValue {
 }
 
 func (ls *LState) getFieldString(obj LValue, key string) LValue {
-	// Fast path: LType - native dispatch, no metatable
-	if lt, ok := obj.(*LType); ok {
-		return ls.typeGetField(lt, key)
-	}
-
 	// Fast path: table without metatable - skip __index check
 	if tb, ok := obj.(*LTable); ok && tb.Metatable == LNil {
 		return tb.RawGetString(key)
@@ -1471,7 +1458,6 @@ func (ls *LState) NewThread() (*LState, context.CancelFunc) {
 }
 
 func (ls *LState) NewFunctionFromProto(proto *FunctionProto) *LFunction {
-	ls.injectProtoTypes(proto)
 	return newLFunctionL(proto, ls.Env, int(proto.NumUpvalues))
 }
 
@@ -1847,7 +1833,6 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 	if err != nil {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}
-	ls.injectProtoTypes(proto)
 
 	return newLFunctionL(proto, ls.currentEnv(), 0), nil
 }
