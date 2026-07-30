@@ -3,6 +3,8 @@ package bind
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -38,7 +40,7 @@ type QualifiedTypeAlias struct {
 }
 
 type qualifiedTypeAliasKey struct {
-	root   ID
+	root   symbol.ID
 	suffix string
 }
 
@@ -87,7 +89,7 @@ func (r *Result) QualifiedTypeRef(ref *ast.TypeRefExpr) (QualifiedTypeAlias, boo
 
 // QualifiedTypeAliases returns direct aliases declared on root. The returned
 // map is a copy so module publication cannot mutate binder state.
-func (r *Result) QualifiedTypeAliases(root ID) map[string]QualifiedTypeAlias {
+func (r *Result) QualifiedTypeAliases(root symbol.ID) map[string]QualifiedTypeAlias {
 	if r == nil || root == 0 {
 		return nil
 	}
@@ -397,13 +399,13 @@ func qualifiedTypeAliasEqual(left, right QualifiedTypeAlias) bool {
 	return true
 }
 
-func (r *Result) recordQualifiedTypeRoot(fn *ast.FunctionExpr, name string, id ID) {
+func (r *Result) recordQualifiedTypeRoot(fn *ast.FunctionExpr, name string, id symbol.ID) {
 	if r == nil || fn == nil || name == "" || id == 0 {
 		return
 	}
 	roots := r.qualifiedTypeRoots[fn]
 	if roots == nil {
-		roots = make(map[string]ID)
+		roots = make(map[string]symbol.ID)
 		r.qualifiedTypeRoots[fn] = roots
 	}
 	if previous, exists := roots[name]; exists && previous != id {
@@ -417,11 +419,11 @@ func (r *Result) recordQualifiedTypeRoot(fn *ast.FunctionExpr, name string, id I
 
 // QualifiedTypeRoots returns exact value symbols used as roots of qualified
 // annotations in fn. A zero symbol marks a scope-ambiguous spelling.
-func (r *Result) QualifiedTypeRoots(fn *ast.FunctionExpr) map[string]ID {
+func (r *Result) QualifiedTypeRoots(fn *ast.FunctionExpr) map[string]symbol.ID {
 	if r == nil || fn == nil || len(r.qualifiedTypeRoots[fn]) == 0 {
 		return nil
 	}
-	out := make(map[string]ID, len(r.qualifiedTypeRoots[fn]))
+	out := make(map[string]symbol.ID, len(r.qualifiedTypeRoots[fn]))
 	for name, id := range r.qualifiedTypeRoots[fn] {
 		out[name] = id
 	}
@@ -429,7 +431,7 @@ func (r *Result) QualifiedTypeRoots(fn *ast.FunctionExpr) map[string]ID {
 }
 
 func (b *binder) bindPrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) {
-	if expr == nil || builtinPrimitiveName(expr.Name) {
+	if expr == nil || typ.BuiltinPrimitiveName(expr.Name) {
 		return
 	}
 	decl, ok := b.lookupType(expr.Name)
@@ -437,14 +439,4 @@ func (b *binder) bindPrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) {
 		return
 	}
 	b.result.primitiveTypeRefs[expr] = decl
-}
-
-func builtinPrimitiveName(name string) bool {
-	switch name {
-	case "nil", "boolean", "number", "integer", "string",
-		"function", "any", "unknown", "never", "self":
-		return true
-	default:
-		return false
-	}
 }

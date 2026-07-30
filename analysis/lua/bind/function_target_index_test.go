@@ -3,6 +3,7 @@ package bind
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -21,7 +22,7 @@ func TestStableLocalFunctionIdentity(t *testing.T) {
 
 	t.Run("ambiguous origin", func(t *testing.T) {
 		bindings := newResult(Options{})
-		target := bindings.newSymbol("target", Local)
+		target := bindings.newSymbol("target", symbol.Local)
 		details := functionOriginDetails{
 			kind:            FunctionOriginLocalAssignment,
 			targetSymbol:    target,
@@ -52,7 +53,7 @@ func TestStableLocalFunctionIdentity(t *testing.T) {
 
 	t.Run("method origin", func(t *testing.T) {
 		bindings := newResult(Options{})
-		target := bindings.newSymbol("method", Local)
+		target := bindings.newSymbol("method", symbol.Local)
 		bindings.registerFunction(function(nil), nil, functionOriginDetails{
 			kind:            FunctionOriginMethod,
 			targetSymbol:    target,

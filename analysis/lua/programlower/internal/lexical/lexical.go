@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/program"
 )
@@ -15,7 +16,7 @@ import (
 type Bodies struct {
 	builder *program.Builder
 
-	active map[bind.ID]program.Term
+	active map[symbol.ID]program.Term
 	undo   []activeUndo
 	frames []bodyFrame
 	roots  []program.Term
@@ -27,7 +28,7 @@ type Bodies struct {
 }
 
 type activeUndo struct {
-	id      bind.ID
+	id      symbol.ID
 	prior   program.Term
 	existed bool
 }
@@ -43,7 +44,7 @@ type bodyFrame struct {
 func New(builder *program.Builder) Bodies {
 	return Bodies{
 		builder: builder,
-		active:  make(map[bind.ID]program.Term),
+		active:  make(map[symbol.ID]program.Term),
 	}
 }
 
@@ -139,7 +140,7 @@ func (b *Bodies) Append(term program.Term) error {
 }
 
 // Resolve returns the currently visible Cell for one binder identity.
-func (b *Bodies) Resolve(id bind.ID) (program.Term, bool) {
+func (b *Bodies) Resolve(id symbol.ID) (program.Term, bool) {
 	term, ok := b.active[id]
 	return term, ok && term != 0
 }
@@ -162,7 +163,7 @@ func (b *Bodies) Vararg(binding *bind.Result) (program.Term, error) {
 }
 
 // Has reports whether a binder identity already has an active Cell.
-func (b *Bodies) Has(id bind.ID) bool {
+func (b *Bodies) Has(id symbol.ID) bool {
 	_, ok := b.active[id]
 	return ok
 }
@@ -178,18 +179,18 @@ func (b *Bodies) CaptureMark() int {
 }
 
 // Declare creates and installs one local, formal, or loop Cell.
-func (b *Bodies) Declare(id bind.ID, span program.Span) (program.Term, error) {
+func (b *Bodies) Declare(id symbol.ID, span program.Span) (program.Term, error) {
 	return b.declare(id, span, true)
 }
 
 // DeclareLoop creates and installs one per-iteration Cell without retaining it
 // in local/formal construction scratch.
-func (b *Bodies) DeclareLoop(id bind.ID, span program.Span) (program.Term, error) {
+func (b *Bodies) DeclareLoop(id symbol.ID, span program.Span) (program.Term, error) {
 	return b.declare(id, span, false)
 }
 
 func (b *Bodies) declare(
-	id bind.ID,
+	id symbol.ID,
 	span program.Span,
 	retain bool,
 ) (program.Term, error) {
@@ -228,7 +229,7 @@ func (b *Bodies) Bind(mark int, span program.Span, values program.Term) error {
 
 // Capture creates and installs one inner Cell while retaining its exact outer.
 func (b *Bodies) Capture(
-	id bind.ID,
+	id symbol.ID,
 	span program.Span,
 	outer program.Term,
 ) (program.Term, error) {
@@ -288,7 +289,7 @@ func (b *Bodies) Function(
 	return term, nil
 }
 
-func (b *Bodies) install(id bind.ID, term program.Term) {
+func (b *Bodies) install(id symbol.ID, term program.Term) {
 	prior, existed := b.active[id]
 	b.undo = append(b.undo, activeUndo{id: id, prior: prior, existed: existed})
 	b.active[id] = term
