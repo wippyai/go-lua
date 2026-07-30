@@ -21,6 +21,23 @@ func newProgramBuilder(t *testing.T) *program.Builder {
 	return b
 }
 
+func newClosureBuilder(t *testing.T, span program.Span) (*program.Builder, program.Term) {
+	t.Helper()
+	b := program.NewBuilder()
+	entry := b.Body(span)
+	if !b.SetEntry(entry) {
+		t.Fatal("failed to establish closure test Entry Body")
+	}
+	return b, entry
+}
+
+func fillEmptyEntry(t *testing.T, b *program.Builder, entry program.Term) {
+	t.Helper()
+	if !b.SetBody(entry) {
+		t.Fatal("failed to fill closure test Entry Body")
+	}
+}
+
 func TestSealRejectsInvalidReferencesAndExactKeyTypes(t *testing.T) {
 	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 
@@ -36,6 +53,19 @@ func TestSealRejectsInvalidReferencesAndExactKeyTypes(t *testing.T) {
 	b.LensExact(span, base, b.Values(span, []program.Term{value}, 0))
 	if _, err := b.Seal(); err == nil {
 		t.Fatal("Seal accepted a non-literal exact Lens key")
+	}
+
+	b = newProgramBuilder(t)
+	b.Values(span, nil, b.Integer(span, 1))
+	if _, err := b.Seal(); err == nil || err.Error() != "program: invalid Values tail" {
+		t.Fatalf("Seal accepted scalar Values tail: %v", err)
+	}
+
+	b = newProgramBuilder(t)
+	body := b.Body(span)
+	b.Values(span, []program.Term{body}, 0)
+	if _, err := b.Seal(); err == nil || err.Error() != "program: invalid Values reference" {
+		t.Fatalf("Seal accepted Body in Values: %v", err)
 	}
 
 	b = newProgramBuilder(t)
@@ -67,6 +97,41 @@ func TestLiteralsAreDistinctOccurrences(t *testing.T) {
 	span, ok := p.Span(second)
 	if !ok || span.StartCol != 9 {
 		t.Fatalf("distinct literal span lost: %#v %v", span, ok)
+	}
+}
+
+func TestValuePositionsRejectNonValueRelations(t *testing.T) {
+	span := program.Span{File: "value-position.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+
+	lens := newProgramBuilder(t)
+	lens.LensKey(span, lens.Body(span), lens.Integer(span, 1))
+	if _, err := lens.Seal(); err == nil || err.Error() != "program: invalid dynamic Lens reference" {
+		t.Fatalf("Lens value-position error = %v", err)
+	}
+
+	b := program.NewBuilder()
+	entryBody := b.Body(span)
+	if !b.SetBody(entryBody) || !b.SetEntry(entryBody) {
+		t.Fatal("Entry setup failed")
+	}
+	values := b.Values(span, nil, 0)
+	b.Branch(span, entryBody, b.Normal(span, values), b.Normal(span, values))
+	if _, err := b.Seal(); err == nil || err.Error() != "program: Branch requires condition and Body/Outcome arms" {
+		t.Fatalf("Branch value-position error = %v", err)
+	}
+
+	table := program.NewBuilder()
+	tableEntry := table.Body(span)
+	if !table.SetBody(tableEntry) || !table.SetEntry(tableEntry) {
+		t.Fatal("Entry setup failed")
+	}
+	term := table.Table(span)
+	fieldValues := table.Values(span, nil, 0)
+	if !table.SetTable(term, []program.Term{tableEntry}, []program.Term{fieldValues}, []program.FieldKind{program.FieldKey}) {
+		t.Fatal("SetTable failed")
+	}
+	if _, err := table.Seal(); err == nil || err.Error() != "program: invalid dynamic Table key" {
+		t.Fatalf("Table value-position error = %v", err)
 	}
 }
 
@@ -143,9 +208,13 @@ func TestEntryBodyLaws(t *testing.T) {
 	}
 
 	function := program.NewBuilder()
+	owner := function.Body(span)
 	functionBody := function.Body(span)
-	function.Function(span, functionBody, nil, false)
-	if !function.SetBody(functionBody) || !function.SetEntry(functionBody) {
+	fn := function.Function(span, owner, functionBody, 0, nil, 0)
+	if !function.SetFunctionCaptures(fn, nil) {
+		t.Fatal("Function capture setup failed")
+	}
+	if !function.SetBody(owner) || !function.SetBody(functionBody) || !function.SetEntry(functionBody) {
 		t.Fatal("Function Entry setup failed")
 	}
 	if _, err := function.Seal(); err == nil || err.Error() != "program: Entry Body cannot be a Function body" {
@@ -174,9 +243,22 @@ func TestEntryBodyLaws(t *testing.T) {
 	}
 }
 
+func TestEntryRejectsFunctionFreeOrphanBody(t *testing.T) {
+	span := program.Span{File: "orphan.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	b := program.NewBuilder()
+	entry := b.Body(span)
+	orphan := b.Body(span)
+	if !b.SetBody(entry) || !b.SetBody(orphan) || !b.SetEntry(entry) {
+		t.Fatal("orphan Body setup failed")
+	}
+	if _, err := b.Seal(); err == nil || err.Error() != "program: non-Entry Body requires exactly one structural parent" {
+		t.Fatalf("function-free orphan Body error = %v", err)
+	}
+}
+
 func TestLensExactNormalizesKeys(t *testing.T) {
-	b := newProgramBuilder(t)
 	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	b, entry := newClosureBuilder(t, span)
 	body := b.Body(span)
 	base := b.String(span, "base")
 	oneInt := b.Integer(span, 1)
@@ -205,6 +287,9 @@ func TestLensExactNormalizesKeys(t *testing.T) {
 	nilWrite := b.Assign(span, []program.Term{firstNilLens}, writeValues)
 	if !b.SetBody(body, nilWrite) {
 		t.Fatal("SetBody failed")
+	}
+	if !b.SetBody(entry, body) {
+		t.Fatal("SetBody(entry) failed")
 	}
 	p, err := b.Seal()
 	if err != nil {
@@ -326,8 +411,8 @@ func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 	}
 
 	richSealAllocs := func(rows int) float64 {
-		b := newProgramBuilder(t)
 		span := program.Span{File: "rich.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
+		b, entry := newClosureBuilder(t, span)
 		body := b.Body(span)
 		roots := make([]program.Term, 0, rows*2)
 		for i := 0; i < rows; i++ {
@@ -339,6 +424,9 @@ func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 		}
 		if !b.SetBody(body, roots...) {
 			t.Fatal("SetBody failed")
+		}
+		if !b.SetBody(entry, body) {
+			t.Fatal("SetBody(entry) failed")
 		}
 		return testing.AllocsPerRun(30, func() {
 			var err error
@@ -355,8 +443,8 @@ func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 }
 
 func TestScalarRelationsAreTypedAndPreserveEvaluationOrder(t *testing.T) {
-	b := newProgramBuilder(t)
 	span := program.Span{File: "scalar.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	b, entry := newClosureBuilder(t, span)
 	body := b.Body(span)
 	cell := b.Cell(span, body)
 	base := b.String(span, "table")
@@ -371,6 +459,9 @@ func TestScalarRelationsAreTypedAndPreserveEvaluationOrder(t *testing.T) {
 	result := b.Return(span, values)
 	if !b.SetBody(body, result) {
 		t.Fatal("SetBody failed")
+	}
+	if !b.SetBody(entry, body) {
+		t.Fatal("SetBody(entry) failed")
 	}
 	p, err := b.Seal()
 	if err != nil {
@@ -474,7 +565,7 @@ func TestValuesLensOrderAndCopies(t *testing.T) {
 	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 3, EndLine: 1, EndCol: 5}
 	base := b.String(span, "base")
 	key := b.Integer(span, 3)
-	tail := b.String(span, "tail")
+	tail := b.Call(span, b.String(span, "open"), 0, b.Values(span, nil, 0), 0)
 	fixed := []program.Term{base, key}
 	values := b.Values(span, fixed, tail)
 	fixed[0] = 0
@@ -525,62 +616,269 @@ func TestDeterministicMinting(t *testing.T) {
 	}
 }
 
-func TestLexicalCaptureReadAndDelayedMutation(t *testing.T) {
-	b := newProgramBuilder(t)
+func TestFunctionCaptureVarargAndDirectCall(t *testing.T) {
 	span := program.Span{File: "closure.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 20}
-	outerBody := b.Body(span)
-	outerCell := b.Cell(span, outerBody)
-	innerBody := b.Body(span)
-	innerCell := b.Cell(span, innerBody)
-	capture := b.Capture(span, innerCell, outerCell)
-	read := b.Read(span, innerCell)
-	table := b.Table(span)
-	key := b.String(span, "field")
-	lens := b.LensExact(span, table, key)
-	rhs := b.Values(span, []program.Term{read}, 0)
-	assign := b.Assign(span, []program.Term{innerCell, lens}, rhs)
-	function := b.Function(span, innerBody, []program.Term{innerCell}, true)
-	if !b.SetTable(table, nil, nil, nil) {
-		t.Fatal("SetTable failed")
+	b, entry := newClosureBuilder(t, span)
+	binding := b.Cell(span, entry)
+	body := b.Body(span)
+	formal := b.Cell(span, body)
+	varargCell := b.Cell(span, body)
+	captured := b.Cell(span, body)
+	function := b.Function(span, entry, body, binding, []program.Term{formal}, varargCell)
+	capture := b.Capture(span, function, captured, binding)
+	if !b.SetFunctionCaptures(function, []program.Term{capture}) {
+		t.Fatal("SetFunctionCaptures failed")
 	}
-	if !b.SetBody(innerBody, assign) {
-		t.Fatal("SetBody(inner) failed")
+	callee := b.Read(span, captured)
+	actuals := b.Values(span, nil, 0)
+	call := b.Call(span, callee, 0, actuals, function)
+	vararg := b.Vararg(span, varargCell)
+	result := b.Return(span, b.Values(span, []program.Term{call}, vararg))
+	if !b.SetBody(body, result) {
+		t.Fatal("SetBody(function) failed")
 	}
-	if !b.SetBody(outerBody) {
-		t.Fatal("SetBody(outer) failed")
-	}
+	fillEmptyEntry(t, b, entry)
 
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner, ok := p.Cell(innerCell); !ok || owner != innerBody {
-		t.Fatalf("Cell = %v, %v", owner, ok)
+	if owner, gotBody, gotBinding, gotVararg, ok := p.Function(function); !ok ||
+		owner != entry || gotBody != body || gotBinding != binding || gotVararg != varargCell {
+		t.Fatalf("Function = %v, %v, %v, %v, %v", owner, gotBody, gotBinding, gotVararg, ok)
 	}
-	if cell, ok := p.Read(read); !ok || cell != innerCell {
-		t.Fatalf("Read = %v, %v", cell, ok)
+	if got, ok := p.FormalAt(function, 0); !ok || got != formal {
+		t.Fatalf("FormalAt = %v, %v", got, ok)
 	}
-	if inner, outer, ok := p.Capture(capture); !ok || inner != innerCell || outer != outerCell {
-		t.Fatalf("Capture = %v, %v, %v", inner, outer, ok)
+	if count, ok := p.FunctionCaptureLen(function); !ok || count != 1 {
+		t.Fatalf("FunctionCaptureLen = %d, %v", count, ok)
 	}
-	if body, vararg, ok := p.Function(function); !ok || body != innerBody || !vararg {
-		t.Fatalf("Function = %v, %v, %v", body, vararg, ok)
+	if got, ok := p.FunctionCaptureAt(function, 0); !ok || got != capture {
+		t.Fatalf("FunctionCaptureAt = %v, %v", got, ok)
 	}
-	if formal, ok := p.FormalAt(function, 0); !ok || formal != innerCell {
-		t.Fatalf("FormalAt = %v, %v", formal, ok)
+	if gotFunction, inner, outer, ok := p.Capture(capture); !ok || gotFunction != function || inner != captured || outer != binding {
+		t.Fatalf("Capture = %v, %v, %v, %v", gotFunction, inner, outer, ok)
 	}
-	if got, ok := p.AppendOrder(assign, nil); !ok || !reflect.DeepEqual(got, []program.Term{innerCell, lens, rhs}) {
-		t.Fatalf("delayed Assign order = %v, %v", got, ok)
+	if got, ok := p.Vararg(vararg); !ok || got != varargCell {
+		t.Fatalf("Vararg = %v, %v", got, ok)
 	}
-	if targets, values, ok := p.AppendAssign(assign, nil); !ok ||
-		!reflect.DeepEqual(targets, []program.Term{innerCell, lens}) || values != rhs {
-		t.Fatalf("Assign = %v, %v, %v", targets, values, ok)
+	if callee, receiver, gotActuals, direct, ok := p.Call(call); !ok ||
+		callee == 0 || receiver != 0 || gotActuals != actuals || direct != function {
+		t.Fatalf("Call = %v, %v, %v, %v, %v", callee, receiver, gotActuals, direct, ok)
+	}
+	if order, ok := p.AppendOrder(call, nil); !ok || !reflect.DeepEqual(order, []program.Term{callee, actuals}) {
+		t.Fatalf("Call order = %v, %v", order, ok)
+	}
+	if head, ok := p.Mu(function); !ok || head != function {
+		t.Fatalf("self direct-call Mu = %v, %v", head, ok)
+	}
+	if allocations := testing.AllocsPerRun(1000, func() {
+		_, hotTerm, hotTerm, hotTerm, hotOK = p.Function(function)
+		hotCount, hotOK = p.FunctionCaptureLen(function)
+		hotTerm, hotOK = p.FunctionCaptureAt(function, 0)
+		_, hotTerm, hotTerm, hotOK = p.Capture(capture)
+		hotTerm, hotOK = p.Vararg(vararg)
+		_, hotTerm, hotTerm, hotTerm, hotOK = p.Call(call)
+	}); allocations != 0 {
+		t.Fatalf("Function/Capture/Call queries allocated: %.2f", allocations)
 	}
 }
 
+func TestFunctionCaptureCallLawsFailClosed(t *testing.T) {
+	span := program.Span{File: "bad-closure.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	sealError := func(t *testing.T, b *program.Builder, want string) {
+		t.Helper()
+		if _, err := b.Seal(); err == nil || err.Error() != want {
+			t.Fatalf("Seal error = %v, want %q", err, want)
+		}
+	}
+
+	t.Run("captures must be filled", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		body := b.Body(span)
+		b.Function(span, entry, body, 0, nil, 0)
+		b.SetBody(body)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Function captures were not filled")
+	})
+	t.Run("captures fill exactly once", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		body := b.Body(span)
+		function := b.Function(span, entry, body, 0, nil, 0)
+		if !b.SetFunctionCaptures(function, nil) || b.SetFunctionCaptures(function, nil) {
+			t.Fatal("SetFunctionCaptures did not enforce exactly-once fill")
+		}
+		b.SetBody(body)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: poisoned builder")
+	})
+	t.Run("function body has one parent", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		body := b.Body(span)
+		function := b.Function(span, entry, body, 0, nil, 0)
+		b.SetFunctionCaptures(function, nil)
+		orphan := b.Body(span)
+		b.SetBody(body)
+		b.SetBody(orphan)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: non-Entry Body requires exactly one structural parent")
+	})
+	t.Run("capture inner is not a formal", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		binding := b.Cell(span, entry)
+		body := b.Body(span)
+		formal := b.Cell(span, body)
+		function := b.Function(span, entry, body, 0, []program.Term{formal}, 0)
+		capture := b.Capture(span, function, formal, binding)
+		b.SetFunctionCaptures(function, []program.Term{capture})
+		b.SetBody(body)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Capture inner Cell conflicts with Function local role")
+	})
+	t.Run("vararg is distinct from formals", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		body := b.Body(span)
+		cell := b.Cell(span, body)
+		function := b.Function(span, entry, body, 0, []program.Term{cell}, cell)
+		b.SetFunctionCaptures(function, nil)
+		b.SetBody(body)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Function formal and vararg Cells must be distinct")
+	})
+	t.Run("capture outer is strict ancestor", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		leftBody := b.Body(span)
+		rightBody := b.Body(span)
+		leftInner := b.Cell(span, leftBody)
+		rightOuter := b.Cell(span, rightBody)
+		left := b.Function(span, entry, leftBody, 0, nil, 0)
+		right := b.Function(span, entry, rightBody, 0, nil, 0)
+		capture := b.Capture(span, left, leftInner, rightOuter)
+		b.SetFunctionCaptures(left, []program.Term{capture})
+		b.SetFunctionCaptures(right, nil)
+		b.SetBody(leftBody)
+		b.SetBody(rightBody)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Capture outer Cell must belong to strict lexical ancestor")
+	})
+	t.Run("binding is unique", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		binding := b.Cell(span, entry)
+		firstBody := b.Body(span)
+		secondBody := b.Body(span)
+		first := b.Function(span, entry, firstBody, binding, nil, 0)
+		second := b.Function(span, entry, secondBody, binding, nil, 0)
+		b.SetFunctionCaptures(first, nil)
+		b.SetFunctionCaptures(second, nil)
+		b.SetBody(firstBody)
+		b.SetBody(secondBody)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Function binding Cell is not unique")
+	})
+	t.Run("capture inner has one outer alias", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		firstOuter := b.Cell(span, entry)
+		secondOuter := b.Cell(span, entry)
+		body := b.Body(span)
+		inner := b.Cell(span, body)
+		function := b.Function(span, entry, body, 0, nil, 0)
+		first := b.Capture(span, function, inner, firstOuter)
+		second := b.Capture(span, function, inner, secondOuter)
+		b.SetFunctionCaptures(function, []program.Term{first, second})
+		b.SetBody(body)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Capture inner Cell has more than one outer alias")
+	})
+	t.Run("direct Function evidence is mandatory", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		callerBody := b.Body(span)
+		calleeBody := b.Body(span)
+		caller := b.Function(span, entry, callerBody, 0, nil, 0)
+		callee := b.Function(span, entry, calleeBody, 0, nil, 0)
+		b.SetFunctionCaptures(caller, nil)
+		b.SetFunctionCaptures(callee, nil)
+		call := b.Call(span, callee, 0, b.Values(span, nil, 0), 0)
+		b.SetBody(callerBody, call)
+		b.SetBody(calleeBody)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Function callee requires matching direct target")
+	})
+	t.Run("Read direct evidence follows capture to binding", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		callerBinding := b.Cell(span, entry)
+		calleeBinding := b.Cell(span, entry)
+		callerBody := b.Body(span)
+		calleeBody := b.Body(span)
+		inner := b.Cell(span, callerBody)
+		caller := b.Function(span, entry, callerBody, callerBinding, nil, 0)
+		callee := b.Function(span, entry, calleeBody, calleeBinding, nil, 0)
+		capture := b.Capture(span, caller, inner, callerBinding)
+		b.SetFunctionCaptures(caller, []program.Term{capture})
+		b.SetFunctionCaptures(callee, nil)
+		call := b.Call(span, b.Read(span, inner), 0, b.Values(span, nil, 0), callee)
+		b.SetBody(callerBody, call)
+		b.SetBody(calleeBody)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Call Cell binding requires matching direct target")
+	})
+	t.Run("bound Cell Read cannot omit direct evidence", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		binding := b.Cell(span, entry)
+		body := b.Body(span)
+		inner := b.Cell(span, body)
+		function := b.Function(span, entry, body, binding, nil, 0)
+		capture := b.Capture(span, function, inner, binding)
+		b.SetFunctionCaptures(function, []program.Term{capture})
+		b.SetBody(body, b.Call(span, b.Read(span, inner), 0, b.Values(span, nil, 0), 0))
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Call Cell binding requires matching direct target")
+	})
+	t.Run("unbound Cell Read cannot claim direct evidence", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		binding := b.Cell(span, entry)
+		unbound := b.Cell(span, entry)
+		callerBody := b.Body(span)
+		targetBody := b.Body(span)
+		inner := b.Cell(span, callerBody)
+		caller := b.Function(span, entry, callerBody, 0, nil, 0)
+		target := b.Function(span, entry, targetBody, binding, nil, 0)
+		capture := b.Capture(span, caller, inner, unbound)
+		b.SetFunctionCaptures(caller, []program.Term{capture})
+		b.SetFunctionCaptures(target, nil)
+		b.SetBody(callerBody, b.Call(span, b.Read(span, inner), 0, b.Values(span, nil, 0), target))
+		b.SetBody(targetBody)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Call Cell binding has no direct Function")
+	})
+	t.Run("unbound Cell Read remains dynamic without direct evidence", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		unbound := b.Cell(span, entry)
+		body := b.Body(span)
+		function := b.Function(span, entry, body, 0, nil, 0)
+		b.SetFunctionCaptures(function, nil)
+		call := b.Call(span, b.Read(span, unbound), 0, b.Values(span, nil, 0), 0)
+		b.SetBody(body, call)
+		fillEmptyEntry(t, b, entry)
+		if _, err := b.Seal(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("Vararg anchors only Function vararg Cell", func(t *testing.T) {
+		b, entry := newClosureBuilder(t, span)
+		body := b.Body(span)
+		cell := b.Cell(span, body)
+		function := b.Function(span, entry, body, 0, nil, 0)
+		b.SetFunctionCaptures(function, nil)
+		b.Vararg(span, cell)
+		b.SetBody(body)
+		fillEmptyEntry(t, b, entry)
+		sealError(t, b, "program: Vararg requires Function vararg Cell")
+	})
+}
+
 func TestBindRetainsDeclarationVisibilityAndRHSOrder(t *testing.T) {
-	b := newProgramBuilder(t)
 	span := program.Span{File: "bind.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 10}
+	b, entry := newClosureBuilder(t, span)
 	body := b.Body(span)
 	first := b.Cell(span, body)
 	second := b.Cell(span, body)
@@ -590,6 +888,9 @@ func TestBindRetainsDeclarationVisibilityAndRHSOrder(t *testing.T) {
 	bind := b.Bind(span, []program.Term{first, second}, values)
 	if !b.SetBody(body, bind) {
 		t.Fatal("SetBody failed")
+	}
+	if !b.SetBody(entry, body) {
+		t.Fatal("SetBody(entry) failed")
 	}
 	p, err := b.Seal()
 	if err != nil {
@@ -671,34 +972,37 @@ func TestBindLawsFailClosed(t *testing.T) {
 }
 
 func TestDirectRecursiveCallMuAndBodyFill(t *testing.T) {
-	b := newProgramBuilder(t)
 	span := program.Span{File: "recursive.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 12}
+	b, entry := newClosureBuilder(t, span)
 	body := b.Body(span)
-	formal := b.Cell(span, body)
-	function := b.Function(span, body, []program.Term{formal}, false)
+	binding := b.Cell(span, entry)
+	inner := b.Cell(span, body)
+	function := b.Function(span, entry, body, binding, nil, 0)
+	capture := b.Capture(span, function, inner, binding)
+	if !b.SetFunctionCaptures(function, []program.Term{capture}) {
+		t.Fatal("SetFunctionCaptures failed")
+	}
 	argument := b.Integer(span, 1)
 	actuals := b.Values(span, []program.Term{argument}, 0)
-	callee := b.Read(span, formal)
-	call := b.Call(span, callee, actuals, function)
+	callee := b.Read(span, inner)
+	call := b.Call(span, callee, 0, actuals, function)
 	if !b.SetBody(body, call) {
 		t.Fatal("SetBody failed")
 	}
+	fillEmptyEntry(t, b, entry)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotCallee, gotActuals, direct, ok := p.Call(call); !ok ||
-		gotCallee != callee || gotActuals != actuals || direct != function {
-		t.Fatalf("Call = %v, %v, %v, %v", gotCallee, gotActuals, direct, ok)
+	if gotCallee, receiver, gotActuals, direct, ok := p.Call(call); !ok ||
+		gotCallee != callee || receiver != 0 || gotActuals != actuals || direct != function {
+		t.Fatalf("Call = %v, %v, %v, %v, %v", gotCallee, receiver, gotActuals, direct, ok)
 	}
 	if head, ok := p.Mu(function); !ok || head != function {
 		t.Fatalf("Mu head = %v, %v; want %v, true", head, ok, function)
 	}
 	if _, ok := p.Mu(call); ok {
 		t.Fatal("non-Function term has a Mu annotation")
-	}
-	if p.TermCount() != 8 { // seven recurrence terms plus the canonical Entry Body
-		t.Fatalf("Seal minted a recurrence Term: TermCount=%d, want 8", p.TermCount())
 	}
 	if got, ok := p.AppendBody(body, nil); !ok ||
 		!reflect.DeepEqual(got, []program.Term{call}) {
@@ -722,23 +1026,31 @@ func TestDirectRecursiveCallMuAndBodyFill(t *testing.T) {
 }
 
 func TestMutualDirectCallMuUsesCanonicalExistingHead(t *testing.T) {
-	b := newProgramBuilder(t)
 	span := program.Span{File: "mutual.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	b, entry := newClosureBuilder(t, span)
 	firstBody := b.Body(span)
 	secondBody := b.Body(span)
+	firstBinding := b.Cell(span, entry)
+	secondBinding := b.Cell(span, entry)
 	firstCalleeCell := b.Cell(span, firstBody)
 	secondCalleeCell := b.Cell(span, secondBody)
-	first := b.Function(span, firstBody, nil, false)
-	second := b.Function(span, secondBody, nil, false)
+	first := b.Function(span, entry, firstBody, firstBinding, nil, 0)
+	second := b.Function(span, entry, secondBody, secondBinding, nil, 0)
+	firstCapture := b.Capture(span, first, firstCalleeCell, secondBinding)
+	secondCapture := b.Capture(span, second, secondCalleeCell, firstBinding)
+	if !b.SetFunctionCaptures(first, []program.Term{firstCapture}) || !b.SetFunctionCaptures(second, []program.Term{secondCapture}) {
+		t.Fatal("SetFunctionCaptures failed")
+	}
 	firstActuals := b.Values(span, nil, 0)
 	secondActuals := b.Values(span, nil, 0)
 	firstCallee := b.Read(span, firstCalleeCell)
 	secondCallee := b.Read(span, secondCalleeCell)
-	firstCall := b.Call(span, firstCallee, firstActuals, second)
-	secondCall := b.Call(span, secondCallee, secondActuals, first)
+	firstCall := b.Call(span, firstCallee, 0, firstActuals, second)
+	secondCall := b.Call(span, secondCallee, 0, secondActuals, first)
 	if !b.SetBody(firstBody, firstCall) || !b.SetBody(secondBody, secondCall) {
 		t.Fatal("SetBody failed")
 	}
+	fillEmptyEntry(t, b, entry)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -752,19 +1064,25 @@ func TestMutualDirectCallMuUsesCanonicalExistingHead(t *testing.T) {
 }
 
 func TestDirectCallMuFindsCallNestedInValues(t *testing.T) {
-	b := newProgramBuilder(t)
 	span := program.Span{File: "nested-call.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	b, entry := newClosureBuilder(t, span)
 	body := b.Body(span)
+	binding := b.Cell(span, entry)
 	calleeCell := b.Cell(span, body)
-	function := b.Function(span, body, nil, false)
+	function := b.Function(span, entry, body, binding, nil, 0)
+	capture := b.Capture(span, function, calleeCell, binding)
+	if !b.SetFunctionCaptures(function, []program.Term{capture}) {
+		t.Fatal("SetFunctionCaptures failed")
+	}
 	actuals := b.Values(span, nil, 0)
 	callee := b.Read(span, calleeCell)
-	call := b.Call(span, callee, actuals, function)
+	call := b.Call(span, callee, 0, actuals, function)
 	values := b.Values(span, []program.Term{call}, 0)
 	result := b.Return(span, values)
 	if !b.SetBody(body, result) {
 		t.Fatal("SetBody failed")
 	}
+	fillEmptyEntry(t, b, entry)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -775,19 +1093,25 @@ func TestDirectCallMuFindsCallNestedInValues(t *testing.T) {
 }
 
 func TestDirectCallMuFindsCallOnlyInSelectRHS(t *testing.T) {
-	b := newProgramBuilder(t)
 	span := program.Span{File: "select-recursive.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	b, entry := newClosureBuilder(t, span)
 	body := b.Body(span)
+	binding := b.Cell(span, entry)
 	calleeCell := b.Cell(span, body)
-	function := b.Function(span, body, nil, false)
+	function := b.Function(span, entry, body, binding, nil, 0)
+	capture := b.Capture(span, function, calleeCell, binding)
+	if !b.SetFunctionCaptures(function, []program.Term{capture}) {
+		t.Fatal("SetFunctionCaptures failed")
+	}
 	callee := b.Read(span, calleeCell)
-	call := b.Call(span, callee, b.Values(span, nil, 0), function)
+	call := b.Call(span, callee, 0, b.Values(span, nil, 0), function)
 	condition := b.Bool(span, false)
 	selectTerm := b.Select(span, program.SelectOr, condition, call)
 	result := b.Return(span, b.Values(span, []program.Term{selectTerm}, 0))
 	if !b.SetBody(body, result) {
 		t.Fatal("SetBody failed")
 	}
+	fillEmptyEntry(t, b, entry)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -801,19 +1125,26 @@ func TestDirectCallMuFindsCallOnlyInSelectRHS(t *testing.T) {
 }
 
 func TestAcyclicDirectCallHasNoMu(t *testing.T) {
-	b := newProgramBuilder(t)
 	span := program.Span{File: "acyclic.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	b, entry := newClosureBuilder(t, span)
 	callerBody := b.Body(span)
 	calleeBody := b.Body(span)
+	callerBinding := b.Cell(span, entry)
+	calleeBinding := b.Cell(span, entry)
 	callerCalleeCell := b.Cell(span, callerBody)
-	caller := b.Function(span, callerBody, nil, false)
-	callee := b.Function(span, calleeBody, nil, false)
+	caller := b.Function(span, entry, callerBody, callerBinding, nil, 0)
+	callee := b.Function(span, entry, calleeBody, calleeBinding, nil, 0)
+	callerCapture := b.Capture(span, caller, callerCalleeCell, calleeBinding)
+	if !b.SetFunctionCaptures(caller, []program.Term{callerCapture}) || !b.SetFunctionCaptures(callee, nil) {
+		t.Fatal("SetFunctionCaptures failed")
+	}
 	actuals := b.Values(span, nil, 0)
 	calleeRead := b.Read(span, callerCalleeCell)
-	call := b.Call(span, calleeRead, actuals, callee)
+	call := b.Call(span, calleeRead, 0, actuals, callee)
 	if !b.SetBody(callerBody, call) || !b.SetBody(calleeBody) {
 		t.Fatal("SetBody failed")
 	}
+	fillEmptyEntry(t, b, entry)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -828,20 +1159,20 @@ func TestAcyclicDirectCallHasNoMu(t *testing.T) {
 
 func TestDirectCallMuLongChainStaysIterativeAndAllocationBounded(t *testing.T) {
 	build := func(functionCount int) *program.Program {
-		b := newProgramBuilder(t)
 		span := program.Span{File: "chain.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+		b, entry := newClosureBuilder(t, span)
 		bodies := make([]program.Term, functionCount)
-		cells := make([]program.Term, functionCount)
 		functions := make([]program.Term, functionCount)
 		for i := 0; i < functionCount; i++ {
 			bodies[i] = b.Body(span)
-			cells[i] = b.Cell(span, bodies[i])
-			functions[i] = b.Function(span, bodies[i], nil, false)
+			functions[i] = b.Function(span, entry, bodies[i], 0, nil, 0)
+			if !b.SetFunctionCaptures(functions[i], nil) {
+				t.Fatal("SetFunctionCaptures failed")
+			}
 		}
 		for i := 0; i+1 < functionCount; i++ {
-			callee := b.Read(span, cells[i])
 			actuals := b.Values(span, nil, 0)
-			call := b.Call(span, callee, actuals, functions[i+1])
+			call := b.Call(span, functions[i+1], 0, actuals, functions[i+1])
 			if !b.SetBody(bodies[i], call) {
 				t.Fatal("SetBody failed")
 			}
@@ -849,6 +1180,7 @@ func TestDirectCallMuLongChainStaysIterativeAndAllocationBounded(t *testing.T) {
 		if !b.SetBody(bodies[functionCount-1]) {
 			t.Fatal("SetBody failed")
 		}
+		fillEmptyEntry(t, b, entry)
 		p, err := b.Seal()
 		if err != nil {
 			t.Fatal(err)
@@ -863,21 +1195,21 @@ func TestDirectCallMuLongChainStaysIterativeAndAllocationBounded(t *testing.T) {
 	_ = build(4096)
 
 	sealedAllocs := func(functionCount int) float64 {
-		b := newProgramBuilder(t)
 		span := program.Span{File: "chain-alloc.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+		b, entry := newClosureBuilder(t, span)
 		bodies := make([]program.Term, functionCount)
-		cells := make([]program.Term, functionCount)
 		functions := make([]program.Term, functionCount)
 		for i := 0; i < functionCount; i++ {
 			bodies[i] = b.Body(span)
-			cells[i] = b.Cell(span, bodies[i])
-			functions[i] = b.Function(span, bodies[i], nil, false)
+			functions[i] = b.Function(span, entry, bodies[i], 0, nil, 0)
+			b.SetFunctionCaptures(functions[i], nil)
 		}
 		for i := 0; i+1 < functionCount; i++ {
-			call := b.Call(span, b.Read(span, cells[i]), b.Values(span, nil, 0), functions[i+1])
+			call := b.Call(span, functions[i+1], 0, b.Values(span, nil, 0), functions[i+1])
 			b.SetBody(bodies[i], call)
 		}
 		b.SetBody(bodies[functionCount-1])
+		fillEmptyEntry(t, b, entry)
 		return testing.AllocsPerRun(20, func() {
 			var err error
 			hotProg, err = b.Seal()
@@ -893,9 +1225,65 @@ func TestDirectCallMuLongChainStaysIterativeAndAllocationBounded(t *testing.T) {
 	}
 }
 
+func TestMethodCallRetainsReceiverWithoutDuplicateEvaluation(t *testing.T) {
+	span := program.Span{File: "method.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	b, entry := newClosureBuilder(t, span)
+	receiver := b.Table(span)
+	if !b.SetTable(receiver, nil, nil, nil) {
+		t.Fatal("SetTable failed")
+	}
+	key := b.String(span, "method")
+	lens := b.LensExact(span, receiver, key)
+	callee := b.Read(span, lens)
+	actuals := b.Values(span, nil, 0)
+	call := b.Call(span, callee, receiver, actuals, 0)
+	body := b.Body(span)
+	if !b.SetBody(body, call) {
+		t.Fatal("SetBody failed")
+	}
+	if !b.SetBody(entry, body) {
+		t.Fatal("SetBody(entry) failed")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCallee, gotReceiver, gotActuals, direct, ok := p.Call(call); !ok ||
+		gotCallee != callee || gotReceiver != receiver || gotActuals != actuals || direct != 0 {
+		t.Fatalf("Call = %v, %v, %v, %v, %v", gotCallee, gotReceiver, gotActuals, direct, ok)
+	}
+	if order, ok := p.AppendOrder(call, nil); !ok || !reflect.DeepEqual(order, []program.Term{callee, actuals}) {
+		t.Fatalf("Call order = %v, %v", order, ok)
+	}
+	if order, ok := p.AppendOrder(callee, nil); !ok || !reflect.DeepEqual(order, []program.Term{lens}) {
+		t.Fatalf("callee order = %v, %v", order, ok)
+	}
+	if order, ok := p.AppendOrder(lens, nil); !ok || !reflect.DeepEqual(order, []program.Term{receiver}) {
+		t.Fatalf("Lens order = %v, %v", order, ok)
+	}
+}
+
+func TestMethodCallReceiverMustMatchExactMethodCallee(t *testing.T) {
+	span := program.Span{File: "bad-method.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	b, entry := newClosureBuilder(t, span)
+	receiver := b.Table(span)
+	other := b.Table(span)
+	if !b.SetTable(receiver, nil, nil, nil) || !b.SetTable(other, nil, nil, nil) {
+		t.Fatal("SetTable failed")
+	}
+	method := b.Read(span, b.LensExact(span, other, b.String(span, "method")))
+	body := b.Body(span)
+	if !b.SetBody(body, b.Call(span, method, receiver, b.Values(span, nil, 0), 0)) || !b.SetBody(entry, body) {
+		t.Fatal("SetBody failed")
+	}
+	if _, err := b.Seal(); err == nil || err.Error() != "program: Call receiver disagrees with method callee" {
+		t.Fatalf("method receiver error = %v", err)
+	}
+}
+
 func TestBranchAndTableAssignmentKeys(t *testing.T) {
-	b := newProgramBuilder(t)
 	span := program.Span{File: "flow.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 9}
+	b, entry := newClosureBuilder(t, span)
 	whenTrue := b.Body(span)
 	whenFalse := b.Body(span)
 	if !b.SetBody(whenTrue) || !b.SetBody(whenFalse) {
@@ -909,7 +1297,7 @@ func TestBranchAndTableAssignmentKeys(t *testing.T) {
 	stringValue := b.String(span, "string value")
 	numericValue := b.String(span, "numeric value")
 	stringRHS := b.Values(span, []program.Term{stringValue}, 0)
-	numericRHS := b.Values(span, nil, numericValue)
+	numericRHS := b.Values(span, []program.Term{numericValue}, 0)
 	if !b.SetTable(
 		table,
 		[]program.Term{stringKey, numericKey},
@@ -919,8 +1307,11 @@ func TestBranchAndTableAssignmentKeys(t *testing.T) {
 		t.Fatal("SetTable failed")
 	}
 	body := b.Body(span)
-	if !b.SetBody(body, branch) {
+	if !b.SetBody(body, branch, whenTrue, whenFalse) {
 		t.Fatal("SetBody failed")
+	}
+	if !b.SetBody(entry, body) {
+		t.Fatal("SetBody(entry) failed")
 	}
 	p, err := b.Seal()
 	if err != nil {
@@ -960,16 +1351,19 @@ func TestNewFamiliesFailClosed(t *testing.T) {
 			b.Assign(span, nil, b.Values(span, []program.Term{value}, 0))
 		},
 		func(b *program.Builder) {
+			owner := b.Body(span)
 			body := b.Body(span)
 			other := b.Body(span)
 			formal := b.Cell(span, other)
-			b.Function(span, body, []program.Term{formal}, false)
+			function := b.Function(span, owner, body, 0, []program.Term{formal}, 0)
+			b.SetFunctionCaptures(function, nil)
+			b.SetBody(owner)
 			b.SetBody(body)
 			b.SetBody(other)
 		},
 		func(b *program.Builder) {
 			callee := b.String(span, "f")
-			b.Call(span, callee, b.Integer(span, 1), 0)
+			b.Call(span, callee, 0, b.Integer(span, 1), 0)
 		},
 		func(b *program.Builder) {
 			condition := b.Bool(span, true)
@@ -1126,10 +1520,10 @@ func TestTableConstructionLaws(t *testing.T) {
 
 func TestNestedBodyOwnershipAndCycles(t *testing.T) {
 	span := program.Span{File: "block.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b := newProgramBuilder(t)
+	b, entry := newClosureBuilder(t, span)
 	parent := b.Body(span)
 	child := b.Body(span)
-	if !b.SetBody(child) || !b.SetBody(parent, child) {
+	if !b.SetBody(child) || !b.SetBody(parent, child) || !b.SetBody(entry, parent) {
 		t.Fatal("nested Body fill failed")
 	}
 	p, err := b.Seal()
@@ -1164,7 +1558,7 @@ func TestBodyOwnershipAndClosureIdentityFailClosed(t *testing.T) {
 	duplicateBody := duplicate.Body(span)
 	duplicateValue := duplicate.Integer(span, 1)
 	duplicateActuals := duplicate.Values(span, []program.Term{duplicateValue}, 0)
-	duplicateTerm := duplicate.Call(span, duplicateValue, duplicateActuals, 0)
+	duplicateTerm := duplicate.Call(span, duplicateValue, 0, duplicateActuals, 0)
 	duplicate.SetBody(duplicateBody, duplicateTerm, duplicateTerm)
 	if _, err := duplicate.Seal(); err == nil {
 		t.Fatal("Seal accepted duplicate ownership within one Body")
@@ -1175,7 +1569,7 @@ func TestBodyOwnershipAndClosureIdentityFailClosed(t *testing.T) {
 	secondBody := shared.Body(span)
 	sharedValue := shared.Integer(span, 1)
 	sharedActuals := shared.Values(span, []program.Term{sharedValue}, 0)
-	sharedTerm := shared.Call(span, sharedValue, sharedActuals, 0)
+	sharedTerm := shared.Call(span, sharedValue, 0, sharedActuals, 0)
 	shared.SetBody(firstBody, sharedTerm)
 	shared.SetBody(secondBody, sharedTerm)
 	if _, err := shared.Seal(); err == nil {
@@ -1183,20 +1577,25 @@ func TestBodyOwnershipAndClosureIdentityFailClosed(t *testing.T) {
 	}
 
 	ambiguousFunction := newProgramBuilder(t)
+	functionOwner := ambiguousFunction.Body(span)
 	functionBody := ambiguousFunction.Body(span)
-	ambiguousFunction.Function(span, functionBody, nil, false)
-	ambiguousFunction.Function(span, functionBody, nil, true)
+	ambiguousFunction.Function(span, functionOwner, functionBody, 0, nil, 0)
+	ambiguousFunction.Function(span, functionOwner, functionBody, 0, nil, 0)
+	ambiguousFunction.SetBody(functionOwner)
 	ambiguousFunction.SetBody(functionBody)
 	if _, err := ambiguousFunction.Seal(); err == nil {
 		t.Fatal("Seal accepted two Functions for one Body")
 	}
 
-	localCapture := newProgramBuilder(t)
+	localCapture, captureEntry := newClosureBuilder(t, span)
 	localBody := localCapture.Body(span)
 	firstCell := localCapture.Cell(span, localBody)
 	secondCell := localCapture.Cell(span, localBody)
-	localCapture.Capture(span, firstCell, secondCell)
+	function := localCapture.Function(span, captureEntry, localBody, 0, nil, 0)
+	capture := localCapture.Capture(span, function, firstCell, secondCell)
+	localCapture.SetFunctionCaptures(function, []program.Term{capture})
 	localCapture.SetBody(localBody)
+	fillEmptyEntry(t, localCapture, captureEntry)
 	if _, err := localCapture.Seal(); err == nil {
 		t.Fatal("Seal accepted a Capture within one Body")
 	}

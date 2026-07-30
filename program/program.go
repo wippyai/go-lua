@@ -100,6 +100,7 @@ const (
 	tagBody
 	tagCell
 	tagRead
+	tagVararg
 	tagUnary
 	tagBinary
 	tagSelect
@@ -149,6 +150,7 @@ type bodyRow struct {
 }
 type cellRow struct{ body Term }
 type readRow struct{ source Term }
+type varargRow struct{ cell Term }
 type unaryRow struct {
 	op      UnaryOp
 	operand Term
@@ -170,12 +172,13 @@ type assignRow struct {
 	values  Term
 }
 type functionRow struct {
-	body    Term
-	formals termRange
-	vararg  bool
+	owner, body, binding, vararg Term
+	formals                      termRange
+	captures                     termRange
+	capturesFilled               bool
 }
-type captureRow struct{ inner, outer Term }
-type callRow struct{ callee, actuals, direct Term }
+type captureRow struct{ function, inner, outer Term }
+type callRow struct{ callee, receiver, actuals, direct Term }
 type branchRow struct{ condition, whenTrue, whenFalse Term }
 type tableRow struct {
 	fields termRange
@@ -208,11 +211,12 @@ type Program struct {
 	files []string
 	spans [tagCount][]storedSpan
 
-	valueTerms  []Term
-	bindTerms   []Term
-	formalTerms []Term
-	orderTerms  []Term
-	orders      [tagCount][]termRange
+	valueTerms   []Term
+	bindTerms    []Term
+	formalTerms  []Term
+	captureTerms []Term
+	orderTerms   []Term
+	orders       [tagCount][]termRange
 
 	nils     uint32
 	bools    []bool
@@ -234,6 +238,7 @@ type Program struct {
 	bodies      []bodyRow
 	cells       []cellRow
 	reads       []readRow
+	varargs     []varargRow
 	unaries     []unaryRow
 	binaries    []binaryRow
 	selects     []selectRow
@@ -256,11 +261,12 @@ type Builder struct {
 	spans     [tagCount][]storedSpan
 	poison    bool
 
-	valueTerms  []Term
-	bindTerms   []Term
-	formalTerms []Term
-	orderTerms  []Term
-	orders      [tagCount][]termRange
+	valueTerms   []Term
+	bindTerms    []Term
+	formalTerms  []Term
+	captureTerms []Term
+	orderTerms   []Term
+	orders       [tagCount][]termRange
 
 	nils     uint32
 	bools    []bool
@@ -281,6 +287,7 @@ type Builder struct {
 	bodies      []bodyRow
 	cells       []cellRow
 	reads       []readRow
+	varargs     []varargRow
 	unaries     []unaryRow
 	binaries    []binaryRow
 	selects     []selectRow
@@ -618,6 +625,20 @@ func (b *Builder) Read(span Span, source Term) Term {
 	return term
 }
 
+// Vararg records one open source occurrence anchored to a Function's vararg
+// Cell. It is an occurrence, not a scalar Cell read, so Values may retain it
+// as its final open tail.
+func (b *Builder) Vararg(span Span, cell Term) Term {
+	b.varargs = append(b.varargs, varargRow{cell: cell})
+	term := b.mint(tagVararg, span, b.familyIndex(len(b.varargs)))
+	if term == 0 {
+		b.varargs = b.varargs[:len(b.varargs)-1]
+		return 0
+	}
+	b.setOrder(term, nil)
+	return term
+}
+
 // Unary records one closed unary scalar operation.
 func (b *Builder) Unary(span Span, op UnaryOp, operand Term) Term {
 	b.unaries = append(b.unaries, unaryRow{op: op, operand: operand})
@@ -697,13 +718,15 @@ func (b *Builder) Assign(span Span, targets []Term, values Term) Term {
 	return term
 }
 
-// Function binds a Body to its ordered formal Cells.
-func (b *Builder) Function(span Span, body Term, formals []Term, vararg bool) Term {
+// Function records a closure with its lexical owner, execution Body, optional
+// enclosing binding Cell, ordered formal Cells, and optional vararg Cell.
+// SetFunctionCaptures must fill its capture set exactly once before Seal.
+func (b *Builder) Function(span Span, owner, body, binding Term, formals []Term, vararg Term) Term {
 	r, ok := b.appendPool(&b.formalTerms, formals)
 	if !ok {
 		return 0
 	}
-	b.functions = append(b.functions, functionRow{body: body, formals: r, vararg: vararg})
+	b.functions = append(b.functions, functionRow{owner: owner, body: body, binding: binding, vararg: vararg, formals: r})
 	term := b.mint(tagFunction, span, b.familyIndex(len(b.functions)))
 	if term == 0 {
 		b.functions = b.functions[:len(b.functions)-1]
@@ -712,9 +735,29 @@ func (b *Builder) Function(span Span, body Term, formals []Term, vararg bool) Te
 	return term
 }
 
-// Capture records one exact inner-to-outer lexical Cell correspondence.
-func (b *Builder) Capture(span Span, inner, outer Term) Term {
-	b.captures = append(b.captures, captureRow{inner: inner, outer: outer})
+// SetFunctionCaptures fixes one Function's capture rows exactly once.
+func (b *Builder) SetFunctionCaptures(function Term, captures []Term) bool {
+	if !b.has(function, tagFunction) {
+		b.poison = true
+		return false
+	}
+	row := &b.functions[function.index()-1]
+	if row.capturesFilled {
+		b.poison = true
+		return false
+	}
+	r, ok := b.appendPool(&b.captureTerms, captures)
+	if !ok {
+		return false
+	}
+	row.captures = r
+	row.capturesFilled = true
+	return true
+}
+
+// Capture records one exact lexical alias owned by function's execution Body.
+func (b *Builder) Capture(span Span, function, inner, outer Term) Term {
+	b.captures = append(b.captures, captureRow{function: function, inner: inner, outer: outer})
 	term := b.mint(tagCapture, span, b.familyIndex(len(b.captures)))
 	if term == 0 {
 		b.captures = b.captures[:len(b.captures)-1]
@@ -722,11 +765,13 @@ func (b *Builder) Capture(span Span, inner, outer Term) Term {
 	return term
 }
 
-// Call is an open result producer. Evaluation is callee followed by actual
-// Values. direct is zero or the binder-proven direct Function target; it does
-// not replace the evaluated callee occurrence.
-func (b *Builder) Call(span Span, callee, actuals, direct Term) Term {
-	b.calls = append(b.calls, callRow{callee: callee, actuals: actuals, direct: direct})
+// Call is an open result producer. Evaluation is callee then actual Values.
+// receiver is an optional semantic correspondence for method syntax, not an
+// extra evaluation child: a method callee is Read(Lens(receiver, key)), which
+// already evaluates receiver exactly once. direct is zero or coherent
+// binder-proven Function evidence; it never replaces the callee occurrence.
+func (b *Builder) Call(span Span, callee, receiver, actuals, direct Term) Term {
+	b.calls = append(b.calls, callRow{callee: callee, receiver: receiver, actuals: actuals, direct: direct})
 	term := b.mint(tagCall, span, b.familyIndex(len(b.calls)))
 	if term == 0 {
 		b.calls = b.calls[:len(b.calls)-1]
@@ -915,6 +960,8 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.cells))
 	case tagRead:
 		return index <= uint32(len(b.reads))
+	case tagVararg:
+		return index <= uint32(len(b.varargs))
 	case tagUnary:
 		return index <= uint32(len(b.unaries))
 	case tagBinary:
@@ -940,6 +987,25 @@ func (b *Builder) valid(term Term) bool {
 }
 func (b *Builder) has(term Term, tag uint8) bool { return term.tag() == tag && b.valid(term) }
 
+// valueOccurrence is the closed source-value family. It deliberately excludes
+// storage, address, tuple, control, and declaration relations.
+func (b *Builder) valueOccurrence(term Term) bool {
+	if !b.valid(term) {
+		return false
+	}
+	switch term.tag() {
+	case tagNil, tagBool, tagInteger, tagFloat, tagString, tagRead, tagVararg,
+		tagUnary, tagBinary, tagSelect, tagFunction, tagCall, tagTable:
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *Builder) openOccurrence(term Term) bool {
+	return b.has(term, tagCall) || b.has(term, tagVararg)
+}
+
 // Seal validates every family iteratively, then returns an immutable snapshot.
 func (b *Builder) Seal() (*Program, error) {
 	if b == nil {
@@ -950,16 +1016,16 @@ func (b *Builder) Seal() (*Program, error) {
 	}
 	for _, row := range b.values {
 		for i := row.fixed.start; i < row.fixed.end; i++ {
-			if !b.valid(b.valueTerms[i]) {
+			if !b.valueOccurrence(b.valueTerms[i]) {
 				return nil, errors.New("program: invalid Values reference")
 			}
 		}
-		if row.tail != 0 && !b.valid(row.tail) {
+		if row.tail != 0 && !b.openOccurrence(row.tail) {
 			return nil, errors.New("program: invalid Values tail")
 		}
 	}
 	for _, row := range b.lensExact {
-		if !b.valid(row.base) || !b.staticExactKey(row.source) {
+		if !b.valueOccurrence(row.base) || !b.staticExactKey(row.source) {
 			return nil, errors.New("program: invalid exact Lens reference")
 		}
 		if row.exact == 0 {
@@ -977,7 +1043,7 @@ func (b *Builder) Seal() (*Program, error) {
 		}
 	}
 	for _, row := range b.lensKeys {
-		if !b.valid(row.base) || !b.valid(row.key) {
+		if !b.valueOccurrence(row.base) || !b.valueOccurrence(row.key) {
 			return nil, errors.New("program: invalid dynamic Lens reference")
 		}
 	}
@@ -1080,17 +1146,17 @@ func (b *Builder) Seal() (*Program, error) {
 		}
 	}
 	for _, row := range b.unaries {
-		if !row.op.valid() || !b.valid(row.operand) {
+		if !row.op.valid() || !b.valueOccurrence(row.operand) {
 			return nil, errors.New("program: invalid Unary relation")
 		}
 	}
 	for _, row := range b.binaries {
-		if !row.op.valid() || !b.valid(row.left) || !b.valid(row.right) {
+		if !row.op.valid() || !b.valueOccurrence(row.left) || !b.valueOccurrence(row.right) {
 			return nil, errors.New("program: invalid Binary relation")
 		}
 	}
 	for _, row := range b.selects {
-		if !row.op.valid() || !b.valid(row.left) || !b.valid(row.right) {
+		if !row.op.valid() || !b.valueOccurrence(row.left) || !b.valueOccurrence(row.right) {
 			return nil, errors.New("program: invalid Select relation")
 		}
 	}
@@ -1133,42 +1199,199 @@ func (b *Builder) Seal() (*Program, error) {
 		}
 	}
 	functionByBody := make([]Term, len(b.bodies)+1)
+	functionOwnerByBody := make([]uint32, len(b.bodies)+1)
 	for functionIndex, row := range b.functions {
-		if !b.has(row.body, tagBody) {
-			return nil, errors.New("program: Function requires Body")
+		if !b.has(row.owner, tagBody) || !b.has(row.body, tagBody) || row.owner == row.body {
+			return nil, errors.New("program: Function requires distinct owner and Body")
 		}
 		if functionByBody[row.body.index()] != 0 {
 			return nil, errors.New("program: Body has more than one Function")
 		}
 		functionByBody[row.body.index()] = makeTerm(tagFunction, uint32(functionIndex+1))
-		for i := row.formals.start; i < row.formals.end; i++ {
-			formal := b.formalTerms[i]
-			if !b.has(formal, tagCell) || b.cells[formal.index()-1].body != row.body {
-				return nil, errors.New("program: Function formal requires Cell owned by its Body")
-			}
-		}
+		functionOwnerByBody[row.body.index()] = row.owner.index()
 	}
 	if functionByBody[b.entry.index()] != 0 {
 		return nil, errors.New("program: Entry Body cannot be a Function body")
 	}
-	for _, row := range b.captures {
-		if !b.has(row.inner, tagCell) || !b.has(row.outer, tagCell) {
-			return nil, errors.New("program: Capture requires inner and outer Cells")
+	lexicalParent := make([]uint32, len(b.bodies)+1)
+	for bodyIndex := uint32(1); bodyIndex <= uint32(len(b.bodies)); bodyIndex++ {
+		if bodyIndex == b.entry.index() {
+			if bodyParent[bodyIndex] != 0 {
+				return nil, errors.New("program: Entry Body cannot be nested")
+			}
+			continue
 		}
-		if b.cells[row.inner.index()-1].body == b.cells[row.outer.index()-1].body {
-			return nil, errors.New("program: Capture must cross Body ownership")
+		nested := bodyParent[bodyIndex] != 0
+		functionBody := functionOwnerByBody[bodyIndex] != 0
+		if nested == functionBody {
+			return nil, errors.New("program: non-Entry Body requires exactly one structural parent")
+		}
+		if nested {
+			lexicalParent[bodyIndex] = bodyParent[bodyIndex]
+		} else {
+			lexicalParent[bodyIndex] = functionOwnerByBody[bodyIndex]
+		}
+	}
+	for _, row := range b.captures {
+		if !b.has(row.function, tagFunction) {
+			return nil, errors.New("program: Capture requires Function")
+		}
+	}
+
+	var captureTerminal []Term
+	var varargFunction []Term
+	var functionCellRole []Term
+	var bindingFunction []Term
+	if len(b.functions) != 0 {
+		functionCellRole = make([]Term, len(b.cells)+1)
+		varargFunction = make([]Term, len(b.cells)+1)
+		bindingFunction = make([]Term, len(b.cells)+1)
+		for functionIndex, row := range b.functions {
+			function := makeTerm(tagFunction, uint32(functionIndex+1))
+			if row.binding != 0 && (!b.has(row.binding, tagCell) || b.cells[row.binding.index()-1].body != row.owner) {
+				return nil, errors.New("program: Function binding requires Cell in owner Body")
+			}
+			if row.binding != 0 {
+				if bindingFunction[row.binding.index()] != 0 {
+					return nil, errors.New("program: Function binding Cell is not unique")
+				}
+				bindingFunction[row.binding.index()] = function
+			}
+			if !row.capturesFilled {
+				return nil, errors.New("program: Function captures were not filled")
+			}
+			for i := row.formals.start; i < row.formals.end; i++ {
+				formal := b.formalTerms[i]
+				if !b.has(formal, tagCell) || b.cells[formal.index()-1].body != row.body {
+					return nil, errors.New("program: Function formal requires Cell owned by its Body")
+				}
+				if functionCellRole[formal.index()] != 0 {
+					return nil, errors.New("program: Function formal and vararg Cells must be distinct")
+				}
+				functionCellRole[formal.index()] = function
+			}
+			if row.vararg != 0 {
+				if !b.has(row.vararg, tagCell) || b.cells[row.vararg.index()-1].body != row.body {
+					return nil, errors.New("program: Function vararg requires Cell owned by its Body")
+				}
+				if functionCellRole[row.vararg.index()] != 0 {
+					return nil, errors.New("program: Function formal and vararg Cells must be distinct")
+				}
+				functionCellRole[row.vararg.index()] = function
+				varargFunction[row.vararg.index()] = function
+			}
+		}
+		if !entryBodyForest(lexicalParent, b.entry.index()) {
+			return nil, errors.New("program: lexical Body forest is disconnected or cyclic")
+		}
+		pre, post := bodyIntervals(lexicalParent)
+		captureLinked := make([]bool, len(b.captures)+1)
+		captureOuter := make([]Term, len(b.cells)+1)
+		for functionIndex, row := range b.functions {
+			function := makeTerm(tagFunction, uint32(functionIndex+1))
+			for i := row.captures.start; i < row.captures.end; i++ {
+				capture := b.captureTerms[i]
+				if !b.has(capture, tagCapture) {
+					return nil, errors.New("program: Function capture requires Capture")
+				}
+				captureIndex := capture.index()
+				if captureLinked[captureIndex] || b.captures[captureIndex-1].function != function {
+					return nil, errors.New("program: Function capture ownership is not exact")
+				}
+				captureLinked[captureIndex] = true
+				captureRow := b.captures[captureIndex-1]
+				if !b.has(captureRow.inner, tagCell) || !b.has(captureRow.outer, tagCell) {
+					return nil, errors.New("program: Capture requires inner and outer Cells")
+				}
+				if b.cells[captureRow.inner.index()-1].body != row.body {
+					return nil, errors.New("program: Capture inner Cell must belong to Function Body")
+				}
+				outerBody := b.cells[captureRow.outer.index()-1].body
+				if outerBody == row.body || !(pre[outerBody.index()] <= pre[row.body.index()] && post[row.body.index()] <= post[outerBody.index()]) {
+					return nil, errors.New("program: Capture outer Cell must belong to strict lexical ancestor")
+				}
+				if captureOuter[captureRow.inner.index()] != 0 {
+					return nil, errors.New("program: Capture inner Cell has more than one outer alias")
+				}
+				if functionCellRole[captureRow.inner.index()] != 0 {
+					return nil, errors.New("program: Capture inner Cell conflicts with Function local role")
+				}
+				captureOuter[captureRow.inner.index()] = captureRow.outer
+				functionCellRole[captureRow.inner.index()] = function
+			}
+		}
+		for captureIndex := range b.captures {
+			if !captureLinked[captureIndex+1] {
+				return nil, errors.New("program: Capture was not set on its Function")
+			}
+		}
+		captureTerminal = terminalCaptureCells(captureOuter)
+		for _, row := range b.functions {
+			if row.binding != 0 && captureTerminal[row.binding.index()] != row.binding {
+				return nil, errors.New("program: Function binding must be terminal lexical Cell")
+			}
+		}
+	}
+	if len(b.functions) == 0 && !entryBodyForest(lexicalParent, b.entry.index()) {
+		return nil, errors.New("program: lexical Body forest is disconnected or cyclic")
+	}
+	if captureTerminal == nil {
+		captureTerminal = terminalCaptureCells(make([]Term, len(b.cells)+1))
+	}
+	for _, row := range b.varargs {
+		if !b.has(row.cell, tagCell) || len(varargFunction) == 0 || varargFunction[row.cell.index()] == 0 {
+			return nil, errors.New("program: Vararg requires Function vararg Cell")
 		}
 	}
 	for _, row := range b.calls {
-		if !b.valid(row.callee) || !b.has(row.actuals, tagValues) {
-			return nil, errors.New("program: Call requires callee and actual Values")
+		if !b.valueOccurrence(row.callee) || row.receiver != 0 && !b.valueOccurrence(row.receiver) || !b.has(row.actuals, tagValues) {
+			return nil, errors.New("program: Call requires callee, optional receiver, and actual Values")
 		}
-		if row.direct != 0 && !b.has(row.direct, tagFunction) {
-			return nil, errors.New("program: Call direct target requires Function")
+		if row.receiver != 0 {
+			if !b.has(row.callee, tagRead) {
+				return nil, errors.New("program: Call receiver requires method Read callee")
+			}
+			lens := b.reads[row.callee.index()-1].source
+			if !b.has(lens, tagLensExact) {
+				return nil, errors.New("program: Call receiver requires exact method Lens")
+			}
+			method := b.lensExact[lens.index()-1]
+			if method.base != row.receiver || !b.has(method.source, tagString) {
+				return nil, errors.New("program: Call receiver disagrees with method callee")
+			}
+		}
+		if b.has(row.callee, tagFunction) {
+			if row.direct != row.callee {
+				return nil, errors.New("program: Function callee requires matching direct target")
+			}
+			continue
+		}
+		if b.has(row.callee, tagRead) {
+			source := b.reads[row.callee.index()-1].source
+			if b.has(source, tagCell) {
+				terminal := captureTerminal[source.index()]
+				named := Term(0)
+				if terminal != 0 && len(bindingFunction) != 0 {
+					named = bindingFunction[terminal.index()]
+				}
+				if named == 0 {
+					if row.direct != 0 {
+						return nil, errors.New("program: Call Cell binding has no direct Function")
+					}
+					continue
+				}
+				if row.direct != named {
+					return nil, errors.New("program: Call Cell binding requires matching direct target")
+				}
+				continue
+			}
+		}
+		if row.direct != 0 {
+			return nil, errors.New("program: Call direct target requires Function or bound Cell Read callee")
 		}
 	}
 	for _, row := range b.branches {
-		if !b.valid(row.condition) || !b.branchArm(row.whenTrue) || !b.branchArm(row.whenFalse) {
+		if !b.valueOccurrence(row.condition) || !b.branchArm(row.whenTrue) || !b.branchArm(row.whenFalse) {
 			return nil, errors.New("program: Branch requires condition and Body/Outcome arms")
 		}
 	}
@@ -1200,7 +1423,7 @@ func (b *Builder) Seal() (*Program, error) {
 					return nil, errors.New("program: invalid exact Table key")
 				}
 			case FieldKey:
-				if !b.valid(field.key) {
+				if !b.valueOccurrence(field.key) {
 					return nil, errors.New("program: invalid dynamic Table key")
 				}
 			default:
@@ -1213,6 +1436,114 @@ func (b *Builder) Seal() (*Program, error) {
 		return nil, err
 	}
 	return b.snapshot(muFunctions), nil
+}
+
+// entryBodyForest verifies the one-root lexical Body forest iteratively. Every
+// non-entry Body must reach entry through exactly one already-chosen parent.
+func entryBodyForest(parent []uint32, entry uint32) bool {
+	if entry == 0 || int(entry) >= len(parent) || parent[entry] != 0 {
+		return false
+	}
+	state := make([]uint8, len(parent))
+	state[entry] = 2
+	for start := uint32(1); int(start) < len(parent); start++ {
+		if state[start] == 2 {
+			continue
+		}
+		node := start
+		for node != entry && node != 0 && int(node) < len(parent) && state[node] == 0 {
+			state[node] = 1
+			node = parent[node]
+		}
+		if node != entry && (node == 0 || int(node) >= len(parent) || state[node] != 2) {
+			return false
+		}
+		node = start
+		for node != entry && state[node] == 1 {
+			state[node] = 2
+			node = parent[node]
+		}
+	}
+	return true
+}
+
+// bodyIntervals returns iterative DFS intervals for strict lexical-ancestor
+// checks in a previously verified one-root Body forest.
+func bodyIntervals(parent []uint32) (pre, post []uint32) {
+	count := len(parent) - 1
+	start := make([]uint32, count+2)
+	for child := 1; child <= count; child++ {
+		if parent[child] != 0 {
+			start[parent[child]+1]++
+		}
+	}
+	for i := 1; i < len(start); i++ {
+		start[i] += start[i-1]
+	}
+	next := append([]uint32(nil), start[:count+1]...)
+	children := make([]uint32, count-1)
+	for child := 1; child <= count; child++ {
+		parent := parent[child]
+		if parent == 0 {
+			continue
+		}
+		children[next[parent]] = uint32(child)
+		next[parent]++
+	}
+	pre = make([]uint32, count+1)
+	post = make([]uint32, count+1)
+	root := uint32(1)
+	for root <= uint32(count) && parent[root] != 0 {
+		root++
+	}
+	type frame struct{ body, next uint32 }
+	clock := uint32(0)
+	stack := make([]frame, 0, count)
+	clock++
+	pre[root] = clock
+	stack = append(stack, frame{body: root, next: start[root]})
+	for len(stack) != 0 {
+		top := &stack[len(stack)-1]
+		if top.next < start[top.body+1] {
+			child := children[top.next]
+			top.next++
+			clock++
+			pre[child] = clock
+			stack = append(stack, frame{body: child, next: start[child]})
+			continue
+		}
+		post[top.body] = clock
+		stack = stack[:len(stack)-1]
+	}
+	return pre, post
+}
+
+// terminalCaptureCells collapses the validated inner-to-outer capture forest
+// once, so direct-call coherence is O(1) per Read after O(number of Cells).
+func terminalCaptureCells(outer []Term) []Term {
+	terminal := make([]Term, len(outer))
+	stack := make([]uint32, 0, len(outer))
+	for start := uint32(1); int(start) < len(outer); start++ {
+		if terminal[start] != 0 {
+			continue
+		}
+		node := start
+		for terminal[node] == 0 && outer[node] != 0 {
+			stack = append(stack, node)
+			node = outer[node].index()
+		}
+		base := terminal[node]
+		if base == 0 {
+			base = makeTerm(tagCell, node)
+			terminal[node] = base
+		}
+		for len(stack) != 0 {
+			node = stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			terminal[node] = base
+		}
+	}
+	return terminal
 }
 
 func (b *Builder) statementRoot(term Term) bool {
@@ -1427,43 +1758,45 @@ func directCallFinishOrder(functionCount int, start, adjacent []uint32) []uint32
 
 func (b *Builder) snapshot(muFunctions []Term) *Program {
 	p := &Program{
-		terms:       copyTerms(b.terms),
-		files:       append([]string(nil), b.files...),
-		valueTerms:  copyTerms(b.valueTerms),
-		bindTerms:   copyTerms(b.bindTerms),
-		formalTerms: copyTerms(b.formalTerms),
-		orderTerms:  copyTerms(b.orderTerms),
-		nils:        b.nils,
-		bools:       append([]bool(nil), b.bools...),
-		integers:    append([]int64(nil), b.integers...),
-		floats:      append([]uint64(nil), b.floats...),
-		strings:     append([]string(nil), b.strings...),
-		values:      append([]valuesRow(nil), b.values...),
-		lensExact:   append([]exactLensRow(nil), b.lensExact...),
-		lensKeys:    append([]keyLensRow(nil), b.lensKeys...),
-		normals:     append([]outcomeRow(nil), b.normals...),
-		returns:     append([]outcomeRow(nil), b.returns...),
-		throws:      append([]outcomeRow(nil), b.throws...),
-		yields:      append([]outcomeRow(nil), b.yields...),
-		breaks:      append([]outcomeRow(nil), b.breaks...),
-		continues:   append([]outcomeRow(nil), b.continues...),
-		muFunctions: copyTerms(muFunctions),
-		entry:       b.entry,
-		bodies:      append([]bodyRow(nil), b.bodies...),
-		cells:       append([]cellRow(nil), b.cells...),
-		reads:       append([]readRow(nil), b.reads...),
-		unaries:     append([]unaryRow(nil), b.unaries...),
-		binaries:    append([]binaryRow(nil), b.binaries...),
-		selects:     append([]selectRow(nil), b.selects...),
-		binds:       append([]bindRow(nil), b.binds...),
-		assigns:     append([]assignRow(nil), b.assigns...),
-		functions:   append([]functionRow(nil), b.functions...),
-		captures:    append([]captureRow(nil), b.captures...),
-		calls:       append([]callRow(nil), b.calls...),
-		branches:    append([]branchRow(nil), b.branches...),
-		tables:      append([]tableRow(nil), b.tables...),
-		tableFields: append([]tableFieldRow(nil), b.tableFields...),
-		exactKeys:   append([]exactKey(nil), b.exactKeys...),
+		terms:        copyTerms(b.terms),
+		files:        append([]string(nil), b.files...),
+		valueTerms:   copyTerms(b.valueTerms),
+		bindTerms:    copyTerms(b.bindTerms),
+		formalTerms:  copyTerms(b.formalTerms),
+		captureTerms: copyTerms(b.captureTerms),
+		orderTerms:   copyTerms(b.orderTerms),
+		nils:         b.nils,
+		bools:        append([]bool(nil), b.bools...),
+		integers:     append([]int64(nil), b.integers...),
+		floats:       append([]uint64(nil), b.floats...),
+		strings:      append([]string(nil), b.strings...),
+		values:       append([]valuesRow(nil), b.values...),
+		lensExact:    append([]exactLensRow(nil), b.lensExact...),
+		lensKeys:     append([]keyLensRow(nil), b.lensKeys...),
+		normals:      append([]outcomeRow(nil), b.normals...),
+		returns:      append([]outcomeRow(nil), b.returns...),
+		throws:       append([]outcomeRow(nil), b.throws...),
+		yields:       append([]outcomeRow(nil), b.yields...),
+		breaks:       append([]outcomeRow(nil), b.breaks...),
+		continues:    append([]outcomeRow(nil), b.continues...),
+		muFunctions:  copyTerms(muFunctions),
+		entry:        b.entry,
+		bodies:       append([]bodyRow(nil), b.bodies...),
+		cells:        append([]cellRow(nil), b.cells...),
+		reads:        append([]readRow(nil), b.reads...),
+		varargs:      append([]varargRow(nil), b.varargs...),
+		unaries:      append([]unaryRow(nil), b.unaries...),
+		binaries:     append([]binaryRow(nil), b.binaries...),
+		selects:      append([]selectRow(nil), b.selects...),
+		binds:        append([]bindRow(nil), b.binds...),
+		assigns:      append([]assignRow(nil), b.assigns...),
+		functions:    append([]functionRow(nil), b.functions...),
+		captures:     append([]captureRow(nil), b.captures...),
+		calls:        append([]callRow(nil), b.calls...),
+		branches:     append([]branchRow(nil), b.branches...),
+		tables:       append([]tableRow(nil), b.tables...),
+		tableFields:  append([]tableFieldRow(nil), b.tableFields...),
+		exactKeys:    append([]exactKey(nil), b.exactKeys...),
 	}
 	for tag := uint8(1); tag < tagCount; tag++ {
 		p.spans[tag] = append([]storedSpan(nil), b.spans[tag]...)
@@ -1513,6 +1846,8 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.cells))
 	case tagRead:
 		return index <= uint32(len(p.reads))
+	case tagVararg:
+		return index <= uint32(len(p.varargs))
 	case tagUnary:
 		return index <= uint32(len(p.unaries))
 	case tagBinary:
@@ -1797,6 +2132,14 @@ func (p *Program) Read(term Term) (Term, bool) {
 	return p.reads[term.index()-1].source, true
 }
 
+// Vararg returns the Function vararg Cell anchoring an open source occurrence.
+func (p *Program) Vararg(term Term) (Term, bool) {
+	if !p.has(term, tagVararg) {
+		return 0, false
+	}
+	return p.varargs[term.index()-1].cell, true
+}
+
 // Unary returns a closed unary scalar relation in O(1).
 func (p *Program) Unary(term Term) (UnaryOp, Term, bool) {
 	if !p.has(term, tagUnary) {
@@ -1893,12 +2236,12 @@ func (p *Program) AppendAssign(term Term, dst []Term) (targets []Term, values Te
 	return append(dst, p.orderTerms[row.targets.start:row.targets.end]...), row.values, true
 }
 
-func (p *Program) Function(term Term) (body Term, vararg, ok bool) {
+func (p *Program) Function(term Term) (owner, body, binding, vararg Term, ok bool) {
 	if !p.has(term, tagFunction) {
-		return 0, false, false
+		return 0, 0, 0, 0, false
 	}
 	row := p.functions[term.index()-1]
-	return row.body, row.vararg, true
+	return row.owner, row.body, row.binding, row.vararg, true
 }
 
 func (p *Program) FormalLen(term Term) (int, bool) {
@@ -1928,20 +2271,47 @@ func (p *Program) AppendFormals(term Term, dst []Term) ([]Term, bool) {
 	return append(dst, p.formalTerms[r.start:r.end]...), true
 }
 
-func (p *Program) Capture(term Term) (inner, outer Term, ok bool) {
-	if !p.has(term, tagCapture) {
-		return 0, 0, false
+func (p *Program) FunctionCaptureLen(term Term) (int, bool) {
+	if !p.has(term, tagFunction) {
+		return 0, false
 	}
-	row := p.captures[term.index()-1]
-	return row.inner, row.outer, true
+	r := p.functions[term.index()-1].captures
+	return int(r.end - r.start), true
 }
 
-func (p *Program) Call(term Term) (callee, actuals, direct Term, ok bool) {
-	if !p.has(term, tagCall) {
+func (p *Program) FunctionCaptureAt(term Term, index int) (Term, bool) {
+	if !p.has(term, tagFunction) {
+		return 0, false
+	}
+	r := p.functions[term.index()-1].captures
+	if index < 0 || uint32(index) >= r.end-r.start {
+		return 0, false
+	}
+	return p.captureTerms[r.start+uint32(index)], true
+}
+
+func (p *Program) AppendFunctionCaptures(term Term, dst []Term) ([]Term, bool) {
+	if !p.has(term, tagFunction) {
+		return dst, false
+	}
+	r := p.functions[term.index()-1].captures
+	return append(dst, p.captureTerms[r.start:r.end]...), true
+}
+
+func (p *Program) Capture(term Term) (function, inner, outer Term, ok bool) {
+	if !p.has(term, tagCapture) {
 		return 0, 0, 0, false
 	}
+	row := p.captures[term.index()-1]
+	return row.function, row.inner, row.outer, true
+}
+
+func (p *Program) Call(term Term) (callee, receiver, actuals, direct Term, ok bool) {
+	if !p.has(term, tagCall) {
+		return 0, 0, 0, 0, false
+	}
 	row := p.calls[term.index()-1]
-	return row.callee, row.actuals, row.direct, true
+	return row.callee, row.receiver, row.actuals, row.direct, true
 }
 
 func (p *Program) Branch(term Term) (condition, whenTrue, whenFalse Term, ok bool) {
