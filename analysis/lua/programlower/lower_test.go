@@ -81,6 +81,15 @@ func functionCapture(t *testing.T, p *program.Program, function program.Term, in
 	return inner, outer
 }
 
+func mustBranch(t *testing.T, p *program.Program, term program.Term) (program.Term, program.Term, program.Term, program.Term) {
+	t.Helper()
+	owner, condition, whenTrue, whenFalse, ok := p.Branch(term)
+	if !ok {
+		t.Fatalf("%v is not a Branch", term)
+	}
+	return owner, condition, whenTrue, whenFalse
+}
+
 func TestEmptyChunkHasOneCanonicalEntry(t *testing.T) {
 	p := parseBindLower(t, "")
 	entry, ok := p.Entry()
@@ -369,6 +378,428 @@ func TestBodyCompletionIsNormalOnlyForNonterminalBodies(t *testing.T) {
 	}
 	if _, _, ok := p.Return(childRoots[0]); !ok {
 		t.Fatal("terminal child Body did not retain Return")
+	}
+}
+
+func TestIfConditionIsOneParentOccurrenceAndArmsKeepSourceSpans(t *testing.T) {
+	p := parseBindLower(t, `local condition
+if condition() then
+  local x = 1
+else
+  local x = 2
+end
+return 3`)
+	entry, _ := p.Entry()
+	roots := entryRoots(t, p)
+	if len(roots) != 3 {
+		t.Fatalf("Entry roots = %v; want Bind, Branch, Return", roots)
+	}
+	owner, condition, whenTrue, whenFalse := mustBranch(t, p, roots[1])
+	if owner != entry || whenTrue == whenFalse {
+		t.Fatalf(
+			"Branch owner/arms = %v %v/%v; want Entry %v and distinct arms",
+			owner,
+			whenTrue,
+			whenFalse,
+			entry,
+		)
+	}
+	if p.CallCount() != 1 || condition == 0 {
+		t.Fatalf("condition Calls = %d, condition %v; want exactly one", p.CallCount(), condition)
+	}
+	callOwner, _, _, _, _, ok := p.Call(condition)
+	if !ok || callOwner != entry {
+		t.Fatalf("Branch condition = Call owner %v ok %v; want Entry %v", callOwner, ok, entry)
+	}
+	if span, ok := p.Span(roots[1]); !ok ||
+		span.StartLine != 2 || span.StartCol != 1 || span.EndLine != 6 {
+		t.Fatalf("Branch span = %#v, %v", span, ok)
+	}
+	if span, ok := p.Span(whenTrue); !ok ||
+		span.StartLine != 3 || span.StartCol != 3 || span.EndLine != 3 {
+		t.Fatalf("Then Body span = %#v, %v", span, ok)
+	}
+	if span, ok := p.Span(whenFalse); !ok ||
+		span.StartLine != 5 || span.StartCol != 3 || span.EndLine != 5 {
+		t.Fatalf("Else Body span = %#v, %v", span, ok)
+	}
+	for _, arm := range []struct {
+		name string
+		body program.Term
+	}{
+		{"Then", whenTrue},
+		{"Else", whenFalse},
+	} {
+		armRoots := bodyRoots(t, p, arm.body)
+		if len(armRoots) != 2 {
+			t.Fatalf("%s roots = %v; want Bind and Normal", arm.name, armRoots)
+		}
+		if normalOwner, _, ok := p.Normal(armRoots[1]); !ok || normalOwner != arm.body {
+			t.Fatalf("%s Normal owner = %v, %v; want %v", arm.name, normalOwner, ok, arm.body)
+		}
+	}
+}
+
+func TestEmptyIfArmsRemainDistinctOwnedBodiesAndOutcomes(t *testing.T) {
+	p := parseBindLower(t, `if true then
+else
+end`)
+	entry, _ := p.Entry()
+	roots := entryRoots(t, p)
+	if len(roots) != 2 {
+		t.Fatalf("Entry roots = %v; want Branch and Normal", roots)
+	}
+	owner, _, whenTrue, whenFalse := mustBranch(t, p, roots[0])
+	if owner != entry || whenTrue == whenFalse || whenTrue == entry || whenFalse == entry {
+		t.Fatalf(
+			"Branch owner/arms = %v %v/%v; want Entry %v and two child Bodies",
+			owner,
+			whenTrue,
+			whenFalse,
+			entry,
+		)
+	}
+	for _, root := range roots {
+		if root == whenTrue || root == whenFalse {
+			t.Fatalf("Branch arm Body %v is also an Entry root", root)
+		}
+	}
+	trueRoots := bodyRoots(t, p, whenTrue)
+	falseRoots := bodyRoots(t, p, whenFalse)
+	if len(trueRoots) != 1 || len(falseRoots) != 1 || trueRoots[0] == falseRoots[0] {
+		t.Fatalf("empty arm roots = %v / %v; want distinct Normal slots", trueRoots, falseRoots)
+	}
+	for _, arm := range []struct {
+		body   program.Term
+		normal program.Term
+	}{
+		{whenTrue, trueRoots[0]},
+		{whenFalse, falseRoots[0]},
+	} {
+		normalOwner, values, ok := p.Normal(arm.normal)
+		if !ok || normalOwner != arm.body {
+			t.Fatalf("Normal %v owner = %v, %v; want %v", arm.normal, normalOwner, ok, arm.body)
+		}
+		valuesOwner, tail, ok := p.Values(values)
+		if !ok || valuesOwner != arm.body || tail != 0 {
+			t.Fatalf("Normal Values owner/tail = %v/%v, %v; want %v/0", valuesOwner, tail, ok, arm.body)
+		}
+	}
+	if _, _, ok := p.Normal(roots[1]); !ok {
+		t.Fatal("nonterminal Entry has no Normal")
+	}
+}
+
+func TestIfArmScopesAreIsolatedAndRestoreTheOuterBinding(t *testing.T) {
+	p := parseBindLower(t, `local x = 0
+if true then
+  local x = 1
+  x = x
+else
+  local x = 2
+  x = x
+end
+x = x`)
+	entry, _ := p.Entry()
+	roots := entryRoots(t, p)
+	if len(roots) != 4 {
+		t.Fatalf("Entry roots = %v; want Bind, Branch, Assign, Normal", roots)
+	}
+	outerCell := boundCell(t, p, roots[0], 0)
+	_, _, whenTrue, whenFalse := mustBranch(t, p, roots[1])
+	armCells := make([]program.Term, 0, 2)
+	for _, arm := range []struct {
+		name string
+		body program.Term
+	}{
+		{"Then", whenTrue},
+		{"Else", whenFalse},
+	} {
+		armRoots := bodyRoots(t, p, arm.body)
+		if len(armRoots) != 3 {
+			t.Fatalf("%s roots = %v; want Bind, Assign, Normal", arm.name, armRoots)
+		}
+		cell := boundCell(t, p, armRoots[0], 0)
+		armCells = append(armCells, cell)
+		if owner, ok := p.Cell(cell); !ok || owner != arm.body {
+			t.Fatalf("%s Cell owner = %v, %v; want %v", arm.name, owner, ok, arm.body)
+		}
+		assignOwner, assigned, ok := p.Assign(armRoots[1])
+		if !ok || assignOwner != arm.body || mustTarget(t, p, armRoots[1], 0) != cell {
+			t.Fatalf("%s Assign owner/target = %v/%v, %v", arm.name, assignOwner, cell, ok)
+		}
+		read := valueAt(t, p, assigned, 0)
+		if readOwner, source, ok := p.Read(read); !ok || readOwner != arm.body || source != cell {
+			t.Fatalf("%s Read owner/source = %v/%v, %v; want %v/%v", arm.name, readOwner, source, ok, arm.body, cell)
+		}
+	}
+	if armCells[0] == armCells[1] || armCells[0] == outerCell || armCells[1] == outerCell {
+		t.Fatalf("shadow Cells = outer %v arms %v; want three identities", outerCell, armCells)
+	}
+	postOwner, postValues, ok := p.Assign(roots[2])
+	if !ok || postOwner != entry || mustTarget(t, p, roots[2], 0) != outerCell {
+		t.Fatalf("post-If Assign owner/target = %v/%v, %v; want %v/%v", postOwner, mustTarget(t, p, roots[2], 0), ok, entry, outerCell)
+	}
+	postRead := valueAt(t, p, postValues, 0)
+	if readOwner, source, ok := p.Read(postRead); !ok || readOwner != entry || source != outerCell {
+		t.Fatalf("post-If Read owner/source = %v/%v, %v; want %v/%v", readOwner, source, ok, entry, outerCell)
+	}
+}
+
+func elseIfSource(depth int) string {
+	var source strings.Builder
+	source.WriteString("if false then\n")
+	for level := 1; level < depth; level++ {
+		source.WriteString("elseif false then\n")
+	}
+	source.WriteString("else\nend")
+	return source.String()
+}
+
+func TestDeepElseIfConditionsStayInLazyFalseBodiesAndSourceOrder(t *testing.T) {
+	const depth = 512
+	p := parseBindLower(t, elseIfSource(depth))
+	if p.BranchCount() != depth || p.BoolCount() != depth {
+		t.Fatalf("families = Branch %d Bool %d; want %d each", p.BranchCount(), p.BoolCount(), depth)
+	}
+	for level := 0; level < depth; level++ {
+		condition, ok := p.BoolAt(level)
+		if !ok {
+			t.Fatalf("BoolAt(%d) failed", level)
+		}
+		span, ok := p.Span(condition)
+		if !ok || span.StartLine != level+1 {
+			t.Fatalf("condition %d span = %#v, %v; want line %d", level, span, ok, level+1)
+		}
+	}
+
+	entry, _ := p.Entry()
+	roots := entryRoots(t, p)
+	branch := roots[0]
+	owner := entry
+	for level := 0; level < depth; level++ {
+		branchOwner, condition, whenTrue, whenFalse := mustBranch(t, p, branch)
+		if branchOwner != owner {
+			t.Fatalf("level %d Branch owner = %v; want %v", level, branchOwner, owner)
+		}
+		conditionOwner, value, ok := p.Bool(condition)
+		if !ok || value || conditionOwner != owner {
+			t.Fatalf(
+				"level %d condition = owner %v value %v ok %v; want %v false",
+				level,
+				conditionOwner,
+				value,
+				ok,
+				owner,
+			)
+		}
+		trueRoots := bodyRoots(t, p, whenTrue)
+		if len(trueRoots) != 1 {
+			t.Fatalf("level %d Then roots = %v; want Normal", level, trueRoots)
+		}
+		if normalOwner, _, ok := p.Normal(trueRoots[0]); !ok || normalOwner != whenTrue {
+			t.Fatalf("level %d Then Normal owner = %v, %v; want %v", level, normalOwner, ok, whenTrue)
+		}
+		falseRoots := bodyRoots(t, p, whenFalse)
+		if level == depth-1 {
+			if len(falseRoots) != 1 {
+				t.Fatalf("terminal Else roots = %v; want Normal", falseRoots)
+			}
+			break
+		}
+		if len(falseRoots) != 2 {
+			t.Fatalf("level %d Else roots = %v; want nested Branch and Normal", level, falseRoots)
+		}
+		if normalOwner, _, ok := p.Normal(falseRoots[1]); !ok || normalOwner != whenFalse {
+			t.Fatalf("level %d Else Normal owner = %v, %v; want %v", level, normalOwner, ok, whenFalse)
+		}
+		branch = falseRoots[0]
+		owner = whenFalse
+	}
+}
+
+func TestIfTerminationKeepsOnlyReachableParentContinuation(t *testing.T) {
+	for _, source := range []string{
+		`if true then return 1 end
+return 2`,
+		`local x = 0
+if true then
+  return 1
+else
+  x = 2
+end
+x = 3
+return x`,
+	} {
+		p := parseBindLower(t, source)
+		entry, _ := p.Entry()
+		roots := entryRoots(t, p)
+		var branch program.Term
+		for _, root := range roots {
+			if _, _, _, _, ok := p.Branch(root); ok {
+				branch = root
+				break
+			}
+		}
+		if branch == 0 {
+			t.Fatalf("source has no parent Branch:\n%s", source)
+		}
+		_, _, whenTrue, whenFalse := mustBranch(t, p, branch)
+		trueRoots := bodyRoots(t, p, whenTrue)
+		if len(trueRoots) != 1 {
+			t.Fatalf("Then roots = %v; want one Return for source:\n%s", trueRoots, source)
+		}
+		if _, _, ok := p.Return(trueRoots[0]); !ok {
+			t.Fatalf("Then root is not Return for source:\n%s", source)
+		}
+		falseRoots := bodyRoots(t, p, whenFalse)
+		if len(falseRoots) == 0 {
+			t.Fatalf("Else Body is empty without its Normal for source:\n%s", source)
+		}
+		if normalOwner, _, ok := p.Normal(falseRoots[len(falseRoots)-1]); !ok || normalOwner != whenFalse {
+			t.Fatalf("Else Body has no owned Normal for source:\n%s", source)
+		}
+		if _, _, ok := p.Return(roots[len(roots)-1]); !ok {
+			t.Fatalf("source has no trailing Return root:\n%s\nroots %v", source, roots)
+		}
+		for _, root := range roots {
+			if normalOwner, _, ok := p.Normal(root); ok && normalOwner == entry {
+				t.Fatalf("terminal Entry retained Normal for source:\n%s", source)
+			}
+		}
+	}
+}
+
+func TestExhaustiveTerminalIfRejectsTrailingStatement(t *testing.T) {
+	for _, source := range []string{
+		`if true then
+  return 1
+else
+  return 2
+end
+local unreachable = 3`,
+		`if true then
+  return 1
+elseif false then
+  return 2
+else
+  return 3
+end
+local unreachable = 4`,
+	} {
+		stmts, err := parse.ParseString(source, "terminal-if.lua")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = programlower.Lower("terminal-if.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
+		if err == nil || !strings.Contains(err.Error(), "statement after terminal") {
+			t.Fatalf("terminal source error = %v; source:\n%s", err, source)
+		}
+	}
+}
+
+func TestExhaustiveTerminalIfHasNoNormalPath(t *testing.T) {
+	p := parseBindLower(t, `if true then
+  return 1
+elseif false then
+  return 2
+else
+  return 3
+end`)
+	roots := entryRoots(t, p)
+	if len(roots) != 1 {
+		t.Fatalf("Entry roots = %v; want only the exhaustive Branch", roots)
+	}
+	branch := roots[0]
+	for level := 0; level < 2; level++ {
+		_, _, whenTrue, whenFalse := mustBranch(t, p, branch)
+		trueRoots := bodyRoots(t, p, whenTrue)
+		if len(trueRoots) != 1 {
+			t.Fatalf("level %d Then roots = %v; want one Return", level, trueRoots)
+		}
+		if _, _, ok := p.Return(trueRoots[0]); !ok {
+			t.Fatalf("level %d Then root is not Return", level)
+		}
+		falseRoots := bodyRoots(t, p, whenFalse)
+		if level == 0 {
+			if len(falseRoots) != 1 {
+				t.Fatalf("outer Else roots = %v; want only nested Branch", falseRoots)
+			}
+			branch = falseRoots[0]
+			continue
+		}
+		if len(falseRoots) != 1 {
+			t.Fatalf("terminal Else roots = %v; want one Return", falseRoots)
+		}
+		if _, _, ok := p.Return(falseRoots[0]); !ok {
+			t.Fatal("terminal Else root is not Return")
+		}
+	}
+	if p.NormalCount() != 0 {
+		t.Fatalf("NormalCount = %d; exhaustive terminal chain wants 0", p.NormalCount())
+	}
+}
+
+func TestFourAndEightThousandElseIfArmsHaveExactLinearShape(t *testing.T) {
+	for _, depth := range []int{4 * 1024, 8 * 1024} {
+		source := elseIfSource(depth)
+		stmts, err := parse.ParseString(source, "deep-elseif.lua")
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding := bind.BindChunk(stmts, bind.Options{})
+		first, err := programlower.Lower("deep-elseif.lua", stmts, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := programlower.Lower("deep-elseif.lua", stmts, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first.BranchCount() != depth ||
+			first.BodyCount() != 2*depth+1 ||
+			first.BoolCount() != depth ||
+			first.NormalCount() != 2*depth+1 ||
+			first.ValuesCount() != 2*depth+1 ||
+			first.TermCount() != 8*depth+3 {
+			t.Fatalf(
+				"%d-chain families: branches=%d bodies=%d bools=%d normals=%d values=%d terms=%d",
+				depth,
+				first.BranchCount(),
+				first.BodyCount(),
+				first.BoolCount(),
+				first.NormalCount(),
+				first.ValuesCount(),
+				first.TermCount(),
+			)
+		}
+		if second.TermCount() != first.TermCount() ||
+			second.BranchCount() != first.BranchCount() ||
+			second.BodyCount() != first.BodyCount() {
+			t.Fatalf("%d-chain fresh lowering changed family counts", depth)
+		}
+		firstEntry, _ := first.Entry()
+		secondEntry, _ := second.Entry()
+		firstRoots := bodyRoots(t, first, firstEntry)
+		secondRoots := bodyRoots(t, second, secondEntry)
+		if firstEntry != secondEntry ||
+			len(firstRoots) != len(secondRoots) ||
+			firstRoots[0] != secondRoots[0] {
+			t.Fatalf("%d-chain fresh lowering changed Entry identity or roots", depth)
+		}
+		for i := 0; i < depth; i++ {
+			firstBranch, _ := first.BranchAt(i)
+			secondBranch, _ := second.BranchAt(i)
+			firstOwner, firstCondition, firstTrue, firstFalse := mustBranch(t, first, firstBranch)
+			secondOwner, secondCondition, secondTrue, secondFalse := mustBranch(t, second, secondBranch)
+			if firstBranch != secondBranch ||
+				firstOwner != secondOwner ||
+				firstCondition != secondCondition ||
+				firstTrue != secondTrue ||
+				firstFalse != secondFalse {
+				t.Fatalf("%d-chain Branch %d changed across fresh lowerings", depth, i)
+			}
+		}
 	}
 }
 
@@ -676,7 +1107,6 @@ func TestUnsupportedSyntaxIsHonest(t *testing.T) {
 		t.Fatal("nil binding result was accepted")
 	}
 	for _, source := range []string{
-		`if true then end`,
 		`while false do end`,
 		`repeat until true`,
 		`for i = 1, 1 do end`,
@@ -697,8 +1127,9 @@ func TestUnsupportedSyntaxIsHonest(t *testing.T) {
 func TestTypedNilASTNodesFailClosed(t *testing.T) {
 	emptyBinding := bind.BindChunk(nil, bind.Options{})
 	for _, stmts := range [][]ast.Stmt{
-		{(*ast.LocalAssignStmt)(nil)},                                // supported statement
-		{(*ast.WhileStmt)(nil)},                                      // unsupported statement
+		{(*ast.LocalAssignStmt)(nil)}, // supported statement
+		{(*ast.IfStmt)(nil)},          // supported statement
+		{(*ast.WhileStmt)(nil)},       // unsupported statement
 		{&ast.ReturnStmt{Exprs: []ast.Expr{(*ast.NumberExpr)(nil)}}}, // supported expression
 		{&ast.ReturnStmt{Exprs: []ast.Expr{(*ast.CastExpr)(nil)}}},   // unsupported expression
 	} {
@@ -721,6 +1152,9 @@ func TestMalformedNestedASTNodesFailClosed(t *testing.T) {
 		{&ast.ReturnStmt{Exprs: []ast.Expr{&ast.FuncCallExpr{Func: number(), Args: []ast.Expr{absentExpr}}}}},
 		{&ast.FuncCallStmt{Expr: (*ast.FuncCallExpr)(nil)}},
 		{&ast.DoBlockStmt{Stmts: []ast.Stmt{absentStmt}}},
+		{&ast.IfStmt{Condition: absentExpr}},
+		{&ast.IfStmt{Condition: &ast.TrueExpr{}, Then: []ast.Stmt{absentStmt}}},
+		{&ast.IfStmt{Condition: &ast.TrueExpr{}, Else: []ast.Stmt{absentStmt}, HasElse: true}},
 	}
 	for _, stmts := range cases {
 		assertLowerFailsClosed(t, stmts, bind.BindChunk(nil, bind.Options{}))

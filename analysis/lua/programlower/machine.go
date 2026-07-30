@@ -120,6 +120,9 @@ const (
 	stepFinishAssign
 	stepFinishCallStmt
 	stepFinishReturn
+	stepFinishIfCondition
+	stepFinishIfThen
+	stepFinishIfElse
 	stepValues
 	stepAppendValue
 	stepExpr
@@ -151,6 +154,7 @@ type step struct {
 	local   *ast.LocalAssignStmt
 	assign  *ast.AssignStmt
 	return_ *ast.ReturnStmt
+	if_     *ast.IfStmt
 	call    *ast.FuncCallExpr
 	attr    *ast.AttrGetExpr
 	fn      *ast.FunctionExpr
@@ -159,10 +163,13 @@ type step struct {
 	slots    []bind.ParamSlot
 	captures []bind.Capture
 
-	span    program.Span
-	unary   program.UnaryOp
-	binary  program.BinaryOp
-	select_ program.SelectOp
+	span      program.Span
+	condition program.Term
+	whenTrue  program.Term
+	whenFalse program.Term
+	unary     program.UnaryOp
+	binary    program.BinaryOp
+	select_   program.SelectOp
 
 	index     int
 	ordinal   int
@@ -170,8 +177,9 @@ type step struct {
 	valueMark int
 	kindMark  int
 
-	readLens  bool
-	allowOpen bool
+	readLens       bool
+	allowOpen      bool
+	thenTerminated bool
 }
 
 func (l *lowerer) run() error {
@@ -242,6 +250,18 @@ func (l *lowerer) run() error {
 				return err
 			}
 			l.currentBody().terminated = true
+		case stepFinishIfCondition:
+			if err := l.beginIfThen(current.if_, l.result); err != nil {
+				return err
+			}
+		case stepFinishIfThen:
+			if err := l.finishIfThen(current); err != nil {
+				return err
+			}
+		case stepFinishIfElse:
+			if err := l.finishIfElse(current); err != nil {
+				return err
+			}
 		case stepValues:
 			if err := l.runValues(current); err != nil {
 				return err
@@ -427,6 +447,11 @@ func (l *lowerer) runStmts(current step) error {
 			step{kind: stepFinishReturn, return_: stmt},
 			step{kind: stepValues, exprs: stmt.Exprs, span: l.span(stmt), mark: len(l.values)},
 		)
+	case *ast.IfStmt:
+		l.push(
+			step{kind: stepFinishIfCondition, if_: stmt},
+			step{kind: stepExpr, expr: stmt.Condition},
+		)
 	case *ast.DoBlockStmt:
 		span := l.span(stmt)
 		body := l.builder.Body(span)
@@ -440,6 +465,86 @@ func (l *lowerer) runStmts(current step) error {
 		)
 	default:
 		return l.unsupportedStmt(stmt)
+	}
+	return nil
+}
+
+func (l *lowerer) beginIfThen(stmt *ast.IfStmt, condition program.Term) error {
+	span := l.chunkSpan(stmt.Then)
+	body := l.builder.Body(span)
+	if body == 0 {
+		return fmt.Errorf("programlower: could not create Then Body")
+	}
+	l.enterBody(body, l.currentBody().function, span)
+	l.push(
+		step{
+			kind:      stepFinishIfThen,
+			if_:       stmt,
+			condition: condition,
+			whenTrue:  body,
+		},
+		step{kind: stepStmts, stmts: stmt.Then},
+	)
+	return nil
+}
+
+func (l *lowerer) finishIfThen(current step) error {
+	if l.owner() != current.whenTrue {
+		return fmt.Errorf("programlower: mismatched Then Body")
+	}
+	terminated, err := l.finishBody()
+	if err != nil {
+		return err
+	}
+
+	span := l.chunkSpan(current.if_.Else)
+	body := l.builder.Body(span)
+	if body == 0 {
+		return fmt.Errorf("programlower: could not create Else Body")
+	}
+	l.enterBody(body, l.currentBody().function, span)
+	l.push(
+		step{
+			kind:           stepFinishIfElse,
+			if_:            current.if_,
+			condition:      current.condition,
+			whenTrue:       current.whenTrue,
+			whenFalse:      body,
+			thenTerminated: terminated,
+		},
+		step{kind: stepStmts, stmts: current.if_.Else},
+	)
+	return nil
+}
+
+func (l *lowerer) finishIfElse(current step) error {
+	if l.owner() != current.whenFalse {
+		return fmt.Errorf("programlower: mismatched Else Body")
+	}
+	elseTerminated, err := l.finishBody()
+	if err != nil {
+		return err
+	}
+
+	branch := l.builder.Branch(
+		l.span(current.if_),
+		l.owner(),
+		current.condition,
+		current.whenTrue,
+		current.whenFalse,
+	)
+	if branch == 0 {
+		return fmt.Errorf("programlower: could not create Branch")
+	}
+	if err := l.appendRoot(branch); err != nil {
+		return err
+	}
+
+	// HasElse marks a terminal else on the final parser-owned IfStmt. Earlier
+	// elseif members instead have the next IfStmt as their sole Else statement.
+	hasAuthoredFalseArm := current.if_.HasElse || len(current.if_.Else) != 0
+	if current.thenTerminated && elseTerminated && hasAuthoredFalseArm {
+		l.currentBody().terminated = true
 	}
 	return nil
 }
