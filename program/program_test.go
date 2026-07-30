@@ -156,10 +156,13 @@ func TestLensExactNormalizesKeys(t *testing.T) {
 }
 
 var (
-	hotTerm  program.Term
-	hotCount int
-	hotOK    bool
-	hotProg  *program.Program
+	hotTerm   program.Term
+	hotCount  int
+	hotOK     bool
+	hotProg   *program.Program
+	hotUnary  program.UnaryOp
+	hotBinary program.BinaryOp
+	hotSelect program.SelectOp
 )
 
 func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
@@ -266,6 +269,121 @@ func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 	richSmall, richLarge := richSealAllocs(1), richSealAllocs(512)
 	if richLarge > richSmall+4 {
 		t.Fatalf("Bind/Body-rich Seal allocations grew per statement: small=%.2f large=%.2f", richSmall, richLarge)
+	}
+}
+
+func TestScalarRelationsAreTypedAndPreserveEvaluationOrder(t *testing.T) {
+	b := program.NewBuilder()
+	span := program.Span{File: "scalar.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	body := b.Body(span)
+	cell := b.Cell(span, body)
+	base := b.String(span, "table")
+	key := b.String(span, "field")
+	lens := b.LensKey(span, base, key)
+	cellRead := b.Read(span, cell)
+	lensRead := b.Read(span, lens)
+	unary := b.Unary(span, program.UnaryBitNot, lensRead)
+	binary := b.Binary(span, program.BinaryIDiv, cellRead, unary)
+	selectTerm := b.Select(span, program.SelectAnd, binary, lensRead)
+	values := b.Values(span, []program.Term{selectTerm}, 0)
+	result := b.Return(span, values)
+	if !b.SetBody(body, result) {
+		t.Fatal("SetBody failed")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if source, ok := p.Read(cellRead); !ok || source != cell {
+		t.Fatalf("Cell Read = %v, %v", source, ok)
+	}
+	if source, ok := p.Read(lensRead); !ok || source != lens {
+		t.Fatalf("Lens Read = %v, %v", source, ok)
+	}
+	if count, ok := p.OrderCount(cellRead); !ok || count != 0 {
+		t.Fatalf("Cell Read order count = %d, %v", count, ok)
+	}
+	if order, ok := p.AppendOrder(cellRead, nil); !ok || len(order) != 0 {
+		t.Fatalf("Cell Read order = %v, %v", order, ok)
+	}
+	if order, ok := p.AppendOrder(lensRead, nil); !ok || !reflect.DeepEqual(order, []program.Term{lens}) {
+		t.Fatalf("Lens Read order = %v, %v", order, ok)
+	}
+	if op, operand, ok := p.Unary(unary); !ok || op != program.UnaryBitNot || operand != lensRead {
+		t.Fatalf("Unary = %v, %v, %v", op, operand, ok)
+	}
+	if order, ok := p.AppendOrder(unary, nil); !ok || !reflect.DeepEqual(order, []program.Term{lensRead}) {
+		t.Fatalf("Unary order = %v, %v", order, ok)
+	}
+	if op, left, right, ok := p.Binary(binary); !ok || op != program.BinaryIDiv || left != cellRead || right != unary {
+		t.Fatalf("Binary = %v, %v, %v, %v", op, left, right, ok)
+	}
+	if order, ok := p.AppendOrder(binary, nil); !ok || !reflect.DeepEqual(order, []program.Term{cellRead, unary}) {
+		t.Fatalf("Binary order = %v, %v", order, ok)
+	}
+	if op, left, right, ok := p.Select(selectTerm); !ok || op != program.SelectAnd || left != binary || right != lensRead {
+		t.Fatalf("Select = %v, %v, %v, %v", op, left, right, ok)
+	}
+	if order, ok := p.AppendOrder(selectTerm, nil); !ok || !reflect.DeepEqual(order, []program.Term{binary}) {
+		t.Fatalf("Select order = %v, %v", order, ok)
+	}
+
+	if allocations := testing.AllocsPerRun(1000, func() {
+		hotTerm, hotOK = p.Read(lensRead)
+		hotUnary, hotTerm, hotOK = p.Unary(unary)
+		hotBinary, hotTerm, _, hotOK = p.Binary(binary)
+		hotSelect, hotTerm, _, hotOK = p.Select(selectTerm)
+		hotCount, hotOK = p.OrderCount(selectTerm)
+		hotTerm, hotOK = p.OrderAt(selectTerm, 0)
+	}); allocations != 0 {
+		t.Fatalf("scalar queries allocated: %.2f", allocations)
+	}
+}
+
+func TestScalarRelationsFailClosedAndSealWithoutPerRowAllocation(t *testing.T) {
+	span := program.Span{File: "bad-scalar.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	invalid := []func(*program.Builder){
+		func(b *program.Builder) { b.Read(span, b.Integer(span, 1)) },
+		func(b *program.Builder) { b.Unary(span, program.UnaryOp(255), b.Integer(span, 1)) },
+		func(b *program.Builder) {
+			b.Binary(span, program.BinaryOp(255), b.Integer(span, 1), b.Integer(span, 2))
+		},
+		func(b *program.Builder) {
+			b.Select(span, program.SelectOp(255), b.Bool(span, true), b.Integer(span, 1))
+		},
+		func(b *program.Builder) { b.Unary(span, program.UnaryNeg, program.Term(0x0101)) },
+		func(b *program.Builder) { b.Binary(span, program.BinaryAdd, b.Integer(span, 1), program.Term(0x0101)) },
+		func(b *program.Builder) { b.Select(span, program.SelectOr, program.Term(0x0101), b.Integer(span, 1)) },
+	}
+	for i, build := range invalid {
+		b := program.NewBuilder()
+		build(b)
+		if _, err := b.Seal(); err == nil {
+			t.Fatalf("invalid scalar relation %d sealed", i)
+		}
+	}
+
+	sealedAllocs := func(rows int) float64 {
+		b := program.NewBuilder()
+		span := program.Span{File: "scalar-alloc.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+		left := b.Integer(span, 1)
+		right := b.Integer(span, 2)
+		for i := 0; i < rows; i++ {
+			unary := b.Unary(span, program.UnaryNeg, left)
+			binary := b.Binary(span, program.BinaryAdd, unary, right)
+			b.Select(span, program.SelectOr, binary, left)
+		}
+		return testing.AllocsPerRun(30, func() {
+			var err error
+			hotProg, err = b.Seal()
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	if small, large := sealedAllocs(64), sealedAllocs(512); large > small+2 {
+		t.Fatalf("scalar Seal allocations grew per relation: small=%.2f large=%.2f", small, large)
 	}
 }
 
@@ -571,6 +689,32 @@ func TestDirectCallMuFindsCallNestedInValues(t *testing.T) {
 	}
 	if head, ok := p.Mu(function); !ok || head != function {
 		t.Fatalf("nested direct call Mu = %v, %v", head, ok)
+	}
+}
+
+func TestDirectCallMuFindsCallOnlyInSelectRHS(t *testing.T) {
+	b := program.NewBuilder()
+	span := program.Span{File: "select-recursive.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	body := b.Body(span)
+	calleeCell := b.Cell(span, body)
+	function := b.Function(span, body, nil, false)
+	callee := b.Read(span, calleeCell)
+	call := b.Call(span, callee, b.Values(span, nil, 0), function)
+	condition := b.Bool(span, false)
+	selectTerm := b.Select(span, program.SelectOr, condition, call)
+	result := b.Return(span, b.Values(span, []program.Term{selectTerm}, 0))
+	if !b.SetBody(body, result) {
+		t.Fatal("SetBody failed")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head, ok := p.Mu(function); !ok || head != function {
+		t.Fatalf("Select RHS direct-call Mu = %v, %v", head, ok)
+	}
+	if order, ok := p.AppendOrder(selectTerm, nil); !ok || !reflect.DeepEqual(order, []program.Term{condition}) {
+		t.Fatalf("Select order = %v, %v", order, ok)
 	}
 }
 

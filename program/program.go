@@ -20,6 +20,61 @@ const (
 	FieldKey
 )
 
+// UnaryOp is the closed source-language unary operator vocabulary.
+type UnaryOp uint8
+
+const (
+	UnaryNeg UnaryOp = iota + 1
+	UnaryNot
+	UnaryLen
+	UnaryBitNot
+)
+
+func (op UnaryOp) valid() bool {
+	return op >= UnaryNeg && op <= UnaryBitNot
+}
+
+// BinaryOp is the closed source-language binary operator vocabulary.
+type BinaryOp uint8
+
+const (
+	BinaryAdd BinaryOp = iota + 1
+	BinarySub
+	BinaryMul
+	BinaryDiv
+	BinaryIDiv
+	BinaryMod
+	BinaryPow
+	BinaryConcat
+	BinaryBitAnd
+	BinaryBitOr
+	BinaryBitXor
+	BinaryShiftLeft
+	BinaryShiftRight
+	BinaryEqual
+	BinaryNotEqual
+	BinaryLess
+	BinaryLessEqual
+	BinaryGreater
+	BinaryGreaterEqual
+)
+
+func (op BinaryOp) valid() bool {
+	return op >= BinaryAdd && op <= BinaryGreaterEqual
+}
+
+// SelectOp is Lua's short-circuit value-selection vocabulary.
+type SelectOp uint8
+
+const (
+	SelectAnd SelectOp = iota + 1
+	SelectOr
+)
+
+func (op SelectOp) valid() bool {
+	return op == SelectAnd || op == SelectOr
+}
+
 const (
 	tagBits  = 8
 	tagMask  = uint32(1<<tagBits - 1)
@@ -45,6 +100,9 @@ const (
 	tagBody
 	tagCell
 	tagRead
+	tagUnary
+	tagBinary
+	tagSelect
 	tagBind
 	tagAssign
 	tagFunction
@@ -90,7 +148,19 @@ type bodyRow struct {
 	filled bool
 }
 type cellRow struct{ body Term }
-type readRow struct{ cell Term }
+type readRow struct{ source Term }
+type unaryRow struct {
+	op      UnaryOp
+	operand Term
+}
+type binaryRow struct {
+	op          BinaryOp
+	left, right Term
+}
+type selectRow struct {
+	op          SelectOp
+	left, right Term
+}
 type bindRow struct {
 	cells  termRange
 	values Term
@@ -163,6 +233,9 @@ type Program struct {
 	bodies      []bodyRow
 	cells       []cellRow
 	reads       []readRow
+	unaries     []unaryRow
+	binaries    []binaryRow
+	selects     []selectRow
 	binds       []bindRow
 	assigns     []assignRow
 	functions   []functionRow
@@ -206,6 +279,9 @@ type Builder struct {
 	bodies      []bodyRow
 	cells       []cellRow
 	reads       []readRow
+	unaries     []unaryRow
+	binaries    []binaryRow
+	selects     []selectRow
 	binds       []bindRow
 	assigns     []assignRow
 	functions   []functionRow
@@ -501,7 +577,7 @@ func (b *Builder) SetBody(body Term, owned ...Term) bool {
 	return true
 }
 
-// Cell is lexical storage owned by one Body. Read observes that storage.
+// Cell is lexical storage owned by one Body. Read observes a Cell or a Lens.
 func (b *Builder) Cell(span Span, body Term) Term {
 	b.cells = append(b.cells, cellRow{body: body})
 	term := b.mint(tagCell, span, b.familyIndex(len(b.cells)))
@@ -511,12 +587,58 @@ func (b *Builder) Cell(span Span, body Term) Term {
 	return term
 }
 
-func (b *Builder) Read(span Span, cell Term) Term {
-	b.reads = append(b.reads, readRow{cell: cell})
+// Read observes a lexical Cell or an evaluated Lens. Reading a Cell has no
+// evaluation predecessor; reading a Lens evaluates that Lens exactly once.
+func (b *Builder) Read(span Span, source Term) Term {
+	b.reads = append(b.reads, readRow{source: source})
 	term := b.mint(tagRead, span, b.familyIndex(len(b.reads)))
 	if term == 0 {
 		b.reads = b.reads[:len(b.reads)-1]
+		return 0
 	}
+	if b.has(source, tagLensExact) || b.has(source, tagLensKey) {
+		b.setOrder(term, []Term{source})
+	} else {
+		b.setOrder(term, nil)
+	}
+	return term
+}
+
+// Unary records one closed unary scalar operation.
+func (b *Builder) Unary(span Span, op UnaryOp, operand Term) Term {
+	b.unaries = append(b.unaries, unaryRow{op: op, operand: operand})
+	term := b.mint(tagUnary, span, b.familyIndex(len(b.unaries)))
+	if term == 0 {
+		b.unaries = b.unaries[:len(b.unaries)-1]
+		return 0
+	}
+	b.setOrder(term, []Term{operand})
+	return term
+}
+
+// Binary records one closed left-to-right binary scalar operation.
+func (b *Builder) Binary(span Span, op BinaryOp, left, right Term) Term {
+	b.binaries = append(b.binaries, binaryRow{op: op, left: left, right: right})
+	term := b.mint(tagBinary, span, b.familyIndex(len(b.binaries)))
+	if term == 0 {
+		b.binaries = b.binaries[:len(b.binaries)-1]
+		return 0
+	}
+	b.setOrder(term, []Term{left, right})
+	return term
+}
+
+// Select records Lua's lazy and/or value selection. The left operand always
+// evaluates first; the right operand is retained in the row and evaluates only
+// when the selected operator's truthiness rule demands it.
+func (b *Builder) Select(span Span, op SelectOp, left, right Term) Term {
+	b.selects = append(b.selects, selectRow{op: op, left: left, right: right})
+	term := b.mint(tagSelect, span, b.familyIndex(len(b.selects)))
+	if term == 0 {
+		b.selects = b.selects[:len(b.selects)-1]
+		return 0
+	}
+	b.setOrder(term, []Term{left})
 	return term
 }
 
@@ -779,6 +901,12 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.cells))
 	case tagRead:
 		return index <= uint32(len(b.reads))
+	case tagUnary:
+		return index <= uint32(len(b.unaries))
+	case tagBinary:
+		return index <= uint32(len(b.binaries))
+	case tagSelect:
+		return index <= uint32(len(b.selects))
 	case tagBind:
 		return index <= uint32(len(b.binds))
 	case tagAssign:
@@ -909,9 +1037,38 @@ func (b *Builder) Seal() (*Program, error) {
 			return nil, errors.New("program: Cell requires Body owner")
 		}
 	}
-	for _, row := range b.reads {
-		if !b.has(row.cell, tagCell) {
-			return nil, errors.New("program: Read requires Cell")
+	for readIndex, row := range b.reads {
+		if !b.has(row.source, tagCell) && !b.has(row.source, tagLensExact) && !b.has(row.source, tagLensKey) {
+			return nil, errors.New("program: Read requires Cell or Lens")
+		}
+		orders := b.orders[tagRead]
+		if readIndex >= len(orders) {
+			return nil, errors.New("program: Read has no evaluation order")
+		}
+		order := orders[readIndex]
+		if b.has(row.source, tagCell) {
+			if order.start != order.end {
+				return nil, errors.New("program: Cell Read must have empty evaluation order")
+			}
+			continue
+		}
+		if order.end-order.start != 1 || b.orderTerms[order.start] != row.source {
+			return nil, errors.New("program: Lens Read must evaluate its Lens exactly once")
+		}
+	}
+	for _, row := range b.unaries {
+		if !row.op.valid() || !b.valid(row.operand) {
+			return nil, errors.New("program: invalid Unary relation")
+		}
+	}
+	for _, row := range b.binaries {
+		if !row.op.valid() || !b.valid(row.left) || !b.valid(row.right) {
+			return nil, errors.New("program: invalid Binary relation")
+		}
+	}
+	for _, row := range b.selects {
+		if !row.op.valid() || !b.valid(row.left) || !b.valid(row.right) {
+			return nil, errors.New("program: invalid Select relation")
 		}
 	}
 	boundCell := make([]Term, len(b.cells)+1)
@@ -1119,6 +1276,13 @@ func (b *Builder) directCallMu() ([]Term, error) {
 				directCallWork{term: branch.whenFalse, owner: current.owner},
 			)
 		}
+		if term.tag() == tagSelect {
+			// Select's RHS is conditional, not part of its unconditional
+			// evaluation order. It is nevertheless executable under this
+			// Function and therefore participates in ownership and direct-call
+			// recurrence discovery.
+			stack = append(stack, directCallWork{term: b.selects[term.index()-1].right, owner: current.owner})
+		}
 		rows := b.orders[term.tag()]
 		if term.index() <= uint32(len(rows)) {
 			order := rows[term.index()-1]
@@ -1261,6 +1425,9 @@ func (b *Builder) snapshot(muFunctions []Term) *Program {
 		bodies:      append([]bodyRow(nil), b.bodies...),
 		cells:       append([]cellRow(nil), b.cells...),
 		reads:       append([]readRow(nil), b.reads...),
+		unaries:     append([]unaryRow(nil), b.unaries...),
+		binaries:    append([]binaryRow(nil), b.binaries...),
+		selects:     append([]selectRow(nil), b.selects...),
 		binds:       append([]bindRow(nil), b.binds...),
 		assigns:     append([]assignRow(nil), b.assigns...),
 		functions:   append([]functionRow(nil), b.functions...),
@@ -1319,6 +1486,12 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.cells))
 	case tagRead:
 		return index <= uint32(len(p.reads))
+	case tagUnary:
+		return index <= uint32(len(p.unaries))
+	case tagBinary:
+		return index <= uint32(len(p.binaries))
+	case tagSelect:
+		return index <= uint32(len(p.selects))
 	case tagBind:
 		return index <= uint32(len(p.binds))
 	case tagAssign:
@@ -1586,7 +1759,35 @@ func (p *Program) Read(term Term) (Term, bool) {
 	if !p.has(term, tagRead) {
 		return 0, false
 	}
-	return p.reads[term.index()-1].cell, true
+	return p.reads[term.index()-1].source, true
+}
+
+// Unary returns a closed unary scalar relation in O(1).
+func (p *Program) Unary(term Term) (UnaryOp, Term, bool) {
+	if !p.has(term, tagUnary) {
+		return 0, 0, false
+	}
+	row := p.unaries[term.index()-1]
+	return row.op, row.operand, true
+}
+
+// Binary returns a closed binary scalar relation in O(1).
+func (p *Program) Binary(term Term) (BinaryOp, Term, Term, bool) {
+	if !p.has(term, tagBinary) {
+		return 0, 0, 0, false
+	}
+	row := p.binaries[term.index()-1]
+	return row.op, row.left, row.right, true
+}
+
+// Select returns a lazy and/or relation in O(1). Its right operand is absent
+// from Order because execution branches on the evaluated left operand.
+func (p *Program) Select(term Term) (SelectOp, Term, Term, bool) {
+	if !p.has(term, tagSelect) {
+		return 0, 0, 0, false
+	}
+	row := p.selects[term.index()-1]
+	return row.op, row.left, row.right, true
 }
 
 func (p *Program) BindLen(term Term) (int, bool) {
