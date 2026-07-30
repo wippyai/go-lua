@@ -137,7 +137,7 @@ func (b *Builder) TypeKey(name string) Key {
 }
 
 func (b *Builder) DeclareTypeParam(span Span, owner Term, name string) Term {
-	if !b.require(b.has(owner, tagTypeAlias) && name != "") {
+	if !b.require((b.has(owner, tagTypeAlias) || b.has(owner, tagTypeFunction)) && name != "") {
 		return 0
 	}
 	key := b.TypeKey(name)
@@ -341,6 +341,115 @@ func (b *Builder) Generic(span Span, base Term, args []Term) Term {
 	return term
 }
 
+// Parameter is one ordered ordinary parameter of a static function
+// type. Name is zero for source syntax that omits a parameter name.
+type Parameter struct {
+	Name Key
+	Type Term
+}
+
+// DeclareSignature reserves a static callable signature under an inherited
+// lexical scope host before its generic declarations and children are filled.
+func (b *Builder) DeclareSignature(span Span, scope Term) Term {
+	if b == nil || b.poison || !b.staticScopeValid(scope) {
+		return 0
+	}
+	b.signatures = append(b.signatures, signatureRow{scope: scope})
+	term := b.mint(tagTypeFunction, span, b.familyIndex(len(b.signatures)))
+	if term == 0 {
+		b.signatures = b.signatures[:len(b.signatures)-1]
+	}
+	return term
+}
+
+// SetSignatureGenerics installs the ordered generic declaration range.
+// Each identity must have been declared with this exact function as owner.
+func (b *Builder) SetSignatureGenerics(function Term, params []Term) bool {
+	if !b.has(function, tagTypeFunction) {
+		b.poison = true
+		return false
+	}
+	r := &b.signatures[function.index()-1]
+	if r.typeParamsSet || r.filled {
+		b.poison = true
+		return false
+	}
+	for _, param := range params {
+		if !b.has(param, tagTypeParam) || b.typeParams[param.index()-1].owner != function {
+			b.poison = true
+			return false
+		}
+	}
+	range_, ok := b.appendPool(&b.typeParamTerms, params)
+	if !ok {
+		return false
+	}
+	r.typeParams, r.typeParamsSet = range_, true
+	return true
+}
+
+// FillSignature records every source-ordered type child once. A nil return
+// clause is distinct from an explicit empty return list through returnsKnown.
+func (b *Builder) FillSignature(function Term, params []Parameter, variadic Term, returnsKnown bool, returns []Term) bool {
+	if !b.has(function, tagTypeFunction) {
+		b.poison = true
+		return false
+	}
+	r := &b.signatures[function.index()-1]
+	if r.filled || !r.typeParamsSet || (!returnsKnown && len(returns) != 0) || (variadic != 0 && !b.staticTypeNode(variadic)) {
+		b.poison = true
+		return false
+	}
+	for _, param := range params {
+		if !b.staticTypeNode(param.Type) || (param.Name != 0 && !b.staticTypeKey(param.Name)) {
+			b.poison = true
+			return false
+		}
+	}
+	for _, result := range returns {
+		if !b.staticTypeNode(result) {
+			b.poison = true
+			return false
+		}
+	}
+	paramStart, paramEnd, ok := boundedRange(len(b.signatureParams), len(params))
+	if !ok {
+		b.poison = true
+		return false
+	}
+	returnStart, returnEnd, ok := boundedRange(len(b.staticTypeTerms), len(returns))
+	if !ok {
+		b.poison = true
+		return false
+	}
+	for _, param := range params {
+		b.signatureParams = append(b.signatureParams, signatureParamRow{name: param.Name, typ: param.Type})
+	}
+	b.staticTypeTerms = append(b.staticTypeTerms, returns...)
+	r.params = signatureParamRange{start: paramStart, end: paramEnd}
+	r.returns = termRange{start: returnStart, end: returnEnd}
+	r.variadic, r.returnsKnown, r.filled = variadic, returnsKnown, true
+	return true
+}
+
+// Assertion records a return-position assertion. param is the binder's
+// immediate-formal ordinal, or -1 when the source name has no such binding.
+func (b *Builder) Assertion(span Span, name string, param int, narrow Term) Term {
+	if !b.require(name != "" && param >= -1 && (param < 0 || uint64(param) <= math.MaxInt32) && (narrow == 0 || b.staticTypeNode(narrow))) {
+		return 0
+	}
+	key := b.TypeKey(name)
+	if key == 0 {
+		return 0
+	}
+	b.assertions = append(b.assertions, assertionRow{name: key, param: int32(param), narrow: narrow})
+	term := b.mint(tagTypeAsserts, span, b.familyIndex(len(b.assertions)))
+	if term == 0 {
+		b.assertions = b.assertions[:len(b.assertions)-1]
+	}
+	return term
+}
+
 // Array records parser-authored {Element} syntax and its explicit readonly
 // modifier. The element is the array's unique type child.
 func (b *Builder) Array(span Span, element Term, readonly bool) Term {
@@ -405,6 +514,8 @@ func (b *Builder) staticTypeNode(term Term) bool {
 	switch term.tag() {
 	case tagTypePrimitive, tagTypeLiteral, tagTypeOptional, tagTypeUnion, tagTypeIntersection, tagTypeRef, tagTypeGeneric, tagTypeArray, tagTypeMap, tagTypeRecord, tagTypeOf:
 		return true
+	case tagTypeFunction, tagTypeAsserts:
+		return true
 	default:
 		return false
 	}
@@ -425,6 +536,7 @@ func (b *Builder) staticTypeKey(key Key) bool {
 func (b *Builder) validateStaticCore() bool {
 	var parents [tagCount][]Term
 	paramSeen := make([]bool, len(b.typeParams))
+	assertReturnSeen := make([]bool, len(b.assertions))
 	parents[tagTypePrimitive] = make([]Term, len(b.primitiveTypes))
 	parents[tagTypeLiteral] = make([]Term, len(b.literalTypes))
 	parents[tagTypeOptional] = make([]Term, len(b.optionalTypes))
@@ -435,6 +547,8 @@ func (b *Builder) validateStaticCore() bool {
 	parents[tagTypeArray] = make([]Term, len(b.arrayTypes))
 	parents[tagTypeMap] = make([]Term, len(b.mapTypes))
 	parents[tagTypeRecord] = make([]Term, len(b.recordTypes))
+	parents[tagTypeFunction] = make([]Term, len(b.signatures))
+	parents[tagTypeAsserts] = make([]Term, len(b.assertions))
 	parents[tagTypeOf] = make([]Term, len(b.typeOfs))
 	attach := func(parent, child Term) bool {
 		if !b.staticTypeNode(child) || !b.valid(parent) {
@@ -452,6 +566,9 @@ func (b *Builder) validateStaticCore() bool {
 	}
 	validParams := func(r termRange) bool {
 		return r.start <= r.end && uint64(r.end) <= uint64(len(b.typeParamTerms))
+	}
+	validFunctionParams := func(r signatureParamRange) bool {
+		return r.start <= r.end && uint64(r.end) <= uint64(len(b.signatureParams))
 	}
 	validPath := func(r keyRange) bool {
 		if r.start >= r.end || uint64(r.end) > uint64(len(b.typeRefPathKeys)) {
@@ -491,9 +608,37 @@ func (b *Builder) validateStaticCore() bool {
 			paramSeen[param.index()-1] = true
 		}
 	}
+	for i, row := range b.signatures {
+		function := makeTerm(tagTypeFunction, uint32(i+1))
+		if !b.staticScopeValid(row.scope) || !row.filled || !row.typeParamsSet || (!row.returnsKnown && row.returns.start != row.returns.end) || !validParams(row.typeParams) || !validFunctionParams(row.params) || !validTerms(row.returns, 0) || (row.variadic != 0 && !b.staticTypeNode(row.variadic)) {
+			return false
+		}
+		for _, param := range b.typeParamTerms[row.typeParams.start:row.typeParams.end] {
+			if !b.has(param, tagTypeParam) || b.typeParams[param.index()-1].owner != function || paramSeen[param.index()-1] {
+				return false
+			}
+			paramSeen[param.index()-1] = true
+		}
+		for _, param := range b.signatureParams[row.params.start:row.params.end] {
+			if (param.name != 0 && !b.staticTypeKey(param.name)) || !attach(function, param.typ) {
+				return false
+			}
+		}
+		if row.variadic != 0 && !attach(function, row.variadic) {
+			return false
+		}
+		for _, result := range b.staticTypeTerms[row.returns.start:row.returns.end] {
+			if !attach(function, result) {
+				return false
+			}
+			if result.tag() == tagTypeAsserts {
+				assertReturnSeen[result.index()-1] = true
+			}
+		}
+	}
 	for i, row := range b.typeParams {
 		param := makeTerm(tagTypeParam, uint32(i+1))
-		if !paramSeen[i] || !b.has(row.owner, tagTypeAlias) || !b.staticTypeKey(row.name) || !row.constraintFilled {
+		if !paramSeen[i] || (!b.has(row.owner, tagTypeAlias) && !b.has(row.owner, tagTypeFunction)) || !b.staticTypeKey(row.name) || !row.constraintFilled {
 			return false
 		}
 		if row.constraint != 0 && (!b.staticTypeNode(row.constraint) || !attach(param, row.constraint)) {
@@ -602,6 +747,12 @@ func (b *Builder) validateStaticCore() bool {
 			}
 		}
 	}
+	for i, row := range b.assertions {
+		assertion := makeTerm(tagTypeAsserts, uint32(i+1))
+		if !b.staticTypeKey(row.name) || row.param < -1 || (row.narrow != 0 && !attach(assertion, row.narrow)) {
+			return false
+		}
+	}
 	for tag, slots := range parents {
 		if uint8(tag) == tagTypeOf {
 			continue
@@ -610,6 +761,16 @@ func (b *Builder) validateStaticCore() bool {
 			if parent == 0 {
 				return false
 			}
+		}
+	}
+	for i, row := range b.assertions {
+		parent := parents[tagTypeAsserts][i]
+		if !b.has(parent, tagTypeFunction) {
+			return false
+		}
+		function := b.signatures[parent.index()-1]
+		if !assertReturnSeen[i] || (row.param >= 0 && uint32(row.param) >= function.params.end-function.params.start) {
+			return false
 		}
 	}
 	for i, row := range b.typeOfs {
@@ -625,7 +786,7 @@ func (b *Builder) validateStaticCore() bool {
 		}
 		for {
 			switch parent.tag() {
-			case tagTypeAlias, tagTypeParam:
+			case tagTypeAlias, tagTypeParam, tagTypeFunction:
 				if parent != row.scope {
 					return false
 				}
@@ -766,6 +927,84 @@ func (p *Program) GenericArgAt(term Term, index int) (Term, bool) {
 		return 0, false
 	}
 	return p.staticTypeTerms[at], true
+}
+
+// Signature reports the distinct source-only callable signature shape.
+// returnsKnown distinguishes no return clause from an authored empty list.
+func (p *Program) Signature(term Term) (scope, variadic Term, returnsKnown bool, ok bool) {
+	if !p.has(term, tagTypeFunction) {
+		return 0, 0, false, false
+	}
+	r := p.signatures[term.index()-1]
+	return r.scope, r.variadic, r.returnsKnown, true
+}
+
+func (p *Program) SignatureGenericCount(term Term) (int, bool) {
+	if !p.has(term, tagTypeFunction) {
+		return 0, false
+	}
+	r := p.signatures[term.index()-1].typeParams
+	return int(r.end - r.start), true
+}
+func (p *Program) SignatureGenericAt(term Term, index int) (Term, bool) {
+	if !p.has(term, tagTypeFunction) || index < 0 {
+		return 0, false
+	}
+	r := p.signatures[term.index()-1].typeParams
+	at := r.start + uint32(index)
+	if at >= r.end {
+		return 0, false
+	}
+	return p.typeParamTerms[at], true
+}
+
+func (p *Program) SignatureParamCount(term Term) (int, bool) {
+	if !p.has(term, tagTypeFunction) {
+		return 0, false
+	}
+	r := p.signatures[term.index()-1].params
+	return int(r.end - r.start), true
+}
+func (p *Program) SignatureParamAt(term Term, index int) (name Key, typ Term, ok bool) {
+	if !p.has(term, tagTypeFunction) || index < 0 {
+		return 0, 0, false
+	}
+	r := p.signatures[term.index()-1].params
+	at := r.start + uint32(index)
+	if at >= r.end {
+		return 0, 0, false
+	}
+	param := p.signatureParams[at]
+	return param.name, param.typ, true
+}
+
+func (p *Program) SignatureReturnCount(term Term) (int, bool) {
+	if !p.has(term, tagTypeFunction) {
+		return 0, false
+	}
+	r := p.signatures[term.index()-1].returns
+	return int(r.end - r.start), true
+}
+func (p *Program) SignatureReturnAt(term Term, index int) (Term, bool) {
+	if !p.has(term, tagTypeFunction) || index < 0 {
+		return 0, false
+	}
+	r := p.signatures[term.index()-1].returns
+	at := r.start + uint32(index)
+	if at >= r.end {
+		return 0, false
+	}
+	return p.staticTypeTerms[at], true
+}
+
+// Assertion reports source spelling, optional resolved formal ordinal (-1
+// means unresolved), and an optional narrow type (zero means truthy/non-nil).
+func (p *Program) Assertion(term Term) (name Key, param int, narrow Term, ok bool) {
+	if !p.has(term, tagTypeAsserts) {
+		return 0, 0, 0, false
+	}
+	r := p.assertions[term.index()-1]
+	return r.name, int(r.param), r.narrow, true
 }
 
 func (p *Program) Array(term Term) (element Term, readonly bool, ok bool) {
@@ -910,4 +1149,22 @@ func (p *Program) RecordCount() int {
 }
 func (p *Program) RecordAt(index int) (Term, bool) {
 	return familyTerm(tagTypeRecord, p.RecordCount(), index)
+}
+func (p *Program) SignatureCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.signatures)
+}
+func (p *Program) SignatureAt(index int) (Term, bool) {
+	return familyTerm(tagTypeFunction, p.SignatureCount(), index)
+}
+func (p *Program) AssertionCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.assertions)
+}
+func (p *Program) AssertionAt(index int) (Term, bool) {
+	return familyTerm(tagTypeAsserts, p.AssertionCount(), index)
 }

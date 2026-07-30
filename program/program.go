@@ -149,6 +149,10 @@ const (
 	tagTypeArray
 	tagTypeMap
 	tagTypeRecord
+	// tagTypeFunction is static function-type syntax. It deliberately remains
+	// separate from tagFunction, which owns an executable Body.
+	tagTypeFunction
+	tagTypeAsserts
 	// tagTypeOf is a static type relation. Its child expression still uses the
 	// ordinary expression families, but Seal proves static containment so it
 	// never enters executable control/effect evidence.
@@ -373,6 +377,9 @@ type Program struct {
 	mapTypes          []mapTypeRow
 	recordTypes       []recordTypeRow
 	recordFields      []recordFieldRow
+	signatures        []signatureRow
+	signatureParams   []signatureParamRow
+	assertions        []assertionRow
 	typeParamTerms    []Term
 	staticTypeTerms   []Term
 }
@@ -453,6 +460,9 @@ type Builder struct {
 	mapTypes          []mapTypeRow
 	recordTypes       []recordTypeRow
 	recordFields      []recordFieldRow
+	signatures        []signatureRow
+	signatureParams   []signatureParamRow
+	assertions        []assertionRow
 	typeParamTerms    []Term
 	staticTypeTerms   []Term
 }
@@ -1433,6 +1443,10 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.mapTypes))
 	case tagTypeRecord:
 		return index <= uint32(len(b.recordTypes))
+	case tagTypeFunction:
+		return index <= uint32(len(b.signatures))
+	case tagTypeAsserts:
+		return index <= uint32(len(b.assertions))
 	case tagTypeOf:
 		return index <= uint32(len(b.typeOfs))
 	}
@@ -3278,6 +3292,9 @@ func (b *Builder) snapshot(
 		mapTypes:          append([]mapTypeRow(nil), b.mapTypes...),
 		recordTypes:       append([]recordTypeRow(nil), b.recordTypes...),
 		recordFields:      append([]recordFieldRow(nil), b.recordFields...),
+		signatures:        append([]signatureRow(nil), b.signatures...),
+		signatureParams:   append([]signatureParamRow(nil), b.signatureParams...),
+		assertions:        append([]assertionRow(nil), b.assertions...),
 		typeParamTerms:    copyTerms(b.typeParamTerms),
 		staticTypeTerms:   copyTerms(b.staticTypeTerms),
 	}
@@ -3376,6 +3393,10 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.mapTypes))
 	case tagTypeRecord:
 		return index <= uint32(len(p.recordTypes))
+	case tagTypeFunction:
+		return index <= uint32(len(p.signatures))
+	case tagTypeAsserts:
+		return index <= uint32(len(p.assertions))
 	case tagTypeOf:
 		return index <= uint32(len(p.typeOfs))
 	}

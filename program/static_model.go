@@ -115,3 +115,31 @@ type genericTypeRow struct {
 	base Term
 	args termRange
 }
+
+// signatureRow is a source-only callable signature. Its type parameters
+// are declaration identities; its ordinary parameters and returns are owned
+// type children in source order.
+type signatureRow struct {
+	scope         Term
+	typeParams    termRange
+	params        signatureParamRange
+	returns       termRange
+	variadic      Term
+	typeParamsSet bool
+	filled        bool
+	returnsKnown  bool
+}
+type signatureParamRange struct{ start, end uint32 }
+type signatureParamRow struct {
+	name Key // zero records an anonymous source parameter.
+	typ  Term
+}
+
+// assertionRow preserves an assertion's source spelling and optional
+// binder-resolved immediate-formal ordinal. A negative ordinal is unresolved;
+// a zero narrow type is the authored truthy/non-nil form.
+type assertionRow struct {
+	name   Key
+	param  int32
+	narrow Term
+}

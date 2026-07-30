@@ -57,24 +57,29 @@ func (b *Builder) TypeOf(span Span, scope, operand Term) Term {
 }
 
 func (b *Builder) staticScopeBody(scope Term) Term {
-	switch {
-	case b.has(scope, tagCell) && b.lexicalCell(scope):
-		return b.cells[scope.index()-1].storage
-	case b.has(scope, tagTypeAlias):
-		body, _, ok := b.staticDeclarationScope(scope)
-		if ok {
-			return body
+	for scope != 0 {
+		switch {
+		case b.has(scope, tagCell) && b.lexicalCell(scope):
+			return b.cells[scope.index()-1].storage
+		case b.has(scope, tagTypeAlias):
+			body, _, ok := b.staticDeclarationScope(scope)
+			if ok {
+				return body
+			}
+			return 0
+		case b.has(scope, tagTypeParam):
+			scope = b.typeParams[scope.index()-1].owner
+		case b.has(scope, tagTypeFunction):
+			scope = b.signatures[scope.index()-1].scope
+		default:
+			return 0
 		}
-	case b.has(scope, tagTypeParam):
-		param := b.typeParams[scope.index()-1]
-		body, _, ok := b.staticDeclarationScope(param.owner)
-		if ok {
-			return body
-		}
-	default:
-		return 0
 	}
 	return 0
+}
+
+func (b *Builder) staticScopeValid(scope Term) bool {
+	return b.staticScopeBody(scope) != 0
 }
 
 // markStaticTerms computes the transient static containment membership. It
@@ -264,30 +269,33 @@ func (b *Builder) validateStaticTypeOf(claims [tagCount][]sealClaimSlot, static 
 		}
 	}
 	scopeFrontier := func(scope Term) (frontier, bool) {
-		switch {
-		case b.has(scope, tagCell):
-			if _, ok := b.globalCellKey(scope); ok {
+		for scope != 0 {
+			switch {
+			case b.has(scope, tagCell):
+				if _, ok := b.globalCellKey(scope); ok {
+					return frontier{}, false
+				}
+				f := cellFrontier[scope.index()]
+				if cellRole[scope.index()] == 0 {
+					return frontier{}, false
+				}
+				f.afterFormals = cellRole[scope.index()] == 2 || cellRole[scope.index()] == 3
+				if f.afterFormals {
+					f.cursor = 0
+				}
+				return f, f.body != 0
+			case b.has(scope, tagTypeAlias):
+				body, gap, ok := b.staticDeclarationScope(scope)
+				return frontier{body: body, cursor: int(gap)}, ok
+			case b.has(scope, tagTypeParam):
+				scope = b.typeParams[scope.index()-1].owner
+			case b.has(scope, tagTypeFunction):
+				scope = b.signatures[scope.index()-1].scope
+			default:
 				return frontier{}, false
 			}
-			f := cellFrontier[scope.index()]
-			if cellRole[scope.index()] == 0 {
-				return frontier{}, false
-			}
-			f.afterFormals = cellRole[scope.index()] == 2 || cellRole[scope.index()] == 3
-			if f.afterFormals {
-				f.cursor = 0
-			}
-			return f, f.body != 0
-		case b.has(scope, tagTypeAlias):
-			body, gap, ok := b.staticDeclarationScope(scope)
-			return frontier{body: body, cursor: int(gap)}, ok
-		case b.has(scope, tagTypeParam):
-			param := b.typeParams[scope.index()-1]
-			body, gap, ok := b.staticDeclarationScope(param.owner)
-			return frontier{body: body, cursor: int(gap)}, ok
-		default:
-			return frontier{}, false
 		}
+		return frontier{}, false
 	}
 	visible := func(at frontier, cell Term) bool {
 		if _, ok := b.globalCellKey(cell); ok {

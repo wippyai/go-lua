@@ -84,6 +84,123 @@ func TestStaticSchemaPredeclaredAliasAndParamTypeOf(t *testing.T) {
 	}
 }
 
+func TestStaticSchemaSignatureAndAssertion(t *testing.T) {
+	b, entry := staticEntry(t)
+	alias := staticAlias(t, b, entry, "Predicate")
+	signatureSpan := Span{File: "signature.lua", StartLine: 1, StartCol: 18, EndLine: 1, EndCol: 48}
+	assertionSpan := Span{File: "signature.lua", StartLine: 1, StartCol: 39, EndLine: 1, EndCol: 48}
+	signature := b.DeclareSignature(signatureSpan, alias)
+	generic := b.DeclareTypeParam(Span{File: "signature.lua", StartLine: 1, StartCol: 19, EndLine: 1, EndCol: 19}, signature, "T")
+	constraint := b.Primitive(Span{}, PrimitiveString)
+	if signature == 0 || generic == 0 || constraint == 0 || !b.FillTypeParam(generic, constraint) || !b.SetSignatureGenerics(signature, []Term{generic}) {
+		t.Fatal("declare signature generic")
+	}
+	paramType := b.TypeRef(Span{}, "", "T", generic)
+	variadic := b.Primitive(Span{}, PrimitiveNumber)
+	narrow := b.Primitive(Span{}, PrimitiveString)
+	assertion := b.Assertion(assertionSpan, "value", 0, narrow)
+	name := b.TypeKey("value")
+	if paramType == 0 || variadic == 0 || assertion == 0 || name == 0 || !b.FillSignature(signature, []Parameter{{Name: name, Type: paramType}}, variadic, true, []Term{assertion}) || !b.SetTypeAliasParams(alias, nil) || !b.FillTypeAlias(alias, signature) || !b.SetBody(entry) {
+		t.Fatal("build signature")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotScope, got, returnsKnown, ok := p.Signature(signature); !ok || gotScope != alias || got != variadic || !returnsKnown {
+		t.Fatalf("signature = %v %v %v", got, returnsKnown, ok)
+	}
+	if count, ok := p.SignatureGenericCount(signature); !ok || count != 1 {
+		t.Fatalf("generic count = %d, %v", count, ok)
+	}
+	if got, ok := p.SignatureGenericAt(signature, 0); !ok || got != generic {
+		t.Fatalf("generic = %v, %v", got, ok)
+	}
+	if owner, _, gotConstraint, ok := p.TypeParam(generic); !ok || owner != signature || gotConstraint != constraint {
+		t.Fatalf("signature generic identity = %v %v %v %v", owner, gotConstraint, generic, ok)
+	}
+	if count, ok := p.SignatureParamCount(signature); !ok || count != 1 {
+		t.Fatalf("parameter count = %d, %v", count, ok)
+	}
+	if gotName, gotType, ok := p.SignatureParamAt(signature, 0); !ok || gotName != name || gotType != paramType {
+		t.Fatalf("parameter = %v %v %v", gotName, gotType, ok)
+	}
+	if count, ok := p.SignatureReturnCount(signature); !ok || count != 1 {
+		t.Fatalf("return count = %d, %v", count, ok)
+	}
+	if got, ok := p.SignatureReturnAt(signature, 0); !ok || got != assertion {
+		t.Fatalf("return = %v, %v", got, ok)
+	}
+	if gotName, ordinal, gotNarrow, ok := p.Assertion(assertion); !ok || gotName != name || ordinal != 0 || gotNarrow != narrow {
+		t.Fatalf("assertion = %v %d %v %v", gotName, ordinal, gotNarrow, ok)
+	}
+	if got, ok := p.Span(signature); !ok || got != signatureSpan {
+		t.Fatalf("signature span = %#v, %v", got, ok)
+	}
+	if got, ok := p.Span(assertion); !ok || got != assertionSpan {
+		t.Fatalf("assertion span = %#v, %v", got, ok)
+	}
+}
+
+func TestStaticSchemaSignaturePreservesAbsentAndEmptyReturns(t *testing.T) {
+	b, entry := staticEntry(t)
+	absentAlias := staticAlias(t, b, entry, "Absent")
+	emptyAlias := staticAlias(t, b, entry, "Empty")
+	absent := b.DeclareSignature(Span{}, absentAlias)
+	empty := b.DeclareSignature(Span{}, emptyAlias)
+	if absent == 0 || empty == 0 || !b.SetSignatureGenerics(absent, nil) || !b.SetSignatureGenerics(empty, nil) || !b.FillSignature(absent, nil, 0, false, nil) || !b.FillSignature(empty, nil, 0, true, nil) || !b.SetTypeAliasParams(absentAlias, nil) || !b.SetTypeAliasParams(emptyAlias, nil) || !b.FillTypeAlias(absentAlias, absent) || !b.FillTypeAlias(emptyAlias, empty) || !b.SetBody(entry) {
+		t.Fatal("build empty signatures")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, returnsKnown, ok := p.Signature(absent); !ok || returnsKnown {
+		t.Fatalf("absent returns = %v, %v", returnsKnown, ok)
+	}
+	if _, _, returnsKnown, ok := p.Signature(empty); !ok || !returnsKnown {
+		t.Fatalf("explicit empty returns = %v, %v", returnsKnown, ok)
+	}
+}
+
+func TestStaticSchemaSignatureGenericTypeOfInheritsLexicalScope(t *testing.T) {
+	b, entry := staticEntry(t)
+	cell := b.Cell(Span{}, entry)
+	bind := b.Bind(Span{}, entry, []Term{cell}, b.Values(Span{}, entry, []Term{b.Nil(Span{}, entry)}, 0))
+	alias := b.DeclareTypeAlias(Span{}, entry, "Scoped")
+	if bind == 0 || alias == 0 || !b.SetTypeAliasGap(alias, 1) {
+		t.Fatal("declare lexical scope")
+	}
+	signature := b.DeclareSignature(Span{}, alias)
+	param := b.DeclareTypeParam(Span{}, signature, "T")
+	constraint := b.TypeOf(Span{}, param, b.Read(Span{}, entry, cell))
+	ref := b.TypeRef(Span{}, "", "T", param)
+	if signature == 0 || param == 0 || constraint == 0 || ref == 0 ||
+		!b.FillTypeParam(param, constraint) ||
+		!b.SetSignatureGenerics(signature, []Term{param}) ||
+		!b.FillSignature(signature, []Parameter{{Type: ref}}, 0, true, nil) ||
+		!b.SetTypeAliasParams(alias, nil) ||
+		!b.FillTypeAlias(alias, signature) ||
+		!b.SetBody(entry, bind) {
+		t.Fatal("build scoped signature")
+	}
+	if _, err := b.Seal(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStaticSchemaRejectsAssertionOutsideSignatureReturn(t *testing.T) {
+	b, entry := staticEntry(t)
+	alias := staticAlias(t, b, entry, "Bad")
+	assertion := b.Assertion(Span{}, "value", -1, 0)
+	if assertion == 0 || !b.SetTypeAliasParams(alias, nil) || !b.FillTypeAlias(alias, assertion) || !b.SetBody(entry) {
+		t.Fatal("build unattached assertion")
+	}
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("Seal accepted assertion outside a signature return")
+	}
+}
+
 func TestStaticSchemaRejectsDuplicateAndMissingAttachments(t *testing.T) {
 	t.Run("duplicate child", func(t *testing.T) {
 		b, entry := staticEntry(t)
