@@ -1317,3 +1317,567 @@ func TestFunctionLoweringAllocationGrowthHasNoBindingTimesClosureTerm(t *testing
 			bindingsOnly.bytes, closuresOnly.bytes, combined.bytes)
 	}
 }
+
+func TestCompletedBodyRestoresShadowedCaptureSource(t *testing.T) {
+	p := parseBindLower(t, `local x = 1
+local holder = {}
+do
+  local x = 2
+  holder[1] = function() return x end
+end
+holder[2] = function() return x end
+return holder`)
+
+	entryRoots := entryRoots(t, p)
+	if len(entryRoots) != 5 {
+		t.Fatalf("Entry roots = %v; want two Bind, Body, Assign, Return", entryRoots)
+	}
+	outerCell := boundCell(t, p, entryRoots[0], 0)
+	innerBody := entryRoots[2]
+	innerRoots := bodyRoots(t, p, innerBody)
+	if len(innerRoots) != 3 {
+		t.Fatalf("inner Body roots = %v; want Bind, Assign, Normal", innerRoots)
+	}
+	innerCell := boundCell(t, p, innerRoots[0], 0)
+	if outerCell == innerCell {
+		t.Fatal("shadowed declaration reused its outer Cell")
+	}
+	if p.FunctionCount() != 2 {
+		t.Fatalf("FunctionCount = %d, want 2", p.FunctionCount())
+	}
+	inside, _ := p.FunctionAt(0)
+	after, _ := p.FunctionAt(1)
+	_, insideOuter := functionCapture(t, p, inside, 0)
+	_, afterOuter := functionCapture(t, p, after, 0)
+	if insideOuter != innerCell {
+		t.Fatalf("in-scope capture outer = %v; want inner Cell %v", insideOuter, innerCell)
+	}
+	if afterOuter != outerCell || afterOuter == innerCell {
+		t.Fatalf("post-scope capture outer = %v; want restored outer Cell %v", afterOuter, outerCell)
+	}
+}
+
+func TestFreshLoweringIsDeterministicThroughPublicProgramRelations(t *testing.T) {
+	source := `local x = 1
+local t = {x, name = x}
+do
+  local x = 2
+  t[x] = function(a, ...) return x, a, ... end
+end
+return x, t`
+	stmts, err := parse.ParseString(source, "deterministic.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := bind.BindChunk(stmts, bind.Options{})
+	want, err := programlower.Lower("deterministic.lua", stmts, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEntry, _ := want.Entry()
+	wantRoots := bodyRoots(t, want, wantEntry)
+	wantFunction, _ := want.FunctionAt(0)
+	wantFunctionOwner, wantFunctionBody, wantVararg, _ := want.Function(wantFunction)
+	wantInner, wantOuter := functionCapture(t, want, wantFunction, 0)
+	wantTable, _ := want.TableAt(0)
+
+	for run := 0; run < 3; run++ {
+		got, err := programlower.Lower("deterministic.lua", stmts, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotEntry, ok := got.Entry()
+		if !ok || gotEntry != wantEntry || got.TermCount() != want.TermCount() ||
+			got.BodyCount() != want.BodyCount() || got.ValuesCount() != want.ValuesCount() ||
+			got.FunctionCount() != want.FunctionCount() || got.TableCount() != want.TableCount() {
+			t.Fatalf(
+				"run %d public counts/Entry differ: entry=%v/%v terms=%d/%d bodies=%d/%d values=%d/%d functions=%d/%d tables=%d/%d",
+				run,
+				gotEntry,
+				wantEntry,
+				got.TermCount(),
+				want.TermCount(),
+				got.BodyCount(),
+				want.BodyCount(),
+				got.ValuesCount(),
+				want.ValuesCount(),
+				got.FunctionCount(),
+				want.FunctionCount(),
+				got.TableCount(),
+				want.TableCount(),
+			)
+		}
+		gotRoots := bodyRoots(t, got, gotEntry)
+		if len(gotRoots) != len(wantRoots) {
+			t.Fatalf("run %d Entry root count = %d, want %d", run, len(gotRoots), len(wantRoots))
+		}
+		for i := range wantRoots {
+			if gotRoots[i] != wantRoots[i] {
+				t.Fatalf("run %d Entry root %d = %v, want %v", run, i, gotRoots[i], wantRoots[i])
+			}
+		}
+		gotFunction, _ := got.FunctionAt(0)
+		gotOwner, gotBody, gotVararg, ok := got.Function(gotFunction)
+		gotInner, gotOuter := functionCapture(t, got, gotFunction, 0)
+		if !ok || gotFunction != wantFunction || gotOwner != wantFunctionOwner ||
+			gotBody != wantFunctionBody || gotVararg != wantVararg ||
+			gotInner != wantInner || gotOuter != wantOuter {
+			t.Fatalf(
+				"run %d Function relation differs: term=%v owner=%v body=%v vararg=%v capture=%v/%v",
+				run,
+				gotFunction,
+				gotOwner,
+				gotBody,
+				gotVararg,
+				gotInner,
+				gotOuter,
+			)
+		}
+		gotTable, _ := got.TableAt(0)
+		if gotTable != wantTable {
+			t.Fatalf("run %d Table identity = %v, want %v", run, gotTable, wantTable)
+		}
+		for i := 0; i < 2; i++ {
+			gotKey, gotValues, gotKind, gotNormalized, gotOK := got.Field(gotTable, i)
+			wantKey, wantValues, wantKind, wantNormalized, wantOK := want.Field(wantTable, i)
+			if !gotOK || !wantOK || gotKey != wantKey || gotValues != wantValues ||
+				gotKind != wantKind || gotNormalized != wantNormalized {
+				t.Fatalf("run %d Table field %d differs", run, i)
+			}
+		}
+	}
+}
+
+func deepUnarySource(depth int) string {
+	var source strings.Builder
+	source.Grow(len("return true") + depth*len("not "))
+	source.WriteString("return ")
+	for i := 0; i < depth; i++ {
+		source.WriteString("not ")
+	}
+	source.WriteString("true")
+	return source.String()
+}
+
+func wideValuesSource(width int) string {
+	var source strings.Builder
+	source.WriteString("return ")
+	for i := 0; i < width; i++ {
+		if i != 0 {
+			source.WriteByte(',')
+		}
+		source.WriteString(strconv.Itoa(i))
+	}
+	return source.String()
+}
+
+func TestThirtyTwoThousandNestedExpressionsLowerFromSource(t *testing.T) {
+	const depth = 32 * 1024
+	stmts, err := parse.ParseString(deepUnarySource(depth), "deep-source.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := programlower.Lower(
+		"deep-source.lua",
+		stmts,
+		bind.BindChunk(stmts, bind.Options{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.UnaryCount() != depth {
+		t.Fatalf("UnaryCount = %d, want %d", p.UnaryCount(), depth)
+	}
+	roots := entryRoots(t, p)
+	_, returned, ok := p.Return(roots[0])
+	if !ok {
+		t.Fatal("deep Entry root is not Return")
+	}
+	term := valueAt(t, p, returned, 0)
+	entry, _ := p.Entry()
+	for level := 0; level < depth; level++ {
+		owner, op, operand, ok := p.Unary(term)
+		if !ok || owner != entry || op != program.UnaryNot || operand == 0 {
+			t.Fatalf(
+				"level %d Unary = owner %v op %v operand %v ok %v",
+				level,
+				owner,
+				op,
+				operand,
+				ok,
+			)
+		}
+		term = operand
+	}
+	if _, value, ok := p.Bool(term); !ok || !value {
+		t.Fatalf("deep terminal operand = %v, %v; want true Bool", value, ok)
+	}
+}
+
+func TestDeepAndWideLoweringObeyLinearScalingLaws(t *testing.T) {
+	type measurement struct {
+		bytes int64
+		ns    int64
+		terms int
+	}
+	measure := func(source, sourceName string) measurement {
+		t.Helper()
+		stmts, err := parse.ParseString(source, sourceName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding := bind.BindChunk(stmts, bind.Options{})
+		p, err := programlower.Lower(sourceName, stmts, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := testing.Benchmark(func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				loweredSink, err = programlower.Lower(sourceName, stmts, binding)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		return measurement{
+			bytes: result.AllocedBytesPerOp(),
+			ns:    result.NsPerOp(),
+			terms: p.TermCount(),
+		}
+	}
+	assertLinear := func(name string, small, large measurement) {
+		t.Helper()
+		t.Logf(
+			"%s scaling: 4K terms=%d bytes=%d ns=%d; 8K terms=%d bytes=%d ns=%d",
+			name,
+			small.terms,
+			small.bytes,
+			small.ns,
+			large.terms,
+			large.bytes,
+			large.ns,
+		)
+		if large.terms > small.terms*26/10+16 {
+			t.Fatalf(
+				"%s Term growth exceeds law: 4K=%d 8K=%d",
+				name,
+				small.terms,
+				large.terms,
+			)
+		}
+		if large.bytes > small.bytes*26/10+64*1024 {
+			t.Fatalf(
+				"%s allocation growth exceeds law: 4K=%dB 8K=%dB",
+				name,
+				small.bytes,
+				large.bytes,
+			)
+		}
+		if large.ns > small.ns*325/100 {
+			t.Fatalf(
+				"%s time growth exceeds law: 4K=%dns 8K=%dns",
+				name,
+				small.ns,
+				large.ns,
+			)
+		}
+	}
+
+	assertLinear(
+		"deep",
+		measure(deepUnarySource(4*1024), "deep-scaling.lua"),
+		measure(deepUnarySource(8*1024), "deep-scaling.lua"),
+	)
+	assertLinear(
+		"wide",
+		measure(wideValuesSource(4*1024), "wide-scaling.lua"),
+		measure(wideValuesSource(8*1024), "wide-scaling.lua"),
+	)
+}
+
+func deepDoShadowSource(depth int) string {
+	var source strings.Builder
+	source.WriteString("local x = 0\n")
+	for level := 1; level <= depth; level++ {
+		source.WriteString("do\nlocal x = ")
+		source.WriteString(strconv.Itoa(level))
+		source.WriteByte('\n')
+	}
+	for level := depth; level > 0; level-- {
+		source.WriteString("x = x\nend\n")
+	}
+	source.WriteString("x = x")
+	return source.String()
+}
+
+func TestNestedLexicalBodiesObeyLinearScalingAndExactOwnership(t *testing.T) {
+	type measurement struct {
+		bytes int64
+		ns    int64
+		terms int
+	}
+	measure := func(depth int) (*program.Program, measurement) {
+		t.Helper()
+		stmts, err := parse.ParseString(deepDoShadowSource(depth), "deep-do.lua")
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding := bind.BindChunk(stmts, bind.Options{})
+		p, err := programlower.Lower("deep-do.lua", stmts, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := testing.Benchmark(func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				loweredSink, err = programlower.Lower("deep-do.lua", stmts, binding)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		return p, measurement{
+			bytes: result.AllocedBytesPerOp(),
+			ns:    result.NsPerOp(),
+			terms: p.TermCount(),
+		}
+	}
+
+	const smallDepth = 4 * 1024
+	const largeDepth = 8 * 1024
+	_, small := measure(smallDepth)
+	largeProgram, large := measure(largeDepth)
+	t.Logf(
+		"lexical Body scaling: 4K terms=%d bytes=%d ns=%d; 8K terms=%d bytes=%d ns=%d",
+		small.terms,
+		small.bytes,
+		small.ns,
+		large.terms,
+		large.bytes,
+		large.ns,
+	)
+	if large.terms > small.terms*26/10+16 {
+		t.Fatalf("lexical Body Term growth exceeds law: 4K=%d 8K=%d", small.terms, large.terms)
+	}
+	if large.bytes > small.bytes*26/10+64*1024 {
+		t.Fatalf(
+			"lexical Body allocation growth exceeds law: 4K=%dB 8K=%dB",
+			small.bytes,
+			large.bytes,
+		)
+	}
+	if large.ns > small.ns*325/100 {
+		t.Fatalf(
+			"lexical Body time growth exceeds law: 4K=%dns 8K=%dns",
+			small.ns,
+			large.ns,
+		)
+	}
+	if largeProgram.BodyCount() != largeDepth+1 ||
+		largeProgram.CellCount() != largeDepth+1 ||
+		largeProgram.BindCount() != largeDepth+1 ||
+		largeProgram.AssignCount() != largeDepth+1 ||
+		largeProgram.NormalCount() != largeDepth+1 {
+		t.Fatalf(
+			"8K lexical families: bodies=%d cells=%d binds=%d assigns=%d normals=%d",
+			largeProgram.BodyCount(),
+			largeProgram.CellCount(),
+			largeProgram.BindCount(),
+			largeProgram.AssignCount(),
+			largeProgram.NormalCount(),
+		)
+	}
+
+	body, _ := largeProgram.Entry()
+	for level := 0; level <= largeDepth; level++ {
+		roots := bodyRoots(t, largeProgram, body)
+		wantRoots := 4
+		if level == largeDepth {
+			wantRoots = 3
+		}
+		if len(roots) != wantRoots {
+			t.Fatalf("level %d Body roots = %v; want %d", level, roots, wantRoots)
+		}
+		cell := boundCell(t, largeProgram, roots[0], 0)
+		if owner, ok := largeProgram.Cell(cell); !ok || owner != body {
+			t.Fatalf("level %d Cell owner = %v, %v; want Body %v", level, owner, ok, body)
+		}
+		assignIndex := 2
+		if level == largeDepth {
+			assignIndex = 1
+		}
+		assign := roots[assignIndex]
+		target := mustTarget(t, largeProgram, assign, 0)
+		owner, assigned, ok := largeProgram.Assign(assign)
+		if !ok || owner != body || target != cell {
+			t.Fatalf(
+				"level %d Assign = owner %v target %v ok %v; want Body %v Cell %v",
+				level,
+				owner,
+				target,
+				ok,
+				body,
+				cell,
+			)
+		}
+		read := valueAt(t, largeProgram, assigned, 0)
+		if readOwner, source, ok := largeProgram.Read(read); !ok ||
+			readOwner != body || source != cell {
+			t.Fatalf(
+				"level %d post-child Read = owner %v source %v ok %v; want Body %v Cell %v",
+				level,
+				readOwner,
+				source,
+				ok,
+				body,
+				cell,
+			)
+		}
+		normal := roots[len(roots)-1]
+		normalOwner, normalValues, ok := largeProgram.Normal(normal)
+		valuesOwner, tail, valuesOK := largeProgram.Values(normalValues)
+		if !ok || !valuesOK || normalOwner != body || valuesOwner != body || tail != 0 {
+			t.Fatalf(
+				"level %d Normal = owner %v Values owner %v tail %v ok %v/%v; want Body %v",
+				level,
+				normalOwner,
+				valuesOwner,
+				tail,
+				ok,
+				valuesOK,
+				body,
+			)
+		}
+		if level != largeDepth {
+			body = roots[1]
+		}
+	}
+}
+
+func deepFunctionCaptureSource(depth int) string {
+	var source strings.Builder
+	source.WriteString("local x = 1\nreturn ")
+	for level := 0; level < depth; level++ {
+		source.WriteString("function() return ")
+	}
+	source.WriteByte('x')
+	if depth != 0 {
+		source.WriteString(" end")
+	}
+	for level := 1; level < depth; level++ {
+		source.WriteString(", x end")
+	}
+	source.WriteString(", x")
+	return source.String()
+}
+
+func TestFourThousandFunctionScopesRestoreImmediateParentCapture(t *testing.T) {
+	const depth = 4 * 1024
+	stmts, err := parse.ParseString(deepFunctionCaptureSource(depth), "deep-function.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := programlower.Lower(
+		"deep-function.lua",
+		stmts,
+		bind.BindChunk(stmts, bind.Options{}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.FunctionCount() != depth || p.BodyCount() != depth+1 ||
+		p.CellCount() != depth+1 || p.ReadCount() != depth+1 {
+		t.Fatalf(
+			"deep Function families: functions=%d bodies=%d cells=%d reads=%d",
+			p.FunctionCount(),
+			p.BodyCount(),
+			p.CellCount(),
+			p.ReadCount(),
+		)
+	}
+
+	roots := entryRoots(t, p)
+	rootCell := boundCell(t, p, roots[0], 0)
+	_, rootValues, ok := p.Return(roots[1])
+	if !ok {
+		t.Fatal("deep Function Entry return missing")
+	}
+	function := valueAt(t, p, rootValues, 0)
+	rootRead := valueAt(t, p, rootValues, 1)
+	if owner, source, ok := p.Read(rootRead); !ok || source != rootCell {
+		t.Fatalf(
+			"post-Function root Read = owner %v source %v ok %v; want root Cell %v",
+			owner,
+			source,
+			ok,
+			rootCell,
+		)
+	}
+
+	wantOuter := rootCell
+	for level := 0; level < depth; level++ {
+		_, body, _, ok := p.Function(function)
+		if !ok {
+			t.Fatalf("level %d value is not Function: %v", level, function)
+		}
+		if count, ok := p.FunctionCaptureCount(function); !ok || count != 1 {
+			t.Fatalf("level %d capture count = %d, %v; want 1", level, count, ok)
+		}
+		inner, outer := functionCapture(t, p, function, 0)
+		if outer != wantOuter {
+			t.Fatalf(
+				"level %d capture Outer = %v; want immediate parent Cell %v",
+				level,
+				outer,
+				wantOuter,
+			)
+		}
+		if innerOwner, ok := p.Cell(inner); !ok || innerOwner != body {
+			t.Fatalf(
+				"level %d capture Inner owner = %v, %v; want Body %v",
+				level,
+				innerOwner,
+				ok,
+				body,
+			)
+		}
+		bodyRoots := bodyRoots(t, p, body)
+		if len(bodyRoots) != 1 {
+			t.Fatalf("level %d Function Body roots = %v; want Return", level, bodyRoots)
+		}
+		_, returned, ok := p.Return(bodyRoots[0])
+		if !ok {
+			t.Fatalf("level %d Function Body root is not Return", level)
+		}
+		if level == depth-1 {
+			read := valueAt(t, p, returned, 0)
+			if readOwner, source, ok := p.Read(read); !ok ||
+				readOwner != body || source != inner {
+				t.Fatalf(
+					"level %d terminal Read = owner %v source %v ok %v; want Body %v Cell %v",
+					level,
+					readOwner,
+					source,
+					ok,
+					body,
+					inner,
+				)
+			}
+			continue
+		}
+		function = valueAt(t, p, returned, 0)
+		read := valueAt(t, p, returned, 1)
+		if readOwner, source, ok := p.Read(read); !ok ||
+			readOwner != body || source != inner {
+			t.Fatalf(
+				"level %d post-child Read = owner %v source %v ok %v; want Body %v restored Cell %v",
+				level,
+				readOwner,
+				source,
+				ok,
+				body,
+				inner,
+			)
+		}
+		wantOuter = inner
+	}
+}
