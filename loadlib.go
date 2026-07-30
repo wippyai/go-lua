@@ -9,7 +9,7 @@ import (
 
 /* load lib {{{ */
 
-var loLoaders = []LGoFunc{loLoaderPreload}
+var loLoaders = []LGoFunc{loLoaderPreload, loLoaderLua}
 
 func loGetPath(env string, defpath string) string {
 	path := os.Getenv(env)
@@ -25,6 +25,25 @@ func loGetPath(env string, defpath string) string {
 		// If Abs fails, leave "!" unsubstituted (paths with "!" won't match)
 	}
 	return path
+}
+
+func loFindFile(L *LState, name, pname string) (string, string) {
+	name = strings.ReplaceAll(name, ".", string(os.PathSeparator))
+	lv := L.GetField(L.GetField(L.Get(EnvironIndex), "package"), pname)
+	path, ok := lv.(LString)
+	if !ok {
+		L.RaiseError("package.%s must be a string", pname)
+	}
+	var messages []string
+	for _, pattern := range strings.Split(string(path), ";") {
+		luapath := strings.ReplaceAll(pattern, "?", name)
+		_, err := os.Stat(luapath)
+		if err == nil {
+			return luapath, ""
+		}
+		messages = append(messages, err.Error())
+	}
+	return "", strings.Join(messages, "\n\t")
 }
 
 func OpenPackage(L *LState) int {
@@ -70,6 +89,21 @@ func loLoaderPreload(L *LState) int {
 		return 1
 	}
 	L.Push(lv)
+	return 1
+}
+
+func loLoaderLua(L *LState) int {
+	name := L.CheckString(1)
+	path, msg := loFindFile(L, name, "path")
+	if len(path) == 0 {
+		L.Push(LString(msg))
+		return 1
+	}
+	fn, err1 := L.LoadFile(path)
+	if err1 != nil {
+		L.RaiseError(err1.Error())
+	}
+	L.Push(fn)
 	return 1
 }
 

@@ -7,11 +7,14 @@ package lua
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 const MultRet = -1
@@ -1454,6 +1457,10 @@ func (ls *LState) NewThread() (*LState, context.CancelFunc) {
 	return thread, cancel
 }
 
+func (ls *LState) NewFunctionFromProto(proto *FunctionProto) *LFunction {
+	return newLFunctionL(proto, ls.Env, int(proto.NumUpvalues))
+}
+
 func (ls *LState) NewUserData() *LUserData {
 	return &LUserData{
 		Metatable: LNil,
@@ -1813,6 +1820,22 @@ func (ls *LState) Register(name string, fn LGFunction) {
 }
 
 /* }}} */
+
+/* load and function call operations {{{ */
+
+func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
+	chunk, err := parse.Parse(reader, name)
+	if err != nil {
+		return nil, newApiErrorE(ApiErrorSyntax, err)
+	}
+
+	proto, err := Compile(chunk, name)
+	if err != nil {
+		return nil, newApiErrorE(ApiErrorSyntax, err)
+	}
+
+	return newLFunctionL(proto, ls.currentEnv(), 0), nil
+}
 
 func (ls *LState) Call(nargs, nret int) {
 	ls.callR(nargs, nret, -1)
