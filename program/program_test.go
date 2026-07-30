@@ -18,6 +18,7 @@ var (
 	queryUnary     program.UnaryOp
 	queryBinary    program.BinaryOp
 	querySelect    program.SelectOp
+	queryLoopKind  program.LoopKind
 	querySpan      program.Span
 	queryInt       int
 	queryInt64     int64
@@ -36,6 +37,17 @@ func entryBuilder(t *testing.T) (*program.Builder, program.Term) {
 		t.Fatal("SetEntry")
 	}
 	return b, entry
+}
+
+func finishNormally(t *testing.T, b *program.Builder, body program.Term, roots ...program.Term) program.Term {
+	t.Helper()
+	values := b.Values(program.Span{}, body, nil, 0)
+	normal := b.Normal(program.Span{}, body, values)
+	roots = append(roots, normal)
+	if !b.SetBody(body, roots...) {
+		t.Fatal("SetBody")
+	}
+	return normal
 }
 
 func TestTypedContainmentAndOwners(t *testing.T) {
@@ -181,24 +193,11 @@ func TestEntryAndSpanContractsFailClosed(t *testing.T) {
 			t.Fatal("Function Body was accepted as Entry")
 		}
 	})
-	t.Run("empty entry queries do not allocate", func(t *testing.T) {
+	t.Run("empty entry has no completion", func(t *testing.T) {
 		b, entry := entryBuilder(t)
 		b.SetBody(entry)
-		p, err := b.Seal()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, ok := p.Entry(); !ok || got != entry {
-			t.Fatalf("Entry = %v, %v", got, ok)
-		}
-		if count, ok := p.BodyLen(entry); !ok || count != 0 {
-			t.Fatalf("BodyLen = %d, %v", count, ok)
-		}
-		if allocations := testing.AllocsPerRun(1000, func() {
-			queryTerm, queryOK = p.Entry()
-			queryInt, queryOK = p.BodyLen(entry)
-		}); allocations != 0 {
-			t.Fatalf("Entry queries allocated: %g", allocations)
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("empty Body was accepted")
 		}
 	})
 }
@@ -394,10 +393,89 @@ func TestBranchBodyIsStructuralAuthority(t *testing.T) {
 	b.SetBody(whenTrue, trueResult)
 	b.SetBody(whenFalse, falseResult)
 	branch := b.Branch(program.Span{}, entry, condition, whenTrue, whenFalse)
-	b.SetBody(entry, branch)
+	finishNormally(t, b, entry, branch)
 	if _, err := b.Seal(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestBranchRejectsOutcomeArms(t *testing.T) {
+	tests := map[string]func(*program.Builder, program.Term) program.Term{
+		"Normal": func(b *program.Builder, owner program.Term) program.Term {
+			values := b.Values(program.Span{}, owner, nil, 0)
+			return b.Normal(program.Span{}, owner, values)
+		},
+		"Return": func(b *program.Builder, owner program.Term) program.Term {
+			values := b.Values(program.Span{}, owner, nil, 0)
+			return b.Return(program.Span{}, owner, values)
+		},
+		"Break": func(b *program.Builder, owner program.Term) program.Term {
+			return b.Break(program.Span{}, owner)
+		},
+	}
+	for name, outcome := range tests {
+		t.Run(name, func(t *testing.T) {
+			b, entry := entryBuilder(t)
+			other := b.Body(program.Span{})
+			finishNormally(t, b, other)
+			condition := b.Bool(program.Span{}, entry, true)
+			if branch := b.Branch(
+				program.Span{}, entry, condition, outcome(b, entry), other,
+			); branch != 0 {
+				t.Fatalf("Branch accepted direct %s arm: %v", name, branch)
+			}
+			if _, err := b.Seal(); err == nil {
+				t.Fatalf("direct %s arm did not poison Builder", name)
+			}
+		})
+	}
+}
+
+func TestBodyCompletionRejectsUnreachableNormal(t *testing.T) {
+	b, entry := entryBuilder(t)
+	returnValues := b.Values(program.Span{}, entry, nil, 0)
+	returned := b.Return(program.Span{}, entry, returnValues)
+	normalValues := b.Values(program.Span{}, entry, nil, 0)
+	normal := b.Normal(program.Span{}, entry, normalValues)
+	b.SetBody(entry, returned, normal)
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("Return followed by unreachable Normal was accepted")
+	}
+}
+
+func TestBodyCompletionRequiresNormalAfterStructuralFallthrough(t *testing.T) {
+	t.Run("Body", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		child := b.Body(program.Span{})
+		finishNormally(t, b, child)
+		b.SetBody(entry, child)
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("fallthrough Body root completed without Normal")
+		}
+	})
+	t.Run("Branch", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		whenTrue, whenFalse := b.Body(program.Span{}), b.Body(program.Span{})
+		finishNormally(t, b, whenTrue)
+		finishNormally(t, b, whenFalse)
+		condition := b.Bool(program.Span{}, entry, true)
+		branch := b.Branch(program.Span{}, entry, condition, whenTrue, whenFalse)
+		b.SetBody(entry, branch)
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("fallthrough Branch root completed without Normal")
+		}
+	})
+	t.Run("Loop", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		body := b.Body(program.Span{})
+		finishNormally(t, b, body)
+		condition := b.Bool(program.Span{}, entry, true)
+		loop := b.Loop(program.Span{}, entry, body, condition, nil, program.LoopWhile)
+		b.SetBody(entry, loop)
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("fallthrough Loop root completed without Normal")
+		}
+	})
 }
 
 func TestExactKeysNormalizeWithoutSharingOccurrences(t *testing.T) {
@@ -417,9 +495,7 @@ func TestExactKeysNormalizeWithoutSharingOccurrences(t *testing.T) {
 	rightValues := b.Values(program.Span{}, entry, nil, 0)
 	leftAssign := b.Assign(program.Span{}, entry, []program.Term{left}, leftValues)
 	rightAssign := b.Assign(program.Span{}, entry, []program.Term{right}, rightValues)
-	if !b.SetBody(entry, leftAssign, rightAssign) {
-		t.Fatal("SetBody")
-	}
+	finishNormally(t, b, entry, leftAssign, rightAssign)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -447,7 +523,7 @@ func TestExactKeyEqualityClasses(t *testing.T) {
 		values := b.Values(program.Span{}, entry, nil, 0)
 		roots[i] = b.Assign(program.Span{}, entry, []program.Term{lenses[i]}, values)
 	}
-	b.SetBody(entry, roots...)
+	finishNormally(t, b, entry, roots...)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -473,7 +549,11 @@ func TestNilExactKeysRemainDistinctSources(t *testing.T) {
 	left := b.LensExact(program.Span{}, entry, leftBase, leftNil, program.FieldExact)
 	right := b.LensExact(program.Span{}, entry, rightBase, rightNil, program.FieldExact)
 	leftValues, rightValues := b.Values(program.Span{}, entry, nil, 0), b.Values(program.Span{}, entry, nil, 0)
-	b.SetBody(entry, b.Assign(program.Span{}, entry, []program.Term{left}, leftValues), b.Assign(program.Span{}, entry, []program.Term{right}, rightValues))
+	finishNormally(
+		t, b, entry,
+		b.Assign(program.Span{}, entry, []program.Term{left}, leftValues),
+		b.Assign(program.Span{}, entry, []program.Term{right}, rightValues),
+	)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -494,7 +574,11 @@ func TestNaNExactKeyDoesNotBecomeComparable(t *testing.T) {
 	left := b.LensExact(program.Span{}, entry, leftBase, leftNaN, program.FieldExact)
 	right := b.LensExact(program.Span{}, entry, rightBase, rightNaN, program.FieldExact)
 	leftValues, rightValues := b.Values(program.Span{}, entry, nil, 0), b.Values(program.Span{}, entry, nil, 0)
-	b.SetBody(entry, b.Assign(program.Span{}, entry, []program.Term{left}, leftValues), b.Assign(program.Span{}, entry, []program.Term{right}, rightValues))
+	finishNormally(
+		t, b, entry,
+		b.Assign(program.Span{}, entry, []program.Term{left}, leftValues),
+		b.Assign(program.Span{}, entry, []program.Term{right}, rightValues),
+	)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -648,7 +732,7 @@ func TestLensAndTableShareNormalizedKey(t *testing.T) {
 	table := b.Table(program.Span{}, entry, []program.Term{fieldName}, []program.Term{fieldValues}, []program.FieldKind{program.FieldName})
 	lens := b.LensExact(program.Span{}, entry, table, lensName, program.FieldName)
 	rhs := b.Values(program.Span{}, entry, nil, 0)
-	b.SetBody(entry, b.Assign(program.Span{}, entry, []program.Term{lens}, rhs))
+	finishNormally(t, b, entry, b.Assign(program.Span{}, entry, []program.Term{lens}, rhs))
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -675,7 +759,12 @@ func TestSealIsAllocationBoundedAndIterative(t *testing.T) {
 		leafValues := b.Values(program.Span{}, bodies[depth-1], []program.Term{leafValue}, 0)
 		b.SetBody(bodies[depth-1], b.Normal(program.Span{}, bodies[depth-1], leafValues))
 		for i := depth - 2; i >= 0; i-- {
-			b.SetBody(bodies[i], bodies[i+1])
+			values := b.Values(program.Span{}, bodies[i], nil, 0)
+			b.SetBody(
+				bodies[i],
+				bodies[i+1],
+				b.Normal(program.Span{}, bodies[i], values),
+			)
 		}
 		return b
 	}
@@ -714,8 +803,8 @@ func TestFunctionBindingAuthorityComesOnlyFromBind(t *testing.T) {
 	functionValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
 	b.SetBody(entry,
 		b.Bind(program.Span{}, entry, []program.Term{binding}, wrongValues),
-		b.Normal(program.Span{}, entry, functionValues),
 		call,
+		b.Normal(program.Span{}, entry, functionValues),
 	)
 	p, err := b.Seal()
 	if err != nil {
@@ -739,7 +828,7 @@ func TestDirectEvidenceIsDerivedFromCaptureChain(t *testing.T) {
 	returned := b.Values(program.Span{}, body, nil, call)
 	b.SetBody(body, b.Return(program.Span{}, body, returned))
 	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
-	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
+	finishNormally(t, b, entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -775,7 +864,7 @@ func TestCapturedAliasWriteInvalidatesDirectEvidence(t *testing.T) {
 	write := b.Assign(program.Span{}, body, []program.Term{inner}, writeValues)
 	b.SetBody(body, write, b.Return(program.Span{}, body, returned))
 	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
-	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
+	finishNormally(t, b, entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -823,7 +912,11 @@ func TestAcyclicDirectCallHasNoMu(t *testing.T) {
 	b.SetBody(calleeBody, b.Return(program.Span{}, calleeBody, calleeValues))
 	callerValue := b.Values(program.Span{}, entry, []program.Term{caller}, 0)
 	calleeValue := b.Values(program.Span{}, entry, []program.Term{callee}, 0)
-	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{callerBinding}, callerValue), b.Bind(program.Span{}, entry, []program.Term{calleeBinding}, calleeValue))
+	finishNormally(
+		t, b, entry,
+		b.Bind(program.Span{}, entry, []program.Term{callerBinding}, callerValue),
+		b.Bind(program.Span{}, entry, []program.Term{calleeBinding}, calleeValue),
+	)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -852,7 +945,7 @@ func TestOpenCallTailAndDirectMu(t *testing.T) {
 	b.SetBody(functionBody, callResult)
 	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
 	bind := b.Bind(program.Span{}, entry, []program.Term{binding}, bound)
-	b.SetBody(entry, bind)
+	finishNormally(t, b, entry, bind)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -966,7 +1059,7 @@ func TestReadCannotCrossFunctionActivation(t *testing.T) {
 	b.SetBody(functionBody, functionResult)
 	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
 	bind := b.Bind(program.Span{}, entry, []program.Term{outer}, bound)
-	b.SetBody(entry, bind)
+	finishNormally(t, b, entry, bind)
 	if _, err := b.Seal(); err == nil {
 		t.Fatal("cross-activation Cell Read was accepted")
 	}
@@ -993,7 +1086,11 @@ func TestMutualDirectMuUsesCanonicalHead(t *testing.T) {
 	b.SetBody(rightBody, b.Return(program.Span{}, rightBody, rightResultValues))
 	leftValue := b.Values(program.Span{}, entry, []program.Term{left}, 0)
 	rightValue := b.Values(program.Span{}, entry, []program.Term{right}, 0)
-	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{leftBinding}, leftValue), b.Bind(program.Span{}, entry, []program.Term{rightBinding}, rightValue))
+	finishNormally(
+		t, b, entry,
+		b.Bind(program.Span{}, entry, []program.Term{leftBinding}, leftValue),
+		b.Bind(program.Span{}, entry, []program.Term{rightBinding}, rightValue),
+	)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -1019,7 +1116,7 @@ func TestDirectMuFindsConditionalSelectRight(t *testing.T) {
 	values := b.Values(program.Span{}, body, []program.Term{selectTerm}, 0)
 	b.SetBody(body, b.Return(program.Span{}, body, values))
 	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
-	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
+	finishNormally(t, b, entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -1039,7 +1136,7 @@ func TestVarargHasFunctionLocalRole(t *testing.T) {
 	values := b.Values(program.Span{}, body, nil, vararg)
 	b.SetBody(body, b.Return(program.Span{}, body, values))
 	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
-	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
+	finishNormally(t, b, entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -1066,19 +1163,15 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 			[]program.Capture{{Inner: captured, Outer: binding}},
 		)
 		formalRead := b.Read(program.Span{}, body, formal)
-		formalValues := b.Values(program.Span{}, body, []program.Term{formalRead}, 0)
 		vararg := b.Vararg(program.Span{}, body, varargCell)
-		varargValues := b.Values(program.Span{}, body, nil, vararg)
-		b.SetBody(body,
-			b.Normal(program.Span{}, body, formalValues),
-			b.Return(program.Span{}, body, varargValues),
-		)
+		varargValues := b.Values(program.Span{}, body, []program.Term{formalRead}, vararg)
+		b.SetBody(body, b.Return(program.Span{}, body, varargValues))
 		functionValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
 		localValue := b.Integer(program.Span{}, entry, 1)
 		localValues := b.Values(program.Span{}, entry, []program.Term{localValue}, 0)
 		bindFunction := b.Bind(program.Span{}, entry, []program.Term{binding}, functionValues)
 		bindLocal := b.Bind(program.Span{}, entry, []program.Term{local}, localValues)
-		b.SetBody(entry, bindFunction, bindLocal)
+		finishNormally(t, b, entry, bindFunction, bindLocal)
 		p, err := b.Seal()
 		if err != nil {
 			t.Fatal(err)
@@ -1130,8 +1223,8 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		cell := b.Cell(program.Span{}, child)
 		values := b.Values(program.Span{}, entry, nil, 0)
 		bind := b.Bind(program.Span{}, entry, []program.Term{cell}, values)
-		b.SetBody(child)
-		b.SetBody(entry, child, bind)
+		finishNormally(t, b, child)
+		finishNormally(t, b, entry, child, bind)
 		if _, err := b.Seal(); err == nil {
 			t.Fatal("cross-Body Bind was accepted")
 		}
@@ -1141,7 +1234,7 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		cell := b.Cell(program.Span{}, entry)
 		values := b.Values(program.Span{}, entry, nil, 0)
 		bind := b.Bind(program.Span{}, entry, []program.Term{cell, cell}, values)
-		b.SetBody(entry, bind)
+		finishNormally(t, b, entry, bind)
 		if _, err := b.Seal(); err == nil {
 			t.Fatal("duplicate Cell in Bind was accepted")
 		}
@@ -1153,7 +1246,7 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		secondValues := b.Values(program.Span{}, entry, nil, 0)
 		first := b.Bind(program.Span{}, entry, []program.Term{cell}, firstValues)
 		second := b.Bind(program.Span{}, entry, []program.Term{cell}, secondValues)
-		b.SetBody(entry, first, second)
+		finishNormally(t, b, entry, first, second)
 		if _, err := b.Seal(); err == nil {
 			t.Fatal("Cell rebound by two Binds")
 		}
@@ -1166,7 +1259,7 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		fn := b.Function(program.Span{}, entry, body, []program.Term{formal}, 0, nil)
 		bodyValues := b.Values(program.Span{}, body, nil, 0)
 		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
-		b.SetBody(other)
+		finishNormally(t, b, other)
 		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
 		b.SetBody(entry, other, b.Normal(program.Span{}, entry, fnValues))
 		if _, err := b.Seal(); err == nil {
@@ -1210,7 +1303,10 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		bodyValues := b.Values(program.Span{}, body, nil, 0)
 		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
-		b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{cell}, fnValues))
+		finishNormally(
+			t, b, entry,
+			b.Bind(program.Span{}, entry, []program.Term{cell}, fnValues),
+		)
 		if _, err := b.Seal(); err == nil {
 			t.Fatal("foreign vararg Cell was accepted")
 		}
@@ -1239,12 +1335,8 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		bodyValues := b.Values(program.Span{}, body, nil, 0)
 		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 		vararg := b.Vararg(program.Span{}, entry, varargCell)
-		entryVarargs := b.Values(program.Span{}, entry, nil, vararg)
-		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
-		b.SetBody(entry,
-			b.Normal(program.Span{}, entry, entryVarargs),
-			b.Normal(program.Span{}, entry, fnValues),
-		)
+		entryValues := b.Values(program.Span{}, entry, []program.Term{fn}, vararg)
+		b.SetBody(entry, b.Normal(program.Span{}, entry, entryValues))
 		if _, err := b.Seal(); err == nil {
 			t.Fatal("cross-activation Vararg was accepted")
 		}
@@ -1277,10 +1369,505 @@ func TestMethodReceiverMustMatchNameLensBase(t *testing.T) {
 	callee := b.Read(program.Span{}, entry, lens)
 	actuals := b.Values(program.Span{}, entry, nil, 0)
 	call := b.Call(program.Span{}, entry, callee, receiver, actuals)
-	receiverValues := b.Values(program.Span{}, entry, []program.Term{receiver}, 0)
-	b.SetBody(entry, b.Normal(program.Span{}, entry, receiverValues), call)
+	receiverValues := b.Values(program.Span{}, entry, []program.Term{receiver, call}, 0)
+	b.SetBody(entry, b.Normal(program.Span{}, entry, receiverValues))
 	if _, err := b.Seal(); err == nil {
 		t.Fatal("method receiver disagreed with name Lens base")
+	}
+}
+
+func TestLoopFamiliesHaveExactTypedShapes(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	roots := make([]program.Term, 0, 4)
+
+	whileBody := b.Body(program.Span{})
+	whileControl := b.Bool(program.Span{}, entry, true)
+	whileValues := b.Values(program.Span{}, whileBody, nil, 0)
+	b.SetBody(whileBody, b.Normal(program.Span{}, whileBody, whileValues))
+	whileLoop := b.Loop(program.Span{}, entry, whileBody, whileControl, nil, program.LoopWhile)
+	roots = append(roots, whileLoop)
+
+	repeatBody := b.Body(program.Span{})
+	repeatControl := b.Bool(program.Span{}, repeatBody, false)
+	repeatValues := b.Values(program.Span{}, repeatBody, nil, 0)
+	b.SetBody(repeatBody, b.Normal(program.Span{}, repeatBody, repeatValues))
+	repeatLoop := b.Loop(program.Span{}, entry, repeatBody, repeatControl, nil, program.LoopRepeat)
+	roots = append(roots, repeatLoop)
+
+	numericBody := b.Body(program.Span{})
+	numericCell := b.Cell(program.Span{}, numericBody)
+	initial := b.Integer(program.Span{}, entry, 1)
+	limit := b.Integer(program.Span{}, entry, 10)
+	step := b.Integer(program.Span{}, entry, 2)
+	numericControl := b.Values(program.Span{}, entry, []program.Term{initial, limit, step}, 0)
+	numericValues := b.Values(program.Span{}, numericBody, nil, 0)
+	b.SetBody(numericBody, b.Normal(program.Span{}, numericBody, numericValues))
+	numericLoop := b.Loop(
+		program.Span{}, entry, numericBody, numericControl,
+		[]program.Term{numericCell}, program.LoopNumericFor,
+	)
+	roots = append(roots, numericLoop)
+
+	genericBody := b.Body(program.Span{})
+	firstCell := b.Cell(program.Span{}, genericBody)
+	secondCell := b.Cell(program.Span{}, genericBody)
+	callee := b.Table(program.Span{}, entry, nil, nil, nil)
+	actuals := b.Values(program.Span{}, entry, nil, 0)
+	openControl := b.Call(program.Span{}, entry, callee, 0, actuals)
+	genericControl := b.Values(program.Span{}, entry, nil, openControl)
+	genericValues := b.Values(program.Span{}, genericBody, nil, 0)
+	b.SetBody(genericBody, b.Normal(program.Span{}, genericBody, genericValues))
+	genericLoop := b.Loop(
+		program.Span{}, entry, genericBody, genericControl,
+		[]program.Term{firstCell, secondCell}, program.LoopGenericFor,
+	)
+	roots = append(roots, genericLoop)
+
+	finishNormally(t, b, entry, roots...)
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		term, body, control program.Term
+		kind                program.LoopKind
+		cells               []program.Term
+	}{
+		{whileLoop, whileBody, whileControl, program.LoopWhile, nil},
+		{repeatLoop, repeatBody, repeatControl, program.LoopRepeat, nil},
+		{numericLoop, numericBody, numericControl, program.LoopNumericFor, []program.Term{numericCell}},
+		{genericLoop, genericBody, genericControl, program.LoopGenericFor, []program.Term{firstCell, secondCell}},
+	}
+	for _, test := range cases {
+		owner, body, control, kind, ok := p.Loop(test.term)
+		if !ok || owner != entry || body != test.body || control != test.control || kind != test.kind {
+			t.Fatalf("Loop(%v) = %v, %v, %v, %v, %v", test.term, owner, body, control, kind, ok)
+		}
+		count, ok := p.LoopCellCount(test.term)
+		if !ok || count != len(test.cells) {
+			t.Fatalf("LoopCellCount(%v) = %d, %v", test.term, count, ok)
+		}
+		for i, want := range test.cells {
+			if got, ok := p.LoopCell(test.term, i); !ok || got != want {
+				t.Fatalf("LoopCell(%v, %d) = %v, %v", test.term, i, got, ok)
+			}
+		}
+		if head, ok := p.Mu(test.term); !ok || head != test.term {
+			t.Fatalf("Mu(%v) = %v, %v", test.term, head, ok)
+		}
+	}
+}
+
+func TestLoopControlTuplePermutations(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	numericBody := b.Body(program.Span{})
+	genericBody := b.Body(program.Span{})
+	b.SetEntry(entry)
+
+	numericCell := b.Cell(program.Span{}, numericBody)
+	initial := b.Integer(program.Span{}, entry, 1)
+	limit := b.Integer(program.Span{}, entry, 10)
+	numericControl := b.Values(program.Span{}, entry, []program.Term{initial, limit}, 0)
+	numericNormalValues := b.Values(program.Span{}, numericBody, nil, 0)
+	b.SetBody(numericBody, b.Normal(program.Span{}, numericBody, numericNormalValues))
+	numericLoop := b.Loop(
+		program.Span{}, entry, numericBody, numericControl,
+		[]program.Term{numericCell}, program.LoopNumericFor,
+	)
+
+	genericCell := b.Cell(program.Span{}, genericBody)
+	iterator := b.Table(program.Span{}, entry, nil, nil, nil)
+	genericControl := b.Values(program.Span{}, entry, []program.Term{iterator}, 0)
+	genericNormalValues := b.Values(program.Span{}, genericBody, nil, 0)
+	b.SetBody(genericBody, b.Normal(program.Span{}, genericBody, genericNormalValues))
+	genericLoop := b.Loop(
+		program.Span{}, entry, genericBody, genericControl,
+		[]program.Term{genericCell}, program.LoopGenericFor,
+	)
+	finishNormally(t, b, entry, numericLoop, genericLoop)
+
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, ok := p.ValuesLen(numericControl); !ok || count != 2 {
+		t.Fatalf("default-step NumericFor control = %d, %v", count, ok)
+	}
+	if _, _, control, kind, ok := p.Loop(genericLoop); !ok || kind != program.LoopGenericFor || control != genericControl {
+		t.Fatalf("fixed GenericFor control = %v, %v, %v", control, kind, ok)
+	}
+}
+
+func TestLoopMuRequiresNormalFallthrough(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	returnBody := b.Body(program.Span{})
+	breakBody := b.Body(program.Span{})
+	b.SetEntry(entry)
+
+	returnControl := b.Bool(program.Span{}, entry, true)
+	returnValues := b.Values(program.Span{}, returnBody, nil, 0)
+	b.SetBody(returnBody, b.Return(program.Span{}, returnBody, returnValues))
+	returnLoop := b.Loop(program.Span{}, entry, returnBody, returnControl, nil, program.LoopWhile)
+
+	breakControl := b.Bool(program.Span{}, entry, true)
+	b.SetBody(breakBody, b.Break(program.Span{}, breakBody))
+	breakLoop := b.Loop(program.Span{}, entry, breakBody, breakControl, nil, program.LoopWhile)
+	finishNormally(t, b, entry, returnLoop, breakLoop)
+
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, loop := range []program.Term{returnLoop, breakLoop} {
+		if head, ok := p.Mu(loop); ok || head != 0 {
+			t.Fatalf("terminal-only Mu(%v) = %v, %v", loop, head, ok)
+		}
+	}
+}
+
+func TestUnreachableBreakDoesNotReviveRepeat(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	outerBody := b.Body(program.Span{})
+	innerBody := b.Body(program.Span{})
+	b.SetEntry(entry)
+
+	returnValues := b.Values(program.Span{}, innerBody, nil, 0)
+	returned := b.Return(program.Span{}, innerBody, returnValues)
+	unreachableBreak := b.Break(program.Span{}, innerBody)
+	b.SetBody(innerBody, returned, unreachableBreak)
+	innerControl := b.Bool(program.Span{}, innerBody, false)
+	inner := b.Loop(
+		program.Span{}, outerBody, innerBody, innerControl, nil, program.LoopRepeat,
+	)
+
+	b.SetBody(outerBody, inner)
+	outerControl := b.Bool(program.Span{}, outerBody, false)
+	outer := b.Loop(
+		program.Span{}, entry, outerBody, outerControl, nil, program.LoopRepeat,
+	)
+	b.SetBody(entry, outer)
+
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, loop := range []program.Term{inner, outer} {
+		if head, ok := p.Mu(loop); ok || head != 0 {
+			t.Fatalf("terminal Repeat Mu(%v) = %v, %v", loop, head, ok)
+		}
+	}
+	if _, target, ok := p.Break(unreachableBreak); !ok || target != inner {
+		t.Fatalf("unreachable Break target = %v, %v", target, ok)
+	}
+}
+
+func TestLoopMuIncludesBranchChildFallthrough(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	body := b.Body(program.Span{})
+	whenTrue := b.Body(program.Span{})
+	whenFalse := b.Body(program.Span{})
+	b.SetEntry(entry)
+
+	finishNormally(t, b, whenTrue)
+	broken := b.Break(program.Span{}, whenFalse)
+	b.SetBody(whenFalse, broken)
+	branchControl := b.Bool(program.Span{}, body, true)
+	branch := b.Branch(program.Span{}, body, branchControl, whenTrue, whenFalse)
+	finishNormally(t, b, body, branch)
+	loopControl := b.Bool(program.Span{}, entry, true)
+	loop := b.Loop(program.Span{}, entry, body, loopControl, nil, program.LoopWhile)
+	finishNormally(t, b, entry, loop)
+
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head, ok := p.Mu(loop); !ok || head != loop {
+		t.Fatalf("branch-child Mu(%v) = %v, %v", loop, head, ok)
+	}
+	if _, target, ok := p.Break(broken); !ok || target != loop {
+		t.Fatalf("branch-arm Break target = %v, %v", target, ok)
+	}
+}
+
+func TestBreakResolvesNearestLexicalLoop(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	outerBody := b.Body(program.Span{})
+	innerBody := b.Body(program.Span{})
+	nestedBody := b.Body(program.Span{})
+	b.SetEntry(entry)
+
+	innerBreak := b.Break(program.Span{}, innerBody)
+	b.SetBody(innerBody, innerBreak)
+	innerControl := b.Bool(program.Span{}, outerBody, true)
+	innerLoop := b.Loop(program.Span{}, outerBody, innerBody, innerControl, nil, program.LoopWhile)
+
+	outerBreak := b.Break(program.Span{}, nestedBody)
+	b.SetBody(nestedBody, outerBreak)
+	b.SetBody(outerBody, innerLoop, nestedBody)
+	outerControl := b.Bool(program.Span{}, entry, true)
+	outerLoop := b.Loop(program.Span{}, entry, outerBody, outerControl, nil, program.LoopWhile)
+	finishNormally(t, b, entry, outerLoop)
+
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner, target, ok := p.Break(innerBreak); !ok || owner != innerBody || target != innerLoop {
+		t.Fatalf("inner Break = %v, %v, %v", owner, target, ok)
+	}
+	if owner, target, ok := p.Break(outerBreak); !ok || owner != nestedBody || target != outerLoop {
+		t.Fatalf("outer Break = %v, %v, %v", owner, target, ok)
+	}
+}
+
+func TestBreakResolvesThroughBranchBody(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	loopBody := b.Body(program.Span{})
+	whenTrue := b.Body(program.Span{})
+	whenFalse := b.Body(program.Span{})
+	b.SetEntry(entry)
+
+	broken := b.Break(program.Span{}, whenTrue)
+	b.SetBody(whenTrue, broken)
+	falseValues := b.Values(program.Span{}, whenFalse, nil, 0)
+	b.SetBody(whenFalse, b.Normal(program.Span{}, whenFalse, falseValues))
+	branchControl := b.Bool(program.Span{}, loopBody, true)
+	branch := b.Branch(program.Span{}, loopBody, branchControl, whenTrue, whenFalse)
+	finishNormally(t, b, loopBody, branch)
+	loopControl := b.Bool(program.Span{}, entry, true)
+	loop := b.Loop(program.Span{}, entry, loopBody, loopControl, nil, program.LoopWhile)
+	finishNormally(t, b, entry, loop)
+
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner, target, ok := p.Break(broken); !ok || owner != whenTrue || target != loop {
+		t.Fatalf("branch Break = %v, %v, %v", owner, target, ok)
+	}
+}
+
+func TestBreakCannotCrossFunctionBoundary(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	loopBody := b.Body(program.Span{})
+	functionBody := b.Body(program.Span{})
+	b.SetEntry(entry)
+
+	b.SetBody(functionBody, b.Break(program.Span{}, functionBody))
+	function := b.Function(program.Span{}, loopBody, functionBody, nil, 0, nil)
+	values := b.Values(program.Span{}, loopBody, []program.Term{function}, 0)
+	b.SetBody(loopBody, b.Normal(program.Span{}, loopBody, values))
+	control := b.Bool(program.Span{}, entry, true)
+	loop := b.Loop(program.Span{}, entry, loopBody, control, nil, program.LoopWhile)
+	finishNormally(t, b, entry, loop)
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("Break crossed a Function boundary")
+	}
+}
+
+func TestBreakOutsideLoopIsRejected(t *testing.T) {
+	b, entry := entryBuilder(t)
+	b.SetBody(entry, b.Break(program.Span{}, entry))
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("Break outside Loop was accepted")
+	}
+}
+
+func TestLoopRejectsInvalidShapes(t *testing.T) {
+	normal := func(b *program.Builder, body program.Term) {
+		values := b.Values(program.Span{}, body, nil, 0)
+		b.SetBody(body, b.Normal(program.Span{}, body, values))
+	}
+	tests := map[string]func() *program.Builder{
+		"kind": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			normal(b, body)
+			control := b.Bool(program.Span{}, entry, true)
+			b.SetBody(entry, b.Loop(program.Span{}, entry, body, control, nil, 0))
+			return b
+		},
+		"while cells": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			cell := b.Cell(program.Span{}, body)
+			normal(b, body)
+			control := b.Bool(program.Span{}, entry, true)
+			b.SetBody(entry, b.Loop(
+				program.Span{}, entry, body, control, []program.Term{cell}, program.LoopWhile,
+			))
+			return b
+		},
+		"repeat control owner": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			normal(b, body)
+			control := b.Bool(program.Span{}, entry, true)
+			b.SetBody(entry, b.Loop(program.Span{}, entry, body, control, nil, program.LoopRepeat))
+			return b
+		},
+		"numeric arity": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			cell := b.Cell(program.Span{}, body)
+			normal(b, body)
+			initial := b.Integer(program.Span{}, entry, 1)
+			control := b.Values(program.Span{}, entry, []program.Term{initial}, 0)
+			b.SetBody(entry, b.Loop(
+				program.Span{}, entry, body, control, []program.Term{cell}, program.LoopNumericFor,
+			))
+			return b
+		},
+		"numeric excess arity": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			cell := b.Cell(program.Span{}, body)
+			normal(b, body)
+			parts := make([]program.Term, 4)
+			for i := range parts {
+				parts[i] = b.Integer(program.Span{}, entry, int64(i+1))
+			}
+			control := b.Values(program.Span{}, entry, parts, 0)
+			b.SetBody(entry, b.Loop(
+				program.Span{}, entry, body, control, []program.Term{cell}, program.LoopNumericFor,
+			))
+			return b
+		},
+		"numeric open tail": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			cell := b.Cell(program.Span{}, body)
+			normal(b, body)
+			initial := b.Integer(program.Span{}, entry, 1)
+			limit := b.Integer(program.Span{}, entry, 2)
+			callee := b.Table(program.Span{}, entry, nil, nil, nil)
+			actuals := b.Values(program.Span{}, entry, nil, 0)
+			tail := b.Call(program.Span{}, entry, callee, 0, actuals)
+			control := b.Values(program.Span{}, entry, []program.Term{initial, limit}, tail)
+			b.SetBody(entry, b.Loop(
+				program.Span{}, entry, body, control, []program.Term{cell}, program.LoopNumericFor,
+			))
+			return b
+		},
+		"numeric cell body": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			cell := b.Cell(program.Span{}, entry)
+			normal(b, body)
+			initial := b.Integer(program.Span{}, entry, 1)
+			limit := b.Integer(program.Span{}, entry, 2)
+			control := b.Values(program.Span{}, entry, []program.Term{initial, limit}, 0)
+			loop := b.Loop(
+				program.Span{}, entry, body, control, []program.Term{cell}, program.LoopNumericFor,
+			)
+			finishNormally(t, b, entry, loop)
+			return b
+		},
+		"numeric cell duplicate role": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			cell := b.Cell(program.Span{}, body)
+			bound := b.Values(program.Span{}, body, nil, 0)
+			bind := b.Bind(program.Span{}, body, []program.Term{cell}, bound)
+			normalValues := b.Values(program.Span{}, body, nil, 0)
+			b.SetBody(body, bind, b.Normal(program.Span{}, body, normalValues))
+			initial := b.Integer(program.Span{}, entry, 1)
+			limit := b.Integer(program.Span{}, entry, 2)
+			control := b.Values(program.Span{}, entry, []program.Term{initial, limit}, 0)
+			loop := b.Loop(
+				program.Span{}, entry, body, control, []program.Term{cell}, program.LoopNumericFor,
+			)
+			finishNormally(t, b, entry, loop)
+			return b
+		},
+		"generic empty control": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			cell := b.Cell(program.Span{}, body)
+			normal(b, body)
+			control := b.Values(program.Span{}, entry, nil, 0)
+			b.SetBody(entry, b.Loop(
+				program.Span{}, entry, body, control, []program.Term{cell}, program.LoopGenericFor,
+			))
+			return b
+		},
+		"generic no cells": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			normal(b, body)
+			value := b.Integer(program.Span{}, entry, 1)
+			control := b.Values(program.Span{}, entry, []program.Term{value}, 0)
+			b.SetBody(entry, b.Loop(program.Span{}, entry, body, control, nil, program.LoopGenericFor))
+			return b
+		},
+		"duplicate body authority": func() *program.Builder {
+			b, entry := entryBuilder(t)
+			body := b.Body(program.Span{})
+			normal(b, body)
+			firstControl := b.Bool(program.Span{}, entry, true)
+			secondControl := b.Bool(program.Span{}, entry, true)
+			first := b.Loop(program.Span{}, entry, body, firstControl, nil, program.LoopWhile)
+			second := b.Loop(program.Span{}, entry, body, secondControl, nil, program.LoopWhile)
+			b.SetBody(entry, first, second)
+			return b
+		},
+	}
+	for name, build := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := build().Seal(); err == nil {
+				t.Fatal("invalid Loop was accepted")
+			}
+		})
+	}
+}
+
+func TestNestedLoopSealIsIterativeAndAllocationBounded(t *testing.T) {
+	build := func(depth int) *program.Builder {
+		b := program.NewBuilder()
+		bodies := make([]program.Term, depth+1)
+		for i := range bodies {
+			bodies[i] = b.Body(program.Span{})
+		}
+		b.SetEntry(bodies[0])
+		leafValues := b.Values(program.Span{}, bodies[depth], nil, 0)
+		b.SetBody(bodies[depth], b.Normal(program.Span{}, bodies[depth], leafValues))
+		for i := depth - 1; i >= 0; i-- {
+			control := b.Bool(program.Span{}, bodies[i], true)
+			loop := b.Loop(
+				program.Span{}, bodies[i], bodies[i+1], control, nil, program.LoopWhile,
+			)
+			values := b.Values(program.Span{}, bodies[i], nil, 0)
+			b.SetBody(bodies[i], loop, b.Normal(program.Span{}, bodies[i], values))
+		}
+		return b
+	}
+	small, large := build(128), build(4096)
+	if _, err := large.Seal(); err != nil {
+		t.Fatalf("deep Loop Seal: %v", err)
+	}
+	smallAllocs := testing.AllocsPerRun(20, func() {
+		if _, err := small.Seal(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	largeAllocs := testing.AllocsPerRun(20, func() {
+		if _, err := large.Seal(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if largeAllocs > smallAllocs+2 {
+		t.Fatalf("Loop Seal allocations grow with depth: small=%g large=%g", smallAllocs, largeAllocs)
 	}
 }
 
@@ -1326,20 +1913,10 @@ func TestTypedQueriesAllocateZero(t *testing.T) {
 	nilValue := b.Nil(program.Span{}, entry)
 	floatValue := b.Float(program.Span{}, entry, -0.0)
 	stringValue := b.String(program.Span{}, entry, "value")
-	scalarValues := b.Values(
-		program.Span{},
-		entry,
-		[]program.Term{selected, localRead, nilValue, floatValue, stringValue},
-		0,
-	)
-	normal := b.Normal(program.Span{}, entry, scalarValues)
-
 	exactBase := b.Table(program.Span{}, entry, nil, nil, nil)
 	name := b.Name(program.Span{}, entry, "field")
 	exactLens := b.LensExact(program.Span{}, entry, exactBase, name, program.FieldName)
 	lensRead := b.Read(program.Span{}, entry, exactLens)
-	lensValues := b.Values(program.Span{}, entry, []program.Term{lensRead}, 0)
-	lensResult := b.Normal(program.Span{}, entry, lensValues)
 
 	dynamicBase := b.Table(program.Span{}, entry, nil, nil, nil)
 	dynamicKey := b.String(program.Span{}, entry, "dynamic")
@@ -1358,8 +1935,15 @@ func TestTypedQueriesAllocateZero(t *testing.T) {
 		[]program.Term{fieldValues},
 		[]program.FieldKind{program.FieldList},
 	)
-	tableValues := b.Values(program.Span{}, entry, []program.Term{table}, 0)
-	tableResult := b.Normal(program.Span{}, entry, tableValues)
+	scalarValues := b.Values(
+		program.Span{},
+		entry,
+		[]program.Term{
+			selected, localRead, nilValue, floatValue, stringValue, lensRead, table,
+		},
+		0,
+	)
+	normal := b.Normal(program.Span{}, entry, scalarValues)
 
 	trueValues := b.Values(program.Span{}, whenTrue, nil, 0)
 	falseValues := b.Values(program.Span{}, whenFalse, nil, 0)
@@ -1368,28 +1952,37 @@ func TestTypedQueriesAllocateZero(t *testing.T) {
 	branchCondition := b.Bool(program.Span{}, entry, false)
 	branch := b.Branch(program.Span{}, entry, branchCondition, whenTrue, whenFalse)
 
-	throwValues := b.Values(program.Span{}, entry, nil, 0)
-	yieldValues := b.Values(program.Span{}, entry, nil, 0)
-	breakValues := b.Values(program.Span{}, entry, nil, 0)
-	continueValues := b.Values(program.Span{}, entry, nil, 0)
-	thrown := b.Throw(program.Span{}, entry, throwValues)
-	yielded := b.Yield(program.Span{}, entry, yieldValues)
-	broken := b.Break(program.Span{}, entry, breakValues)
-	continued := b.Continue(program.Span{}, entry, continueValues)
+	throwBody, throwFall := b.Body(program.Span{}), b.Body(program.Span{})
+	throwValues := b.Values(program.Span{}, throwBody, nil, 0)
+	thrown := b.Throw(program.Span{}, throwBody, throwValues)
+	b.SetBody(throwBody, thrown)
+	finishNormally(t, b, throwFall)
+	throwCondition := b.Bool(program.Span{}, entry, false)
+	throwBranch := b.Branch(program.Span{}, entry, throwCondition, throwBody, throwFall)
+
+	yieldBody, yieldFall := b.Body(program.Span{}), b.Body(program.Span{})
+	yieldValues := b.Values(program.Span{}, yieldBody, nil, 0)
+	yielded := b.Yield(program.Span{}, yieldBody, yieldValues)
+	b.SetBody(yieldBody, yielded)
+	finishNormally(t, b, yieldFall)
+	yieldCondition := b.Bool(program.Span{}, entry, false)
+	yieldBranch := b.Branch(program.Span{}, entry, yieldCondition, yieldBody, yieldFall)
+	loopBody := b.Body(program.Span{})
+	loopCondition := b.Bool(program.Span{}, entry, true)
+	broken := b.Break(program.Span{}, loopBody)
+	b.SetBody(loopBody, broken)
+	loop := b.Loop(program.Span{}, entry, loopBody, loopCondition, nil, program.LoopWhile)
 
 	b.SetBody(
 		entry,
 		bindFunction,
 		bindLocal,
-		normal,
-		lensResult,
 		assign,
-		tableResult,
 		branch,
-		thrown,
-		yielded,
-		broken,
-		continued,
+		throwBranch,
+		yieldBranch,
+		loop,
+		normal,
 	)
 	p, err := b.Seal()
 	if err != nil {
@@ -1415,8 +2008,8 @@ func TestTypedQueriesAllocateZero(t *testing.T) {
 		queryTerm, queryTerm2, queryOK = p.Throw(thrown)
 		queryTerm, queryTerm2, queryOK = p.Yield(yielded)
 		queryTerm, queryTerm2, queryOK = p.Break(broken)
-		queryTerm, queryTerm2, queryOK = p.Continue(continued)
 		queryTerm, queryOK = p.Mu(function)
+		queryTerm, queryOK = p.Mu(loop)
 		queryInt, queryOK = p.BodyLen(entry)
 		queryTerm, queryOK = p.Root(entry, 0)
 		queryTerm, queryOK = p.Cell(local)
@@ -1438,6 +2031,9 @@ func TestTypedQueriesAllocateZero(t *testing.T) {
 		queryTerm, queryTerm2, queryOK = p.FunctionCapture(function, 0)
 		queryTerm, queryTerm2, queryTerm3, queryTerm4, queryTerm5, queryOK = p.Call(call)
 		queryTerm, queryTerm2, queryTerm3, queryTerm4, queryOK = p.Branch(branch)
+		queryTerm, queryTerm2, queryTerm3, queryLoopKind, queryOK = p.Loop(loop)
+		queryInt, queryOK = p.LoopCellCount(loop)
+		queryTerm, queryOK = p.LoopCell(loop, 0)
 		queryTerm, queryOK = p.Table(table)
 		queryTerm, queryString, queryKey, queryOK = p.Name(name)
 		queryTerm, queryInt64, queryKey, queryOK = p.List(list)
@@ -1453,6 +2049,8 @@ func TestTypedQueriesAllocateZero(t *testing.T) {
 		queryTerm, queryOK = p.FunctionAt(0)
 		queryInt = p.CallCount()
 		queryTerm, queryOK = p.CallAt(0)
+		queryInt = p.LoopCount()
+		queryTerm, queryOK = p.LoopAt(0)
 	})
 	if allocations != 0 {
 		t.Fatalf("typed queries allocated: %g", allocations)
@@ -1491,9 +2089,7 @@ func TestLongDirectCycleIsIterative(t *testing.T) {
 		bound := b.Values(program.Span{}, entry, []program.Term{functions[i]}, 0)
 		roots[i] = b.Bind(program.Span{}, entry, []program.Term{bindings[i]}, bound)
 	}
-	if !b.SetBody(entry, roots...) {
-		t.Fatal("SetBody")
-	}
+	finishNormally(t, b, entry, roots...)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
@@ -1531,7 +2127,10 @@ func TestLongAcyclicDirectCallChainIsIterativeAndAllocationBounded(t *testing.T)
 		for i := 0; i+1 < count; i++ {
 			callee := b.Read(program.Span{}, bodies[i], inners[i])
 			actuals := b.Values(program.Span{}, bodies[i], nil, 0)
-			b.SetBody(bodies[i], b.Call(program.Span{}, bodies[i], callee, 0, actuals))
+			finishNormally(
+				t, b, bodies[i],
+				b.Call(program.Span{}, bodies[i], callee, 0, actuals),
+			)
 		}
 		lastValues := b.Values(program.Span{}, bodies[count-1], nil, 0)
 		b.SetBody(bodies[count-1], b.Return(program.Span{}, bodies[count-1], lastValues))
@@ -1540,7 +2139,7 @@ func TestLongAcyclicDirectCallChainIsIterativeAndAllocationBounded(t *testing.T)
 			values := b.Values(program.Span{}, entry, []program.Term{function}, 0)
 			roots[i] = b.Bind(program.Span{}, entry, []program.Term{bindings[i]}, values)
 		}
-		b.SetBody(entry, roots...)
+		finishNormally(t, b, entry, roots...)
 		return b, functions
 	}
 
@@ -1815,7 +2414,10 @@ func TestFunctionRejectsDuplicateCaptureOuter(t *testing.T) {
 	bodyValues := b.Values(program.Span{}, body, nil, 0)
 	b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
-	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{outer}, bound))
+	finishNormally(
+		t, b, entry,
+		b.Bind(program.Span{}, entry, []program.Term{outer}, bound),
+	)
 	if _, err := b.Seal(); err == nil {
 		t.Fatal("duplicate outer capture was accepted")
 	}
@@ -1851,7 +2453,10 @@ func TestFunctionRejectsCaptureOutsideLexicalAncestry(t *testing.T) {
 			bodyValues := b.Values(program.Span{}, body, nil, 0)
 			b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 			bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
-			b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{outer}, bound))
+			finishNormally(
+				t, b, entry,
+				b.Bind(program.Span{}, entry, []program.Term{outer}, bound),
+			)
 			if _, err := b.Seal(); err == nil {
 				t.Fatal("non-ancestral Capture was accepted")
 			}
@@ -1887,7 +2492,10 @@ func TestFunctionRejectsCaptureDefinitionRoleCollisions(t *testing.T) {
 			bodyValues := b.Values(program.Span{}, body, nil, 0)
 			b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 			bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
-			b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{outer}, bound))
+			finishNormally(
+				t, b, entry,
+				b.Bind(program.Span{}, entry, []program.Term{outer}, bound),
+			)
 			if _, err := b.Seal(); err == nil {
 				t.Fatal("Capture role collision was accepted")
 			}

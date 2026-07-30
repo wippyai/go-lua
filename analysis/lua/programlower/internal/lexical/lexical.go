@@ -40,6 +40,13 @@ type bodyFrame struct {
 	undoMark   int
 	rootMark   int
 	terminated bool
+	hasBreak   bool
+}
+
+// Flow summarizes the reachable exits of one completed Body.
+type Flow struct {
+	Terminated bool
+	HasBreak   bool
 }
 
 // New creates the lexical authority for one unfinished Program.
@@ -107,92 +114,55 @@ func (b *Bodies) Owner() program.Term {
 	return b.frames[len(b.frames)-1].body
 }
 
-// CanContinue reports whether the active Body still accepts a statement root.
-func (b *Bodies) CanContinue() bool {
+// FallsThrough reports whether the active Body has a reachable normal exit.
+func (b *Bodies) FallsThrough() bool {
 	return !b.frames[len(b.frames)-1].terminated
 }
 
 // Finish atomically publishes the current Body, restores its lexical mappings,
 // and leaves its parent active.
-func (b *Bodies) Finish(normalValues program.Term) (program.Term, bool, error) {
+func (b *Bodies) Finish(normalValues program.Term) (program.Term, Flow, error) {
 	if len(b.frames) == 0 {
-		return 0, false, fmt.Errorf("programlower: no lexical body to finalize")
+		return 0, Flow{}, fmt.Errorf("programlower: no lexical body to finalize")
 	}
 	frame := b.frames[len(b.frames)-1]
 	if frame.terminated {
 		if normalValues != 0 {
-			return 0, false, fmt.Errorf("programlower: terminal Body has normal Values")
+			return 0, Flow{}, fmt.Errorf("programlower: terminal Body has normal Values")
 		}
 	} else {
 		if normalValues == 0 {
-			return 0, false, fmt.Errorf("programlower: nonterminal Body has no normal Values")
+			return 0, Flow{}, fmt.Errorf("programlower: nonterminal Body has no normal Values")
 		}
 		normal := b.builder.Normal(frame.span, frame.body, normalValues)
 		if normal == 0 {
-			return 0, false, fmt.Errorf("programlower: could not create Normal outcome")
+			return 0, Flow{}, fmt.Errorf("programlower: could not create Normal outcome")
 		}
 		b.roots = append(b.roots, normal)
 	}
 	if !b.builder.SetBody(frame.body, b.roots[frame.rootMark:]...) {
-		return 0, false, fmt.Errorf("programlower: could not finalize Body")
+		return 0, Flow{}, fmt.Errorf("programlower: could not finalize Body")
 	}
 	b.roots = b.roots[:frame.rootMark]
 	b.restore(frame.undoMark)
 	b.frames = b.frames[:len(b.frames)-1]
-	return frame.body, frame.terminated, nil
+	return frame.body, Flow{
+		Terminated: frame.terminated,
+		HasBreak:   frame.hasBreak,
+	}, nil
 }
 
-// Append publishes one completed statement relation in the current Body.
-func (b *Bodies) Append(term program.Term) error {
+// Append publishes one completed statement relation and atomically merges its
+// control-flow effect into the current Body.
+func (b *Bodies) Append(term program.Term, flow Flow) error {
 	if term == 0 {
 		return fmt.Errorf("programlower: could not create Body root")
 	}
 	b.roots = append(b.roots, term)
-	return nil
-}
-
-// Child publishes one completed child Body and propagates its terminal state.
-func (b *Bodies) Child(body program.Term, terminated bool) error {
-	if err := b.Append(body); err != nil {
-		return err
-	}
-	if terminated {
-		b.frames[len(b.frames)-1].terminated = true
-	}
-	return nil
-}
-
-// Return records one terminal return in the current Body.
-func (b *Bodies) Return(span program.Span, values program.Term) error {
-	owner := b.Owner()
-	term := b.builder.Return(span, owner, values)
-	if term == 0 {
-		return fmt.Errorf("programlower: could not lower return")
-	}
-	b.roots = append(b.roots, term)
-	b.frames[len(b.frames)-1].terminated = true
-	return nil
-}
-
-// Branch records one condition and its two owned Bodies, then propagates the
-// exact authored terminal law to the parent Body.
-func (b *Bodies) Branch(
-	span program.Span,
-	condition program.Term,
-	whenTrue program.Term,
-	whenFalse program.Term,
-	thenTerminated bool,
-	elseTerminated bool,
-	hasAuthoredFalseArm bool,
-) error {
-	owner := b.Owner()
-	branch := b.builder.Branch(span, owner, condition, whenTrue, whenFalse)
-	if branch == 0 {
-		return fmt.Errorf("programlower: could not create Branch")
-	}
-	b.roots = append(b.roots, branch)
-	if thenTerminated && elseTerminated && hasAuthoredFalseArm {
-		b.frames[len(b.frames)-1].terminated = true
+	frame := &b.frames[len(b.frames)-1]
+	if !frame.terminated {
+		frame.terminated = flow.Terminated
+		frame.hasBreak = frame.hasBreak || flow.HasBreak
 	}
 	return nil
 }
@@ -236,8 +206,22 @@ func (b *Bodies) CaptureMark() int {
 	return len(b.captures)
 }
 
-// Declare creates and installs one local or formal Cell.
+// Declare creates and installs one local, formal, or loop Cell.
 func (b *Bodies) Declare(id symbol.ID, span program.Span) (program.Term, error) {
+	return b.declare(id, span, true)
+}
+
+// DeclareLoop creates and installs one per-iteration Cell without retaining it
+// in local/formal construction scratch.
+func (b *Bodies) DeclareLoop(id symbol.ID, span program.Span) (program.Term, error) {
+	return b.declare(id, span, false)
+}
+
+func (b *Bodies) declare(
+	id symbol.ID,
+	span program.Span,
+	retain bool,
+) (program.Term, error) {
 	if id == 0 {
 		return 0, fmt.Errorf("programlower: cannot declare zero binder symbol")
 	}
@@ -250,7 +234,9 @@ func (b *Bodies) Declare(id symbol.ID, span program.Span) (program.Term, error) 
 		return 0, fmt.Errorf("programlower: could not create Cell")
 	}
 	b.install(id, cell)
-	b.appendCell(cell)
+	if retain {
+		b.appendCell(cell)
+	}
 	return cell, nil
 }
 

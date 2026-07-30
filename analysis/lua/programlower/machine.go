@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/control"
 	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/eval"
 	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/lexical"
 	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/store"
@@ -29,6 +30,7 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 		builder:    builder,
 		captures:   captures,
 		scopes:     lexical.New(builder),
+		controls:   control.New(builder),
 		packs:      eval.New(builder),
 		access:     store.New(builder),
 	}
@@ -45,7 +47,8 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 	if err := l.run(); err != nil {
 		return nil, err
 	}
-	if !l.scopes.Clean() || !l.packs.Clean() || !l.access.Clean() {
+	if !l.scopes.Clean() || !l.controls.Clean() ||
+		!l.packs.Clean() || !l.access.Clean() {
 		return nil, fmt.Errorf("programlower: unfinished assembly scratch")
 	}
 	sealed, err := builder.Seal()
@@ -68,10 +71,11 @@ type lowerer struct {
 	builder    *program.Builder
 	captures   captureIndex
 
-	scopes lexical.Bodies
-	packs  eval.Values
-	access store.Access
-	steps  []step
+	scopes   lexical.Bodies
+	controls control.Writer
+	packs    eval.Values
+	access   store.Access
+	steps    []step
 
 	result program.Term
 }
@@ -92,6 +96,11 @@ const (
 	stepFinishIfCondition
 	stepFinishIfThen
 	stepFinishIfElse
+	stepFinishWhileCondition
+	stepFinishLoopBody
+	stepFinishRepeat
+	stepNumberControls
+	stepFinishGenericControls
 	stepValues
 	stepAppendValue
 	stepExpr
@@ -118,7 +127,7 @@ type step struct {
 	stmts []ast.Stmt
 	exprs []ast.Expr
 	expr  ast.Expr
-	key   ast.Expr
+	node  ast.PositionHolder
 
 	local   *ast.LocalAssignStmt
 	assign  *ast.AssignStmt
@@ -146,9 +155,9 @@ type step struct {
 	valueMark int
 	kindMark  int
 
-	readLens       bool
-	allowOpen      bool
-	thenTerminated bool
+	readLens  bool
+	allowOpen bool
+	thenFlow  lexical.Flow
 }
 
 func (l *lowerer) run() error {
@@ -167,11 +176,11 @@ func (l *lowerer) run() error {
 				return err
 			}
 		case stepFinishDo:
-			child, terminated, err := l.finishBody(current.span)
+			child, flow, err := l.finishBody(current.span)
 			if err != nil {
 				return err
 			}
-			if err := l.scopes.Child(child, terminated); err != nil {
+			if err := l.scopes.Append(child, flow); err != nil {
 				return err
 			}
 		case stepFinishLocal:
@@ -198,15 +207,23 @@ func (l *lowerer) run() error {
 			if err != nil {
 				return err
 			}
-			if err := l.scopes.Append(term); err != nil {
+			if err := l.scopes.Append(term, lexical.Flow{}); err != nil {
 				return err
 			}
 		case stepFinishCallStmt:
-			if err := l.scopes.Append(l.result); err != nil {
+			if err := l.scopes.Append(l.result, lexical.Flow{}); err != nil {
 				return err
 			}
 		case stepFinishReturn:
-			if err := l.scopes.Return(l.span(current.return_), l.result); err != nil {
+			term, flow, err := l.controls.Return(
+				l.span(current.return_),
+				l.owner(),
+				l.result,
+			)
+			if err != nil {
+				return err
+			}
+			if err := l.scopes.Append(term, flow); err != nil {
 				return err
 			}
 		case stepFinishIfCondition:
@@ -219,6 +236,35 @@ func (l *lowerer) run() error {
 			}
 		case stepFinishIfElse:
 			if err := l.finishIfElse(current); err != nil {
+				return err
+			}
+		case stepFinishWhileCondition:
+			stmt, ok := current.node.(*ast.WhileStmt)
+			if !ok || stmt == nil {
+				return fmt.Errorf("programlower: invalid while continuation")
+			}
+			if err := l.beginWhileBody(stmt, l.result); err != nil {
+				return err
+			}
+		case stepFinishLoopBody:
+			if err := l.finishLoopBody(current); err != nil {
+				return err
+			}
+		case stepFinishRepeat:
+			current.condition = l.result
+			if err := l.finishLoopBody(current); err != nil {
+				return err
+			}
+		case stepNumberControls:
+			if err := l.runNumberControls(current); err != nil {
+				return err
+			}
+		case stepFinishGenericControls:
+			stmt, ok := current.node.(*ast.GenericForStmt)
+			if !ok || stmt == nil {
+				return fmt.Errorf("programlower: invalid generic for continuation")
+			}
+			if err := l.beginGenericForBody(stmt, l.result); err != nil {
 				return err
 			}
 		case stepValues:
@@ -319,7 +365,11 @@ func (l *lowerer) run() error {
 				return err
 			}
 		case stepFinishTableKey:
-			l.access.KeyField(l.result, current.key)
+			key, ok := current.node.(ast.Expr)
+			if !ok || !astNodePresent(key) {
+				return fmt.Errorf("programlower: invalid table key continuation")
+			}
+			l.access.KeyField(l.result, key)
 			l.push(
 				step{
 					kind:      stepFinishTableValue,
@@ -357,9 +407,6 @@ func (l *lowerer) runStmts(current step) error {
 	stmt := current.stmts[current.index]
 	if !astNodePresent(stmt) {
 		return fmt.Errorf("programlower: absent statement %T", stmt)
-	}
-	if !l.scopes.CanContinue() {
-		return fmt.Errorf("programlower: statement after terminal %T", stmt)
 	}
 	l.push(step{kind: stepStmts, stmts: current.stmts, index: current.index + 1})
 
@@ -411,6 +458,23 @@ func (l *lowerer) runStmts(current step) error {
 			step{kind: stepFinishIfCondition, if_: stmt},
 			step{kind: stepExpr, expr: stmt.Condition},
 		)
+	case *ast.WhileStmt:
+		l.push(
+			step{kind: stepFinishWhileCondition, node: stmt},
+			step{kind: stepExpr, expr: stmt.Condition},
+		)
+	case *ast.RepeatStmt:
+		return l.startRepeat(stmt)
+	case *ast.NumberForStmt:
+		return l.startNumberFor(stmt)
+	case *ast.GenericForStmt:
+		return l.startGenericFor(stmt)
+	case *ast.BreakStmt:
+		term, flow, err := l.controls.Break(l.span(stmt), l.owner())
+		if err != nil {
+			return err
+		}
+		return l.scopes.Append(term, flow)
 	case *ast.DoBlockStmt:
 		span := l.span(stmt)
 		_, err := l.scopes.EnterBlock(span)
@@ -450,7 +514,7 @@ func (l *lowerer) finishIfThen(current step) error {
 	if l.owner() != current.whenTrue {
 		return fmt.Errorf("programlower: mismatched Then Body")
 	}
-	_, terminated, err := l.finishBody(current.span)
+	_, flow, err := l.finishBody(current.span)
 	if err != nil {
 		return err
 	}
@@ -462,13 +526,13 @@ func (l *lowerer) finishIfThen(current step) error {
 	}
 	l.push(
 		step{
-			kind:           stepFinishIfElse,
-			if_:            current.if_,
-			condition:      current.condition,
-			whenTrue:       current.whenTrue,
-			whenFalse:      body,
-			thenTerminated: terminated,
-			span:           span,
+			kind:      stepFinishIfElse,
+			if_:       current.if_,
+			condition: current.condition,
+			whenTrue:  current.whenTrue,
+			whenFalse: body,
+			thenFlow:  flow,
+			span:      span,
 		},
 		step{kind: stepStmts, stmts: current.if_.Else},
 	)
@@ -479,23 +543,260 @@ func (l *lowerer) finishIfElse(current step) error {
 	if l.owner() != current.whenFalse {
 		return fmt.Errorf("programlower: mismatched Else Body")
 	}
-	_, elseTerminated, err := l.finishBody(current.span)
+	_, elseFlow, err := l.finishBody(current.span)
 	if err != nil {
 		return err
 	}
 
-	// HasElse marks a terminal else on the final parser-owned IfStmt. Earlier
-	// elseif members instead have the next IfStmt as their sole Else statement.
-	hasAuthoredFalseArm := current.if_.HasElse || len(current.if_.Else) != 0
-	return l.scopes.Branch(
+	term, flow, err := l.controls.Branch(
 		l.span(current.if_),
+		l.owner(),
 		current.condition,
 		current.whenTrue,
 		current.whenFalse,
-		current.thenTerminated,
-		elseTerminated,
-		hasAuthoredFalseArm,
+		current.thenFlow,
+		elseFlow,
 	)
+	if err != nil {
+		return err
+	}
+	return l.scopes.Append(term, flow)
+}
+
+func (l *lowerer) beginWhileBody(stmt *ast.WhileStmt, control program.Term) error {
+	bodySpan := l.chunkSpan(stmt.Stmts)
+	body, err := l.scopes.EnterBlock(bodySpan)
+	if err != nil {
+		return fmt.Errorf("programlower: could not create while Body: %w", err)
+	}
+	l.push(
+		step{
+			kind:      stepFinishLoopBody,
+			node:      stmt,
+			span:      bodySpan,
+			whenTrue:  body,
+			condition: control,
+			mark:      l.controls.CellMark(),
+		},
+		step{kind: stepStmts, stmts: stmt.Stmts},
+	)
+	return nil
+}
+
+func (l *lowerer) startRepeat(stmt *ast.RepeatStmt) error {
+	bodySpan := l.chunkSpan(stmt.Stmts)
+	body, err := l.scopes.EnterBlock(bodySpan)
+	if err != nil {
+		return fmt.Errorf("programlower: could not create repeat Body: %w", err)
+	}
+	l.push(
+		step{
+			kind:     stepFinishRepeat,
+			node:     stmt,
+			span:     bodySpan,
+			whenTrue: body,
+			mark:     l.controls.CellMark(),
+		},
+		step{kind: stepExpr, expr: stmt.Condition},
+		step{kind: stepStmts, stmts: stmt.Stmts},
+	)
+	return nil
+}
+
+func (l *lowerer) startNumberFor(stmt *ast.NumberForStmt) error {
+	if !astNodePresent(stmt.Init) {
+		return fmt.Errorf("programlower: absent numeric for initializer %T", stmt.Init)
+	}
+	if !astNodePresent(stmt.Limit) {
+		return fmt.Errorf("programlower: absent numeric for limit %T", stmt.Limit)
+	}
+	if stmt.Step != nil && !astNodePresent(stmt.Step) {
+		return fmt.Errorf("programlower: absent numeric for step %T", stmt.Step)
+	}
+	l.push(step{
+		kind: stepNumberControls,
+		node: stmt,
+		mark: l.packs.Mark(),
+	})
+	return nil
+}
+
+func (l *lowerer) runNumberControls(current step) error {
+	stmt, ok := current.node.(*ast.NumberForStmt)
+	if !ok || stmt == nil {
+		return fmt.Errorf("programlower: invalid numeric for continuation")
+	}
+	count := 2
+	if stmt.Step != nil {
+		count = 3
+	}
+	if current.index == count {
+		control, err := l.packs.Fixed(
+			l.span(stmt),
+			l.owner(),
+			current.mark,
+			count,
+		)
+		if err != nil {
+			return err
+		}
+		return l.beginNumberForBody(stmt, control)
+	}
+	if current.index < 0 || current.index > count {
+		return fmt.Errorf("programlower: invalid numeric for control cursor")
+	}
+	var expr ast.Expr
+	switch current.index {
+	case 0:
+		expr = stmt.Init
+	case 1:
+		expr = stmt.Limit
+	case 2:
+		expr = stmt.Step
+	}
+	current.index++
+	l.push(
+		current,
+		step{kind: stepAppendValue},
+		step{kind: stepExpr, expr: expr},
+	)
+	return nil
+}
+
+func (l *lowerer) beginNumberForBody(
+	stmt *ast.NumberForStmt,
+	control program.Term,
+) error {
+	id, ok := l.binding.NumForSymbol(stmt)
+	if !ok || id == 0 {
+		return fmt.Errorf("programlower: binder has no symbol for numeric for variable")
+	}
+	bodySpan := l.chunkSpan(stmt.Stmts)
+	body, err := l.scopes.EnterBlock(bodySpan)
+	if err != nil {
+		return fmt.Errorf("programlower: could not create numeric for Body: %w", err)
+	}
+	cellMark := l.controls.CellMark()
+	cell, err := l.scopes.DeclareLoop(id, l.positionSpan(stmt.NamePosition))
+	if err != nil {
+		return fmt.Errorf("programlower: could not create numeric for Cell: %w", err)
+	}
+	if err := l.controls.RememberCell(cell); err != nil {
+		return err
+	}
+	l.push(
+		step{
+			kind:      stepFinishLoopBody,
+			node:      stmt,
+			span:      bodySpan,
+			whenTrue:  body,
+			condition: control,
+			mark:      cellMark,
+		},
+		step{kind: stepStmts, stmts: stmt.Stmts},
+	)
+	return nil
+}
+
+func (l *lowerer) startGenericFor(stmt *ast.GenericForStmt) error {
+	if len(stmt.Names) == 0 {
+		return fmt.Errorf("programlower: generic for has no variables")
+	}
+	if len(stmt.Exprs) == 0 {
+		return fmt.Errorf("programlower: generic for has no iterator expressions")
+	}
+	l.push(
+		step{kind: stepFinishGenericControls, node: stmt},
+		step{
+			kind:  stepValues,
+			exprs: stmt.Exprs,
+			span:  l.span(stmt),
+			mark:  l.packs.Mark(),
+		},
+	)
+	return nil
+}
+
+func (l *lowerer) beginGenericForBody(
+	stmt *ast.GenericForStmt,
+	control program.Term,
+) error {
+	ids := l.binding.GenericForSymbols(stmt)
+	if len(ids) != len(stmt.Names) {
+		return fmt.Errorf("programlower: binder has incomplete generic for symbols")
+	}
+	bodySpan := l.chunkSpan(stmt.Stmts)
+	body, err := l.scopes.EnterBlock(bodySpan)
+	if err != nil {
+		return fmt.Errorf("programlower: could not create generic for Body: %w", err)
+	}
+	cellMark := l.controls.CellMark()
+	for i, id := range ids {
+		if id == 0 {
+			return fmt.Errorf("programlower: binder has no symbol for generic for variable %d", i)
+		}
+		var span program.Span
+		if i < len(stmt.NamePositions) {
+			span = l.positionSpan(stmt.NamePositions[i])
+		} else {
+			span = l.span(stmt)
+		}
+		cell, err := l.scopes.DeclareLoop(id, span)
+		if err != nil {
+			return fmt.Errorf("programlower: could not create generic for Cell %d: %w", i, err)
+		}
+		if err := l.controls.RememberCell(cell); err != nil {
+			return err
+		}
+	}
+	l.push(
+		step{
+			kind:      stepFinishLoopBody,
+			node:      stmt,
+			span:      bodySpan,
+			whenTrue:  body,
+			condition: control,
+			mark:      cellMark,
+		},
+		step{kind: stepStmts, stmts: stmt.Stmts},
+	)
+	return nil
+}
+
+func (l *lowerer) finishLoopBody(current step) error {
+	if l.owner() != current.whenTrue {
+		return fmt.Errorf("programlower: mismatched loop Body")
+	}
+	body, flow, err := l.finishBody(current.span)
+	if err != nil {
+		return err
+	}
+	var kind program.LoopKind
+	switch current.node.(type) {
+	case *ast.WhileStmt:
+		kind = program.LoopWhile
+	case *ast.RepeatStmt:
+		kind = program.LoopRepeat
+	case *ast.NumberForStmt:
+		kind = program.LoopNumericFor
+	case *ast.GenericForStmt:
+		kind = program.LoopGenericFor
+	default:
+		return fmt.Errorf("programlower: invalid loop continuation %T", current.node)
+	}
+	term, outerFlow, err := l.controls.Loop(
+		l.span(current.node),
+		l.owner(),
+		body,
+		current.condition,
+		current.mark,
+		kind,
+		flow,
+	)
+	if err != nil {
+		return err
+	}
+	return l.scopes.Append(term, outerFlow)
 }
 
 func (l *lowerer) finishLocal(current step) error {
@@ -1024,7 +1325,7 @@ func (l *lowerer) runTableFields(current step) error {
 			step{
 				kind:      stepFinishTableKey,
 				expr:      field.Value,
-				key:       field.Key,
+				node:      field.Key,
 				allowOpen: false,
 			},
 			step{kind: stepExpr, expr: field.Key},
@@ -1048,13 +1349,13 @@ func (l *lowerer) push(steps ...step) {
 	l.steps = append(l.steps, steps...)
 }
 
-func (l *lowerer) finishBody(span program.Span) (program.Term, bool, error) {
+func (l *lowerer) finishBody(span program.Span) (program.Term, lexical.Flow, error) {
 	var normalValues program.Term
-	if l.scopes.CanContinue() {
+	if l.scopes.FallsThrough() {
 		var err error
 		normalValues, err = l.packs.Empty(span, l.owner())
 		if err != nil {
-			return 0, false, err
+			return 0, lexical.Flow{}, err
 		}
 	}
 	return l.scopes.Finish(normalValues)

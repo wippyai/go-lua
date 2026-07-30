@@ -72,6 +72,25 @@ func (v *Values) Pack(
 	return term, nil
 }
 
+// Fixed completes a scalar-adjusted list with no open tail.
+func (v *Values) Fixed(
+	span program.Span,
+	owner program.Term,
+	mark int,
+	count int,
+) (program.Term, error) {
+	if mark < 0 || mark > len(v.terms) ||
+		count < 0 || len(v.terms)-mark != count {
+		return 0, fmt.Errorf("programlower: incomplete fixed value list")
+	}
+	term := v.builder.Values(span, owner, v.terms[mark:], 0)
+	v.terms = v.terms[:mark]
+	if term == 0 {
+		return 0, fmt.Errorf("programlower: could not create fixed Values")
+	}
+	return term, nil
+}
+
 // Field completes one table field pack with its context-specific open law.
 func (v *Values) Field(
 	span program.Span,

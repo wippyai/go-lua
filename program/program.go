@@ -20,6 +20,21 @@ type FieldKind uint8
 
 type Capture struct{ Inner, Outer Term }
 
+// LoopKind is the closed source-language loop vocabulary. Every kind shares
+// one typed Loop relation; its exact operand shape is verified by Seal.
+type LoopKind uint8
+
+const (
+	LoopWhile LoopKind = iota + 1
+	LoopRepeat
+	LoopNumericFor
+	LoopGenericFor
+)
+
+func (kind LoopKind) valid() bool {
+	return kind >= LoopWhile && kind <= LoopGenericFor
+}
+
 const (
 	FieldList FieldKind = iota + 1
 	// FieldName is dot/name syntax. Its spelling is metadata, never an
@@ -108,7 +123,6 @@ const (
 	tagThrow
 	tagYield
 	tagBreak
-	tagContinue
 	tagBody
 	tagCell
 	tagRead
@@ -121,6 +135,7 @@ const (
 	tagFunction
 	tagCall
 	tagBranch
+	tagLoop
 	tagTable
 	tagKey
 	tagCount
@@ -181,6 +196,7 @@ type exactLensRow struct {
 }
 type keyLensRow struct{ owner, base, key Term }
 type outcomeRow struct{ owner, values Term }
+type breakRow struct{ owner Term }
 type bodyRow struct {
 	roots  termRange
 	filled bool
@@ -250,6 +266,11 @@ type sealClaimSlot struct {
 	count uint8
 }
 
+const (
+	completionFallsThrough uint8 = 1 << iota
+	completionHasBreak
+)
+
 // Program is the immutable result of Builder.Seal.
 type Program struct {
 	termCount int // size metric only; no generic Term stream is retained
@@ -269,34 +290,41 @@ type Program struct {
 	strings  []stringRow
 	values   []valuesRow
 
-	lensExact   []exactLensRow
-	lensKeys    []keyLensRow
-	normals     []outcomeRow
-	returns     []outcomeRow
-	throws      []outcomeRow
-	yields      []outcomeRow
-	breaks      []outcomeRow
-	continues   []outcomeRow
-	muFunctions []Term // dense Seal-derived canonical heads for cyclic Functions
-	directCalls []Term // Seal-derived direct Function evidence by Call index
-	entry       Term   // the one canonical non-Function shard entry Body
-	bodies      []bodyRow
-	cells       []cellRow
-	reads       []readRow
-	varargs     []varargRow
-	unaries     []unaryRow
-	binaries    []binaryRow
-	selects     []selectRow
-	binds       []bindRow
-	assigns     []assignRow
-	functions   []functionRow
-	captures    []captureRow
-	calls       []callRow
-	branches    []branchRow
-	tables      []tableRow
-	tableFields []tableFieldRow
-	keys        []keyRow
-	exactKeys   []exactKey
+	lensExact      []exactLensRow
+	lensKeys       []keyLensRow
+	normals        []outcomeRow
+	returns        []outcomeRow
+	throws         []outcomeRow
+	yields         []outcomeRow
+	breaks         []breakRow
+	breakLoops     []Term // dense Seal-derived nearest enclosing Loop by Break index
+	loopMu         []bool // dense Seal-derived recurrence evidence by Loop index
+	muFunctions    []Term // dense Seal-derived canonical heads for cyclic Functions
+	directCalls    []Term // Seal-derived direct Function evidence by Call index
+	entry          Term   // the one canonical non-Function shard entry Body
+	bodies         []bodyRow
+	cells          []cellRow
+	reads          []readRow
+	varargs        []varargRow
+	unaries        []unaryRow
+	binaries       []binaryRow
+	selects        []selectRow
+	binds          []bindRow
+	assigns        []assignRow
+	functions      []functionRow
+	captures       []captureRow
+	calls          []callRow
+	branches       []branchRow
+	loopOwners     []Term
+	loopBodies     []Term
+	loopControls   []Term
+	loopKinds      []LoopKind
+	loopCellRanges []termRange
+	loopCells      []Term
+	tables         []tableRow
+	tableFields    []tableFieldRow
+	keys           []keyRow
+	exactKeys      []exactKey
 }
 
 // Builder is the sole mutable construction path for Program.
@@ -320,33 +348,38 @@ type Builder struct {
 	strings  []stringRow
 	values   []valuesRow
 
-	lensExact   []exactLensRow
-	lensKeys    []keyLensRow
-	normals     []outcomeRow
-	returns     []outcomeRow
-	throws      []outcomeRow
-	yields      []outcomeRow
-	breaks      []outcomeRow
-	continues   []outcomeRow
-	entry       Term
-	bodies      []bodyRow
-	cells       []cellRow
-	reads       []readRow
-	varargs     []varargRow
-	unaries     []unaryRow
-	binaries    []binaryRow
-	selects     []selectRow
-	binds       []bindRow
-	assigns     []assignRow
-	functions   []functionRow
-	captures    []captureRow
-	calls       []callRow
-	branches    []branchRow
-	tables      []tableRow
-	tableFields []tableFieldRow
-	keys        []keyRow
-	exactKeys   []exactKey
-	exactLookup map[exactKey]Key
+	lensExact      []exactLensRow
+	lensKeys       []keyLensRow
+	normals        []outcomeRow
+	returns        []outcomeRow
+	throws         []outcomeRow
+	yields         []outcomeRow
+	breaks         []breakRow
+	entry          Term
+	bodies         []bodyRow
+	cells          []cellRow
+	reads          []readRow
+	varargs        []varargRow
+	unaries        []unaryRow
+	binaries       []binaryRow
+	selects        []selectRow
+	binds          []bindRow
+	assigns        []assignRow
+	functions      []functionRow
+	captures       []captureRow
+	calls          []callRow
+	branches       []branchRow
+	loopOwners     []Term
+	loopBodies     []Term
+	loopControls   []Term
+	loopKinds      []LoopKind
+	loopCellRanges []termRange
+	loopCells      []Term
+	tables         []tableRow
+	tableFields    []tableFieldRow
+	keys           []keyRow
+	exactKeys      []exactKey
+	exactLookup    map[exactKey]Key
 }
 
 // NewBuilder returns an empty Program builder.
@@ -635,11 +668,19 @@ func (b *Builder) Throw(span Span, owner, values Term) Term {
 func (b *Builder) Yield(span Span, owner, values Term) Term {
 	return b.outcome(tagYield, span, owner, values)
 }
-func (b *Builder) Break(span Span, owner, values Term) Term {
-	return b.outcome(tagBreak, span, owner, values)
-}
-func (b *Builder) Continue(span Span, owner, values Term) Term {
-	return b.outcome(tagContinue, span, owner, values)
+
+// Break terminates the nearest enclosing Loop. It has no value operand;
+// Seal derives and validates its exact Loop target from lexical structure.
+func (b *Builder) Break(span Span, owner Term) Term {
+	if !b.require(b.has(owner, tagBody)) {
+		return 0
+	}
+	b.breaks = append(b.breaks, breakRow{owner: owner})
+	term := b.mint(tagBreak, span, b.familyIndex(len(b.breaks)))
+	if term == 0 {
+		b.breaks = b.breaks[:len(b.breaks)-1]
+	}
+	return term
 }
 func (b *Builder) outcome(tag uint8, span Span, owner, value Term) Term {
 	if !b.require(b.has(owner, tagBody) && b.has(value, tagValues)) {
@@ -655,10 +696,9 @@ func (b *Builder) outcome(tag uint8, span Span, owner, value Term) Term {
 		rows = &b.throws
 	case tagYield:
 		rows = &b.yields
-	case tagBreak:
-		rows = &b.breaks
 	default:
-		rows = &b.continues
+		b.poison = true
+		return 0
 	}
 	*rows = append(*rows, outcomeRow{owner: owner, values: value})
 	term := b.mint(tag, span, b.familyIndex(len(*rows)))
@@ -914,15 +954,81 @@ func (b *Builder) Call(span Span, owner, callee, receiver, actuals Term) Term {
 	return term
 }
 
-// Branch evaluates condition and then transfers to exactly one owned Body or Outcome.
+// Branch evaluates condition and then transfers to exactly one owned Body.
 func (b *Builder) Branch(span Span, owner, condition, whenTrue, whenFalse Term) Term {
-	if !b.require(b.has(owner, tagBody) && b.valueOccurrence(condition) && b.branchArm(whenTrue) && b.branchArm(whenFalse)) {
+	if !b.require(b.has(owner, tagBody) && b.valueOccurrence(condition) &&
+		b.has(whenTrue, tagBody) && b.has(whenFalse, tagBody)) {
 		return 0
 	}
 	b.branches = append(b.branches, branchRow{owner: owner, condition: condition, whenTrue: whenTrue, whenFalse: whenFalse})
 	term := b.mint(tagBranch, span, b.familyIndex(len(b.branches)))
 	if term == 0 {
 		b.branches = b.branches[:len(b.branches)-1]
+		return 0
+	}
+	return term
+}
+
+// Loop records one of Lua's four loop forms without constructing a CFG or an
+// authored backedge. Its body Normal outcome returns to the Loop head, Break
+// exits it, and other outcomes propagate. Seal annotates the Loop as Mu only
+// when that Normal backedge exists.
+//
+// While and Repeat have no iteration Cells and a scalar control occurrence.
+// NumericFor has one iteration Cell and a closed 2- or 3-value control tuple.
+// GenericFor has one or more iteration Cells and a non-empty, possibly open,
+// control tuple.
+func (b *Builder) Loop(span Span, owner, body, control Term, cells []Term, kind LoopKind) Term {
+	if !b.require(kind.valid() && b.has(owner, tagBody) && b.has(body, tagBody) && owner != body) {
+		return 0
+	}
+	switch kind {
+	case LoopWhile, LoopRepeat:
+		if !b.require(len(cells) == 0 && b.valueOccurrence(control)) {
+			return 0
+		}
+	case LoopNumericFor:
+		if !b.require(len(cells) == 1 && b.has(control, tagValues)) {
+			return 0
+		}
+		values := b.values[control.index()-1]
+		count := values.fixed.end - values.fixed.start
+		if !b.require((count == 2 || count == 3) && values.tail == 0) {
+			return 0
+		}
+	case LoopGenericFor:
+		if !b.require(len(cells) != 0 && b.has(control, tagValues)) {
+			return 0
+		}
+		values := b.values[control.index()-1]
+		if !b.require(values.fixed.start != values.fixed.end || values.tail != 0) {
+			return 0
+		}
+	default:
+		return 0
+	}
+	for _, cell := range cells {
+		if !b.require(b.has(cell, tagCell)) {
+			return 0
+		}
+	}
+	cellRange, ok := b.appendPool(&b.loopCells, cells)
+	if !ok {
+		return 0
+	}
+	b.loopOwners = append(b.loopOwners, owner)
+	b.loopBodies = append(b.loopBodies, body)
+	b.loopControls = append(b.loopControls, control)
+	b.loopKinds = append(b.loopKinds, kind)
+	b.loopCellRanges = append(b.loopCellRanges, cellRange)
+	term := b.mint(tagLoop, span, b.familyIndex(len(b.loopOwners)))
+	if term == 0 {
+		b.loopOwners = b.loopOwners[:len(b.loopOwners)-1]
+		b.loopBodies = b.loopBodies[:len(b.loopBodies)-1]
+		b.loopControls = b.loopControls[:len(b.loopControls)-1]
+		b.loopKinds = b.loopKinds[:len(b.loopKinds)-1]
+		b.loopCellRanges = b.loopCellRanges[:len(b.loopCellRanges)-1]
+		b.loopCells = b.loopCells[:cellRange.start]
 		return 0
 	}
 	return term
@@ -1113,8 +1219,6 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.yields))
 	case tagBreak:
 		return index <= uint32(len(b.breaks))
-	case tagContinue:
-		return index <= uint32(len(b.continues))
 	case tagBody:
 		return index <= uint32(len(b.bodies))
 	case tagCell:
@@ -1139,6 +1243,8 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.calls))
 	case tagBranch:
 		return index <= uint32(len(b.branches))
+	case tagLoop:
+		return index <= uint32(len(b.loopOwners))
 	case tagTable:
 		return index <= uint32(len(b.tables))
 	case tagKey:
@@ -1223,20 +1329,38 @@ func (b *Builder) Seal() (*Program, error) {
 	}
 	for _, row := range b.branches {
 		for _, arm := range [...]Term{row.whenTrue, row.whenFalse} {
-			if b.has(arm, tagBody) {
-				if err := setParent(arm, row.owner); err != nil {
-					return nil, err
-				}
+			if err := setParent(arm, row.owner); err != nil {
+				return nil, err
 			}
 		}
 	}
-	if parent[b.entry.index()] != 0 || functionAtBody[b.entry.index()] != 0 || !entryBodyForest(parent, b.entry.index()) {
+	for i, owner := range b.loopOwners {
+		body := b.loopBodies[i]
+		if !b.loopKinds[i].valid() || !b.has(owner, tagBody) || !b.has(body, tagBody) || owner == body {
+			return nil, errors.New("program: invalid Loop Body authority")
+		}
+		if err := setParent(body, owner); err != nil {
+			return nil, err
+		}
+	}
+	if parent[b.entry.index()] != 0 || functionAtBody[b.entry.index()] != 0 {
 		return nil, errors.New("program: invalid Body forest")
 	}
-	pre, post := bodyIntervals(parent)
-	activation := b.bodyActivations(parent, functionAtBody, b.entry)
-	if activation == nil {
-		return nil, errors.New("program: invalid Body activation")
+	var enclosingLoop []Term
+	if len(b.breaks) != 0 {
+		if len(b.loopOwners) == 0 {
+			return nil, errors.New("program: Break has no enclosing Loop")
+		}
+		enclosingLoop = make([]Term, len(b.bodies)+1)
+		for i, body := range b.loopBodies {
+			enclosingLoop[body.index()] = makeTerm(tagLoop, uint32(i+1))
+		}
+	}
+	pre, post, activation, postorder, ok := b.proveBodyForest(
+		parent, functionAtBody, enclosingLoop, b.entry,
+	)
+	if !ok {
+		return nil, errors.New("program: invalid Body context")
 	}
 
 	claims := [tagCount][]sealClaimSlot{}
@@ -1292,10 +1416,6 @@ func (b *Builder) Seal() (*Program, error) {
 	for i, row := range b.breaks {
 		claims[tagBreak][i].owner = row.owner
 	}
-	claims[tagContinue] = make([]sealClaimSlot, len(b.continues))
-	for i, row := range b.continues {
-		claims[tagContinue][i].owner = row.owner
-	}
 	claims[tagRead] = make([]sealClaimSlot, len(b.reads))
 	for i, row := range b.reads {
 		claims[tagRead][i].owner = row.owner
@@ -1335,6 +1455,10 @@ func (b *Builder) Seal() (*Program, error) {
 	claims[tagBranch] = make([]sealClaimSlot, len(b.branches))
 	for i, row := range b.branches {
 		claims[tagBranch][i].owner = row.owner
+	}
+	claims[tagLoop] = make([]sealClaimSlot, len(b.loopOwners))
+	for i, owner := range b.loopOwners {
+		claims[tagLoop][i].owner = owner
 	}
 	claims[tagTable] = make([]sealClaimSlot, len(b.tables))
 	for i, row := range b.tables {
@@ -1412,7 +1536,7 @@ func (b *Builder) Seal() (*Program, error) {
 			return nil, err
 		}
 	}
-	for _, rows := range [][]outcomeRow{b.normals, b.returns, b.throws, b.yields, b.breaks, b.continues} {
+	for _, rows := range [][]outcomeRow{b.normals, b.returns, b.throws, b.yields} {
 		for _, row := range rows {
 			if !b.has(row.values, tagValues) {
 				return nil, errors.New("program: Outcome requires Values")
@@ -1499,14 +1623,55 @@ func (b *Builder) Seal() (*Program, error) {
 			return nil, err
 		}
 		for _, arm := range [...]Term{row.whenTrue, row.whenFalse} {
-			if !b.branchArm(arm) {
+			if !b.has(arm, tagBody) {
 				return nil, errors.New("program: invalid Branch arm")
 			}
-			if !b.has(arm, tagBody) {
-				if err := claim(arm, row.owner); err != nil {
-					return nil, err
-				}
+		}
+	}
+	for i, owner := range b.loopOwners {
+		body := b.loopBodies[i]
+		control := b.loopControls[i]
+		cells := b.loopCellRanges[i]
+		switch b.loopKinds[i] {
+		case LoopWhile:
+			if cells.start != cells.end || !b.valueOccurrence(control) {
+				return nil, errors.New("program: invalid While Loop")
 			}
+			if err := claim(control, owner); err != nil {
+				return nil, err
+			}
+		case LoopRepeat:
+			if cells.start != cells.end || !b.valueOccurrence(control) {
+				return nil, errors.New("program: invalid Repeat Loop")
+			}
+			if err := claim(control, body); err != nil {
+				return nil, err
+			}
+		case LoopNumericFor:
+			if cells.end-cells.start != 1 || !b.has(control, tagValues) {
+				return nil, errors.New("program: invalid NumericFor Loop")
+			}
+			values := b.values[control.index()-1]
+			count := values.fixed.end - values.fixed.start
+			if (count != 2 && count != 3) || values.tail != 0 {
+				return nil, errors.New("program: invalid NumericFor control")
+			}
+			if err := claim(control, owner); err != nil {
+				return nil, err
+			}
+		case LoopGenericFor:
+			if cells.start == cells.end || !b.has(control, tagValues) {
+				return nil, errors.New("program: invalid GenericFor Loop")
+			}
+			values := b.values[control.index()-1]
+			if values.fixed.start == values.fixed.end && values.tail == 0 {
+				return nil, errors.New("program: empty GenericFor control")
+			}
+			if err := claim(control, owner); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, errors.New("program: invalid Loop kind")
 		}
 	}
 	for _, row := range b.tables {
@@ -1541,18 +1706,40 @@ func (b *Builder) Seal() (*Program, error) {
 		}
 	}
 
+	bodyCompletions, err := b.completeBodies(postorder)
+	if err != nil {
+		return nil, err
+	}
 	direct := make([]Term, len(b.calls))
 	if err := b.validateCells(pre, post, activation, direct); err != nil {
 		return nil, err
+	}
+	breakLoops := make([]Term, len(b.breaks))
+	for i, row := range b.breaks {
+		if !b.has(row.owner, tagBody) || int(row.owner.index()) >= len(enclosingLoop) || enclosingLoop[row.owner.index()] == 0 {
+			return nil, errors.New("program: Break has no enclosing Loop")
+		}
+		breakLoops[i] = enclosingLoop[row.owner.index()]
 	}
 	mu, err := b.directCallMu(activation, direct)
 	if err != nil {
 		return nil, err
 	}
-	return b.snapshot(mu, direct), nil
+	loopMu := make([]bool, len(b.loopOwners))
+	for i, body := range b.loopBodies {
+		loopMu[i] = bodyCompletions[body.index()]&completionFallsThrough != 0
+	}
+	return b.snapshot(mu, direct, breakLoops, loopMu), nil
 }
 
-func (b *Builder) bodyActivations(parent []uint32, functionAtBody []Term, entry Term) []Term {
+// proveBodyForest builds the Body CSR once, then proves the one-root forest,
+// lexical intervals, Function activation, optional nearest Loop context, and
+// child-before-parent order in one iterative traversal.
+func (b *Builder) proveBodyForest(
+	parent []uint32,
+	functionAtBody, enclosingLoop []Term,
+	entry Term,
+) (pre, post []uint32, activation []Term, postorder []uint32, ok bool) {
 	count := len(parent) - 1
 	start := make([]uint32, count+2)
 	for child := uint32(1); int(child) < len(parent); child++ {
@@ -1572,27 +1759,113 @@ func (b *Builder) bodyActivations(parent []uint32, functionAtBody []Term, entry 
 			next[at]++
 		}
 	}
-	activation := make([]Term, len(parent))
-	stack := make([]uint32, 1, len(parent)-1)
-	stack[0] = entry.index()
-	seen := 0
+	pre = make([]uint32, len(parent))
+	post = make([]uint32, len(parent))
+	activation = make([]Term, len(parent))
+	postorder = next[:0]
+	type frame struct{ body, next uint32 }
+	stack := make([]frame, 0, count)
+	clock := uint32(1)
+	root := entry.index()
+	pre[root] = clock
+	stack = append(stack, frame{body: root, next: start[root]})
 	for len(stack) != 0 {
-		body := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		seen++
-		for i := start[body]; i < start[body+1]; i++ {
-			child := children[i]
-			activation[child] = activation[body]
+		top := &stack[len(stack)-1]
+		if top.next < start[top.body+1] {
+			child := children[top.next]
+			top.next++
+			if child == 0 || pre[child] != 0 {
+				return nil, nil, nil, nil, false
+			}
+			clock++
+			pre[child] = clock
+			parentBody := top.body
+			activation[child] = activation[parentBody]
+			var loop Term
+			if enclosingLoop != nil {
+				loop = enclosingLoop[child]
+				enclosingLoop[child] = enclosingLoop[parentBody]
+			}
 			if functionAtBody[child] != 0 {
 				activation[child] = functionAtBody[child]
+				if enclosingLoop != nil {
+					enclosingLoop[child] = 0
+				}
 			}
-			stack = append(stack, child)
+			if loop != 0 {
+				enclosingLoop[child] = loop
+			}
+			stack = append(stack, frame{body: child, next: start[child]})
+			continue
 		}
+		post[top.body] = clock
+		postorder = append(postorder, top.body)
+		stack = stack[:len(stack)-1]
 	}
-	if seen != len(parent)-1 {
-		return nil
+	if len(postorder) != count {
+		return nil, nil, nil, nil, false
 	}
-	return activation
+	return pre, post, activation, postorder, true
+}
+
+// completeBodies proves ordered control completion child-first. Structural
+// roots compose their already-proved child completion; unreachable suffix
+// roots remain source evidence but cannot change the reachable result.
+func (b *Builder) completeBodies(postorder []uint32) ([]uint8, error) {
+	completion := make([]uint8, len(b.bodies)+1)
+	for _, bodyIndex := range postorder {
+		row := b.bodies[bodyIndex-1]
+		flow := uint8(completionFallsThrough)
+		witnessed := false
+		for at := row.roots.start; at < row.roots.end; at++ {
+			root := b.bodyTerms[at]
+			final := at+1 == row.roots.end
+			if root.tag() == tagNormal {
+				if flow&completionFallsThrough == 0 {
+					return nil, errors.New("program: unreachable Normal")
+				}
+				if !final {
+					return nil, errors.New("program: reachable Normal must complete its Body")
+				}
+				witnessed = true
+				continue
+			}
+			if flow&completionFallsThrough == 0 {
+				continue
+			}
+			var step uint8
+			switch root.tag() {
+			case tagBind, tagAssign, tagCall:
+				step = completionFallsThrough
+			case tagReturn, tagThrow, tagYield:
+				step = 0
+			case tagBreak:
+				step = completionHasBreak
+			case tagBody:
+				step = completion[root.index()]
+			case tagBranch:
+				branch := b.branches[root.index()-1]
+				whenTrue := completion[branch.whenTrue.index()]
+				whenFalse := completion[branch.whenFalse.index()]
+				step = whenTrue | whenFalse
+			case tagLoop:
+				loopIndex := root.index() - 1
+				body := completion[b.loopBodies[loopIndex].index()]
+				if b.loopKinds[loopIndex] != LoopRepeat ||
+					body&(completionFallsThrough|completionHasBreak) != 0 {
+					step = completionFallsThrough
+				}
+			default:
+				return nil, errors.New("program: invalid Body completion root")
+			}
+			flow = (flow & completionHasBreak) | step
+		}
+		if flow&completionFallsThrough != 0 && !witnessed {
+			return nil, errors.New("program: reachable Body fallthrough needs Normal")
+		}
+		completion[bodyIndex] = flow
+	}
+	return completion, nil
 }
 
 func (b *Builder) validateCells(pre, post []uint32, activation []Term, direct []Term) error {
@@ -1613,6 +1886,16 @@ func (b *Builder) validateCells(pre, post []uint32, activation []Term, direct []
 			cell := b.bindTerms[i]
 			if !b.has(cell, tagCell) || b.cells[cell.index()-1].body != row.owner || roles[cell.index()] != 0 {
 				return errors.New("program: invalid Bind Cell role")
+			}
+			roles[cell.index()] = 1
+		}
+	}
+	for loopIndex, cells := range b.loopCellRanges {
+		body := b.loopBodies[loopIndex]
+		for i := cells.start; i < cells.end; i++ {
+			cell := b.loopCells[i]
+			if !b.has(cell, tagCell) || b.cells[cell.index()-1].body != body || roles[cell.index()] != 0 {
+				return errors.New("program: invalid Loop Cell role")
 			}
 			roles[cell.index()] = 1
 		}
@@ -1739,86 +2022,6 @@ func (b *Builder) validateCells(pre, post []uint32, activation []Term, direct []
 	return nil
 }
 
-// entryBodyForest verifies the one-root lexical Body forest iteratively. Every
-// non-entry Body must reach entry through exactly one already-chosen parent.
-func entryBodyForest(parent []uint32, entry uint32) bool {
-	if entry == 0 || int(entry) >= len(parent) || parent[entry] != 0 {
-		return false
-	}
-	state := make([]uint8, len(parent))
-	state[entry] = 2
-	for start := uint32(1); int(start) < len(parent); start++ {
-		if state[start] == 2 {
-			continue
-		}
-		node := start
-		for node != entry && node != 0 && int(node) < len(parent) && state[node] == 0 {
-			state[node] = 1
-			node = parent[node]
-		}
-		if node != entry && (node == 0 || int(node) >= len(parent) || state[node] != 2) {
-			return false
-		}
-		node = start
-		for node != entry && state[node] == 1 {
-			state[node] = 2
-			node = parent[node]
-		}
-	}
-	return true
-}
-
-// bodyIntervals returns iterative DFS intervals for strict lexical-ancestor
-// checks in a previously verified one-root Body forest.
-func bodyIntervals(parent []uint32) (pre, post []uint32) {
-	count := len(parent) - 1
-	start := make([]uint32, count+2)
-	for child := 1; child <= count; child++ {
-		if parent[child] != 0 {
-			start[parent[child]+1]++
-		}
-	}
-	for i := 1; i < len(start); i++ {
-		start[i] += start[i-1]
-	}
-	next := append([]uint32(nil), start[:count+1]...)
-	children := make([]uint32, count-1)
-	for child := 1; child <= count; child++ {
-		parent := parent[child]
-		if parent == 0 {
-			continue
-		}
-		children[next[parent]] = uint32(child)
-		next[parent]++
-	}
-	pre = make([]uint32, count+1)
-	post = make([]uint32, count+1)
-	root := uint32(1)
-	for root <= uint32(count) && parent[root] != 0 {
-		root++
-	}
-	type frame struct{ body, next uint32 }
-	clock := uint32(0)
-	stack := make([]frame, 0, count)
-	clock++
-	pre[root] = clock
-	stack = append(stack, frame{body: root, next: start[root]})
-	for len(stack) != 0 {
-		top := &stack[len(stack)-1]
-		if top.next < start[top.body+1] {
-			child := children[top.next]
-			top.next++
-			clock++
-			pre[child] = clock
-			stack = append(stack, frame{body: child, next: start[child]})
-			continue
-		}
-		post[top.body] = clock
-		stack = stack[:len(stack)-1]
-	}
-	return pre, post
-}
-
 // terminalCaptureCells collapses the validated inner-to-outer capture forest
 // once, so direct-call coherence is O(1) per Read after O(number of Cells).
 func terminalCaptureCells(outer []Term) []Term {
@@ -1853,18 +2056,9 @@ func (b *Builder) statementRoot(term Term) bool {
 
 func (b *Builder) statementTag(tag uint8) bool {
 	switch tag {
-	case tagBind, tagAssign, tagCall, tagBranch, tagBody, tagNormal, tagReturn,
-		tagThrow, tagYield, tagBreak, tagContinue:
+	case tagBind, tagAssign, tagCall, tagBranch, tagLoop, tagBody, tagNormal,
+		tagReturn, tagThrow, tagYield, tagBreak:
 		return true
-	default:
-		return false
-	}
-}
-
-func (b *Builder) branchArm(term Term) bool {
-	switch term.tag() {
-	case tagBody, tagNormal, tagReturn, tagThrow, tagYield, tagBreak, tagContinue:
-		return b.valid(term)
 	default:
 		return false
 	}
@@ -2007,49 +2201,56 @@ func directCallFinishOrder(functionCount int, start, adjacent []uint32) []uint32
 	return order
 }
 
-func (b *Builder) snapshot(muFunctions, directCalls []Term) *Program {
+func (b *Builder) snapshot(muFunctions, directCalls, breakLoops []Term, loopMu []bool) *Program {
 	p := &Program{
-		termCount:   b.termCount,
-		files:       append([]string(nil), b.files...),
-		valueTerms:  copyTerms(b.valueTerms),
-		bodyTerms:   copyTerms(b.bodyTerms),
-		bindTerms:   copyTerms(b.bindTerms),
-		assignTerms: copyTerms(b.assignTerms),
-		formalTerms: copyTerms(b.formalTerms),
-		nils:        copyTerms(b.nils),
-		bools:       append([]boolRow(nil), b.bools...),
-		integers:    append([]integerRow(nil), b.integers...),
-		floats:      append([]floatRow(nil), b.floats...),
-		strings:     append([]stringRow(nil), b.strings...),
-		values:      append([]valuesRow(nil), b.values...),
-		lensExact:   append([]exactLensRow(nil), b.lensExact...),
-		lensKeys:    append([]keyLensRow(nil), b.lensKeys...),
-		normals:     append([]outcomeRow(nil), b.normals...),
-		returns:     append([]outcomeRow(nil), b.returns...),
-		throws:      append([]outcomeRow(nil), b.throws...),
-		yields:      append([]outcomeRow(nil), b.yields...),
-		breaks:      append([]outcomeRow(nil), b.breaks...),
-		continues:   append([]outcomeRow(nil), b.continues...),
-		muFunctions: copyTerms(muFunctions),
-		directCalls: copyTerms(directCalls),
-		entry:       b.entry,
-		bodies:      append([]bodyRow(nil), b.bodies...),
-		cells:       append([]cellRow(nil), b.cells...),
-		reads:       append([]readRow(nil), b.reads...),
-		varargs:     append([]varargRow(nil), b.varargs...),
-		unaries:     append([]unaryRow(nil), b.unaries...),
-		binaries:    append([]binaryRow(nil), b.binaries...),
-		selects:     append([]selectRow(nil), b.selects...),
-		binds:       append([]bindRow(nil), b.binds...),
-		assigns:     append([]assignRow(nil), b.assigns...),
-		functions:   append([]functionRow(nil), b.functions...),
-		captures:    append([]captureRow(nil), b.captures...),
-		calls:       append([]callRow(nil), b.calls...),
-		branches:    append([]branchRow(nil), b.branches...),
-		tables:      append([]tableRow(nil), b.tables...),
-		tableFields: append([]tableFieldRow(nil), b.tableFields...),
-		keys:        append([]keyRow(nil), b.keys...),
-		exactKeys:   append([]exactKey(nil), b.exactKeys...),
+		termCount:      b.termCount,
+		files:          append([]string(nil), b.files...),
+		valueTerms:     copyTerms(b.valueTerms),
+		bodyTerms:      copyTerms(b.bodyTerms),
+		bindTerms:      copyTerms(b.bindTerms),
+		assignTerms:    copyTerms(b.assignTerms),
+		formalTerms:    copyTerms(b.formalTerms),
+		nils:           copyTerms(b.nils),
+		bools:          append([]boolRow(nil), b.bools...),
+		integers:       append([]integerRow(nil), b.integers...),
+		floats:         append([]floatRow(nil), b.floats...),
+		strings:        append([]stringRow(nil), b.strings...),
+		values:         append([]valuesRow(nil), b.values...),
+		lensExact:      append([]exactLensRow(nil), b.lensExact...),
+		lensKeys:       append([]keyLensRow(nil), b.lensKeys...),
+		normals:        append([]outcomeRow(nil), b.normals...),
+		returns:        append([]outcomeRow(nil), b.returns...),
+		throws:         append([]outcomeRow(nil), b.throws...),
+		yields:         append([]outcomeRow(nil), b.yields...),
+		breaks:         append([]breakRow(nil), b.breaks...),
+		breakLoops:     copyTerms(breakLoops),
+		loopMu:         append([]bool(nil), loopMu...),
+		muFunctions:    copyTerms(muFunctions),
+		directCalls:    copyTerms(directCalls),
+		entry:          b.entry,
+		bodies:         append([]bodyRow(nil), b.bodies...),
+		cells:          append([]cellRow(nil), b.cells...),
+		reads:          append([]readRow(nil), b.reads...),
+		varargs:        append([]varargRow(nil), b.varargs...),
+		unaries:        append([]unaryRow(nil), b.unaries...),
+		binaries:       append([]binaryRow(nil), b.binaries...),
+		selects:        append([]selectRow(nil), b.selects...),
+		binds:          append([]bindRow(nil), b.binds...),
+		assigns:        append([]assignRow(nil), b.assigns...),
+		functions:      append([]functionRow(nil), b.functions...),
+		captures:       append([]captureRow(nil), b.captures...),
+		calls:          append([]callRow(nil), b.calls...),
+		branches:       append([]branchRow(nil), b.branches...),
+		loopOwners:     copyTerms(b.loopOwners),
+		loopBodies:     copyTerms(b.loopBodies),
+		loopControls:   copyTerms(b.loopControls),
+		loopKinds:      append([]LoopKind(nil), b.loopKinds...),
+		loopCellRanges: append([]termRange(nil), b.loopCellRanges...),
+		loopCells:      copyTerms(b.loopCells),
+		tables:         append([]tableRow(nil), b.tables...),
+		tableFields:    append([]tableFieldRow(nil), b.tableFields...),
+		keys:           append([]keyRow(nil), b.keys...),
+		exactKeys:      append([]exactKey(nil), b.exactKeys...),
 	}
 	for tag := uint8(1); tag < tagCount; tag++ {
 		p.spans[tag] = append([]storedSpan(nil), b.spans[tag]...)
@@ -2090,8 +2291,6 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.yields))
 	case tagBreak:
 		return index <= uint32(len(p.breaks))
-	case tagContinue:
-		return index <= uint32(len(p.continues))
 	case tagBody:
 		return index <= uint32(len(p.bodies))
 	case tagCell:
@@ -2116,6 +2315,8 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.calls))
 	case tagBranch:
 		return index <= uint32(len(p.branches))
+	case tagLoop:
+		return index <= uint32(len(p.loopOwners))
 	case tagTable:
 		return index <= uint32(len(p.tables))
 	case tagKey:
@@ -2232,10 +2433,6 @@ func (p *Program) Outcome(term Term) (owner, values Term, ok bool) {
 		return p.Throw(term)
 	case tagYield:
 		return p.Yield(term)
-	case tagBreak:
-		return p.Break(term)
-	case tagContinue:
-		return p.Continue(term)
 	}
 	return 0, 0, false
 }
@@ -2243,10 +2440,6 @@ func (p *Program) Normal(term Term) (owner, values Term, ok bool) { return p.out
 func (p *Program) Return(term Term) (owner, values Term, ok bool) { return p.outcome(term, tagReturn) }
 func (p *Program) Throw(term Term) (owner, values Term, ok bool)  { return p.outcome(term, tagThrow) }
 func (p *Program) Yield(term Term) (owner, values Term, ok bool)  { return p.outcome(term, tagYield) }
-func (p *Program) Break(term Term) (owner, values Term, ok bool)  { return p.outcome(term, tagBreak) }
-func (p *Program) Continue(term Term) (owner, values Term, ok bool) {
-	return p.outcome(term, tagContinue)
-}
 func (p *Program) outcome(term Term, tag uint8) (Term, Term, bool) {
 	if !p.has(term, tag) {
 		return 0, 0, false
@@ -2265,17 +2458,38 @@ func (p *Program) outcome(term Term, tag uint8) (Term, Term, bool) {
 	case tagYield:
 		row := p.yields[index]
 		return row.owner, row.values, true
-	case tagBreak:
-		row := p.breaks[index]
-		return row.owner, row.values, true
 	}
-	row := p.continues[index]
-	return row.owner, row.values, true
+	return 0, 0, false
 }
 
-// Mu returns the canonical existing Function head for term's Seal-derived
-// direct-call recurrence SCC. Mu is an annotation, never a Term.
+// Break returns its lexical owner and exact nearest enclosing Loop, both
+// validated and derived by Seal.
+func (p *Program) Break(term Term) (owner, loop Term, ok bool) {
+	if !p.has(term, tagBreak) {
+		return 0, 0, false
+	}
+	if int(term.index()) > len(p.breakLoops) {
+		return 0, 0, false
+	}
+	loop = p.breakLoops[term.index()-1]
+	if !p.has(loop, tagLoop) {
+		return 0, 0, false
+	}
+	return p.breaks[term.index()-1].owner, loop, true
+}
+
+// Mu returns an existing recurrence head. A Loop is its own head exactly when
+// its canonical Body has a Normal fallthrough backedge. A Function uses its
+// Seal-derived direct-call recurrence SCC. Mu is an annotation, never a
+// separate Term.
 func (p *Program) Mu(term Term) (Term, bool) {
+	if p.has(term, tagLoop) {
+		index := term.index() - 1
+		if int(index) < len(p.loopMu) && p.loopMu[index] {
+			return term, true
+		}
+		return 0, false
+	}
 	if !p.has(term, tagFunction) || int(term.index()) >= len(p.muFunctions) {
 		return 0, false
 	}
@@ -2479,6 +2693,33 @@ func (p *Program) Branch(term Term) (owner, condition, whenTrue, whenFalse Term,
 	return row.owner, row.condition, row.whenTrue, row.whenFalse, true
 }
 
+func (p *Program) Loop(term Term) (owner, body, control Term, kind LoopKind, ok bool) {
+	if !p.has(term, tagLoop) {
+		return 0, 0, 0, 0, false
+	}
+	index := term.index() - 1
+	return p.loopOwners[index], p.loopBodies[index], p.loopControls[index], p.loopKinds[index], true
+}
+
+func (p *Program) LoopCellCount(term Term) (int, bool) {
+	if !p.has(term, tagLoop) {
+		return 0, false
+	}
+	r := p.loopCellRanges[term.index()-1]
+	return int(r.end - r.start), true
+}
+
+func (p *Program) LoopCell(term Term, index int) (Term, bool) {
+	if !p.has(term, tagLoop) {
+		return 0, false
+	}
+	r := p.loopCellRanges[term.index()-1]
+	if index < 0 || uint32(index) >= r.end-r.start {
+		return 0, false
+	}
+	return p.loopCells[r.start+uint32(index)], true
+}
+
 func (p *Program) Table(term Term) (owner Term, ok bool) {
 	if !p.has(term, tagTable) {
 		return 0, false
@@ -2642,15 +2883,6 @@ func (p *Program) BreakCount() int {
 	return len(p.breaks)
 }
 func (p *Program) BreakAt(index int) (Term, bool) { return familyTerm(tagBreak, p.BreakCount(), index) }
-func (p *Program) ContinueCount() int {
-	if p == nil {
-		return 0
-	}
-	return len(p.continues)
-}
-func (p *Program) ContinueAt(index int) (Term, bool) {
-	return familyTerm(tagContinue, p.ContinueCount(), index)
-}
 func (p *Program) BodyCount() int {
 	if p == nil {
 		return 0
@@ -2750,6 +2982,15 @@ func (p *Program) BranchCount() int {
 }
 func (p *Program) BranchAt(index int) (Term, bool) {
 	return familyTerm(tagBranch, p.BranchCount(), index)
+}
+func (p *Program) LoopCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.loopOwners)
+}
+func (p *Program) LoopAt(index int) (Term, bool) {
+	return familyTerm(tagLoop, p.LoopCount(), index)
 }
 func (p *Program) TableCount() int {
 	if p == nil {
