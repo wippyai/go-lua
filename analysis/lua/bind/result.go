@@ -1,7 +1,6 @@
 package bind
 
 import (
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -12,50 +11,50 @@ type Options struct {
 
 // Result records lexical declaration identities for identifier occurrences.
 type Result struct {
-	identSymbols          map[*ast.IdentExpr]symbol.ID
-	readIdents            map[symbol.ID][]*ast.IdentExpr
-	writeIdents           map[symbol.ID][]*ast.IdentExpr
-	declarations          map[symbol.ID]Declaration
-	occurrences           map[symbol.ID][]Occurrence
+	identSymbols          map[*ast.IdentExpr]ID
+	readIdents            map[ID][]*ast.IdentExpr
+	writeIdents           map[ID][]*ast.IdentExpr
+	declarations          map[ID]Declaration
+	occurrences           map[ID][]Occurrence
 	implicitGlobalUses    map[*ast.IdentExpr]struct{}
-	implicitGlobalSymbols map[symbol.ID]struct{}
+	implicitGlobalSymbols map[ID]struct{}
 	typeValueRefs         map[*ast.IdentExpr]TypeDecl
 
-	directCalls            map[symbol.ID][]*ast.FuncCallExpr
+	directCalls            map[ID][]*ast.FuncCallExpr
 	runtimeUseScanComplete bool
 
-	nextSymbolID symbol.ID
+	nextSymbolID ID
 
-	names map[symbol.ID]string
-	kinds map[symbol.ID]symbol.Kind
+	names map[ID]string
+	kinds map[ID]Kind
 
 	globals map[string]globalSymbol
 
-	functionSymbols   map[*ast.FunctionExpr]symbol.ID
-	functionsBySymbol map[symbol.ID]*ast.FunctionExpr
+	functionSymbols   map[*ast.FunctionExpr]ID
+	functionsBySymbol map[ID]*ast.FunctionExpr
 	functions         []*ast.FunctionExpr
 	nestedFunctions   map[*ast.FunctionExpr][]*ast.FunctionExpr
 	functionOrigins   map[*ast.FunctionExpr]FunctionOrigin
 	// functionTargetIndex maps a value binding to the sole function identity
 	// introduced for that binding. A present zero value is an ambiguity marker.
 	// It is built once with the function-origin table and is never exposed.
-	functionTargetIndex map[symbol.ID]symbol.ID
+	functionTargetIndex map[ID]ID
 	functionIndex       map[*ast.FunctionExpr]int
 	functionSubtreeEnd  map[*ast.FunctionExpr]int
-	declaringFunctions  map[symbol.ID]*ast.FunctionExpr
+	declaringFunctions  map[ID]*ast.FunctionExpr
 	directCaptures      map[*ast.FunctionExpr][]Capture
-	directCaptureSeen   map[*ast.FunctionExpr]map[symbol.ID]struct{}
-	directGlobalReads   map[*ast.FunctionExpr][]symbol.ID
-	directGlobalSeen    map[*ast.FunctionExpr]map[symbol.ID]struct{}
-	chunkGlobalReads    []symbol.ID
-	chunkGlobalSeen     map[symbol.ID]struct{}
+	directCaptureSeen   map[*ast.FunctionExpr]map[ID]struct{}
+	directGlobalReads   map[*ast.FunctionExpr][]ID
+	directGlobalSeen    map[*ast.FunctionExpr]map[ID]struct{}
+	chunkGlobalReads    []ID
+	chunkGlobalSeen     map[ID]struct{}
 
-	paramSymbols      map[*ast.FunctionExpr][]symbol.ID
-	varargSymbols     map[*ast.FunctionExpr]symbol.ID
+	paramSymbols      map[*ast.FunctionExpr][]ID
+	varargSymbols     map[*ast.FunctionExpr]ID
 	paramSlots        map[*ast.FunctionExpr][]ParamSlot
-	localSymbols      map[*ast.LocalAssignStmt][]symbol.ID
-	numForSymbols     map[*ast.NumberForStmt]symbol.ID
-	genericForSymbols map[*ast.GenericForStmt][]symbol.ID
+	localSymbols      map[*ast.LocalAssignStmt][]ID
+	numForSymbols     map[*ast.NumberForStmt]ID
+	genericForSymbols map[*ast.GenericForStmt][]ID
 
 	gotoTargets   map[*ast.GotoStmt]*ast.LabelStmt
 	controlIssues []ControlIssue
@@ -74,41 +73,41 @@ type Result struct {
 	// qualifiedTypeRoots records value-namespace roots used only by qualified
 	// type references in a function (for example protocol.User where protocol
 	// is an outer local initialized by require("protocol")).
-	qualifiedTypeRoots map[*ast.FunctionExpr]map[string]symbol.ID
+	qualifiedTypeRoots map[*ast.FunctionExpr]map[string]ID
 }
 
 func newResult(opts Options) *Result {
 	r := &Result{
-		identSymbols:          make(map[*ast.IdentExpr]symbol.ID),
-		readIdents:            make(map[symbol.ID][]*ast.IdentExpr),
-		writeIdents:           make(map[symbol.ID][]*ast.IdentExpr),
-		declarations:          make(map[symbol.ID]Declaration),
-		occurrences:           make(map[symbol.ID][]Occurrence),
+		identSymbols:          make(map[*ast.IdentExpr]ID),
+		readIdents:            make(map[ID][]*ast.IdentExpr),
+		writeIdents:           make(map[ID][]*ast.IdentExpr),
+		declarations:          make(map[ID]Declaration),
+		occurrences:           make(map[ID][]Occurrence),
 		implicitGlobalUses:    make(map[*ast.IdentExpr]struct{}),
-		implicitGlobalSymbols: make(map[symbol.ID]struct{}),
+		implicitGlobalSymbols: make(map[ID]struct{}),
 		typeValueRefs:         make(map[*ast.IdentExpr]TypeDecl),
-		names:                 make(map[symbol.ID]string),
-		kinds:                 make(map[symbol.ID]symbol.Kind),
+		names:                 make(map[ID]string),
+		kinds:                 make(map[ID]Kind),
 		globals:               make(map[string]globalSymbol),
-		functionSymbols:       make(map[*ast.FunctionExpr]symbol.ID),
-		functionsBySymbol:     make(map[symbol.ID]*ast.FunctionExpr),
+		functionSymbols:       make(map[*ast.FunctionExpr]ID),
+		functionsBySymbol:     make(map[ID]*ast.FunctionExpr),
 		nestedFunctions:       make(map[*ast.FunctionExpr][]*ast.FunctionExpr),
 		functionOrigins:       make(map[*ast.FunctionExpr]FunctionOrigin),
-		functionTargetIndex:   make(map[symbol.ID]symbol.ID),
+		functionTargetIndex:   make(map[ID]ID),
 		functionIndex:         make(map[*ast.FunctionExpr]int),
 		functionSubtreeEnd:    make(map[*ast.FunctionExpr]int),
-		declaringFunctions:    make(map[symbol.ID]*ast.FunctionExpr),
+		declaringFunctions:    make(map[ID]*ast.FunctionExpr),
 		directCaptures:        make(map[*ast.FunctionExpr][]Capture),
-		directCaptureSeen:     make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
-		directGlobalReads:     make(map[*ast.FunctionExpr][]symbol.ID),
-		directGlobalSeen:      make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
-		chunkGlobalSeen:       make(map[symbol.ID]struct{}),
-		paramSymbols:          make(map[*ast.FunctionExpr][]symbol.ID),
-		varargSymbols:         make(map[*ast.FunctionExpr]symbol.ID),
+		directCaptureSeen:     make(map[*ast.FunctionExpr]map[ID]struct{}),
+		directGlobalReads:     make(map[*ast.FunctionExpr][]ID),
+		directGlobalSeen:      make(map[*ast.FunctionExpr]map[ID]struct{}),
+		chunkGlobalSeen:       make(map[ID]struct{}),
+		paramSymbols:          make(map[*ast.FunctionExpr][]ID),
+		varargSymbols:         make(map[*ast.FunctionExpr]ID),
 		paramSlots:            make(map[*ast.FunctionExpr][]ParamSlot),
-		localSymbols:          make(map[*ast.LocalAssignStmt][]symbol.ID),
-		numForSymbols:         make(map[*ast.NumberForStmt]symbol.ID),
-		genericForSymbols:     make(map[*ast.GenericForStmt][]symbol.ID),
+		localSymbols:          make(map[*ast.LocalAssignStmt][]ID),
+		numForSymbols:         make(map[*ast.NumberForStmt]ID),
+		genericForSymbols:     make(map[*ast.GenericForStmt][]ID),
 		typeRefs:              make(map[*ast.TypeRefExpr]TypeDecl),
 		primitiveTypeRefs:     make(map[*ast.PrimitiveTypeExpr]TypeDecl),
 		typeDefDecls:          make(map[*ast.TypeDefStmt]TypeDecl),
@@ -118,7 +117,7 @@ func newResult(opts Options) *Result {
 		methodReceiverTypes:   make(map[*ast.FunctionExpr]TypeDecl),
 		qualifiedTypeRefs:     make(map[*ast.TypeRefExpr]QualifiedTypeAlias),
 		qualifiedTypeAliases:  make(map[qualifiedTypeAliasKey]QualifiedTypeAlias),
-		qualifiedTypeRoots:    make(map[*ast.FunctionExpr]map[string]symbol.ID),
+		qualifiedTypeRoots:    make(map[*ast.FunctionExpr]map[string]ID),
 	}
 	r.runtimeUseScanComplete = true
 	for _, name := range normalizeNames(opts.Globals) {

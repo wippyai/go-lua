@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -399,7 +398,7 @@ func TestIterativeBinderDeterministicAcrossFreshTrees(t *testing.T) {
 	if len(leftOrigins) != len(rightOrigins) || len(leftOrigins) != 1 {
 		t.Fatalf("fresh origins = %d/%d", len(leftOrigins), len(rightOrigins))
 	}
-	if kind, ok := left.Kind(leftOrigins[0].Symbol); !ok || kind != symbol.Function {
+	if kind, ok := left.Kind(leftOrigins[0].Symbol); !ok || kind != Function {
 		t.Fatalf("function kind = %v/%v", kind, ok)
 	}
 	if leftOrigins[0].Symbol != rightOrigins[0].Symbol ||

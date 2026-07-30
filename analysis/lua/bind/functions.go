@@ -1,13 +1,12 @@
 package bind
 
 import (
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // ParamSlot describes one runtime parameter slot for a function.
 type ParamSlot struct {
-	Symbol       symbol.ID
+	Symbol       ID
 	Name         string
 	Position     ast.Position
 	Type         ast.TypeExpr
@@ -18,7 +17,7 @@ type ParamSlot struct {
 
 // Capture describes one declaration directly captured by a function body.
 type Capture struct {
-	Captured          symbol.ID
+	Captured          ID
 	CapturedName      string
 	DeclaringFunction *ast.FunctionExpr
 }
@@ -36,7 +35,7 @@ const (
 // FunctionOrigin records where a function expression was introduced.
 type FunctionOrigin struct {
 	Func   *ast.FunctionExpr
-	Symbol symbol.ID
+	Symbol ID
 	Parent *ast.FunctionExpr
 	Kind   FunctionOriginKind
 
@@ -44,7 +43,7 @@ type FunctionOrigin struct {
 	LocalIndex int
 	Method     string
 
-	TargetSymbol    symbol.ID
+	TargetSymbol    ID
 	HasTargetSymbol bool
 }
 
@@ -53,8 +52,8 @@ type FunctionOrigin struct {
 // intentionally projected to operation sites by the solved-body exporter.
 // The zero value is not a proof.
 type LocalFunctionUseClosure struct {
-	FunctionSymbol         symbol.ID
-	TargetSymbol           symbol.ID
+	FunctionSymbol         ID
+	TargetSymbol           ID
 	DirectCalls            []*ast.FuncCallExpr
 	RuntimeUseScanComplete bool
 	// DirectCallSetComplete permits a stable function binding to cross a
@@ -76,8 +75,8 @@ func (r *Result) LocalFunctionUseClosures() []LocalFunctionUseClosure {
 		return nil
 	}
 	out := make([]LocalFunctionUseClosure, 0, len(r.functions))
-	targetCounts := make(map[symbol.ID]int, len(r.functions))
-	seenTargets := make(map[symbol.ID]struct{}, len(targetCounts))
+	targetCounts := make(map[ID]int, len(r.functions))
+	seenTargets := make(map[ID]struct{}, len(targetCounts))
 	for _, fn := range r.functions {
 		origin, ok := r.functionOrigins[fn]
 		if ok && origin.HasTargetSymbol && origin.TargetSymbol != 0 {
@@ -144,7 +143,7 @@ func (r *Result) LocalFunctionUseClosures() []LocalFunctionUseClosure {
 }
 
 // FunctionSymbol returns the function identity symbol for fn.
-func (r *Result) FunctionSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
+func (r *Result) FunctionSymbol(fn *ast.FunctionExpr) (ID, bool) {
 	if r == nil || fn == nil {
 		return 0, false
 	}
@@ -153,7 +152,7 @@ func (r *Result) FunctionSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
 }
 
 // FunctionBySymbol returns the function expression identified by sym.
-func (r *Result) FunctionBySymbol(sym symbol.ID) (*ast.FunctionExpr, bool) {
+func (r *Result) FunctionBySymbol(sym ID) (*ast.FunctionExpr, bool) {
 	if r == nil || sym == 0 {
 		return nil, false
 	}
@@ -168,12 +167,12 @@ func (r *Result) FunctionBySymbol(sym symbol.ID) (*ast.FunctionExpr, bool) {
 //
 // The lookup is constant-time. Consumers must not reconstruct this relation by
 // scanning FunctionOrigins: the private index is sealed as functions register.
-func (r *Result) StableLocalFunctionIdentity(targetBinding symbol.ID) (symbol.ID, bool) {
+func (r *Result) StableLocalFunctionIdentity(targetBinding ID) (ID, bool) {
 	if r == nil || targetBinding == 0 || len(r.writeIdents[targetBinding]) != 0 {
 		return 0, false
 	}
 	kind, known := r.kinds[targetBinding]
-	if !known || kind != symbol.Local {
+	if !known || kind != Local {
 		return 0, false
 	}
 	functionIdentity, indexed := r.functionTargetIndex[targetBinding]
@@ -185,7 +184,7 @@ func (r *Result) StableLocalFunctionIdentity(targetBinding symbol.ID) (symbol.ID
 // and the function is not self-recursive through that binding. It is the
 // constant-scope authority for consumers that may erase the function value
 // itself while retaining its direct lexical call edge.
-func (r *Result) StableDirectCallFunctionIdentity(targetBinding symbol.ID) (symbol.ID, bool) {
+func (r *Result) StableDirectCallFunctionIdentity(targetBinding ID) (ID, bool) {
 	identity, stable := r.StableLocalFunctionIdentity(targetBinding)
 	if !stable || !r.runtimeUseScanComplete {
 		return 0, false
@@ -284,7 +283,7 @@ func (r *Result) FunctionOrigin(fn *ast.FunctionExpr) (FunctionOrigin, bool) {
 
 // MethodOriginReceiverSymbol returns the root value symbol that owns a colon
 // method definition, such as methods in `function methods:f(...)`.
-func (r *Result) MethodOriginReceiverSymbol(origin FunctionOrigin) (symbol.ID, bool) {
+func (r *Result) MethodOriginReceiverSymbol(origin FunctionOrigin) (ID, bool) {
 	if r == nil || origin.Kind != FunctionOriginMethod {
 		return 0, false
 	}
@@ -295,7 +294,7 @@ func (r *Result) MethodOriginReceiverSymbol(origin FunctionOrigin) (symbol.ID, b
 	return r.receiverRootSymbol(stmt.Name.Receiver)
 }
 
-func (r *Result) receiverRootSymbol(expr ast.Expr) (symbol.ID, bool) {
+func (r *Result) receiverRootSymbol(expr ast.Expr) (ID, bool) {
 	for {
 		switch e := expr.(type) {
 		case *ast.IdentExpr:
@@ -362,7 +361,7 @@ func (r *Result) ForEachDescendantFunctionOrigin(ancestor *ast.FunctionExpr, vis
 }
 
 // DeclaringFunction returns the function that owns a declaration symbol.
-func (r *Result) DeclaringFunction(sym symbol.ID) (*ast.FunctionExpr, bool) {
+func (r *Result) DeclaringFunction(sym ID) (*ast.FunctionExpr, bool) {
 	if r == nil || sym == 0 {
 		return nil, false
 	}
@@ -387,17 +386,17 @@ func (r *Result) ForEachEntryCapture(visit func(*ast.FunctionExpr, Capture) bool
 	if r == nil || visit == nil {
 		return
 	}
-	var seen map[*ast.FunctionExpr]map[symbol.ID]struct{}
+	var seen map[*ast.FunctionExpr]map[ID]struct{}
 	mark := func(fn *ast.FunctionExpr, capture Capture) bool {
 		if fn == nil || capture.Captured == 0 {
 			return false
 		}
 		if seen == nil {
-			seen = make(map[*ast.FunctionExpr]map[symbol.ID]struct{})
+			seen = make(map[*ast.FunctionExpr]map[ID]struct{})
 		}
 		symbols := seen[fn]
 		if symbols == nil {
-			symbols = make(map[symbol.ID]struct{})
+			symbols = make(map[ID]struct{})
 			seen[fn] = symbols
 		}
 		if _, exists := symbols[capture.Captured]; exists {
@@ -428,7 +427,7 @@ func (r *Result) ForEachEntryCapture(visit func(*ast.FunctionExpr, Capture) bool
 // DirectGlobalReads returns global symbols directly read by fn in first-use
 // order. Globals are not closure captures, but interprocedural analysis needs
 // them as entry-state dependencies because Lua globals are mutable values.
-func (r *Result) DirectGlobalReads(fn *ast.FunctionExpr) []symbol.ID {
+func (r *Result) DirectGlobalReads(fn *ast.FunctionExpr) []ID {
 	if r == nil || fn == nil {
 		return nil
 	}
@@ -437,7 +436,7 @@ func (r *Result) DirectGlobalReads(fn *ast.FunctionExpr) []symbol.ID {
 
 // ChunkGlobalReads returns global symbols directly read by the lexical chunk
 // (outside nested functions) in first-use order.
-func (r *Result) ChunkGlobalReads() []symbol.ID {
+func (r *Result) ChunkGlobalReads() []ID {
 	if r == nil {
 		return nil
 	}
@@ -445,7 +444,7 @@ func (r *Result) ChunkGlobalReads() []symbol.ID {
 }
 
 // ParamSymbols returns ordered parameter symbols for fn.
-func (r *Result) ParamSymbols(fn *ast.FunctionExpr) []symbol.ID {
+func (r *Result) ParamSymbols(fn *ast.FunctionExpr) []ID {
 	if r == nil || fn == nil {
 		return nil
 	}
@@ -453,7 +452,7 @@ func (r *Result) ParamSymbols(fn *ast.FunctionExpr) []symbol.ID {
 }
 
 // VarargSymbol returns the vararg parameter identity for fn, when present.
-func (r *Result) VarargSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
+func (r *Result) VarargSymbol(fn *ast.FunctionExpr) (ID, bool) {
 	if r == nil || fn == nil {
 		return 0, false
 	}
@@ -474,21 +473,21 @@ type functionOriginDetails struct {
 	stmt            ast.Stmt
 	localIndex      int
 	method          string
-	targetSymbol    symbol.ID
+	targetSymbol    ID
 	hasTargetSymbol bool
 
 	receiverType    TypeDecl
 	hasReceiverType bool
 }
 
-func (r *Result) registerFunction(fn, parent *ast.FunctionExpr, details functionOriginDetails) symbol.ID {
+func (r *Result) registerFunction(fn, parent *ast.FunctionExpr, details functionOriginDetails) ID {
 	if fn == nil {
 		return 0
 	}
 	if id, ok := r.functionSymbols[fn]; ok {
 		return id
 	}
-	id := r.newSymbol("", symbol.Function)
+	id := r.newSymbol("", Function)
 	r.functionSymbols[fn] = id
 	r.functionsBySymbol[id] = fn
 	r.functions = append(r.functions, fn)
@@ -542,7 +541,7 @@ func (b *binder) currentFunction() *ast.FunctionExpr {
 	return b.functions[len(b.functions)-1].fn
 }
 
-func (b *binder) recordDirectCapture(id symbol.ID) {
+func (b *binder) recordDirectCapture(id ID) {
 	if id == 0 {
 		return
 	}
@@ -551,7 +550,7 @@ func (b *binder) recordDirectCapture(id symbol.ID) {
 		return
 	}
 	kind, ok := b.result.kinds[id]
-	if !ok || (kind != symbol.Local && kind != symbol.Param) {
+	if !ok || (kind != Local && kind != Param) {
 		return
 	}
 	declaringFn := b.result.declaringFunctions[id]
@@ -560,7 +559,7 @@ func (b *binder) recordDirectCapture(id symbol.ID) {
 	}
 	seen := b.result.directCaptureSeen[current]
 	if seen == nil {
-		seen = make(map[symbol.ID]struct{})
+		seen = make(map[ID]struct{})
 		b.result.directCaptureSeen[current] = seen
 	}
 	if _, ok := seen[id]; ok {
@@ -574,7 +573,7 @@ func (b *binder) recordDirectCapture(id symbol.ID) {
 	})
 }
 
-func (b *binder) recordDirectGlobalRead(id symbol.ID) {
+func (b *binder) recordDirectGlobalRead(id ID) {
 	if id == 0 {
 		return
 	}
@@ -584,7 +583,7 @@ func (b *binder) recordDirectGlobalRead(id symbol.ID) {
 			return
 		}
 		kind, ok := b.result.kinds[id]
-		if !ok || kind != symbol.Global {
+		if !ok || kind != Global {
 			return
 		}
 		b.result.chunkGlobalSeen[id] = struct{}{}
@@ -592,12 +591,12 @@ func (b *binder) recordDirectGlobalRead(id symbol.ID) {
 		return
 	}
 	kind, ok := b.result.kinds[id]
-	if !ok || kind != symbol.Global {
+	if !ok || kind != Global {
 		return
 	}
 	seen := b.result.directGlobalSeen[current]
 	if seen == nil {
-		seen = make(map[symbol.ID]struct{})
+		seen = make(map[ID]struct{})
 		b.result.directGlobalSeen[current] = seen
 	}
 	if _, ok := seen[id]; ok {

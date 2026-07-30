@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -43,7 +42,7 @@ func ret(exprs ...ast.Expr) *ast.ReturnStmt {
 	return &ast.ReturnStmt{Exprs: exprs}
 }
 
-func mustSymbol(t *testing.T, r *Result, ident *ast.IdentExpr) symbol.ID {
+func mustSymbol(t *testing.T, r *Result, ident *ast.IdentExpr) ID {
 	t.Helper()
 	id, ok := r.SymbolOf(ident)
 	if !ok {
@@ -52,7 +51,7 @@ func mustSymbol(t *testing.T, r *Result, ident *ast.IdentExpr) symbol.ID {
 	return id
 }
 
-func mustLocalAt(t *testing.T, r *Result, stmt *ast.LocalAssignStmt, index int) symbol.ID {
+func mustLocalAt(t *testing.T, r *Result, stmt *ast.LocalAssignStmt, index int) ID {
 	t.Helper()
 	id, ok := r.LocalSymbolAt(stmt, index)
 	if !ok {
@@ -79,7 +78,7 @@ func mustPrimitiveTypeRef(t *testing.T, r *Result, expr *ast.PrimitiveTypeExpr) 
 	return decl
 }
 
-func assertKind(t *testing.T, r *Result, id symbol.ID, want symbol.Kind) {
+func assertKind(t *testing.T, r *Result, id ID, want Kind) {
 	t.Helper()
 	got, ok := r.Kind(id)
 	if !ok {
@@ -90,7 +89,7 @@ func assertKind(t *testing.T, r *Result, id symbol.ID, want symbol.Kind) {
 	}
 }
 
-func assertDeclaringFunction(t *testing.T, r *Result, id symbol.ID, want *ast.FunctionExpr) {
+func assertDeclaringFunction(t *testing.T, r *Result, id ID, want *ast.FunctionExpr) {
 	t.Helper()
 	got, ok := r.DeclaringFunction(id)
 	if !ok {
@@ -101,7 +100,7 @@ func assertDeclaringFunction(t *testing.T, r *Result, id symbol.ID, want *ast.Fu
 	}
 }
 
-func mustFunctionSymbol(t *testing.T, r *Result, fn *ast.FunctionExpr) symbol.ID {
+func mustFunctionSymbol(t *testing.T, r *Result, fn *ast.FunctionExpr) ID {
 	t.Helper()
 	id, ok := r.FunctionSymbol(fn)
 	if !ok {
@@ -119,16 +118,16 @@ func mustOrigin(t *testing.T, r *Result, fn *ast.FunctionExpr) FunctionOrigin {
 	return origin
 }
 
-func captureIDs(captures []Capture) []symbol.ID {
-	ids := make([]symbol.ID, len(captures))
+func captureIDs(captures []Capture) []ID {
+	ids := make([]ID, len(captures))
 	for i, capture := range captures {
 		ids[i] = capture.Captured
 	}
 	return ids
 }
 
-func entryCaptureIDs(r *Result) map[*ast.FunctionExpr][]symbol.ID {
-	entries := make(map[*ast.FunctionExpr][]symbol.ID)
+func entryCaptureIDs(r *Result) map[*ast.FunctionExpr][]ID {
+	entries := make(map[*ast.FunctionExpr][]ID)
 	r.ForEachEntryCapture(func(fn *ast.FunctionExpr, capture Capture) bool {
 		entries[fn] = append(entries[fn], capture.Captured)
 		return true
@@ -217,20 +216,20 @@ func TestImplicitGlobals(t *testing.T) {
 	}, Options{Globals: []string{"print", "", "math", "print"}})
 
 	readID := mustSymbol(t, r, unresolvedRead)
-	assertKind(t, r, readID, symbol.Global)
+	assertKind(t, r, readID, Global)
 	if !r.IsImplicitGlobalUse(unresolvedRead) {
 		t.Fatalf("unresolved read was not marked implicit global use")
 	}
 
 	assignID := mustSymbol(t, r, assignmentTarget)
-	assertKind(t, r, assignID, symbol.Global)
+	assertKind(t, r, assignID, Global)
 	if r.IsImplicitGlobalUse(assignmentTarget) {
 		t.Fatalf("assignment target was marked implicit global read")
 	}
 
 	for _, read := range []*ast.IdentExpr{predeclaredRead, normalizedRead} {
 		id := mustSymbol(t, r, read)
-		assertKind(t, r, id, symbol.Global)
+		assertKind(t, r, id, Global)
 		if r.IsImplicitGlobalUse(read) {
 			t.Fatalf("predeclared global %q was marked implicit", read.Value)
 		}
@@ -343,7 +342,7 @@ func TestFuncDefTargetSymbol(t *testing.T) {
 	if !ok || id != globalID {
 		t.Fatalf("global FuncDefTargetSymbol = %d/%v, want %d/true", id, ok, globalID)
 	}
-	assertKind(t, r, id, symbol.Global)
+	assertKind(t, r, id, Global)
 	if !r.HasWrite(globalID) {
 		t.Fatalf("HasWrite(global function target %d) = false, want true", globalID)
 	}
@@ -391,7 +390,7 @@ func TestParamSymbols(t *testing.T) {
 		if got := r.Name(params[i]); got != wantName {
 			t.Fatalf("param %d name = %q, want %q", i, got, wantName)
 		}
-		assertKind(t, r, params[i], symbol.Param)
+		assertKind(t, r, params[i], Param)
 	}
 	if got := mustSymbol(t, r, aRead); got != params[0] {
 		t.Fatalf("a read resolved to %d, want param %d", got, params[0])
@@ -417,7 +416,7 @@ func TestParamSymbols(t *testing.T) {
 	if len(params) != 1 || r.Name(params[0]) != "typed" {
 		t.Fatalf("typed params = %v, want typed param", params)
 	}
-	assertKind(t, r, params[0], symbol.Param)
+	assertKind(t, r, params[0], Param)
 }
 
 func TestFunctionIdentityAndTree(t *testing.T) {
@@ -441,7 +440,7 @@ func TestFunctionIdentityAndTree(t *testing.T) {
 		if !ok || second != first {
 			t.Fatalf("second FunctionSymbol(%p) = %d/%v, want stable %d/true", fn, second, ok, first)
 		}
-		assertKind(t, r, first, symbol.Function)
+		assertKind(t, r, first, Function)
 
 		gotFn, ok := r.FunctionBySymbol(first)
 		if !ok || gotFn != fn {
@@ -476,7 +475,7 @@ func TestFunctionIdentityAndTree(t *testing.T) {
 	if id, ok := r.FunctionSymbol(unknown); ok || id != 0 {
 		t.Fatalf("unknown FunctionSymbol = %d/%v, want 0/false", id, ok)
 	}
-	if fn, ok := r.FunctionBySymbol(symbol.ID(0)); ok || fn != nil {
+	if fn, ok := r.FunctionBySymbol(ID(0)); ok || fn != nil {
 		t.Fatalf("zero FunctionBySymbol = %p/%v, want nil/false", fn, ok)
 	}
 
@@ -663,16 +662,16 @@ func TestDirectCapturesOuterParamLocalAndGlobals(t *testing.T) {
 	if got := mustSymbol(t, r, paramRead); got != paramID {
 		t.Fatalf("outer param read resolved to %d, want %d", got, paramID)
 	}
-	assertKind(t, r, localID, symbol.Local)
-	assertKind(t, r, paramID, symbol.Param)
-	assertKind(t, r, mustSymbol(t, r, globalRead), symbol.Global)
+	assertKind(t, r, localID, Local)
+	assertKind(t, r, paramID, Param)
+	assertKind(t, r, mustSymbol(t, r, globalRead), Global)
 
 	captures := r.DirectCaptures(child)
-	if got, want := captureIDs(captures), []symbol.ID{localID, paramID}; !reflect.DeepEqual(got, want) {
+	if got, want := captureIDs(captures), []ID{localID, paramID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DirectCaptures(child) = %v, want %v", got, want)
 	}
 	for i, want := range []struct {
-		id   symbol.ID
+		id   ID
 		name string
 	}{
 		{id: localID, name: "x"},
@@ -706,14 +705,14 @@ func TestDirectGlobalReadsTracksGlobalsWithoutCapturingThem(t *testing.T) {
 
 	globalID := mustSymbol(t, r, globalRead)
 	localID := mustLocalAt(t, r, localDecl, 0)
-	assertKind(t, r, globalID, symbol.Global)
+	assertKind(t, r, globalID, Global)
 	if got := mustSymbol(t, r, localRead); got != localID {
 		t.Fatalf("local read resolved to %d, want %d", got, localID)
 	}
-	if got, want := captureIDs(r.DirectCaptures(child)), []symbol.ID{localID}; !reflect.DeepEqual(got, want) {
+	if got, want := captureIDs(r.DirectCaptures(child)), []ID{localID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DirectCaptures(child) = %v, want %v", got, want)
 	}
-	if got, want := r.DirectGlobalReads(child), []symbol.ID{globalID}; !reflect.DeepEqual(got, want) {
+	if got, want := r.DirectGlobalReads(child), []ID{globalID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DirectGlobalReads(child) = %v, want %v", got, want)
 	}
 	got := r.DirectGlobalReads(child)
@@ -734,10 +733,10 @@ func TestChunkGlobalReadsTracksOnlyLexicalChunkAndOwnsResult(t *testing.T) {
 	r := BindChunk(stmts, Options{Globals: []string{"chunk_global", "nested_global"}})
 	chunkID := mustSymbol(t, r, chunkRead)
 	nestedID := mustSymbol(t, r, nestedRead)
-	if got, want := r.ChunkGlobalReads(), []symbol.ID{chunkID}; !reflect.DeepEqual(got, want) {
+	if got, want := r.ChunkGlobalReads(), []ID{chunkID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ChunkGlobalReads = %v, want %v", got, want)
 	}
-	if got, want := r.DirectGlobalReads(nested), []symbol.ID{nestedID}; !reflect.DeepEqual(got, want) {
+	if got, want := r.DirectGlobalReads(nested), []ID{nestedID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DirectGlobalReads(nested) = %v, want %v", got, want)
 	}
 	got := r.ChunkGlobalReads()
@@ -768,7 +767,7 @@ func TestDirectCapturesNestedNonVarargDoesNotCaptureOuterVararg(t *testing.T) {
 	}
 
 	captures := r.DirectCaptures(child)
-	if got, want := captureIDs(captures), []symbol.ID{localID}; !reflect.DeepEqual(got, want) {
+	if got, want := captureIDs(captures), []ID{localID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DirectCaptures(child) = %v, want %v without outer vararg %d", got, want, varargID)
 	}
 	if captures[0].CapturedName != "x" || captures[0].DeclaringFunction != outer {
@@ -811,7 +810,7 @@ func TestDirectCapturesShadowingAndNestedDirectness(t *testing.T) {
 	parentOnlyID := mustLocalAt(t, r, parentOnly, 0)
 	outerOnlyID := mustLocalAt(t, r, outerOnly, 0)
 	captures := r.DirectCaptures(grandchild)
-	if got, want := captureIDs(captures), []symbol.ID{parentOnlyID, outerOnlyID}; !reflect.DeepEqual(got, want) {
+	if got, want := captureIDs(captures), []ID{parentOnlyID, outerOnlyID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DirectCaptures(grandchild) = %v, want %v", got, want)
 	}
 	if captures[0].CapturedName != "parentOnly" || captures[0].DeclaringFunction != child {
@@ -866,7 +865,7 @@ func TestParamSlotsTypedAndVararg(t *testing.T) {
 	if !ok || varargID == 0 {
 		t.Fatalf("VarargSymbol = %d/%v, want non-zero/true", varargID, ok)
 	}
-	assertKind(t, r, varargID, symbol.Param)
+	assertKind(t, r, varargID, Param)
 	if slots[2].Symbol != varargID || slots[2].Name != "..." || slots[2].Type != varargType || slots[2].SourceIndex != 2 || !slots[2].Vararg || slots[2].ImplicitSelf {
 		t.Fatalf("vararg slot = %#v, want typed vararg symbol %d", slots[2], varargID)
 	}
@@ -1085,7 +1084,7 @@ func TestFunctionDefinitionsAndNestedScopes(t *testing.T) {
 	if got := mustSymbol(t, r, bodyRead); got != targetID {
 		t.Fatalf("global function body read resolved to %d, want function target %d", got, targetID)
 	}
-	assertKind(t, r, targetID, symbol.Global)
+	assertKind(t, r, targetID, Global)
 	if r.IsImplicitGlobalUse(target) {
 		t.Fatalf("global function assignment target was marked implicit")
 	}
@@ -1166,7 +1165,7 @@ func TestLoopLocals(t *testing.T) {
 	if r.Name(loopID) != "i" {
 		t.Fatalf("numeric for symbol name = %q, want i", r.Name(loopID))
 	}
-	assertKind(t, r, loopID, symbol.Local)
+	assertKind(t, r, loopID, Local)
 	if got := mustSymbol(t, r, limitRead); got != outerID {
 		t.Fatalf("numeric for limit resolved to %d, want outer local %d", got, outerID)
 	}
@@ -1426,13 +1425,13 @@ end
 
 return first()
 `
-	symbolsByName := func() map[string]symbol.ID {
+	symbolsByName := func() map[string]ID {
 		stmts, err := parse.ParseString(source, "bind_test.lua")
 		if err != nil {
 			t.Fatalf("ParseString: %v", err)
 		}
 		r := BindChunk(stmts, Options{})
-		out := make(map[string]symbol.ID)
+		out := make(map[string]ID)
 		r.ForEachFunctionOrigin(func(origin FunctionOrigin) bool {
 			if origin.HasTargetSymbol && origin.TargetSymbol != 0 {
 				out[r.Name(origin.TargetSymbol)] = origin.Symbol
@@ -1570,7 +1569,7 @@ func TestExpressionTraversal(t *testing.T) {
 	r := BindChunk([]ast.Stmt{ret(expr)}, Options{})
 	for _, read := range []*ast.IdentExpr{obj, key, callee, recv, tableKey, tableVal, arg} {
 		id := mustSymbol(t, r, read)
-		assertKind(t, r, id, symbol.Global)
+		assertKind(t, r, id, Global)
 		if !r.IsImplicitGlobalUse(read) {
 			t.Fatalf("%q was not marked implicit global use", read.Value)
 		}
@@ -1689,10 +1688,10 @@ func TestCaptureStreamPreservesBoundaryOwnership(t *testing.T) {
 	if got := entries[root]; len(got) != 0 {
 		t.Fatalf("Entry captures(root) = %v, want none: child-owned y crosses no root boundary", got)
 	}
-	if got := entries[child]; !reflect.DeepEqual(got, []symbol.ID{x}) {
+	if got := entries[child]; !reflect.DeepEqual(got, []ID{x}) {
 		t.Fatalf("Entry captures(child) = %v, want ancestor-owned x only", got)
 	}
-	if got := entries[grand]; !reflect.DeepEqual(got, []symbol.ID{x, y}) {
+	if got := entries[grand]; !reflect.DeepEqual(got, []ID{x, y}) {
 		t.Fatalf("Entry captures(grand) = %v, want direct x,y order", got)
 	}
 }
@@ -1849,7 +1848,7 @@ type Row = {
 			}
 		}
 	}
-	for _, id := range []symbol.ID{anchorID, probeID} {
+	for _, id := range []ID{anchorID, probeID} {
 		if r.HasRead(id) {
 			t.Fatalf("annotation query recorded runtime read for symbol %d", id)
 		}

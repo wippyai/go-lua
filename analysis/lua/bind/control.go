@@ -1,7 +1,6 @@
 package bind
 
 import (
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -26,7 +25,7 @@ type ControlIssue struct {
 	Goto     *ast.GotoStmt
 	Label    *ast.LabelStmt
 	Previous *ast.LabelStmt
-	Local    symbol.ID
+	Local    ID
 }
 
 // GotoTarget returns the exact visible Label bound to a legal Goto. Invalid
@@ -84,7 +83,7 @@ type controlDeclaredUndo struct {
 }
 
 type controlFunction struct {
-	locals []symbol.ID
+	locals []ID
 	blocks []int
 
 	targets    map[string]int
@@ -167,7 +166,7 @@ func (c *controlBinder) popBlock() {
 	fn.blocks = fn.blocks[:len(fn.blocks)-1]
 }
 
-func (c *controlBinder) define(id symbol.ID) {
+func (c *controlBinder) define(id ID) {
 	fn := c.function()
 	if fn == nil || len(fn.blocks) == 0 || id == 0 {
 		return
@@ -323,7 +322,7 @@ func (c *controlBinder) visitGoto(stmt *ast.GotoStmt) {
 func (c *controlBinder) resolveGoto(fn *controlFunction, pending controlGoto, labelIndex int) {
 	label := c.labels[labelIndex]
 	if pending.effective < label.active {
-		var entered symbol.ID
+		var entered ID
 		if pending.effective >= 0 && pending.effective < len(fn.locals) {
 			entered = fn.locals[pending.effective]
 		}

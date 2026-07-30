@@ -3,7 +3,6 @@ package bind
 import (
 	"reflect"
 
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -330,10 +329,10 @@ func (b *binder) visitAssignTargets(step bindStep) {
 }
 
 func (b *binder) beginLocal(stmt *ast.LocalAssignStmt) {
-	ids := make([]symbol.ID, len(stmt.Names))
-	pending := make(map[string]symbol.ID, len(stmt.Names))
+	ids := make([]ID, len(stmt.Names))
+	pending := make(map[string]ID, len(stmt.Names))
 	for i, name := range stmt.Names {
-		id := b.newSymbol(name, symbol.Local)
+		id := b.newSymbol(name, Local)
 		b.result.setDeclaration(id, declarationForPosition(namePosition(stmt.NamePositions, i), name, false))
 		ids[i] = id
 		if name != "" {
@@ -403,7 +402,7 @@ func (b *binder) enterIfElse(stmt *ast.IfStmt) {
 }
 
 func (b *binder) enterNumberFor(stmt *ast.NumberForStmt) {
-	id := b.newSymbol(stmt.Name, symbol.Local)
+	id := b.newSymbol(stmt.Name, Local)
 	b.result.setDeclaration(id, declarationForPosition(stmt.NamePosition, stmt.Name, false))
 	b.result.numForSymbols[stmt] = id
 	b.pushScope()
@@ -413,10 +412,10 @@ func (b *binder) enterNumberFor(stmt *ast.NumberForStmt) {
 }
 
 func (b *binder) enterGenericFor(stmt *ast.GenericForStmt) {
-	ids := make([]symbol.ID, len(stmt.Names))
+	ids := make([]ID, len(stmt.Names))
 	b.pushScope()
 	for i, name := range stmt.Names {
-		id := b.newSymbol(name, symbol.Local)
+		id := b.newSymbol(name, Local)
 		b.result.setDeclaration(id, declarationForPosition(namePosition(stmt.NamePositions, i), name, false))
 		ids[i] = id
 		b.define(name, id)
@@ -588,7 +587,7 @@ func (b *binder) recordCall(call *ast.FuncCallExpr, mode exprBindMode) {
 		return
 	}
 	if b.result.directCalls == nil {
-		b.result.directCalls = make(map[symbol.ID][]*ast.FuncCallExpr)
+		b.result.directCalls = make(map[ID][]*ast.FuncCallExpr)
 	}
 	b.result.directCalls[id] = append(b.result.directCalls[id], call)
 }
@@ -749,7 +748,7 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool) {
 		b.result.functionTypeParams[fn] = fnTypeParams
 	}
 
-	params := make([]symbol.ID, 0)
+	params := make([]ID, 0)
 	slots := make([]ParamSlot, 0)
 	var names []string
 	var types []ast.TypeExpr
@@ -762,7 +761,7 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool) {
 		varargType = fn.ParList.VarargType
 	}
 	if method && (len(names) == 0 || names[0] != "self") {
-		id := b.newSymbol("self", symbol.Param)
+		id := b.newSymbol("self", Param)
 		b.result.setDeclaration(id, Declaration{Synthetic: true})
 		params = append(params, id)
 		b.define("self", id)
@@ -771,7 +770,7 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool) {
 		})
 	}
 	for i, name := range names {
-		id := b.newSymbol(name, symbol.Param)
+		id := b.newSymbol(name, Param)
 		position := positionAt(fn.ParList, i)
 		b.result.setDeclaration(id, declarationForPosition(position, name, false))
 		params = append(params, id)
@@ -782,7 +781,7 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool) {
 	}
 	b.result.paramSymbols[fn] = params
 	if hasVargs {
-		id := b.newSymbol("...", symbol.Param)
+		id := b.newSymbol("...", Param)
 		var position ast.Position
 		if fn.ParList != nil {
 			position = fn.ParList.VarargPosition

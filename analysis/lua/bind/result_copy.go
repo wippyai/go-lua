@@ -1,15 +1,14 @@
 package bind
 
 import (
-	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-func cloneSymbols(ids []symbol.ID) []symbol.ID {
+func cloneSymbols(ids []ID) []ID {
 	if len(ids) == 0 {
 		return nil
 	}
-	return append([]symbol.ID(nil), ids...)
+	return append([]ID(nil), ids...)
 }
 
 func cloneFunctions(fns []*ast.FunctionExpr) []*ast.FunctionExpr {
