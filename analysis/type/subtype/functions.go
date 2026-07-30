@@ -2,7 +2,7 @@ package subtype
 
 import "github.com/wippyai/go-lua/analysis/type/typ"
 
-func (c *checker) checkFunction(sub, super *typ.Function, depth int) bool {
+func (c *checker) checkFunction(sub, super *typ.Function) bool {
 	subReq := minRequiredArgs(sub)
 	superReq := minRequiredArgs(super)
 	if subReq > superReq || (super.Variadic == nil && subReq > len(super.Params)) {
@@ -31,12 +31,12 @@ func (c *checker) checkFunction(sub, super *typ.Function, depth int) bool {
 		if subT == nil || superT == nil {
 			continue
 		}
-		if !c.check(superT, subT, depth+1) {
+		if !c.check(superT, subT) {
 			return false
 		}
 	}
 	if sub.Variadic != nil && super.Variadic != nil {
-		if !c.check(super.Variadic, sub.Variadic, depth+1) {
+		if !c.check(super.Variadic, sub.Variadic) {
 			return false
 		}
 	}
@@ -45,7 +45,7 @@ func (c *checker) checkFunction(sub, super *typ.Function, depth int) bool {
 		if i < len(sub.Returns) {
 			subReturn = sub.Returns[i]
 		}
-		if !c.check(subReturn, super.Returns[i], depth+1) {
+		if !c.check(subReturn, super.Returns[i]) {
 			return false
 		}
 	}

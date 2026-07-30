@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
+func (c *checker) canWidenTo(narrow, wide typ.Type) bool {
 	if missingTypePair(narrow, wide) {
 		return false
 	}
@@ -28,7 +28,7 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 			c.widenInProgress = make(map[typePair]bool)
 		}
 		c.widenInProgress[pair] = true
-		result := c.canWidenToUncached(narrow, wide, depth)
+		result := c.canWidenToUncached(narrow, wide)
 		delete(c.widenInProgress, pair)
 		if c.widenMemo == nil {
 			c.widenMemo = make(map[typePair]bool)
@@ -36,34 +36,34 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 		c.widenMemo[pair] = result
 		return result
 	}
-	return c.canWidenToUncached(narrow, wide, depth)
+	return c.canWidenToUncached(narrow, wide)
 }
 
-func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
+func (c *checker) canWidenToUncached(narrow, wide typ.Type) bool {
 
 	if inst, ok := narrow.(*typ.Instantiated); ok {
 		expanded := subst.ExpandInstantiated(inst)
 		if expanded != nil && expanded != narrow {
-			return c.check(expanded, subst.Self(wide, inst), depth+1) ||
-				c.canWidenTo(expanded, subst.Self(wide, inst), depth+1)
+			return c.check(expanded, subst.Self(wide, inst)) ||
+				c.canWidenTo(expanded, subst.Self(wide, inst))
 		}
 	}
 	if inst, ok := wide.(*typ.Instantiated); ok {
 		expanded := subst.ExpandInstantiated(inst)
 		if expanded != nil && expanded != wide {
-			return c.check(subst.Self(narrow, inst), expanded, depth+1) ||
-				c.canWidenTo(subst.Self(narrow, inst), expanded, depth+1)
+			return c.check(subst.Self(narrow, inst), expanded) ||
+				c.canWidenTo(subst.Self(narrow, inst), expanded)
 		}
 	}
 	if subRec, ok := narrow.(*typ.Recursive); ok && subRec.Body != nil && subRec.Body != narrow {
 		if supRec, ok := wide.(*typ.Recursive); ok && supRec.Body != nil && supRec.Body != wide {
-			return c.check(subRec.Body, supRec.Body, depth+1) ||
-				c.canWidenTo(subRec.Body, supRec.Body, depth+1)
+			return c.check(subRec.Body, supRec.Body) ||
+				c.canWidenTo(subRec.Body, supRec.Body)
 		}
-		return c.check(subRec.Body, wide, depth+1) || c.canWidenTo(subRec.Body, wide, depth+1)
+		return c.check(subRec.Body, wide) || c.canWidenTo(subRec.Body, wide)
 	}
 	if supRec, ok := wide.(*typ.Recursive); ok && supRec.Body != nil && supRec.Body != wide {
-		return c.check(narrow, supRec.Body, depth+1) || c.canWidenTo(narrow, supRec.Body, depth+1)
+		return c.check(narrow, supRec.Body) || c.canWidenTo(narrow, supRec.Body)
 	}
 
 	if typ.IsAny(wide) {
@@ -86,10 +86,10 @@ func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
 	}
 	if opt, ok := wide.(*typ.Optional); ok {
 		if narrowOpt, ok := narrow.(*typ.Optional); ok {
-			return c.check(narrowOpt.Inner, opt.Inner, depth+1) ||
-				c.canWidenTo(narrowOpt.Inner, opt.Inner, depth+1)
+			return c.check(narrowOpt.Inner, opt.Inner) ||
+				c.canWidenTo(narrowOpt.Inner, opt.Inner)
 		}
-		if c.check(narrow, opt.Inner, depth+1) || c.canWidenTo(narrow, opt.Inner, depth+1) {
+		if c.check(narrow, opt.Inner) || c.canWidenTo(narrow, opt.Inner) {
 			return true
 		}
 	}
@@ -98,7 +98,7 @@ func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
 			return false
 		}
 		for _, m := range u.Members {
-			if c.check(m, wide, depth+1) || c.canWidenTo(m, wide, depth+1) {
+			if c.check(m, wide) || c.canWidenTo(m, wide) {
 				continue
 			}
 			return false
@@ -110,7 +110,7 @@ func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
 			if m.Kind() == kind.Literal {
 				continue
 			}
-			if c.check(narrow, m, depth+1) || c.canWidenTo(narrow, m, depth+1) {
+			if c.check(narrow, m) || c.canWidenTo(narrow, m) {
 				return true
 			}
 		}
@@ -140,29 +140,29 @@ func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
 			return true
 		}
 		if supRec, ok := wide.(*typ.Record); ok {
-			return c.canWidenRecordTo(subRec, supRec, depth+1)
+			return c.canWidenRecordTo(subRec, supRec)
 		}
 		if supArray, ok := wide.(*typ.Array); ok {
-			return c.canWidenRecordToArray(subRec, supArray, depth+1)
+			return c.canWidenRecordToArray(subRec, supArray)
 		}
 		if supMap, ok := wide.(*typ.Map); ok {
-			return c.canWidenRecordToMap(subRec, supMap, depth+1)
+			return c.canWidenRecordToMap(subRec, supMap)
 		}
 	}
 	if subMap, ok := narrow.(*typ.Map); ok {
 		if supMap, ok := wide.(*typ.Map); ok {
-			return c.canWidenMapTo(subMap, supMap, depth+1)
+			return c.canWidenMapTo(subMap, supMap)
 		}
 	}
 	if subArray, ok := narrow.(*typ.Array); ok {
 		if supArray, ok := wide.(*typ.Array); ok {
-			return c.check(subArray.Element, supArray.Element, depth+1) ||
-				c.canWidenTo(subArray.Element, supArray.Element, depth+1)
+			return c.check(subArray.Element, supArray.Element) ||
+				c.canWidenTo(subArray.Element, supArray.Element)
 		}
 		if supMap, ok := wide.(*typ.Map); ok {
-			return c.check(typ.Integer, supMap.Key, depth+1) &&
-				(c.check(subArray.Element, supMap.Value, depth+1) ||
-					c.canWidenTo(subArray.Element, supMap.Value, depth+1))
+			return c.check(typ.Integer, supMap.Key) &&
+				(c.check(subArray.Element, supMap.Value) ||
+					c.canWidenTo(subArray.Element, supMap.Value))
 		}
 	}
 	if subTuple, ok := narrow.(*typ.Tuple); ok {
@@ -171,8 +171,8 @@ func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
 				return false
 			}
 			for i := range subTuple.Elements {
-				if c.check(subTuple.Elements[i], supTuple.Elements[i], depth+1) ||
-					c.canWidenTo(subTuple.Elements[i], supTuple.Elements[i], depth+1) {
+				if c.check(subTuple.Elements[i], supTuple.Elements[i]) ||
+					c.canWidenTo(subTuple.Elements[i], supTuple.Elements[i]) {
 					continue
 				}
 				return false
@@ -182,7 +182,7 @@ func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
 	}
 	if subFn, ok := narrow.(*typ.Function); ok {
 		if supFn, ok := wide.(*typ.Function); ok {
-			if !c.functionParamsEquivalent(subFn, supFn, depth+1) {
+			if !c.functionParamsEquivalent(subFn, supFn) {
 				return false
 			}
 			for i := 0; i < len(supFn.Returns); i++ {
@@ -190,7 +190,7 @@ func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
 				if i < len(subFn.Returns) {
 					subReturn = subFn.Returns[i]
 				}
-				if c.check(subReturn, supFn.Returns[i], depth+1) || c.canWidenTo(subReturn, supFn.Returns[i], depth+1) {
+				if c.check(subReturn, supFn.Returns[i]) || c.canWidenTo(subReturn, supFn.Returns[i]) {
 					continue
 				}
 				return false
@@ -201,11 +201,11 @@ func (c *checker) canWidenToUncached(narrow, wide typ.Type, depth int) bool {
 	return false
 }
 
-func (c *checker) canWidenMapTo(narrow, wide *typ.Map, depth int) bool {
+func (c *checker) canWidenMapTo(narrow, wide *typ.Map) bool {
 	if narrow == nil || wide == nil {
 		return false
 	}
-	if !c.check(narrow.Key, wide.Key, depth+1) || !c.check(wide.Key, narrow.Key, depth+1) {
+	if !c.check(narrow.Key, wide.Key) || !c.check(wide.Key, narrow.Key) {
 		return false
 	}
 	// A map is mutable, so widening its value type lets a write through the wider
@@ -214,11 +214,11 @@ func (c *checker) canWidenMapTo(narrow, wide *typ.Map, depth int) bool {
 	// values yet (value Never); a map carrying a concrete value type must match it
 	// invariantly, exactly as checkMap requires.
 	if typ.IsNever(narrow.Value) {
-		return c.check(narrow.Value, wide.Value, depth+1) ||
-			c.canWidenTo(narrow.Value, wide.Value, depth+1)
+		return c.check(narrow.Value, wide.Value) ||
+			c.canWidenTo(narrow.Value, wide.Value)
 	}
-	return c.check(narrow.Value, wide.Value, depth+1) &&
-		c.check(wide.Value, narrow.Value, depth+1)
+	return c.check(narrow.Value, wide.Value) &&
+		c.check(wide.Value, narrow.Value)
 }
 
 // canWidenRecordToMap reports whether a fresh record literal widens to a map
@@ -226,30 +226,30 @@ func (c *checker) canWidenMapTo(narrow, wide *typ.Map, depth int) bool {
 // subtype of (or widen to) the map value, matching record-to-map subtyping while
 // allowing the per-field literal widening fresh constructors rely on. A record
 // map-component, when present, must likewise widen to the target map.
-func (c *checker) canWidenRecordToMap(narrow *typ.Record, wide *typ.Map, depth int) bool {
+func (c *checker) canWidenRecordToMap(narrow *typ.Record, wide *typ.Map) bool {
 	if narrow == nil || wide == nil {
 		return false
 	}
 	for _, f := range narrow.Fields {
-		if !c.check(typ.LiteralString(f.Name), wide.Key, depth+1) {
+		if !c.check(typ.LiteralString(f.Name), wide.Key) {
 			return false
 		}
-		if !c.check(f.Type, wide.Value, depth+1) && !c.canWidenTo(f.Type, wide.Value, depth+1) {
+		if !c.check(f.Type, wide.Value) && !c.canWidenTo(f.Type, wide.Value) {
 			return false
 		}
 	}
 	if narrow.HasMapComponent() {
-		if !c.check(narrow.MapKey, wide.Key, depth+1) {
+		if !c.check(narrow.MapKey, wide.Key) {
 			return false
 		}
-		if !c.check(narrow.MapValue, wide.Value, depth+1) && !c.canWidenTo(narrow.MapValue, wide.Value, depth+1) {
+		if !c.check(narrow.MapValue, wide.Value) && !c.canWidenTo(narrow.MapValue, wide.Value) {
 			return false
 		}
 	}
 	return true
 }
 
-func (c *checker) canWidenRecordToArray(narrow *typ.Record, wide *typ.Array, depth int) bool {
+func (c *checker) canWidenRecordToArray(narrow *typ.Record, wide *typ.Array) bool {
 	if narrow == nil || wide == nil {
 		return false
 	}
@@ -260,22 +260,22 @@ func (c *checker) canWidenRecordToArray(narrow *typ.Record, wide *typ.Array, dep
 		if m.Kind != typ.StaticMemberIntIndex {
 			return false
 		}
-		if !c.check(m.Type, wide.Element, depth+1) && !c.canWidenTo(m.Type, wide.Element, depth+1) {
+		if !c.check(m.Type, wide.Element) && !c.canWidenTo(m.Type, wide.Element) {
 			return false
 		}
 	}
 	if narrow.HasMapComponent() {
-		if !c.check(narrow.MapKey, typ.Integer, depth+1) {
+		if !c.check(narrow.MapKey, typ.Integer) {
 			return false
 		}
-		if !c.check(narrow.MapValue, wide.Element, depth+1) && !c.canWidenTo(narrow.MapValue, wide.Element, depth+1) {
+		if !c.check(narrow.MapValue, wide.Element) && !c.canWidenTo(narrow.MapValue, wide.Element) {
 			return false
 		}
 	}
 	return true
 }
 
-func (c *checker) functionParamsEquivalent(a, b *typ.Function, depth int) bool {
+func (c *checker) functionParamsEquivalent(a, b *typ.Function) bool {
 	if a == nil || b == nil || len(a.Params) != len(b.Params) {
 		return false
 	}
@@ -285,7 +285,7 @@ func (c *checker) functionParamsEquivalent(a, b *typ.Function, depth int) bool {
 		if ap.Optional != bp.Optional {
 			return false
 		}
-		if !c.check(ap.Type, bp.Type, depth+1) || !c.check(bp.Type, ap.Type, depth+1) {
+		if !c.check(ap.Type, bp.Type) || !c.check(bp.Type, ap.Type) {
 			return false
 		}
 	}
@@ -295,10 +295,10 @@ func (c *checker) functionParamsEquivalent(a, b *typ.Function, depth int) bool {
 	if a.Variadic == nil || b.Variadic == nil {
 		return false
 	}
-	return c.check(a.Variadic, b.Variadic, depth+1) && c.check(b.Variadic, a.Variadic, depth+1)
+	return c.check(a.Variadic, b.Variadic) && c.check(b.Variadic, a.Variadic)
 }
 
-func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
+func (c *checker) canWidenRecordTo(narrow, wide *typ.Record) bool {
 	if narrow == nil || wide == nil {
 		return false
 	}
@@ -310,7 +310,7 @@ func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 			}
 			continue
 		}
-		if !c.check(nf.Type, wf.Type, depth+1) && !c.canWidenTo(nf.Type, wf.Type, depth+1) {
+		if !c.check(nf.Type, wf.Type) && !c.canWidenTo(nf.Type, wf.Type) {
 			return false
 		}
 	}
@@ -322,7 +322,7 @@ func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 			}
 			continue
 		}
-		if !c.check(nm.Type, wm.Type, depth+1) && !c.canWidenTo(nm.Type, wm.Type, depth+1) {
+		if !c.check(nm.Type, wm.Type) && !c.canWidenTo(nm.Type, wm.Type) {
 			return false
 		}
 	}

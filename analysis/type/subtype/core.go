@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func (c *checker) check(sub, super typ.Type, depth int) bool {
+func (c *checker) check(sub, super typ.Type) bool {
 	if missingTypePair(sub, super) {
 		return false
 	}
@@ -32,7 +32,7 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 			return true
 		}
 		c.inProgress[pair] = true
-		result := c.checkCore(sub, super, depth)
+		result := c.checkCore(sub, super)
 		delete(c.inProgress, pair)
 		if c.memo == nil {
 			c.memo = make(map[typePair]bool)
@@ -41,10 +41,10 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 		return result
 	}
 
-	return c.checkCore(sub, super, depth)
+	return c.checkCore(sub, super)
 }
 
-func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
+func (c *checker) checkCore(sub, super typ.Type) bool {
 	if sub == super {
 		return true
 	}
@@ -78,16 +78,16 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	}
 
 	if a, ok := sub.(*typ.Alias); ok {
-		return c.check(a.UnaliasedTarget(), super, depth+1)
+		return c.check(a.UnaliasedTarget(), super)
 	}
 	if a, ok := super.(*typ.Alias); ok {
-		return c.check(sub, a.UnaliasedTarget(), depth+1)
+		return c.check(sub, a.UnaliasedTarget())
 	}
 	if a, ok := sub.(*typ.Annotated); ok {
-		return c.check(a.Inner, super, depth+1)
+		return c.check(a.Inner, super)
 	}
 	if a, ok := super.(*typ.Annotated); ok {
-		return c.check(sub, a.Inner, depth+1)
+		return c.check(sub, a.Inner)
 	}
 	// Both sides recursive (distinct identities for the same nominal type, e.g.
 	// resolved in two contexts): unwrap both bodies. The inProgress coinductive
@@ -95,33 +95,33 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	// recursive types are subtypes regardless of placeholder identity.
 	if rs, ok := sub.(*typ.Recursive); ok && rs.Body != nil && rs.Body != rs {
 		if rp, ok := super.(*typ.Recursive); ok && rp.Body != nil && rp.Body != rp {
-			return c.check(rs.Body, rp.Body, depth+1)
+			return c.check(rs.Body, rp.Body)
 		}
 	}
 	if r, ok := sub.(*typ.Recursive); ok && super.Kind() != kind.Recursive && r.Body != nil && r.Body != r {
-		return c.check(r.Body, super, depth+1)
+		return c.check(r.Body, super)
 	}
 	if r, ok := super.(*typ.Recursive); ok && sub.Kind() != kind.Recursive && r.Body != nil && r.Body != r {
-		return c.check(sub, r.Body, depth+1)
+		return c.check(sub, r.Body)
 	}
 
 	subInst, subIsInst := sub.(*typ.Instantiated)
 	superInst, superIsInst := super.(*typ.Instantiated)
 	if subIsInst && superIsInst && subInst.Generic != nil && superInst.Generic != nil {
 		if typ.TypeEquals(subInst.Generic, superInst.Generic) {
-			return c.checkInstantiated(subInst, superInst, depth)
+			return c.checkInstantiated(subInst, superInst)
 		}
 	}
 	if subIsInst {
 		expanded := subst.ExpandInstantiated(subInst)
 		if expanded != nil && expanded != sub {
-			return c.check(expanded, subst.Self(super, subInst), depth+1)
+			return c.check(expanded, subst.Self(super, subInst))
 		}
 	}
 	if superIsInst {
 		expanded := subst.ExpandInstantiated(superInst)
 		if expanded != nil && expanded != super {
-			return c.check(subst.Self(sub, superInst), expanded, depth+1)
+			return c.check(subst.Self(sub, superInst), expanded)
 		}
 	}
 
@@ -140,7 +140,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		}
 		if i, ok := super.(*typ.Intersection); ok {
 			for _, m := range i.Members {
-				if !c.check(sub, m, depth+1) {
+				if !c.check(sub, m) {
 					return false
 				}
 			}
@@ -148,7 +148,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		}
 		if u, ok := super.(*typ.Union); ok {
 			for _, m := range u.Members {
-				if c.check(sub, m, depth+1) {
+				if c.check(sub, m) {
 					return true
 				}
 			}
@@ -162,7 +162,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 
 	if u, ok := sub.(*typ.Union); ok {
 		for _, m := range u.Members {
-			if !c.check(m, super, depth+1) {
+			if !c.check(m, super) {
 				return false
 			}
 		}
@@ -170,10 +170,10 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	}
 	if u, ok := super.(*typ.Union); ok {
 		if o, ok := sub.(*typ.Optional); ok {
-			return c.check(o.Inner, super, depth+1) && c.checkNil(super, depth+1)
+			return c.check(o.Inner, super) && c.checkNil(super)
 		}
 		for _, m := range u.Members {
-			if c.check(sub, m, depth+1) {
+			if c.check(sub, m) {
 				return true
 			}
 		}
@@ -181,7 +181,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	}
 	if i, ok := sub.(*typ.Intersection); ok {
 		for _, m := range i.Members {
-			if c.check(m, super, depth+1) {
+			if c.check(m, super) {
 				return true
 			}
 		}
@@ -189,7 +189,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	}
 	if i, ok := super.(*typ.Intersection); ok {
 		for _, m := range i.Members {
-			if !c.check(sub, m, depth+1) {
+			if !c.check(sub, m) {
 				return false
 			}
 		}
@@ -198,15 +198,15 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 
 	if o, ok := super.(*typ.Optional); ok {
 		if subOpt, ok := sub.(*typ.Optional); ok {
-			return c.check(subOpt.Inner, o.Inner, depth+1)
+			return c.check(subOpt.Inner, o.Inner)
 		}
 		if sub.Kind() == kind.Nil {
 			return true
 		}
-		return c.check(sub, o.Inner, depth+1)
+		return c.check(sub, o.Inner)
 	}
 	if o, ok := sub.(*typ.Optional); ok {
-		return c.checkNil(super, depth+1) && c.check(o.Inner, super, depth+1)
+		return c.checkNil(super) && c.check(o.Inner, super)
 	}
 
 	if ok, handled := checkTableTop(sub, super); handled {
@@ -219,42 +219,42 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 
 	if r, ok := sub.(*typ.Record); ok {
 		if m, ok := super.(*typ.Map); ok {
-			return c.checkRecordToMap(r, m, depth+1)
+			return c.checkRecordToMap(r, m)
 		}
 		if m, ok := super.(*typ.ReadonlyMap); ok {
-			return c.checkRecordToReadonlyMap(r, m, depth+1)
+			return c.checkRecordToReadonlyMap(r, m)
 		}
 	}
 	if m, ok := sub.(*typ.Map); ok {
 		if r, ok := super.(*typ.Record); ok {
-			return c.checkMapToRecord(m, r, depth+1)
+			return c.checkMapToRecord(m, r)
 		}
 		if view, ok := super.(*typ.ReadonlyMap); ok {
-			return c.checkReadonlyMap(typetable.NewReadonlyMap(m.Key, m.Value), view, depth+1)
+			return c.checkReadonlyMap(typetable.NewReadonlyMap(m.Key, m.Value), view)
 		}
 	}
 	if arr, ok := sub.(*typ.Array); ok {
 		if m, ok := super.(*typ.Map); ok {
-			return c.checkArrayToMap(arr, m, depth+1)
+			return c.checkArrayToMap(arr, m)
 		}
 		if view, ok := super.(*typ.ReadonlyMap); ok {
-			return c.checkReadonlyMap(typetable.NewReadonlyMap(typ.Integer, arr.Element), view, depth+1)
+			return c.checkReadonlyMap(typetable.NewReadonlyMap(typ.Integer, arr.Element), view)
 		}
 	}
 	if tup, ok := sub.(*typ.Tuple); ok {
 		if arr, ok := super.(*typ.Array); ok {
-			return c.checkTupleToArray(tup, arr, depth+1)
+			return c.checkTupleToArray(tup, arr)
 		}
 		if m, ok := super.(*typ.Map); ok {
-			return c.checkTupleToMap(tup, m, depth+1)
+			return c.checkTupleToMap(tup, m)
 		}
 		if view, ok := super.(*typ.ReadonlyMap); ok {
-			return c.checkTupleToReadonlyMap(tup, view, depth+1)
+			return c.checkTupleToReadonlyMap(tup, view)
 		}
 	}
 	if rec, ok := sub.(*typ.Record); ok {
 		if iface, ok := super.(*typ.Interface); ok {
-			return c.checkRecordToInterface(rec, iface, depth+1)
+			return c.checkRecordToInterface(rec, iface)
 		}
 	}
 
@@ -263,13 +263,13 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 			return typ.TypeEquals(tp, sp)
 		}
 		if tp.Constraint != nil {
-			return c.check(tp.Constraint, super, depth+1)
+			return c.check(tp.Constraint, super)
 		}
 		return typ.IsAny(super)
 	}
 	if tp, ok := super.(*typ.TypeParam); ok {
 		if tp.Constraint != nil {
-			return c.check(sub, tp.Constraint, depth+1)
+			return c.check(sub, tp.Constraint)
 		}
 		return true
 	}
@@ -295,23 +295,23 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 
 	switch sub.Kind() {
 	case kind.Function:
-		return c.checkFunction(sub.(*typ.Function), super.(*typ.Function), depth)
+		return c.checkFunction(sub.(*typ.Function), super.(*typ.Function))
 	case kind.Record:
-		return c.checkRecord(sub.(*typ.Record), super.(*typ.Record), depth)
+		return c.checkRecord(sub.(*typ.Record), super.(*typ.Record))
 	case kind.Array:
-		return c.checkArray(sub.(*typ.Array), super.(*typ.Array), depth)
+		return c.checkArray(sub.(*typ.Array), super.(*typ.Array))
 	case kind.Map:
-		return c.checkMap(sub.(*typ.Map), super.(*typ.Map), depth)
+		return c.checkMap(sub.(*typ.Map), super.(*typ.Map))
 	case kind.ReadonlyMap:
-		return c.checkReadonlyMap(sub.(*typ.ReadonlyMap), super.(*typ.ReadonlyMap), depth)
+		return c.checkReadonlyMap(sub.(*typ.ReadonlyMap), super.(*typ.ReadonlyMap))
 	case kind.Tuple:
-		return c.checkTuple(sub.(*typ.Tuple), super.(*typ.Tuple), depth)
+		return c.checkTuple(sub.(*typ.Tuple), super.(*typ.Tuple))
 	case kind.Interface:
-		return c.checkInterface(sub.(*typ.Interface), super.(*typ.Interface), depth)
+		return c.checkInterface(sub.(*typ.Interface), super.(*typ.Interface))
 	case kind.Instantiated:
-		return c.checkInstantiated(sub.(*typ.Instantiated), super.(*typ.Instantiated), depth)
+		return c.checkInstantiated(sub.(*typ.Instantiated), super.(*typ.Instantiated))
 	case kind.Meta:
-		return c.check(sub.(*typ.Meta).Of, super.(*typ.Meta).Of, depth+1)
+		return c.check(sub.(*typ.Meta).Of, super.(*typ.Meta).Of)
 	default:
 		// Opaque or deferred same-kind nodes are accepted only by their own
 		// equality relation, keeping unsupported structure closed.
@@ -319,8 +319,8 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	}
 }
 
-func (c *checker) checkNil(super typ.Type, depth int) bool {
-	return c.check(typ.Nil, super, depth)
+func (c *checker) checkNil(super typ.Type) bool {
+	return c.check(typ.Nil, super)
 }
 
 type typePair struct {

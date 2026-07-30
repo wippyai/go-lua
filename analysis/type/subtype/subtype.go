@@ -8,7 +8,7 @@ import (
 // IsSubtype reports whether sub is a strict subtype of super.
 func IsSubtype(sub, super typ.Type) bool {
 	c := &checker{}
-	return c.check(sub, super, 0)
+	return c.check(sub, super)
 }
 
 // IsFreshAssignable reports whether sub is a subtype of super or widens to it
@@ -18,12 +18,12 @@ func IsSubtype(sub, super typ.Type) bool {
 // nested literal fields take their declared contract rather than their narrow
 // constructed type.
 func IsFreshAssignable(sub, super typ.Type) bool {
-	if (&checker{}).check(sub, super, 0) {
+	if (&checker{}).check(sub, super) {
 		return true
 	}
 	// Widening is a distinct recursive relation. Its coinductive assumptions
 	// must not observe false memo entries from the preceding subtype proof.
-	return (&checker{}).canWidenTo(sub, super, 0)
+	return (&checker{}).canWidenTo(sub, super)
 }
 
 func isOptionalTop(t typ.Type) bool {

@@ -5,44 +5,44 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func (c *checker) checkArray(sub, super *typ.Array, depth int) bool {
-	return c.check(sub.Element, super.Element, depth+1)
+func (c *checker) checkArray(sub, super *typ.Array) bool {
+	return c.check(sub.Element, super.Element)
 }
 
-func (c *checker) checkMap(sub, super *typ.Map, depth int) bool {
-	if !c.check(sub.Key, super.Key, depth+1) || !c.check(super.Key, sub.Key, depth+1) {
+func (c *checker) checkMap(sub, super *typ.Map) bool {
+	if !c.check(sub.Key, super.Key) || !c.check(super.Key, sub.Key) {
 		return false
 	}
-	if !c.check(sub.Value, super.Value, depth+1) {
+	if !c.check(sub.Value, super.Value) {
 		return false
 	}
 	// A map is mutable, so its value is invariant: widening the value type (for
 	// example to any) would let a write through the alias store a value the
 	// original map's type forbids. Covariant read-only access uses ReadonlyMap.
-	return c.check(super.Value, sub.Value, depth+1)
+	return c.check(super.Value, sub.Value)
 }
 
-func (c *checker) checkReadonlyMap(sub, super *typ.ReadonlyMap, depth int) bool {
+func (c *checker) checkReadonlyMap(sub, super *typ.ReadonlyMap) bool {
 	if sub == nil || super == nil {
 		return false
 	}
-	return c.check(sub.Key, super.Key, depth+1) &&
-		c.check(typetable.PresentReadonlyEntryValue(sub.Value), super.Value, depth+1)
+	return c.check(sub.Key, super.Key) &&
+		c.check(typetable.PresentReadonlyEntryValue(sub.Value), super.Value)
 }
 
-func (c *checker) checkTuple(sub, super *typ.Tuple, depth int) bool {
+func (c *checker) checkTuple(sub, super *typ.Tuple) bool {
 	if len(sub.Elements) != len(super.Elements) {
 		return false
 	}
 	for i, e := range sub.Elements {
-		if !c.check(e, super.Elements[i], depth+1) {
+		if !c.check(e, super.Elements[i]) {
 			return false
 		}
 	}
 	return true
 }
 
-func (c *checker) checkInterface(sub, super *typ.Interface, depth int) bool {
+func (c *checker) checkInterface(sub, super *typ.Interface) bool {
 	if sub == nil || super == nil {
 		return false
 	}
@@ -58,7 +58,7 @@ func (c *checker) checkInterface(sub, super *typ.Interface, depth int) bool {
 			if subMethod.Name != superMethod.Name {
 				continue
 			}
-			if !c.check(subMethod.Type, superMethod.Type, depth+1) {
+			if !c.check(subMethod.Type, superMethod.Type) {
 				return false
 			}
 			found = true
@@ -71,7 +71,7 @@ func (c *checker) checkInterface(sub, super *typ.Interface, depth int) bool {
 	return true
 }
 
-func (c *checker) checkInstantiated(sub, super *typ.Instantiated, depth int) bool {
+func (c *checker) checkInstantiated(sub, super *typ.Instantiated) bool {
 	if sub == nil || super == nil || sub.Generic == nil || super.Generic == nil {
 		return false
 	}
@@ -79,7 +79,7 @@ func (c *checker) checkInstantiated(sub, super *typ.Instantiated, depth int) boo
 		return false
 	}
 	for i, a := range sub.TypeArgs {
-		if !c.check(a, super.TypeArgs[i], depth+1) || !c.check(super.TypeArgs[i], a, depth+1) {
+		if !c.check(a, super.TypeArgs[i]) || !c.check(super.TypeArgs[i], a) {
 			return false
 		}
 	}

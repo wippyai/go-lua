@@ -48,7 +48,7 @@ func RecordInterfaceMismatch(sub, super typ.Type) (InterfaceMismatch, bool) {
 				Expected: method.Type,
 			}, true
 		}
-		if !c.check(field.Type, checkExpected, 1) {
+		if !c.check(field.Type, checkExpected) {
 			return InterfaceMismatch{
 				Kind:     InterfaceMismatchMethodType,
 				Method:   method,

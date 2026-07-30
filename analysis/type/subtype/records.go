@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
+func (c *checker) checkRecord(sub, super *typ.Record) bool {
 	for _, sf := range super.Fields {
 		subMember, ok := recordReadableField(sub, sf.Name)
 		if !ok {
@@ -18,7 +18,7 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			}
 			continue
 		}
-		if !c.checkRecordMember(subMember, recordMemberShape{typ: sf.Type, optional: sf.Optional, readonly: sf.Readonly}, depth+1) {
+		if !c.checkRecordMember(subMember, recordMemberShape{typ: sf.Type, optional: sf.Optional, readonly: sf.Readonly}) {
 			return false
 		}
 	}
@@ -30,7 +30,7 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			}
 			continue
 		}
-		if !c.checkRecordMember(subMember, recordMemberShape{typ: sm.Type, optional: sm.Optional, readonly: sm.Readonly}, depth+1) {
+		if !c.checkRecordMember(subMember, recordMemberShape{typ: sm.Type, optional: sm.Optional, readonly: sm.Readonly}) {
 			return false
 		}
 	}
@@ -39,14 +39,14 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 		if !sub.HasMapComponent() {
 			return false
 		}
-		if !c.check(sub.MapKey, super.MapKey, depth+1) {
+		if !c.check(sub.MapKey, super.MapKey) {
 			return false
 		}
-		if !c.check(sub.MapValue, super.MapValue, depth+1) {
+		if !c.check(sub.MapValue, super.MapValue) {
 			return false
 		}
 	}
-	return c.metaSubtype(sub.Metatable, super.Metatable, depth+1)
+	return c.metaSubtype(sub.Metatable, super.Metatable)
 }
 
 type recordMemberShape struct {
@@ -97,7 +97,7 @@ func staticMemberShape(member *typ.StaticMember) recordMemberShape {
 	return recordMemberShape{typ: member.Type, optional: member.Optional, readonly: member.Readonly}
 }
 
-func (c *checker) checkRecordMember(sub, super recordMemberShape, depth int) bool {
+func (c *checker) checkRecordMember(sub, super recordMemberShape) bool {
 	if super.optional && sub.typ != nil && sub.typ.Kind() == kind.Nil {
 		return true
 	}
@@ -106,17 +106,17 @@ func (c *checker) checkRecordMember(sub, super recordMemberShape, depth int) boo
 		effectiveSuper = typeexpr.Optional(super.typ)
 	}
 	if super.readonly {
-		if !c.check(sub.typ, effectiveSuper, depth+1) {
+		if !c.check(sub.typ, effectiveSuper) {
 			return false
 		}
 	} else {
 		if sub.readonly {
 			return false
 		}
-		if !c.check(sub.typ, effectiveSuper, depth+1) {
+		if !c.check(sub.typ, effectiveSuper) {
 			return false
 		}
-		if !c.check(effectiveSuper, sub.typ, depth+1) && !c.canWidenTo(sub.typ, effectiveSuper, depth+1) {
+		if !c.check(effectiveSuper, sub.typ) && !c.canWidenTo(sub.typ, effectiveSuper) {
 			return false
 		}
 	}
@@ -126,7 +126,7 @@ func (c *checker) checkRecordMember(sub, super recordMemberShape, depth int) boo
 	return true
 }
 
-func (c *checker) metaSubtype(subMT, superMT typ.Type, depth int) bool {
+func (c *checker) metaSubtype(subMT, superMT typ.Type) bool {
 	if subMT == nil && superMT == nil {
 		return true
 	}
@@ -147,10 +147,10 @@ func (c *checker) metaSubtype(subMT, superMT typ.Type, depth int) bool {
 	if subMT == nil || superMT == nil {
 		return false
 	}
-	return c.check(subMT, superMT, depth)
+	return c.check(subMT, superMT)
 }
 
-func (c *checker) checkRecordToInterface(sub *typ.Record, super *typ.Interface, depth int) bool {
+func (c *checker) checkRecordToInterface(sub *typ.Record, super *typ.Interface) bool {
 	if sub == nil || super == nil {
 		return false
 	}
@@ -160,7 +160,7 @@ func (c *checker) checkRecordToInterface(sub *typ.Record, super *typ.Interface, 
 			return false
 		}
 		methodType := subst.Self(method.Type, sub)
-		if !c.check(field.Type, methodType, depth+1) {
+		if !c.check(field.Type, methodType) {
 			return false
 		}
 	}
