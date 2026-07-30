@@ -219,7 +219,10 @@ func TestGlobalCellCallNeverDerivesDirectEvidence(t *testing.T) {
 	b, entry := entryBuilder(t)
 	body := b.Body(program.Span{})
 	global := b.Global(program.Span{}, "callback")
-	function := b.Function(program.Span{}, entry, body, nil, 0, nil)
+	function := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(function, body, nil, 0, nil) {
+		t.Fatal("FillFunction")
+	}
 	recursiveCallee := b.Read(program.Span{}, body, global)
 	recursiveActuals := b.Values(program.Span{}, body, nil, 0)
 	recursiveCall := b.Call(program.Span{}, body, recursiveCallee, 0, recursiveActuals)

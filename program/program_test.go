@@ -180,7 +180,10 @@ func TestEntryAndSpanContractsFailClosed(t *testing.T) {
 		b := program.NewBuilder()
 		owner, body := b.Body(program.Span{}), b.Body(program.Span{})
 		b.SetEntry(body)
-		fn := b.Function(program.Span{}, owner, body, nil, 0, nil)
+		fn := b.DeclareFunction(program.Span{}, owner)
+		if !b.FillFunction(fn, body, nil, 0, nil) {
+			t.Fatal("FillFunction")
+		}
 		bodyValues := b.Values(program.Span{}, body, nil, 0)
 		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 		fnValues := b.Values(program.Span{}, owner, []program.Term{fn}, 0)
@@ -737,7 +740,10 @@ func TestFunctionBindingAuthorityComesOnlyFromBind(t *testing.T) {
 	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 	b.SetEntry(entry)
 	binding := b.Cell(program.Span{}, entry)
-	fn := b.Function(program.Span{}, entry, body, nil, 0, nil)
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, body, nil, 0, nil) {
+		t.Fatal("FillFunction")
+	}
 	bodyValues := b.Values(program.Span{}, body, nil, 0)
 	b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 	wrong := b.Integer(program.Span{}, entry, 1)
@@ -766,7 +772,10 @@ func TestDirectEvidenceIsDerivedFromCaptureChain(t *testing.T) {
 	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 	b.SetEntry(entry)
 	binding, inner := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, body)
-	fn := b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{{Inner: inner, Outer: binding}})
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, body, nil, 0, []program.Capture{{Inner: inner, Outer: binding}}) {
+		t.Fatal("FillFunction")
+	}
 	actuals := b.Values(program.Span{}, body, nil, 0)
 	callee := b.Read(program.Span{}, body, inner)
 	call := b.Call(program.Span{}, body, callee, 0, actuals)
@@ -799,7 +808,10 @@ func TestCapturedAliasWriteInvalidatesDirectEvidence(t *testing.T) {
 	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 	b.SetEntry(entry)
 	binding, inner := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, body)
-	fn := b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{{Inner: inner, Outer: binding}})
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, body, nil, 0, []program.Capture{{Inner: inner, Outer: binding}}) {
+		t.Fatal("FillFunction")
+	}
 	actuals := b.Values(program.Span{}, body, nil, 0)
 	callee := b.Read(program.Span{}, body, inner)
 	call := b.Call(program.Span{}, body, callee, 0, actuals)
@@ -846,8 +858,14 @@ func TestAcyclicDirectCallHasNoMu(t *testing.T) {
 	b.SetEntry(entry)
 	callerBinding, calleeBinding := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, entry)
 	captureCell := b.Cell(program.Span{}, callerBody)
-	caller := b.Function(program.Span{}, entry, callerBody, nil, 0, []program.Capture{{Inner: captureCell, Outer: calleeBinding}})
-	callee := b.Function(program.Span{}, entry, calleeBody, nil, 0, nil)
+	caller := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(caller, callerBody, nil, 0, []program.Capture{{Inner: captureCell, Outer: calleeBinding}}) {
+		t.Fatal("FillFunction")
+	}
+	callee := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(callee, calleeBody, nil, 0, nil) {
+		t.Fatal("FillFunction")
+	}
 	actuals := b.Values(program.Span{}, callerBody, nil, 0)
 	read := b.Read(program.Span{}, callerBody, captureCell)
 	call := b.Call(program.Span{}, callerBody, read, 0, actuals)
@@ -881,7 +899,10 @@ func TestOpenCallTailAndDirectMu(t *testing.T) {
 	b.SetEntry(entry)
 	binding := b.Cell(program.Span{}, entry)
 	inner := b.Cell(program.Span{}, functionBody)
-	fn := b.Function(program.Span{}, entry, functionBody, nil, 0, []program.Capture{{Inner: inner, Outer: binding}})
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, functionBody, nil, 0, []program.Capture{{Inner: inner, Outer: binding}}) {
+		t.Fatal("FillFunction")
+	}
 	actuals := b.Values(program.Span{}, functionBody, nil, 0)
 	callee := b.Read(program.Span{}, functionBody, inner)
 	call := b.Call(program.Span{}, functionBody, callee, 0, actuals)
@@ -997,7 +1018,10 @@ func TestReadCannotCrossFunctionActivation(t *testing.T) {
 	functionBody := b.Body(program.Span{})
 	b.SetEntry(entry)
 	outer := b.Cell(program.Span{}, entry)
-	fn := b.Function(program.Span{}, entry, functionBody, nil, 0, nil)
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, functionBody, nil, 0, nil) {
+		t.Fatal("FillFunction")
+	}
 	read := b.Read(program.Span{}, functionBody, outer)
 	functionValues := b.Values(program.Span{}, functionBody, []program.Term{read}, 0)
 	functionResult := b.Return(program.Span{}, functionBody, functionValues)
@@ -1017,8 +1041,14 @@ func TestMutualForwardCaptureIsRejected(t *testing.T) {
 	b.SetEntry(entry)
 	leftBinding, rightBinding := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, entry)
 	leftCapture, rightCapture := b.Cell(program.Span{}, leftBody), b.Cell(program.Span{}, rightBody)
-	left := b.Function(program.Span{}, entry, leftBody, nil, 0, []program.Capture{{Inner: leftCapture, Outer: rightBinding}})
-	right := b.Function(program.Span{}, entry, rightBody, nil, 0, []program.Capture{{Inner: rightCapture, Outer: leftBinding}})
+	left := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(left, leftBody, nil, 0, []program.Capture{{Inner: leftCapture, Outer: rightBinding}}) {
+		t.Fatal("FillFunction")
+	}
+	right := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(right, rightBody, nil, 0, []program.Capture{{Inner: rightCapture, Outer: leftBinding}}) {
+		t.Fatal("FillFunction")
+	}
 	leftActuals := b.Values(program.Span{}, leftBody, nil, 0)
 	leftRead := b.Read(program.Span{}, leftBody, leftCapture)
 	leftCall := b.Call(program.Span{}, leftBody, leftRead, 0, leftActuals)
@@ -1046,7 +1076,10 @@ func TestDirectMuFindsConditionalSelectRight(t *testing.T) {
 	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 	b.SetEntry(entry)
 	binding, captureCell := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, body)
-	fn := b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{{Inner: captureCell, Outer: binding}})
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, body, nil, 0, []program.Capture{{Inner: captureCell, Outer: binding}}) {
+		t.Fatal("FillFunction")
+	}
 	actuals := b.Values(program.Span{}, body, nil, 0)
 	callee := b.Read(program.Span{}, body, captureCell)
 	call := b.Call(program.Span{}, body, callee, 0, actuals)
@@ -1070,7 +1103,10 @@ func TestVarargHasFunctionLocalRole(t *testing.T) {
 	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 	b.SetEntry(entry)
 	binding, varargCell := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, body)
-	fn := b.Function(program.Span{}, entry, body, nil, varargCell, nil)
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, body, nil, varargCell, nil) {
+		t.Fatal("FillFunction")
+	}
 	vararg := b.Vararg(program.Span{}, body, varargCell)
 	values := b.Values(program.Span{}, body, nil, vararg)
 	b.SetBody(body, b.Return(program.Span{}, body, values))
@@ -1093,14 +1129,10 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		b.SetEntry(entry)
 		binding, local := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, entry)
 		formal, varargCell, captured := b.Cell(program.Span{}, body), b.Cell(program.Span{}, body), b.Cell(program.Span{}, body)
-		fn := b.Function(
-			program.Span{},
-			entry,
-			body,
-			[]program.Term{formal},
-			varargCell,
-			[]program.Capture{{Inner: captured, Outer: binding}},
-		)
+		fn := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(fn, body, []program.Term{formal}, varargCell, []program.Capture{{Inner: captured, Outer: binding}}) {
+			t.Fatal("FillFunction")
+		}
 		formalRead := b.Read(program.Span{}, body, formal)
 		vararg := b.Vararg(program.Span{}, body, varargCell)
 		varargValues := b.Values(program.Span{}, body, []program.Term{formalRead}, vararg)
@@ -1195,7 +1227,10 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		entry, body, other := b.Body(program.Span{}), b.Body(program.Span{}), b.Body(program.Span{})
 		b.SetEntry(entry)
 		formal := b.Cell(program.Span{}, other)
-		fn := b.Function(program.Span{}, entry, body, []program.Term{formal}, 0, nil)
+		fn := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(fn, body, []program.Term{formal}, 0, nil) {
+			t.Fatal("FillFunction")
+		}
 		bodyValues := b.Values(program.Span{}, body, nil, 0)
 		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 		finishAtTail(t, b, other)
@@ -1210,7 +1245,10 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 		b.SetEntry(entry)
 		formal := b.Cell(program.Span{}, body)
-		fn := b.Function(program.Span{}, entry, body, []program.Term{formal, formal}, 0, nil)
+		fn := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(fn, body, []program.Term{formal, formal}, 0, nil) {
+			t.Fatal("FillFunction")
+		}
 		bodyValues := b.Values(program.Span{}, body, nil, 0)
 		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
@@ -1224,7 +1262,10 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 		b.SetEntry(entry)
 		cell := b.Cell(program.Span{}, body)
-		fn := b.Function(program.Span{}, entry, body, []program.Term{cell}, cell, nil)
+		fn := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(fn, body, []program.Term{cell}, cell, nil) {
+			t.Fatal("FillFunction")
+		}
 		bodyValues := b.Values(program.Span{}, body, nil, 0)
 		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
@@ -1238,7 +1279,10 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 		b.SetEntry(entry)
 		cell := b.Cell(program.Span{}, entry)
-		fn := b.Function(program.Span{}, entry, body, nil, cell, nil)
+		fn := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(fn, body, nil, cell, nil) {
+			t.Fatal("FillFunction")
+		}
 		bodyValues := b.Values(program.Span{}, body, nil, 0)
 		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
@@ -1255,7 +1299,10 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 		b.SetEntry(entry)
 		formal := b.Cell(program.Span{}, body)
-		fn := b.Function(program.Span{}, entry, body, []program.Term{formal}, 0, nil)
+		fn := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(fn, body, []program.Term{formal}, 0, nil) {
+			t.Fatal("FillFunction")
+		}
 		vararg := b.Vararg(program.Span{}, body, formal)
 		bodyValues := b.Values(program.Span{}, body, nil, vararg)
 		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
@@ -1270,7 +1317,10 @@ func TestBindFormalAndVarargRolePermutations(t *testing.T) {
 		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 		b.SetEntry(entry)
 		varargCell := b.Cell(program.Span{}, body)
-		fn := b.Function(program.Span{}, entry, body, nil, varargCell, nil)
+		fn := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(fn, body, nil, varargCell, nil) {
+			t.Fatal("FillFunction")
+		}
 		bodyValues := b.Values(program.Span{}, body, nil, 0)
 		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 		vararg := b.Vararg(program.Span{}, entry, varargCell)
@@ -1598,7 +1648,10 @@ func TestBreakCannotCrossFunctionBoundary(t *testing.T) {
 	b.SetEntry(entry)
 
 	b.SetBody(functionBody, b.Break(program.Span{}, functionBody))
-	function := b.Function(program.Span{}, loopBody, functionBody, nil, 0, nil)
+	function := b.DeclareFunction(program.Span{}, loopBody)
+	if !b.FillFunction(function, functionBody, nil, 0, nil) {
+		t.Fatal("FillFunction")
+	}
 	values := b.Values(program.Span{}, loopBody, []program.Term{function}, 0)
 	b.SetBody(loopBody, b.Return(program.Span{}, loopBody, values))
 	control := b.Bool(program.Span{}, entry, true)
@@ -1814,14 +1867,10 @@ func TestTypedQueriesAllocateZero(t *testing.T) {
 	formal := b.Cell(program.Span{}, functionBody)
 	varargCell := b.Cell(program.Span{}, functionBody)
 	captured := b.Cell(program.Span{}, functionBody)
-	function := b.Function(
-		program.Span{},
-		entry,
-		functionBody,
-		[]program.Term{formal},
-		varargCell,
-		[]program.Capture{{Inner: captured, Outer: binding}},
-	)
+	function := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(function, functionBody, []program.Term{formal}, varargCell, []program.Capture{{Inner: captured, Outer: binding}}) {
+		t.Fatal("FillFunction")
+	}
 	capturedRead := b.Read(program.Span{}, functionBody, captured)
 	actuals := b.Values(program.Span{}, functionBody, nil, 0)
 	call := b.Call(program.Span{}, functionBody, capturedRead, 0, actuals)
@@ -1986,7 +2035,11 @@ func TestLongForwardCaptureCycleIsRejectedIteratively(t *testing.T) {
 	}
 	for i := range functions {
 		next := (i + 1) % count
-		functions[i] = b.Function(program.Span{}, entry, bodies[i], nil, 0, []program.Capture{{Inner: inners[i], Outer: bindings[next]}})
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, bodies[i], nil, 0, []program.Capture{{Inner: inners[i], Outer: bindings[next]}}) {
+			t.Fatal("FillFunction")
+		}
+		functions[i] = function
 	}
 	for i := range functions {
 		actuals := b.Values(program.Span{}, bodies[i], nil, 0)
@@ -2029,7 +2082,11 @@ func TestLongAcyclicDirectCallChainIsIterativeAndAllocationBounded(t *testing.T)
 			if i+1 < count {
 				captures = []program.Capture{{Inner: inners[i], Outer: bindings[i+1]}}
 			}
-			functions[i] = b.Function(program.Span{}, entry, bodies[i], nil, 0, captures)
+			function := b.DeclareFunction(program.Span{}, entry)
+			if !b.FillFunction(function, bodies[i], nil, 0, captures) {
+				t.Fatal("FillFunction")
+			}
+			functions[i] = function
 		}
 		for i := 0; i+1 < count; i++ {
 			callee := b.Read(program.Span{}, bodies[i], inners[i])
@@ -2319,10 +2376,13 @@ func TestFunctionRejectsDuplicateCaptureOuter(t *testing.T) {
 	b.SetEntry(entry)
 	outer := b.Cell(program.Span{}, entry)
 	innerOne, innerTwo := b.Cell(program.Span{}, body), b.Cell(program.Span{}, body)
-	fn := b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, body, nil, 0, []program.Capture{
 		{Inner: innerOne, Outer: outer},
 		{Inner: innerTwo, Outer: outer},
-	})
+	}) {
+		t.Fatal("FillFunction")
+	}
 	bodyValues := b.Values(program.Span{}, body, nil, 0)
 	b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
@@ -2343,7 +2403,11 @@ func TestFunctionRejectsCaptureOutsideLexicalAncestry(t *testing.T) {
 		{
 			name: "inner belongs to owner",
 			build: func(b *program.Builder, entry, body, outer program.Term) program.Term {
-				return b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{{Inner: outer, Outer: outer}})
+				function := b.DeclareFunction(program.Span{}, entry)
+				if !b.FillFunction(function, body, nil, 0, []program.Capture{{Inner: outer, Outer: outer}}) {
+					t.Fatal("FillFunction")
+				}
+				return function
 			},
 		},
 		{
@@ -2351,7 +2415,11 @@ func TestFunctionRejectsCaptureOutsideLexicalAncestry(t *testing.T) {
 			build: func(b *program.Builder, entry, body, _ program.Term) program.Term {
 				inner := b.Cell(program.Span{}, body)
 				localOuter := b.Cell(program.Span{}, body)
-				return b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{{Inner: inner, Outer: localOuter}})
+				function := b.DeclareFunction(program.Span{}, entry)
+				if !b.FillFunction(function, body, nil, 0, []program.Capture{{Inner: inner, Outer: localOuter}}) {
+					t.Fatal("FillFunction")
+				}
+				return function
 			},
 		},
 	}
@@ -2384,13 +2452,21 @@ func TestFunctionRejectsCaptureDefinitionRoleCollisions(t *testing.T) {
 		{
 			name: "formal and capture",
 			function: func(b *program.Builder, entry, body, inner, outer program.Term) program.Term {
-				return b.Function(program.Span{}, entry, body, []program.Term{inner}, 0, []program.Capture{{Inner: inner, Outer: outer}})
+				function := b.DeclareFunction(program.Span{}, entry)
+				if !b.FillFunction(function, body, []program.Term{inner}, 0, []program.Capture{{Inner: inner, Outer: outer}}) {
+					t.Fatal("FillFunction")
+				}
+				return function
 			},
 		},
 		{
 			name: "vararg and capture",
 			function: func(b *program.Builder, entry, body, inner, outer program.Term) program.Term {
-				return b.Function(program.Span{}, entry, body, nil, inner, []program.Capture{{Inner: inner, Outer: outer}})
+				function := b.DeclareFunction(program.Span{}, entry)
+				if !b.FillFunction(function, body, nil, inner, []program.Capture{{Inner: inner, Outer: outer}}) {
+					t.Fatal("FillFunction")
+				}
+				return function
 			},
 		},
 	}
@@ -2419,8 +2495,14 @@ func TestFunctionBodyHasExactlyOneStructuralAuthority(t *testing.T) {
 	b := program.NewBuilder()
 	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
 	b.SetEntry(entry)
-	left := b.Function(program.Span{}, entry, body, nil, 0, nil)
-	right := b.Function(program.Span{}, entry, body, nil, 0, nil)
+	left := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(left, body, nil, 0, nil) {
+		t.Fatal("FillFunction")
+	}
+	right := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(right, body, nil, 0, nil) {
+		t.Fatal("FillFunction")
+	}
 	bodyValues := b.Values(program.Span{}, body, nil, 0)
 	b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
 	functions := b.Values(program.Span{}, entry, []program.Term{left, right}, 0)

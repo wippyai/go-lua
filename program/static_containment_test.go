@@ -15,7 +15,10 @@ func TestTypeOfStaticContainmentExcludesRuntimeEvidence(t *testing.T) {
 	b, entry := entryBuilder(t)
 	fnBody := b.Body(program.Span{})
 	f := b.Cell(program.Span{}, entry)
-	fn := b.Function(program.Span{}, entry, fnBody, nil, 0, nil)
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, fnBody, nil, 0, nil) {
+		t.Fatal("FillFunction")
+	}
 	fv := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
 	bindFn := b.Bind(program.Span{}, entry, []program.Term{f}, fv)
 	scope := staticScopeAfter(t, b, entry)
@@ -51,7 +54,10 @@ func TestTypeOfFormalCellScopeSeesAllFormals(t *testing.T) {
 	b, entry := entryBuilder(t)
 	body := b.Body(program.Span{})
 	first, second := b.Cell(program.Span{}, body), b.Cell(program.Span{}, body)
-	fn := b.Function(program.Span{}, entry, body, []program.Term{first, second}, 0, nil)
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, body, []program.Term{first, second}, 0, nil) {
+		t.Fatal("FillFunction")
+	}
 	if b.TypeOf(program.Span{}, first, b.Read(program.Span{}, body, second)) == 0 {
 		t.Fatal("formal-cell typeof")
 	}
@@ -138,21 +144,47 @@ func TestTypeOfCannotShareExecutableParentAndRejectsFunctionLiteral(t *testing.T
 	b, entry = entryBuilder(t)
 	body := b.Body(program.Span{})
 	scope = staticScopeAfter(t, b, entry)
-	fn := b.Function(program.Span{}, entry, body, nil, 0, nil)
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, body, nil, 0, nil) {
+		t.Fatal("FillFunction")
+	}
 	if got := b.TypeOf(program.Span{}, scope, fn); got != 0 {
 		t.Fatalf("typeof Function literal = %v, want rejection", got)
 	}
 }
 
+func TestTypeOfAcceptsRuntimeFunctionHost(t *testing.T) {
+	b, entry := entryBuilder(t)
+	body := b.Body(program.Span{})
+	fn := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(fn, body, nil, 0, nil) {
+		t.Fatal("FillFunction")
+	}
+	typeOf := b.TypeOf(program.Span{}, fn, b.Integer(program.Span{}, body, 1))
+	if typeOf == 0 {
+		t.Fatal("TypeOf runtime Function host")
+	}
+	if !b.SetFunctionReturns(fn, true, []program.Term{typeOf}) {
+		t.Fatal("SetFunctionReturns")
+	}
+	if !b.SetBody(body) {
+		t.Fatal("SetBody function")
+	}
+	cell := b.Cell(program.Span{}, entry)
+	values := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+	if !b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{cell}, values)) {
+		t.Fatal("SetBody entry")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope, _, ok := p.TypeOf(typeOf); !ok || scope != fn {
+		t.Fatalf("TypeOf scope = %v, %v", scope, ok)
+	}
+}
+
 func TestTypeOfRejectsUnsupportedStaticExpressionShapes(t *testing.T) {
-	t.Run("ambiguous function host", func(t *testing.T) {
-		b, entry := entryBuilder(t)
-		body := b.Body(program.Span{})
-		fn := b.Function(program.Span{}, entry, body, nil, 0, nil)
-		if got := b.TypeOf(program.Span{}, fn, b.Integer(program.Span{}, body, 1)); got != 0 {
-			t.Fatalf("Function host = %v, want rejection", got)
-		}
-	})
 	t.Run("implicit global", func(t *testing.T) {
 		b, entry := entryBuilder(t)
 		scope := staticScopeAfter(t, b, entry)
@@ -168,7 +200,10 @@ func TestTypeOfRejectsUnsupportedStaticExpressionShapes(t *testing.T) {
 		b, entry := entryBuilder(t)
 		body := b.Body(program.Span{})
 		vararg := b.Cell(program.Span{}, body)
-		fn := b.Function(program.Span{}, entry, body, nil, vararg, nil)
+		fn := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(fn, body, nil, vararg, nil) {
+			t.Fatal("FillFunction")
+		}
 		b.TypeOf(program.Span{}, fn, b.Vararg(program.Span{}, body, vararg))
 		if !b.SetBody(body) {
 			t.Fatal("SetBody")
@@ -184,7 +219,10 @@ func TestTypeOfRejectsUnsupportedStaticExpressionShapes(t *testing.T) {
 		b, entry := entryBuilder(t)
 		scope := staticScopeAfter(t, b, entry)
 		body := b.Body(program.Span{})
-		fn := b.Function(program.Span{}, entry, body, nil, 0, nil)
+		fn := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(fn, body, nil, 0, nil) {
+			t.Fatal("FillFunction")
+		}
 		call := b.Call(program.Span{}, entry, fn, 0, b.Values(program.Span{}, entry, nil, 0))
 		b.TypeOf(program.Span{}, scope, call)
 		if !b.SetBody(body) {

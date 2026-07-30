@@ -81,8 +81,9 @@ type RecordTypeExpr struct {
 
 // TypeParamExpr represents a type parameter in generic types.
 type TypeParamExpr struct {
-	Name       string
-	Constraint TypeExpr // nil = any
+	Name         string
+	NamePosition Position // Exact parser-owned type-parameter declaration token.
+	Constraint   TypeExpr // nil = any
 }
 
 // FunctionParamExpr represents a function parameter with optional name and type.

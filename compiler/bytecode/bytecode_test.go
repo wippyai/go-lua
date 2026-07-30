@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	lua "github.com/wippyai/go-lua"
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func TestLocalFunctionEvidenceDoesNotChangeBytecode(t *testing.T) {
@@ -27,6 +29,35 @@ func TestLocalFunctionEvidenceDoesNotChangeBytecode(t *testing.T) {
 		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != want {
 			t.Fatalf("bytecode hash = %s, want %s", got, want)
 		}
+	}
+}
+
+func TestTypedFunctionHeaderEvidenceDoesNotChangeBytecode(t *testing.T) {
+	stmts, err := parse.ParseString(`local function f<T>(value: T): () return end`, "header-evidence.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := lua.Compile(stmts, "header-evidence.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := stmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FunctionExpr)
+	fn.ReturnsKnown = false
+	fn.TypeParams[0].NamePosition = ast.Position{}
+	after, err := lua.Compile(stmts, "header-evidence.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeDump, err := Dump(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterDump, err := Dump(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeDump, afterDump) {
+		t.Fatal("parser header evidence changed production bytecode")
 	}
 }
 

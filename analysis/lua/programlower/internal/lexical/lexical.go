@@ -323,50 +323,57 @@ func (b *Bodies) Capture(
 	return inner, nil
 }
 
-// Function completes one closure relation from cells and captures already
-// installed by the machine's binder-ordered traversal.
-func (b *Bodies) Function(
-	span program.Span,
+// DeclareFunction mints the closure identity before entering its child Body so
+// generic constraints can retain the outer lexical frontier.
+func (b *Bodies) DeclareFunction(span program.Span) (program.Term, error) {
+	if len(b.frames) == 0 {
+		return 0, fmt.Errorf("programlower: Function has no lexical owner")
+	}
+	term := b.builder.DeclareFunction(span, b.Owner())
+	if term == 0 {
+		return 0, fmt.Errorf("programlower: could not declare Function")
+	}
+	if !b.builder.SetFunctionOuterGap(term, b.Cursor()) {
+		return 0, fmt.Errorf("programlower: could not place Function")
+	}
+	return term, nil
+}
+
+// FillFunction completes a previously declared closure from cells and
+// captures installed by the machine's binder-ordered traversal.
+func (b *Bodies) FillFunction(
+	function program.Term,
 	cellMark int,
 	captureMark int,
 	varargIndex int,
-) (program.Term, error) {
+) error {
 	if len(b.frames) < 2 {
-		return 0, fmt.Errorf("programlower: Function has no lexical owner")
+		return fmt.Errorf("programlower: Function has no lexical owner")
 	}
 	if cellMark < 0 || cellMark > b.cellLen ||
 		captureMark < 0 || captureMark > len(b.captures) {
-		return 0, fmt.Errorf("programlower: invalid Function construction mark")
+		return fmt.Errorf("programlower: invalid Function construction mark")
 	}
 	params := b.cellSlice()[cellMark:]
 	formals := params
 	var vararg program.Term
 	if varargIndex >= 0 {
 		if varargIndex >= len(params) {
-			return 0, fmt.Errorf("programlower: invalid function vararg Cell")
+			return fmt.Errorf("programlower: invalid function vararg Cell")
 		}
 		if varargIndex != len(params)-1 {
-			return 0, fmt.Errorf("programlower: function vararg Cell is not final")
+			return fmt.Errorf("programlower: function vararg Cell is not final")
 		}
 		vararg = params[varargIndex]
 		formals = params[:varargIndex]
 	}
-	owner := b.frames[len(b.frames)-2].body
 	body := b.frames[len(b.frames)-1].body
-	term := b.builder.Function(
-		span,
-		owner,
-		body,
-		formals,
-		vararg,
-		b.captures[captureMark:],
-	)
+	if !b.builder.FillFunction(function, body, formals, vararg, b.captures[captureMark:]) {
+		return fmt.Errorf("programlower: could not fill Function")
+	}
 	b.truncateCells(cellMark)
 	b.captures = b.captures[:captureMark]
-	if term == 0 {
-		return 0, fmt.Errorf("programlower: could not create Function")
-	}
-	return term, nil
+	return nil
 }
 
 func (b *Bodies) install(id symbol.ID, term program.Term) {

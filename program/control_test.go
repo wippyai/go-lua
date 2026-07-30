@@ -202,7 +202,10 @@ func TestGotoCannotEnterNestedBodyOrFunction(t *testing.T) {
 		label := b.Label(program.Span{}, body)
 		b.SetLabelCursor(label, 0)
 		b.SetBody(body)
-		function := b.Function(program.Span{}, entry, body, nil, 0, nil)
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, body, nil, 0, nil) {
+			t.Fatal("FillFunction")
+		}
 		functionValues := b.Values(program.Span{}, entry, []program.Term{function}, 0)
 		cell := b.Cell(program.Span{}, entry)
 		bind := b.Bind(program.Span{}, entry, []program.Term{cell}, functionValues)

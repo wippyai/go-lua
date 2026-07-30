@@ -2092,8 +2092,8 @@ function f(a: number) return a end`, "typed-definition.lua")
 		stmts,
 		bind.BindChunk(stmts, bind.Options{}),
 	)
-	if err == nil || !strings.Contains(err.Error(), "typed function parameter") {
-		t.Fatalf("typed function definition error = %v", err)
+	if err != nil {
+		t.Fatalf("typed function definition lower error = %v", err)
 	}
 
 	stmts, err = parse.ParseString(`return function(a: number) return a end`, "typed.lua")
@@ -2101,8 +2101,8 @@ function f(a: number) return a end`, "typed-definition.lua")
 		t.Fatal(err)
 	}
 	_, err = programlower.Lower("typed.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
-	if err == nil || !strings.Contains(err.Error(), "typed function parameter") {
-		t.Fatalf("typed Function error = %v", err)
+	if err != nil {
+		t.Fatalf("typed Function lower error = %v", err)
 	}
 
 	typedCall := &ast.FuncCallExpr{
@@ -2113,6 +2113,108 @@ function f(a: number) return a end`, "typed-definition.lua")
 	_, err = programlower.Lower("typed-call.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
 	if err == nil || !strings.Contains(err.Error(), "unsupported typed call") {
 		t.Fatalf("typed Call error = %v", err)
+	}
+}
+
+func TestTypedFunctionHeaderRetainsExactRuntimeHosts(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local outer = nil
+return function<T: typeof(outer)>(value: typeof(value), ...: typeof(value)): asserts value is typeof(value)
+	return value
+end
+`, "typed-header.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := programlower.Lower("typed-header.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	function, ok := p.FunctionAt(0)
+	if !ok {
+		t.Fatal("missing runtime Function")
+	}
+	if count, ok := p.FunctionTypeParamCount(function); !ok || count != 1 {
+		t.Fatalf("FunctionTypeParamCount = %d/%v, want 1/true", count, ok)
+	}
+	param, ok := p.FunctionTypeParamAt(function, 0)
+	if !ok {
+		t.Fatal("missing runtime Function generic")
+	}
+	owner, _, constraint, ok := p.TypeParam(param)
+	if !ok || owner != function || constraint == 0 {
+		t.Fatalf("runtime generic = owner %v constraint %v ok %v", owner, constraint, ok)
+	}
+	entry, ok := p.Entry()
+	if !ok {
+		t.Fatal("missing entry Body")
+	}
+	outerBind, ok := p.Root(entry, 0)
+	if !ok {
+		t.Fatal("missing outer local Bind")
+	}
+	outer, ok := p.BoundCell(outerBind, 0)
+	if !ok {
+		t.Fatal("missing outer Cell")
+	}
+	_, genericOperand, ok := p.TypeOf(constraint)
+	if !ok {
+		t.Fatal("missing generic constraint typeof")
+	}
+	_, genericSource, ok := p.Read(genericOperand)
+	if !ok || genericSource != outer {
+		t.Fatalf("generic constraint source = %v/%v, want outer %v", genericSource, ok, outer)
+	}
+	formal, ok := p.FormalAt(function, 0)
+	if !ok {
+		t.Fatal("missing formal Cell")
+	}
+	_, _, vararg, ok := p.Function(function)
+	if !ok || vararg == 0 {
+		t.Fatalf("Function vararg = %v/%v", vararg, ok)
+	}
+	for _, host := range []program.Term{formal, vararg} {
+		declared, ok := p.CellDeclaredType(host)
+		if !ok {
+			t.Fatalf("missing declared type for Cell %v", host)
+		}
+		declaredHost, target, ok := p.DeclaredType(declared)
+		if !ok || declaredHost != host {
+			t.Fatalf("DeclaredType = host %v target %v ok %v, want host %v", declaredHost, target, ok, host)
+		}
+		scope, operand, ok := p.TypeOf(target)
+		if !ok || scope != host {
+			t.Fatalf("declared TypeOf = scope %v operand %v ok %v, want %v", scope, operand, ok, host)
+		}
+		_, source, ok := p.Read(operand)
+		if !ok || source != formal {
+			t.Fatalf("declared TypeOf Read = %v/%v, want formal %v", source, ok, formal)
+		}
+	}
+	if known, ok := p.FunctionReturnsKnown(function); !ok || !known {
+		t.Fatalf("FunctionReturnsKnown = %v/%v, want true/true", known, ok)
+	}
+	if count, ok := p.FunctionReturnCount(function); !ok || count != 1 {
+		t.Fatalf("FunctionReturnCount = %d/%v, want 1/true", count, ok)
+	}
+	returnType, ok := p.FunctionReturnAt(function, 0)
+	if !ok {
+		t.Fatal("missing function return type")
+	}
+	_, ordinal, narrow, ok := p.Assertion(returnType)
+	if !ok || ordinal != 0 || narrow == 0 {
+		t.Fatalf("Assertion = ordinal %d narrow %v ok %v", ordinal, narrow, ok)
+	}
+	scope, operand, ok := p.TypeOf(narrow)
+	if !ok || scope != function {
+		t.Fatalf("assertion TypeOf = scope %v operand %v ok %v", scope, operand, ok)
+	}
+	_, source, ok := p.Read(operand)
+	if !ok || source != formal {
+		t.Fatalf("assertion TypeOf Read = %v/%v, want formal %v", source, ok, formal)
+	}
+	if count := p.DeclaredTypeCount(); count != 2 {
+		t.Fatalf("DeclaredTypeCount = %d, want formal and vararg types", count)
 	}
 }
 

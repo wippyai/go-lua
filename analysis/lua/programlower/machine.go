@@ -124,8 +124,12 @@ const (
 	stepFinishBinary
 	stepFinishLensBase
 	stepFinishLens
+	stepFunctionHeaderGenerics
 	stepFunctionParams
 	stepFunctionCaptures
+	stepFunctionHeaderParams
+	stepFunctionHeaderReturns
+	stepFinishFunctionHeader
 	stepFinishFunctionBody
 	stepFinishCallCallee
 	stepFinishCall
@@ -407,8 +411,24 @@ func (l *lowerer) run() error {
 			if err := l.runFunctionParams(current); err != nil {
 				return err
 			}
+		case stepFunctionHeaderGenerics:
+			if err := l.runFunctionHeaderGenerics(current); err != nil {
+				return err
+			}
 		case stepFunctionCaptures:
 			if err := l.runFunctionCaptures(current); err != nil {
+				return err
+			}
+		case stepFunctionHeaderParams:
+			if err := l.runFunctionHeaderParams(current); err != nil {
+				return err
+			}
+		case stepFunctionHeaderReturns:
+			if err := l.runFunctionHeaderReturns(current); err != nil {
+				return err
+			}
+		case stepFinishFunctionHeader:
+			if err := l.static.FinishFunctionReturns(current.fn, current.typeBase, current.staticMark, current.ordinal); err != nil {
 				return err
 			}
 		case stepFinishFunctionBody:
@@ -1904,33 +1924,57 @@ func (l *lowerer) startFunction(fn *ast.FunctionExpr) error {
 }
 
 func (l *lowerer) startFunctionBody(fn *ast.FunctionExpr) error {
-	if len(fn.TypeParams) != 0 || len(fn.ReturnTypes) != 0 {
-		return fmt.Errorf("programlower: unsupported typed function")
-	}
 	slots := l.binding.ParamSlots(fn)
-	for _, slot := range slots {
-		if slot.Type != nil {
-			return fmt.Errorf("programlower: unsupported typed function parameter %q", slot.Name)
-		}
+	function, err := l.scopes.DeclareFunction(l.span(fn))
+	if err != nil {
+		return err
 	}
-	if fn.ParList != nil && fn.ParList.VarargType != nil {
-		return fmt.Errorf("programlower: unsupported typed function vararg")
-	}
-	span := l.span(fn)
-	if _, err := l.scopes.EnterFunction(span, fn); err != nil {
-		return fmt.Errorf("programlower: could not create function Body")
-	}
-	if err := l.predeclare(fn.Stmts); err != nil {
+	params, err := l.static.BeginFunctionHeader(fn, function)
+	if err != nil {
 		return err
 	}
 	l.push(step{
-		kind:      stepFunctionParams,
-		fn:        fn,
-		slots:     slots,
-		captures:  l.captures[fn],
-		mark:      l.scopes.CellMark(),
-		valueMark: l.scopes.CaptureMark(),
+		kind:       stepFunctionHeaderGenerics,
+		fn:         fn,
+		slots:      slots,
+		captures:   l.captures[fn],
+		typeParams: params,
+		typeBase:   function,
 	})
+	return nil
+}
+
+func (l *lowerer) runFunctionHeaderGenerics(current step) error {
+	if current.fn == nil || current.index < 0 || current.index > len(current.typeParams) {
+		return fmt.Errorf("programlower: invalid function generic cursor")
+	}
+	if current.index == len(current.typeParams) {
+		if _, err := l.scopes.EnterFunction(l.span(current.fn), current.fn); err != nil {
+			return fmt.Errorf("programlower: could not create function Body")
+		}
+		if err := l.predeclare(current.fn.Stmts); err != nil {
+			return err
+		}
+		l.push(step{kind: stepFunctionParams, fn: current.fn, slots: current.slots, captures: current.captures, mark: l.scopes.CellMark(), valueMark: l.scopes.CaptureMark(), typeBase: current.typeBase})
+		return nil
+	}
+	param := current.typeParams[current.index]
+	if param.ID == 0 || param.Kind != bind.TypeDeclParam {
+		return fmt.Errorf("programlower: invalid function type parameter binding")
+	}
+	current.index++
+	if param.Constraint == nil {
+		if err := l.static.FinishParam(param, 0); err != nil {
+			return err
+		}
+		l.push(current)
+		return nil
+	}
+	host, ok := l.static.Host(param)
+	if !ok {
+		return fmt.Errorf("programlower: function type parameter was not predeclared")
+	}
+	l.push(current, step{kind: stepFinishTypeParam, typeParam: param}, step{kind: stepStaticType, typeExpr: param.Constraint, typeHost: host})
 	return nil
 }
 
@@ -1943,6 +1987,7 @@ func (l *lowerer) runFunctionParams(current step) error {
 			captures:  current.captures,
 			mark:      current.mark,
 			valueMark: current.valueMark,
+			typeBase:  current.typeBase,
 		})
 		return nil
 	}
@@ -2001,20 +2046,72 @@ func (l *lowerer) beginFunctionBody(current step) error {
 		}
 		varargIndex = i
 	}
-	function, err := l.scopes.Function(
-		l.span(current.fn),
+	if err := l.scopes.FillFunction(
+		current.typeBase,
 		current.mark,
 		current.valueMark,
 		varargIndex,
-	)
-	if err != nil {
+	); err != nil {
 		return err
 	}
 
-	functionMark := l.packs.Hold(function)
+	functionMark := l.packs.Hold(current.typeBase)
 	l.push(
 		step{kind: stepFinishFunctionBody, mark: functionMark, span: l.span(current.fn)},
 		step{kind: stepStmts, stmts: current.fn.Stmts},
+		step{kind: stepFunctionHeaderParams, fn: current.fn, slots: current.slots, typeBase: current.typeBase, staticMark: l.static.Mark()},
+	)
+	return nil
+}
+
+func (l *lowerer) runFunctionHeaderParams(current step) error {
+	if current.fn == nil || current.index < 0 || current.index > len(current.slots) {
+		return fmt.Errorf("programlower: invalid function header parameter cursor")
+	}
+	if current.index == len(current.slots) {
+		l.push(step{kind: stepFunctionHeaderReturns, fn: current.fn, typeBase: current.typeBase, staticMark: current.staticMark})
+		return nil
+	}
+	slot := current.slots[current.index]
+	current.index++
+	if slot.Type == nil {
+		l.push(current)
+		return nil
+	}
+	if slot.Symbol == 0 {
+		return fmt.Errorf("programlower: missing typed function parameter symbol")
+	}
+	bound, ok := l.binding.SymbolTypeAnnotation(slot.Symbol)
+	if !ok || bound != slot.Type {
+		return fmt.Errorf("programlower: mismatched function parameter type binding")
+	}
+	host, ok := l.scopes.Resolve(slot.Symbol)
+	if !ok {
+		return fmt.Errorf("programlower: missing typed function parameter Cell")
+	}
+	l.push(current,
+		step{kind: stepFinishStaticLocalDeclaredType, typeExpr: slot.Type, typeHost: host},
+		step{kind: stepStaticType, typeExpr: slot.Type, typeHost: host},
+	)
+	return nil
+}
+
+func (l *lowerer) runFunctionHeaderReturns(current step) error {
+	if current.fn == nil || current.index < 0 || current.index > len(current.fn.ReturnTypes) {
+		return fmt.Errorf("programlower: invalid function return cursor")
+	}
+	if current.index == len(current.fn.ReturnTypes) {
+		l.push(step{kind: stepFinishFunctionHeader, fn: current.fn, typeBase: current.typeBase, staticMark: current.staticMark, ordinal: len(current.fn.ReturnTypes)})
+		return nil
+	}
+	returnType := current.fn.ReturnTypes[current.index]
+	if returnType == nil {
+		return fmt.Errorf("programlower: absent function return at index %d", current.index)
+	}
+	current.index++
+	l.push(current,
+		step{kind: stepAppendStaticType},
+		step{kind: stepStaticType, typeExpr: returnType, typeHost: current.typeBase},
 	)
 	return nil
 }

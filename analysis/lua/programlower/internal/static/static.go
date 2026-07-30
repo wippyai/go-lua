@@ -104,14 +104,17 @@ func (w *Writer) Place(def *ast.TypeDefStmt, gap int) error {
 	}
 	params := w.binding.TypeDefParams(def)
 	terms := make([]program.Term, 0, len(params))
-	for _, param := range params {
+	for index, param := range params {
 		if param.ID == 0 || param.Kind != bind.TypeDeclParam || param.Name == "" {
 			return fmt.Errorf("programlower: invalid type parameter on %q", decl.Name)
 		}
 		if _, exists := w.terms[param.ID]; exists {
 			return fmt.Errorf("programlower: duplicate type parameter identity %q", param.Name)
 		}
-		term := w.builder.DeclareTypeParam(w.span(def), alias, param.Name)
+		if index >= len(def.TypeParams) || def.TypeParams[index].Name != param.Name {
+			return fmt.Errorf("programlower: invalid type parameter source position %q", param.Name)
+		}
+		term := w.builder.DeclareTypeParam(w.nameSpan(param.NamePosition), alias, param.Name)
 		if term == 0 {
 			return fmt.Errorf("programlower: could not declare type parameter %q", param.Name)
 		}
@@ -190,7 +193,7 @@ func (w *Writer) BeginSignature(expr *ast.FunctionTypeExpr, scope program.Term) 
 		if _, exists := w.terms[param.ID]; exists {
 			return 0, nil, fmt.Errorf("programlower: duplicate type parameter identity %q", param.Name)
 		}
-		term := w.builder.DeclareTypeParam(w.span(expr), signature, param.Name)
+		term := w.builder.DeclareTypeParam(w.nameSpan(param.NamePosition), signature, param.Name)
 		if term == 0 {
 			return 0, nil, fmt.Errorf("programlower: could not declare function type parameter %q", param.Name)
 		}
@@ -202,6 +205,57 @@ func (w *Writer) BeginSignature(expr *ast.FunctionTypeExpr, scope program.Term) 
 	}
 	w.generics = w.generics[:0]
 	return signature, params, nil
+}
+
+// BeginFunctionHeader adds generic declarations directly to an executable
+// Function. It shares the same binder identity table and constraint completion
+// path as aliases and source-only function types.
+func (w *Writer) BeginFunctionHeader(expr *ast.FunctionExpr, function program.Term) ([]bind.TypeDecl, error) {
+	if w == nil || w.builder == nil || w.binding == nil || expr == nil || function == 0 {
+		return nil, fmt.Errorf("programlower: invalid function header")
+	}
+	params := w.binding.FunctionTypeParams(expr)
+	if len(params) != len(expr.TypeParams) {
+		return nil, fmt.Errorf("programlower: missing function type parameter bindings")
+	}
+	if len(w.generics) != 0 {
+		return nil, fmt.Errorf("programlower: unfinished function generic scratch")
+	}
+	for index, param := range params {
+		declared := expr.TypeParams[index]
+		if param.ID == 0 || param.Kind != bind.TypeDeclParam || param.Name == "" || param.Name != declared.Name {
+			return nil, fmt.Errorf("programlower: invalid function type parameter binding")
+		}
+		if _, exists := w.terms[param.ID]; exists {
+			return nil, fmt.Errorf("programlower: duplicate type parameter identity %q", param.Name)
+		}
+		term := w.builder.DeclareTypeParam(w.nameSpan(param.NamePosition), function, param.Name)
+		if term == 0 {
+			return nil, fmt.Errorf("programlower: could not declare function type parameter %q", param.Name)
+		}
+		w.terms[param.ID] = term
+		w.generics = append(w.generics, term)
+	}
+	if !w.builder.SetFunctionGenerics(function, w.generics) {
+		return nil, fmt.Errorf("programlower: could not set function type parameters")
+	}
+	w.generics = w.generics[:0]
+	return params, nil
+}
+
+// FinishFunctionReturns records the exact runtime Function return clause.
+func (w *Writer) FinishFunctionReturns(expr *ast.FunctionExpr, function program.Term, mark, count int) error {
+	if w == nil || w.builder == nil || expr == nil || count != len(expr.ReturnTypes) {
+		return fmt.Errorf("programlower: invalid function return completion")
+	}
+	returns, err := w.rangeTerms(mark, count)
+	if err != nil {
+		return err
+	}
+	if !w.builder.SetFunctionReturns(function, expr.ReturnsKnown, returns) {
+		return fmt.Errorf("programlower: could not finalize function returns")
+	}
+	return nil
 }
 
 // FinishSignature completes a source-only callable from fixed parameter and

@@ -32,6 +32,11 @@ func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast
     node.CopyLastPos(fallback)
   }
 }
+
+type returnTypeAnnotation struct {
+  types []ast.TypeExpr
+  known bool
+}
 %}
 %type<stmts> chunk
 %type<stmts> chunk1
@@ -66,7 +71,7 @@ func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast
 %type<typeexpr> primarytypeexpr
 %type<typeexprlist> typeexprlist
 %type<typeexprlist> typeexprlist2
-%type<typeexprlist> returntypeannot
+%type<returntype> returntypeannot
 %type<typeparams> typeparams
 %type<typeparams> typeparamlist
 %type<typeparam> typeparam
@@ -104,6 +109,7 @@ func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast
 
   typeexpr     ast.TypeExpr
   typeexprlist []ast.TypeExpr
+  returntype   returnTypeAnnotation
   typeparam    ast.TypeParamExpr
   typeparams   []ast.TypeParamExpr
   recordfield  ast.RecordFieldExpr
@@ -740,29 +746,29 @@ args:
 
 function:
         TFunction funcbody {
-            $$ = &ast.FunctionExpr{TypeParams: $2.TypeParams, ParList:$2.ParList, ReturnTypes: $2.ReturnTypes, Stmts: $2.Stmts}
+            $$ = &ast.FunctionExpr{TypeParams: $2.TypeParams, ParList:$2.ParList, ReturnTypes: $2.ReturnTypes, ReturnsKnown: $2.ReturnsKnown, Stmts: $2.Stmts}
             $$.SetPosFromToken($1.Pos)
             $$.CopyLastPos($2)
         }
 
 funcbody:
         '(' parlist ')' returntypeannot block TEnd {
-            $$ = &ast.FunctionExpr{ParList: $2, ReturnTypes: $4, Stmts: $5}
+            $$ = &ast.FunctionExpr{ParList: $2, ReturnTypes: $4.types, ReturnsKnown: $4.known, Stmts: $5}
             $$.SetPosFromToken($1.Pos)
             $$.SetLastPosFromToken($6.Pos)
         } |
         '(' ')' returntypeannot block TEnd {
-            $$ = &ast.FunctionExpr{ParList: &ast.ParList{HasVargs: false, Names: []string{}}, ReturnTypes: $3, Stmts: $4}
+            $$ = &ast.FunctionExpr{ParList: &ast.ParList{HasVargs: false, Names: []string{}}, ReturnTypes: $3.types, ReturnsKnown: $3.known, Stmts: $4}
             $$.SetPosFromToken($1.Pos)
             $$.SetLastPosFromToken($5.Pos)
         } |
         typeparams '(' parlist ')' returntypeannot block TEnd {
-            $$ = &ast.FunctionExpr{TypeParams: $1, ParList: $3, ReturnTypes: $5, Stmts: $6}
+            $$ = &ast.FunctionExpr{TypeParams: $1, ParList: $3, ReturnTypes: $5.types, ReturnsKnown: $5.known, Stmts: $6}
             $$.SetPosFromToken($2.Pos)
             $$.SetLastPosFromToken($7.Pos)
         } |
         typeparams '(' ')' returntypeannot block TEnd {
-            $$ = &ast.FunctionExpr{TypeParams: $1, ParList: &ast.ParList{HasVargs: false, Names: []string{}}, ReturnTypes: $4, Stmts: $5}
+            $$ = &ast.FunctionExpr{TypeParams: $1, ParList: &ast.ParList{HasVargs: false, Names: []string{}}, ReturnTypes: $4.types, ReturnsKnown: $4.known, Stmts: $5}
             $$.SetPosFromToken($2.Pos)
             $$.SetLastPosFromToken($6.Pos)
         }
@@ -894,16 +900,16 @@ fieldsep:
 
 returntypeannot:
         /* empty */ {
-            $$ = nil
+            $$ = returnTypeAnnotation{}
         } |
         ':' typeexprlist {
-            $$ = $2
+            $$ = returnTypeAnnotation{types: $2, known: true}
         } |
         ':' '(' ')' {
-            $$ = nil
+            $$ = returnTypeAnnotation{known: true}
         } |
         ':' '(' typeexpr ',' typeexprlist ')' {
-            $$ = append([]ast.TypeExpr{$3}, $5...)
+            $$ = returnTypeAnnotation{types: append([]ast.TypeExpr{$3}, $5...), known: true}
         }
 
 typeexpr:
@@ -1240,10 +1246,10 @@ typeparamlist:
 
 typeparam:
         TIdent {
-            $$ = ast.TypeParamExpr{Name: $1.Str, Constraint: nil}
+            $$ = ast.TypeParamExpr{Name: $1.Str, NamePosition: $1.Pos, Constraint: nil}
         } |
         TIdent ':' typeexpr {
-            $$ = ast.TypeParamExpr{Name: $1.Str, Constraint: $3}
+            $$ = ast.TypeParamExpr{Name: $1.Str, NamePosition: $1.Pos, Constraint: $3}
         }
 
 typednamelist:
@@ -1283,15 +1289,23 @@ interfacebody:
 
 interfacemethod:
         TFunction TIdent '(' ')' returntypeannot {
+            returns := $5.types
+            if $5.known && returns == nil {
+                returns = []ast.TypeExpr{}
+            }
             $$ = ast.InterfaceMethodExpr{
                 Name: $2.Str,
-                Type: &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: $5},
+                Type: &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: returns},
             }
         } |
         TFunction TIdent '(' typednamelist ')' returntypeannot {
+            returns := $6.types
+            if $6.known && returns == nil {
+                returns = []ast.TypeExpr{}
+            }
             $$ = ast.InterfaceMethodExpr{
                 Name: $2.Str,
-                Type: &ast.FunctionTypeExpr{Params: toFuncParams($4), Returns: $6},
+                Type: &ast.FunctionTypeExpr{Params: toFuncParams($4), Returns: returns},
             }
         }
 

@@ -1631,6 +1631,9 @@ end
 	if len(params) != 1 || params[0].Name != "T" {
 		t.Fatalf("FunctionTypeParams = %#v, want T", params)
 	}
+	if params[0].NamePosition != fn.TypeParams[0].NamePosition {
+		t.Fatalf("function type parameter position = %#v, want %#v", params[0].NamePosition, fn.TypeParams[0].NamePosition)
+	}
 	if len(fn.ReturnTypes) != 1 {
 		t.Fatalf("return types = %d, want 1", len(fn.ReturnTypes))
 	}

@@ -20,10 +20,10 @@ func TestDeadDirectSelfCallDoesNotCreateMu(t *testing.T) {
 	body := b.Body(program.Span{})
 	outer := b.Cell(program.Span{}, entry)
 	inner := b.Cell(program.Span{}, body)
-	function := b.Function(
-		program.Span{}, entry, body, nil, 0,
-		[]program.Capture{{Inner: inner, Outer: outer}},
-	)
+	function := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(function, body, nil, 0, []program.Capture{{Inner: inner, Outer: outer}}) {
+		t.Fatal("FillFunction")
+	}
 	returnedValues := b.Values(program.Span{}, body, nil, 0)
 	returned := b.Return(program.Span{}, body, returnedValues)
 	callee := b.Read(program.Span{}, body, inner)
@@ -52,10 +52,15 @@ func TestDeadMutualForwardCapturesAreRejected(t *testing.T) {
 		b.Cell(program.Span{}, bodies[0]),
 		b.Cell(program.Span{}, bodies[1]),
 	}
-	functions := []program.Term{
-		b.Function(program.Span{}, entry, bodies[0], nil, 0, []program.Capture{{Inner: inners[0], Outer: outers[1]}}),
-		b.Function(program.Span{}, entry, bodies[1], nil, 0, []program.Capture{{Inner: inners[1], Outer: outers[0]}}),
+	first := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(first, bodies[0], nil, 0, []program.Capture{{Inner: inners[0], Outer: outers[1]}}) {
+		t.Fatal("FillFunction")
 	}
+	second := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(second, bodies[1], nil, 0, []program.Capture{{Inner: inners[1], Outer: outers[0]}}) {
+		t.Fatal("FillFunction")
+	}
+	functions := []program.Term{first, second}
 	for i := range functions {
 		returnedValues := b.Values(program.Span{}, bodies[i], nil, 0)
 		returned := b.Return(program.Span{}, bodies[i], returnedValues)
@@ -81,10 +86,10 @@ func TestGotoRevivesDirectSelfCall(t *testing.T) {
 	body := b.Body(program.Span{})
 	outer := b.Cell(program.Span{}, entry)
 	inner := b.Cell(program.Span{}, body)
-	function := b.Function(
-		program.Span{}, entry, body, nil, 0,
-		[]program.Capture{{Inner: inner, Outer: outer}},
-	)
+	function := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(function, body, nil, 0, []program.Capture{{Inner: inner, Outer: outer}}) {
+		t.Fatal("FillFunction")
+	}
 	label := b.Label(program.Span{}, body)
 	if !b.SetLabelCursor(label, 2) {
 		t.Fatal("place Label")
@@ -115,10 +120,10 @@ func TestAssignmentStabilityUsesSourceReachability(t *testing.T) {
 		body := b.Body(program.Span{})
 		outer := b.Cell(program.Span{}, entry)
 		inner := b.Cell(program.Span{}, body)
-		function := b.Function(
-			program.Span{}, entry, body, nil, 0,
-			[]program.Capture{{Inner: inner, Outer: outer}},
-		)
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, body, nil, 0, []program.Capture{{Inner: inner, Outer: outer}}) {
+			t.Fatal("FillFunction")
+		}
 		callee := b.Read(program.Span{}, body, inner)
 		actuals := b.Values(program.Span{}, body, nil, 0)
 		call := b.Call(program.Span{}, body, callee, 0, actuals)
@@ -168,10 +173,10 @@ func TestRepeatConditionCallUsesDecisionReachability(t *testing.T) {
 		repeatBody := b.Body(program.Span{})
 		outer := b.Cell(program.Span{}, entry)
 		inner := b.Cell(program.Span{}, functionBody)
-		function := b.Function(
-			program.Span{}, entry, functionBody, nil, 0,
-			[]program.Capture{{Inner: inner, Outer: outer}},
-		)
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, functionBody, nil, 0, []program.Capture{{Inner: inner, Outer: outer}}) {
+			t.Fatal("FillFunction")
+		}
 		if tailReachable {
 			finishAtTail(t, b, repeatBody)
 		} else {
@@ -210,10 +215,10 @@ func TestDeepNestedDirectCallContainmentIsIterativeAndLinear(t *testing.T) {
 		body := b.Body(program.Span{})
 		outer := b.Cell(program.Span{}, entry)
 		inner := b.Cell(program.Span{}, body)
-		function := b.Function(
-			program.Span{}, entry, body, nil, 0,
-			[]program.Capture{{Inner: inner, Outer: outer}},
-		)
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, body, nil, 0, []program.Capture{{Inner: inner, Outer: outer}}) {
+			t.Fatal("FillFunction")
+		}
 		callee := b.Read(program.Span{}, body, inner)
 		actuals := b.Values(program.Span{}, body, nil, 0)
 		value := b.Call(program.Span{}, body, callee, 0, actuals)
@@ -370,10 +375,10 @@ func TestCellFrontiersRejectAuthoredUseBeforeBind(t *testing.T) {
 		body := b.Body(program.Span{})
 		outer := b.Cell(program.Span{}, entry)
 		inner := b.Cell(program.Span{}, body)
-		function := b.Function(
-			program.Span{}, entry, body, nil, 0,
-			[]program.Capture{{Inner: inner, Outer: outer}},
-		)
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, body, nil, 0, []program.Capture{{Inner: inner, Outer: outer}}) {
+			t.Fatal("FillFunction")
+		}
 		finishAtTail(t, b, body)
 		functionValues := b.Values(program.Span{}, entry, []program.Term{function}, 0)
 		returned := b.Return(program.Span{}, entry, functionValues)
@@ -391,7 +396,10 @@ func TestCellFrontiersAreValidatedBeforeDeadDirectEvidenceIsCleared(t *testing.T
 		b, entry := entryBuilder(t)
 		functionBody := b.Body(program.Span{})
 		cell := b.Cell(program.Span{}, entry)
-		function := b.Function(program.Span{}, entry, functionBody, nil, 0, nil)
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, functionBody, nil, 0, nil) {
+			t.Fatal("FillFunction")
+		}
 		finishAtTail(t, b, functionBody)
 
 		empty := b.Values(program.Span{}, entry, nil, 0)
@@ -412,7 +420,10 @@ func TestCellFrontiersAreValidatedBeforeDeadDirectEvidenceIsCleared(t *testing.T
 		b, entry := entryBuilder(t)
 		probeBody := b.Body(program.Span{})
 		cell := b.Cell(program.Span{}, entry)
-		probe := b.Function(program.Span{}, entry, probeBody, nil, 0, nil)
+		probe := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(probe, probeBody, nil, 0, nil) {
+			t.Fatal("FillFunction")
+		}
 		finishAtTail(t, b, probeBody)
 
 		empty := b.Values(program.Span{}, entry, nil, 0)
@@ -435,10 +446,10 @@ func TestCellFrontiersAreValidatedBeforeDeadDirectEvidenceIsCleared(t *testing.T
 		functionBody := b.Body(program.Span{})
 		outer := b.Cell(program.Span{}, entry)
 		inner := b.Cell(program.Span{}, functionBody)
-		function := b.Function(
-			program.Span{}, entry, functionBody, nil, 0,
-			[]program.Capture{{Inner: inner, Outer: outer}},
-		)
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, functionBody, nil, 0, []program.Capture{{Inner: inner, Outer: outer}}) {
+			t.Fatal("FillFunction")
+		}
 		finishAtTail(t, b, functionBody)
 
 		empty := b.Values(program.Span{}, entry, nil, 0)
@@ -461,10 +472,10 @@ func TestRecursiveLocalExceptionIsExactAndAligned(t *testing.T) {
 		body := b.Body(program.Span{})
 		outer := b.Cell(program.Span{}, entry)
 		inner := b.Cell(program.Span{}, body)
-		function := b.Function(
-			program.Span{}, entry, body, nil, 0,
-			[]program.Capture{{Inner: inner, Outer: outer}},
-		)
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, body, nil, 0, []program.Capture{{Inner: inner, Outer: outer}}) {
+			t.Fatal("FillFunction")
+		}
 		finishAtTail(t, b, body)
 		values := b.Values(program.Span{}, entry, []program.Term{function}, 0)
 		finishAtTail(t, b, entry, b.Bind(program.Span{}, entry, []program.Term{outer}, values))
@@ -478,10 +489,10 @@ func TestRecursiveLocalExceptionIsExactAndAligned(t *testing.T) {
 		body := b.Body(program.Span{})
 		left, right := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, entry)
 		inner := b.Cell(program.Span{}, body)
-		function := b.Function(
-			program.Span{}, entry, body, nil, 0,
-			[]program.Capture{{Inner: inner, Outer: right}},
-		)
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, body, nil, 0, []program.Capture{{Inner: inner, Outer: right}}) {
+			t.Fatal("FillFunction")
+		}
 		finishAtTail(t, b, body)
 		nilValue := b.Nil(program.Span{}, entry)
 		values := b.Values(program.Span{}, entry, []program.Term{function, nilValue}, 0)
@@ -496,10 +507,10 @@ func TestRecursiveLocalExceptionIsExactAndAligned(t *testing.T) {
 		body := b.Body(program.Span{})
 		outer := b.Cell(program.Span{}, entry)
 		inner := b.Cell(program.Span{}, body)
-		function := b.Function(
-			program.Span{}, entry, body, nil, 0,
-			[]program.Capture{{Inner: inner, Outer: outer}},
-		)
+		function := b.DeclareFunction(program.Span{}, entry)
+		if !b.FillFunction(function, body, nil, 0, []program.Capture{{Inner: inner, Outer: outer}}) {
+			t.Fatal("FillFunction")
+		}
 		finishAtTail(t, b, body)
 		wrapped := b.Unary(program.Span{}, entry, program.UnaryNot, function)
 		values := b.Values(program.Span{}, entry, []program.Term{wrapped}, 0)
@@ -517,14 +528,14 @@ func TestNestedImmediateFunctionCanCloseDirectCallSCC(t *testing.T) {
 	outerBinding := b.Cell(program.Span{}, entry)
 	outerCapture := b.Cell(program.Span{}, outerBody)
 	innerCapture := b.Cell(program.Span{}, innerBody)
-	outerFunction := b.Function(
-		program.Span{}, entry, outerBody, nil, 0,
-		[]program.Capture{{Inner: outerCapture, Outer: outerBinding}},
-	)
-	innerFunction := b.Function(
-		program.Span{}, outerBody, innerBody, nil, 0,
-		[]program.Capture{{Inner: innerCapture, Outer: outerCapture}},
-	)
+	outerFunction := b.DeclareFunction(program.Span{}, entry)
+	if !b.FillFunction(outerFunction, outerBody, nil, 0, []program.Capture{{Inner: outerCapture, Outer: outerBinding}}) {
+		t.Fatal("FillFunction")
+	}
+	innerFunction := b.DeclareFunction(program.Span{}, outerBody)
+	if !b.FillFunction(innerFunction, innerBody, nil, 0, []program.Capture{{Inner: innerCapture, Outer: outerCapture}}) {
+		t.Fatal("FillFunction")
+	}
 	innerCallee := b.Read(program.Span{}, innerBody, innerCapture)
 	innerActuals := b.Values(program.Span{}, innerBody, nil, 0)
 	innerCall := b.Call(program.Span{}, innerBody, innerCallee, 0, innerActuals)
@@ -564,10 +575,10 @@ func TestForLoopControlIsReachableAndRetainsTransferKind(t *testing.T) {
 			outer := b.Cell(program.Span{}, entry)
 			capture := b.Cell(program.Span{}, functionBody)
 			iteration := b.Cell(program.Span{}, loopBody)
-			function := b.Function(
-				program.Span{}, entry, functionBody, nil, 0,
-				[]program.Capture{{Inner: capture, Outer: outer}},
-			)
+			function := b.DeclareFunction(program.Span{}, entry)
+			if !b.FillFunction(function, functionBody, nil, 0, []program.Capture{{Inner: capture, Outer: outer}}) {
+				t.Fatal("FillFunction")
+			}
 			finishAtTail(t, b, loopBody)
 			callee := b.Read(program.Span{}, functionBody, capture)
 			actuals := b.Values(program.Span{}, functionBody, nil, 0)

@@ -23,12 +23,13 @@ const (
 
 // TypeDecl records one declaration in the lexical type namespace.
 type TypeDecl struct {
-	ID         TypeDeclID
-	Kind       TypeDeclKind
-	Name       string
-	Type       *ast.TypeDefStmt
-	Interface  *ast.InterfaceDefStmt
-	Constraint ast.TypeExpr
+	ID           TypeDeclID
+	Kind         TypeDeclKind
+	Name         string
+	NamePosition ast.Position
+	Type         *ast.TypeDefStmt
+	Interface    *ast.InterfaceDefStmt
+	Constraint   ast.TypeExpr
 }
 
 // QualifiedTypeAlias is the exact type-namespace meaning introduced by a
@@ -292,6 +293,7 @@ func (b *binder) defineTypeParams(params []ast.TypeParamExpr) []TypeDecl {
 		if decl.ID == 0 {
 			continue
 		}
+		decl.NamePosition = param.NamePosition
 		b.defineType(param.Name, decl)
 		decls = append(decls, decl)
 	}

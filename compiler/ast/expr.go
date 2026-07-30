@@ -174,7 +174,10 @@ type FunctionExpr struct {
 	TypeParams  []TypeParamExpr // Generic type parameters <T, U>
 	ParList     *ParList        // Parameter list
 	ReturnTypes []TypeExpr      // Declared return types (nil = inferred)
-	Stmts       []Stmt          // Function body
+	// ReturnsKnown distinguishes an omitted return annotation from an authored
+	// empty `: ()` return clause.
+	ReturnsKnown bool
+	Stmts        []Stmt // Function body
 }
 
 // KeyName extracts a string key name from an expression.

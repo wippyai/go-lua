@@ -18,8 +18,6 @@ type Key uint32
 // a field Term family.
 type FieldKind uint8
 
-type Capture struct{ Inner, Outer Term }
-
 // LoopKind is the closed source-language loop vocabulary. Every kind shares
 // one typed Loop relation; its exact operand shape is verified by Seal.
 type LoopKind uint8
@@ -190,7 +188,6 @@ type Span struct {
 
 // termRange indexes one contiguous Term pool. It never owns a slice.
 type termRange struct{ start, end uint32 }
-type captureRange struct{ start, end uint32 }
 type storedSpan struct {
 	file                uint32
 	startLine, startCol uint32
@@ -266,11 +263,6 @@ type assignRow struct {
 	owner   Term
 	targets termRange
 	values  Term
-}
-type functionRow struct {
-	owner, body, vararg Term
-	formals             termRange
-	captures            captureRange
 }
 type captureRow struct{ inner, outer Term }
 type callRow struct{ owner, callee, receiver, actuals Term }
@@ -1066,44 +1058,6 @@ func (b *Builder) Assign(span Span, owner Term, targets []Term, values Term) Ter
 		b.assigns = b.assigns[:len(b.assigns)-1]
 		b.assignTerms = b.assignTerms[:targetRange.start]
 		return 0
-	}
-	return term
-}
-
-// Function records a closure with its lexical owner, execution Body, ordered
-// formal Cells, optional vararg Cell, and complete lexical capture pairs.
-func (b *Builder) Function(span Span, owner, body Term, formals []Term, vararg Term, captures []Capture) Term {
-	if !b.require(b.has(owner, tagBody) && b.has(body, tagBody) && owner != body) {
-		return 0
-	}
-	if vararg != 0 && !b.require(b.lexicalCell(vararg)) {
-		return 0
-	}
-	for _, formal := range formals {
-		if !b.require(b.lexicalCell(formal)) {
-			return 0
-		}
-	}
-	for _, capture := range captures {
-		if !b.require(b.lexicalCell(capture.Inner) && b.lexicalCell(capture.Outer)) {
-			return 0
-		}
-	}
-	r, ok := b.appendPool(&b.formalTerms, formals)
-	if !ok {
-		return 0
-	}
-	c, ok := b.appendCaptures(captures)
-	if !ok {
-		b.formalTerms = b.formalTerms[:r.start]
-		return 0
-	}
-	b.functions = append(b.functions, functionRow{owner: owner, body: body, vararg: vararg, formals: r, captures: c})
-	term := b.mint(tagFunction, span, b.familyIndex(len(b.functions)))
-	if term == 0 {
-		b.functions = b.functions[:len(b.functions)-1]
-		b.formalTerms = b.formalTerms[:r.start]
-		b.captures = b.captures[:c.start]
 	}
 	return term
 }
@@ -3770,53 +3724,6 @@ func (p *Program) Assign(term Term) (owner, values Term, ok bool) {
 	}
 	row := p.assigns[term.index()-1]
 	return row.owner, row.values, true
-}
-
-func (p *Program) Function(term Term) (owner, body, vararg Term, ok bool) {
-	if !p.has(term, tagFunction) {
-		return 0, 0, 0, false
-	}
-	row := p.functions[term.index()-1]
-	return row.owner, row.body, row.vararg, true
-}
-
-func (p *Program) FormalLen(term Term) (int, bool) {
-	if !p.has(term, tagFunction) {
-		return 0, false
-	}
-	r := p.functions[term.index()-1].formals
-	return int(r.end - r.start), true
-}
-
-func (p *Program) FormalAt(term Term, index int) (Term, bool) {
-	if !p.has(term, tagFunction) {
-		return 0, false
-	}
-	r := p.functions[term.index()-1].formals
-	if index < 0 || uint32(index) >= r.end-r.start {
-		return 0, false
-	}
-	return p.formalTerms[r.start+uint32(index)], true
-}
-
-func (p *Program) FunctionCaptureCount(term Term) (int, bool) {
-	if !p.has(term, tagFunction) {
-		return 0, false
-	}
-	r := p.functions[term.index()-1].captures
-	return int(r.end - r.start), true
-}
-
-func (p *Program) FunctionCapture(term Term, index int) (inner, outer Term, ok bool) {
-	if !p.has(term, tagFunction) {
-		return 0, 0, false
-	}
-	r := p.functions[term.index()-1].captures
-	if index < 0 || uint32(index) >= r.end-r.start {
-		return 0, 0, false
-	}
-	row := p.captures[r.start+uint32(index)]
-	return row.inner, row.outer, true
 }
 
 func (p *Program) Call(term Term) (owner, callee, receiver, actuals, direct Term, ok bool) {

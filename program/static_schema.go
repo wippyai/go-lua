@@ -137,7 +137,7 @@ func (b *Builder) TypeKey(name string) Key {
 }
 
 func (b *Builder) DeclareTypeParam(span Span, owner Term, name string) Term {
-	if !b.require((b.has(owner, tagTypeAlias) || b.has(owner, tagTypeFunction)) && name != "") {
+	if !b.require((b.has(owner, tagTypeAlias) || b.has(owner, tagTypeFunction) || b.has(owner, tagFunction)) && name != "") {
 		return 0
 	}
 	key := b.TypeKey(name)
@@ -636,9 +636,35 @@ func (b *Builder) validateStaticCore() bool {
 			}
 		}
 	}
+	for i, row := range b.functions {
+		function := makeTerm(tagFunction, uint32(i+1))
+		if (row.typeParamsSet && !validParams(row.typeParams)) ||
+			(row.typeParamsSet && (!row.outerGapSet || int(row.outerGap) > int(b.bodies[row.owner.index()-1].roots.end-b.bodies[row.owner.index()-1].roots.start))) ||
+			(row.returnsSet && ((!row.returnsKnown && row.returns.start != row.returns.end) || !validTerms(row.returns, 0))) {
+			return false
+		}
+		if row.typeParamsSet {
+			for _, param := range b.typeParamTerms[row.typeParams.start:row.typeParams.end] {
+				if !b.has(param, tagTypeParam) || b.typeParams[param.index()-1].owner != function || paramSeen[param.index()-1] {
+					return false
+				}
+				paramSeen[param.index()-1] = true
+			}
+		}
+		if row.returnsSet {
+			for _, result := range b.staticTypeTerms[row.returns.start:row.returns.end] {
+				if !attach(function, result) {
+					return false
+				}
+				if result.tag() == tagTypeAsserts {
+					assertReturnSeen[result.index()-1] = true
+				}
+			}
+		}
+	}
 	for i, row := range b.typeParams {
 		param := makeTerm(tagTypeParam, uint32(i+1))
-		if !paramSeen[i] || (!b.has(row.owner, tagTypeAlias) && !b.has(row.owner, tagTypeFunction)) || !b.staticTypeKey(row.name) || !row.constraintFilled {
+		if !paramSeen[i] || (!b.has(row.owner, tagTypeAlias) && !b.has(row.owner, tagTypeFunction) && !b.has(row.owner, tagFunction)) || !b.staticTypeKey(row.name) || !row.constraintFilled {
 			return false
 		}
 		if row.constraint != 0 && (!b.staticTypeNode(row.constraint) || !attach(param, row.constraint)) {
@@ -768,12 +794,21 @@ func (b *Builder) validateStaticCore() bool {
 	}
 	for i, row := range b.assertions {
 		parent := parents[tagTypeAsserts][i]
-		if !b.has(parent, tagTypeFunction) {
+		if !b.has(parent, tagTypeFunction) && !b.has(parent, tagFunction) {
 			return false
 		}
-		function := b.signatures[parent.index()-1]
-		if !assertReturnSeen[i] || (row.param >= 0 && uint32(row.param) >= function.params.end-function.params.start) {
+		if !assertReturnSeen[i] {
 			return false
+		}
+		if row.param >= 0 {
+			if b.has(parent, tagTypeFunction) {
+				function := b.signatures[parent.index()-1]
+				if uint32(row.param) >= function.params.end-function.params.start {
+					return false
+				}
+			} else if uint32(row.param) >= b.functions[parent.index()-1].formals.end-b.functions[parent.index()-1].formals.start {
+				return false
+			}
 		}
 	}
 	for i, row := range b.typeOfs {
@@ -789,7 +824,7 @@ func (b *Builder) validateStaticCore() bool {
 		}
 		for {
 			switch parent.tag() {
-			case tagTypeAlias, tagTypeParam, tagTypeFunction:
+			case tagTypeAlias, tagTypeParam, tagTypeFunction, tagFunction:
 				if parent != row.scope {
 					return false
 				}

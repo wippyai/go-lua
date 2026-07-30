@@ -33,10 +33,8 @@ type typeOfRow struct{ scope, operand Term }
 // TypeOf records parser-reachable typeof(expr). The expression is built with
 // the ordinary source expression relations, so it has its normal lexical Body
 // owner and span. scope is the declaration/signature host for the type tree.
-// This initial contract accepts the existing host terms that already carry an
-// exact lexical Cell attachment host. Function is intentionally not accepted:
-// its generic-constraint and after-formals phases are distinct source sites.
-// Future declaration/signature rows add their exact host terms directly.
+// Runtime Function is a precise host too: a direct Function scope is
+// post-formals, while a TypeParam it owns is pre-formals.
 func (b *Builder) TypeOf(span Span, scope, operand Term) Term {
 	if b == nil || !b.require(b.staticScopeBody(scope) != 0 && b.valueOccurrence(operand)) {
 		return 0
@@ -68,9 +66,15 @@ func (b *Builder) staticScopeBody(scope Term) Term {
 			}
 			return 0
 		case b.has(scope, tagTypeParam):
-			scope = b.typeParams[scope.index()-1].owner
+			owner := b.typeParams[scope.index()-1].owner
+			if b.has(owner, tagFunction) {
+				return b.functions[owner.index()-1].owner
+			}
+			scope = owner
 		case b.has(scope, tagTypeFunction):
 			scope = b.signatures[scope.index()-1].scope
+		case b.has(scope, tagFunction):
+			return b.functions[scope.index()-1].body
 		default:
 			return 0
 		}
@@ -288,9 +292,16 @@ func (b *Builder) validateStaticTypeOf(claims [tagCount][]sealClaimSlot, static 
 				body, gap, ok := b.staticDeclarationScope(scope)
 				return frontier{body: body, cursor: int(gap)}, ok
 			case b.has(scope, tagTypeParam):
-				scope = b.typeParams[scope.index()-1].owner
+				owner := b.typeParams[scope.index()-1].owner
+				if b.has(owner, tagFunction) {
+					function := b.functions[owner.index()-1]
+					return frontier{body: function.owner, cursor: int(function.outerGap)}, true
+				}
+				scope = owner
 			case b.has(scope, tagTypeFunction):
 				scope = b.signatures[scope.index()-1].scope
+			case b.has(scope, tagFunction):
+				return frontier{body: b.functions[scope.index()-1].body, cursor: 0, afterFormals: true}, true
 			default:
 				return frontier{}, false
 			}

@@ -238,6 +238,35 @@ func TestParseFunctionWithoutTypes(t *testing.T) {
 	if fn.ReturnTypes != nil {
 		t.Errorf("ReturnTypes should be nil when not specified")
 	}
+	if fn.ReturnsKnown {
+		t.Error("ReturnsKnown should be false when no return annotation was specified")
+	}
+}
+
+func TestParseRuntimeFunctionReturnClausePresence(t *testing.T) {
+	tests := []struct {
+		input string
+		known bool
+		count int
+	}{
+		{"function f() end", false, 0},
+		{"function f(): () end", true, 0},
+		{"function f(): number, string end", true, 2},
+	}
+	for _, tt := range tests {
+		stmt := parseOneString(t, tt.input).(*ast.FuncDefStmt)
+		if stmt.Func.ReturnsKnown != tt.known || len(stmt.Func.ReturnTypes) != tt.count {
+			t.Fatalf("%q returns = known:%v count:%d, want known:%v count:%d", tt.input, stmt.Func.ReturnsKnown, len(stmt.Func.ReturnTypes), tt.known, tt.count)
+		}
+	}
+
+	iface := parseOneString(t, `interface I
+function omitted()
+function void(): ()
+end`).(*ast.InterfaceDefStmt)
+	if iface.Methods[0].Type.Returns != nil || iface.Methods[1].Type.Returns == nil || len(iface.Methods[1].Type.Returns) != 0 {
+		t.Fatalf("interface returns = %#v / %#v, want nil / explicit empty", iface.Methods[0].Type.Returns, iface.Methods[1].Type.Returns)
+	}
 }
 
 func TestParseTypeDecl(t *testing.T) {
@@ -2063,6 +2092,9 @@ func TestParseGenericFunctionTypeParams(t *testing.T) {
 			for i, want := range tt.wantParams {
 				if fn.TypeParams[i].Name != want {
 					t.Errorf("TypeParams[%d].Name = %q, want %q", i, fn.TypeParams[i].Name, want)
+				}
+				if pos := fn.TypeParams[i].NamePosition; pos.File != "test" || pos.Line != 1 || pos.Column <= 0 {
+					t.Errorf("TypeParams[%d].NamePosition = %#v, want parser token position", i, pos)
 				}
 			}
 		})
