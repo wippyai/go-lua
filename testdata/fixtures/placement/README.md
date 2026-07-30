@@ -32,7 +32,7 @@ Three-outcome total model:
 
 Mapping to the harness `placement` buckets used in the manifests:
 `Scalar`+`FrameLocal` -> `stack`; `ActorLocal` -> `owned_heap`; `Shared` -> `shared_heap`;
-`deferred+promote` -> counted as `unknown` / `no_fact` (runtime-decided).
+`deferred+promote` -> counted as `unknown` (runtime-decided).
 
 ## Benchmark fixtures (expected per-site class)
 

@@ -9,7 +9,6 @@
       "min_frame_local": 1,
       "max_frame_local": 1,
       "min_dies_before_suspension": 1,
-      "max_no_fact": 0,
       "max_unknown": 0
     }
   },

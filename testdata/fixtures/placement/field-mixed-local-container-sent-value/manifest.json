@@ -20,7 +20,6 @@
       "max_shared_heap_kind": {
         "lua.table": 1
       },
-      "max_no_fact": 0,
       "max_unknown": 0
     }
   },

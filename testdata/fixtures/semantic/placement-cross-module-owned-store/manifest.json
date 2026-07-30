@@ -15,7 +15,6 @@
       "min_owned_heap_kind": {
         "lua.table": 4
       },
-      "max_no_fact": 0,
       "max_unknown": 0
     }
   },

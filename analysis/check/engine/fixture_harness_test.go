@@ -106,7 +106,6 @@ type fixturePlacement struct {
 	MinAllocationSites      int            `json:"min_allocation_sites,omitempty"`
 	MinDecomposable         int            `json:"min_decomposable,omitempty"`
 	MinFrameLocal           int            `json:"min_frame_local,omitempty"`
-	MaxNoFact               *int           `json:"max_no_fact,omitempty"`
 	MaxUnknown              *int           `json:"max_unknown,omitempty"`
 	MaxDecomposable         *int           `json:"max_decomposable,omitempty"`
 	MaxFrameLocal           *int           `json:"max_frame_local,omitempty"`
@@ -518,7 +517,6 @@ func placementExpectationMisses(expect *fixturePlacement, plan *engine.Placement
 	minimum("owned_heap_depth", maxDepth(placement.OwnedHeap), expect.MinOwnedHeapDepth)
 	minimum("shared_depth", maxDepth(placement.SharedHeap), expect.MinSharedDepth)
 	maximum("unknown", byPlacement(placement.Unknown), expect.MaxUnknown)
-	maximum("no_fact", 0, expect.MaxNoFact)
 	misses = append(misses, byKind(placement.Stack, expect.MinStackKind)...)
 	misses = append(misses, byKind(placement.OwnedHeap, expect.MinOwnedHeapKind)...)
 	misses = append(misses, byKind(placement.SharedHeap, expect.MinSharedHeapKind)...)

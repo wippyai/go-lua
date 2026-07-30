@@ -40,7 +40,7 @@ buckets as follows (this is the mapping used in both manifests):
 | Scalar, FrameLocal   | `stack`                 |
 | ActorLocal           | `owned_heap`            |
 | Shared               | `shared_heap`           |
-| deferred+promote     | `unknown` / `no_fact`   |
+| deferred+promote     | `unknown`               |
 
 ## shared-lib-divergent-consumers
 
@@ -75,15 +75,15 @@ frames up in `main.lua`. Two call paths mix distinct outcomes:
 | Path in `main.lua` | Behavior                                              | Conclusion        | Bucket              |
 | ------------------ | ----------------------------------------------------- | ----------------- | ------------------- |
 | `local_path`       | `mid.make(...)` then reads `box.body`, drops the box  | **proven-local** (FrameLocal) | `stack`             |
-| `mixed_path`       | `if cond then process.send(..., box) else read box.body` | **deferred+promote** | `unknown` / `no_fact` |
+| `mixed_path`       | `if cond then process.send(..., box) else read box.body` | **deferred+promote** | `unknown` |
 
 `mixed_path` sends the box only on an input-dependent condition (`cond`). No single
 static placement dominates: choosing Shared unconditionally would over-promote the
 `else` branch that stays local; choosing local would be unsound for the `then` branch
 that escapes. The information-theoretically optimal decision is therefore **deferred**:
 emit a runtime clone at the send boundary and keep the allocation local otherwise. In
-the aggregate this site is counted as `unknown`/`no_fact` (runtime-decided), so the
-manifest sets `require_complete: false` and allows `max_unknown: 1` / `max_no_fact: 1`,
+the aggregate this site is counted as `unknown` (runtime-decided), so the
+manifest sets `require_complete: false` and allows `max_unknown: 1`,
 while still asserting `min_stack: 1` for the proven-local `local_path` box.
 
 ## Pending on tasks 3eb96899 + 150f00f9

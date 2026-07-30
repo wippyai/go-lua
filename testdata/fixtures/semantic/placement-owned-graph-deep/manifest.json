@@ -1,1 +1,1 @@
-{ "description": "Ownership.store promotes a deep value graph to owned-heap placement.", "packages": ["ownership"], "check": { "placement": { "require_complete": true, "min_owned_heap": 2, "max_no_fact": 0, "max_unknown": 0 } }, "run": { "skip": "placement-only" } }
+{ "description": "Ownership.store promotes a deep value graph to owned-heap placement.", "packages": ["ownership"], "check": { "placement": { "require_complete": true, "min_owned_heap": 2, "max_unknown": 0 } }, "run": { "skip": "placement-only" } }
