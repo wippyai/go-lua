@@ -137,6 +137,10 @@ const (
 	tagLoop
 	tagTable
 	tagKey
+	// tagTypeOf is a static type relation. Its child expression still uses the
+	// ordinary expression families, but Seal proves static containment so it
+	// never enters executable control/effect evidence.
+	tagTypeOf
 	tagCount
 )
 
@@ -312,6 +316,7 @@ type Program struct {
 	gotoTargets    []Term
 	mu             [tagCount][]Term // Seal-derived canonical SCC head by family
 	directCalls    []Term           // Seal-derived direct Function evidence by Call index
+	static         staticSet        // compact static-containment classification
 	entry          Term             // the one canonical non-Function shard entry Body
 	bodies         []bodyRow
 	cells          []cellRow
@@ -341,6 +346,7 @@ type Program struct {
 	// occurrences. It is sparse occurrence evidence, never a Cell property.
 	implicitReads []Term
 	exactKeys     []exactKey
+	typeOfs       []typeOfRow
 }
 
 // Builder is the sole mutable construction path for Program.
@@ -404,6 +410,7 @@ type Builder struct {
 	implicitReads []Term
 	exactKeys     []exactKey
 	exactLookup   map[exactKey]Key
+	typeOfs       []typeOfRow
 }
 
 // NewBuilder returns an empty Program builder.
@@ -1358,6 +1365,8 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.tables))
 	case tagKey:
 		return index <= uint32(len(b.keys))
+	case tagTypeOf:
+		return index <= uint32(len(b.typeOfs))
 	}
 	return false
 }
@@ -1471,6 +1480,14 @@ func (b *Builder) Seal() (*Program, error) {
 	if !ok {
 		return nil, errors.New("program: invalid Body context")
 	}
+	var staticTerms staticSet
+	if len(b.typeOfs) != 0 {
+		marked, err := b.markStaticTerms()
+		if err != nil {
+			return nil, err
+		}
+		staticTerms = marked
+	}
 
 	claims := [tagCount][]sealClaimSlot{}
 	claims[tagNil] = make([]sealClaimSlot, len(b.nils))
@@ -1574,13 +1591,20 @@ func (b *Builder) Seal() (*Program, error) {
 	for i, row := range b.keys {
 		claims[tagKey][i].owner = row.owner
 	}
+	claims[tagTypeOf] = make([]sealClaimSlot, len(b.typeOfs))
+	for i, row := range b.typeOfs {
+		typeOf := makeTerm(tagTypeOf, uint32(i+1))
+		claims[tagTypeOf][i] = sealClaimSlot{owner: b.staticScopeBody(row.scope), parent: typeOf}
+	}
 	claim := func(child, owner, parent Term) error {
 		if !b.valid(child) || !b.valid(parent) || !b.has(owner, tagBody) ||
 			child.tag() >= tagCount || int(child.index()) > len(claims[child.tag()]) {
 			return errors.New("program: invalid typed containment")
 		}
 		at := &claims[child.tag()][child.index()-1]
-		if at.owner != owner || at.parent != 0 {
+		childStatic := staticTerms.has(child)
+		parentStatic := staticTerms.has(parent)
+		if childStatic != parentStatic || at.owner != owner || at.parent != 0 {
 			return errors.New("program: invalid typed containment")
 		}
 		at.parent = parent
@@ -1805,6 +1829,11 @@ func (b *Builder) Seal() (*Program, error) {
 			}
 		}
 	}
+	for i, row := range b.typeOfs {
+		if err := claim(row.operand, b.staticScopeBody(row.scope), makeTerm(tagTypeOf, uint32(i+1))); err != nil {
+			return nil, err
+		}
+	}
 	allClaimed := func(slots []sealClaimSlot) bool {
 		for _, slot := range slots {
 			if slot.parent == 0 {
@@ -1817,6 +1846,9 @@ func (b *Builder) Seal() (*Program, error) {
 		if !allClaimed(slots) {
 			return nil, errors.New("program: unclaimed source term")
 		}
+	}
+	if err := b.validateStaticTypeOf(claims, staticTerms); err != nil {
+		return nil, err
 	}
 	// Evidence order is increasing Read-Term construction order. Because the
 	// relation only retains implicit occurrences, a monotonic walk proves
@@ -1840,11 +1872,11 @@ func (b *Builder) Seal() (*Program, error) {
 		breakLoops[i] = enclosingLoop[row.owner.index()]
 	}
 	direct := make([]Term, len(b.calls))
-	controlMu, err := b.sourceControl(pre, post, activation, breakLoops, claims, direct)
+	controlMu, err := b.sourceControl(pre, post, activation, breakLoops, claims, staticTerms, direct)
 	if err != nil {
 		return nil, err
 	}
-	if err := b.validateCells(pre, post, activation, direct, claims); err != nil {
+	if err := b.validateCells(pre, post, activation, direct, claims, staticTerms); err != nil {
 		return nil, err
 	}
 	functionMu, err := b.directCallMu(activation, direct)
@@ -1852,7 +1884,7 @@ func (b *Builder) Seal() (*Program, error) {
 		return nil, err
 	}
 	controlMu[tagFunction] = functionMu
-	return b.snapshot(controlMu, direct, breakLoops), nil
+	return b.snapshot(controlMu, direct, breakLoops, staticTerms), nil
 }
 
 // containingRoot projects one occurrence to its unique executable source root
@@ -1860,6 +1892,7 @@ func (b *Builder) Seal() (*Program, error) {
 // paths are compressed, so nested operands are resolved once without rescans.
 func containingRoot(
 	claims [tagCount][]sealClaimSlot,
+	static staticSet,
 	start Term,
 ) (Term, error) {
 	current := start
@@ -1868,7 +1901,11 @@ func containingRoot(
 			int(current.index()) > len(claims[current.tag()]) {
 			return 0, errors.New("program: invalid containment parent")
 		}
-		parent := claims[current.tag()][current.index()-1].parent
+		slot := claims[current.tag()][current.index()-1]
+		if static.has(current) {
+			return 0, errors.New("program: static source term has no executable root")
+		}
+		parent := slot.parent
 		if parent == 0 {
 			return 0, errors.New("program: source term has no executable root")
 		}
@@ -1987,6 +2024,7 @@ func (b *Builder) validateCells(
 	activation []Term,
 	direct []Term,
 	claims [tagCount][]sealClaimSlot,
+	static staticSet,
 ) error {
 	visible := func(owner, cell Term) bool {
 		if !b.has(owner, tagBody) || !b.lexicalCell(cell) {
@@ -2043,7 +2081,10 @@ func (b *Builder) validateCells(
 			roles[cell.index()] = 1
 		}
 	}
-	for _, row := range b.reads {
+	for i, row := range b.reads {
+		if static.has(makeTerm(tagRead, uint32(i+1))) {
+			continue
+		}
 		if b.lexicalCell(row.source) && !visible(row.owner, row.source) {
 			return errors.New("program: Read Cell is not active at occurrence")
 		}
@@ -2217,17 +2258,30 @@ func (b *Builder) sourceControl(
 	activation []Term,
 	breakLoops []Term,
 	claims [tagCount][]sealClaimSlot,
+	static staticSet,
 	direct []Term,
 ) ([tagCount][]Term, error) {
 	var mu [tagCount][]Term
 	var nodes [tagCount][]uint32
+	executable := func(term Term) bool {
+		if !b.valid(term) || term.tag() >= tagCount || int(term.index()) > len(claims[term.tag()]) {
+			return false
+		}
+		return !static.has(term)
+	}
 	hasDirectCandidate := false
-	for _, row := range b.calls {
+	for i, row := range b.calls {
+		if !executable(makeTerm(tagCall, uint32(i+1))) {
+			continue
+		}
 		hasDirectCandidate = hasDirectCandidate || b.has(row.callee, tagFunction) ||
 			(b.has(row.callee, tagRead) && b.lexicalCell(b.reads[row.callee.index()-1].source))
 	}
 	hasReadFrontier := false
-	for _, row := range b.reads {
+	for i, row := range b.reads {
+		if !executable(makeTerm(tagRead, uint32(i+1))) {
+			continue
+		}
 		hasReadFrontier = hasReadFrontier || b.lexicalCell(row.source)
 	}
 	hasFunctionFrontier := false
@@ -2467,10 +2521,13 @@ func (b *Builder) sourceControl(
 		return scopeAt[node], true
 	}
 	for i, row := range b.reads {
+		if !executable(makeTerm(tagRead, uint32(i+1))) {
+			continue
+		}
 		if !b.lexicalCell(row.source) {
 			continue
 		}
-		root, err := containingRoot(claims, makeTerm(tagRead, uint32(i+1)))
+		root, err := containingRoot(claims, static, makeTerm(tagRead, uint32(i+1)))
 		if err != nil {
 			return mu, err
 		}
@@ -2484,7 +2541,7 @@ func (b *Builder) sourceControl(
 			continue
 		}
 		function := makeTerm(tagFunction, uint32(i+1))
-		root, err := containingRoot(claims, function)
+		root, err := containingRoot(claims, static, function)
 		if err != nil {
 			return mu, err
 		}
@@ -2659,11 +2716,14 @@ func (b *Builder) sourceControl(
 		}
 	}
 	for i, row := range b.calls {
+		if !executable(makeTerm(tagCall, uint32(i+1))) {
+			continue
+		}
 		if !(b.has(row.callee, tagFunction) ||
 			(b.has(row.callee, tagRead) && b.lexicalCell(b.reads[row.callee.index()-1].source))) {
 			continue
 		}
-		root, err := containingRoot(claims, makeTerm(tagCall, uint32(i+1)))
+		root, err := containingRoot(claims, static, makeTerm(tagCall, uint32(i+1)))
 		if err != nil {
 			return mu, err
 		}
@@ -3076,6 +3136,7 @@ func directCallFinishOrder(functionCount int, start, adjacent []uint32) ([]uint3
 func (b *Builder) snapshot(
 	mu [tagCount][]Term,
 	directCalls, breakLoops []Term,
+	static staticSet,
 ) *Program {
 	p := &Program{
 		termCount:      b.termCount,
@@ -3128,10 +3189,12 @@ func (b *Builder) snapshot(
 		globalCells:    copyTerms(b.globalCells),
 		implicitReads:  copyTerms(b.implicitReads),
 		exactKeys:      append([]exactKey(nil), b.exactKeys...),
+		typeOfs:        append([]typeOfRow(nil), b.typeOfs...),
 	}
 	for tag := uint8(1); tag < tagCount; tag++ {
 		p.mu[tag] = copyTerms(mu[tag])
 	}
+	p.static = static
 	for tag := uint8(1); tag < tagCount; tag++ {
 		p.spans[tag] = append([]storedSpan(nil), b.spans[tag]...)
 	}
@@ -3199,6 +3262,8 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.tables))
 	case tagKey:
 		return index <= uint32(len(p.keys))
+	case tagTypeOf:
+		return index <= uint32(len(p.typeOfs))
 	}
 	return false
 }
@@ -3357,6 +3422,17 @@ func (p *Program) Mu(term Term) (Term, bool) {
 		}
 	}
 	return 0, false
+}
+
+// Static reports whether Seal proved term belongs exclusively to an authored
+// static tree. It is a compact classification bit, not a persisted topology.
+func (p *Program) Static(term Term) bool {
+	if !p.Valid(term) || term.tag() >= tagCount {
+		return false
+	}
+	words := p.static[term.tag()]
+	index := term.index() - 1
+	return int(index>>6) < len(words) && words[index>>6]&(uint64(1)<<uint(index&63)) != 0
 }
 
 // Entry returns the shard's one canonical top-level Body in O(1).
