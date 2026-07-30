@@ -6,9 +6,10 @@ import (
 	"reflect"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/eval"
+	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/lexical"
+	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/store"
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/parse/numparse"
 	"github.com/wippyai/go-lua/program"
 )
 
@@ -21,42 +22,33 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 
 	captures := make(captureIndex)
 	binding.ForEachEntryCapture(captures.add)
+	builder := program.NewBuilder()
 	l := lowerer{
 		sourceName: sourceName,
 		binding:    binding,
-		builder:    program.NewBuilder(),
-		active:     make(map[symbol.ID]program.Term),
+		builder:    builder,
 		captures:   captures,
+		scopes:     lexical.New(builder),
+		packs:      eval.New(builder),
+		access:     store.New(builder),
 	}
 
 	span := l.chunkSpan(stmts)
-	entry := l.builder.Body(span)
-	if entry == 0 {
-		return nil, fmt.Errorf("programlower: could not create chunk body")
+	_, err := l.scopes.Entry(span)
+	if err != nil {
+		return nil, err
 	}
-	if !l.builder.SetEntry(entry) {
-		return nil, fmt.Errorf("programlower: could not set chunk Entry")
-	}
-	l.enterBody(entry, nil, span)
 	l.push(
-		step{kind: stepFinishEntry},
+		step{kind: stepFinishEntry, span: span},
 		step{kind: stepStmts, stmts: stmts},
 	)
 	if err := l.run(); err != nil {
 		return nil, err
 	}
-	if len(l.bodies) != 0 {
-		return nil, fmt.Errorf("programlower: unfinished lexical body")
-	}
-	if len(l.active) != 0 || len(l.activeUndo) != 0 {
-		return nil, fmt.Errorf("programlower: unfinished lexical mappings")
-	}
-	if len(l.roots) != 0 || len(l.values) != 0 || len(l.targets) != 0 ||
-		len(l.tableKeys) != 0 || len(l.tableValues) != 0 || len(l.tableKinds) != 0 ||
-		len(l.capturePairs) != 0 {
+	if !l.scopes.Clean() || !l.packs.Clean() || !l.access.Clean() {
 		return nil, fmt.Errorf("programlower: unfinished assembly scratch")
 	}
-	sealed, err := l.builder.Seal()
+	sealed, err := builder.Seal()
 	if err != nil {
 		return nil, fmt.Errorf("programlower: seal: %w", err)
 	}
@@ -76,35 +68,12 @@ type lowerer struct {
 	builder    *program.Builder
 	captures   captureIndex
 
-	active     map[symbol.ID]program.Term
-	activeUndo []activeUndo
-	bodies     []bodyFrame
-	steps      []step
+	scopes lexical.Bodies
+	packs  eval.Values
+	access store.Access
+	steps  []step
 
 	result program.Term
-
-	roots        []program.Term
-	values       []program.Term
-	targets      []program.Term
-	tableKeys    []program.Term
-	tableValues  []program.Term
-	tableKinds   []program.FieldKind
-	capturePairs []program.Capture
-}
-
-type activeUndo struct {
-	id      symbol.ID
-	prior   program.Term
-	existed bool
-}
-
-type bodyFrame struct {
-	body       program.Term
-	function   *ast.FunctionExpr
-	span       program.Span
-	undoMark   int
-	rootMark   int
-	terminated bool
 }
 
 type stepKind uint8
@@ -194,20 +163,16 @@ func (l *lowerer) run() error {
 				return err
 			}
 		case stepFinishEntry:
-			if _, err := l.finishBody(); err != nil {
+			if _, _, err := l.finishBody(current.span); err != nil {
 				return err
 			}
 		case stepFinishDo:
-			child := l.currentBody().body
-			terminated, err := l.finishBody()
+			child, terminated, err := l.finishBody(current.span)
 			if err != nil {
 				return err
 			}
-			if err := l.appendRoot(child); err != nil {
+			if err := l.scopes.Child(child, terminated); err != nil {
 				return err
-			}
-			if terminated {
-				l.currentBody().terminated = true
 			}
 		case stepFinishLocal:
 			if err := l.finishLocal(current); err != nil {
@@ -222,34 +187,28 @@ func (l *lowerer) run() error {
 				return err
 			}
 		case stepAppendTarget:
-			l.targets = append(l.targets, l.result)
+			l.access.RememberTarget(l.result)
 		case stepFinishAssign:
-			term := l.builder.Assign(
+			term, err := l.access.Assign(
 				l.span(current.assign),
 				l.owner(),
-				l.targets[current.mark:],
+				current.mark,
 				l.result,
 			)
-			l.targets = l.targets[:current.mark]
-			if term == 0 {
-				return fmt.Errorf("programlower: could not lower assignment")
+			if err != nil {
+				return err
 			}
-			if err := l.appendRoot(term); err != nil {
+			if err := l.scopes.Append(term); err != nil {
 				return err
 			}
 		case stepFinishCallStmt:
-			if err := l.appendRoot(l.result); err != nil {
+			if err := l.scopes.Append(l.result); err != nil {
 				return err
 			}
 		case stepFinishReturn:
-			term := l.builder.Return(l.span(current.return_), l.owner(), l.result)
-			if term == 0 {
-				return fmt.Errorf("programlower: could not lower return")
-			}
-			if err := l.appendRoot(term); err != nil {
+			if err := l.scopes.Return(l.span(current.return_), l.result); err != nil {
 				return err
 			}
-			l.currentBody().terminated = true
 		case stepFinishIfCondition:
 			if err := l.beginIfThen(current.if_, l.result); err != nil {
 				return err
@@ -267,7 +226,7 @@ func (l *lowerer) run() error {
 				return err
 			}
 		case stepAppendValue:
-			l.values = append(l.values, l.result)
+			l.packs.Append(l.result)
 		case stepExpr:
 			if err := l.runExpr(current.expr); err != nil {
 				return err
@@ -278,7 +237,9 @@ func (l *lowerer) run() error {
 				return fmt.Errorf("programlower: could not create unary operation")
 			}
 		case stepFinishBinaryLeft:
-			l.values = append(l.values, l.result)
+			if mark := l.packs.Hold(l.result); mark != current.mark {
+				return fmt.Errorf("programlower: invalid left operand mark")
+			}
 			l.push(
 				step{
 					kind:    stepFinishBinary,
@@ -290,16 +251,16 @@ func (l *lowerer) run() error {
 				step{kind: stepExpr, expr: current.expr},
 			)
 		case stepFinishBinary:
-			if current.mark < 0 || current.mark >= len(l.values) {
+			left, err := l.packs.Take(current.mark)
+			if err != nil {
 				return fmt.Errorf("programlower: missing left operand")
 			}
-			left, right := l.values[current.mark], l.result
+			right := l.result
 			if current.select_ != 0 {
 				l.result = l.builder.Select(current.span, l.owner(), current.select_, left, right)
 			} else {
 				l.result = l.builder.Binary(current.span, l.owner(), current.binary, left, right)
 			}
-			l.values = l.values[:current.mark]
 			if l.result == 0 {
 				if current.select_ != 0 {
 					return fmt.Errorf("programlower: could not create logical selection")
@@ -323,33 +284,33 @@ func (l *lowerer) run() error {
 				return err
 			}
 		case stepFinishFunctionBody:
-			if current.mark < 0 || current.mark >= len(l.values) {
+			function, err := l.packs.Take(current.mark)
+			if err != nil {
 				return fmt.Errorf("programlower: missing Function result")
 			}
-			function := l.values[current.mark]
-			if _, err := l.finishBody(); err != nil {
+			if _, _, err := l.finishBody(current.span); err != nil {
 				return err
 			}
-			l.values = l.values[:current.mark]
 			l.result = function
 		case stepFinishCallCallee:
-			l.values = append(l.values, l.result)
+			if mark := l.packs.Hold(l.result); mark != current.mark {
+				return fmt.Errorf("programlower: invalid Call callee mark")
+			}
 			l.push(
 				step{kind: stepFinishCall, call: current.call, mark: current.mark},
 				step{
 					kind:  stepValues,
 					exprs: current.call.Args,
 					span:  l.span(current.call),
-					mark:  len(l.values),
+					mark:  l.packs.Mark(),
 				},
 			)
 		case stepFinishCall:
-			if current.mark < 0 || current.mark >= len(l.values) {
+			callee, err := l.packs.Take(current.mark)
+			if err != nil {
 				return fmt.Errorf("programlower: missing Call callee")
 			}
-			callee := l.values[current.mark]
 			l.result = l.builder.Call(l.span(current.call), l.owner(), callee, 0, l.result)
-			l.values = l.values[:current.mark]
 			if l.result == 0 {
 				return fmt.Errorf("programlower: could not create Call")
 			}
@@ -358,8 +319,7 @@ func (l *lowerer) run() error {
 				return err
 			}
 		case stepFinishTableKey:
-			l.tableKeys = append(l.tableKeys, l.result)
-			l.tableKinds = append(l.tableKinds, tableFieldKind(current.key))
+			l.access.KeyField(l.result, current.key)
 			l.push(
 				step{
 					kind:      stepFinishTableValue,
@@ -369,18 +329,17 @@ func (l *lowerer) run() error {
 				step{kind: stepExpr, expr: current.expr},
 			)
 		case stepFinishTableValue:
-			var fixed []program.Term
-			var tail program.Term
-			if current.allowOpen && openProducer(current.expr) {
-				tail = l.result
-			} else {
-				fixed = []program.Term{l.result}
+			values, err := l.packs.Field(
+				l.span(current.expr),
+				l.owner(),
+				current.expr,
+				l.result,
+				current.allowOpen,
+			)
+			if err != nil {
+				return err
 			}
-			values := l.builder.Values(l.span(current.expr), l.owner(), fixed, tail)
-			if values == 0 {
-				return fmt.Errorf("programlower: could not create table field Values")
-			}
-			l.tableValues = append(l.tableValues, values)
+			l.access.FieldValues(values)
 		default:
 			return fmt.Errorf("programlower: invalid lowering step %d", current.kind)
 		}
@@ -399,7 +358,7 @@ func (l *lowerer) runStmts(current step) error {
 	if !astNodePresent(stmt) {
 		return fmt.Errorf("programlower: absent statement %T", stmt)
 	}
-	if l.currentBody().terminated {
+	if !l.scopes.CanContinue() {
 		return fmt.Errorf("programlower: statement after terminal %T", stmt)
 	}
 	l.push(step{kind: stepStmts, stmts: current.stmts, index: current.index + 1})
@@ -423,14 +382,14 @@ func (l *lowerer) runStmts(current step) error {
 			}
 		}
 		l.push(
-			step{kind: stepFinishLocal, local: stmt, mark: len(l.targets)},
-			step{kind: stepValues, exprs: stmt.Exprs, span: l.span(stmt), mark: len(l.values)},
+			step{kind: stepFinishLocal, local: stmt, mark: l.scopes.CellMark()},
+			step{kind: stepValues, exprs: stmt.Exprs, span: l.span(stmt), mark: l.packs.Mark()},
 		)
 	case *ast.AssignStmt:
 		if len(stmt.Lhs) == 0 {
 			return fmt.Errorf("programlower: assignment has no targets")
 		}
-		l.push(step{kind: stepTargets, assign: stmt, mark: len(l.targets)})
+		l.push(step{kind: stepTargets, assign: stmt, mark: l.access.TargetMark()})
 	case *ast.FuncCallStmt:
 		call, ok := stmt.Expr.(*ast.FuncCallExpr)
 		if !ok || call == nil {
@@ -445,7 +404,7 @@ func (l *lowerer) runStmts(current step) error {
 	case *ast.ReturnStmt:
 		l.push(
 			step{kind: stepFinishReturn, return_: stmt},
-			step{kind: stepValues, exprs: stmt.Exprs, span: l.span(stmt), mark: len(l.values)},
+			step{kind: stepValues, exprs: stmt.Exprs, span: l.span(stmt), mark: l.packs.Mark()},
 		)
 	case *ast.IfStmt:
 		l.push(
@@ -454,13 +413,12 @@ func (l *lowerer) runStmts(current step) error {
 		)
 	case *ast.DoBlockStmt:
 		span := l.span(stmt)
-		body := l.builder.Body(span)
-		if body == 0 {
-			return fmt.Errorf("programlower: could not create do-block body")
+		_, err := l.scopes.EnterBlock(span)
+		if err != nil {
+			return fmt.Errorf("programlower: could not create do-block body: %w", err)
 		}
-		l.enterBody(body, l.currentBody().function, span)
 		l.push(
-			step{kind: stepFinishDo},
+			step{kind: stepFinishDo, span: span},
 			step{kind: stepStmts, stmts: stmt.Stmts},
 		)
 	default:
@@ -471,17 +429,17 @@ func (l *lowerer) runStmts(current step) error {
 
 func (l *lowerer) beginIfThen(stmt *ast.IfStmt, condition program.Term) error {
 	span := l.chunkSpan(stmt.Then)
-	body := l.builder.Body(span)
-	if body == 0 {
-		return fmt.Errorf("programlower: could not create Then Body")
+	body, err := l.scopes.EnterBlock(span)
+	if err != nil {
+		return fmt.Errorf("programlower: could not create Then Body: %w", err)
 	}
-	l.enterBody(body, l.currentBody().function, span)
 	l.push(
 		step{
 			kind:      stepFinishIfThen,
 			if_:       stmt,
 			condition: condition,
 			whenTrue:  body,
+			span:      span,
 		},
 		step{kind: stepStmts, stmts: stmt.Then},
 	)
@@ -492,17 +450,16 @@ func (l *lowerer) finishIfThen(current step) error {
 	if l.owner() != current.whenTrue {
 		return fmt.Errorf("programlower: mismatched Then Body")
 	}
-	terminated, err := l.finishBody()
+	_, terminated, err := l.finishBody(current.span)
 	if err != nil {
 		return err
 	}
 
 	span := l.chunkSpan(current.if_.Else)
-	body := l.builder.Body(span)
-	if body == 0 {
-		return fmt.Errorf("programlower: could not create Else Body")
+	body, err := l.scopes.EnterBlock(span)
+	if err != nil {
+		return fmt.Errorf("programlower: could not create Else Body: %w", err)
 	}
-	l.enterBody(body, l.currentBody().function, span)
 	l.push(
 		step{
 			kind:           stepFinishIfElse,
@@ -511,6 +468,7 @@ func (l *lowerer) finishIfThen(current step) error {
 			whenTrue:       current.whenTrue,
 			whenFalse:      body,
 			thenTerminated: terminated,
+			span:           span,
 		},
 		step{kind: stepStmts, stmts: current.if_.Else},
 	)
@@ -521,32 +479,23 @@ func (l *lowerer) finishIfElse(current step) error {
 	if l.owner() != current.whenFalse {
 		return fmt.Errorf("programlower: mismatched Else Body")
 	}
-	elseTerminated, err := l.finishBody()
+	_, elseTerminated, err := l.finishBody(current.span)
 	if err != nil {
-		return err
-	}
-
-	branch := l.builder.Branch(
-		l.span(current.if_),
-		l.owner(),
-		current.condition,
-		current.whenTrue,
-		current.whenFalse,
-	)
-	if branch == 0 {
-		return fmt.Errorf("programlower: could not create Branch")
-	}
-	if err := l.appendRoot(branch); err != nil {
 		return err
 	}
 
 	// HasElse marks a terminal else on the final parser-owned IfStmt. Earlier
 	// elseif members instead have the next IfStmt as their sole Else statement.
 	hasAuthoredFalseArm := current.if_.HasElse || len(current.if_.Else) != 0
-	if current.thenTerminated && elseTerminated && hasAuthoredFalseArm {
-		l.currentBody().terminated = true
-	}
-	return nil
+	return l.scopes.Branch(
+		l.span(current.if_),
+		current.condition,
+		current.whenTrue,
+		current.whenFalse,
+		current.thenTerminated,
+		elseTerminated,
+		hasAuthoredFalseArm,
+	)
 }
 
 func (l *lowerer) finishLocal(current step) error {
@@ -556,22 +505,14 @@ func (l *lowerer) finishLocal(current step) error {
 		if !ok || id == 0 {
 			return fmt.Errorf("programlower: binder has no symbol for local slot %d", i)
 		}
-		if _, exists := l.active[id]; exists {
+		if l.scopes.Has(id) {
 			return fmt.Errorf("programlower: duplicate binder symbol for local slot %d", i)
 		}
-		cell := l.builder.Cell(l.nameSpan(stmt, i), l.owner())
-		if cell == 0 {
+		if _, err := l.scopes.Declare(id, l.nameSpan(stmt, i)); err != nil {
 			return fmt.Errorf("programlower: could not create local cell %d", i)
 		}
-		l.install(id, cell)
-		l.targets = append(l.targets, cell)
 	}
-	term := l.builder.Bind(l.span(stmt), l.owner(), l.targets[current.mark:], l.result)
-	l.targets = l.targets[:current.mark]
-	if term == 0 {
-		return fmt.Errorf("programlower: could not lower local declaration")
-	}
-	return l.appendRoot(term)
+	return l.scopes.Bind(current.mark, l.span(stmt), l.result)
 }
 
 func (l *lowerer) runTargets(current step) error {
@@ -582,7 +523,7 @@ func (l *lowerer) runTargets(current step) error {
 				kind:  stepValues,
 				exprs: current.assign.Rhs,
 				span:  l.span(current.assign),
-				mark:  len(l.values),
+				mark:  l.packs.Mark(),
 			},
 		)
 		return nil
@@ -614,8 +555,8 @@ func (l *lowerer) runTarget(expr ast.Expr) error {
 		if !ok || id == 0 {
 			return fmt.Errorf("programlower: binder has no symbol for identifier target")
 		}
-		cell, ok := l.active[id]
-		if !ok || cell == 0 {
+		cell, ok := l.scopes.Resolve(id)
+		if !ok {
 			return fmt.Errorf("programlower: unsupported non-local identifier target")
 		}
 		l.result = cell
@@ -629,18 +570,9 @@ func (l *lowerer) runTarget(expr ast.Expr) error {
 
 func (l *lowerer) runValues(current step) error {
 	if current.index == len(current.exprs) {
-		fixed := l.values[current.mark:]
-		var tail program.Term
-		if len(current.exprs) != 0 && openProducer(current.exprs[len(current.exprs)-1]) {
-			tail = fixed[len(fixed)-1]
-			fixed = fixed[:len(fixed)-1]
-		}
-		l.result = l.builder.Values(current.span, l.owner(), fixed, tail)
-		l.values = l.values[:current.mark]
-		if l.result == 0 {
-			return fmt.Errorf("programlower: could not create Values")
-		}
-		return nil
+		var err error
+		l.result, err = l.packs.Pack(current.span, l.owner(), current.mark, current.exprs)
+		return err
 	}
 	if current.index < 0 || current.index > len(current.exprs) {
 		return fmt.Errorf("programlower: invalid value-list cursor")
@@ -672,6 +604,7 @@ func (l *lowerer) runExpr(expr ast.Expr) error {
 		return fmt.Errorf("programlower: absent expression %T", expr)
 	}
 	span := l.span(expr)
+	var err error
 	switch expr := expr.(type) {
 	case *ast.NilExpr:
 		l.result = l.builder.Nil(span, l.owner())
@@ -680,15 +613,7 @@ func (l *lowerer) runExpr(expr ast.Expr) error {
 	case *ast.FalseExpr:
 		l.result = l.builder.Bool(span, l.owner(), false)
 	case *ast.NumberExpr:
-		if integer, ok := numparse.ParseIntegerLiteral(expr.Value); ok {
-			l.result = l.builder.Integer(span, l.owner(), integer)
-			break
-		}
-		value, ok := numparse.ParseFloatLiteral(expr.Value)
-		if !ok {
-			return fmt.Errorf("programlower: invalid numeric literal %q", expr.Value)
-		}
-		l.result = l.builder.Float(span, l.owner(), value)
+		l.result, err = l.packs.Number(span, l.owner(), expr.Value)
 	case *ast.StringExpr:
 		l.result = l.builder.String(span, l.owner(), expr.Value)
 	case *ast.IdentExpr:
@@ -696,23 +621,15 @@ func (l *lowerer) runExpr(expr ast.Expr) error {
 		if !ok || id == 0 {
 			return fmt.Errorf("programlower: binder has no symbol for identifier occurrence")
 		}
-		cell, ok := l.active[id]
-		if !ok || cell == 0 {
+		cell, ok := l.scopes.Resolve(id)
+		if !ok {
 			return fmt.Errorf("programlower: unsupported non-local identifier binding")
 		}
 		l.result = l.builder.Read(span, l.owner(), cell)
 	case *ast.Comma3Expr:
-		fn := l.currentBody().function
-		if fn == nil {
-			return fmt.Errorf("programlower: vararg expression outside function")
-		}
-		id, ok := l.binding.VarargSymbol(fn)
-		if !ok {
-			return fmt.Errorf("programlower: vararg expression in non-vararg function")
-		}
-		cell, ok := l.active[id]
-		if !ok || cell == 0 {
-			return fmt.Errorf("programlower: missing vararg Cell")
+		cell, resolveErr := l.scopes.Vararg(l.binding)
+		if resolveErr != nil {
+			return resolveErr
 		}
 		l.result = l.builder.Vararg(span, l.owner(), cell)
 	case *ast.AttrGetExpr:
@@ -759,16 +676,20 @@ func (l *lowerer) runExpr(expr ast.Expr) error {
 	case *ast.FuncCallExpr:
 		return l.startCall(expr)
 	case *ast.TableExpr:
+		keyMark, valueMark, kindMark := l.access.TableMark()
 		l.push(step{
 			kind:      stepTableFields,
 			table:     expr,
-			mark:      len(l.tableKeys),
-			valueMark: len(l.tableValues),
-			kindMark:  len(l.tableKinds),
+			mark:      keyMark,
+			valueMark: valueMark,
+			kindMark:  kindMark,
 		})
 		return nil
 	default:
 		return l.unsupportedExpr(expr)
+	}
+	if err != nil {
+		return err
 	}
 	if l.result == 0 {
 		return fmt.Errorf("programlower: could not lower expression %T", expr)
@@ -797,7 +718,7 @@ func (l *lowerer) startBinary(
 			binary:  binary,
 			select_: select_,
 			expr:    right,
-			mark:    len(l.values),
+			mark:    l.packs.Mark(),
 		},
 		step{kind: stepExpr, expr: left},
 	)
@@ -809,7 +730,7 @@ func (l *lowerer) startLens(attr *ast.AttrGetExpr, read bool) {
 			kind:     stepFinishLensBase,
 			attr:     attr,
 			span:     l.span(attr),
-			mark:     len(l.values),
+			mark:     l.packs.Mark(),
 			readLens: read,
 		},
 		step{kind: stepExpr, expr: attr.Object},
@@ -817,7 +738,9 @@ func (l *lowerer) startLens(attr *ast.AttrGetExpr, read bool) {
 }
 
 func (l *lowerer) finishLensBase(current step) error {
-	l.values = append(l.values, l.result)
+	if mark := l.packs.Hold(l.result); mark != current.mark {
+		return fmt.Errorf("programlower: invalid Lens base mark")
+	}
 	if !astNodePresent(current.attr.Key) {
 		return fmt.Errorf("programlower: absent attribute key %T", current.attr.Key)
 	}
@@ -827,11 +750,28 @@ func (l *lowerer) finishLensBase(current step) error {
 		if !ok || name == nil {
 			return fmt.Errorf("programlower: dot attribute key is not a string literal")
 		}
-		key := l.builder.Name(l.span(name), l.owner(), name.Value)
-		if key == 0 {
-			return fmt.Errorf("programlower: could not create attribute Name")
+		base, err := l.packs.Take(current.mark)
+		if err != nil {
+			return fmt.Errorf("programlower: missing Lens base")
 		}
-		return l.finishLens(current, key)
+		lens, err := l.access.DotLens(
+			current.span,
+			l.owner(),
+			base,
+			l.span(name),
+			name.Value,
+		)
+		if err != nil {
+			return err
+		}
+		l.result = lens
+		if current.readLens {
+			l.result = l.builder.Read(current.span, l.owner(), lens)
+			if l.result == 0 {
+				return fmt.Errorf("programlower: could not read Lens")
+			}
+		}
+		return nil
 	case ast.AttrKeyIndex:
 		l.push(
 			step{
@@ -855,27 +795,19 @@ func (l *lowerer) finishLensBase(current step) error {
 }
 
 func (l *lowerer) finishLens(current step, key program.Term) error {
-	if current.mark < 0 || current.mark >= len(l.values) {
+	base, err := l.packs.Take(current.mark)
+	if err != nil {
 		return fmt.Errorf("programlower: missing Lens base")
 	}
-	base := l.values[current.mark]
-	var lens program.Term
-	switch current.attr.KeySyntax {
-	case ast.AttrKeyDot:
-		lens = l.builder.LensExact(current.span, l.owner(), base, key, program.FieldName)
-	case ast.AttrKeyIndex:
-		kind := tableFieldKind(current.attr.Key)
-		if kind == program.FieldExact {
-			lens = l.builder.LensExact(current.span, l.owner(), base, key, kind)
-		} else {
-			lens = l.builder.LensKey(current.span, l.owner(), base, key)
-		}
-	default:
-		return fmt.Errorf("programlower: unsupported attribute key syntax %d", current.attr.KeySyntax)
-	}
-	l.values = l.values[:current.mark]
-	if lens == 0 {
-		return fmt.Errorf("programlower: could not create Lens")
+	lens, err := l.access.IndexLens(
+		current.span,
+		l.owner(),
+		base,
+		key,
+		current.attr.Key,
+	)
+	if err != nil {
+		return err
 	}
 	l.result = lens
 	if current.readLens {
@@ -905,18 +837,16 @@ func (l *lowerer) startFunction(fn *ast.FunctionExpr) error {
 		return fmt.Errorf("programlower: unsupported typed function vararg")
 	}
 	span := l.span(fn)
-	body := l.builder.Body(span)
-	if body == 0 {
+	if _, err := l.scopes.EnterFunction(span, fn); err != nil {
 		return fmt.Errorf("programlower: could not create function Body")
 	}
-	l.enterBody(body, fn, span)
 	l.push(step{
 		kind:      stepFunctionParams,
 		fn:        fn,
 		slots:     slots,
 		captures:  l.captures[fn],
-		mark:      len(l.targets),
-		valueMark: len(l.capturePairs),
+		mark:      l.scopes.CellMark(),
+		valueMark: l.scopes.CaptureMark(),
 	})
 	return nil
 }
@@ -940,15 +870,12 @@ func (l *lowerer) runFunctionParams(current step) error {
 	if slot.Symbol == 0 {
 		return fmt.Errorf("programlower: binder has no symbol for function formal %q", slot.Name)
 	}
-	if _, exists := l.active[slot.Symbol]; exists {
+	if l.scopes.Has(slot.Symbol) {
 		return fmt.Errorf("programlower: duplicate binder symbol for function formal %q", slot.Name)
 	}
-	cell := l.builder.Cell(l.positionSpan(slot.Position), l.owner())
-	if cell == 0 {
+	if _, err := l.scopes.Declare(slot.Symbol, l.positionSpan(slot.Position)); err != nil {
 		return fmt.Errorf("programlower: could not create function formal Cell")
 	}
-	l.install(slot.Symbol, cell)
-	l.targets = append(l.targets, cell)
 	current.index++
 	l.push(current)
 	return nil
@@ -962,63 +889,48 @@ func (l *lowerer) runFunctionCaptures(current step) error {
 		return fmt.Errorf("programlower: invalid function-capture cursor")
 	}
 	capture := current.captures[current.index]
-	outer, exists := l.active[capture.Captured]
-	if !exists || outer == 0 {
+	outer, exists := l.scopes.Resolve(capture.Captured)
+	if !exists {
 		return fmt.Errorf(
 			"programlower: missing outer Cell for capture %q",
 			capture.CapturedName,
 		)
 	}
-	inner := l.builder.Cell(l.span(current.fn), l.owner())
-	if inner == 0 {
+	if _, err := l.scopes.Capture(capture.Captured, l.span(current.fn), outer); err != nil {
 		return fmt.Errorf("programlower: could not create capture Cell")
 	}
-	l.capturePairs = append(l.capturePairs, program.Capture{Inner: inner, Outer: outer})
-	l.install(capture.Captured, inner)
 	current.index++
 	l.push(current)
 	return nil
 }
 
 func (l *lowerer) beginFunctionBody(current step) error {
-	params := l.targets[current.mark:]
-	formals := params
-	var vararg program.Term
+	varargIndex := -1
 	for i, slot := range current.slots {
 		if !slot.Vararg {
 			continue
 		}
-		if vararg != 0 {
+		if varargIndex >= 0 {
 			return fmt.Errorf("programlower: function has multiple vararg Cells")
 		}
 		if i != len(current.slots)-1 {
 			return fmt.Errorf("programlower: function vararg Cell is not final")
 		}
-		vararg = params[i]
-		formals = params[:i]
+		varargIndex = i
 	}
-	if len(l.bodies) < 2 {
-		return fmt.Errorf("programlower: Function has no lexical owner")
-	}
-	owner := l.bodies[len(l.bodies)-2].body
-	function := l.builder.Function(
+	function, err := l.scopes.Function(
 		l.span(current.fn),
-		owner,
-		l.owner(),
-		formals,
-		vararg,
-		l.capturePairs[current.valueMark:],
+		current.mark,
+		current.valueMark,
+		varargIndex,
 	)
-	l.targets = l.targets[:current.mark]
-	l.capturePairs = l.capturePairs[:current.valueMark]
-	if function == 0 {
-		return fmt.Errorf("programlower: could not create Function")
+	if err != nil {
+		return err
 	}
 
-	functionMark := len(l.values)
-	l.values = append(l.values, function)
+	functionMark := l.packs.Hold(function)
 	l.push(
-		step{kind: stepFinishFunctionBody, mark: functionMark},
+		step{kind: stepFinishFunctionBody, mark: functionMark, span: l.span(current.fn)},
 		step{kind: stepStmts, stmts: current.fn.Stmts},
 	)
 	return nil
@@ -1037,7 +949,7 @@ func (l *lowerer) startCall(call *ast.FuncCallExpr) error {
 	if !astNodePresent(call.Func) {
 		return fmt.Errorf("programlower: plain call has no callee")
 	}
-	mark := len(l.values)
+	mark := l.packs.Mark()
 	l.push(
 		step{kind: stepFinishCallCallee, call: call, mark: mark},
 		step{kind: stepExpr, expr: call.Func},
@@ -1047,20 +959,15 @@ func (l *lowerer) startCall(call *ast.FuncCallExpr) error {
 
 func (l *lowerer) runTableFields(current step) error {
 	if current.index == len(current.table.Fields) {
-		keys := l.tableKeys[current.mark:]
-		values := l.tableValues[current.valueMark:]
-		kinds := l.tableKinds[current.kindMark:]
-		if len(keys) != len(values) || len(keys) != len(kinds) {
-			return fmt.Errorf("programlower: incomplete table fields")
-		}
-		l.result = l.builder.Table(l.span(current.table), l.owner(), keys, values, kinds)
-		l.tableKeys = l.tableKeys[:current.mark]
-		l.tableValues = l.tableValues[:current.valueMark]
-		l.tableKinds = l.tableKinds[:current.kindMark]
-		if l.result == 0 {
-			return fmt.Errorf("programlower: could not create table allocation")
-		}
-		return nil
+		var err error
+		l.result, err = l.access.Table(
+			l.span(current.table),
+			l.owner(),
+			current.mark,
+			current.valueMark,
+			current.kindMark,
+		)
+		return err
 	}
 	if current.index < 0 || current.index > len(current.table.Fields) {
 		return fmt.Errorf("programlower: invalid table-field cursor")
@@ -1076,16 +983,13 @@ func (l *lowerer) runTableFields(current step) error {
 
 	if field.Key == nil {
 		current.ordinal++
-		key := l.builder.List(
+		if err := l.access.ListField(
 			program.Span{File: l.sourceName},
 			l.owner(),
 			int64(current.ordinal),
-		)
-		if key == 0 {
+		); err != nil {
 			return fmt.Errorf("programlower: could not create table list key %d", index)
 		}
-		l.tableKeys = append(l.tableKeys, key)
-		l.tableKinds = append(l.tableKinds, program.FieldList)
 		next.ordinal = current.ordinal
 		l.push(
 			next,
@@ -1106,12 +1010,9 @@ func (l *lowerer) runTableFields(current step) error {
 				index,
 			)
 		}
-		key := l.builder.Name(l.span(name), l.owner(), name.Value)
-		if key == 0 {
+		if err := l.access.NameField(l.span(name), l.owner(), name.Value); err != nil {
 			return fmt.Errorf("programlower: could not create table field Name %d", index)
 		}
-		l.tableKeys = append(l.tableKeys, key)
-		l.tableKinds = append(l.tableKinds, program.FieldName)
 		l.push(
 			next,
 			step{kind: stepFinishTableValue, expr: field.Value},
@@ -1143,100 +1044,24 @@ func (l *lowerer) runTableFields(current step) error {
 	return nil
 }
 
-func tableFieldKind(expr ast.Expr) program.FieldKind {
-	switch expr.(type) {
-	case *ast.NilExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NumberExpr, *ast.StringExpr:
-		return program.FieldExact
-	default:
-		return program.FieldKey
-	}
-}
-
-func openProducer(expr ast.Expr) bool {
-	if !astNodePresent(expr) {
-		return false
-	}
-	switch expr := expr.(type) {
-	case *ast.FuncCallExpr:
-		return !expr.AdjustRet
-	case *ast.Comma3Expr:
-		return !expr.AdjustRet
-	default:
-		return false
-	}
-}
-
 func (l *lowerer) push(steps ...step) {
 	l.steps = append(l.steps, steps...)
 }
 
-func (l *lowerer) enterBody(body program.Term, fn *ast.FunctionExpr, span program.Span) {
-	l.bodies = append(l.bodies, bodyFrame{
-		body:     body,
-		function: fn,
-		span:     span,
-		undoMark: len(l.activeUndo),
-		rootMark: len(l.roots),
-	})
-}
-
-func (l *lowerer) finishBody() (bool, error) {
-	if len(l.bodies) == 0 {
-		return false, fmt.Errorf("programlower: no lexical body to finalize")
-	}
-	frame := l.bodies[len(l.bodies)-1]
-	if !frame.terminated {
-		values := l.builder.Values(frame.span, frame.body, nil, 0)
-		if values == 0 {
-			return false, fmt.Errorf("programlower: could not create normal Values")
+func (l *lowerer) finishBody(span program.Span) (program.Term, bool, error) {
+	var normalValues program.Term
+	if l.scopes.CanContinue() {
+		var err error
+		normalValues, err = l.packs.Empty(span, l.owner())
+		if err != nil {
+			return 0, false, err
 		}
-		normal := l.builder.Normal(frame.span, frame.body, values)
-		if normal == 0 {
-			return false, fmt.Errorf("programlower: could not create Normal outcome")
-		}
-		l.roots = append(l.roots, normal)
 	}
-	if !l.builder.SetBody(frame.body, l.roots[frame.rootMark:]...) {
-		return false, fmt.Errorf("programlower: could not finalize Body")
-	}
-	l.roots = l.roots[:frame.rootMark]
-	l.restore(frame.undoMark)
-	l.bodies = l.bodies[:len(l.bodies)-1]
-	return frame.terminated, nil
-}
-
-func (l *lowerer) currentBody() *bodyFrame {
-	return &l.bodies[len(l.bodies)-1]
+	return l.scopes.Finish(normalValues)
 }
 
 func (l *lowerer) owner() program.Term {
-	return l.currentBody().body
-}
-
-func (l *lowerer) appendRoot(term program.Term) error {
-	if term == 0 {
-		return fmt.Errorf("programlower: could not create Body root")
-	}
-	l.roots = append(l.roots, term)
-	return nil
-}
-
-func (l *lowerer) install(id symbol.ID, term program.Term) {
-	prior, existed := l.active[id]
-	l.activeUndo = append(l.activeUndo, activeUndo{id: id, prior: prior, existed: existed})
-	l.active[id] = term
-}
-
-func (l *lowerer) restore(mark int) {
-	for i := len(l.activeUndo) - 1; i >= mark; i-- {
-		undo := l.activeUndo[i]
-		if undo.existed {
-			l.active[undo.id] = undo.prior
-		} else {
-			delete(l.active, undo.id)
-		}
-	}
-	l.activeUndo = l.activeUndo[:mark]
+	return l.scopes.Owner()
 }
 
 func arithmeticOp(operator string) (program.BinaryOp, bool) {
