@@ -60,9 +60,21 @@ func (b *Builder) staticScopeBody(scope Term) Term {
 	switch {
 	case b.has(scope, tagCell) && b.lexicalCell(scope):
 		return b.cells[scope.index()-1].storage
+	case b.has(scope, tagTypeAlias):
+		body, _, ok := b.staticDeclarationScope(scope)
+		if ok {
+			return body
+		}
+	case b.has(scope, tagTypeParam):
+		param := b.typeParams[scope.index()-1]
+		body, _, ok := b.staticDeclarationScope(param.owner)
+		if ok {
+			return body
+		}
 	default:
 		return 0
 	}
+	return 0
 }
 
 // markStaticTerms computes the transient static containment membership. It
@@ -266,6 +278,13 @@ func (b *Builder) validateStaticTypeOf(claims [tagCount][]sealClaimSlot, static 
 				f.cursor = 0
 			}
 			return f, f.body != 0
+		case b.has(scope, tagTypeAlias):
+			body, gap, ok := b.staticDeclarationScope(scope)
+			return frontier{body: body, cursor: int(gap)}, ok
+		case b.has(scope, tagTypeParam):
+			param := b.typeParams[scope.index()-1]
+			body, gap, ok := b.staticDeclarationScope(param.owner)
+			return frontier{body: body, cursor: int(gap)}, ok
 		default:
 			return frontier{}, false
 		}

@@ -360,3 +360,23 @@ func TestTypeOfFirstLoopBodyRootSeesLoopCell(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTypeOfAliasGapUsesDeclarationFrontier(t *testing.T) {
+	b, entry := entryBuilder(t)
+	cell := b.Cell(program.Span{}, entry)
+	bind := b.Bind(program.Span{}, entry, []program.Term{cell}, b.Values(program.Span{}, entry, []program.Term{b.Nil(program.Span{}, entry)}, 0))
+	alias := b.DeclareTypeAlias(program.Span{}, entry, "T")
+	if alias == 0 || !b.SetTypeAliasGap(alias, 1) {
+		t.Fatal("alias declare/place")
+	}
+	target := b.TypeOf(program.Span{}, alias, b.Read(program.Span{}, entry, cell))
+	if target == 0 || !b.SetTypeAliasParams(alias, nil) || !b.FillTypeAlias(alias, target) {
+		t.Fatal("alias predeclare/fill")
+	}
+	if !b.SetBody(entry, bind) {
+		t.Fatal("SetBody")
+	}
+	if _, err := b.Seal(); err != nil {
+		t.Fatal(err)
+	}
+}

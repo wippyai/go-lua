@@ -137,6 +137,15 @@ const (
 	tagLoop
 	tagTable
 	tagKey
+	tagTypeAlias
+	tagTypeParam
+	tagTypePrimitive
+	tagTypeLiteral
+	tagTypeOptional
+	tagTypeUnion
+	tagTypeIntersection
+	tagTypeRef
+	tagTypeGeneric
 	// tagTypeOf is a static type relation. Its child expression still uses the
 	// ordinary expression families, but Seal proves static containment so it
 	// never enters executable control/effect evidence.
@@ -344,9 +353,21 @@ type Program struct {
 	globalCells    []Term
 	// implicitReads records only binder-proven unresolved global read
 	// occurrences. It is sparse occurrence evidence, never a Cell property.
-	implicitReads []Term
-	exactKeys     []exactKey
-	typeOfs       []typeOfRow
+	implicitReads     []Term
+	exactKeys         []exactKey
+	typeOfs           []typeOfRow
+	typeAliases       []typeAliasRow
+	typeParams        []typeParamRow
+	primitiveTypes    []primitiveTypeRow
+	literalTypes      []literalTypeRow
+	optionalTypes     []unaryTypeRow
+	unionTypes        []termsTypeRow
+	intersectionTypes []termsTypeRow
+	typeRefs          []typeRefRow
+	typeRefPathKeys   []Key
+	genericTypes      []genericTypeRow
+	typeParamTerms    []Term
+	staticTypeTerms   []Term
 }
 
 // Builder is the sole mutable construction path for Program.
@@ -407,10 +428,22 @@ type Builder struct {
 	globalLookup   map[Key]Term
 	// implicitReads is append-only through ImplicitRead, which
 	// mints the ordinary Read occurrence and its evidence together.
-	implicitReads []Term
-	exactKeys     []exactKey
-	exactLookup   map[exactKey]Key
-	typeOfs       []typeOfRow
+	implicitReads     []Term
+	exactKeys         []exactKey
+	exactLookup       map[exactKey]Key
+	typeOfs           []typeOfRow
+	typeAliases       []typeAliasRow
+	typeParams        []typeParamRow
+	primitiveTypes    []primitiveTypeRow
+	literalTypes      []literalTypeRow
+	optionalTypes     []unaryTypeRow
+	unionTypes        []termsTypeRow
+	intersectionTypes []termsTypeRow
+	typeRefs          []typeRefRow
+	typeRefPathKeys   []Key
+	genericTypes      []genericTypeRow
+	typeParamTerms    []Term
+	staticTypeTerms   []Term
 }
 
 // NewBuilder returns an empty Program builder.
@@ -1365,6 +1398,24 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.tables))
 	case tagKey:
 		return index <= uint32(len(b.keys))
+	case tagTypeAlias:
+		return index <= uint32(len(b.typeAliases))
+	case tagTypeParam:
+		return index <= uint32(len(b.typeParams))
+	case tagTypePrimitive:
+		return index <= uint32(len(b.primitiveTypes))
+	case tagTypeLiteral:
+		return index <= uint32(len(b.literalTypes))
+	case tagTypeOptional:
+		return index <= uint32(len(b.optionalTypes))
+	case tagTypeUnion:
+		return index <= uint32(len(b.unionTypes))
+	case tagTypeIntersection:
+		return index <= uint32(len(b.intersectionTypes))
+	case tagTypeRef:
+		return index <= uint32(len(b.typeRefs))
+	case tagTypeGeneric:
+		return index <= uint32(len(b.genericTypes))
 	case tagTypeOf:
 		return index <= uint32(len(b.typeOfs))
 	}
@@ -1479,6 +1530,12 @@ func (b *Builder) Seal() (*Program, error) {
 	)
 	if !ok {
 		return nil, errors.New("program: invalid Body context")
+	}
+	if !b.validateStaticDeclarations() {
+		return nil, errors.New("program: invalid static declaration")
+	}
+	if !b.validateStaticCore() {
+		return nil, errors.New("program: invalid static type core")
 	}
 	var staticTerms staticSet
 	if len(b.typeOfs) != 0 {
@@ -3139,57 +3196,69 @@ func (b *Builder) snapshot(
 	static staticSet,
 ) *Program {
 	p := &Program{
-		termCount:      b.termCount,
-		files:          append([]string(nil), b.files...),
-		valueTerms:     copyTerms(b.valueTerms),
-		bodyTerms:      copyTerms(b.bodyTerms),
-		bindTerms:      copyTerms(b.bindTerms),
-		assignTerms:    copyTerms(b.assignTerms),
-		formalTerms:    copyTerms(b.formalTerms),
-		nils:           copyTerms(b.nils),
-		bools:          append([]boolRow(nil), b.bools...),
-		integers:       append([]integerRow(nil), b.integers...),
-		floats:         append([]floatRow(nil), b.floats...),
-		strings:        append([]stringRow(nil), b.strings...),
-		values:         append([]valuesRow(nil), b.values...),
-		lensExact:      append([]exactLensRow(nil), b.lensExact...),
-		lensKeys:       append([]keyLensRow(nil), b.lensKeys...),
-		returns:        append([]returnRow(nil), b.returns...),
-		breaks:         append([]breakRow(nil), b.breaks...),
-		breakLoops:     copyTerms(breakLoops),
-		labelOwners:    copyTerms(b.labelOwners),
-		labelCursors:   append([]uint32(nil), b.labelCursors...),
-		gotoOwners:     copyTerms(b.gotoOwners),
-		gotoTargets:    copyTerms(b.gotoTargets),
-		directCalls:    copyTerms(directCalls),
-		entry:          b.entry,
-		bodies:         append([]bodyRow(nil), b.bodies...),
-		cells:          append([]cellRow(nil), b.cells...),
-		reads:          append([]readRow(nil), b.reads...),
-		varargs:        append([]varargRow(nil), b.varargs...),
-		unaries:        append([]unaryRow(nil), b.unaries...),
-		binaries:       append([]binaryRow(nil), b.binaries...),
-		selects:        append([]selectRow(nil), b.selects...),
-		binds:          append([]bindRow(nil), b.binds...),
-		assigns:        append([]assignRow(nil), b.assigns...),
-		functions:      append([]functionRow(nil), b.functions...),
-		captures:       append([]captureRow(nil), b.captures...),
-		calls:          append([]callRow(nil), b.calls...),
-		branches:       append([]branchRow(nil), b.branches...),
-		loopOwners:     copyTerms(b.loopOwners),
-		loopBodies:     copyTerms(b.loopBodies),
-		loopControls:   copyTerms(b.loopControls),
-		loopKinds:      append([]LoopKind(nil), b.loopKinds...),
-		loopCellRanges: append([]termRange(nil), b.loopCellRanges...),
-		loopCells:      copyTerms(b.loopCells),
-		tables:         append([]tableRow(nil), b.tables...),
-		tableFields:    append([]tableFieldRow(nil), b.tableFields...),
-		keys:           append([]keyRow(nil), b.keys...),
-		globalKeys:     append([]Key(nil), b.globalKeys...),
-		globalCells:    copyTerms(b.globalCells),
-		implicitReads:  copyTerms(b.implicitReads),
-		exactKeys:      append([]exactKey(nil), b.exactKeys...),
-		typeOfs:        append([]typeOfRow(nil), b.typeOfs...),
+		termCount:         b.termCount,
+		files:             append([]string(nil), b.files...),
+		valueTerms:        copyTerms(b.valueTerms),
+		bodyTerms:         copyTerms(b.bodyTerms),
+		bindTerms:         copyTerms(b.bindTerms),
+		assignTerms:       copyTerms(b.assignTerms),
+		formalTerms:       copyTerms(b.formalTerms),
+		nils:              copyTerms(b.nils),
+		bools:             append([]boolRow(nil), b.bools...),
+		integers:          append([]integerRow(nil), b.integers...),
+		floats:            append([]floatRow(nil), b.floats...),
+		strings:           append([]stringRow(nil), b.strings...),
+		values:            append([]valuesRow(nil), b.values...),
+		lensExact:         append([]exactLensRow(nil), b.lensExact...),
+		lensKeys:          append([]keyLensRow(nil), b.lensKeys...),
+		returns:           append([]returnRow(nil), b.returns...),
+		breaks:            append([]breakRow(nil), b.breaks...),
+		breakLoops:        copyTerms(breakLoops),
+		labelOwners:       copyTerms(b.labelOwners),
+		labelCursors:      append([]uint32(nil), b.labelCursors...),
+		gotoOwners:        copyTerms(b.gotoOwners),
+		gotoTargets:       copyTerms(b.gotoTargets),
+		directCalls:       copyTerms(directCalls),
+		entry:             b.entry,
+		bodies:            append([]bodyRow(nil), b.bodies...),
+		cells:             append([]cellRow(nil), b.cells...),
+		reads:             append([]readRow(nil), b.reads...),
+		varargs:           append([]varargRow(nil), b.varargs...),
+		unaries:           append([]unaryRow(nil), b.unaries...),
+		binaries:          append([]binaryRow(nil), b.binaries...),
+		selects:           append([]selectRow(nil), b.selects...),
+		binds:             append([]bindRow(nil), b.binds...),
+		assigns:           append([]assignRow(nil), b.assigns...),
+		functions:         append([]functionRow(nil), b.functions...),
+		captures:          append([]captureRow(nil), b.captures...),
+		calls:             append([]callRow(nil), b.calls...),
+		branches:          append([]branchRow(nil), b.branches...),
+		loopOwners:        copyTerms(b.loopOwners),
+		loopBodies:        copyTerms(b.loopBodies),
+		loopControls:      copyTerms(b.loopControls),
+		loopKinds:         append([]LoopKind(nil), b.loopKinds...),
+		loopCellRanges:    append([]termRange(nil), b.loopCellRanges...),
+		loopCells:         copyTerms(b.loopCells),
+		tables:            append([]tableRow(nil), b.tables...),
+		tableFields:       append([]tableFieldRow(nil), b.tableFields...),
+		keys:              append([]keyRow(nil), b.keys...),
+		globalKeys:        append([]Key(nil), b.globalKeys...),
+		globalCells:       copyTerms(b.globalCells),
+		implicitReads:     copyTerms(b.implicitReads),
+		exactKeys:         append([]exactKey(nil), b.exactKeys...),
+		typeOfs:           append([]typeOfRow(nil), b.typeOfs...),
+		typeAliases:       append([]typeAliasRow(nil), b.typeAliases...),
+		typeParams:        append([]typeParamRow(nil), b.typeParams...),
+		primitiveTypes:    append([]primitiveTypeRow(nil), b.primitiveTypes...),
+		literalTypes:      append([]literalTypeRow(nil), b.literalTypes...),
+		optionalTypes:     append([]unaryTypeRow(nil), b.optionalTypes...),
+		unionTypes:        append([]termsTypeRow(nil), b.unionTypes...),
+		intersectionTypes: append([]termsTypeRow(nil), b.intersectionTypes...),
+		typeRefs:          append([]typeRefRow(nil), b.typeRefs...),
+		typeRefPathKeys:   append([]Key(nil), b.typeRefPathKeys...),
+		genericTypes:      append([]genericTypeRow(nil), b.genericTypes...),
+		typeParamTerms:    copyTerms(b.typeParamTerms),
+		staticTypeTerms:   copyTerms(b.staticTypeTerms),
 	}
 	for tag := uint8(1); tag < tagCount; tag++ {
 		p.mu[tag] = copyTerms(mu[tag])
@@ -3262,6 +3331,24 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.tables))
 	case tagKey:
 		return index <= uint32(len(p.keys))
+	case tagTypeAlias:
+		return index <= uint32(len(p.typeAliases))
+	case tagTypeParam:
+		return index <= uint32(len(p.typeParams))
+	case tagTypePrimitive:
+		return index <= uint32(len(p.primitiveTypes))
+	case tagTypeLiteral:
+		return index <= uint32(len(p.literalTypes))
+	case tagTypeOptional:
+		return index <= uint32(len(p.optionalTypes))
+	case tagTypeUnion:
+		return index <= uint32(len(p.unionTypes))
+	case tagTypeIntersection:
+		return index <= uint32(len(p.intersectionTypes))
+	case tagTypeRef:
+		return index <= uint32(len(p.typeRefs))
+	case tagTypeGeneric:
+		return index <= uint32(len(p.genericTypes))
 	case tagTypeOf:
 		return index <= uint32(len(p.typeOfs))
 	}
