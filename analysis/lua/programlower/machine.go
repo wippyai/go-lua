@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/control"
 	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/eval"
 	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/lexical"
+	staticlower "github.com/wippyai/go-lua/analysis/lua/programlower/internal/static"
 	"github.com/wippyai/go-lua/analysis/lua/programlower/internal/store"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/program"
@@ -39,6 +40,7 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 		controls:   control.New(builder),
 		packs:      eval.New(builder),
 		access:     store.New(builder),
+		static:     staticlower.New(builder, binding, sourceName),
 	}
 
 	span := l.chunkSpan(stmts)
@@ -46,7 +48,7 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 	if err != nil {
 		return nil, err
 	}
-	if err := l.predeclareLabels(stmts); err != nil {
+	if err := l.predeclare(stmts); err != nil {
 		return nil, err
 	}
 	l.push(
@@ -57,7 +59,7 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 		return nil, err
 	}
 	if !l.scopes.Clean() || !l.controls.Clean() ||
-		!l.packs.Clean() || !l.access.Clean() {
+		!l.packs.Clean() || !l.access.Clean() || !l.static.Clean() || l.staticOperand {
 		return nil, fmt.Errorf("programlower: unfinished assembly scratch")
 	}
 	sealed, err := builder.Seal()
@@ -80,11 +82,13 @@ type lowerer struct {
 	builder    *program.Builder
 	captures   captureIndex
 
-	scopes   lexical.Bodies
-	controls control.Writer
-	packs    eval.Values
-	access   store.Access
-	steps    []step
+	scopes        lexical.Bodies
+	controls      control.Writer
+	packs         eval.Values
+	access        store.Access
+	static        *staticlower.Writer
+	steps         []step
+	staticOperand bool
 
 	result program.Term
 }
@@ -128,6 +132,18 @@ const (
 	stepTableFields
 	stepFinishTableKey
 	stepFinishTableValue
+	stepTypeAliasConstraints
+	stepFinishTypeParam
+	stepFinishTypeAlias
+	stepStaticType
+	stepStaticTypeList
+	stepAppendStaticType
+	stepFinishStaticOptional
+	stepFinishStaticUnion
+	stepFinishStaticIntersection
+	stepFinishStaticGenericBase
+	stepFinishStaticGeneric
+	stepFinishStaticTypeOf
 )
 
 // step is a closed, phase-private instruction. Its AST fields keep the
@@ -140,15 +156,20 @@ type step struct {
 	expr  ast.Expr
 	node  ast.PositionHolder
 
-	local   *ast.LocalAssignStmt
-	assign  *ast.AssignStmt
-	funcdef *ast.FuncDefStmt
-	return_ *ast.ReturnStmt
-	if_     *ast.IfStmt
-	call    *ast.FuncCallExpr
-	attr    *ast.AttrGetExpr
-	fn      *ast.FunctionExpr
-	table   *ast.TableExpr
+	local      *ast.LocalAssignStmt
+	assign     *ast.AssignStmt
+	funcdef    *ast.FuncDefStmt
+	return_    *ast.ReturnStmt
+	if_        *ast.IfStmt
+	call       *ast.FuncCallExpr
+	attr       *ast.AttrGetExpr
+	fn         *ast.FunctionExpr
+	table      *ast.TableExpr
+	typedef    *ast.TypeDefStmt
+	typeExpr   ast.TypeExpr
+	types      []ast.TypeExpr
+	typeParam  bind.TypeDecl
+	typeParams []bind.TypeDecl
 
 	slots    []bind.ParamSlot
 	captures []bind.Capture
@@ -161,11 +182,14 @@ type step struct {
 	binary    program.BinaryOp
 	select_   program.SelectOp
 
-	index     int
-	ordinal   int
-	mark      int
-	valueMark int
-	kindMark  int
+	index      int
+	ordinal    int
+	mark       int
+	valueMark  int
+	kindMark   int
+	staticMark int
+	typeHost   program.Term
+	typeBase   program.Term
 
 	readLens  bool
 	allowOpen bool
@@ -428,6 +452,96 @@ func (l *lowerer) run() error {
 				return err
 			}
 			l.access.FieldValues(values)
+		case stepTypeAliasConstraints:
+			if err := l.runTypeAliasConstraints(current); err != nil {
+				return err
+			}
+		case stepFinishTypeParam:
+			if err := l.static.FinishParam(current.typeParam, l.result); err != nil {
+				return err
+			}
+		case stepFinishTypeAlias:
+			if err := l.static.FinishAlias(current.typedef, l.result); err != nil {
+				return err
+			}
+		case stepStaticType:
+			if err := l.runStaticType(current); err != nil {
+				return err
+			}
+		case stepStaticTypeList:
+			if err := l.runStaticTypeList(current); err != nil {
+				return err
+			}
+		case stepAppendStaticType:
+			if err := l.static.Append(l.result); err != nil {
+				return err
+			}
+		case stepFinishStaticOptional:
+			optional, ok := current.node.(*ast.OptionalTypeExpr)
+			if !ok || optional == nil {
+				return fmt.Errorf("programlower: invalid optional type continuation")
+			}
+			term, err := l.static.Optional(optional, l.result)
+			if err != nil {
+				return err
+			}
+			l.result = term
+		case stepFinishStaticUnion:
+			union, ok := current.node.(*ast.UnionTypeExpr)
+			if !ok || union == nil {
+				return fmt.Errorf("programlower: invalid union type continuation")
+			}
+			if err := l.finishStaticUnion(union, current.staticMark); err != nil {
+				return err
+			}
+		case stepFinishStaticIntersection:
+			intersection, ok := current.node.(*ast.IntersectionTypeExpr)
+			if !ok || intersection == nil {
+				return fmt.Errorf("programlower: invalid intersection type continuation")
+			}
+			if err := l.finishStaticIntersection(intersection, current.staticMark); err != nil {
+				return err
+			}
+		case stepFinishStaticGenericBase:
+			generic, ok := current.node.(*ast.GenericTypeExpr)
+			if !ok || generic == nil {
+				return fmt.Errorf("programlower: invalid generic base continuation")
+			}
+			if err := l.static.Append(l.result); err != nil {
+				return err
+			}
+			base, err := l.static.Take(current.staticMark)
+			if err != nil {
+				return err
+			}
+			mark := l.static.Mark()
+			l.push(
+				step{kind: stepFinishStaticGeneric, node: generic, typeBase: base, staticMark: mark},
+				step{kind: stepStaticTypeList, types: generic.Args, typeHost: current.typeHost, staticMark: mark},
+			)
+		case stepFinishStaticGeneric:
+			generic, ok := current.node.(*ast.GenericTypeExpr)
+			if !ok || generic == nil {
+				return fmt.Errorf("programlower: invalid generic type continuation")
+			}
+			if err := l.finishStaticGeneric(generic, current.staticMark, current.typeBase); err != nil {
+				return err
+			}
+		case stepFinishStaticTypeOf:
+			typeOf, ok := current.node.(*ast.TypeOfExpr)
+			if !ok || typeOf == nil {
+				return fmt.Errorf("programlower: invalid typeof continuation")
+			}
+			if !l.staticOperand {
+				return fmt.Errorf("programlower: missing static operand mode")
+			}
+			operand := l.result
+			l.staticOperand = false
+			term, err := l.static.TypeOf(typeOf, current.typeHost, operand)
+			if err != nil {
+				return err
+			}
+			l.result = term
 		default:
 			return fmt.Errorf("programlower: invalid lowering step %d", current.kind)
 		}
@@ -507,6 +621,8 @@ func (l *lowerer) runStmts(current step) error {
 		return l.startNumberFor(stmt)
 	case *ast.GenericForStmt:
 		return l.startGenericFor(stmt)
+	case *ast.TypeDefStmt:
+		return l.startTypeAlias(stmt)
 	case *ast.BreakStmt:
 		term, err := l.controls.Break(l.span(stmt), l.owner())
 		if err != nil {
@@ -531,7 +647,7 @@ func (l *lowerer) runStmts(current step) error {
 		if err != nil {
 			return fmt.Errorf("programlower: could not create do-block body: %w", err)
 		}
-		if err := l.predeclareLabels(stmt.Stmts); err != nil {
+		if err := l.predeclare(stmt.Stmts); err != nil {
 			return err
 		}
 		l.push(
@@ -544,13 +660,175 @@ func (l *lowerer) runStmts(current step) error {
 	return nil
 }
 
+// startTypeAlias places the predeclared alias at its exact non-executable
+// cursor, then lowers constraints and target through the same iterative step
+// machine used for source expressions. It intentionally appends no Body root.
+func (l *lowerer) startTypeAlias(def *ast.TypeDefStmt) error {
+	if def == nil {
+		return fmt.Errorf("programlower: nil type alias")
+	}
+	if err := l.static.Place(def, l.scopes.Cursor()); err != nil {
+		return err
+	}
+	alias, ok := l.static.Alias(def)
+	if !ok {
+		return fmt.Errorf("programlower: type alias was not predeclared")
+	}
+	l.push(step{
+		kind:       stepTypeAliasConstraints,
+		typedef:    def,
+		typeHost:   alias,
+		typeParams: l.binding.TypeDefParams(def),
+	})
+	return nil
+}
+
+func (l *lowerer) runTypeAliasConstraints(current step) error {
+	if current.index == len(current.typeParams) {
+		l.push(
+			step{kind: stepFinishTypeAlias, typedef: current.typedef},
+			step{kind: stepStaticType, typeExpr: current.typedef.Type, typeHost: current.typeHost},
+		)
+		return nil
+	}
+	if current.index < 0 || current.index > len(current.typeParams) {
+		return fmt.Errorf("programlower: invalid type parameter cursor")
+	}
+	param := current.typeParams[current.index]
+	if param.ID == 0 || param.Kind != bind.TypeDeclParam {
+		return fmt.Errorf("programlower: invalid type parameter binding")
+	}
+	current.index++
+	if param.Constraint == nil {
+		if err := l.static.FinishParam(param, 0); err != nil {
+			return err
+		}
+		l.push(current)
+		return nil
+	}
+	host, ok := l.static.Host(param)
+	if !ok {
+		return fmt.Errorf("programlower: type parameter was not predeclared")
+	}
+	l.push(
+		current,
+		step{kind: stepFinishTypeParam, typeParam: param},
+		step{kind: stepStaticType, typeExpr: param.Constraint, typeHost: host},
+	)
+	return nil
+}
+
+func (l *lowerer) runStaticType(current step) error {
+	if current.typeExpr == nil {
+		return fmt.Errorf("programlower: absent static type expression")
+	}
+	switch expr := current.typeExpr.(type) {
+	case *ast.OptionalTypeExpr:
+		l.push(
+			step{kind: stepFinishStaticOptional, node: expr},
+			step{kind: stepStaticType, typeExpr: expr.Inner, typeHost: current.typeHost},
+		)
+		return nil
+	case *ast.UnionTypeExpr:
+		mark := l.static.Mark()
+		l.push(
+			step{kind: stepFinishStaticUnion, node: expr, staticMark: mark},
+			step{kind: stepStaticTypeList, types: expr.Types, typeHost: current.typeHost, staticMark: mark},
+		)
+		return nil
+	case *ast.IntersectionTypeExpr:
+		mark := l.static.Mark()
+		l.push(
+			step{kind: stepFinishStaticIntersection, node: expr, staticMark: mark},
+			step{kind: stepStaticTypeList, types: expr.Types, typeHost: current.typeHost, staticMark: mark},
+		)
+		return nil
+	case *ast.GenericTypeExpr:
+		if expr.Base == nil {
+			return fmt.Errorf("programlower: generic type has no base")
+		}
+		l.push(
+			step{kind: stepFinishStaticGenericBase, node: expr, typeHost: current.typeHost, staticMark: l.static.Mark()},
+			step{kind: stepStaticType, typeExpr: expr.Base, typeHost: current.typeHost},
+		)
+		return nil
+	case *ast.TypeOfExpr:
+		if l.staticOperand {
+			return fmt.Errorf("programlower: nested static operand mode")
+		}
+		l.staticOperand = true
+		l.push(
+			step{kind: stepFinishStaticTypeOf, node: expr, typeHost: current.typeHost},
+			step{kind: stepExpr, expr: expr.Expr},
+		)
+		return nil
+	default:
+		term, handled, err := l.static.Leaf(current.typeExpr)
+		if err != nil {
+			return err
+		}
+		if !handled {
+			return fmt.Errorf("programlower: unsupported type expression %T", current.typeExpr)
+		}
+		l.result = term
+		return nil
+	}
+}
+
+func (l *lowerer) runStaticTypeList(current step) error {
+	if current.index == len(current.types) {
+		return nil
+	}
+	if current.index < 0 || current.index > len(current.types) {
+		return fmt.Errorf("programlower: invalid static type-list cursor")
+	}
+	expr := current.types[current.index]
+	if expr == nil {
+		return fmt.Errorf("programlower: absent static type expression at index %d", current.index)
+	}
+	current.index++
+	l.push(
+		current,
+		step{kind: stepAppendStaticType},
+		step{kind: stepStaticType, typeExpr: expr, typeHost: current.typeHost},
+	)
+	return nil
+}
+
+func (l *lowerer) finishStaticUnion(expr *ast.UnionTypeExpr, mark int) error {
+	term, err := l.static.Union(expr, mark, len(expr.Types))
+	if err != nil {
+		return err
+	}
+	l.result = term
+	return nil
+}
+
+func (l *lowerer) finishStaticIntersection(expr *ast.IntersectionTypeExpr, mark int) error {
+	term, err := l.static.Intersection(expr, mark, len(expr.Types))
+	if err != nil {
+		return err
+	}
+	l.result = term
+	return nil
+}
+
+func (l *lowerer) finishStaticGeneric(expr *ast.GenericTypeExpr, mark int, base program.Term) error {
+	term, err := l.static.Generic(expr, base, mark, len(expr.Args))
+	if err != nil {
+		return err
+	}
+	l.result = term
+	return nil
+}
+
 func (l *lowerer) beginIfThen(stmt *ast.IfStmt, condition program.Term) error {
 	span := l.chunkSpan(stmt.Then)
 	body, err := l.scopes.EnterBlock(span)
 	if err != nil {
 		return fmt.Errorf("programlower: could not create Then Body: %w", err)
 	}
-	if err := l.predeclareLabels(stmt.Then); err != nil {
+	if err := l.predeclare(stmt.Then); err != nil {
 		return err
 	}
 	l.push(
@@ -580,7 +858,7 @@ func (l *lowerer) finishIfThen(current step) error {
 	if err != nil {
 		return fmt.Errorf("programlower: could not create Else Body: %w", err)
 	}
-	if err := l.predeclareLabels(current.if_.Else); err != nil {
+	if err := l.predeclare(current.if_.Else); err != nil {
 		return err
 	}
 	l.push(
@@ -625,7 +903,7 @@ func (l *lowerer) beginWhileBody(stmt *ast.WhileStmt, control program.Term) erro
 	if err != nil {
 		return fmt.Errorf("programlower: could not create while Body: %w", err)
 	}
-	if err := l.predeclareLabels(stmt.Stmts); err != nil {
+	if err := l.predeclare(stmt.Stmts); err != nil {
 		return err
 	}
 	l.push(
@@ -648,7 +926,7 @@ func (l *lowerer) startRepeat(stmt *ast.RepeatStmt) error {
 	if err != nil {
 		return fmt.Errorf("programlower: could not create repeat Body: %w", err)
 	}
-	if err := l.predeclareLabels(stmt.Stmts); err != nil {
+	if err := l.predeclare(stmt.Stmts); err != nil {
 		return err
 	}
 	l.push(
@@ -738,7 +1016,7 @@ func (l *lowerer) beginNumberForBody(
 	if err != nil {
 		return fmt.Errorf("programlower: could not create numeric for Body: %w", err)
 	}
-	if err := l.predeclareLabels(stmt.Stmts); err != nil {
+	if err := l.predeclare(stmt.Stmts); err != nil {
 		return err
 	}
 	cellMark := l.controls.CellMark()
@@ -795,7 +1073,7 @@ func (l *lowerer) beginGenericForBody(
 	if err != nil {
 		return fmt.Errorf("programlower: could not create generic for Body: %w", err)
 	}
-	if err := l.predeclareLabels(stmt.Stmts); err != nil {
+	if err := l.predeclare(stmt.Stmts); err != nil {
 		return err
 	}
 	cellMark := l.controls.CellMark()
@@ -964,11 +1242,15 @@ func (l *lowerer) resolveIdent(expr *ast.IdentExpr, read bool) error {
 		l.result = cell
 		return nil
 	}
+	implicit := l.binding.IsImplicitGlobalUse(expr)
+	if l.staticOperand {
+		implicit = false
+	}
 	l.result, err = l.access.ReadGlobal(
 		l.span(expr),
 		l.owner(),
 		cell,
-		l.binding.IsImplicitGlobalUse(expr),
+		implicit,
 	)
 	return err
 }
@@ -1298,7 +1580,7 @@ func (l *lowerer) startFunctionBody(fn *ast.FunctionExpr) error {
 	if _, err := l.scopes.EnterFunction(span, fn); err != nil {
 		return fmt.Errorf("programlower: could not create function Body")
 	}
-	if err := l.predeclareLabels(fn.Stmts); err != nil {
+	if err := l.predeclare(fn.Stmts); err != nil {
 		return err
 	}
 	l.push(step{
@@ -1511,6 +1793,13 @@ func (l *lowerer) push(steps ...step) {
 
 func (l *lowerer) finishBody() (program.Term, error) {
 	return l.scopes.Finish()
+}
+
+func (l *lowerer) predeclare(stmts []ast.Stmt) error {
+	if err := l.predeclareLabels(stmts); err != nil {
+		return err
+	}
+	return l.static.Predeclare(l.owner(), stmts)
 }
 
 func (l *lowerer) predeclareLabels(stmts []ast.Stmt) error {
