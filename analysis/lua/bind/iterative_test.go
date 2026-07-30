@@ -279,6 +279,36 @@ func TestIterativeBinderTypeOfHasIdentityOnly(t *testing.T) {
 	}
 }
 
+func TestIterativeBinderDeepTypeQueryFunctionSignatures(t *testing.T) {
+	const depth = 4096
+	leafUse := &ast.IdentExpr{Value: "p"}
+	leaf := &ast.FunctionExpr{ParList: &ast.ParList{
+		Names: []string{"p"},
+		Types: []ast.TypeExpr{&ast.TypeOfExpr{Expr: leafUse}},
+	}}
+	var expr ast.Expr = leaf
+	for range depth {
+		expr = &ast.FunctionExpr{ParList: &ast.ParList{
+			Names: []string{"p"},
+			Types: []ast.TypeExpr{&ast.TypeOfExpr{Expr: expr}},
+		}}
+	}
+	result := BindChunk([]ast.Stmt{&ast.TypeDefStmt{
+		Name: "Snapshot",
+		Type: &ast.TypeOfExpr{Expr: expr},
+	}}, Options{})
+	slots := result.ParamSlots(leaf)
+	if len(slots) != 1 || slots[0].Symbol == 0 {
+		t.Fatalf("leaf ParamSlots = %#v, want one static formal", slots)
+	}
+	if got := mustSymbol(t, result, leafUse); got != slots[0].Symbol {
+		t.Fatalf("nested typeof(p) = %d, want leaf formal %d", got, slots[0].Symbol)
+	}
+	if len(result.Functions()) != 0 {
+		t.Fatalf("static signatures registered runtime Functions = %d", len(result.Functions()))
+	}
+}
+
 func TestIterativeBinderCastVisitsAnnotationOnce(t *testing.T) {
 	ref := &ast.TypeRefExpr{Path: []string{"T"}}
 	cast := &ast.CastExpr{

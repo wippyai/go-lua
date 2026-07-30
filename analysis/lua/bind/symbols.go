@@ -254,6 +254,9 @@ func (r *Result) SymbolTypeAnnotation(id symbol.ID) (ast.TypeExpr, bool) {
 	if r == nil || id == 0 {
 		return nil, false
 	}
+	if expr, ok := r.symbolAnnotations[id]; ok && expr != nil {
+		return expr, true
+	}
 	if fn, ok := r.DeclaringFunction(id); ok {
 		for _, slot := range r.ParamSlots(fn) {
 			if slot.Symbol == id && slot.Type != nil {

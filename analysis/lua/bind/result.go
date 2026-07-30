@@ -50,9 +50,12 @@ type Result struct {
 	chunkGlobalReads    []symbol.ID
 	chunkGlobalSeen     map[symbol.ID]struct{}
 
-	paramSymbols      map[*ast.FunctionExpr][]symbol.ID
-	varargSymbols     map[*ast.FunctionExpr]symbol.ID
-	paramSlots        map[*ast.FunctionExpr][]ParamSlot
+	paramSymbols  map[*ast.FunctionExpr][]symbol.ID
+	varargSymbols map[*ast.FunctionExpr]symbol.ID
+	paramSlots    map[*ast.FunctionExpr][]ParamSlot
+	// symbolAnnotations retains exact declaration syntax when a symbol has no
+	// runtime declaring-function relation, such as a source-only signature.
+	symbolAnnotations map[symbol.ID]ast.TypeExpr
 	localSymbols      map[*ast.LocalAssignStmt][]symbol.ID
 	numForSymbols     map[*ast.NumberForStmt]symbol.ID
 	genericForSymbols map[*ast.GenericForStmt][]symbol.ID
@@ -106,6 +109,7 @@ func newResult(opts Options) *Result {
 		paramSymbols:          make(map[*ast.FunctionExpr][]symbol.ID),
 		varargSymbols:         make(map[*ast.FunctionExpr]symbol.ID),
 		paramSlots:            make(map[*ast.FunctionExpr][]ParamSlot),
+		symbolAnnotations:     make(map[symbol.ID]ast.TypeExpr),
 		localSymbols:          make(map[*ast.LocalAssignStmt][]symbol.ID),
 		numForSymbols:         make(map[*ast.NumberForStmt]symbol.ID),
 		genericForSymbols:     make(map[*ast.GenericForStmt][]symbol.ID),

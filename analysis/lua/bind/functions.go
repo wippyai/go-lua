@@ -5,7 +5,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// ParamSlot describes one runtime parameter slot for a function.
+// ParamSlot describes one parameter slot for a function. Source-only function
+// literals reached through static type queries have slots but no runtime body.
 type ParamSlot struct {
 	Symbol       symbol.ID
 	Name         string
@@ -461,7 +462,9 @@ func (r *Result) VarargSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
 	return id, ok && id != 0
 }
 
-// ParamSlots returns the bind-owned runtime parameter layout for fn.
+// ParamSlots returns the bind-owned parameter layout for fn. Source-only
+// function literals reached through static type queries have slots but no
+// FunctionOrigin or runtime body evidence.
 func (r *Result) ParamSlots(fn *ast.FunctionExpr) []ParamSlot {
 	if r == nil || fn == nil {
 		return nil

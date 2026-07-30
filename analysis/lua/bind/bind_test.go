@@ -1022,6 +1022,99 @@ type Query = typeof(function(value: any): asserts value end)
 	}
 }
 
+func TestParsedTypeQueryFunctionSignatureBindsStaticFormalsOnly(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local value = nil
+type Snapshot = typeof(function<T: typeof(value)>(value: typeof(value), side: typeof(external), ...: typeof(value)): asserts value is typeof(value)
+	local bodyOnly = value
+end)
+`, "typeof_function_signature.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	if len(stmts) != 2 {
+		t.Fatalf("statements = %d, want 2", len(stmts))
+	}
+	outerDecl := stmts[0].(*ast.LocalAssignStmt)
+	fn := stmts[1].(*ast.TypeDefStmt).Type.(*ast.TypeOfExpr).Expr.(*ast.FunctionExpr)
+	constraintUse := fn.TypeParams[0].Constraint.(*ast.TypeOfExpr).Expr.(*ast.IdentExpr)
+	paramUse := fn.ParList.Types[0].(*ast.TypeOfExpr).Expr.(*ast.IdentExpr)
+	globalUse := fn.ParList.Types[1].(*ast.TypeOfExpr).Expr.(*ast.IdentExpr)
+	varargTypeUse := fn.ParList.VarargType.(*ast.TypeOfExpr).Expr.(*ast.IdentExpr)
+	assertion := fn.ReturnTypes[0].(*ast.AssertsTypeExpr)
+	returnUse := assertion.NarrowTo.(*ast.TypeOfExpr).Expr.(*ast.IdentExpr)
+	bodyRead := fn.Stmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.IdentExpr)
+
+	bindings := BindChunk(stmts, Options{})
+	outer := mustLocalAt(t, bindings, outerDecl, 0)
+	slots := bindings.ParamSlots(fn)
+	if len(slots) != 3 {
+		t.Fatalf("ParamSlots = %#v, want value, side, and vararg", slots)
+	}
+	if slots[0].Name != "value" || slots[0].Symbol == 0 || slots[0].Vararg {
+		t.Fatalf("value slot = %#v", slots[0])
+	}
+	if slots[1].Name != "side" || slots[1].Symbol == 0 || slots[1].Vararg {
+		t.Fatalf("side slot = %#v", slots[1])
+	}
+	if slots[2].Name != "..." || slots[2].Symbol == 0 || !slots[2].Vararg {
+		t.Fatalf("vararg slot = %#v", slots[2])
+	}
+	if params := bindings.ParamSymbols(fn); len(params) != 2 || params[0] != slots[0].Symbol || params[1] != slots[1].Symbol {
+		t.Fatalf("ParamSymbols = %v, want value and side symbols", params)
+	}
+	if got, ok := bindings.VarargSymbol(fn); !ok || got != slots[2].Symbol {
+		t.Fatalf("VarargSymbol = %d/%v, want %d/true", got, ok, slots[2].Symbol)
+	}
+	if got, ok := bindings.SymbolTypeAnnotation(slots[0].Symbol); !ok || got != fn.ParList.Types[0] {
+		t.Fatalf("value SymbolTypeAnnotation = %T/%v, want exact parameter annotation", got, ok)
+	}
+	if got, ok := bindings.SymbolTypeAnnotation(slots[2].Symbol); !ok || got != fn.ParList.VarargType {
+		t.Fatalf("vararg SymbolTypeAnnotation = %T/%v, want exact vararg annotation", got, ok)
+	}
+	if got := mustSymbol(t, bindings, constraintUse); got != outer {
+		t.Fatalf("constraint typeof(value) = %d, want outer value %d", got, outer)
+	}
+	for _, use := range []*ast.IdentExpr{paramUse, varargTypeUse, returnUse} {
+		if got := mustSymbol(t, bindings, use); got != slots[0].Symbol {
+			t.Fatalf("signature typeof(value) = %d, want value formal %d", got, slots[0].Symbol)
+		}
+	}
+	if !bindings.IsImplicitGlobalUse(globalUse) {
+		t.Fatal("static global identity was not recorded")
+	}
+	if got, ok := bindings.AssertedParam(assertion); !ok || got != 0 {
+		t.Fatalf("AssertedParam = %d/%v, want 0/true", got, ok)
+	}
+	if params := bindings.FunctionTypeParams(fn); len(params) != 1 || params[0].Name != "T" {
+		t.Fatalf("FunctionTypeParams = %#v, want T", params)
+	}
+	if _, ok := bindings.FunctionOrigin(fn); ok {
+		t.Fatal("static signature created FunctionOrigin")
+	}
+	if _, ok := bindings.FunctionSymbol(fn); ok {
+		t.Fatal("static signature created FunctionSymbol")
+	}
+	if _, ok := bindings.SymbolOf(bodyRead); ok {
+		t.Fatal("static signature traversed function body")
+	}
+	if bindings.HasRead(outer) || bindings.HasRead(slots[0].Symbol) || bindings.HasRead(slots[1].Symbol) || bindings.HasRead(slots[2].Symbol) {
+		t.Fatal("static signature created runtime read evidence")
+	}
+	if globals := bindings.ChunkGlobalReads(); len(globals) != 0 {
+		t.Fatalf("ChunkGlobalReads = %v, want no static-query global evidence", globals)
+	}
+	if globals := bindings.DirectGlobalReads(fn); len(globals) != 0 {
+		t.Fatalf("DirectGlobalReads = %v, want no static-query global evidence", globals)
+	}
+	if captures := bindings.DirectCaptures(fn); len(captures) != 0 {
+		t.Fatalf("DirectCaptures = %#v, want none", captures)
+	}
+	if _, ok := bindings.DeclaringFunction(slots[0].Symbol); ok {
+		t.Fatal("static formal was attributed to an enclosing runtime function")
+	}
+}
+
 func TestMethodSelfParam(t *testing.T) {
 	receiver := ident("obj")
 	selfRead := ident("self")

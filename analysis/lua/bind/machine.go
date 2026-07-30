@@ -824,10 +824,56 @@ func (b *binder) enterFunctionSignature(fn *ast.FunctionExpr) {
 }
 
 func (b *binder) finishFunctionSignature(fn *ast.FunctionExpr) {
-	b.recordFunctionSignatureAssertedParams(fn)
-	b.pushTypeScope()
-	b.defineTypeParams(fn.TypeParams)
-	b.push(bindStep{kind: stepTypeScopeLeave})
+	// A function literal appearing in a type query has a source-only
+	// signature.  Its body is intentionally never entered, but the signature
+	// still has the same formal-name visibility as an executable function once
+	// its type-parameter constraints have been checked.  Keep this scope out of
+	// b.functions: that table is runtime function-origin evidence.
+	b.pushScope()
+	fnTypeParams := b.defineTypeParams(fn.TypeParams)
+	if len(fnTypeParams) > 0 {
+		b.result.functionTypeParams[fn] = fnTypeParams
+	}
+
+	params := make([]symbol.ID, 0)
+	slots := make([]ParamSlot, 0)
+	if fn.ParList != nil {
+		for i, name := range fn.ParList.Names {
+			// Do not use b.newSymbol here: static-signature declarations must
+			// not be attributed to any enclosing runtime function.
+			id := b.result.newSymbol(name, symbol.Param)
+			position := positionAt(fn.ParList, i)
+			annotation := typeAt(fn.ParList.Types, i)
+			b.result.setDeclaration(id, declarationForPosition(position, name, false))
+			if annotation != nil {
+				b.result.symbolAnnotations[id] = annotation
+			}
+			params = append(params, id)
+			b.define(name, id)
+			slots = append(slots, ParamSlot{
+				Symbol: id, Name: name, Position: position,
+				Type: annotation, SourceIndex: i,
+			})
+		}
+		if fn.ParList.HasVargs {
+			id := b.result.newSymbol("...", symbol.Param)
+			b.result.setDeclaration(id, declarationForPosition(fn.ParList.VarargPosition, "...", true))
+			if fn.ParList.VarargType != nil {
+				b.result.symbolAnnotations[id] = fn.ParList.VarargType
+			}
+			b.result.varargSymbols[fn] = id
+			b.define("...", id)
+			slots = append(slots, ParamSlot{
+				Symbol: id, Name: "...", Position: fn.ParList.VarargPosition,
+				Type: fn.ParList.VarargType, SourceIndex: len(fn.ParList.Names), Vararg: true,
+			})
+		}
+	}
+	b.result.paramSymbols[fn] = params
+	b.result.paramSlots[fn] = slots
+	b.recordFunctionAssertedParams(fn, slots)
+
+	b.push(bindStep{kind: stepLeaveScope})
 	b.push(bindStep{kind: stepTypeList, node: fn, phase: phaseFunctionReturns})
 	if fn.ParList != nil {
 		b.scheduleType(fn.ParList.VarargType)
@@ -926,24 +972,6 @@ func (b *binder) recordFunctionTypeAssertedParams(fn *ast.FunctionTypeExpr) {
 		}
 		for ordinal := len(fn.Params) - 1; ordinal >= 0; ordinal-- {
 			if fn.Params[ordinal].Name == assertion.ParamName {
-				b.recordAssertedParam(assertion, ordinal)
-				break
-			}
-		}
-	}
-}
-
-func (b *binder) recordFunctionSignatureAssertedParams(fn *ast.FunctionExpr) {
-	if fn == nil || fn.ParList == nil {
-		return
-	}
-	for _, returnType := range fn.ReturnTypes {
-		assertion, ok := returnType.(*ast.AssertsTypeExpr)
-		if !ok {
-			continue
-		}
-		for ordinal := len(fn.ParList.Names) - 1; ordinal >= 0; ordinal-- {
-			if fn.ParList.Names[ordinal] == assertion.ParamName {
 				b.recordAssertedParam(assertion, ordinal)
 				break
 			}
