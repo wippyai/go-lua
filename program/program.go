@@ -10,6 +10,16 @@ import (
 // 8-bit family tag. Zero is invalid.
 type Term uint32
 
+// FieldKind distinguishes Lua constructor field evaluation without introducing
+// a field Term family.
+type FieldKind uint8
+
+const (
+	FieldList FieldKind = iota + 1
+	FieldExact
+	FieldKey
+)
+
 const (
 	tagBits  = 8
 	tagMask  = uint32(1<<tagBits - 1)
@@ -26,17 +36,16 @@ const (
 	tagValues
 	tagLensExact
 	tagLensKey
-	tagEvaluate
 	tagNormal
 	tagReturn
 	tagThrow
 	tagYield
 	tagBreak
 	tagContinue
-	tagMu
 	tagBody
 	tagCell
 	tagRead
+	tagBind
 	tagAssign
 	tagFunction
 	tagCapture
@@ -76,13 +85,16 @@ type exactLensRow struct {
 }
 type keyLensRow struct{ base, key Term }
 type outcomeRow struct{ values Term }
-type muRow struct{ head, back Term }
 type bodyRow struct {
 	owned  termRange
 	filled bool
 }
 type cellRow struct{ body Term }
 type readRow struct{ cell Term }
+type bindRow struct {
+	cells  termRange
+	values Term
+}
 type assignRow struct {
 	targets termRange
 	values  Term
@@ -93,8 +105,17 @@ type functionRow struct {
 	vararg  bool
 }
 type captureRow struct{ inner, outer Term }
-type callRow struct{ callee, actuals Term }
+type callRow struct{ callee, actuals, direct Term }
 type branchRow struct{ condition, whenTrue, whenFalse Term }
+type tableRow struct {
+	fields termRange
+	filled bool
+}
+type tableFieldRow struct {
+	key, values Term
+	kind        FieldKind
+	normalized  uint32
+}
 
 const (
 	exactBool uint8 = iota + 1
@@ -118,48 +139,7 @@ type Program struct {
 	spans [tagCount][]storedSpan
 
 	valueTerms  []Term
-	formalTerms []Term
-	orderTerms  []Term
-	orders      [tagCount][]termRange
-
-	nils     uint32
-	bools    []bool
-	integers []int64
-	floats   []uint64
-	strings  []string
-	values   []valuesRow
-
-	lensExact []exactLensRow
-	lensKeys  []keyLensRow
-	evaluates uint32
-	normals   []outcomeRow
-	returns   []outcomeRow
-	throws    []outcomeRow
-	yields    []outcomeRow
-	breaks    []outcomeRow
-	continues []outcomeRow
-	mus       []muRow
-	bodies    []bodyRow
-	cells     []cellRow
-	reads     []readRow
-	assigns   []assignRow
-	functions []functionRow
-	captures  []captureRow
-	calls     []callRow
-	branches  []branchRow
-	tables    uint32
-	exactKeys []exactKey
-}
-
-// Builder is the sole mutable construction path for Program.
-type Builder struct {
-	terms     []Term
-	files     []string
-	fileIndex map[string]uint32
-	spans     [tagCount][]storedSpan
-	poison    bool
-
-	valueTerms  []Term
+	bindTerms   []Term
 	formalTerms []Term
 	orderTerms  []Term
 	orders      [tagCount][]termRange
@@ -173,23 +153,67 @@ type Builder struct {
 
 	lensExact   []exactLensRow
 	lensKeys    []keyLensRow
-	evaluates   uint32
 	normals     []outcomeRow
 	returns     []outcomeRow
 	throws      []outcomeRow
 	yields      []outcomeRow
 	breaks      []outcomeRow
 	continues   []outcomeRow
-	mus         []muRow
+	muFunctions []Term // dense Seal-derived canonical heads for cyclic Functions
 	bodies      []bodyRow
 	cells       []cellRow
 	reads       []readRow
+	binds       []bindRow
 	assigns     []assignRow
 	functions   []functionRow
 	captures    []captureRow
 	calls       []callRow
 	branches    []branchRow
-	tables      uint32
+	tables      []tableRow
+	tableFields []tableFieldRow
+	exactKeys   []exactKey
+}
+
+// Builder is the sole mutable construction path for Program.
+type Builder struct {
+	terms     []Term
+	files     []string
+	fileIndex map[string]uint32
+	spans     [tagCount][]storedSpan
+	poison    bool
+
+	valueTerms  []Term
+	bindTerms   []Term
+	formalTerms []Term
+	orderTerms  []Term
+	orders      [tagCount][]termRange
+
+	nils     uint32
+	bools    []bool
+	integers []int64
+	floats   []uint64
+	strings  []string
+	values   []valuesRow
+
+	lensExact   []exactLensRow
+	lensKeys    []keyLensRow
+	normals     []outcomeRow
+	returns     []outcomeRow
+	throws      []outcomeRow
+	yields      []outcomeRow
+	breaks      []outcomeRow
+	continues   []outcomeRow
+	bodies      []bodyRow
+	cells       []cellRow
+	reads       []readRow
+	binds       []bindRow
+	assigns     []assignRow
+	functions   []functionRow
+	captures    []captureRow
+	calls       []callRow
+	branches    []branchRow
+	tables      []tableRow
+	tableFields []tableFieldRow
 	exactKeys   []exactKey
 	exactLookup map[exactKey]uint32
 }
@@ -386,8 +410,9 @@ func (b *Builder) Values(span Span, fixed []Term, tail Term) Term {
 	return term
 }
 
-// LensExact records an evaluated base plus an exact bool, integer, float, or
-// string literal key. Seal rejects nil, NaN, invalid, and non-literal keys.
+// LensExact records an evaluated base plus a static nil, bool, integer, float,
+// or string key occurrence. Nil and NaN remain exact source evidence but do
+// not receive a storable normalized-key atom.
 func (b *Builder) LensExact(span Span, base, key Term) Term {
 	exact, _ := b.normalizedExactKey(key)
 	b.lensExact = append(b.lensExact, exactLensRow{base: base, source: key, exact: exact})
@@ -409,22 +434,6 @@ func (b *Builder) LensKey(span Span, base, key Term) Term {
 		return 0
 	}
 	b.setOrder(term, []Term{base, key})
-	return term
-}
-
-// Evaluate retains exact left-to-right evaluation without a generic node.
-func (b *Builder) Evaluate(span Span, terms ...Term) Term {
-	if b.evaluates == indexMax {
-		b.poison = true
-		return 0
-	}
-	b.evaluates++
-	term := b.mint(tagEvaluate, span, b.evaluates)
-	if term != 0 {
-		b.setOrder(term, terms)
-	} else {
-		b.evaluates--
-	}
 	return term
 }
 
@@ -458,18 +467,6 @@ func (b *Builder) outcome(tag uint8, span Span, value Term) Term {
 		return 0
 	}
 	b.setOrder(term, []Term{value})
-	return term
-}
-
-// Mu records an explicit recurrence head and exact backedge.
-func (b *Builder) Mu(span Span, head, back Term) Term {
-	b.mus = append(b.mus, muRow{head: head, back: back})
-	term := b.mint(tagMu, span, b.familyIndex(len(b.mus)))
-	if term == 0 {
-		b.mus = b.mus[:len(b.mus)-1]
-		return 0
-	}
-	b.setOrder(term, []Term{head, back})
 	return term
 }
 
@@ -523,6 +520,24 @@ func (b *Builder) Read(span Span, cell Term) Term {
 	return term
 }
 
+// Bind initializes lexical Cells. Cell identities are static; evaluation
+// order contains only the RHS Values relation.
+func (b *Builder) Bind(span Span, cells []Term, values Term) Term {
+	r, ok := b.appendPool(&b.bindTerms, cells)
+	if !ok {
+		return 0
+	}
+	b.binds = append(b.binds, bindRow{cells: r, values: values})
+	term := b.mint(tagBind, span, b.familyIndex(len(b.binds)))
+	if term == 0 {
+		b.binds = b.binds[:len(b.binds)-1]
+		b.bindTerms = b.bindTerms[:r.start]
+		return 0
+	}
+	b.setOrder(term, []Term{values})
+	return term
+}
+
 // Assign evaluates its Cells/Lenses from left to right, then evaluates RHS
 // Values. The row represents one delayed commit after that complete order.
 func (b *Builder) Assign(span Span, targets []Term, values Term) Term {
@@ -571,9 +586,11 @@ func (b *Builder) Capture(span Span, inner, outer Term) Term {
 	return term
 }
 
-// Call is an open result producer. Evaluation is callee followed by actual Values.
-func (b *Builder) Call(span Span, callee, actuals Term) Term {
-	b.calls = append(b.calls, callRow{callee: callee, actuals: actuals})
+// Call is an open result producer. Evaluation is callee followed by actual
+// Values. direct is zero or the binder-proven direct Function target; it does
+// not replace the evaluated callee occurrence.
+func (b *Builder) Call(span Span, callee, actuals, direct Term) Term {
+	b.calls = append(b.calls, callRow{callee: callee, actuals: actuals, direct: direct})
 	term := b.mint(tagCall, span, b.familyIndex(len(b.calls)))
 	if term == 0 {
 		b.calls = b.calls[:len(b.calls)-1]
@@ -595,19 +612,53 @@ func (b *Builder) Branch(span Span, condition, whenTrue, whenFalse Term) Term {
 	return term
 }
 
-// Table mints allocation identity only. Field initialization is represented
-// once by Lens and delayed Assign terms owned by a Body.
+// Table mints allocation identity. SetTable later fills its direct constructor
+// fields exactly once without routing construction through mutation relations.
 func (b *Builder) Table(span Span) Term {
-	if b.tables == indexMax {
-		b.poison = true
-		return 0
-	}
-	b.tables++
-	term := b.mint(tagTable, span, b.tables)
+	b.tables = append(b.tables, tableRow{})
+	term := b.mint(tagTable, span, b.familyIndex(len(b.tables)))
 	if term == 0 {
-		b.tables--
+		b.tables = b.tables[:len(b.tables)-1]
 	}
 	return term
+}
+
+func (b *Builder) SetTable(table Term, keys, values []Term, kinds []FieldKind) bool {
+	if !b.has(table, tagTable) {
+		b.poison = true
+		return false
+	}
+	row := &b.tables[table.index()-1]
+	if row.filled || len(keys) != len(values) || len(keys) != len(kinds) {
+		b.poison = true
+		return false
+	}
+	startFields := uint64(len(b.tableFields))
+	endFields := startFields + uint64(len(keys))
+	if endFields > math.MaxUint32 {
+		b.poison = true
+		return false
+	}
+	orderStart := uint32(len(b.orderTerms))
+	for i := range keys {
+		field := tableFieldRow{key: keys[i], values: values[i], kind: kinds[i]}
+		switch kinds[i] {
+		case FieldList, FieldExact:
+			field.normalized, _ = b.normalizedExactKey(keys[i])
+		case FieldKey:
+			if _, ok := b.appendPool(&b.orderTerms, []Term{keys[i]}); !ok {
+				return false
+			}
+		}
+		if _, ok := b.appendPool(&b.orderTerms, []Term{values[i]}); !ok {
+			return false
+		}
+		b.tableFields = append(b.tableFields, field)
+	}
+	row.fields = termRange{start: uint32(startFields), end: uint32(endFields)}
+	row.filled = true
+	b.setOrderRange(table, termRange{start: orderStart, end: uint32(len(b.orderTerms))})
+	return true
 }
 
 func (b *Builder) normalizedExactKey(term Term) (uint32, bool) {
@@ -646,6 +697,29 @@ func (b *Builder) exactKey(term Term) (exactKey, bool) {
 	}
 	return exactKey{}, false
 }
+
+func (b *Builder) staticExactKey(term Term) bool {
+	if !b.valid(term) {
+		return false
+	}
+	switch term.tag() {
+	case tagNil, tagBool, tagInteger, tagFloat, tagString:
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *Builder) absentNormalizedKey(term Term) bool {
+	if !b.valid(term) {
+		return false
+	}
+	if term.tag() == tagNil {
+		return true
+	}
+	return term.tag() == tagFloat && math.IsNaN(math.Float64frombits(b.floats[term.index()-1]))
+}
+
 func normalizeFloat(bits uint64) (exactKey, bool) {
 	value := math.Float64frombits(bits)
 	if math.IsNaN(value) {
@@ -687,8 +761,6 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.lensExact))
 	case tagLensKey:
 		return index <= uint32(len(b.lensKeys))
-	case tagEvaluate:
-		return index <= b.evaluates
 	case tagNormal:
 		return index <= uint32(len(b.normals))
 	case tagReturn:
@@ -701,14 +773,14 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.breaks))
 	case tagContinue:
 		return index <= uint32(len(b.continues))
-	case tagMu:
-		return index <= uint32(len(b.mus))
 	case tagBody:
 		return index <= uint32(len(b.bodies))
 	case tagCell:
 		return index <= uint32(len(b.cells))
 	case tagRead:
 		return index <= uint32(len(b.reads))
+	case tagBind:
+		return index <= uint32(len(b.binds))
 	case tagAssign:
 		return index <= uint32(len(b.assigns))
 	case tagFunction:
@@ -720,7 +792,7 @@ func (b *Builder) valid(term Term) bool {
 	case tagBranch:
 		return index <= uint32(len(b.branches))
 	case tagTable:
-		return index <= b.tables
+		return index <= uint32(len(b.tables))
 	}
 	return false
 }
@@ -745,8 +817,17 @@ func (b *Builder) Seal() (*Program, error) {
 		}
 	}
 	for _, row := range b.lensExact {
-		if !b.valid(row.base) || !b.valid(row.source) || row.exact == 0 || row.exact > uint32(len(b.exactKeys)) {
+		if !b.valid(row.base) || !b.staticExactKey(row.source) {
 			return nil, errors.New("program: invalid exact Lens reference")
+		}
+		if row.exact == 0 {
+			if !b.absentNormalizedKey(row.source) {
+				return nil, errors.New("program: invalid exact Lens key")
+			}
+			continue
+		}
+		if row.exact > uint32(len(b.exactKeys)) {
+			return nil, errors.New("program: invalid exact Lens key")
 		}
 		key, ok := b.exactKey(row.source)
 		if !ok || b.exactKeys[row.exact-1] != key {
@@ -774,12 +855,16 @@ func (b *Builder) Seal() (*Program, error) {
 			}
 		}
 	}
-	for _, row := range b.mus {
-		if !b.valid(row.head) || !b.valid(row.back) {
-			return nil, errors.New("program: invalid Mu reference")
+	var ownerOffset [tagCount]int
+	ownerCount := 0
+	for tag := uint8(1); tag < tagCount; tag++ {
+		if b.statementTag(tag) {
+			ownerOffset[tag] = ownerCount
+			ownerCount += len(b.spans[tag])
 		}
 	}
-	ownedBy := make(map[Term]Term)
+	ownedBy := make([]Term, ownerCount)
+	bodyParent := make([]uint32, len(b.bodies)+1)
 	for bodyIndex, row := range b.bodies {
 		if !row.filled {
 			return nil, errors.New("program: Body was not filled")
@@ -790,10 +875,33 @@ func (b *Builder) Seal() (*Program, error) {
 			if !b.valid(owned) {
 				return nil, errors.New("program: invalid Body-owned term")
 			}
-			if previous := ownedBy[owned]; previous != 0 {
+			if !b.statementRoot(owned) {
+				return nil, errors.New("program: Body requires statement roots")
+			}
+			ownerSlot := ownerOffset[owned.tag()] + int(owned.index()-1)
+			if previous := ownedBy[ownerSlot]; previous != 0 {
 				return nil, errors.New("program: term has duplicate Body ownership")
 			}
-			ownedBy[owned] = body
+			ownedBy[ownerSlot] = body
+			if owned.tag() == tagBody {
+				bodyParent[owned.index()] = uint32(bodyIndex + 1)
+			}
+		}
+	}
+	bodyState := make([]uint8, len(b.bodies)+1)
+	for start := uint32(1); start <= uint32(len(b.bodies)); start++ {
+		body := start
+		for body != 0 && bodyState[body] == 0 {
+			bodyState[body] = 1
+			body = bodyParent[body]
+		}
+		if body != 0 && bodyState[body] == 1 {
+			return nil, errors.New("program: Body ownership cycle")
+		}
+		body = start
+		for body != 0 && bodyState[body] == 1 {
+			bodyState[body] = 2
+			body = bodyParent[body]
 		}
 	}
 	for _, row := range b.cells {
@@ -806,9 +914,36 @@ func (b *Builder) Seal() (*Program, error) {
 			return nil, errors.New("program: Read requires Cell")
 		}
 	}
+	boundCell := make([]Term, len(b.cells)+1)
+	for bindIndex, row := range b.binds {
+		bind := makeTerm(tagBind, uint32(bindIndex+1))
+		owner := ownedBy[ownerOffset[tagBind]+int(bind.index()-1)]
+		if owner == 0 {
+			return nil, errors.New("program: Bind requires Body ownership")
+		}
+		if !b.has(row.values, tagValues) {
+			return nil, errors.New("program: Bind requires RHS Values")
+		}
+		if row.cells.start == row.cells.end {
+			return nil, errors.New("program: Bind requires Cells")
+		}
+		for i := row.cells.start; i < row.cells.end; i++ {
+			cell := b.bindTerms[i]
+			if !b.has(cell, tagCell) || b.cells[cell.index()-1].body != owner {
+				return nil, errors.New("program: Bind Cell must belong to its Body")
+			}
+			if boundCell[cell.index()] != 0 {
+				return nil, errors.New("program: Cell bound more than once")
+			}
+			boundCell[cell.index()] = bind
+		}
+	}
 	for _, row := range b.assigns {
 		if !b.has(row.values, tagValues) {
 			return nil, errors.New("program: Assign requires RHS Values")
+		}
+		if row.targets.start == row.targets.end {
+			return nil, errors.New("program: Assign requires targets")
 		}
 		for i := row.targets.start; i < row.targets.end; i++ {
 			target := b.orderTerms[i]
@@ -817,15 +952,15 @@ func (b *Builder) Seal() (*Program, error) {
 			}
 		}
 	}
-	functionByBody := make(map[Term]Term)
+	functionByBody := make([]Term, len(b.bodies)+1)
 	for functionIndex, row := range b.functions {
 		if !b.has(row.body, tagBody) {
 			return nil, errors.New("program: Function requires Body")
 		}
-		if functionByBody[row.body] != 0 {
+		if functionByBody[row.body.index()] != 0 {
 			return nil, errors.New("program: Body has more than one Function")
 		}
-		functionByBody[row.body] = makeTerm(tagFunction, uint32(functionIndex+1))
+		functionByBody[row.body.index()] = makeTerm(tagFunction, uint32(functionIndex+1))
 		for i := row.formals.start; i < row.formals.end; i++ {
 			formal := b.formalTerms[i]
 			if !b.has(formal, tagCell) || b.cells[formal.index()-1].body != row.body {
@@ -845,13 +980,70 @@ func (b *Builder) Seal() (*Program, error) {
 		if !b.valid(row.callee) || !b.has(row.actuals, tagValues) {
 			return nil, errors.New("program: Call requires callee and actual Values")
 		}
+		if row.direct != 0 && !b.has(row.direct, tagFunction) {
+			return nil, errors.New("program: Call direct target requires Function")
+		}
 	}
 	for _, row := range b.branches {
 		if !b.valid(row.condition) || !b.branchArm(row.whenTrue) || !b.branchArm(row.whenFalse) {
 			return nil, errors.New("program: Branch requires condition and Body/Outcome arms")
 		}
 	}
-	return b.snapshot(), nil
+	for _, row := range b.tables {
+		if !row.filled {
+			return nil, errors.New("program: Table was not filled")
+		}
+		for i := row.fields.start; i < row.fields.end; i++ {
+			field := b.tableFields[i]
+			if !b.has(field.values, tagValues) {
+				return nil, errors.New("program: Table field requires Values")
+			}
+			switch field.kind {
+			case FieldList, FieldExact:
+				if !b.staticExactKey(field.key) {
+					return nil, errors.New("program: invalid exact Table key")
+				}
+				if field.normalized == 0 {
+					if !b.absentNormalizedKey(field.key) {
+						return nil, errors.New("program: invalid exact Table key")
+					}
+					continue
+				}
+				if field.normalized > uint32(len(b.exactKeys)) {
+					return nil, errors.New("program: invalid exact Table key")
+				}
+				key, ok := b.exactKey(field.key)
+				if !ok || b.exactKeys[field.normalized-1] != key {
+					return nil, errors.New("program: invalid exact Table key")
+				}
+			case FieldKey:
+				if !b.valid(field.key) {
+					return nil, errors.New("program: invalid dynamic Table key")
+				}
+			default:
+				return nil, errors.New("program: invalid Table field kind")
+			}
+		}
+	}
+	muFunctions, err := b.directCallMu()
+	if err != nil {
+		return nil, err
+	}
+	return b.snapshot(muFunctions), nil
+}
+
+func (b *Builder) statementRoot(term Term) bool {
+	return b.statementTag(term.tag()) && b.valid(term)
+}
+
+func (b *Builder) statementTag(tag uint8) bool {
+	switch tag {
+	case tagBind, tagAssign, tagCall, tagBranch, tagBody, tagNormal, tagReturn,
+		tagThrow, tagYield, tagBreak, tagContinue:
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *Builder) branchArm(term Term) bool {
@@ -863,11 +1055,192 @@ func (b *Builder) branchArm(term Term) bool {
 	}
 }
 
-func (b *Builder) snapshot() *Program {
+type directCallEdge struct{ from, to uint32 }
+type directCallWork struct {
+	term  Term
+	owner uint32
+}
+
+// directCallMu derives canonical Function heads for static direct-call SCCs.
+// It walks each executable occurrence once under its unique owning Function,
+// never descends through a nested Function value, and stores no second
+// execution graph.
+func (b *Builder) directCallMu() ([]Term, error) {
+	functionCount := len(b.functions)
+	mu := make([]Term, functionCount+1)
+	if functionCount == 0 {
+		return mu, nil
+	}
+
+	var ownerOffset [tagCount]int
+	ownerCount := 0
+	for tag := uint8(1); tag < tagCount; tag++ {
+		ownerOffset[tag] = ownerCount
+		ownerCount += len(b.spans[tag])
+	}
+	owner := make([]uint32, ownerCount)
+	edges := make([]directCallEdge, 0, len(b.calls))
+	stack := make([]directCallWork, 0, len(b.terms)+len(b.functions))
+	for functionIndex, row := range b.functions {
+		function := uint32(functionIndex + 1)
+		stack = append(stack, directCallWork{term: row.body, owner: function})
+	}
+	for len(stack) != 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		term := current.term
+		if term == 0 || term.tag() >= tagCount || term.index() > uint32(len(b.spans[term.tag()])) {
+			continue
+		}
+
+		// A Function is a static value at this point. Its body is seeded as a
+		// separate execution root above, so common callee references are lawful.
+		if term.tag() == tagFunction {
+			continue
+		}
+		ownerSlot := ownerOffset[term.tag()] + int(term.index()-1)
+		if previous := owner[ownerSlot]; previous != 0 {
+			if previous != current.owner {
+				return nil, errors.New("program: executable occurrence belongs to multiple Functions")
+			}
+			continue
+		}
+		owner[ownerSlot] = current.owner
+		if term.tag() == tagCall {
+			direct := b.calls[term.index()-1].direct
+			if direct != 0 {
+				edges = append(edges, directCallEdge{from: current.owner, to: direct.index()})
+			}
+		}
+		if term.tag() == tagBranch {
+			branch := b.branches[term.index()-1]
+			stack = append(stack,
+				directCallWork{term: branch.whenTrue, owner: current.owner},
+				directCallWork{term: branch.whenFalse, owner: current.owner},
+			)
+		}
+		rows := b.orders[term.tag()]
+		if term.index() <= uint32(len(rows)) {
+			order := rows[term.index()-1]
+			for i := order.start; i < order.end; i++ {
+				stack = append(stack, directCallWork{term: b.orderTerms[i], owner: current.owner})
+			}
+		}
+	}
+
+	forwardStart, forward := directCallAdjacency(functionCount, edges, false)
+	reverseStart, reverse := directCallAdjacency(functionCount, edges, true)
+	finished := directCallFinishOrder(functionCount, forwardStart, forward)
+	component := make([]uint32, functionCount+1)
+	componentHead := make([]uint32, functionCount+1)
+	members := make([]uint32, 0, functionCount)
+	componentID := uint32(0)
+	for i := len(finished) - 1; i >= 0; i-- {
+		start := finished[i]
+		if component[start] != 0 {
+			continue
+		}
+		componentID++
+		members = append(members[:0], start)
+		component[start] = componentID
+		head := start
+		for len(members) != 0 {
+			node := members[len(members)-1]
+			members = members[:len(members)-1]
+			if node < head {
+				head = node
+			}
+			for edge := reverseStart[node]; edge < reverseStart[node+1]; edge++ {
+				previous := reverse[edge]
+				if component[previous] == 0 {
+					component[previous] = componentID
+					members = append(members, previous)
+				}
+			}
+		}
+		componentHead[componentID] = head
+	}
+
+	componentSize := make([]uint32, componentID+1)
+	for function := uint32(1); function <= uint32(functionCount); function++ {
+		componentSize[component[function]]++
+	}
+	for function := uint32(1); function <= uint32(functionCount); function++ {
+		componentID := component[function]
+		if componentSize[componentID] > 1 {
+			mu[function] = makeTerm(tagFunction, componentHead[componentID])
+			continue
+		}
+		for edge := forwardStart[function]; edge < forwardStart[function+1]; edge++ {
+			if forward[edge] == function {
+				mu[function] = makeTerm(tagFunction, function)
+				break
+			}
+		}
+	}
+	return mu, nil
+}
+
+func directCallAdjacency(functionCount int, edges []directCallEdge, reverse bool) ([]uint32, []uint32) {
+	start := make([]uint32, functionCount+2)
+	for _, edge := range edges {
+		at := edge.from
+		if reverse {
+			at = edge.to
+		}
+		start[at+1]++
+	}
+	for index := 1; index < len(start); index++ {
+		start[index] += start[index-1]
+	}
+	next := append([]uint32(nil), start[:functionCount+1]...)
+	adjacent := make([]uint32, len(edges))
+	for _, edge := range edges {
+		from, to := edge.from, edge.to
+		if reverse {
+			from, to = to, from
+		}
+		adjacent[next[from]] = to
+		next[from]++
+	}
+	return start, adjacent
+}
+
+func directCallFinishOrder(functionCount int, start, adjacent []uint32) []uint32 {
+	type frame struct{ node, next uint32 }
+	seen := make([]bool, functionCount+1)
+	order := make([]uint32, 0, functionCount)
+	stack := make([]frame, 0, functionCount)
+	for root := uint32(1); root <= uint32(functionCount); root++ {
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		stack = append(stack, frame{node: root, next: start[root]})
+		for len(stack) != 0 {
+			top := &stack[len(stack)-1]
+			if top.next < start[top.node+1] {
+				next := adjacent[top.next]
+				top.next++
+				if !seen[next] {
+					seen[next] = true
+					stack = append(stack, frame{node: next, next: start[next]})
+				}
+				continue
+			}
+			order = append(order, top.node)
+			stack = stack[:len(stack)-1]
+		}
+	}
+	return order
+}
+
+func (b *Builder) snapshot(muFunctions []Term) *Program {
 	p := &Program{
 		terms:       copyTerms(b.terms),
 		files:       append([]string(nil), b.files...),
 		valueTerms:  copyTerms(b.valueTerms),
+		bindTerms:   copyTerms(b.bindTerms),
 		formalTerms: copyTerms(b.formalTerms),
 		orderTerms:  copyTerms(b.orderTerms),
 		nils:        b.nils,
@@ -878,23 +1251,24 @@ func (b *Builder) snapshot() *Program {
 		values:      append([]valuesRow(nil), b.values...),
 		lensExact:   append([]exactLensRow(nil), b.lensExact...),
 		lensKeys:    append([]keyLensRow(nil), b.lensKeys...),
-		evaluates:   b.evaluates,
 		normals:     append([]outcomeRow(nil), b.normals...),
 		returns:     append([]outcomeRow(nil), b.returns...),
 		throws:      append([]outcomeRow(nil), b.throws...),
 		yields:      append([]outcomeRow(nil), b.yields...),
 		breaks:      append([]outcomeRow(nil), b.breaks...),
 		continues:   append([]outcomeRow(nil), b.continues...),
-		mus:         append([]muRow(nil), b.mus...),
+		muFunctions: copyTerms(muFunctions),
 		bodies:      append([]bodyRow(nil), b.bodies...),
 		cells:       append([]cellRow(nil), b.cells...),
 		reads:       append([]readRow(nil), b.reads...),
+		binds:       append([]bindRow(nil), b.binds...),
 		assigns:     append([]assignRow(nil), b.assigns...),
 		functions:   append([]functionRow(nil), b.functions...),
 		captures:    append([]captureRow(nil), b.captures...),
 		calls:       append([]callRow(nil), b.calls...),
 		branches:    append([]branchRow(nil), b.branches...),
-		tables:      b.tables,
+		tables:      append([]tableRow(nil), b.tables...),
+		tableFields: append([]tableFieldRow(nil), b.tableFields...),
 		exactKeys:   append([]exactKey(nil), b.exactKeys...),
 	}
 	for tag := uint8(1); tag < tagCount; tag++ {
@@ -927,8 +1301,6 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.lensExact))
 	case tagLensKey:
 		return index <= uint32(len(p.lensKeys))
-	case tagEvaluate:
-		return index <= p.evaluates
 	case tagNormal:
 		return index <= uint32(len(p.normals))
 	case tagReturn:
@@ -941,14 +1313,14 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.breaks))
 	case tagContinue:
 		return index <= uint32(len(p.continues))
-	case tagMu:
-		return index <= uint32(len(p.mus))
 	case tagBody:
 		return index <= uint32(len(p.bodies))
 	case tagCell:
 		return index <= uint32(len(p.cells))
 	case tagRead:
 		return index <= uint32(len(p.reads))
+	case tagBind:
+		return index <= uint32(len(p.binds))
 	case tagAssign:
 		return index <= uint32(len(p.assigns))
 	case tagFunction:
@@ -960,7 +1332,7 @@ func (p *Program) Valid(term Term) bool {
 	case tagBranch:
 		return index <= uint32(len(p.branches))
 	case tagTable:
-		return index <= p.tables
+		return index <= uint32(len(p.tables))
 	}
 	return false
 }
@@ -1081,7 +1453,12 @@ func (p *Program) SameKey(left, right Term) bool {
 	if !p.has(left, tagLensExact) || !p.has(right, tagLensExact) {
 		return false
 	}
-	return p.lensExact[left.index()-1].exact == p.lensExact[right.index()-1].exact
+	leftRow := p.lensExact[left.index()-1]
+	rightRow := p.lensExact[right.index()-1]
+	if leftRow.exact != 0 || rightRow.exact != 0 {
+		return leftRow.exact != 0 && leftRow.exact == rightRow.exact
+	}
+	return leftRow.source.tag() == tagNil && rightRow.source.tag() == tagNil
 }
 
 func (p *Program) orderRange(term Term) (termRange, bool) {
@@ -1160,12 +1537,15 @@ func (p *Program) outcome(term Term, tag uint8) (Term, bool) {
 	}
 	return p.continues[index].values, true
 }
-func (p *Program) Mu(term Term) (head, back Term, ok bool) {
-	if !p.has(term, tagMu) {
-		return 0, 0, false
+
+// Mu returns the canonical existing Function head for term's Seal-derived
+// direct-call recurrence SCC. Mu is an annotation, never a Term.
+func (p *Program) Mu(term Term) (Term, bool) {
+	if !p.has(term, tagFunction) || int(term.index()) >= len(p.muFunctions) {
+		return 0, false
 	}
-	r := p.mus[term.index()-1]
-	return r.head, r.back, true
+	head := p.muFunctions[term.index()]
+	return head, head != 0
 }
 
 func (p *Program) BodyLen(term Term) (int, bool) {
@@ -1207,6 +1587,40 @@ func (p *Program) Read(term Term) (Term, bool) {
 		return 0, false
 	}
 	return p.reads[term.index()-1].cell, true
+}
+
+func (p *Program) BindLen(term Term) (int, bool) {
+	if !p.has(term, tagBind) {
+		return 0, false
+	}
+	r := p.binds[term.index()-1].cells
+	return int(r.end - r.start), true
+}
+
+func (p *Program) BindAt(term Term, index int) (Term, bool) {
+	if !p.has(term, tagBind) {
+		return 0, false
+	}
+	r := p.binds[term.index()-1].cells
+	if index < 0 || uint32(index) >= r.end-r.start {
+		return 0, false
+	}
+	return p.bindTerms[r.start+uint32(index)], true
+}
+
+func (p *Program) BindValues(term Term) (Term, bool) {
+	if !p.has(term, tagBind) {
+		return 0, false
+	}
+	return p.binds[term.index()-1].values, true
+}
+
+func (p *Program) AppendBind(term Term, dst []Term) (cells []Term, values Term, ok bool) {
+	if !p.has(term, tagBind) {
+		return dst, 0, false
+	}
+	row := p.binds[term.index()-1]
+	return append(dst, p.bindTerms[row.cells.start:row.cells.end]...), row.values, true
 }
 
 func (p *Program) AssignLen(term Term) (int, bool) {
@@ -1286,12 +1700,12 @@ func (p *Program) Capture(term Term) (inner, outer Term, ok bool) {
 	return row.inner, row.outer, true
 }
 
-func (p *Program) Call(term Term) (callee, actuals Term, ok bool) {
+func (p *Program) Call(term Term) (callee, actuals, direct Term, ok bool) {
 	if !p.has(term, tagCall) {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	row := p.calls[term.index()-1]
-	return row.callee, row.actuals, true
+	return row.callee, row.actuals, row.direct, true
 }
 
 func (p *Program) Branch(term Term) (condition, whenTrue, whenFalse Term, ok bool) {
@@ -1303,6 +1717,26 @@ func (p *Program) Branch(term Term) (condition, whenTrue, whenFalse Term, ok boo
 }
 
 func (p *Program) Table(term Term) bool { return p.has(term, tagTable) }
+
+func (p *Program) TableLen(term Term) (int, bool) {
+	if !p.has(term, tagTable) {
+		return 0, false
+	}
+	r := p.tables[term.index()-1].fields
+	return int(r.end - r.start), true
+}
+
+func (p *Program) TableAt(term Term, index int) (key, values Term, kind FieldKind, ok bool) {
+	if !p.has(term, tagTable) {
+		return 0, 0, 0, false
+	}
+	r := p.tables[term.index()-1].fields
+	if index < 0 || uint32(index) >= r.end-r.start {
+		return 0, 0, 0, false
+	}
+	field := p.tableFields[r.start+uint32(index)]
+	return field.key, field.values, field.kind, true
+}
 
 func copyTerms(terms []Term) []Term {
 	if len(terms) == 0 {
