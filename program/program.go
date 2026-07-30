@@ -119,8 +119,6 @@ const (
 	tagLensExact
 	tagLensKey
 	tagReturn
-	tagThrow
-	tagYield
 	tagBreak
 	tagLabel
 	tagGoto
@@ -210,7 +208,7 @@ type exactLensRow struct {
 	exact        Key
 }
 type keyLensRow struct{ owner, base, key Term }
-type outcomeRow struct{ owner, values Term }
+type returnRow struct{ owner, values Term }
 type breakRow struct{ owner Term }
 type bodyRow struct {
 	roots  termRange
@@ -305,9 +303,7 @@ type Program struct {
 
 	lensExact      []exactLensRow
 	lensKeys       []keyLensRow
-	returns        []outcomeRow
-	throws         []outcomeRow
-	yields         []outcomeRow
+	returns        []returnRow
 	breaks         []breakRow
 	breakLoops     []Term // dense Seal-derived nearest enclosing Loop by Break index
 	labelOwners    []Term
@@ -370,9 +366,7 @@ type Builder struct {
 
 	lensExact      []exactLensRow
 	lensKeys       []keyLensRow
-	returns        []outcomeRow
-	throws         []outcomeRow
-	yields         []outcomeRow
+	returns        []returnRow
 	breaks         []breakRow
 	labelOwners    []Term
 	labelCursors   []uint32
@@ -687,13 +681,15 @@ func (b *Builder) LensKey(span Span, owner, base, key Term) Term {
 }
 
 func (b *Builder) Return(span Span, owner, values Term) Term {
-	return b.outcome(tagReturn, span, owner, values)
-}
-func (b *Builder) Throw(span Span, owner, values Term) Term {
-	return b.outcome(tagThrow, span, owner, values)
-}
-func (b *Builder) Yield(span Span, owner, values Term) Term {
-	return b.outcome(tagYield, span, owner, values)
+	if !b.require(b.has(owner, tagBody) && b.has(values, tagValues)) {
+		return 0
+	}
+	b.returns = append(b.returns, returnRow{owner: owner, values: values})
+	term := b.mint(tagReturn, span, b.familyIndex(len(b.returns)))
+	if term == 0 {
+		b.returns = b.returns[:len(b.returns)-1]
+	}
+	return term
 }
 
 // Break terminates the nearest enclosing Loop. It has no value operand;
@@ -757,31 +753,6 @@ func (b *Builder) Goto(span Span, owner, targetLabel Term) Term {
 	if term == 0 {
 		b.gotoOwners = b.gotoOwners[:len(b.gotoOwners)-1]
 		b.gotoTargets = b.gotoTargets[:len(b.gotoTargets)-1]
-	}
-	return term
-}
-
-func (b *Builder) outcome(tag uint8, span Span, owner, value Term) Term {
-	if !b.require(b.has(owner, tagBody) && b.has(value, tagValues)) {
-		return 0
-	}
-	var rows *[]outcomeRow
-	switch tag {
-	case tagReturn:
-		rows = &b.returns
-	case tagThrow:
-		rows = &b.throws
-	case tagYield:
-		rows = &b.yields
-	default:
-		b.poison = true
-		return 0
-	}
-	*rows = append(*rows, outcomeRow{owner: owner, values: value})
-	term := b.mint(tag, span, b.familyIndex(len(*rows)))
-	if term == 0 {
-		*rows = (*rows)[:len(*rows)-1]
-		return 0
 	}
 	return term
 }
@@ -1351,10 +1322,6 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.lensKeys))
 	case tagReturn:
 		return index <= uint32(len(b.returns))
-	case tagThrow:
-		return index <= uint32(len(b.throws))
-	case tagYield:
-		return index <= uint32(len(b.yields))
 	case tagBreak:
 		return index <= uint32(len(b.breaks))
 	case tagLabel:
@@ -1542,14 +1509,6 @@ func (b *Builder) Seal() (*Program, error) {
 	for i, row := range b.returns {
 		claims[tagReturn][i].owner = row.owner
 	}
-	claims[tagThrow] = make([]sealClaimSlot, len(b.throws))
-	for i, row := range b.throws {
-		claims[tagThrow][i].owner = row.owner
-	}
-	claims[tagYield] = make([]sealClaimSlot, len(b.yields))
-	for i, row := range b.yields {
-		claims[tagYield][i].owner = row.owner
-	}
 	claims[tagBreak] = make([]sealClaimSlot, len(b.breaks))
 	for i, row := range b.breaks {
 		claims[tagBreak][i].owner = row.owner
@@ -1686,15 +1645,12 @@ func (b *Builder) Seal() (*Program, error) {
 			return nil, err
 		}
 	}
-	for family, rows := range [][]outcomeRow{b.returns, b.throws, b.yields} {
-		tag := [...]uint8{tagReturn, tagThrow, tagYield}[family]
-		for i, row := range rows {
-			if !b.has(row.values, tagValues) {
-				return nil, errors.New("program: Outcome requires Values")
-			}
-			if err := claim(row.values, row.owner, makeTerm(tag, uint32(i+1))); err != nil {
-				return nil, err
-			}
+	for i, row := range b.returns {
+		if !b.has(row.values, tagValues) {
+			return nil, errors.New("program: Return requires Values")
+		}
+		if err := claim(row.values, row.owner, makeTerm(tagReturn, uint32(i+1))); err != nil {
+			return nil, err
 		}
 	}
 	for i, row := range b.reads {
@@ -2288,7 +2244,7 @@ func (b *Builder) sourceControl(
 		}
 	}
 	controlTags := [...]uint8{
-		tagReturn, tagThrow, tagYield, tagBreak, tagLabel, tagGoto, tagBody,
+		tagReturn, tagBreak, tagLabel, tagGoto, tagBody,
 		tagBind, tagAssign, tagCall, tagBranch, tagLoop,
 	}
 	mayRecur := len(b.loopOwners) != 0 || len(b.gotoOwners) != 0
@@ -2620,7 +2576,7 @@ func (b *Builder) sourceControl(
 			switch root.tag() {
 			case tagBind, tagAssign, tagCall:
 				add(node, next)
-			case tagReturn, tagThrow, tagYield:
+			case tagReturn:
 			case tagBreak:
 				loop := breakLoops[root.index()-1]
 				if !b.has(loop, tagLoop) || nodes[tagLoop][loop.index()-1] == noControlNode {
@@ -2949,7 +2905,7 @@ func (b *Builder) statementRoot(term Term) bool {
 func (b *Builder) statementTag(tag uint8) bool {
 	switch tag {
 	case tagBind, tagAssign, tagCall, tagBranch, tagLoop, tagBody,
-		tagReturn, tagThrow, tagYield, tagBreak, tagGoto:
+		tagReturn, tagBreak, tagGoto:
 		return true
 	default:
 		return false
@@ -3137,9 +3093,7 @@ func (b *Builder) snapshot(
 		values:         append([]valuesRow(nil), b.values...),
 		lensExact:      append([]exactLensRow(nil), b.lensExact...),
 		lensKeys:       append([]keyLensRow(nil), b.lensKeys...),
-		returns:        append([]outcomeRow(nil), b.returns...),
-		throws:         append([]outcomeRow(nil), b.throws...),
-		yields:         append([]outcomeRow(nil), b.yields...),
+		returns:        append([]returnRow(nil), b.returns...),
 		breaks:         append([]breakRow(nil), b.breaks...),
 		breakLoops:     copyTerms(breakLoops),
 		labelOwners:    copyTerms(b.labelOwners),
@@ -3209,10 +3163,6 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.lensKeys))
 	case tagReturn:
 		return index <= uint32(len(p.returns))
-	case tagThrow:
-		return index <= uint32(len(p.throws))
-	case tagYield:
-		return index <= uint32(len(p.yields))
 	case tagBreak:
 		return index <= uint32(len(p.breaks))
 	case tagLabel:
@@ -3351,37 +3301,12 @@ func (p *Program) Lens(term Term) (owner, base, source Term, kind FieldKind, key
 	return 0, 0, 0, 0, 0, false
 }
 
-func (p *Program) Outcome(term Term) (owner, values Term, ok bool) {
-	switch term.tag() {
-	case tagReturn:
-		return p.Return(term)
-	case tagThrow:
-		return p.Throw(term)
-	case tagYield:
-		return p.Yield(term)
-	}
-	return 0, 0, false
-}
-func (p *Program) Return(term Term) (owner, values Term, ok bool) { return p.outcome(term, tagReturn) }
-func (p *Program) Throw(term Term) (owner, values Term, ok bool)  { return p.outcome(term, tagThrow) }
-func (p *Program) Yield(term Term) (owner, values Term, ok bool)  { return p.outcome(term, tagYield) }
-func (p *Program) outcome(term Term, tag uint8) (Term, Term, bool) {
-	if !p.has(term, tag) {
+func (p *Program) Return(term Term) (owner, values Term, ok bool) {
+	if !p.has(term, tagReturn) {
 		return 0, 0, false
 	}
-	index := term.index() - 1
-	switch tag {
-	case tagReturn:
-		row := p.returns[index]
-		return row.owner, row.values, true
-	case tagThrow:
-		row := p.throws[index]
-		return row.owner, row.values, true
-	case tagYield:
-		row := p.yields[index]
-		return row.owner, row.values, true
-	}
-	return 0, 0, false
+	row := p.returns[term.index()-1]
+	return row.owner, row.values, true
 }
 
 // Break returns its lexical owner and exact nearest enclosing Loop, both
@@ -3840,20 +3765,6 @@ func (p *Program) ReturnCount() int {
 func (p *Program) ReturnAt(index int) (Term, bool) {
 	return familyTerm(tagReturn, p.ReturnCount(), index)
 }
-func (p *Program) ThrowCount() int {
-	if p == nil {
-		return 0
-	}
-	return len(p.throws)
-}
-func (p *Program) ThrowAt(index int) (Term, bool) { return familyTerm(tagThrow, p.ThrowCount(), index) }
-func (p *Program) YieldCount() int {
-	if p == nil {
-		return 0
-	}
-	return len(p.yields)
-}
-func (p *Program) YieldAt(index int) (Term, bool) { return familyTerm(tagYield, p.YieldCount(), index) }
 func (p *Program) BreakCount() int {
 	if p == nil {
 		return 0

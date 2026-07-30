@@ -1885,21 +1885,6 @@ func TestTypedQueriesAllocateZero(t *testing.T) {
 	branchCondition := b.Bool(program.Span{}, entry, false)
 	branch := b.Branch(program.Span{}, entry, branchCondition, whenTrue, whenFalse)
 
-	throwBody, throwFall := b.Body(program.Span{}), b.Body(program.Span{})
-	throwValues := b.Values(program.Span{}, throwBody, nil, 0)
-	thrown := b.Throw(program.Span{}, throwBody, throwValues)
-	b.SetBody(throwBody, thrown)
-	finishAtTail(t, b, throwFall)
-	throwCondition := b.Bool(program.Span{}, entry, false)
-	throwBranch := b.Branch(program.Span{}, entry, throwCondition, throwBody, throwFall)
-
-	yieldBody, yieldFall := b.Body(program.Span{}), b.Body(program.Span{})
-	yieldValues := b.Values(program.Span{}, yieldBody, nil, 0)
-	yielded := b.Yield(program.Span{}, yieldBody, yieldValues)
-	b.SetBody(yieldBody, yielded)
-	finishAtTail(t, b, yieldFall)
-	yieldCondition := b.Bool(program.Span{}, entry, false)
-	yieldBranch := b.Branch(program.Span{}, entry, yieldCondition, yieldBody, yieldFall)
 	loopBody := b.Body(program.Span{})
 	loopCondition := b.Bool(program.Span{}, entry, true)
 	broken := b.Break(program.Span{}, loopBody)
@@ -1912,8 +1897,6 @@ func TestTypedQueriesAllocateZero(t *testing.T) {
 		bindLocal,
 		assign,
 		branch,
-		throwBranch,
-		yieldBranch,
 		loop,
 		normal,
 	)
@@ -1935,11 +1918,8 @@ func TestTypedQueriesAllocateZero(t *testing.T) {
 		queryTerm, queryOK = p.Value(scalarValues, 0)
 		queryTerm, queryTerm2, queryOK = p.Values(scalarValues)
 		queryTerm, queryTerm2, queryTerm3, queryFieldKind, queryKey, queryOK = p.Lens(exactLens)
-		queryTerm, queryTerm2, queryOK = p.Outcome(normal)
 		queryTerm, queryTerm2, queryOK = p.Return(normal)
 		queryTerm, queryTerm2, queryOK = p.Return(returned)
-		queryTerm, queryTerm2, queryOK = p.Throw(thrown)
-		queryTerm, queryTerm2, queryOK = p.Yield(yielded)
 		queryTerm, queryTerm2, queryOK = p.Break(broken)
 		queryTerm, queryOK = p.Mu(function)
 		queryTerm, queryOK = p.Mu(loop)
