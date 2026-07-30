@@ -18,6 +18,7 @@ type Writer struct {
 	sourceName string
 	terms      map[bind.TypeDeclID]program.Term
 	children   []program.Term
+	fields     []program.RecordField
 }
 
 // Mark starts one LIFO ordered child range for an iterative type walk.
@@ -183,6 +184,9 @@ func (w *Writer) PrimitiveOrRef(expr *ast.PrimitiveTypeExpr) (program.Term, erro
 	if w == nil || w.builder == nil || w.binding == nil || expr == nil || expr.Name == "" {
 		return 0, fmt.Errorf("programlower: invalid primitive type")
 	}
+	if len(expr.Annotations) != 0 {
+		return 0, fmt.Errorf("programlower: primitive type annotations are not supported")
+	}
 	span := w.span(expr)
 	if decl, ok := w.binding.PrimitiveTypeRef(expr); ok {
 		return w.declarationRef(span, "", expr.Name, decl)
@@ -259,6 +263,64 @@ func (w *Writer) Generic(expr *ast.GenericTypeExpr, base program.Term, mark, cou
 		return 0, err
 	}
 	return w.term(w.builder.Generic(w.span(expr), base, args), "generic type")
+}
+
+// Array completes parser-authored array syntax after its element type has been
+// lowered. Annotation attachments remain deliberately closed until Program has
+// an annotation family that can retain their static-query semantics.
+func (w *Writer) Array(expr *ast.ArrayTypeExpr, element program.Term) (program.Term, error) {
+	if w == nil || w.builder == nil || expr == nil || element == 0 {
+		return 0, fmt.Errorf("programlower: invalid array type")
+	}
+	if len(expr.ElementAnnotations) != 0 || len(expr.ArrayAnnotations) != 0 {
+		return 0, fmt.Errorf("programlower: array type annotations are not supported")
+	}
+	return w.term(w.builder.Array(w.span(expr), element, expr.Readonly), "array type")
+}
+
+// Map completes parser-authored map syntax after its ordered key and value
+// children have been lowered.
+func (w *Writer) Map(expr *ast.MapTypeExpr, key, value program.Term) (program.Term, error) {
+	if w == nil || w.builder == nil || expr == nil || key == 0 || value == 0 {
+		return 0, fmt.Errorf("programlower: invalid map type")
+	}
+	return w.term(w.builder.Map(w.span(expr), key, value, expr.Readonly), "map type")
+}
+
+// Record completes one ordered field range. Its descriptor slice belongs to
+// the Writer and is reset after Builder.Record copies it into Program storage,
+// avoiding a per-record temporary allocation in the lowering machine.
+func (w *Writer) Record(expr *ast.RecordTypeExpr, mark, count int) (program.Term, error) {
+	if w == nil || w.builder == nil || expr == nil || count != len(expr.Fields) {
+		return 0, fmt.Errorf("programlower: invalid record type")
+	}
+	for _, field := range expr.Fields {
+		if field.Name == "" || len(field.Annotations) != 0 {
+			return 0, fmt.Errorf("programlower: record field is unsupported")
+		}
+	}
+	terms, err := w.rangeTerms(mark, count)
+	if err != nil {
+		return 0, err
+	}
+	if len(w.fields) != 0 {
+		return 0, fmt.Errorf("programlower: unfinished record-field scratch")
+	}
+	for index, field := range expr.Fields {
+		key := w.builder.TypeKey(field.Name)
+		if key == 0 {
+			return 0, fmt.Errorf("programlower: invalid record field name %q", field.Name)
+		}
+		w.fields = append(w.fields, program.RecordField{
+			Key:      key,
+			Type:     terms[index],
+			NameSpan: w.nameSpan(field.NamePosition),
+			Optional: field.Optional,
+		})
+	}
+	term := w.builder.Record(w.span(expr), w.fields, expr.Readonly)
+	w.fields = w.fields[:0]
+	return w.term(term, "record type")
 }
 
 // TypeOf lowers typeof with the exact declaration/parameter host and an
@@ -347,6 +409,20 @@ func (w *Writer) span(holder ast.PositionHolder) program.Span {
 		endLine, endCol = 0, 0
 	}
 	return program.Span{File: w.sourceName, StartLine: holder.Line(), StartCol: holder.Column(), EndLine: endLine, EndCol: endCol}
+}
+
+func (w *Writer) nameSpan(position ast.Position) program.Span {
+	file := position.File
+	if file == "" {
+		file = w.sourceName
+	}
+	return program.Span{
+		File:      file,
+		StartLine: position.Line,
+		StartCol:  position.Column,
+		EndLine:   position.EndLine,
+		EndCol:    position.EndColumn,
+	}
 }
 
 func sourceRef(path []string) (pkg, name string) {

@@ -129,6 +129,163 @@ func TestWriterLeafAndOrderedFinishers(t *testing.T) {
 	}
 }
 
+func TestPrimitiveAnnotationsFailClosed(t *testing.T) {
+	w, _, _ := writerFor(t, "")
+	_, handled, err := w.Leaf(&ast.PrimitiveTypeExpr{
+		Name:        "number",
+		Annotations: []ast.AnnotationExpr{{Name: "min"}},
+	})
+	if !handled || err == nil {
+		t.Fatalf("annotated primitive handled=%v err=%v", handled, err)
+	}
+}
+
+func TestWriterStructuralContainers(t *testing.T) {
+	t.Run("array rejects unsupported annotations", func(t *testing.T) {
+		w, _, _ := writerFor(t, "")
+		element, handled, err := w.Leaf(&ast.PrimitiveTypeExpr{Name: "number"})
+		if err != nil || !handled {
+			t.Fatalf("element = %v %v", handled, err)
+		}
+		for _, expr := range []*ast.ArrayTypeExpr{
+			{Element: &ast.PrimitiveTypeExpr{Name: "number"}, ElementAnnotations: []ast.AnnotationExpr{{Name: "element"}}},
+			{Element: &ast.PrimitiveTypeExpr{Name: "number"}, ArrayAnnotations: []ast.AnnotationExpr{{Name: "array"}}},
+		} {
+			if _, err := w.Array(expr, element); err == nil {
+				t.Fatal("annotated array was accepted")
+			}
+		}
+	})
+
+	t.Run("map preserves ordered children and readonly", func(t *testing.T) {
+		w, builder, _ := writerFor(t, "")
+		key, handled, err := w.Leaf(&ast.PrimitiveTypeExpr{Name: "string"})
+		if err != nil || !handled {
+			t.Fatalf("key = %v %v", handled, err)
+		}
+		value, handled, err := w.Leaf(&ast.PrimitiveTypeExpr{Name: "number"})
+		if err != nil || !handled {
+			t.Fatalf("value = %v %v", handled, err)
+		}
+		mapped, err := w.Map(&ast.MapTypeExpr{Key: &ast.PrimitiveTypeExpr{Name: "string"}, Value: &ast.PrimitiveTypeExpr{Name: "number"}, Readonly: true}, key, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := sealStaticTarget(t, builder, mapped)
+		gotKey, gotValue, readonly, ok := p.Map(mapped)
+		if !ok || gotKey != key || gotValue != value || !readonly {
+			t.Fatalf("map = %v %v %v %v", gotKey, gotValue, readonly, ok)
+		}
+	})
+
+	t.Run("record preserves field metadata and reuses descriptor scratch", func(t *testing.T) {
+		w, builder, stmts := writerFor(t, "type Shape = readonly { first: string, second?: number }")
+		record, ok := stmts[0].(*ast.TypeDefStmt).Type.(*ast.RecordTypeExpr)
+		if !ok {
+			t.Fatalf("record = %T", stmts[0].(*ast.TypeDefStmt).Type)
+		}
+		first, handled, err := w.Leaf(record.Fields[0].Type)
+		if err != nil || !handled {
+			t.Fatalf("first = %v %v", handled, err)
+		}
+		second, handled, err := w.Leaf(record.Fields[1].Type)
+		if err != nil || !handled {
+			t.Fatalf("second = %v %v", handled, err)
+		}
+		mark := w.Mark()
+		if err := w.Append(first); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Append(second); err != nil {
+			t.Fatal(err)
+		}
+		shape, err := w.Record(record, mark, len(record.Fields))
+		if err != nil || !w.Clean() {
+			t.Fatalf("record = %v clean=%v", err, w.Clean())
+		}
+
+		p := sealStaticTarget(t, builder, shape)
+		readonly, count, ok := p.Record(shape)
+		if !ok || !readonly || count != 2 {
+			t.Fatalf("record = %v %d %v", readonly, count, ok)
+		}
+		key, typ, span, optional, ok := p.RecordField(shape, 1)
+		if !ok || key == 0 || typ != second || !optional {
+			t.Fatalf("second field = %v %v %v %v", key, typ, optional, ok)
+		}
+		position := record.Fields[1].NamePosition
+		wantSpan := program.Span{File: position.File, StartLine: position.Line, StartCol: position.Column, EndLine: position.EndLine, EndCol: position.EndColumn}
+		if wantSpan.File == "" {
+			wantSpan.File = "static.lua"
+		}
+		if span != wantSpan {
+			t.Fatalf("field name span = %#v, want %#v", span, wantSpan)
+		}
+	})
+
+	t.Run("record reuses writer descriptor scratch", func(t *testing.T) {
+		w, _, _ := writerFor(t, "")
+		record := &ast.RecordTypeExpr{Fields: []ast.RecordFieldExpr{
+			{Name: "first", Type: &ast.PrimitiveTypeExpr{Name: "string"}},
+			{Name: "second", Type: &ast.PrimitiveTypeExpr{Name: "number"}},
+		}}
+		makeRecord := func() {
+			types := []string{"string", "number"}
+			mark := w.Mark()
+			for _, name := range types {
+				term, handled, err := w.Leaf(&ast.PrimitiveTypeExpr{Name: name})
+				if err != nil || !handled || w.Append(term) != nil {
+					t.Fatalf("field %q = handled=%v err=%v", name, handled, err)
+				}
+			}
+			if _, err := w.Record(record, mark, len(record.Fields)); err != nil || !w.Clean() {
+				t.Fatalf("record err=%v clean=%v", err, w.Clean())
+			}
+		}
+		makeRecord()
+		fieldCapacity := cap(w.fields)
+		if fieldCapacity < len(record.Fields) {
+			t.Fatalf("field scratch cap = %d", fieldCapacity)
+		}
+		makeRecord()
+		if cap(w.fields) != fieldCapacity {
+			t.Fatalf("field scratch cap=%d want=%d", cap(w.fields), fieldCapacity)
+		}
+	})
+
+	t.Run("record rejects field annotations", func(t *testing.T) {
+		w, _, _ := writerFor(t, "")
+		term, handled, err := w.Leaf(&ast.PrimitiveTypeExpr{Name: "string"})
+		if err != nil || !handled {
+			t.Fatalf("term = %v %v", handled, err)
+		}
+		mark := w.Mark()
+		if err := w.Append(term); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Record(&ast.RecordTypeExpr{Fields: []ast.RecordFieldExpr{{Name: "name", Type: &ast.PrimitiveTypeExpr{Name: "string"}, Annotations: []ast.AnnotationExpr{{Name: "field"}}}}}, mark, 1); err == nil {
+			t.Fatal("annotated record field was accepted")
+		}
+	})
+}
+
+func sealStaticTarget(t *testing.T, builder *program.Builder, target program.Term) *program.Program {
+	t.Helper()
+	entry := builder.Body(program.Span{})
+	if entry == 0 || !builder.SetEntry(entry) {
+		t.Fatal("entry")
+	}
+	alias := builder.DeclareTypeAlias(program.Span{}, entry, "Target")
+	if alias == 0 || !builder.SetTypeAliasGap(alias, 0) || !builder.SetTypeAliasParams(alias, nil) || !builder.FillTypeAlias(alias, target) || !builder.SetBody(entry) {
+		t.Fatal("attach target")
+	}
+	p, err := builder.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func TestWriterQualifiedReferenceDecisions(t *testing.T) {
 	t.Run("qualified source resolves to lexical alias", func(t *testing.T) {
 		w, builder, stmts := writerFor(t, `return function()

@@ -144,6 +144,10 @@ const (
 	stepFinishStaticGenericBase
 	stepFinishStaticGeneric
 	stepFinishStaticTypeOf
+	stepFinishStaticArray
+	stepFinishStaticMapKey
+	stepFinishStaticMap
+	stepStaticRecordFields
 )
 
 // step is a closed, phase-private instruction. Its AST fields keep the
@@ -542,6 +546,37 @@ func (l *lowerer) run() error {
 				return err
 			}
 			l.result = term
+		case stepFinishStaticArray:
+			expr := current.node.(*ast.ArrayTypeExpr)
+			term, err := l.static.Array(expr, l.result)
+			if err != nil {
+				return err
+			}
+			l.result = term
+		case stepFinishStaticMapKey:
+			expr := current.node.(*ast.MapTypeExpr)
+			l.push(step{kind: stepFinishStaticMap, node: expr, typeBase: l.result}, step{kind: stepStaticType, typeExpr: expr.Value, typeHost: current.typeHost})
+		case stepFinishStaticMap:
+			expr := current.node.(*ast.MapTypeExpr)
+			term, err := l.static.Map(expr, current.typeBase, l.result)
+			if err != nil {
+				return err
+			}
+			l.result = term
+		case stepStaticRecordFields:
+			expr := current.node.(*ast.RecordTypeExpr)
+			if current.index == len(expr.Fields) {
+				term, err := l.static.Record(expr, current.staticMark, len(expr.Fields))
+				if err != nil {
+					return err
+				}
+				l.result = term
+				continue
+			}
+			if current.index < 0 || current.index > len(expr.Fields) {
+				return fmt.Errorf("programlower: invalid static record-field cursor")
+			}
+			l.push(step{kind: stepStaticRecordFields, node: expr, index: current.index + 1, staticMark: current.staticMark, typeHost: current.typeHost}, step{kind: stepAppendStaticType}, step{kind: stepStaticType, typeExpr: expr.Fields[current.index].Type, typeHost: current.typeHost})
 		default:
 			return fmt.Errorf("programlower: invalid lowering step %d", current.kind)
 		}
@@ -723,6 +758,15 @@ func (l *lowerer) runStaticType(current step) error {
 		return fmt.Errorf("programlower: absent static type expression")
 	}
 	switch expr := current.typeExpr.(type) {
+	case *ast.ArrayTypeExpr:
+		l.push(step{kind: stepFinishStaticArray, node: expr}, step{kind: stepStaticType, typeExpr: expr.Element, typeHost: current.typeHost})
+		return nil
+	case *ast.MapTypeExpr:
+		l.push(step{kind: stepFinishStaticMapKey, node: expr, typeHost: current.typeHost}, step{kind: stepStaticType, typeExpr: expr.Key, typeHost: current.typeHost})
+		return nil
+	case *ast.RecordTypeExpr:
+		l.push(step{kind: stepStaticRecordFields, node: expr, staticMark: l.static.Mark(), typeHost: current.typeHost})
+		return nil
 	case *ast.OptionalTypeExpr:
 		l.push(
 			step{kind: stepFinishStaticOptional, node: expr},

@@ -3,6 +3,8 @@ package programlower_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/program"
 )
 
@@ -77,5 +79,99 @@ func TestLowerCoreStaticCompositesAndTypeOf(t *testing.T) {
 	}
 	if n, ok := p.GenericArgLen(gTarget); !ok || n != 1 {
 		t.Fatal("generic args")
+	}
+}
+
+func TestLowerStaticArrayMapAndRecordQueries(t *testing.T) {
+	const source = `type Nested = readonly {number[]}
+type Dictionary<K, V> = readonly {[K]: V}
+type Empty = {}
+type Shape = readonly {first: string, second?: number, nested: {enabled: boolean}}`
+	stmts, err := parse.ParseString(source, "fixture.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shapeStmt := stmts[3].(*ast.TypeDefStmt)
+	shapeSyntax := shapeStmt.Type.(*ast.RecordTypeExpr)
+	p, err := lowerSource(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested, _ := p.TypeAliasAt(0)
+	dictionary, _ := p.TypeAliasAt(1)
+	empty, _ := p.TypeAliasAt(2)
+	shape, _ := p.TypeAliasAt(3)
+
+	_, nestedTarget, _, _ := p.TypeAlias(nested)
+	innerArray, readonly, ok := p.Array(nestedTarget)
+	if !ok || !readonly {
+		t.Fatalf("outer array readonly=%v ok=%v", readonly, ok)
+	}
+	element, readonly, ok := p.Array(innerArray)
+	if !ok || readonly {
+		t.Fatalf("suffix array readonly=%v ok=%v", readonly, ok)
+	}
+	if kind, ok := p.Primitive(element); !ok || kind != program.PrimitiveNumber {
+		t.Fatalf("nested array element=%v/%v", kind, ok)
+	}
+
+	if n, ok := p.TypeAliasParamCount(dictionary); !ok || n != 2 {
+		t.Fatalf("dictionary params=%d/%v", n, ok)
+	}
+	keyParam, _ := p.TypeAliasParamAt(dictionary, 0)
+	valueParam, _ := p.TypeAliasParamAt(dictionary, 1)
+	_, dictionaryTarget, _, _ := p.TypeAlias(dictionary)
+	key, value, readonly, ok := p.Map(dictionaryTarget)
+	if !ok || !readonly {
+		t.Fatalf("map readonly=%v ok=%v", readonly, ok)
+	}
+	state, target, _, _, ok := p.TypeRef(key)
+	if !ok || state != program.TypeRefDeclaration || target != keyParam {
+		t.Fatalf("map key=%v/%v/%v", state, target, ok)
+	}
+	state, target, _, _, ok = p.TypeRef(value)
+	if !ok || state != program.TypeRefDeclaration || target != valueParam {
+		t.Fatalf("map value=%v/%v/%v", state, target, ok)
+	}
+
+	_, emptyTarget, _, _ := p.TypeAlias(empty)
+	if readonly, fields, ok := p.Record(emptyTarget); !ok || readonly || fields != 0 {
+		t.Fatalf("empty record=%v/%d/%v", readonly, fields, ok)
+	}
+	_, shapeTarget, _, _ := p.TypeAlias(shape)
+	if readonly, fields, ok := p.Record(shapeTarget); !ok || !readonly || fields != 3 {
+		t.Fatalf("shape record=%v/%d/%v", readonly, fields, ok)
+	}
+	for index, want := range shapeSyntax.Fields {
+		key, typ, span, optional, ok := p.RecordField(shapeTarget, index)
+		if !ok || key == 0 || optional != want.Optional {
+			t.Fatalf("field[%d]=%v/%v/%v", index, key, optional, ok)
+		}
+		wantSpan := program.Span{
+			File:      "fixture.lua",
+			StartLine: want.NamePosition.Line,
+			StartCol:  want.NamePosition.Column,
+			EndLine:   want.NamePosition.EndLine,
+			EndCol:    want.NamePosition.EndColumn,
+		}
+		if span != wantSpan {
+			t.Fatalf("field[%d] span=%#v want=%#v", index, span, wantSpan)
+		}
+		if index == 2 {
+			if nestedReadonly, nestedFields, ok := p.Record(typ); !ok || nestedReadonly || nestedFields != 1 {
+				t.Fatalf("nested record=%v/%d/%v", nestedReadonly, nestedFields, ok)
+			}
+		}
+	}
+}
+
+func TestLowerStaticContainerAnnotationsFailClosed(t *testing.T) {
+	for _, source := range []string{
+		`type A = {number} @min(0)`,
+		`type R = {name: string @min_len(1)}`,
+	} {
+		if _, err := lowerSource(source); err == nil {
+			t.Fatalf("Lower(%q) accepted unsupported static annotation", source)
+		}
 	}
 }
