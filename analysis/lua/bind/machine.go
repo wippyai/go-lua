@@ -688,6 +688,7 @@ func (b *binder) visitRecordFields(step bindStep) {
 	field := record.Fields[step.index]
 	step.index++
 	b.push(step)
+	b.scheduleAnnotationArgs(field.Annotations)
 	b.scheduleType(field.Type)
 }
 

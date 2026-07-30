@@ -1743,7 +1743,10 @@ local function probe(value) return value end
 local scalar: number @scalar(anchor, probe(anchor)) = 0
 local elements: {number @element(anchor, probe(anchor))} = {}
 local values: {number} @array(anchor, probe(anchor)) = {}
-type Row = { value: number @field(anchor, probe(anchor)) }
+type Row = {
+    value: number @field(anchor, probe(anchor)),
+    choice: (string | number)? @choice(anchor, probe(anchor)),
+}
 `, "annotation_args.lua")
 	if err != nil {
 		t.Fatalf("ParseString: %v", err)
@@ -1793,12 +1796,15 @@ type Row = { value: number @field(anchor, probe(anchor)) }
 		t.Fatalf("statement 5 = %T, want TypeDefStmt", stmts[5])
 	}
 	record, ok := row.Type.(*ast.RecordTypeExpr)
-	if !ok || len(record.Fields) != 1 {
-		t.Fatalf("Row type = %#v, want single-field record", row.Type)
+	if !ok || len(record.Fields) != 2 {
+		t.Fatalf("Row type = %#v, want two-field record", row.Type)
 	}
 	fieldType, ok := record.Fields[0].Type.(*ast.PrimitiveTypeExpr)
 	if !ok || len(fieldType.Annotations) != 1 {
 		t.Fatalf("record field type = %#v, want annotated primitive", record.Fields[0].Type)
+	}
+	if len(record.Fields[1].Annotations) != 1 {
+		t.Fatalf("composite record field annotations = %#v, want one annotation", record.Fields[1].Annotations)
 	}
 
 	r := BindChunk(stmts, Options{})
@@ -1809,6 +1815,7 @@ type Row = { value: number @field(anchor, probe(anchor)) }
 		elementPrimitive.Annotations,
 		valuesType.ArrayAnnotations,
 		fieldType.Annotations,
+		record.Fields[1].Annotations,
 	}
 	for _, group := range annotations {
 		for _, annotation := range group {
