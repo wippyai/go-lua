@@ -9,7 +9,7 @@ import (
 )
 
 func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
-	if stopDepthPair(narrow, wide, depth) {
+	if missingTypePair(narrow, wide) {
 		return false
 	}
 	wide = unwrap.Alias(wide)

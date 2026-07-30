@@ -31,23 +31,10 @@ func TestPrimitiveStrictOrder(t *testing.T) {
 	}
 }
 
-func TestSubtypeDepthExhaustionFailsClosed(t *testing.T) {
-	exhausted := typ.DefaultRecursionDepth + 1
-	if (&checker{}).check(typ.String, typ.String, exhausted) {
-		t.Fatal("subtype comparison succeeded after recursion-depth exhaustion")
-	}
-	if (&checker{}).canWidenTo(typ.String, typ.String, exhausted) {
-		t.Fatal("widen comparison succeeded after recursion-depth exhaustion")
-	}
-
-	// A non-cyclic width-subtyping chain deeper than any sane budget: every
-	// level allocates a fresh *typ.Record pair, so cycle-pair memoization
-	// never collapses the walk (no pair ever repeats) and only a live depth
-	// budget can terminate it early. sub carries one extra field beyond what
-	// super requires at every level, which is valid structural width
-	// subtyping; the honest, unbounded answer is "yes, subtype" all the way
-	// to the shared Number leaf. Depth exhaustion must still fail closed and
-	// report false rather than let the walk run to completion.
+func TestSubtypeDeepAcyclicWidthChainHasNoSemanticCap(t *testing.T) {
+	// Every level allocates a fresh record pair, so no pair repeats. The proof
+	// must reach Number instead of turning an implementation budget into a
+	// false negative. This deliberately exceeds the former 4096 cap.
 	const chainDepth = 10000
 	var sub typ.Type = typ.Number
 	var super typ.Type = typ.Number
@@ -55,8 +42,54 @@ func TestSubtypeDepthExhaustionFailsClosed(t *testing.T) {
 		sub = typetable.NewRecord().Field("extra", typ.Number).Field("next", sub).Build()
 		super = typetable.NewRecord().Field("next", super).Build()
 	}
-	if IsSubtype(sub, super) {
-		t.Fatal("width-subtyping chain deeper than the recursion budget was accepted as a subtype: depth exhaustion did not fail closed")
+	if !IsSubtype(sub, super) {
+		t.Fatal("deep acyclic width-subtyping chain was rejected")
+	}
+}
+
+func TestSubtypeDeepAcyclicPrefixThenCycleUsesPairCoinduction(t *testing.T) {
+	// The acyclic prefix is larger than the old cap and the leaf is an actual
+	// cycle. A positive result proves that neither a budget nor a repeated-node
+	// shortcut is standing in for the structural proof; the following negative
+	// case proves productive arms are still checked after the cycle closes.
+	list := func(name string, element typ.Type) *typ.Recursive {
+		return typ.NewRecursive(name, func(self typ.Type) typ.Type {
+			return typetable.NewRecord().
+				Field("value", element).
+				Field("next", typeexpr.Optional(self)).
+				Build()
+		})
+	}
+
+	var acceptedSub typ.Type = list("AcceptedSub", typ.Integer)
+	var acceptedSuper typ.Type = list("AcceptedSuper", typ.Number)
+	var rejectedSub typ.Type = list("RejectedSub", typ.Number)
+	var rejectedSuper typ.Type = list("RejectedSuper", typ.String)
+	for i := 0; i < 10000; i++ {
+		acceptedSub = typetable.NewRecord().ReadonlyField("next", acceptedSub).Build()
+		acceptedSuper = typetable.NewRecord().ReadonlyField("next", acceptedSuper).Build()
+		rejectedSub = typetable.NewRecord().ReadonlyField("next", rejectedSub).Build()
+		rejectedSuper = typetable.NewRecord().ReadonlyField("next", rejectedSuper).Build()
+	}
+	if !IsSubtype(acceptedSub, acceptedSuper) {
+		t.Fatal("deep acyclic prefix followed by a valid recursive proof was rejected")
+	}
+	if IsSubtype(rejectedSub, rejectedSuper) {
+		t.Fatal("deep acyclic prefix hid a productive recursive payload mismatch")
+	}
+}
+
+func TestSubtypeRecursiveUnionAgainstPrimitiveUsesCompletePairKey(t *testing.T) {
+	// A primitive endpoint has no allocation identity. The pair key must still
+	// represent it, otherwise R = R | string re-enters unchecked and grows the
+	// Go stack forever after removal of the old depth cap.
+	loop := typ.NewRecursivePlaceholder("StringLoop")
+	loop.SetBody(typeexpr.Union(loop, typ.String))
+	if !IsSubtype(loop, typ.String) {
+		t.Fatal("R = R | string should satisfy string by coinduction")
+	}
+	if IsSubtype(loop, typ.Number) {
+		t.Fatal("R = R | string must not satisfy an unrelated primitive")
 	}
 }
 

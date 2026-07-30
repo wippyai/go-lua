@@ -9,35 +9,36 @@ import (
 )
 
 func (c *checker) check(sub, super typ.Type, depth int) bool {
-	if stopDepthPair(sub, super, depth) {
+	if missingTypePair(sub, super) {
 		return false
 	}
 	if sub == super {
 		return true
 	}
 
-	if needsCycleGuard(sub.Kind()) && needsCycleGuard(super.Kind()) {
-		if pair, ok := newTypePair(sub, super); ok {
-			if c.memo != nil {
-				if result, ok := c.memo[pair]; ok {
-					return result
-				}
+	if pair, ok := newTypePair(sub, super); ok {
+		if c.memo != nil {
+			if result, ok := c.memo[pair]; ok {
+				return result
 			}
-			if c.inProgress == nil {
-				c.inProgress = make(map[typePair]bool)
-			}
-			if c.inProgress[pair] {
-				return true
-			}
-			c.inProgress[pair] = true
-			result := c.checkCore(sub, super, depth)
-			delete(c.inProgress, pair)
-			if c.memo == nil {
-				c.memo = make(map[typePair]bool)
-			}
-			c.memo[pair] = result
-			return result
 		}
+		if c.inProgress == nil {
+			c.inProgress = make(map[typePair]bool)
+		}
+		if c.inProgress[pair] {
+			// Exact obligation-pair repetition closes a coinductive proof. The
+			// key space includes primitive endpoints: recursive unions such as
+			// R = R | {run: fn} must terminate when queried against string too.
+			return true
+		}
+		c.inProgress[pair] = true
+		result := c.checkCore(sub, super, depth)
+		delete(c.inProgress, pair)
+		if c.memo == nil {
+			c.memo = make(map[typePair]bool)
+		}
+		c.memo[pair] = result
+		return result
 	}
 
 	return c.checkCore(sub, super, depth)
@@ -323,25 +324,40 @@ func (c *checker) checkNil(super typ.Type, depth int) bool {
 }
 
 type typePair struct {
-	sub   uintptr
-	super uintptr
+	sub   typeNodeID
+	super typeNodeID
+}
+
+// typeNodeID is an identity in the closed type universe. Product nodes use
+// their allocation identity; singleton primitives use their kind. Keeping
+// those spaces separate avoids treating a pointer value as a primitive tag.
+// A pair is usable only when both endpoints have such an identity, which
+// keeps arbitrary third-party non-pointer Type implementations out of the
+// coinductive table rather than accidentally merging them by kind.
+type typeNodeID struct {
+	pointer     uintptr
+	primitive   kind.Kind
+	isPrimitive bool
 }
 
 func newTypePair(sub, super typ.Type) (typePair, bool) {
-	subPtr := nodeid.Pointer(sub)
-	superPtr := nodeid.Pointer(super)
-	if subPtr == 0 || superPtr == 0 {
+	subID, subOK := typeNodeIdentity(sub)
+	superID, superOK := typeNodeIdentity(super)
+	if !subOK || !superOK {
 		return typePair{}, false
 	}
-	return typePair{sub: subPtr, super: superPtr}, true
+	return typePair{sub: subID, super: superID}, true
 }
 
-func needsCycleGuard(k kind.Kind) bool {
-	switch k {
+func typeNodeIdentity(t typ.Type) (typeNodeID, bool) {
+	if pointer := nodeid.Pointer(t); pointer != 0 {
+		return typeNodeID{pointer: pointer}, true
+	}
+	switch t.Kind() {
 	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String,
 		kind.Any, kind.Unknown, kind.Never, kind.Self:
-		return false
+		return typeNodeID{primitive: t.Kind(), isPrimitive: true}, true
 	default:
-		return true
+		return typeNodeID{}, false
 	}
 }
