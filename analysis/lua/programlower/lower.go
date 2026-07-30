@@ -28,6 +28,9 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 	if l.body == 0 {
 		return nil, fmt.Errorf("programlower: could not create chunk body")
 	}
+	if !l.builder.SetEntry(l.body) {
+		return nil, fmt.Errorf("programlower: could not set chunk Entry")
+	}
 	terminated, err := l.lowerStmts(stmts)
 	if err != nil {
 		return nil, err

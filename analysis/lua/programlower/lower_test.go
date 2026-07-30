@@ -26,6 +26,28 @@ func parseBindLower(t *testing.T, source string) *program.Program {
 	return lowered
 }
 
+func TestEmptyChunkHasOneCanonicalEntry(t *testing.T) {
+	p := parseBindLower(t, "")
+	entry, ok := p.Entry()
+	if !ok {
+		t.Fatal("empty chunk has no Entry")
+	}
+	roots, ok := p.AppendBody(entry, nil)
+	if !ok || len(roots) != 1 {
+		t.Fatalf("empty Entry roots = %v, %v; want one Normal outcome", roots, ok)
+	}
+	values, ok := p.Normal(roots[0])
+	if !ok {
+		t.Fatalf("empty Entry root is not Normal: %v", roots[0])
+	}
+	if count, ok := p.ValuesLen(values); !ok || count != 0 {
+		t.Fatalf("empty Entry ValuesLen = %d, %v", count, ok)
+	}
+	if tail, ok := p.ValuesTail(values); !ok || tail != 0 {
+		t.Fatalf("empty Entry tail = %v, %v", tail, ok)
+	}
+}
+
 func TestParseBindLowerLiteralLocalsTableAssignmentAndReturn(t *testing.T) {
 	p := parseBindLower(t, `
 local x = 1
@@ -35,7 +57,11 @@ return x, t
 `)
 
 	var bodies, cells, reads, binds, assigns, tables, lenses, returns int
-	var rootBody, tableTerm, returnValues program.Term
+	rootBody, ok := p.Entry()
+	if !ok {
+		t.Fatal("Program has no Entry")
+	}
+	var tableTerm, returnValues program.Term
 	var cellTerms, bindTerms []program.Term
 	for i := 0; i < p.TermCount(); i++ {
 		term, ok := p.TermAt(i)
@@ -44,7 +70,6 @@ return x, t
 		}
 		if _, ok := p.BodyLen(term); ok {
 			bodies++
-			rootBody = term
 		}
 		if _, ok := p.Cell(term); ok {
 			cells++
@@ -200,39 +225,41 @@ do
   return x
 end
 `)
-	var bodies, cells []program.Term
-	var returnValues program.Term
+	entry, ok := p.Entry()
+	if !ok {
+		t.Fatal("Program has no Entry")
+	}
+	var cells []program.Term
 	for i := 0; i < p.TermCount(); i++ {
 		term, _ := p.TermAt(i)
-		if _, ok := p.BodyLen(term); ok {
-			bodies = append(bodies, term)
-		}
 		if _, ok := p.Cell(term); ok {
 			cells = append(cells, term)
-		}
-		if values, ok := p.Return(term); ok {
-			returnValues = values
 		}
 	}
 	if len(cells) != 2 {
 		t.Fatalf("cells = %d", len(cells))
 	}
-	if len(bodies) != 2 {
-		t.Fatalf("bodies = %d", len(bodies))
-	}
-	outerRoots, ok := p.AppendBody(bodies[0], nil)
-	if !ok || len(outerRoots) != 2 || outerRoots[1] != bodies[1] {
+	outerRoots, ok := p.AppendBody(entry, nil)
+	if !ok || len(outerRoots) != 2 {
 		t.Fatalf("outer Body = %v, %v; want Bind then child Body", outerRoots, ok)
 	}
-	innerRoots, ok := p.AppendBody(bodies[1], nil)
+	innerBody := outerRoots[1]
+	if _, ok := p.BodyLen(innerBody); !ok || innerBody == entry {
+		t.Fatalf("nested Body = %v, %v; Entry = %v", innerBody, ok, entry)
+	}
+	innerRoots, ok := p.AppendBody(innerBody, nil)
 	if !ok || len(innerRoots) != 2 {
 		t.Fatalf("inner Body = %v, %v; want Bind then Return", innerRoots, ok)
 	}
-	if owner, ok := p.Cell(cells[0]); !ok || owner != bodies[0] {
-		t.Fatalf("outer Cell owner = %v, %v; want %v", owner, ok, bodies[0])
+	returnValues, ok := p.Return(innerRoots[1])
+	if !ok {
+		t.Fatalf("nested root is not Return: %v", innerRoots[1])
 	}
-	if owner, ok := p.Cell(cells[1]); !ok || owner != bodies[1] {
-		t.Fatalf("inner Cell owner = %v, %v; want %v", owner, ok, bodies[1])
+	if owner, ok := p.Cell(cells[0]); !ok || owner != entry {
+		t.Fatalf("outer Cell owner = %v, %v; want %v", owner, ok, entry)
+	}
+	if owner, ok := p.Cell(cells[1]); !ok || owner != innerBody {
+		t.Fatalf("inner Cell owner = %v, %v; want %v", owner, ok, innerBody)
 	}
 	value, ok := p.ValuesAt(returnValues, 0)
 	if !ok {
@@ -333,19 +360,35 @@ return t
 func loweredReturnValue(t *testing.T, source string) (*program.Program, program.Term) {
 	t.Helper()
 	p := parseBindLower(t, source)
-	for i := 0; i < p.TermCount(); i++ {
-		term, _ := p.TermAt(i)
-		values, ok := p.Return(term)
-		if !ok {
-			continue
-		}
-		value, ok := p.ValuesAt(values, 0)
-		if !ok {
-			t.Fatal("Return has no first value")
-		}
-		return p, value
+	entry, ok := p.Entry()
+	if !ok {
+		t.Fatal("Program has no Entry")
 	}
-	t.Fatal("Program has no Return")
+	bodies := []program.Term{entry}
+	for len(bodies) != 0 {
+		body := bodies[len(bodies)-1]
+		bodies = bodies[:len(bodies)-1]
+		roots, ok := p.AppendBody(body, nil)
+		if !ok {
+			t.Fatalf("Entry-reachable term is not Body: %v", body)
+		}
+		for _, root := range roots {
+			if _, ok := p.BodyLen(root); ok {
+				bodies = append(bodies, root)
+				continue
+			}
+			values, ok := p.Return(root)
+			if !ok {
+				continue
+			}
+			value, ok := p.ValuesAt(values, 0)
+			if !ok {
+				t.Fatal("Return has no first value")
+			}
+			return p, value
+		}
+	}
+	t.Fatal("Entry-reachable Bodies have no Return")
 	return nil, 0
 }
 
@@ -446,13 +489,17 @@ func TestLogicalSelectionKeepsRightSideConditional(t *testing.T) {
 
 func TestAttributeReadsPreserveExactAndDynamicLenses(t *testing.T) {
 	p := parseBindLower(t, "local t = {}\nlocal k = \"name\"\nreturn t.name, t[nil], t[k]")
-	var returned program.Term
-	for i := 0; i < p.TermCount(); i++ {
-		term, _ := p.TermAt(i)
-		if values, ok := p.Return(term); ok {
-			returned = values
-			break
-		}
+	entry, ok := p.Entry()
+	if !ok {
+		t.Fatal("Program has no Entry")
+	}
+	roots, ok := p.AppendBody(entry, nil)
+	if !ok || len(roots) != 3 {
+		t.Fatalf("Entry roots = %v, %v", roots, ok)
+	}
+	returned, ok := p.Return(roots[2])
+	if !ok {
+		t.Fatalf("Entry root 2 is not Return: %v", roots[2])
 	}
 	for i, wantDynamic := range []bool{false, false, true} {
 		read, ok := p.ValuesAt(returned, i)
