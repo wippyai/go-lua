@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/symbol"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -431,7 +430,7 @@ func (r *Result) QualifiedTypeRoots(fn *ast.FunctionExpr) map[string]symbol.ID {
 }
 
 func (b *binder) bindPrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) {
-	if expr == nil || typ.BuiltinPrimitiveName(expr.Name) {
+	if expr == nil || builtinPrimitiveName(expr.Name) {
 		return
 	}
 	decl, ok := b.lookupType(expr.Name)
@@ -439,4 +438,14 @@ func (b *binder) bindPrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) {
 		return
 	}
 	b.result.primitiveTypeRefs[expr] = decl
+}
+
+func builtinPrimitiveName(name string) bool {
+	switch name {
+	case "nil", "boolean", "number", "integer", "string",
+		"function", "any", "unknown", "never", "self":
+		return true
+	default:
+		return false
+	}
 }
