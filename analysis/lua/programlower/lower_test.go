@@ -2045,17 +2045,179 @@ return (f())`)
 		}
 	})
 
-	t.Run("method needs exact upstream token evidence", func(t *testing.T) {
+	t.Run("method requires exact upstream token evidence", func(t *testing.T) {
 		stmts, err := parse.ParseString(`local t = {}
 return t:m(1)`, "method.lua")
 		if err != nil {
 			t.Fatal(err)
 		}
+		if _, err = programlower.Lower("method.lua", stmts, bind.BindChunk(stmts, bind.Options{})); err != nil {
+			t.Fatalf("parser-authored method lower error = %v", err)
+		}
+		call := stmts[1].(*ast.ReturnStmt).Exprs[0].(*ast.FuncCallExpr)
+		call.MethodPosition = ast.Position{}
 		_, err = programlower.Lower("method.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
-		if err == nil || !strings.Contains(err.Error(), "AST has no MethodPosition evidence") {
+		if err == nil || !strings.Contains(err.Error(), "MethodPosition evidence") {
 			t.Fatalf("method call error = %v", err)
 		}
 	})
+}
+
+func TestMethodCallAndDefinitionCanonicalLaws(t *testing.T) {
+	t.Run("call retains one receiver occurrence and authored open arguments", func(t *testing.T) {
+		stmts, err := parse.ParseString(`return make():method(arg())`, "method-call-laws.lua")
+		if err != nil {
+			t.Fatal(err)
+		}
+		method := stmts[0].(*ast.ReturnStmt).Exprs[0].(*ast.FuncCallExpr)
+		p, err := programlower.Lower("method-call-laws.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry, _ := p.Entry()
+		root, _ := p.Root(entry, 0)
+		_, returned, ok := p.Return(root)
+		if !ok {
+			t.Fatal("missing method Return")
+		}
+		methodCall := valuesTail(t, p, returned)
+		_, callee, receiver, actuals, direct, ok := p.Call(methodCall)
+		if !ok || receiver == 0 || direct != 0 {
+			t.Fatalf("method Call = callee %v receiver %v direct %v ok %v", callee, receiver, direct, ok)
+		}
+		if count, ok := p.ValuesLen(actuals); !ok || count != 0 {
+			t.Fatalf("method actual fixed prefix = %d/%v, want authored tail only", count, ok)
+		}
+		argument := valuesTail(t, p, actuals)
+		if _, _, argumentReceiver, _, _, ok := p.Call(argument); !ok || argumentReceiver != 0 {
+			t.Fatalf("method argument tail = %v, want ordinary arg() Call", argument)
+		}
+		if _, _, makeReceiver, _, _, ok := p.Call(receiver); !ok || makeReceiver != 0 {
+			t.Fatalf("method receiver = %v, want sole make() Call", receiver)
+		}
+		_, lens, ok := p.Read(callee)
+		if !ok {
+			t.Fatalf("method callee = %v, want Read", callee)
+		}
+		_, base, key, kind, _, ok := p.Lens(lens)
+		if !ok || base != receiver || kind != program.FieldName {
+			t.Fatalf("method Lens = base %v key %v kind %v ok %v", base, key, kind, ok)
+		}
+		if _, text, _, ok := p.Name(key); !ok || text != "method" {
+			t.Fatalf("method key = %v, want Name(method)", key)
+		}
+		nameSpan, _ := p.Span(key)
+		if nameSpan.StartLine != method.MethodPosition.Line || nameSpan.StartCol != method.MethodPosition.Column ||
+			nameSpan.EndLine != method.MethodPosition.EndLine || nameSpan.EndCol != method.MethodPosition.EndColumn {
+			t.Fatalf("method Name span = %#v, want %#v", nameSpan, method.MethodPosition)
+		}
+		selectorSpan, _ := p.Span(lens)
+		if selectorSpan.StartLine != method.Receiver.Line() || selectorSpan.StartCol != method.Receiver.Column() ||
+			selectorSpan.EndLine != method.MethodPosition.EndLine || selectorSpan.EndCol != method.MethodPosition.EndColumn {
+			t.Fatalf("method selector span = %#v", selectorSpan)
+		}
+		readSpan, _ := p.Span(callee)
+		if readSpan != selectorSpan {
+			t.Fatalf("method Read span = %#v, want selector %#v", readSpan, selectorSpan)
+		}
+	})
+
+	t.Run("dotted definition creates an assignment Lens rather than reading the method", func(t *testing.T) {
+		stmts, err := parse.ParseString(`local ns = { part = {} }
+function ns.part:method() end`, "method-definition-laws.lua")
+		if err != nil {
+			t.Fatal(err)
+		}
+		method := stmts[1].(*ast.FuncDefStmt)
+		p, err := programlower.Lower("method-definition-laws.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry, _ := p.Entry()
+		assign, _ := p.Root(entry, 1)
+		target, ok := p.Target(assign, 0)
+		if !ok {
+			t.Fatal("missing method definition target")
+		}
+		if _, _, _, kind, _, ok := p.Lens(target); !ok || kind != program.FieldName {
+			t.Fatalf("method definition target = %v, want name Lens", target)
+		}
+		if _, _, ok := p.Read(target); ok {
+			t.Fatal("method definition target must not read its method Lens")
+		}
+		targetSpan, _ := p.Span(target)
+		if targetSpan.StartLine != method.Name.Receiver.Line() || targetSpan.StartCol != method.Name.Receiver.Column() ||
+			targetSpan.EndLine != method.Name.MethodPosition.EndLine || targetSpan.EndCol != method.Name.MethodPosition.EndColumn {
+			t.Fatalf("method definition target span = %#v", targetSpan)
+		}
+		function := functionAssignedBy(t, p, assign)
+		if _, _, _, ok := p.Function(function); !ok {
+			t.Fatalf("method definition value = %v, want Function", function)
+		}
+	})
+}
+
+func TestImplicitMethodSelfCarriesMethodSpanAndDeclaredAliasType(t *testing.T) {
+	stmts, err := parse.ParseString(`type Receiver = {}
+local Receiver = {}
+function Receiver:method<T>(value: T, ...: T): asserts self
+end`, "implicit-method-self.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	method := stmts[2].(*ast.FuncDefStmt)
+	p, err := programlower.Lower("implicit-method-self.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	function, ok := p.FunctionAt(0)
+	if !ok {
+		t.Fatal("missing method Function")
+	}
+	self, ok := p.FormalAt(function, 0)
+	if !ok {
+		t.Fatal("missing implicit self formal")
+	}
+	selfSpan, _ := p.Span(self)
+	if selfSpan.StartLine != method.Name.MethodPosition.Line || selfSpan.StartCol != method.Name.MethodPosition.Column ||
+		selfSpan.EndLine != method.Name.MethodPosition.EndLine || selfSpan.EndCol != method.Name.MethodPosition.EndColumn {
+		t.Fatalf("implicit self span = %#v, want %#v", selfSpan, method.Name.MethodPosition)
+	}
+	declared, ok := p.CellDeclaredType(self)
+	if !ok {
+		t.Fatal("missing implicit self declared type")
+	}
+	_, target, ok := p.DeclaredType(declared)
+	if !ok {
+		t.Fatal("missing implicit self declaration target")
+	}
+	state, alias, _, name, ok := p.TypeRef(target)
+	if !ok || state != program.TypeRefDeclaration || alias == 0 || name == 0 {
+		t.Fatalf("implicit self type = state %v alias %v name %v ok %v", state, alias, name, ok)
+	}
+	wantAlias, ok := p.TypeAliasAt(0)
+	if !ok || alias != wantAlias {
+		t.Fatalf("implicit self TypeRef target = %v/%v, want TypeAliasAt(0) %v", alias, ok, wantAlias)
+	}
+	_, _, aliasName, ok := p.TypeAlias(wantAlias)
+	if !ok || name != aliasName {
+		t.Fatalf("implicit self TypeRef name = %v, want alias name key %v", name, aliasName)
+	}
+	typeSpan, _ := p.Span(target)
+	if typeSpan != selfSpan {
+		t.Fatalf("implicit self TypeRef span = %#v, want %#v", typeSpan, selfSpan)
+	}
+	if count, ok := p.FunctionTypeParamCount(function); !ok || count != 1 {
+		t.Fatalf("method generic count = %d/%v", count, ok)
+	}
+	returned, ok := p.FunctionReturnAt(function, 0)
+	if !ok {
+		t.Fatal("missing method assertion return")
+	}
+	_, ordinal, _, ok := p.Assertion(returned)
+	if !ok || ordinal != 0 {
+		t.Fatalf("method assertion ordinal = %d/%v, want implicit self slot 0", ordinal, ok)
+	}
 }
 
 func TestLocalFunctionEvidenceAndFunctionFormValidation(t *testing.T) {
@@ -2073,6 +2235,14 @@ function t:f() end`, "method-definition.lua")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = programlower.Lower(
+		"method-definition.lua",
+		stmts,
+		bind.BindChunk(stmts, bind.Options{}),
+	); err != nil {
+		t.Fatalf("parser-authored method definition lower error = %v", err)
+	}
+	stmts[1].(*ast.FuncDefStmt).Name.MethodPosition = ast.Position{}
 	_, err = programlower.Lower(
 		"method-definition.lua",
 		stmts,

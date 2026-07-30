@@ -156,7 +156,8 @@ type ParList struct {
 
 // FuncName represents a function name in a function definition statement.
 type FuncName struct {
-	Func     Expr
-	Receiver Expr
-	Method   string
+	Func           Expr
+	Receiver       Expr
+	Method         string
+	MethodPosition Position // Exact parser token position for Method.
 }

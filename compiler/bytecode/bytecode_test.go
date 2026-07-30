@@ -61,6 +61,40 @@ func TestTypedFunctionHeaderEvidenceDoesNotChangeBytecode(t *testing.T) {
 	}
 }
 
+func TestMethodPositionEvidenceDoesNotChangeBytecode(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local receiver = {}
+function receiver:method(value) return value + 1 end
+return receiver:method(2)
+`, "method-evidence.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := lua.Compile(stmts, "method-evidence.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := stmts[1].(*ast.FuncDefStmt)
+	call := stmts[2].(*ast.ReturnStmt).Exprs[0].(*ast.FuncCallExpr)
+	def.Name.MethodPosition = ast.Position{}
+	call.MethodPosition = ast.Position{}
+	after, err := lua.Compile(stmts, "method-evidence.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeDump, err := Dump(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterDump, err := Dump(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeDump, afterDump) {
+		t.Fatal("method position evidence changed production bytecode")
+	}
+}
+
 func TestDumpUndumpRoundTripExecutes(t *testing.T) {
 	state := lua.NewState()
 	defer state.Close()

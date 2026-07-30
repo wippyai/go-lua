@@ -349,25 +349,25 @@ funcname:
             $$ = $1
         } |
         funcname1 ':' TIdent {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: $3.Str}
+            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: $3.Str, MethodPosition: $3.Pos}
         } |
         funcname1 ':' TType {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "type"}
+            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "type", MethodPosition: $3.Pos}
         } |
         funcname1 ':' TInterface {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "interface"}
+            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "interface", MethodPosition: $3.Pos}
         } |
         funcname1 ':' TReadonly {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "readonly"}
+            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "readonly", MethodPosition: $3.Pos}
         } |
         funcname1 ':' TAs {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "as"}
+            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "as", MethodPosition: $3.Pos}
         } |
         funcname1 ':' TAsserts {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "asserts"}
+            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "asserts", MethodPosition: $3.Pos}
         } |
         funcname1 ':' TIs {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "is"}
+            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "is", MethodPosition: $3.Pos}
         }
 
 funcname1:
@@ -689,37 +689,37 @@ functioncall:
             setLastPosFromExprs($$, $2, $1)
         } |
         prefixexp ':' TIdent args {
-            $$ = &ast.FuncCallExpr{Method: $3.Str, Receiver: $1, Args: $4}
+            $$ = &ast.FuncCallExpr{Method: $3.Str, MethodPosition: $3.Pos, Receiver: $1, Args: $4}
             $$.CopyPos($1)
             setLastPosFromExprs($$, $4, $1)
         } |
         prefixexp ':' TType args {
-            $$ = &ast.FuncCallExpr{Method: "type", Receiver: $1, Args: $4}
+            $$ = &ast.FuncCallExpr{Method: "type", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
             $$.CopyPos($1)
             setLastPosFromExprs($$, $4, $1)
         } |
         prefixexp ':' TInterface args {
-            $$ = &ast.FuncCallExpr{Method: "interface", Receiver: $1, Args: $4}
+            $$ = &ast.FuncCallExpr{Method: "interface", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
             $$.CopyPos($1)
             setLastPosFromExprs($$, $4, $1)
         } |
         prefixexp ':' TReadonly args {
-            $$ = &ast.FuncCallExpr{Method: "readonly", Receiver: $1, Args: $4}
+            $$ = &ast.FuncCallExpr{Method: "readonly", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
             $$.CopyPos($1)
             setLastPosFromExprs($$, $4, $1)
         } |
         prefixexp ':' TAs args {
-            $$ = &ast.FuncCallExpr{Method: "as", Receiver: $1, Args: $4}
+            $$ = &ast.FuncCallExpr{Method: "as", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
             $$.CopyPos($1)
             setLastPosFromExprs($$, $4, $1)
         } |
         prefixexp ':' TAsserts args {
-            $$ = &ast.FuncCallExpr{Method: "asserts", Receiver: $1, Args: $4}
+            $$ = &ast.FuncCallExpr{Method: "asserts", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
             $$.CopyPos($1)
             setLastPosFromExprs($$, $4, $1)
         } |
         prefixexp ':' TIs args {
-            $$ = &ast.FuncCallExpr{Method: "is", Receiver: $1, Args: $4}
+            $$ = &ast.FuncCallExpr{Method: "is", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
             $$.CopyPos($1)
             setLastPosFromExprs($$, $4, $1)
         }

@@ -133,6 +133,9 @@ const (
 	stepFinishFunctionBody
 	stepFinishCallCallee
 	stepFinishCall
+	stepFinishMethodCallReceiver
+	stepFinishMethodCall
+	stepFinishMethodFuncDefReceiver
 	stepTableFields
 	stepFinishTableKey
 	stepFinishTableValue
@@ -461,6 +464,18 @@ func (l *lowerer) run() error {
 			l.result = l.builder.Call(l.span(current.call), l.owner(), callee, 0, l.result)
 			if l.result == 0 {
 				return fmt.Errorf("programlower: could not create Call")
+			}
+		case stepFinishMethodCallReceiver:
+			if err := l.finishMethodCallReceiver(current); err != nil {
+				return err
+			}
+		case stepFinishMethodCall:
+			if err := l.finishMethodCall(current); err != nil {
+				return err
+			}
+		case stepFinishMethodFuncDefReceiver:
+			if err := l.finishMethodFuncDefReceiver(current); err != nil {
+				return err
 			}
 		case stepTableFields:
 			if err := l.runTableFields(current); err != nil {
@@ -1853,12 +1868,26 @@ func (l *lowerer) startFuncDef(stmt *ast.FuncDefStmt) error {
 		return fmt.Errorf("programlower: invalid function definition")
 	}
 	if stmt.Name.Method != "" || stmt.Name.Receiver != nil {
-		if stmt.Name.Method == "" || stmt.Name.Receiver == nil || stmt.Name.Func != nil {
+		if stmt.Name.Method == "" || !astNodePresent(stmt.Name.Receiver) || stmt.Name.Func != nil {
 			return fmt.Errorf("programlower: invalid method function definition shape")
 		}
-		return fmt.Errorf(
-			"programlower: unsupported method function definition: AST has no MethodPosition evidence",
+		if !funcDefTargetShape(stmt.Name.Receiver) {
+			return fmt.Errorf("programlower: unsupported method function definition receiver shape")
+		}
+		if !stmt.Name.MethodPosition.Valid() {
+			return fmt.Errorf("programlower: method function definition has no MethodPosition evidence")
+		}
+		origin, ok := l.binding.FunctionOrigin(stmt.Func)
+		if !ok || origin.Kind != bind.FunctionOriginMethod ||
+			origin.Func != stmt.Func || origin.Stmt != stmt || origin.Method != stmt.Name.Method {
+			return fmt.Errorf("programlower: unsupported ambiguous method declaration origin")
+		}
+		mark := l.access.TargetMark()
+		l.push(
+			step{kind: stepFinishMethodFuncDefReceiver, funcdef: stmt, mark: mark},
+			step{kind: stepExpr, expr: stmt.Name.Receiver},
 		)
+		return nil
 	}
 	if !astNodePresent(stmt.Name.Func) {
 		return fmt.Errorf("programlower: invalid function definition target")
@@ -2001,12 +2030,44 @@ func (l *lowerer) runFunctionParams(current step) error {
 	if l.scopes.Has(slot.Symbol) {
 		return fmt.Errorf("programlower: duplicate binder symbol for function formal %q", slot.Name)
 	}
-	if _, err := l.scopes.Declare(slot.Symbol, l.positionSpan(slot.Position)); err != nil {
+	span := l.positionSpan(slot.Position)
+	if slot.ImplicitSelf {
+		position, err := l.methodPosition(current.fn)
+		if err != nil {
+			return err
+		}
+		span = l.positionSpan(position)
+	}
+	if _, err := l.scopes.Declare(slot.Symbol, span); err != nil {
 		return fmt.Errorf("programlower: could not create function formal Cell")
+	}
+	if slot.ImplicitSelf {
+		if decl, ok := l.binding.MethodReceiverType(current.fn); ok {
+			host, exists := l.scopes.Resolve(slot.Symbol)
+			if !exists {
+				return fmt.Errorf("programlower: missing implicit self Cell")
+			}
+			if err := l.static.DeclareImplicitSelfType(host, span, decl); err != nil {
+				return err
+			}
+		}
 	}
 	current.index++
 	l.push(current)
 	return nil
+}
+
+func (l *lowerer) methodPosition(fn *ast.FunctionExpr) (ast.Position, error) {
+	origin, ok := l.binding.FunctionOrigin(fn)
+	if !ok || origin.Kind != bind.FunctionOriginMethod || origin.Func != fn {
+		return ast.Position{}, fmt.Errorf("programlower: missing method function origin")
+	}
+	stmt, ok := origin.Stmt.(*ast.FuncDefStmt)
+	if !ok || stmt == nil || stmt.Name == nil || stmt.Func != fn ||
+		stmt.Name.Method == "" || origin.Method != stmt.Name.Method || !stmt.Name.MethodPosition.Valid() {
+		return ast.Position{}, fmt.Errorf("programlower: invalid method function origin")
+	}
+	return stmt.Name.MethodPosition, nil
 }
 
 func (l *lowerer) runFunctionCaptures(current step) error {
@@ -2121,10 +2182,17 @@ func (l *lowerer) startCall(call *ast.FuncCallExpr) error {
 		return fmt.Errorf("programlower: unsupported typed call")
 	}
 	if call.Method != "" || call.Receiver != nil {
-		if call.Method == "" || call.Receiver == nil || call.Func != nil {
+		if call.Method == "" || !astNodePresent(call.Receiver) || call.Func != nil {
 			return fmt.Errorf("programlower: invalid method call shape")
 		}
-		return fmt.Errorf("programlower: unsupported method call: AST has no MethodPosition evidence")
+		if !call.MethodPosition.Valid() {
+			return fmt.Errorf("programlower: method call has no MethodPosition evidence")
+		}
+		l.push(
+			step{kind: stepFinishMethodCallReceiver, call: call, mark: l.packs.Mark()},
+			step{kind: stepExpr, expr: call.Receiver},
+		)
+		return nil
 	}
 	if !astNodePresent(call.Func) {
 		return fmt.Errorf("programlower: plain call has no callee")
@@ -2133,6 +2201,95 @@ func (l *lowerer) startCall(call *ast.FuncCallExpr) error {
 	l.push(
 		step{kind: stepFinishCallCallee, call: call, mark: mark},
 		step{kind: stepExpr, expr: call.Func},
+	)
+	return nil
+}
+
+// finishMethodCallReceiver lowers the receiver once into the callee's exact
+// name Lens. The receiver and callee are held independently so argument
+// lowering cannot duplicate or reorder either occurrence.
+func (l *lowerer) finishMethodCallReceiver(current step) error {
+	if current.call == nil || !current.call.MethodPosition.Valid() {
+		return fmt.Errorf("programlower: invalid method call continuation")
+	}
+	if l.packs.Mark() != current.mark {
+		return fmt.Errorf("programlower: invalid method Call receiver mark")
+	}
+	receiver := l.result
+	selectorSpan := l.methodSelectorSpan(current.call.Receiver, current.call.MethodPosition)
+	lens, err := l.access.DotLens(
+		selectorSpan,
+		l.owner(),
+		receiver,
+		l.positionSpan(current.call.MethodPosition),
+		current.call.Method,
+	)
+	if err != nil {
+		return err
+	}
+	callee := l.builder.Read(selectorSpan, l.owner(), lens)
+	if callee == 0 {
+		return fmt.Errorf("programlower: could not read method Call callee")
+	}
+	// Keep receiver below callee while Values packs authored arguments only.
+	receiverMark := l.packs.Hold(receiver)
+	calleeMark := l.packs.Hold(callee)
+	l.push(
+		step{kind: stepFinishMethodCall, call: current.call, mark: receiverMark, valueMark: calleeMark},
+		step{kind: stepValues, exprs: current.call.Args, span: l.span(current.call), mark: l.packs.Mark()},
+	)
+	return nil
+}
+
+func (l *lowerer) methodSelectorSpan(receiver ast.Expr, position ast.Position) program.Span {
+	span := l.positionSpan(position)
+	if !astNodePresent(receiver) {
+		return span
+	}
+	span.StartLine = receiver.Line()
+	span.StartCol = receiver.Column()
+	return span
+}
+
+func (l *lowerer) finishMethodCall(current step) error {
+	callee, err := l.packs.Take(current.valueMark)
+	if err != nil {
+		return fmt.Errorf("programlower: missing method Call callee")
+	}
+	receiver, err := l.packs.Take(current.mark)
+	if err != nil {
+		return fmt.Errorf("programlower: missing method Call receiver")
+	}
+	l.result = l.builder.Call(l.span(current.call), l.owner(), callee, receiver, l.result)
+	if l.result == 0 {
+		return fmt.Errorf("programlower: could not create method Call")
+	}
+	return nil
+}
+
+// finishMethodFuncDefReceiver evaluates the receiver before creating the
+// method closure, matching the production compiler's SETTABLE sequence.
+func (l *lowerer) finishMethodFuncDefReceiver(current step) error {
+	stmt := current.funcdef
+	if stmt == nil || stmt.Name == nil || stmt.Name.Method == "" ||
+		!astNodePresent(stmt.Name.Receiver) || !stmt.Name.MethodPosition.Valid() {
+		return fmt.Errorf("programlower: invalid method function definition continuation")
+	}
+	selectorSpan := l.methodSelectorSpan(stmt.Name.Receiver, stmt.Name.MethodPosition)
+	target, err := l.access.DotLens(
+		selectorSpan,
+		l.owner(),
+		l.result,
+		l.positionSpan(stmt.Name.MethodPosition),
+		stmt.Name.Method,
+	)
+	if err != nil {
+		return err
+	}
+	l.access.RememberTarget(target)
+	l.push(
+		step{kind: stepFinishFuncDef, funcdef: stmt, mark: current.mark},
+		step{kind: stepFuncDefFunction, funcdef: stmt},
 	)
 	return nil
 }

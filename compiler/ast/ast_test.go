@@ -2,6 +2,15 @@ package ast
 
 import "testing"
 
+func TestMethodPositionDefaultsToZeroForManualASTs(t *testing.T) {
+	if got := (&FuncCallExpr{Method: "method"}).MethodPosition; got != (Position{}) {
+		t.Fatalf("FuncCallExpr MethodPosition = %#v, want zero position", got)
+	}
+	if got := (&FuncName{Method: "method"}).MethodPosition; got != (Position{}) {
+		t.Fatalf("FuncName MethodPosition = %#v, want zero position", got)
+	}
+}
+
 func TestNodeColumn(t *testing.T) {
 	n := &Node{}
 	if n.Column() != 0 {

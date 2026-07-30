@@ -1579,6 +1579,40 @@ func TestParseContextualKeywordsAsMethodNames(t *testing.T) {
 	}
 }
 
+func TestParseMethodPositions(t *testing.T) {
+	variants := []string{"method", "type", "interface", "readonly", "as", "asserts", "is"}
+
+	for _, method := range variants {
+		t.Run("definition_"+method, func(t *testing.T) {
+			stmt := parseOneString(t, "function Receiver:"+method+"() end")
+			def, ok := stmt.(*ast.FuncDefStmt)
+			if !ok {
+				t.Fatalf("stmt = %T, want *ast.FuncDefStmt", stmt)
+			}
+			want := ast.Position{File: "test", Line: 1, Column: 19, EndLine: 1, EndColumn: 18 + len(method)}
+			if got := def.Name.MethodPosition; got != want {
+				t.Fatalf("MethodPosition = %#v, want %#v", got, want)
+			}
+		})
+
+		t.Run("call_"+method, func(t *testing.T) {
+			stmt := parseOneString(t, "Receiver:"+method+"()")
+			callStmt, ok := stmt.(*ast.FuncCallStmt)
+			if !ok {
+				t.Fatalf("stmt = %T, want *ast.FuncCallStmt", stmt)
+			}
+			call, ok := callStmt.Expr.(*ast.FuncCallExpr)
+			if !ok {
+				t.Fatalf("call expression = %T, want *ast.FuncCallExpr", callStmt.Expr)
+			}
+			want := ast.Position{File: "test", Line: 1, Column: 10, EndLine: 1, EndColumn: 9 + len(method)}
+			if got := call.MethodPosition; got != want {
+				t.Fatalf("MethodPosition = %#v, want %#v", got, want)
+			}
+		})
+	}
+}
+
 func TestParseTypeOfExpr(t *testing.T) {
 	t.Run("typeof identifier", func(t *testing.T) {
 		typedef := parseOneString(t, `type T = typeof(x)`).(*ast.TypeDefStmt)

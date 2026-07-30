@@ -94,12 +94,15 @@ type TableExpr struct {
 // FuncCallExpr represents a function call expression.
 type FuncCallExpr struct {
 	ExprBase
-	Func      Expr       // Function to call
-	Receiver  Expr       // Method receiver (nil for regular calls)
-	Method    string     // Method name (empty for regular calls)
-	Args      []Expr     // Call arguments
-	TypeArgs  []TypeExpr // Explicit type arguments for generic calls
-	AdjustRet bool       // Whether return count should be adjusted
+	Func     Expr   // Function to call
+	Receiver Expr   // Method receiver (nil for regular calls)
+	Method   string // Method name (empty for regular calls)
+	// MethodPosition is the exact parser token position for Method.
+	// It is zero for regular calls and manually-constructed method ASTs.
+	MethodPosition Position
+	Args           []Expr     // Call arguments
+	TypeArgs       []TypeExpr // Explicit type arguments for generic calls
+	AdjustRet      bool       // Whether return count should be adjusted
 }
 
 // CanProduceMultipleValues reports whether expr can expand to multiple Lua values

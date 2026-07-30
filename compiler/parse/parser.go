@@ -1342,43 +1342,43 @@ yydefault:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:351
 		{
-			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: yyDollar[3].token.Str}
+			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: yyDollar[3].token.Str, MethodPosition: yyDollar[3].token.Pos}
 		}
 	case 34:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:354
 		{
-			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "type"}
+			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "type", MethodPosition: yyDollar[3].token.Pos}
 		}
 	case 35:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:357
 		{
-			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "interface"}
+			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "interface", MethodPosition: yyDollar[3].token.Pos}
 		}
 	case 36:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:360
 		{
-			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "readonly"}
+			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "readonly", MethodPosition: yyDollar[3].token.Pos}
 		}
 	case 37:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:363
 		{
-			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "as"}
+			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "as", MethodPosition: yyDollar[3].token.Pos}
 		}
 	case 38:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:366
 		{
-			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "asserts"}
+			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "asserts", MethodPosition: yyDollar[3].token.Pos}
 		}
 	case 39:
 		yyDollar = yyS[yypt-3 : yypt+1]
 //line parser.go.y:369
 		{
-			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "is"}
+			yyVAL.funcname = &ast.FuncName{Func: nil, Receiver: yyDollar[1].funcname.Func, Method: "is", MethodPosition: yyDollar[3].token.Pos}
 		}
 	case 40:
 		yyDollar = yyS[yypt-1 : yypt+1]
@@ -1866,7 +1866,7 @@ yydefault:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:691
 		{
-			yyVAL.expr = &ast.FuncCallExpr{Method: yyDollar[3].token.Str, Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
+			yyVAL.expr = &ast.FuncCallExpr{Method: yyDollar[3].token.Str, MethodPosition: yyDollar[3].token.Pos, Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			setLastPosFromExprs(yyVAL.expr, yyDollar[4].exprlist, yyDollar[1].expr)
 		}
@@ -1874,7 +1874,7 @@ yydefault:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:696
 		{
-			yyVAL.expr = &ast.FuncCallExpr{Method: "type", Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
+			yyVAL.expr = &ast.FuncCallExpr{Method: "type", MethodPosition: yyDollar[3].token.Pos, Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			setLastPosFromExprs(yyVAL.expr, yyDollar[4].exprlist, yyDollar[1].expr)
 		}
@@ -1882,7 +1882,7 @@ yydefault:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:701
 		{
-			yyVAL.expr = &ast.FuncCallExpr{Method: "interface", Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
+			yyVAL.expr = &ast.FuncCallExpr{Method: "interface", MethodPosition: yyDollar[3].token.Pos, Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			setLastPosFromExprs(yyVAL.expr, yyDollar[4].exprlist, yyDollar[1].expr)
 		}
@@ -1890,7 +1890,7 @@ yydefault:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:706
 		{
-			yyVAL.expr = &ast.FuncCallExpr{Method: "readonly", Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
+			yyVAL.expr = &ast.FuncCallExpr{Method: "readonly", MethodPosition: yyDollar[3].token.Pos, Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			setLastPosFromExprs(yyVAL.expr, yyDollar[4].exprlist, yyDollar[1].expr)
 		}
@@ -1898,7 +1898,7 @@ yydefault:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:711
 		{
-			yyVAL.expr = &ast.FuncCallExpr{Method: "as", Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
+			yyVAL.expr = &ast.FuncCallExpr{Method: "as", MethodPosition: yyDollar[3].token.Pos, Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			setLastPosFromExprs(yyVAL.expr, yyDollar[4].exprlist, yyDollar[1].expr)
 		}
@@ -1906,7 +1906,7 @@ yydefault:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:716
 		{
-			yyVAL.expr = &ast.FuncCallExpr{Method: "asserts", Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
+			yyVAL.expr = &ast.FuncCallExpr{Method: "asserts", MethodPosition: yyDollar[3].token.Pos, Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			setLastPosFromExprs(yyVAL.expr, yyDollar[4].exprlist, yyDollar[1].expr)
 		}
@@ -1914,7 +1914,7 @@ yydefault:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:721
 		{
-			yyVAL.expr = &ast.FuncCallExpr{Method: "is", Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
+			yyVAL.expr = &ast.FuncCallExpr{Method: "is", MethodPosition: yyDollar[3].token.Pos, Receiver: yyDollar[1].expr, Args: yyDollar[4].exprlist}
 			yyVAL.expr.CopyPos(yyDollar[1].expr)
 			setLastPosFromExprs(yyVAL.expr, yyDollar[4].exprlist, yyDollar[1].expr)
 		}
