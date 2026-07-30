@@ -34,19 +34,10 @@ type activeUndo struct {
 }
 
 type bodyFrame struct {
-	body       program.Term
-	function   *ast.FunctionExpr
-	span       program.Span
-	undoMark   int
-	rootMark   int
-	terminated bool
-	hasBreak   bool
-}
-
-// Flow summarizes the reachable exits of one completed Body.
-type Flow struct {
-	Terminated bool
-	HasBreak   bool
+	body     program.Term
+	function *ast.FunctionExpr
+	undoMark int
+	rootMark int
 }
 
 // New creates the lexical authority for one unfinished Program.
@@ -66,7 +57,7 @@ func (b *Bodies) Entry(span program.Span) (program.Term, error) {
 	if !b.builder.SetEntry(body) {
 		return 0, fmt.Errorf("programlower: could not set chunk Entry")
 	}
-	b.enter(body, nil, span)
+	b.enter(body, nil)
 	return body, nil
 }
 
@@ -95,15 +86,14 @@ func (b *Bodies) enterBody(
 	if body == 0 {
 		return 0, fmt.Errorf("programlower: could not create Body")
 	}
-	b.enter(body, function, span)
+	b.enter(body, function)
 	return body, nil
 }
 
-func (b *Bodies) enter(body program.Term, function *ast.FunctionExpr, span program.Span) {
+func (b *Bodies) enter(body program.Term, function *ast.FunctionExpr) {
 	b.frames = append(b.frames, bodyFrame{
 		body:     body,
 		function: function,
-		span:     span,
 		undoMark: len(b.undo),
 		rootMark: len(b.roots),
 	})
@@ -114,56 +104,38 @@ func (b *Bodies) Owner() program.Term {
 	return b.frames[len(b.frames)-1].body
 }
 
-// FallsThrough reports whether the active Body has a reachable normal exit.
-func (b *Bodies) FallsThrough() bool {
-	return !b.frames[len(b.frames)-1].terminated
+// Cursor returns the active Body's structural position between authored roots.
+// Labels at the same cursor share one source-control position and do not
+// themselves consume a root.
+func (b *Bodies) Cursor() int {
+	frame := b.frames[len(b.frames)-1]
+	return len(b.roots) - frame.rootMark
 }
 
 // Finish atomically publishes the current Body, restores its lexical mappings,
 // and leaves its parent active.
-func (b *Bodies) Finish(normalValues program.Term) (program.Term, Flow, error) {
+func (b *Bodies) Finish() (program.Term, error) {
 	if len(b.frames) == 0 {
-		return 0, Flow{}, fmt.Errorf("programlower: no lexical body to finalize")
+		return 0, fmt.Errorf("programlower: no lexical body to finalize")
 	}
 	frame := b.frames[len(b.frames)-1]
-	if frame.terminated {
-		if normalValues != 0 {
-			return 0, Flow{}, fmt.Errorf("programlower: terminal Body has normal Values")
-		}
-	} else {
-		if normalValues == 0 {
-			return 0, Flow{}, fmt.Errorf("programlower: nonterminal Body has no normal Values")
-		}
-		normal := b.builder.Normal(frame.span, frame.body, normalValues)
-		if normal == 0 {
-			return 0, Flow{}, fmt.Errorf("programlower: could not create Normal outcome")
-		}
-		b.roots = append(b.roots, normal)
-	}
 	if !b.builder.SetBody(frame.body, b.roots[frame.rootMark:]...) {
-		return 0, Flow{}, fmt.Errorf("programlower: could not finalize Body")
+		return 0, fmt.Errorf("programlower: could not finalize Body")
 	}
 	b.roots = b.roots[:frame.rootMark]
 	b.restore(frame.undoMark)
 	b.frames = b.frames[:len(b.frames)-1]
-	return frame.body, Flow{
-		Terminated: frame.terminated,
-		HasBreak:   frame.hasBreak,
-	}, nil
+	return frame.body, nil
 }
 
-// Append publishes one completed statement relation and atomically merges its
-// control-flow effect into the current Body.
-func (b *Bodies) Append(term program.Term, flow Flow) error {
+// Append publishes one completed statement relation. Reachability and
+// completion are proved from the sealed control equations, never guessed by
+// the source-order lowerer.
+func (b *Bodies) Append(term program.Term) error {
 	if term == 0 {
 		return fmt.Errorf("programlower: could not create Body root")
 	}
 	b.roots = append(b.roots, term)
-	frame := &b.frames[len(b.frames)-1]
-	if !frame.terminated {
-		frame.terminated = flow.Terminated
-		frame.hasBreak = frame.hasBreak || flow.HasBreak
-	}
 	return nil
 }
 

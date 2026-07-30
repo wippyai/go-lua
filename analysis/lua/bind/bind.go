@@ -15,6 +15,7 @@ func BindFunction(fn *ast.FunctionExpr, opts Options) *Result {
 		localIndex: -1,
 	})
 	b.run()
+	b.control.finish(r)
 	r.finalizeFunctionIndexes()
 	return r
 }
@@ -23,10 +24,13 @@ func BindFunction(fn *ast.FunctionExpr, opts Options) *Result {
 func BindChunk(stmts []ast.Stmt, opts Options) *Result {
 	r := newResult(opts)
 	b := binder{result: r, rootStmts: stmts}
+	b.control.enterFunction()
 	b.pushScope()
 	b.scheduleStmtList(nil, phaseChunk)
 	b.run()
 	b.popScope()
+	b.control.leaveFunction()
+	b.control.finish(r)
 	r.finalizeFunctionIndexes()
 	return r
 }

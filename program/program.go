@@ -118,11 +118,12 @@ const (
 	tagValues
 	tagLensExact
 	tagLensKey
-	tagNormal
 	tagReturn
 	tagThrow
 	tagYield
 	tagBreak
+	tagLabel
+	tagGoto
 	tagBody
 	tagCell
 	tagRead
@@ -262,14 +263,8 @@ type exactKey struct {
 	text string
 }
 type sealClaimSlot struct {
-	owner Term
-	count uint8
+	owner, parent Term
 }
-
-const (
-	completionFallsThrough uint8 = 1 << iota
-	completionHasBreak
-)
 
 // Program is the immutable result of Builder.Seal.
 type Program struct {
@@ -292,16 +287,18 @@ type Program struct {
 
 	lensExact      []exactLensRow
 	lensKeys       []keyLensRow
-	normals        []outcomeRow
 	returns        []outcomeRow
 	throws         []outcomeRow
 	yields         []outcomeRow
 	breaks         []breakRow
 	breakLoops     []Term // dense Seal-derived nearest enclosing Loop by Break index
-	loopMu         []bool // dense Seal-derived recurrence evidence by Loop index
-	muFunctions    []Term // dense Seal-derived canonical heads for cyclic Functions
-	directCalls    []Term // Seal-derived direct Function evidence by Call index
-	entry          Term   // the one canonical non-Function shard entry Body
+	labelOwners    []Term
+	labelCursors   []uint32
+	gotoOwners     []Term
+	gotoTargets    []Term
+	mu             [tagCount][]Term // Seal-derived canonical SCC head by family
+	directCalls    []Term           // Seal-derived direct Function evidence by Call index
+	entry          Term             // the one canonical non-Function shard entry Body
 	bodies         []bodyRow
 	cells          []cellRow
 	reads          []readRow
@@ -350,11 +347,15 @@ type Builder struct {
 
 	lensExact      []exactLensRow
 	lensKeys       []keyLensRow
-	normals        []outcomeRow
 	returns        []outcomeRow
 	throws         []outcomeRow
 	yields         []outcomeRow
 	breaks         []breakRow
+	labelOwners    []Term
+	labelCursors   []uint32
+	labelPlaced    []bool
+	gotoOwners     []Term
+	gotoTargets    []Term
 	entry          Term
 	bodies         []bodyRow
 	cells          []cellRow
@@ -656,9 +657,6 @@ func (b *Builder) LensKey(span Span, owner, base, key Term) Term {
 	return term
 }
 
-func (b *Builder) Normal(span Span, owner, values Term) Term {
-	return b.outcome(tagNormal, span, owner, values)
-}
 func (b *Builder) Return(span Span, owner, values Term) Term {
 	return b.outcome(tagReturn, span, owner, values)
 }
@@ -682,14 +680,64 @@ func (b *Builder) Break(span Span, owner Term) Term {
 	}
 	return term
 }
+
+// Label mints a zero-width source anchor. SetLabelCursor must place it exactly
+// once at a gap in its owner's executable Body sequence before Seal.
+func (b *Builder) Label(span Span, owner Term) Term {
+	if !b.require(b.has(owner, tagBody)) {
+		return 0
+	}
+	b.labelOwners = append(b.labelOwners, owner)
+	b.labelCursors = append(b.labelCursors, 0)
+	b.labelPlaced = append(b.labelPlaced, false)
+	term := b.mint(tagLabel, span, b.familyIndex(len(b.labelOwners)))
+	if term == 0 {
+		b.labelOwners = b.labelOwners[:len(b.labelOwners)-1]
+		b.labelCursors = b.labelCursors[:len(b.labelCursors)-1]
+		b.labelPlaced = b.labelPlaced[:len(b.labelPlaced)-1]
+	}
+	return term
+}
+
+// SetLabelCursor places a Label at one Body gap in [0, BodyLen]. Labels are
+// anchors, not executable roots, so several Labels may share one cursor.
+func (b *Builder) SetLabelCursor(label Term, cursor int) bool {
+	if !b.has(label, tagLabel) || cursor < 0 || uint64(cursor) > math.MaxUint32 {
+		b.poison = true
+		return false
+	}
+	index := label.index() - 1
+	if b.labelPlaced[index] {
+		b.poison = true
+		return false
+	}
+	b.labelCursors[index] = uint32(cursor)
+	b.labelPlaced[index] = true
+	return true
+}
+
+// Goto terminates sequential flow and transfers directly to a resolved Label.
+// Label spellings and unresolved-name tables never enter Program.
+func (b *Builder) Goto(span Span, owner, targetLabel Term) Term {
+	if !b.require(b.has(owner, tagBody) && b.has(targetLabel, tagLabel)) {
+		return 0
+	}
+	b.gotoOwners = append(b.gotoOwners, owner)
+	b.gotoTargets = append(b.gotoTargets, targetLabel)
+	term := b.mint(tagGoto, span, b.familyIndex(len(b.gotoOwners)))
+	if term == 0 {
+		b.gotoOwners = b.gotoOwners[:len(b.gotoOwners)-1]
+		b.gotoTargets = b.gotoTargets[:len(b.gotoTargets)-1]
+	}
+	return term
+}
+
 func (b *Builder) outcome(tag uint8, span Span, owner, value Term) Term {
 	if !b.require(b.has(owner, tagBody) && b.has(value, tagValues)) {
 		return 0
 	}
 	var rows *[]outcomeRow
 	switch tag {
-	case tagNormal:
-		rows = &b.normals
 	case tagReturn:
 		rows = &b.returns
 	case tagThrow:
@@ -970,9 +1018,9 @@ func (b *Builder) Branch(span Span, owner, condition, whenTrue, whenFalse Term) 
 }
 
 // Loop records one of Lua's four loop forms without constructing a CFG or an
-// authored backedge. Its body Normal outcome returns to the Loop head, Break
-// exits it, and other outcomes propagate. Seal annotates the Loop as Mu only
-// when that Normal backedge exists.
+// authored backedge. Reaching its Body's implicit tail returns to the Loop
+// head, Break exits it, and other outcomes propagate. Seal derives Mu from the
+// exact reachable source-control SCC.
 //
 // While and Repeat have no iteration Cells and a scalar control occurrence.
 // NumericFor has one iteration Cell and a closed 2- or 3-value control tuple.
@@ -1209,8 +1257,6 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.lensExact))
 	case tagLensKey:
 		return index <= uint32(len(b.lensKeys))
-	case tagNormal:
-		return index <= uint32(len(b.normals))
 	case tagReturn:
 		return index <= uint32(len(b.returns))
 	case tagThrow:
@@ -1219,6 +1265,10 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.yields))
 	case tagBreak:
 		return index <= uint32(len(b.breaks))
+	case tagLabel:
+		return index <= uint32(len(b.labelOwners))
+	case tagGoto:
+		return index <= uint32(len(b.gotoOwners))
 	case tagBody:
 		return index <= uint32(len(b.bodies))
 	case tagCell:
@@ -1356,7 +1406,7 @@ func (b *Builder) Seal() (*Program, error) {
 			enclosingLoop[body.index()] = makeTerm(tagLoop, uint32(i+1))
 		}
 	}
-	pre, post, activation, postorder, ok := b.proveBodyForest(
+	pre, post, activation, _, ok := b.proveBodyForest(
 		parent, functionAtBody, enclosingLoop, b.entry,
 	)
 	if !ok {
@@ -1396,10 +1446,6 @@ func (b *Builder) Seal() (*Program, error) {
 	for i, row := range b.lensKeys {
 		claims[tagLensKey][i].owner = row.owner
 	}
-	claims[tagNormal] = make([]sealClaimSlot, len(b.normals))
-	for i, row := range b.normals {
-		claims[tagNormal][i].owner = row.owner
-	}
 	claims[tagReturn] = make([]sealClaimSlot, len(b.returns))
 	for i, row := range b.returns {
 		claims[tagReturn][i].owner = row.owner
@@ -1415,6 +1461,15 @@ func (b *Builder) Seal() (*Program, error) {
 	claims[tagBreak] = make([]sealClaimSlot, len(b.breaks))
 	for i, row := range b.breaks {
 		claims[tagBreak][i].owner = row.owner
+	}
+	claims[tagLabel] = make([]sealClaimSlot, len(b.labelOwners))
+	for i, owner := range b.labelOwners {
+		label := makeTerm(tagLabel, uint32(i+1))
+		claims[tagLabel][i] = sealClaimSlot{owner: owner, parent: label}
+	}
+	claims[tagGoto] = make([]sealClaimSlot, len(b.gotoOwners))
+	for i, owner := range b.gotoOwners {
+		claims[tagGoto][i].owner = owner
 	}
 	claims[tagRead] = make([]sealClaimSlot, len(b.reads))
 	for i, row := range b.reads {
@@ -1468,23 +1523,24 @@ func (b *Builder) Seal() (*Program, error) {
 	for i, row := range b.keys {
 		claims[tagKey][i].owner = row.owner
 	}
-	claim := func(child, owner Term) error {
-		if !b.valid(child) || !b.has(owner, tagBody) || child.tag() >= tagCount || int(child.index()) > len(claims[child.tag()]) {
+	claim := func(child, owner, parent Term) error {
+		if !b.valid(child) || !b.valid(parent) || !b.has(owner, tagBody) ||
+			child.tag() >= tagCount || int(child.index()) > len(claims[child.tag()]) {
 			return errors.New("program: invalid typed containment")
 		}
 		at := &claims[child.tag()][child.index()-1]
-		if at.owner != owner || at.count != 0 {
+		if at.owner != owner || at.parent != 0 {
 			return errors.New("program: invalid typed containment")
 		}
-		at.count = 1
+		at.parent = parent
 		return nil
 	}
-	claimValues := func(owner Term, row valuesRow) error {
+	claimValues := func(term Term, row valuesRow) error {
 		for i := row.fixed.start; i < row.fixed.end; i++ {
 			if !b.valueOccurrence(b.valueTerms[i]) {
 				return errors.New("program: invalid Values value")
 			}
-			if err := claim(b.valueTerms[i], owner); err != nil {
+			if err := claim(b.valueTerms[i], row.owner, term); err != nil {
 				return err
 			}
 		}
@@ -1492,7 +1548,7 @@ func (b *Builder) Seal() (*Program, error) {
 			if !b.openOccurrence(row.tail) {
 				return errors.New("program: invalid Values tail")
 			}
-			return claim(row.tail, owner)
+			return claim(row.tail, row.owner, term)
 		}
 		return nil
 	}
@@ -1503,123 +1559,129 @@ func (b *Builder) Seal() (*Program, error) {
 			if b.has(root, tagBody) {
 				continue
 			}
-			if err := claim(root, owner); err != nil {
+			if err := claim(root, owner, root); err != nil {
 				return nil, err
 			}
 		}
 	}
-	for _, row := range b.values {
-		if err := claimValues(row.owner, row); err != nil {
+	for i, row := range b.values {
+		if err := claimValues(makeTerm(tagValues, uint32(i+1)), row); err != nil {
 			return nil, err
 		}
 	}
-	for _, row := range b.lensExact {
+	for i, row := range b.lensExact {
+		parent := makeTerm(tagLensExact, uint32(i+1))
 		if !b.valueOccurrence(row.base) || !b.staticExactKey(row.source) {
 			if row.kind != FieldName || !b.has(row.source, tagKey) || b.keys[row.source.index()-1].kind != FieldName || b.keys[row.source.index()-1].owner != row.owner {
 				return nil, errors.New("program: invalid exact Lens")
 			}
 		}
-		if err := claim(row.base, row.owner); err != nil {
+		if err := claim(row.base, row.owner, parent); err != nil {
 			return nil, err
 		}
 		if row.kind == FieldExact || row.kind == FieldName {
-			if err := claim(row.source, row.owner); err != nil {
+			if err := claim(row.source, row.owner, parent); err != nil {
 				return nil, err
 			}
 		}
 	}
-	for _, row := range b.lensKeys {
-		if err := claim(row.base, row.owner); err != nil {
+	for i, row := range b.lensKeys {
+		parent := makeTerm(tagLensKey, uint32(i+1))
+		if err := claim(row.base, row.owner, parent); err != nil {
 			return nil, err
 		}
-		if err := claim(row.key, row.owner); err != nil {
+		if err := claim(row.key, row.owner, parent); err != nil {
 			return nil, err
 		}
 	}
-	for _, rows := range [][]outcomeRow{b.normals, b.returns, b.throws, b.yields} {
-		for _, row := range rows {
+	for family, rows := range [][]outcomeRow{b.returns, b.throws, b.yields} {
+		tag := [...]uint8{tagReturn, tagThrow, tagYield}[family]
+		for i, row := range rows {
 			if !b.has(row.values, tagValues) {
 				return nil, errors.New("program: Outcome requires Values")
 			}
-			if err := claim(row.values, row.owner); err != nil {
+			if err := claim(row.values, row.owner, makeTerm(tag, uint32(i+1))); err != nil {
 				return nil, err
 			}
 		}
 	}
-	for _, row := range b.reads {
+	for i, row := range b.reads {
 		if !b.has(row.source, tagCell) && !b.has(row.source, tagLensExact) && !b.has(row.source, tagLensKey) {
 			return nil, errors.New("program: invalid Read")
 		}
 		if !b.has(row.source, tagCell) {
-			if err := claim(row.source, row.owner); err != nil {
+			if err := claim(row.source, row.owner, makeTerm(tagRead, uint32(i+1))); err != nil {
 				return nil, err
 			}
 		}
 	}
-	for _, row := range b.unaries {
+	for i, row := range b.unaries {
 		if !row.op.valid() {
 			return nil, errors.New("program: invalid Unary")
 		}
-		if err := claim(row.operand, row.owner); err != nil {
+		if err := claim(row.operand, row.owner, makeTerm(tagUnary, uint32(i+1))); err != nil {
 			return nil, err
 		}
 	}
-	for _, row := range b.binaries {
+	for i, row := range b.binaries {
 		if !row.op.valid() {
 			return nil, errors.New("program: invalid Binary")
 		}
-		if err := claim(row.left, row.owner); err != nil {
+		parent := makeTerm(tagBinary, uint32(i+1))
+		if err := claim(row.left, row.owner, parent); err != nil {
 			return nil, err
 		}
-		if err := claim(row.right, row.owner); err != nil {
+		if err := claim(row.right, row.owner, parent); err != nil {
 			return nil, err
 		}
 	}
-	for _, row := range b.selects {
+	for i, row := range b.selects {
 		if !row.op.valid() {
 			return nil, errors.New("program: invalid Select")
 		}
-		if err := claim(row.left, row.owner); err != nil {
+		parent := makeTerm(tagSelect, uint32(i+1))
+		if err := claim(row.left, row.owner, parent); err != nil {
 			return nil, err
 		}
-		if err := claim(row.right, row.owner); err != nil {
+		if err := claim(row.right, row.owner, parent); err != nil {
 			return nil, err
 		}
 	}
-	for _, row := range b.binds {
+	for i, row := range b.binds {
 		if !b.has(row.values, tagValues) {
 			return nil, errors.New("program: invalid Bind")
 		}
-		if err := claim(row.values, row.owner); err != nil {
+		if err := claim(row.values, row.owner, makeTerm(tagBind, uint32(i+1))); err != nil {
 			return nil, err
 		}
 	}
-	for _, row := range b.assigns {
+	for rowIndex, row := range b.assigns {
 		if !b.has(row.values, tagValues) {
 			return nil, errors.New("program: invalid Assign")
 		}
 		for i := row.targets.start; i < row.targets.end; i++ {
 			target := b.assignTerms[i]
 			if b.has(target, tagLensExact) || b.has(target, tagLensKey) {
-				if err := claim(target, row.owner); err != nil {
+				if err := claim(target, row.owner, makeTerm(tagAssign, uint32(rowIndex+1))); err != nil {
 					return nil, err
 				}
 			}
 		}
-		if err := claim(row.values, row.owner); err != nil {
+		if err := claim(row.values, row.owner, makeTerm(tagAssign, uint32(rowIndex+1))); err != nil {
 			return nil, err
 		}
 	}
-	for _, row := range b.calls {
-		if err := claim(row.callee, row.owner); err != nil {
+	for i, row := range b.calls {
+		parent := makeTerm(tagCall, uint32(i+1))
+		if err := claim(row.callee, row.owner, parent); err != nil {
 			return nil, err
 		}
-		if err := claim(row.actuals, row.owner); err != nil {
+		if err := claim(row.actuals, row.owner, parent); err != nil {
 			return nil, err
 		}
 	}
-	for _, row := range b.branches {
-		if err := claim(row.condition, row.owner); err != nil {
+	for i, row := range b.branches {
+		if err := claim(row.condition, row.owner, makeTerm(tagBranch, uint32(i+1))); err != nil {
 			return nil, err
 		}
 		for _, arm := range [...]Term{row.whenTrue, row.whenFalse} {
@@ -1629,6 +1691,7 @@ func (b *Builder) Seal() (*Program, error) {
 		}
 	}
 	for i, owner := range b.loopOwners {
+		parent := makeTerm(tagLoop, uint32(i+1))
 		body := b.loopBodies[i]
 		control := b.loopControls[i]
 		cells := b.loopCellRanges[i]
@@ -1637,14 +1700,14 @@ func (b *Builder) Seal() (*Program, error) {
 			if cells.start != cells.end || !b.valueOccurrence(control) {
 				return nil, errors.New("program: invalid While Loop")
 			}
-			if err := claim(control, owner); err != nil {
+			if err := claim(control, owner, parent); err != nil {
 				return nil, err
 			}
 		case LoopRepeat:
 			if cells.start != cells.end || !b.valueOccurrence(control) {
 				return nil, errors.New("program: invalid Repeat Loop")
 			}
-			if err := claim(control, body); err != nil {
+			if err := claim(control, body, parent); err != nil {
 				return nil, err
 			}
 		case LoopNumericFor:
@@ -1656,7 +1719,7 @@ func (b *Builder) Seal() (*Program, error) {
 			if (count != 2 && count != 3) || values.tail != 0 {
 				return nil, errors.New("program: invalid NumericFor control")
 			}
-			if err := claim(control, owner); err != nil {
+			if err := claim(control, owner, parent); err != nil {
 				return nil, err
 			}
 		case LoopGenericFor:
@@ -1667,34 +1730,35 @@ func (b *Builder) Seal() (*Program, error) {
 			if values.fixed.start == values.fixed.end && values.tail == 0 {
 				return nil, errors.New("program: empty GenericFor control")
 			}
-			if err := claim(control, owner); err != nil {
+			if err := claim(control, owner, parent); err != nil {
 				return nil, err
 			}
 		default:
 			return nil, errors.New("program: invalid Loop kind")
 		}
 	}
-	for _, row := range b.tables {
+	for tableIndex, row := range b.tables {
+		parent := makeTerm(tagTable, uint32(tableIndex+1))
 		for i := row.fields.start; i < row.fields.end; i++ {
 			field := b.tableFields[i]
 			if field.kind == FieldName || field.kind == FieldList {
 				if !b.has(field.key, tagKey) || b.keys[field.key.index()-1].kind != field.kind || b.keys[field.key.index()-1].owner != row.owner {
 					return nil, errors.New("program: invalid static Table key")
 				}
-				if err := claim(field.key, row.owner); err != nil {
+				if err := claim(field.key, row.owner, parent); err != nil {
 					return nil, err
 				}
-			} else if err := claim(field.key, row.owner); err != nil {
+			} else if err := claim(field.key, row.owner, parent); err != nil {
 				return nil, err
 			}
-			if err := claim(field.values, row.owner); err != nil {
+			if err := claim(field.values, row.owner, parent); err != nil {
 				return nil, err
 			}
 		}
 	}
 	allClaimed := func(slots []sealClaimSlot) bool {
 		for _, slot := range slots {
-			if slot.count != 1 {
+			if slot.parent == 0 {
 				return false
 			}
 		}
@@ -1706,14 +1770,6 @@ func (b *Builder) Seal() (*Program, error) {
 		}
 	}
 
-	bodyCompletions, err := b.completeBodies(postorder)
-	if err != nil {
-		return nil, err
-	}
-	direct := make([]Term, len(b.calls))
-	if err := b.validateCells(pre, post, activation, direct); err != nil {
-		return nil, err
-	}
 	breakLoops := make([]Term, len(b.breaks))
 	for i, row := range b.breaks {
 		if !b.has(row.owner, tagBody) || int(row.owner.index()) >= len(enclosingLoop) || enclosingLoop[row.owner.index()] == 0 {
@@ -1721,15 +1777,52 @@ func (b *Builder) Seal() (*Program, error) {
 		}
 		breakLoops[i] = enclosingLoop[row.owner.index()]
 	}
-	mu, err := b.directCallMu(activation, direct)
+	direct := make([]Term, len(b.calls))
+	controlMu, err := b.sourceControl(pre, post, activation, breakLoops, claims, direct)
 	if err != nil {
 		return nil, err
 	}
-	loopMu := make([]bool, len(b.loopOwners))
-	for i, body := range b.loopBodies {
-		loopMu[i] = bodyCompletions[body.index()]&completionFallsThrough != 0
+	if err := b.validateCells(pre, post, activation, direct, claims); err != nil {
+		return nil, err
 	}
-	return b.snapshot(mu, direct, breakLoops, loopMu), nil
+	functionMu, err := b.directCallMu(activation, direct)
+	if err != nil {
+		return nil, err
+	}
+	controlMu[tagFunction] = functionMu
+	return b.snapshot(controlMu, direct, breakLoops), nil
+}
+
+// containingRoot projects one occurrence to its unique executable source root
+// through the parent relation already proved by typed containment. Parent
+// paths are compressed, so nested operands are resolved once without rescans.
+func containingRoot(
+	claims [tagCount][]sealClaimSlot,
+	start Term,
+) (Term, error) {
+	current := start
+	for {
+		if current == 0 || current.tag() >= tagCount ||
+			int(current.index()) > len(claims[current.tag()]) {
+			return 0, errors.New("program: invalid containment parent")
+		}
+		parent := claims[current.tag()][current.index()-1].parent
+		if parent == 0 {
+			return 0, errors.New("program: source term has no executable root")
+		}
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	root := current
+	current = start
+	for current != root {
+		parent := claims[current.tag()][current.index()-1].parent
+		claims[current.tag()][current.index()-1].parent = root
+		current = parent
+	}
+	return root, nil
 }
 
 // proveBodyForest builds the Body CSR once, then proves the one-root forest,
@@ -1808,67 +1901,12 @@ func (b *Builder) proveBodyForest(
 	return pre, post, activation, postorder, true
 }
 
-// completeBodies proves ordered control completion child-first. Structural
-// roots compose their already-proved child completion; unreachable suffix
-// roots remain source evidence but cannot change the reachable result.
-func (b *Builder) completeBodies(postorder []uint32) ([]uint8, error) {
-	completion := make([]uint8, len(b.bodies)+1)
-	for _, bodyIndex := range postorder {
-		row := b.bodies[bodyIndex-1]
-		flow := uint8(completionFallsThrough)
-		witnessed := false
-		for at := row.roots.start; at < row.roots.end; at++ {
-			root := b.bodyTerms[at]
-			final := at+1 == row.roots.end
-			if root.tag() == tagNormal {
-				if flow&completionFallsThrough == 0 {
-					return nil, errors.New("program: unreachable Normal")
-				}
-				if !final {
-					return nil, errors.New("program: reachable Normal must complete its Body")
-				}
-				witnessed = true
-				continue
-			}
-			if flow&completionFallsThrough == 0 {
-				continue
-			}
-			var step uint8
-			switch root.tag() {
-			case tagBind, tagAssign, tagCall:
-				step = completionFallsThrough
-			case tagReturn, tagThrow, tagYield:
-				step = 0
-			case tagBreak:
-				step = completionHasBreak
-			case tagBody:
-				step = completion[root.index()]
-			case tagBranch:
-				branch := b.branches[root.index()-1]
-				whenTrue := completion[branch.whenTrue.index()]
-				whenFalse := completion[branch.whenFalse.index()]
-				step = whenTrue | whenFalse
-			case tagLoop:
-				loopIndex := root.index() - 1
-				body := completion[b.loopBodies[loopIndex].index()]
-				if b.loopKinds[loopIndex] != LoopRepeat ||
-					body&(completionFallsThrough|completionHasBreak) != 0 {
-					step = completionFallsThrough
-				}
-			default:
-				return nil, errors.New("program: invalid Body completion root")
-			}
-			flow = (flow & completionHasBreak) | step
-		}
-		if flow&completionFallsThrough != 0 && !witnessed {
-			return nil, errors.New("program: reachable Body fallthrough needs Normal")
-		}
-		completion[bodyIndex] = flow
-	}
-	return completion, nil
-}
-
-func (b *Builder) validateCells(pre, post []uint32, activation []Term, direct []Term) error {
+func (b *Builder) validateCells(
+	pre, post []uint32,
+	activation []Term,
+	direct []Term,
+	claims [tagCount][]sealClaimSlot,
+) error {
 	visible := func(owner, cellBody Term) bool {
 		return b.has(owner, tagBody) && b.has(cellBody, tagBody) && activation[owner.index()] == activation[cellBody.index()] && pre[cellBody.index()] <= pre[owner.index()] && post[owner.index()] <= post[cellBody.index()]
 	}
@@ -1901,26 +1939,44 @@ func (b *Builder) validateCells(pre, post []uint32, activation []Term, direct []
 		}
 	}
 	for _, row := range b.reads {
-		if b.has(row.source, tagCell) && !visible(row.owner, b.cells[row.source.index()-1].body) {
-			return errors.New("program: Read Cell is not lexically visible")
+		if b.has(row.source, tagCell) &&
+			!visible(row.owner, b.cells[row.source.index()-1].body) {
+			return errors.New("program: Read Cell is not active at occurrence")
 		}
 	}
 	for _, row := range b.assigns {
 		for i := row.targets.start; i < row.targets.end; i++ {
 			target := b.assignTerms[i]
-			if b.has(target, tagCell) && !visible(row.owner, b.cells[target.index()-1].body) {
-				return errors.New("program: Assign Cell is not lexically visible")
+			if b.has(target, tagCell) &&
+				!visible(row.owner, b.cells[target.index()-1].body) {
+				return errors.New("program: Assign Cell is not active at occurrence")
 			}
 		}
 	}
 
-	bindingFunction := make([]Term, len(b.cells)+1)
-	unstableBinding := make([]bool, len(b.cells)+1)
-	varargFunction := make([]Term, len(b.cells)+1)
-	captureOuter := make([]Term, len(b.cells)+1)
-	captureOuterSeen := make([]uint32, len(b.cells)+1)
+	needCellDirect := false
+	for i, marker := range direct {
+		callee := b.calls[i].callee
+		needCellDirect = needCellDirect || marker != 0 &&
+			b.has(callee, tagRead) && b.has(b.reads[callee.index()-1].source, tagCell)
+	}
+	var bindingFunction []Term
+	var unstableBinding []bool
+	var captureOuter []Term
+	if needCellDirect {
+		bindingFunction = make([]Term, len(b.cells)+1)
+		unstableBinding = make([]bool, len(b.cells)+1)
+		captureOuter = make([]Term, len(b.cells)+1)
+	}
+	hasCaptures := false
+	for _, row := range b.functions {
+		hasCaptures = hasCaptures || row.captures.start != row.captures.end
+	}
+	var captureOuterSeen []uint32
+	if hasCaptures {
+		captureOuterSeen = make([]uint32, len(b.cells)+1)
+	}
 	for functionIndex, row := range b.functions {
-		function := makeTerm(tagFunction, uint32(functionIndex+1))
 		for i := row.formals.start; i < row.formals.end; i++ {
 			cell := b.formalTerms[i]
 			if !b.has(cell, tagCell) || b.cells[cell.index()-1].body != row.body || roles[cell.index()] != 0 {
@@ -1934,11 +1990,13 @@ func (b *Builder) validateCells(pre, post []uint32, activation []Term, direct []
 				return errors.New("program: invalid vararg Cell role")
 			}
 			roles[cell.index()] = 1
-			varargFunction[cell.index()] = function
 		}
 		for i := row.captures.start; i < row.captures.end; i++ {
 			rowCapture := b.captures[i]
-			if !b.has(rowCapture.inner, tagCell) || !b.has(rowCapture.outer, tagCell) || b.cells[rowCapture.inner.index()-1].body != row.body || !visible(row.owner, b.cells[rowCapture.outer.index()-1].body) || roles[rowCapture.inner.index()] != 0 {
+			if !b.has(rowCapture.inner, tagCell) || !b.has(rowCapture.outer, tagCell) ||
+				b.cells[rowCapture.inner.index()-1].body != row.body ||
+				!visible(row.owner, b.cells[rowCapture.outer.index()-1].body) ||
+				roles[rowCapture.inner.index()] != 0 {
 				return errors.New("program: invalid lexical Capture")
 			}
 			if captureOuterSeen[rowCapture.outer.index()] == uint32(functionIndex+1) {
@@ -1946,25 +2004,32 @@ func (b *Builder) validateCells(pre, post []uint32, activation []Term, direct []
 			}
 			captureOuterSeen[rowCapture.outer.index()] = uint32(functionIndex + 1)
 			roles[rowCapture.inner.index()] = 1
-			captureOuter[rowCapture.inner.index()] = rowCapture.outer
+			if needCellDirect {
+				captureOuter[rowCapture.inner.index()] = rowCapture.outer
+			}
 		}
 	}
-	for _, row := range b.binds {
-		values := b.values[row.values.index()-1]
-		limit := row.cells.end - row.cells.start
-		if fixed := values.fixed.end - values.fixed.start; fixed < limit {
-			limit = fixed
-		}
-		for i := uint32(0); i < limit; i++ {
-			function := b.valueTerms[values.fixed.start+i]
-			if !b.has(function, tagFunction) {
+	if needCellDirect {
+		for bindIndex, row := range b.binds {
+			if claims[tagBind][bindIndex].parent == 0 {
 				continue
 			}
-			cell := b.bindTerms[row.cells.start+i]
-			if bindingFunction[cell.index()] != 0 {
-				return errors.New("program: Function has duplicate binding")
+			values := b.values[row.values.index()-1]
+			limit := row.cells.end - row.cells.start
+			if fixed := values.fixed.end - values.fixed.start; fixed < limit {
+				limit = fixed
 			}
-			bindingFunction[cell.index()] = function
+			for i := uint32(0); i < limit; i++ {
+				function := b.valueTerms[values.fixed.start+i]
+				if !b.has(function, tagFunction) {
+					continue
+				}
+				cell := b.bindTerms[row.cells.start+i]
+				if bindingFunction[cell.index()] != 0 {
+					return errors.New("program: Function has duplicate binding")
+				}
+				bindingFunction[cell.index()] = function
+			}
 		}
 	}
 	for cell := 1; cell <= len(b.cells); cell++ {
@@ -1972,21 +2037,32 @@ func (b *Builder) validateCells(pre, post []uint32, activation []Term, direct []
 			return errors.New("program: Cell needs exactly one definition role")
 		}
 	}
-	terminal := terminalCaptureCells(captureOuter)
-	for _, row := range b.assigns {
-		for i := row.targets.start; i < row.targets.end; i++ {
-			target := b.assignTerms[i]
-			if !b.has(target, tagCell) {
+	var terminal []Term
+	if needCellDirect {
+		terminal = terminalCaptureCells(captureOuter)
+		for assignIndex, row := range b.assigns {
+			if claims[tagAssign][assignIndex].parent == 0 {
 				continue
 			}
-			base := terminal[target.index()]
-			if base != 0 && bindingFunction[base.index()] != 0 {
-				unstableBinding[base.index()] = true
+			for i := row.targets.start; i < row.targets.end; i++ {
+				target := b.assignTerms[i]
+				if !b.has(target, tagCell) {
+					continue
+				}
+				base := terminal[target.index()]
+				if base != 0 && bindingFunction[base.index()] != 0 {
+					unstableBinding[base.index()] = true
+				}
 			}
 		}
 	}
 	for _, row := range b.varargs {
-		if !b.has(row.cell, tagCell) || varargFunction[row.cell.index()] == 0 || !visible(row.owner, b.cells[row.cell.index()-1].body) {
+		if !b.has(row.cell, tagCell) || !visible(row.owner, b.cells[row.cell.index()-1].body) {
+			return errors.New("program: invalid Vararg")
+		}
+		function := activation[row.owner.index()]
+		if !b.has(function, tagFunction) ||
+			b.functions[function.index()-1].vararg != row.cell {
 			return errors.New("program: invalid Vararg")
 		}
 	}
@@ -2007,6 +2083,9 @@ func (b *Builder) validateCells(pre, post []uint32, activation []Term, direct []
 				return errors.New("program: method receiver mismatch")
 			}
 		}
+		if direct[callIndex] == 0 {
+			continue
+		}
 		expected := Term(0)
 		if b.has(row.callee, tagFunction) {
 			expected = row.callee
@@ -2020,6 +2099,672 @@ func (b *Builder) validateCells(pre, post []uint32, activation []Term, direct []
 		direct[callIndex] = expected
 	}
 	return nil
+}
+
+type controlEdge struct{ from, to uint32 }
+
+const noControlNode = ^uint32(0)
+
+// sourceControl seals the one source-control authority. Nodes are transient
+// Body cursors plus hidden loop decision cursors; executable roots and Labels
+// map directly to those cursors. The returned Mu projection is the only
+// persisted recurrence result, so no consumer reconstructs a CFG or reruns SCC.
+func (b *Builder) sourceControl(
+	pre, post []uint32,
+	activation []Term,
+	breakLoops []Term,
+	claims [tagCount][]sealClaimSlot,
+	direct []Term,
+) ([tagCount][]Term, error) {
+	var mu [tagCount][]Term
+	var nodes [tagCount][]uint32
+	hasDirectCandidate := false
+	for _, row := range b.calls {
+		hasDirectCandidate = hasDirectCandidate || b.has(row.callee, tagFunction) ||
+			(b.has(row.callee, tagRead) && b.has(b.reads[row.callee.index()-1].source, tagCell))
+	}
+	hasReadFrontier := false
+	for _, row := range b.reads {
+		hasReadFrontier = hasReadFrontier || b.has(row.source, tagCell)
+	}
+	hasFunctionFrontier := false
+	for _, row := range b.functions {
+		hasFunctionFrontier = hasFunctionFrontier || row.captures.start != row.captures.end
+	}
+	hasAssignFrontier := false
+	for _, row := range b.assigns {
+		for at := row.targets.start; at < row.targets.end; at++ {
+			if b.has(b.assignTerms[at], tagCell) {
+				hasAssignFrontier = true
+				break
+			}
+		}
+	}
+	controlTags := [...]uint8{
+		tagReturn, tagThrow, tagYield, tagBreak, tagLabel, tagGoto, tagBody,
+		tagBind, tagAssign, tagCall, tagBranch, tagLoop,
+	}
+	mayRecur := len(b.loopOwners) != 0 || len(b.gotoOwners) != 0
+	for _, tag := range controlTags {
+		count := len(b.spans[tag])
+		if mayRecur {
+			mu[tag] = make([]Term, count)
+		}
+	}
+	if !mayRecur && !hasDirectCandidate && len(b.labelOwners) == 0 &&
+		!hasReadFrontier && !hasFunctionFrontier && !hasAssignFrontier {
+		return mu, nil
+	}
+	for _, tag := range controlTags {
+		count := len(b.spans[tag])
+		nodes[tag] = make([]uint32, count)
+		for i := range nodes[tag] {
+			nodes[tag][i] = noControlNode
+		}
+	}
+	bodyStart := make([]uint32, len(b.bodies)+1)
+	var nodeCount uint64
+	for bodyIndex, row := range b.bodies {
+		bodyStart[bodyIndex+1] = uint32(nodeCount)
+		nodeCount += uint64(row.roots.end-row.roots.start) + 1
+	}
+	loopDecision := make([]uint32, len(b.loopOwners))
+	for i := range loopDecision {
+		loopDecision[i] = noControlNode
+		if b.loopKinds[i] == LoopRepeat ||
+			b.loopKinds[i] == LoopNumericFor ||
+			b.loopKinds[i] == LoopGenericFor {
+			if nodeCount > math.MaxUint32 {
+				return mu, errors.New("program: source control is too large")
+			}
+			loopDecision[i] = uint32(nodeCount)
+			nodeCount++
+		}
+	}
+	if nodeCount == 0 || nodeCount > math.MaxUint32 {
+		return mu, errors.New("program: source control is too large")
+	}
+	count := uint32(nodeCount)
+	bodyNode := func(body Term, cursor uint32) (uint32, bool) {
+		if !b.has(body, tagBody) {
+			return 0, false
+		}
+		row := b.bodies[body.index()-1]
+		length := row.roots.end - row.roots.start
+		if cursor > length {
+			return 0, false
+		}
+		return bodyStart[body.index()] + cursor, true
+	}
+	setNode := func(term Term, node uint32) error {
+		if !b.valid(term) || int(term.tag()) >= len(nodes) ||
+			int(term.index()) > len(nodes[term.tag()]) ||
+			nodes[term.tag()][term.index()-1] != noControlNode {
+			return errors.New("program: ambiguous control occurrence")
+		}
+		nodes[term.tag()][term.index()-1] = node
+		return nil
+	}
+	for bodyIndex, row := range b.bodies {
+		start := bodyStart[bodyIndex+1]
+		for cursor, at := uint32(0), row.roots.start; at < row.roots.end; cursor, at = cursor+1, at+1 {
+			root := b.bodyTerms[at]
+			if root.tag() == tagBody {
+				continue
+			}
+			if err := setNode(root, start+cursor); err != nil {
+				return mu, err
+			}
+		}
+	}
+	for bodyIndex := range b.bodies {
+		body := makeTerm(tagBody, uint32(bodyIndex+1))
+		nodes[tagBody][bodyIndex] = bodyStart[body.index()]
+	}
+	for i, owner := range b.labelOwners {
+		if i >= len(b.labelPlaced) || !b.labelPlaced[i] {
+			return mu, errors.New("program: unplaced Label")
+		}
+		node, ok := bodyNode(owner, b.labelCursors[i])
+		if !ok {
+			return mu, errors.New("program: Label cursor outside Body")
+		}
+		if err := setNode(makeTerm(tagLabel, uint32(i+1)), node); err != nil {
+			return mu, err
+		}
+	}
+	if !mayRecur && !hasDirectCandidate &&
+		!hasReadFrontier && !hasFunctionFrontier && !hasAssignFrontier {
+		return mu, nil
+	}
+
+	// Build lexical environments as a persistent tree. Every Bind extends the
+	// active environment after its root. An ordinary Body tail restores its
+	// entry environment for Lua's final-void-label rule. A Repeat Body retains
+	// its final environment because the following until condition is inside
+	// that Body's local scope.
+	scopeAt := make([]uint32, count)
+	scopeCapacity := 1 + len(b.binds)
+	scopeParent := make([]uint32, 1, scopeCapacity)
+	cellScope := make([]uint32, len(b.cells)+1)
+	bodyScope := make([]uint32, len(b.bodies)+1)
+	bodyScopeSet := make([]bool, len(b.bodies)+1)
+	repeatBody := make([]bool, len(b.bodies)+1)
+	for i, body := range b.loopBodies {
+		if b.loopKinds[i] == LoopRepeat {
+			repeatBody[body.index()] = true
+		}
+	}
+	bodyStack := make([]uint32, 0, len(b.bodies))
+	seedBody := func(body Term) error {
+		if !b.has(body, tagBody) || bodyScopeSet[body.index()] {
+			return errors.New("program: ambiguous control activation")
+		}
+		bodyScopeSet[body.index()] = true
+		bodyStack = append(bodyStack, body.index())
+		return nil
+	}
+	if err := seedBody(b.entry); err != nil {
+		return mu, err
+	}
+	for _, row := range b.functions {
+		if err := seedBody(row.body); err != nil {
+			return mu, err
+		}
+	}
+	setChildScope := func(child Term, scope uint32) error {
+		if !b.has(child, tagBody) || bodyScopeSet[child.index()] {
+			return errors.New("program: ambiguous lexical Body scope")
+		}
+		bodyScope[child.index()] = scope
+		bodyScopeSet[child.index()] = true
+		bodyStack = append(bodyStack, child.index())
+		return nil
+	}
+	for len(bodyStack) != 0 {
+		bodyIndex := bodyStack[len(bodyStack)-1]
+		bodyStack = bodyStack[:len(bodyStack)-1]
+		row := b.bodies[bodyIndex-1]
+		env := bodyScope[bodyIndex]
+		start := bodyStart[bodyIndex]
+		cursor := uint32(0)
+		for at := row.roots.start; at < row.roots.end; at++ {
+			scopeAt[start+cursor] = env
+			root := b.bodyTerms[at]
+			switch root.tag() {
+			case tagBind:
+				scopeParent = append(scopeParent, env)
+				env = uint32(len(scopeParent) - 1)
+				bind := b.binds[root.index()-1]
+				for i := bind.cells.start; i < bind.cells.end; i++ {
+					cellScope[b.bindTerms[i].index()] = env
+				}
+			case tagBody:
+				if err := setChildScope(root, env); err != nil {
+					return mu, err
+				}
+			case tagBranch:
+				branch := b.branches[root.index()-1]
+				if err := setChildScope(branch.whenTrue, env); err != nil {
+					return mu, err
+				}
+				if err := setChildScope(branch.whenFalse, env); err != nil {
+					return mu, err
+				}
+			case tagLoop:
+				loopIndex := root.index() - 1
+				if err := setChildScope(b.loopBodies[loopIndex], env); err != nil {
+					return mu, err
+				}
+			}
+			cursor++
+		}
+		if repeatBody[bodyIndex] {
+			scopeAt[start+cursor] = env
+		} else {
+			scopeAt[start+cursor] = bodyScope[bodyIndex]
+		}
+	}
+	for bodyIndex := 1; bodyIndex < len(bodyScopeSet); bodyIndex++ {
+		if !bodyScopeSet[bodyIndex] {
+			return mu, errors.New("program: Body has no lexical control scope")
+		}
+	}
+	for i, decision := range loopDecision {
+		if decision == noControlNode {
+			continue
+		}
+		if b.loopKinds[i] == LoopRepeat {
+			body := b.loopBodies[i]
+			row := b.bodies[body.index()-1]
+			scopeAt[decision] = scopeAt[bodyStart[body.index()]+row.roots.end-row.roots.start]
+		} else {
+			scopeAt[decision] = scopeAt[nodes[tagLoop][i]]
+		}
+	}
+	scopePre, scopePost := treeIntervals(scopeParent)
+	contains := func(cell Term, scope uint32) bool {
+		cellAt := cellScope[cell.index()]
+		return scope < uint32(len(scopePre)) && cellAt < uint32(len(scopePre)) &&
+			scopePre[cellAt] <= scopePre[scope] && scopePost[scope] <= scopePost[cellAt]
+	}
+	rootScope := func(root Term) (uint32, bool) {
+		if !b.valid(root) || root.tag() >= tagCount ||
+			int(root.index()) > len(nodes[root.tag()]) {
+			return 0, false
+		}
+		if b.has(root, tagLoop) && b.loopKinds[root.index()-1] == LoopRepeat {
+			decision := loopDecision[root.index()-1]
+			return scopeAt[decision], decision != noControlNode
+		}
+		node := nodes[root.tag()][root.index()-1]
+		if node == noControlNode {
+			return 0, false
+		}
+		return scopeAt[node], true
+	}
+	for i, row := range b.reads {
+		if !b.has(row.source, tagCell) {
+			continue
+		}
+		root, err := containingRoot(claims, makeTerm(tagRead, uint32(i+1)))
+		if err != nil {
+			return mu, err
+		}
+		scope, ok := rootScope(root)
+		if !ok || !contains(row.source, scope) {
+			return mu, errors.New("program: Read Cell is not active at occurrence")
+		}
+	}
+	for i, row := range b.functions {
+		if row.captures.start == row.captures.end {
+			continue
+		}
+		function := makeTerm(tagFunction, uint32(i+1))
+		root, err := containingRoot(claims, function)
+		if err != nil {
+			return mu, err
+		}
+		scope, ok := rootScope(root)
+		recursive := Term(0)
+		if b.has(root, tagBind) {
+			bind := b.binds[root.index()-1]
+			values := b.values[bind.values.index()-1]
+			limit := bind.cells.end - bind.cells.start
+			if fixed := values.fixed.end - values.fixed.start; fixed < limit {
+				limit = fixed
+			}
+			for offset := uint32(0); offset < limit; offset++ {
+				if b.valueTerms[values.fixed.start+offset] == function {
+					recursive = b.bindTerms[bind.cells.start+offset]
+					break
+				}
+			}
+		}
+		if !ok {
+			return mu, errors.New("program: Function has no source frontier")
+		}
+		for at := row.captures.start; at < row.captures.end; at++ {
+			outer := b.captures[at].outer
+			if !contains(outer, scope) && outer != recursive {
+				return mu, errors.New("program: invalid lexical Capture")
+			}
+		}
+	}
+	for i, node := range nodes[tagAssign] {
+		row := b.assigns[i]
+		hasCell := false
+		for at := row.targets.start; at < row.targets.end; at++ {
+			hasCell = hasCell || b.has(b.assignTerms[at], tagCell)
+		}
+		if !hasCell {
+			continue
+		}
+		if node == noControlNode {
+			return mu, errors.New("program: Assign has no source frontier")
+		}
+		for at := row.targets.start; at < row.targets.end; at++ {
+			target := b.assignTerms[at]
+			if b.has(target, tagCell) && !contains(target, scopeAt[node]) {
+				return mu, errors.New("program: Assign Cell is not active at occurrence")
+			}
+		}
+	}
+	if !mayRecur && !hasDirectCandidate {
+		return mu, nil
+	}
+	isScopeAncestor := func(outer, inner uint32) bool {
+		return scopePre[outer] <= scopePre[inner] && scopePost[inner] <= scopePost[outer]
+	}
+
+	edgeCount := 0
+	for _, root := range b.bodyTerms {
+		switch root.tag() {
+		case tagBind, tagAssign, tagCall, tagBreak, tagGoto:
+			edgeCount++
+		case tagBody:
+			edgeCount += 2
+		case tagBranch:
+			edgeCount += 4
+		case tagLoop:
+			if b.loopKinds[root.index()-1] == LoopRepeat ||
+				b.loopKinds[root.index()-1] == LoopNumericFor ||
+				b.loopKinds[root.index()-1] == LoopGenericFor {
+				edgeCount += 4
+			} else {
+				edgeCount += 3
+			}
+		}
+	}
+	edges := make([]controlEdge, 0, edgeCount)
+	add := func(from, to uint32) {
+		edges = append(edges, controlEdge{from: from, to: to})
+	}
+	bodyTail := func(body Term) uint32 {
+		row := b.bodies[body.index()-1]
+		return bodyStart[body.index()] + row.roots.end - row.roots.start
+	}
+	for bodyIndex, row := range b.bodies {
+		body := makeTerm(tagBody, uint32(bodyIndex+1))
+		start := bodyStart[body.index()]
+		for cursor, at := uint32(0), row.roots.start; at < row.roots.end; cursor, at = cursor+1, at+1 {
+			root := b.bodyTerms[at]
+			node, next := start+cursor, start+cursor+1
+			switch root.tag() {
+			case tagBind, tagAssign, tagCall:
+				add(node, next)
+			case tagReturn, tagThrow, tagYield:
+			case tagBreak:
+				loop := breakLoops[root.index()-1]
+				if !b.has(loop, tagLoop) || nodes[tagLoop][loop.index()-1] == noControlNode {
+					return mu, errors.New("program: Break has no control target")
+				}
+				add(node, nodes[tagLoop][loop.index()-1]+1)
+			case tagGoto:
+				gotoIndex := root.index() - 1
+				targetLabel := b.gotoTargets[gotoIndex]
+				if !b.has(targetLabel, tagLabel) {
+					return mu, errors.New("program: Goto has invalid Label")
+				}
+				gotoOwner := b.gotoOwners[gotoIndex]
+				labelOwner := b.labelOwners[targetLabel.index()-1]
+				if activation[gotoOwner.index()] != activation[labelOwner.index()] ||
+					!(pre[labelOwner.index()] <= pre[gotoOwner.index()] &&
+						post[gotoOwner.index()] <= post[labelOwner.index()]) {
+					return mu, errors.New("program: Goto target is not lexically visible")
+				}
+				target := nodes[tagLabel][targetLabel.index()-1]
+				if !isScopeAncestor(scopeAt[target], scopeAt[node]) {
+					return mu, errors.New("program: Goto enters a live local scope")
+				}
+				add(node, target)
+			case tagBody:
+				add(node, bodyStart[root.index()])
+				add(bodyTail(root), next)
+			case tagBranch:
+				branch := b.branches[root.index()-1]
+				add(node, bodyStart[branch.whenTrue.index()])
+				add(node, bodyStart[branch.whenFalse.index()])
+				add(bodyTail(branch.whenTrue), next)
+				add(bodyTail(branch.whenFalse), next)
+			case tagLoop:
+				loopIndex := root.index() - 1
+				loopBody := b.loopBodies[loopIndex]
+				entry, tail := bodyStart[loopBody.index()], bodyTail(loopBody)
+				switch b.loopKinds[loopIndex] {
+				case LoopRepeat:
+					decision := loopDecision[loopIndex]
+					add(node, entry)
+					add(tail, decision)
+					add(decision, entry)
+					add(decision, next)
+				case LoopNumericFor, LoopGenericFor:
+					decision := loopDecision[loopIndex]
+					add(node, decision)
+					add(decision, entry)
+					add(decision, next)
+					add(tail, decision)
+				default:
+					add(node, entry)
+					add(node, next)
+					add(tail, node)
+				}
+			default:
+				return mu, errors.New("program: invalid source control root")
+			}
+		}
+	}
+
+	start, adjacent := controlAdjacency(count, edges, false)
+	reachable := make([]bool, count)
+	work := make([]uint32, 0, count)
+	reach := func(node uint32) {
+		if !reachable[node] {
+			reachable[node] = true
+			work = append(work, node)
+		}
+	}
+	reach(bodyStart[b.entry.index()])
+	for _, row := range b.functions {
+		reach(bodyStart[row.body.index()])
+	}
+	for len(work) != 0 {
+		node := work[len(work)-1]
+		work = work[:len(work)-1]
+		for edge := start[node]; edge < start[node+1]; edge++ {
+			reach(adjacent[edge])
+		}
+	}
+	for i, row := range b.calls {
+		if !(b.has(row.callee, tagFunction) ||
+			(b.has(row.callee, tagRead) && b.has(b.reads[row.callee.index()-1].source, tagCell))) {
+			continue
+		}
+		root, err := containingRoot(claims, makeTerm(tagCall, uint32(i+1)))
+		if err != nil {
+			return mu, err
+		}
+		var node uint32
+		if b.has(root, tagLoop) && b.loopKinds[root.index()-1] == LoopRepeat {
+			node = loopDecision[root.index()-1]
+		} else {
+			node = nodes[root.tag()][root.index()-1]
+		}
+		if node != noControlNode && reachable[node] {
+			direct[i] = root
+		}
+	}
+	if hasDirectCandidate {
+		for i, node := range nodes[tagBind] {
+			if node == noControlNode || !reachable[node] {
+				claims[tagBind][i].parent = 0
+			}
+		}
+		for i, node := range nodes[tagAssign] {
+			if node == noControlNode || !reachable[node] {
+				claims[tagAssign][i].parent = 0
+			}
+		}
+	}
+	if !mayRecur {
+		return mu, nil
+	}
+	reverseStart, reverse := controlAdjacency(count, edges, true)
+	finished := controlFinishOrder(start, adjacent, reachable)
+	component := make([]uint32, count)
+	componentCount := uint32(0)
+	members := make([]uint32, 0, count)
+	for i := len(finished) - 1; i >= 0; i-- {
+		root := finished[i]
+		if component[root] != 0 {
+			continue
+		}
+		componentCount++
+		component[root] = componentCount
+		members = append(members[:0], root)
+		for len(members) != 0 {
+			node := members[len(members)-1]
+			members = members[:len(members)-1]
+			for edge := reverseStart[node]; edge < reverseStart[node+1]; edge++ {
+				previous := reverse[edge]
+				if reachable[previous] && component[previous] == 0 {
+					component[previous] = componentCount
+					members = append(members, previous)
+				}
+			}
+		}
+	}
+	componentSize := make([]uint32, componentCount+1)
+	cyclic := make([]bool, componentCount+1)
+	for node, id := range component {
+		if id == 0 {
+			continue
+		}
+		componentSize[id]++
+		for edge := start[node]; edge < start[node+1]; edge++ {
+			if adjacent[edge] == uint32(node) {
+				cyclic[id] = true
+			}
+		}
+	}
+	for id := uint32(1); id <= componentCount; id++ {
+		cyclic[id] = cyclic[id] || componentSize[id] > 1
+	}
+	componentHead := make([]Term, componentCount+1)
+	offerHead := func(term Term, node uint32) {
+		id := component[node]
+		if id != 0 && cyclic[id] && (componentHead[id] == 0 || term < componentHead[id]) {
+			componentHead[id] = term
+		}
+	}
+	for i := range b.labelOwners {
+		offerHead(makeTerm(tagLabel, uint32(i+1)), nodes[tagLabel][i])
+	}
+	for i := range b.loopOwners {
+		term := makeTerm(tagLoop, uint32(i+1))
+		offerHead(term, nodes[tagLoop][i])
+		if loopDecision[i] != noControlNode {
+			offerHead(term, loopDecision[i])
+		}
+	}
+	for id := uint32(1); id <= componentCount; id++ {
+		if cyclic[id] && componentHead[id] == 0 {
+			return mu, errors.New("program: cyclic control has no Mu head")
+		}
+	}
+	for _, tag := range controlTags {
+		for i, node := range nodes[tag] {
+			if node == noControlNode || component[node] == 0 {
+				continue
+			}
+			id := component[node]
+			if cyclic[id] {
+				mu[tag][i] = componentHead[id]
+			}
+		}
+	}
+	for i, decision := range loopDecision {
+		if decision == noControlNode || component[decision] == 0 {
+			continue
+		}
+		id := component[decision]
+		if cyclic[id] {
+			mu[tagLoop][i] = componentHead[id]
+		}
+	}
+	return mu, nil
+}
+
+func treeIntervals(parent []uint32) ([]uint32, []uint32) {
+	start := make([]uint32, len(parent)+1)
+	for child := uint32(1); int(child) < len(parent); child++ {
+		start[parent[child]+1]++
+	}
+	for i := 1; i < len(start); i++ {
+		start[i] += start[i-1]
+	}
+	next := append([]uint32(nil), start[:len(parent)]...)
+	children := make([]uint32, len(parent)-1)
+	for child := uint32(1); int(child) < len(parent); child++ {
+		at := parent[child]
+		children[next[at]] = child
+		next[at]++
+	}
+	pre := make([]uint32, len(parent))
+	post := make([]uint32, len(parent))
+	type frame struct{ node, next uint32 }
+	stack := make([]frame, 0, len(parent))
+	stack = append(stack, frame{node: 0, next: start[0]})
+	clock := uint32(1)
+	pre[0] = clock
+	for len(stack) != 0 {
+		top := &stack[len(stack)-1]
+		if top.next < start[top.node+1] {
+			child := children[top.next]
+			top.next++
+			clock++
+			pre[child] = clock
+			stack = append(stack, frame{node: child, next: start[child]})
+			continue
+		}
+		post[top.node] = clock
+		stack = stack[:len(stack)-1]
+	}
+	return pre, post
+}
+
+func controlAdjacency(count uint32, edges []controlEdge, reverse bool) ([]uint32, []uint32) {
+	start := make([]uint32, int(count)+1)
+	for _, edge := range edges {
+		at := edge.from
+		if reverse {
+			at = edge.to
+		}
+		start[at+1]++
+	}
+	for i := 1; i < len(start); i++ {
+		start[i] += start[i-1]
+	}
+	next := append([]uint32(nil), start[:count]...)
+	adjacent := make([]uint32, len(edges))
+	for _, edge := range edges {
+		from, to := edge.from, edge.to
+		if reverse {
+			from, to = to, from
+		}
+		adjacent[next[from]] = to
+		next[from]++
+	}
+	return start, adjacent
+}
+
+func controlFinishOrder(start, adjacent []uint32, reachable []bool) []uint32 {
+	type frame struct{ node, next uint32 }
+	seen := make([]bool, len(reachable))
+	order := make([]uint32, 0, len(reachable))
+	stack := make([]frame, 0, len(reachable))
+	for root := uint32(0); int(root) < len(reachable); root++ {
+		if !reachable[root] || seen[root] {
+			continue
+		}
+		seen[root] = true
+		stack = append(stack, frame{node: root, next: start[root]})
+		for len(stack) != 0 {
+			top := &stack[len(stack)-1]
+			if top.next < start[top.node+1] {
+				next := adjacent[top.next]
+				top.next++
+				if reachable[next] && !seen[next] {
+					seen[next] = true
+					stack = append(stack, frame{node: next, next: start[next]})
+				}
+				continue
+			}
+			order = append(order, top.node)
+			stack = stack[:len(stack)-1]
+		}
+	}
+	return order
 }
 
 // terminalCaptureCells collapses the validated inner-to-outer capture forest
@@ -2056,8 +2801,8 @@ func (b *Builder) statementRoot(term Term) bool {
 
 func (b *Builder) statementTag(tag uint8) bool {
 	switch tag {
-	case tagBind, tagAssign, tagCall, tagBranch, tagLoop, tagBody, tagNormal,
-		tagReturn, tagThrow, tagYield, tagBreak:
+	case tagBind, tagAssign, tagCall, tagBranch, tagLoop, tagBody,
+		tagReturn, tagThrow, tagYield, tagBreak, tagGoto:
 		return true
 	default:
 		return false
@@ -2066,17 +2811,20 @@ func (b *Builder) statementTag(tag uint8) bool {
 
 type directCallEdge struct{ from, to uint32 }
 
-// directCallMu derives canonical Function heads for static direct-call SCCs.
-// Edges are read directly from typed Call rows: call.owner determines the
-// enclosing activation, and Seal-derived direct evidence is the target. No
-// operand walk, generic operation stream, or reconstructed execution graph exists.
-func (b *Builder) directCallMu(activation, direct []Term) ([]Term, error) {
+// directCallMu derives canonical Function heads for reachable static direct
+// Call SCCs. Nested immediately-called Function literals can close a cycle
+// with an aligned recursive capture, so this relation is not self-only.
+func (b *Builder) directCallMu(
+	activation, direct []Term,
+) ([]Term, error) {
 	functionCount := len(b.functions)
-	mu := make([]Term, functionCount+1)
 	if functionCount == 0 {
-		return mu, nil
+		return nil, nil
 	}
-	edges := make([]directCallEdge, 0, len(b.calls))
+	if len(direct) != len(b.calls) {
+		return nil, errors.New("program: invalid direct Call evidence")
+	}
+	edgeCount := 0
 	for callIndex, call := range b.calls {
 		if direct[callIndex] == 0 {
 			continue
@@ -2085,18 +2833,35 @@ func (b *Builder) directCallMu(activation, direct []Term) ([]Term, error) {
 			return nil, errors.New("program: Call has no activation")
 		}
 		from := activation[call.owner.index()]
-		if from == 0 { // an Entry activation call is not a recursive edge.
+		if from == 0 {
 			continue
 		}
 		if !b.has(from, tagFunction) || !b.has(direct[callIndex], tagFunction) {
 			return nil, errors.New("program: invalid direct Call edge")
 		}
+		edgeCount++
+	}
+	if edgeCount == 0 {
+		return nil, nil
+	}
+	edges := make([]directCallEdge, 0, edgeCount)
+	for callIndex, call := range b.calls {
+		if direct[callIndex] == 0 {
+			continue
+		}
+		from := activation[call.owner.index()]
+		if from == 0 { // an Entry activation call is not a recursive edge.
+			continue
+		}
 		edges = append(edges, directCallEdge{from: from.index(), to: direct[callIndex].index()})
 	}
-
 	forwardStart, forward := directCallAdjacency(functionCount, edges, false)
+	finished, cyclic := directCallFinishOrder(functionCount, forwardStart, forward)
+	if !cyclic {
+		return nil, nil
+	}
+	mu := make([]Term, functionCount)
 	reverseStart, reverse := directCallAdjacency(functionCount, edges, true)
-	finished := directCallFinishOrder(functionCount, forwardStart, forward)
 	component := make([]uint32, functionCount+1)
 	componentHead := make([]uint32, functionCount+1)
 	members := make([]uint32, 0, functionCount)
@@ -2132,14 +2897,14 @@ func (b *Builder) directCallMu(activation, direct []Term) ([]Term, error) {
 		componentSize[component[function]]++
 	}
 	for function := uint32(1); function <= uint32(functionCount); function++ {
-		componentID := component[function]
-		if componentSize[componentID] > 1 {
-			mu[function] = makeTerm(tagFunction, componentHead[componentID])
+		id := component[function]
+		if componentSize[id] > 1 {
+			mu[function-1] = makeTerm(tagFunction, componentHead[id])
 			continue
 		}
 		for edge := forwardStart[function]; edge < forwardStart[function+1]; edge++ {
 			if forward[edge] == function {
-				mu[function] = makeTerm(tagFunction, function)
+				mu[function-1] = makeTerm(tagFunction, function)
 				break
 			}
 		}
@@ -2172,36 +2937,43 @@ func directCallAdjacency(functionCount int, edges []directCallEdge, reverse bool
 	return start, adjacent
 }
 
-func directCallFinishOrder(functionCount int, start, adjacent []uint32) []uint32 {
+func directCallFinishOrder(functionCount int, start, adjacent []uint32) ([]uint32, bool) {
 	type frame struct{ node, next uint32 }
-	seen := make([]bool, functionCount+1)
+	color := make([]uint8, functionCount+1)
 	order := make([]uint32, 0, functionCount)
 	stack := make([]frame, 0, functionCount)
+	cyclic := false
 	for root := uint32(1); root <= uint32(functionCount); root++ {
-		if seen[root] {
+		if color[root] != 0 {
 			continue
 		}
-		seen[root] = true
+		color[root] = 1
 		stack = append(stack, frame{node: root, next: start[root]})
 		for len(stack) != 0 {
 			top := &stack[len(stack)-1]
 			if top.next < start[top.node+1] {
 				next := adjacent[top.next]
 				top.next++
-				if !seen[next] {
-					seen[next] = true
+				if color[next] == 0 {
+					color[next] = 1
 					stack = append(stack, frame{node: next, next: start[next]})
+				} else if color[next] == 1 {
+					cyclic = true
 				}
 				continue
 			}
 			order = append(order, top.node)
+			color[top.node] = 2
 			stack = stack[:len(stack)-1]
 		}
 	}
-	return order
+	return order, cyclic
 }
 
-func (b *Builder) snapshot(muFunctions, directCalls, breakLoops []Term, loopMu []bool) *Program {
+func (b *Builder) snapshot(
+	mu [tagCount][]Term,
+	directCalls, breakLoops []Term,
+) *Program {
 	p := &Program{
 		termCount:      b.termCount,
 		files:          append([]string(nil), b.files...),
@@ -2218,14 +2990,15 @@ func (b *Builder) snapshot(muFunctions, directCalls, breakLoops []Term, loopMu [
 		values:         append([]valuesRow(nil), b.values...),
 		lensExact:      append([]exactLensRow(nil), b.lensExact...),
 		lensKeys:       append([]keyLensRow(nil), b.lensKeys...),
-		normals:        append([]outcomeRow(nil), b.normals...),
 		returns:        append([]outcomeRow(nil), b.returns...),
 		throws:         append([]outcomeRow(nil), b.throws...),
 		yields:         append([]outcomeRow(nil), b.yields...),
 		breaks:         append([]breakRow(nil), b.breaks...),
 		breakLoops:     copyTerms(breakLoops),
-		loopMu:         append([]bool(nil), loopMu...),
-		muFunctions:    copyTerms(muFunctions),
+		labelOwners:    copyTerms(b.labelOwners),
+		labelCursors:   append([]uint32(nil), b.labelCursors...),
+		gotoOwners:     copyTerms(b.gotoOwners),
+		gotoTargets:    copyTerms(b.gotoTargets),
 		directCalls:    copyTerms(directCalls),
 		entry:          b.entry,
 		bodies:         append([]bodyRow(nil), b.bodies...),
@@ -2251,6 +3024,9 @@ func (b *Builder) snapshot(muFunctions, directCalls, breakLoops []Term, loopMu [
 		tableFields:    append([]tableFieldRow(nil), b.tableFields...),
 		keys:           append([]keyRow(nil), b.keys...),
 		exactKeys:      append([]exactKey(nil), b.exactKeys...),
+	}
+	for tag := uint8(1); tag < tagCount; tag++ {
+		p.mu[tag] = copyTerms(mu[tag])
 	}
 	for tag := uint8(1); tag < tagCount; tag++ {
 		p.spans[tag] = append([]storedSpan(nil), b.spans[tag]...)
@@ -2281,8 +3057,6 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.lensExact))
 	case tagLensKey:
 		return index <= uint32(len(p.lensKeys))
-	case tagNormal:
-		return index <= uint32(len(p.normals))
 	case tagReturn:
 		return index <= uint32(len(p.returns))
 	case tagThrow:
@@ -2291,6 +3065,10 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.yields))
 	case tagBreak:
 		return index <= uint32(len(p.breaks))
+	case tagLabel:
+		return index <= uint32(len(p.labelOwners))
+	case tagGoto:
+		return index <= uint32(len(p.gotoOwners))
 	case tagBody:
 		return index <= uint32(len(p.bodies))
 	case tagCell:
@@ -2425,8 +3203,6 @@ func (p *Program) Lens(term Term) (owner, base, source Term, kind FieldKind, key
 
 func (p *Program) Outcome(term Term) (owner, values Term, ok bool) {
 	switch term.tag() {
-	case tagNormal:
-		return p.Normal(term)
 	case tagReturn:
 		return p.Return(term)
 	case tagThrow:
@@ -2436,7 +3212,6 @@ func (p *Program) Outcome(term Term) (owner, values Term, ok bool) {
 	}
 	return 0, 0, false
 }
-func (p *Program) Normal(term Term) (owner, values Term, ok bool) { return p.outcome(term, tagNormal) }
 func (p *Program) Return(term Term) (owner, values Term, ok bool) { return p.outcome(term, tagReturn) }
 func (p *Program) Throw(term Term) (owner, values Term, ok bool)  { return p.outcome(term, tagThrow) }
 func (p *Program) Yield(term Term) (owner, values Term, ok bool)  { return p.outcome(term, tagYield) }
@@ -2446,9 +3221,6 @@ func (p *Program) outcome(term Term, tag uint8) (Term, Term, bool) {
 	}
 	index := term.index() - 1
 	switch tag {
-	case tagNormal:
-		row := p.normals[index]
-		return row.owner, row.values, true
 	case tagReturn:
 		row := p.returns[index]
 		return row.owner, row.values, true
@@ -2478,23 +3250,38 @@ func (p *Program) Break(term Term) (owner, loop Term, ok bool) {
 	return p.breaks[term.index()-1].owner, loop, true
 }
 
-// Mu returns an existing recurrence head. A Loop is its own head exactly when
-// its canonical Body has a Normal fallthrough backedge. A Function uses its
-// Seal-derived direct-call recurrence SCC. Mu is an annotation, never a
-// separate Term.
+// Label returns one zero-width source anchor as its owner and executable Body
+// cursor. Several Labels may share a cursor.
+func (p *Program) Label(term Term) (owner Term, cursor int, ok bool) {
+	if !p.has(term, tagLabel) {
+		return 0, 0, false
+	}
+	index := term.index() - 1
+	return p.labelOwners[index], int(p.labelCursors[index]), true
+}
+
+// Goto returns its lexical owner and exact resolved Label target.
+func (p *Program) Goto(term Term) (owner, targetLabel Term, ok bool) {
+	if !p.has(term, tagGoto) {
+		return 0, 0, false
+	}
+	index := term.index() - 1
+	return p.gotoOwners[index], p.gotoTargets[index], true
+}
+
+// Mu returns an existing canonical source-control or direct-call SCC head.
+// It is an annotation, never a separate Term or a second control graph.
 func (p *Program) Mu(term Term) (Term, bool) {
-	if p.has(term, tagLoop) {
+	if p.Valid(term) && term.tag() < tagCount {
 		index := term.index() - 1
-		if int(index) < len(p.loopMu) && p.loopMu[index] {
-			return term, true
+		if int(index) < len(p.mu[term.tag()]) {
+			head := p.mu[term.tag()][index]
+			if head != 0 {
+				return head, true
+			}
 		}
-		return 0, false
 	}
-	if !p.has(term, tagFunction) || int(term.index()) >= len(p.muFunctions) {
-		return 0, false
-	}
-	head := p.muFunctions[term.index()]
-	return head, head != 0
+	return 0, false
 }
 
 // Entry returns the shard's one canonical top-level Body in O(1).
@@ -2844,15 +3631,6 @@ func (p *Program) LensKeyCount() int {
 func (p *Program) LensKeyAt(index int) (Term, bool) {
 	return familyTerm(tagLensKey, p.LensKeyCount(), index)
 }
-func (p *Program) NormalCount() int {
-	if p == nil {
-		return 0
-	}
-	return len(p.normals)
-}
-func (p *Program) NormalAt(index int) (Term, bool) {
-	return familyTerm(tagNormal, p.NormalCount(), index)
-}
 func (p *Program) ReturnCount() int {
 	if p == nil {
 		return 0
@@ -2883,6 +3661,24 @@ func (p *Program) BreakCount() int {
 	return len(p.breaks)
 }
 func (p *Program) BreakAt(index int) (Term, bool) { return familyTerm(tagBreak, p.BreakCount(), index) }
+func (p *Program) LabelCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.labelOwners)
+}
+func (p *Program) LabelAt(index int) (Term, bool) {
+	return familyTerm(tagLabel, p.LabelCount(), index)
+}
+func (p *Program) GotoCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.gotoOwners)
+}
+func (p *Program) GotoAt(index int) (Term, bool) {
+	return familyTerm(tagGoto, p.GotoCount(), index)
+}
 func (p *Program) BodyCount() int {
 	if p == nil {
 		return 0

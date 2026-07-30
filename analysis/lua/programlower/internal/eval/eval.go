@@ -113,15 +113,6 @@ func (v *Values) Field(
 	return term, nil
 }
 
-// Empty records the canonical empty pack for one normal Body outcome.
-func (v *Values) Empty(span program.Span, owner program.Term) (program.Term, error) {
-	term := v.builder.Values(span, owner, nil, 0)
-	if term == 0 {
-		return 0, fmt.Errorf("programlower: could not create normal Values")
-	}
-	return term, nil
-}
-
 // Number parses and records one authored numeric constant.
 func (v *Values) Number(
 	span program.Span,

@@ -207,6 +207,8 @@ func (b *binder) visitStmtList(step bindStep) {
 	stmts := b.statementList(step.node, step.phase)
 	if step.index < 0 {
 		b.hoistTypeDecls(stmts)
+		_, repeatBody := step.node.(*ast.RepeatStmt)
+		b.control.indexLabels(stmts, !repeatBody)
 		step.index = 0
 	}
 	if step.index >= len(stmts) {
@@ -301,7 +303,11 @@ func (b *binder) visitStmt(stmt ast.Stmt) {
 		}
 	case *ast.ReturnStmt:
 		b.push(bindStep{kind: stepExprList, node: s, mode: exprBindRuntime})
-	case *ast.BreakStmt, *ast.LabelStmt, *ast.GotoStmt:
+	case *ast.BreakStmt:
+	case *ast.LabelStmt:
+		b.control.visitLabel(s)
+	case *ast.GotoStmt:
+		b.control.visitGoto(s)
 	case *ast.TypeDefStmt:
 		b.beginTypeDef(s)
 	case *ast.InterfaceDefStmt:
@@ -711,6 +717,7 @@ func (b *binder) enterFunction(fn *ast.FunctionExpr, method bool, origin functio
 	oldVisible := b.visiblePending
 	b.functions = append(b.functions, functionFrame{fn: fn, visiblePending: oldVisible})
 	b.visiblePending = len(b.pending)
+	b.control.enterFunction()
 	b.pushScope()
 	if origin.hasReceiverType {
 		b.result.methodReceiverTypes[fn] = origin.receiverType
@@ -781,6 +788,7 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool) {
 
 func (b *binder) leaveFunction() {
 	b.popScope()
+	b.control.leaveFunction()
 	if len(b.functions) == 0 {
 		return
 	}

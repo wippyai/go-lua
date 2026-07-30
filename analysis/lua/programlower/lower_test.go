@@ -106,25 +106,15 @@ func mustLoop(t *testing.T, p *program.Program, term program.Term) (program.Term
 	return owner, body, control, kind
 }
 
-func TestEmptyChunkHasOneCanonicalEntry(t *testing.T) {
+func TestEmptyChunkHasOneCanonicalEntryAndStructuralTail(t *testing.T) {
 	p := parseBindLower(t, "")
 	entry, ok := p.Entry()
 	if !ok {
 		t.Fatal("empty chunk has no Entry")
 	}
 	roots := bodyRoots(t, p, entry)
-	if len(roots) != 1 {
-		t.Fatalf("empty Entry roots = %v; want one Normal outcome", roots)
-	}
-	owner, values, ok := p.Normal(roots[0])
-	if !ok || owner != entry {
-		t.Fatalf("empty Entry root is not Normal: %v", roots[0])
-	}
-	if count, ok := p.ValuesLen(values); !ok || count != 0 {
-		t.Fatalf("empty Entry ValuesLen = %d, %v", count, ok)
-	}
-	if tail := valuesTail(t, p, values); tail != 0 {
-		t.Fatalf("empty Entry tail = %v", tail)
+	if len(roots) != 0 {
+		t.Fatalf("empty Entry roots = %v; want structural Body tail only", roots)
 	}
 }
 
@@ -337,13 +327,10 @@ func TestParallelAttributeAssignmentPreservesBothTargetLenses(t *testing.T) {
 local k = 1
 t[k], t[2] = 3, 4`)
 	roots := entryRoots(t, p)
-	if len(roots) != 4 {
-		t.Fatalf("Entry roots = %v, want two Bind roots, Assign, and terminal Normal", roots)
+	if len(roots) != 3 {
+		t.Fatalf("Entry roots = %v, want two Bind roots and Assign", roots)
 	}
 	assign := roots[2]
-	if _, _, ok := p.Normal(roots[3]); !ok {
-		t.Fatal("nonterminal Entry has no Normal outcome")
-	}
 	if count, ok := p.AssignLen(assign); !ok || count != 2 {
 		t.Fatalf("AssignLen = %d, %v; want 2", count, ok)
 	}
@@ -368,22 +355,16 @@ func mustTarget(t *testing.T, p *program.Program, assign program.Term, index int
 	return target
 }
 
-func TestBodyCompletionIsNormalOnlyForNonterminalBodies(t *testing.T) {
+func TestBodyTailIsStructuralForTerminalAndNonterminalBodies(t *testing.T) {
 	p := parseBindLower(t, `do local x = 1 end`)
 	roots := entryRoots(t, p)
-	if len(roots) != 2 {
-		t.Fatalf("Entry roots = %v, want child Body then Normal", roots)
+	if len(roots) != 1 {
+		t.Fatalf("Entry roots = %v, want child Body", roots)
 	}
 	child := roots[0]
 	childRoots := bodyRoots(t, p, child)
-	if len(childRoots) != 2 {
-		t.Fatalf("do Body roots = %v, want Bind then Normal", childRoots)
-	}
-	if _, _, ok := p.Normal(childRoots[1]); !ok {
-		t.Fatal("nonterminal child Body has no Normal outcome")
-	}
-	if _, _, ok := p.Normal(roots[1]); !ok {
-		t.Fatal("nonterminal Entry has no Normal outcome")
+	if len(childRoots) != 1 {
+		t.Fatalf("do Body roots = %v, want Bind", childRoots)
 	}
 
 	p = parseBindLower(t, `do return 1 end`)
@@ -447,23 +428,20 @@ return 3`)
 		{"Else", whenFalse},
 	} {
 		armRoots := bodyRoots(t, p, arm.body)
-		if len(armRoots) != 2 {
-			t.Fatalf("%s roots = %v; want Bind and Normal", arm.name, armRoots)
-		}
-		if normalOwner, _, ok := p.Normal(armRoots[1]); !ok || normalOwner != arm.body {
-			t.Fatalf("%s Normal owner = %v, %v; want %v", arm.name, normalOwner, ok, arm.body)
+		if len(armRoots) != 1 {
+			t.Fatalf("%s roots = %v; want Bind", arm.name, armRoots)
 		}
 	}
 }
 
-func TestEmptyIfArmsRemainDistinctOwnedBodiesAndOutcomes(t *testing.T) {
+func TestEmptyIfArmsRemainDistinctOwnedBodies(t *testing.T) {
 	p := parseBindLower(t, `if true then
 else
 end`)
 	entry, _ := p.Entry()
 	roots := entryRoots(t, p)
-	if len(roots) != 2 {
-		t.Fatalf("Entry roots = %v; want Branch and Normal", roots)
+	if len(roots) != 1 {
+		t.Fatalf("Entry roots = %v; want Branch", roots)
 	}
 	owner, _, whenTrue, whenFalse := mustBranch(t, p, roots[0])
 	if owner != entry || whenTrue == whenFalse || whenTrue == entry || whenFalse == entry {
@@ -482,27 +460,8 @@ end`)
 	}
 	trueRoots := bodyRoots(t, p, whenTrue)
 	falseRoots := bodyRoots(t, p, whenFalse)
-	if len(trueRoots) != 1 || len(falseRoots) != 1 || trueRoots[0] == falseRoots[0] {
-		t.Fatalf("empty arm roots = %v / %v; want distinct Normal slots", trueRoots, falseRoots)
-	}
-	for _, arm := range []struct {
-		body   program.Term
-		normal program.Term
-	}{
-		{whenTrue, trueRoots[0]},
-		{whenFalse, falseRoots[0]},
-	} {
-		normalOwner, values, ok := p.Normal(arm.normal)
-		if !ok || normalOwner != arm.body {
-			t.Fatalf("Normal %v owner = %v, %v; want %v", arm.normal, normalOwner, ok, arm.body)
-		}
-		valuesOwner, tail, ok := p.Values(values)
-		if !ok || valuesOwner != arm.body || tail != 0 {
-			t.Fatalf("Normal Values owner/tail = %v/%v, %v; want %v/0", valuesOwner, tail, ok, arm.body)
-		}
-	}
-	if _, _, ok := p.Normal(roots[1]); !ok {
-		t.Fatal("nonterminal Entry has no Normal")
+	if len(trueRoots) != 0 || len(falseRoots) != 0 {
+		t.Fatalf("empty arm roots = %v / %v; want structural tails only", trueRoots, falseRoots)
 	}
 }
 
@@ -518,8 +477,8 @@ end
 x = x`)
 	entry, _ := p.Entry()
 	roots := entryRoots(t, p)
-	if len(roots) != 4 {
-		t.Fatalf("Entry roots = %v; want Bind, Branch, Assign, Normal", roots)
+	if len(roots) != 3 {
+		t.Fatalf("Entry roots = %v; want Bind, Branch, Assign", roots)
 	}
 	outerCell := boundCell(t, p, roots[0], 0)
 	_, _, whenTrue, whenFalse := mustBranch(t, p, roots[1])
@@ -532,8 +491,8 @@ x = x`)
 		{"Else", whenFalse},
 	} {
 		armRoots := bodyRoots(t, p, arm.body)
-		if len(armRoots) != 3 {
-			t.Fatalf("%s roots = %v; want Bind, Assign, Normal", arm.name, armRoots)
+		if len(armRoots) != 2 {
+			t.Fatalf("%s roots = %v; want Bind and Assign", arm.name, armRoots)
 		}
 		cell := boundCell(t, p, armRoots[0], 0)
 		armCells = append(armCells, cell)
@@ -610,24 +569,18 @@ func TestDeepElseIfConditionsStayInLazyFalseBodiesAndSourceOrder(t *testing.T) {
 			)
 		}
 		trueRoots := bodyRoots(t, p, whenTrue)
-		if len(trueRoots) != 1 {
-			t.Fatalf("level %d Then roots = %v; want Normal", level, trueRoots)
-		}
-		if normalOwner, _, ok := p.Normal(trueRoots[0]); !ok || normalOwner != whenTrue {
-			t.Fatalf("level %d Then Normal owner = %v, %v; want %v", level, normalOwner, ok, whenTrue)
+		if len(trueRoots) != 0 {
+			t.Fatalf("level %d Then roots = %v; want structural tail only", level, trueRoots)
 		}
 		falseRoots := bodyRoots(t, p, whenFalse)
 		if level == depth-1 {
-			if len(falseRoots) != 1 {
-				t.Fatalf("terminal Else roots = %v; want Normal", falseRoots)
+			if len(falseRoots) != 0 {
+				t.Fatalf("terminal Else roots = %v; want structural tail only", falseRoots)
 			}
 			break
 		}
-		if len(falseRoots) != 2 {
-			t.Fatalf("level %d Else roots = %v; want nested Branch and Normal", level, falseRoots)
-		}
-		if normalOwner, _, ok := p.Normal(falseRoots[1]); !ok || normalOwner != whenFalse {
-			t.Fatalf("level %d Else Normal owner = %v, %v; want %v", level, normalOwner, ok, whenFalse)
+		if len(falseRoots) != 1 {
+			t.Fatalf("level %d Else roots = %v; want nested Branch", level, falseRoots)
 		}
 		branch = falseRoots[0]
 		owner = whenFalse
@@ -648,7 +601,6 @@ x = 3
 return x`,
 	} {
 		p := parseBindLower(t, source)
-		entry, _ := p.Entry()
 		roots := entryRoots(t, p)
 		var branch program.Term
 		for _, root := range roots {
@@ -668,25 +620,14 @@ return x`,
 		if _, _, ok := p.Return(trueRoots[0]); !ok {
 			t.Fatalf("Then root is not Return for source:\n%s", source)
 		}
-		falseRoots := bodyRoots(t, p, whenFalse)
-		if len(falseRoots) == 0 {
-			t.Fatalf("Else Body is empty without its Normal for source:\n%s", source)
-		}
-		if normalOwner, _, ok := p.Normal(falseRoots[len(falseRoots)-1]); !ok || normalOwner != whenFalse {
-			t.Fatalf("Else Body has no owned Normal for source:\n%s", source)
-		}
+		_ = bodyRoots(t, p, whenFalse)
 		if _, _, ok := p.Return(roots[len(roots)-1]); !ok {
 			t.Fatalf("source has no trailing Return root:\n%s\nroots %v", source, roots)
-		}
-		for _, root := range roots {
-			if normalOwner, _, ok := p.Normal(root); ok && normalOwner == entry {
-				t.Fatalf("terminal Entry retained Normal for source:\n%s", source)
-			}
 		}
 	}
 }
 
-func TestExhaustiveTerminalIfRetainsTrailingStatementWithoutRevivingNormal(t *testing.T) {
+func TestExhaustiveTerminalIfRetainsTrailingAuthoredStatement(t *testing.T) {
 	for _, source := range []string{
 		`if true then
   return 1
@@ -715,15 +656,10 @@ local unreachable = 4`,
 		if _, ok := p.BindLen(roots[1]); !ok {
 			t.Fatalf("trailing authored root is not Bind: %v", roots[1])
 		}
-		for _, root := range roots {
-			if owner, _, ok := p.Normal(root); ok && owner == entry {
-				t.Fatalf("unreachable Bind revived Entry Normal for source:\n%s", source)
-			}
-		}
 	}
 }
 
-func TestExhaustiveTerminalIfHasNoNormalPath(t *testing.T) {
+func TestExhaustiveTerminalIfRetainsOnlyAuthoredReturns(t *testing.T) {
 	p := parseBindLower(t, `if true then
   return 1
 elseif false then
@@ -760,12 +696,9 @@ end`)
 			t.Fatal("terminal Else root is not Return")
 		}
 	}
-	if p.NormalCount() != 0 {
-		t.Fatalf("NormalCount = %d; exhaustive terminal chain wants 0", p.NormalCount())
-	}
 }
 
-func TestTerminalIfRetainsTrailingAssignmentWithoutNormal(t *testing.T) {
+func TestTerminalIfRetainsTrailingAuthoredAssignment(t *testing.T) {
 	p := parseBindLower(t, `
 local x = 0
 if true then
@@ -782,11 +715,6 @@ x = 3
 	}
 	if _, ok := p.AssignLen(roots[2]); !ok {
 		t.Fatalf("trailing root is not Assign: %v", roots[2])
-	}
-	for _, root := range roots {
-		if owner, _, ok := p.Normal(root); ok && owner == entry {
-			t.Fatal("unreachable assignment revived Entry Normal")
-		}
 	}
 }
 
@@ -809,16 +737,14 @@ func TestFourAndEightThousandElseIfArmsHaveExactLinearShape(t *testing.T) {
 		if first.BranchCount() != depth ||
 			first.BodyCount() != 2*depth+1 ||
 			first.BoolCount() != depth ||
-			first.NormalCount() != 2*depth+1 ||
-			first.ValuesCount() != 2*depth+1 ||
-			first.TermCount() != 8*depth+3 {
+			first.ValuesCount() != 0 ||
+			first.TermCount() != 4*depth+1 {
 			t.Fatalf(
-				"%d-chain families: branches=%d bodies=%d bools=%d normals=%d values=%d terms=%d",
+				"%d-chain families: branches=%d bodies=%d bools=%d values=%d terms=%d",
 				depth,
 				first.BranchCount(),
 				first.BodyCount(),
 				first.BoolCount(),
-				first.NormalCount(),
 				first.ValuesCount(),
 				first.TermCount(),
 			)
@@ -1186,7 +1112,7 @@ return x
 	}
 }
 
-func TestRepeatConditionSharesBodyLocalsAndNormalBackedge(t *testing.T) {
+func TestRepeatConditionSharesBodyLocalsAndStructuralBackedge(t *testing.T) {
 	p := parseBindLower(t, `
 repeat
 	local x = 1
@@ -1200,16 +1126,13 @@ return 2
 		t.Fatalf("Repeat = owner %v kind %v; want %v/%v", entry, kind, programEntry, program.LoopRepeat)
 	}
 	bodyTerms := bodyRoots(t, p, body)
-	if len(bodyTerms) != 2 {
-		t.Fatalf("Repeat Body roots = %v; want Bind and Normal", bodyTerms)
+	if len(bodyTerms) != 1 {
+		t.Fatalf("Repeat Body roots = %v; want Bind", bodyTerms)
 	}
 	cell := boundCell(t, p, bodyTerms[0], 0)
 	readOwner, source, ok := p.Read(condition)
 	if !ok || readOwner != body || source != cell {
 		t.Fatalf("Repeat condition = owner %v source %v ok %v; want %v/%v", readOwner, source, ok, body, cell)
-	}
-	if normalOwner, _, ok := p.Normal(bodyTerms[1]); !ok || normalOwner != body {
-		t.Fatalf("Repeat Body has no owned Normal backedge: %v", bodyTerms[1])
 	}
 	if mu, ok := p.Mu(loop); !ok || mu != loop {
 		t.Fatalf("Repeat Mu = %v, %v; want self", mu, ok)
@@ -1438,11 +1361,6 @@ end
 	if _, _, ok := nested.Return(nestedRoots[1]); !ok {
 		t.Fatalf("nested trailing root is not Return: %v", nestedRoots[1])
 	}
-	for _, root := range nestedRoots {
-		if owner, _, ok := nested.Normal(root); ok && owner == nestedBody {
-			t.Fatal("inner-loop Break revived outer Repeat fallthrough")
-		}
-	}
 }
 
 func TestUnreachableBreakInsideRepeatCannotReviveReturnFlow(t *testing.T) {
@@ -1490,11 +1408,6 @@ end
 	if len(functionRoots) != 2 {
 		t.Fatalf("Function roots = %v; want Loop and unreachable Return", functionRoots)
 	}
-	for _, root := range functionRoots {
-		if owner, _, ok := p.Normal(root); ok && owner == functionBody {
-			t.Fatal("unreachable Break revived Function fallthrough")
-		}
-	}
 }
 
 func TestReturnOnlyRepeatRetainsConditionWithoutMu(t *testing.T) {
@@ -1525,7 +1438,7 @@ func TestBreakOutsideLoopAndAcrossFunctionBoundaryFailSeal(t *testing.T) {
 	}
 }
 
-func TestLoopMuRequiresAnExactBodyNormal(t *testing.T) {
+func TestLoopMuRequiresReachableBodyTail(t *testing.T) {
 	p := parseBindLower(t, `
 while false do end
 repeat break until true
@@ -1537,6 +1450,129 @@ repeat break until true
 	}
 	if mu, ok := p.Mu(repeatLoop); ok || mu != 0 {
 		t.Fatalf("terminal Repeat Mu = %v, %v; want none", mu, ok)
+	}
+}
+
+func TestGotoTargetsExactPredeclaredLabelAtFinalVoidCursor(t *testing.T) {
+	p := parseBindLower(t, `
+goto done
+local dead = 1
+::done::
+`)
+	entry, _ := p.Entry()
+	if p.LabelCount() != 1 || p.GotoCount() != 1 {
+		t.Fatalf("control families: labels=%d gotos=%d; want 1/1", p.LabelCount(), p.GotoCount())
+	}
+	label, _ := p.LabelAt(0)
+	labelOwner, cursor, ok := p.Label(label)
+	if !ok || labelOwner != entry || cursor != 2 {
+		t.Fatalf("Label = owner %v cursor %d ok %v; want %v/2/true", labelOwner, cursor, ok, entry)
+	}
+	jump, _ := p.GotoAt(0)
+	jumpOwner, target, ok := p.Goto(jump)
+	if !ok || jumpOwner != entry || target != label {
+		t.Fatalf("Goto = owner %v target %v ok %v; want %v/%v/true", jumpOwner, target, ok, entry, label)
+	}
+	roots := bodyRoots(t, p, entry)
+	if len(roots) != 2 || roots[0] != jump {
+		t.Fatalf("Entry roots = %v; want Goto and Bind with Label kept out of roots", roots)
+	}
+	if _, ok := p.BindLen(roots[1]); !ok {
+		t.Fatalf("Entry root 1 is not Bind: %v", roots[1])
+	}
+}
+
+func TestConsecutiveLabelsShareOneStructuralCursor(t *testing.T) {
+	p := parseBindLower(t, `
+local x = 1
+::first::
+::second::
+return x
+`)
+	entry, _ := p.Entry()
+	if p.LabelCount() != 2 {
+		t.Fatalf("LabelCount = %d; want 2", p.LabelCount())
+	}
+	for index := 0; index < 2; index++ {
+		label, _ := p.LabelAt(index)
+		owner, cursor, ok := p.Label(label)
+		if !ok || owner != entry || cursor != 1 {
+			t.Fatalf("LabelAt(%d) = owner %v cursor %d ok %v; want %v/1/true", index, owner, cursor, ok, entry)
+		}
+	}
+	roots := bodyRoots(t, p, entry)
+	if len(roots) != 2 {
+		t.Fatalf("Entry roots = %v; want Bind and Return only", roots)
+	}
+	if _, ok := p.BindLen(roots[0]); !ok {
+		t.Fatalf("Entry root 0 is not Bind: %v", roots[0])
+	}
+	if _, _, ok := p.Return(roots[1]); !ok {
+		t.Fatalf("Entry root 1 is not Return: %v", roots[1])
+	}
+}
+
+func TestNestedGotoTargetsPredeclaredAncestorLabel(t *testing.T) {
+	p := parseBindLower(t, `
+do
+	goto done
+end
+::done::
+return 1
+`)
+	entry, _ := p.Entry()
+	label, _ := p.LabelAt(0)
+	labelOwner, cursor, ok := p.Label(label)
+	if !ok || labelOwner != entry || cursor != 1 {
+		t.Fatalf("ancestor Label = owner %v cursor %d ok %v; want %v/1/true", labelOwner, cursor, ok, entry)
+	}
+	roots := bodyRoots(t, p, entry)
+	if len(roots) != 2 {
+		t.Fatalf("Entry roots = %v; want Body and Return", roots)
+	}
+	child := roots[0]
+	childRoots := bodyRoots(t, p, child)
+	if len(childRoots) != 1 {
+		t.Fatalf("nested Body roots = %v; want one Goto", childRoots)
+	}
+	jumpOwner, target, ok := p.Goto(childRoots[0])
+	if !ok || jumpOwner != child || target != label {
+		t.Fatalf("nested Goto = owner %v target %v ok %v; want %v/%v/true", jumpOwner, target, ok, child, label)
+	}
+}
+
+func TestBackwardGotoCycleUsesLabelAsCanonicalMu(t *testing.T) {
+	p := parseBindLower(t, `
+::again::
+goto again
+`)
+	entry, _ := p.Entry()
+	label, _ := p.LabelAt(0)
+	if owner, cursor, ok := p.Label(label); !ok || owner != entry || cursor != 0 {
+		t.Fatalf("Label = owner %v cursor %d ok %v; want %v/0/true", owner, cursor, ok, entry)
+	}
+	jump, _ := p.GotoAt(0)
+	if owner, target, ok := p.Goto(jump); !ok || owner != entry || target != label {
+		t.Fatalf("Goto = owner %v target %v ok %v; want %v/%v/true", owner, target, ok, entry, label)
+	}
+	for _, term := range []program.Term{label, jump} {
+		if head, ok := p.Mu(term); !ok || head != label {
+			t.Fatalf("Mu(%v) = %v, %v; want Label %v", term, head, ok, label)
+		}
+	}
+}
+
+func TestInvalidGotoAndLabelControlFailsBeforeProgramAssembly(t *testing.T) {
+	for _, source := range []string{
+		`goto missing`,
+		"::same::\n::same::",
+		"goto done\nlocal x = 1\n::done::\nreturn x",
+		"::outside::\nreturn function() goto outside end",
+	} {
+		_, err := lowerSource(source)
+		if err == nil || !strings.Contains(err.Error(), "invalid control") {
+			t.Fatalf("invalid source lowered for %q: %v", source, err)
+		}
 	}
 }
 
@@ -2215,8 +2251,8 @@ return holder`)
 	outerCell := boundCell(t, p, entryRoots[0], 0)
 	innerBody := entryRoots[2]
 	innerRoots := bodyRoots(t, p, innerBody)
-	if len(innerRoots) != 3 {
-		t.Fatalf("inner Body roots = %v; want Bind, Assign, Normal", innerRoots)
+	if len(innerRoots) != 2 {
+		t.Fatalf("inner Body roots = %v; want Bind and Assign", innerRoots)
 	}
 	innerCell := boundCell(t, p, innerRoots[0], 0)
 	if outerCell == innerCell {
@@ -2390,24 +2426,27 @@ func TestFourThousandDeepAndWideLoopsLowerIterativelyFromSource(t *testing.T) {
 	if !ok || breakLoop != inner {
 		t.Fatalf("deep Break Loop = %v, %v; want innermost %v", breakLoop, ok, inner)
 	}
-	if _, ok := deep.Mu(inner); ok {
-		t.Fatal("terminal innermost loop unexpectedly has Mu")
-	}
 	outer, _ := deep.LoopAt(size - 1)
-	if mu, ok := deep.Mu(outer); !ok || mu != outer {
-		t.Fatalf("fallthrough outer loop Mu = %v, %v; want self", mu, ok)
+	innerHead, innerOK := deep.Mu(inner)
+	outerHead, outerOK := deep.Mu(outer)
+	if !innerOK || !outerOK || innerHead != outerHead {
+		t.Fatalf(
+			"nested loop Mu = inner %v/%v outer %v/%v; want one shared recursive component",
+			innerHead,
+			innerOK,
+			outerHead,
+			outerOK,
+		)
 	}
 
 	wide := parseBindLower(t, wideWhileSource(size))
 	if wide.LoopCount() != size ||
 		wide.BodyCount() != size+1 ||
-		wide.NormalCount() != size+1 ||
 		wide.BoolCount() != size {
 		t.Fatalf(
-			"wide loop families: loops=%d bodies=%d normals=%d bools=%d",
+			"wide loop families: loops=%d bodies=%d bools=%d",
 			wide.LoopCount(),
 			wide.BodyCount(),
-			wide.NormalCount(),
 			wide.BoolCount(),
 		)
 	}
@@ -2602,24 +2641,22 @@ func TestNestedLexicalBodiesObeyLinearScalingAndExactOwnership(t *testing.T) {
 	if largeProgram.BodyCount() != largeDepth+1 ||
 		largeProgram.CellCount() != largeDepth+1 ||
 		largeProgram.BindCount() != largeDepth+1 ||
-		largeProgram.AssignCount() != largeDepth+1 ||
-		largeProgram.NormalCount() != largeDepth+1 {
+		largeProgram.AssignCount() != largeDepth+1 {
 		t.Fatalf(
-			"8K lexical families: bodies=%d cells=%d binds=%d assigns=%d normals=%d",
+			"8K lexical families: bodies=%d cells=%d binds=%d assigns=%d",
 			largeProgram.BodyCount(),
 			largeProgram.CellCount(),
 			largeProgram.BindCount(),
 			largeProgram.AssignCount(),
-			largeProgram.NormalCount(),
 		)
 	}
 
 	body, _ := largeProgram.Entry()
 	for level := 0; level <= largeDepth; level++ {
 		roots := bodyRoots(t, largeProgram, body)
-		wantRoots := 4
+		wantRoots := 3
 		if level == largeDepth {
-			wantRoots = 3
+			wantRoots = 2
 		}
 		if len(roots) != wantRoots {
 			t.Fatalf("level %d Body roots = %v; want %d", level, roots, wantRoots)
@@ -2657,21 +2694,6 @@ func TestNestedLexicalBodiesObeyLinearScalingAndExactOwnership(t *testing.T) {
 				ok,
 				body,
 				cell,
-			)
-		}
-		normal := roots[len(roots)-1]
-		normalOwner, normalValues, ok := largeProgram.Normal(normal)
-		valuesOwner, tail, valuesOK := largeProgram.Values(normalValues)
-		if !ok || !valuesOK || normalOwner != body || valuesOwner != body || tail != 0 {
-			t.Fatalf(
-				"level %d Normal = owner %v Values owner %v tail %v ok %v/%v; want Body %v",
-				level,
-				normalOwner,
-				valuesOwner,
-				tail,
-				ok,
-				valuesOK,
-				body,
 			)
 		}
 		if level != largeDepth {

@@ -384,11 +384,14 @@ type binder struct {
 	typeHeads map[string]TypeDecl
 	typeUndo  []typeUndo
 	typeMarks []int
+
+	control controlBinder
 }
 
 func (b *binder) pushScope() {
 	b.valueMarks = append(b.valueMarks, len(b.valueUndo))
 	b.pushTypeScope()
+	b.control.pushBlock()
 }
 
 func (b *binder) popScope() {
@@ -407,6 +410,7 @@ func (b *binder) popScope() {
 	b.valueUndo = b.valueUndo[:mark]
 	b.valueMarks = b.valueMarks[:len(b.valueMarks)-1]
 	b.popTypeScope()
+	b.control.popBlock()
 }
 
 func (b *binder) define(name string, id symbol.ID) {
@@ -419,6 +423,7 @@ func (b *binder) define(name string, id symbol.ID) {
 	prior, existed := b.valueHeads[name]
 	b.valueUndo = append(b.valueUndo, valueUndo{name: name, prior: prior, existed: existed})
 	b.valueHeads[name] = valueHead{id: id, depth: len(b.valueMarks) - 1}
+	b.control.define(id)
 }
 
 func (b *binder) newSymbol(name string, kind symbol.Kind) symbol.ID {

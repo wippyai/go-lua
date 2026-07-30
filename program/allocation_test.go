@@ -10,9 +10,7 @@ func TestNoLoopSealAllocationDoesNotRegress(t *testing.T) {
 	b := program.NewBuilder()
 	entry := b.Body(program.Span{})
 	b.SetEntry(entry)
-	value := b.Integer(program.Span{}, entry, 1)
-	values := b.Values(program.Span{}, entry, []program.Term{value}, 0)
-	b.SetBody(entry, b.Normal(program.Span{}, entry, values))
+	b.SetBody(entry)
 	allocations := testing.AllocsPerRun(100, func() {
 		if _, err := b.Seal(); err != nil {
 			t.Fatal(err)

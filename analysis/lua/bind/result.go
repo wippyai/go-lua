@@ -57,6 +57,9 @@ type Result struct {
 	numForSymbols     map[*ast.NumberForStmt]symbol.ID
 	genericForSymbols map[*ast.GenericForStmt][]symbol.ID
 
+	gotoTargets   map[*ast.GotoStmt]*ast.LabelStmt
+	controlIssues []ControlIssue
+
 	nextTypeDeclID       TypeDeclID
 	typeRefs             map[*ast.TypeRefExpr]TypeDecl
 	primitiveTypeRefs    map[*ast.PrimitiveTypeExpr]TypeDecl

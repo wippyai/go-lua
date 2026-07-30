@@ -20,6 +20,12 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 	if binding == nil {
 		return nil, fmt.Errorf("programlower: nil binding result")
 	}
+	if issues := binding.ControlIssues(); len(issues) != 0 {
+		return nil, fmt.Errorf(
+			"programlower: binding has %d invalid control statement(s)",
+			len(issues),
+		)
+	}
 
 	captures := make(captureIndex)
 	binding.ForEachEntryCapture(captures.add)
@@ -38,6 +44,9 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 	span := l.chunkSpan(stmts)
 	_, err := l.scopes.Entry(span)
 	if err != nil {
+		return nil, err
+	}
+	if err := l.predeclareLabels(stmts); err != nil {
 		return nil, err
 	}
 	l.push(
@@ -157,7 +166,6 @@ type step struct {
 
 	readLens  bool
 	allowOpen bool
-	thenFlow  lexical.Flow
 }
 
 func (l *lowerer) run() error {
@@ -172,15 +180,15 @@ func (l *lowerer) run() error {
 				return err
 			}
 		case stepFinishEntry:
-			if _, _, err := l.finishBody(current.span); err != nil {
+			if _, err := l.finishBody(); err != nil {
 				return err
 			}
 		case stepFinishDo:
-			child, flow, err := l.finishBody(current.span)
+			child, err := l.finishBody()
 			if err != nil {
 				return err
 			}
-			if err := l.scopes.Append(child, flow); err != nil {
+			if err := l.scopes.Append(child); err != nil {
 				return err
 			}
 		case stepFinishLocal:
@@ -207,15 +215,15 @@ func (l *lowerer) run() error {
 			if err != nil {
 				return err
 			}
-			if err := l.scopes.Append(term, lexical.Flow{}); err != nil {
+			if err := l.scopes.Append(term); err != nil {
 				return err
 			}
 		case stepFinishCallStmt:
-			if err := l.scopes.Append(l.result, lexical.Flow{}); err != nil {
+			if err := l.scopes.Append(l.result); err != nil {
 				return err
 			}
 		case stepFinishReturn:
-			term, flow, err := l.controls.Return(
+			term, err := l.controls.Return(
 				l.span(current.return_),
 				l.owner(),
 				l.result,
@@ -223,7 +231,7 @@ func (l *lowerer) run() error {
 			if err != nil {
 				return err
 			}
-			if err := l.scopes.Append(term, flow); err != nil {
+			if err := l.scopes.Append(term); err != nil {
 				return err
 			}
 		case stepFinishIfCondition:
@@ -334,7 +342,7 @@ func (l *lowerer) run() error {
 			if err != nil {
 				return fmt.Errorf("programlower: missing Function result")
 			}
-			if _, _, err := l.finishBody(current.span); err != nil {
+			if _, err := l.finishBody(); err != nil {
 				return err
 			}
 			l.result = function
@@ -470,16 +478,31 @@ func (l *lowerer) runStmts(current step) error {
 	case *ast.GenericForStmt:
 		return l.startGenericFor(stmt)
 	case *ast.BreakStmt:
-		term, flow, err := l.controls.Break(l.span(stmt), l.owner())
+		term, err := l.controls.Break(l.span(stmt), l.owner())
 		if err != nil {
 			return err
 		}
-		return l.scopes.Append(term, flow)
+		return l.scopes.Append(term)
+	case *ast.LabelStmt:
+		return l.controls.PlaceLabel(stmt, l.scopes.Cursor())
+	case *ast.GotoStmt:
+		target, ok := l.binding.GotoTarget(stmt)
+		if !ok {
+			return fmt.Errorf("programlower: binder has no legal target for goto")
+		}
+		term, err := l.controls.Goto(l.span(stmt), l.owner(), target)
+		if err != nil {
+			return err
+		}
+		return l.scopes.Append(term)
 	case *ast.DoBlockStmt:
 		span := l.span(stmt)
 		_, err := l.scopes.EnterBlock(span)
 		if err != nil {
 			return fmt.Errorf("programlower: could not create do-block body: %w", err)
+		}
+		if err := l.predeclareLabels(stmt.Stmts); err != nil {
+			return err
 		}
 		l.push(
 			step{kind: stepFinishDo, span: span},
@@ -496,6 +519,9 @@ func (l *lowerer) beginIfThen(stmt *ast.IfStmt, condition program.Term) error {
 	body, err := l.scopes.EnterBlock(span)
 	if err != nil {
 		return fmt.Errorf("programlower: could not create Then Body: %w", err)
+	}
+	if err := l.predeclareLabels(stmt.Then); err != nil {
+		return err
 	}
 	l.push(
 		step{
@@ -514,7 +540,7 @@ func (l *lowerer) finishIfThen(current step) error {
 	if l.owner() != current.whenTrue {
 		return fmt.Errorf("programlower: mismatched Then Body")
 	}
-	_, flow, err := l.finishBody(current.span)
+	_, err := l.finishBody()
 	if err != nil {
 		return err
 	}
@@ -524,6 +550,9 @@ func (l *lowerer) finishIfThen(current step) error {
 	if err != nil {
 		return fmt.Errorf("programlower: could not create Else Body: %w", err)
 	}
+	if err := l.predeclareLabels(current.if_.Else); err != nil {
+		return err
+	}
 	l.push(
 		step{
 			kind:      stepFinishIfElse,
@@ -531,7 +560,6 @@ func (l *lowerer) finishIfThen(current step) error {
 			condition: current.condition,
 			whenTrue:  current.whenTrue,
 			whenFalse: body,
-			thenFlow:  flow,
 			span:      span,
 		},
 		step{kind: stepStmts, stmts: current.if_.Else},
@@ -543,24 +571,22 @@ func (l *lowerer) finishIfElse(current step) error {
 	if l.owner() != current.whenFalse {
 		return fmt.Errorf("programlower: mismatched Else Body")
 	}
-	_, elseFlow, err := l.finishBody(current.span)
+	_, err := l.finishBody()
 	if err != nil {
 		return err
 	}
 
-	term, flow, err := l.controls.Branch(
+	term, err := l.controls.Branch(
 		l.span(current.if_),
 		l.owner(),
 		current.condition,
 		current.whenTrue,
 		current.whenFalse,
-		current.thenFlow,
-		elseFlow,
 	)
 	if err != nil {
 		return err
 	}
-	return l.scopes.Append(term, flow)
+	return l.scopes.Append(term)
 }
 
 func (l *lowerer) beginWhileBody(stmt *ast.WhileStmt, control program.Term) error {
@@ -568,6 +594,9 @@ func (l *lowerer) beginWhileBody(stmt *ast.WhileStmt, control program.Term) erro
 	body, err := l.scopes.EnterBlock(bodySpan)
 	if err != nil {
 		return fmt.Errorf("programlower: could not create while Body: %w", err)
+	}
+	if err := l.predeclareLabels(stmt.Stmts); err != nil {
+		return err
 	}
 	l.push(
 		step{
@@ -588,6 +617,9 @@ func (l *lowerer) startRepeat(stmt *ast.RepeatStmt) error {
 	body, err := l.scopes.EnterBlock(bodySpan)
 	if err != nil {
 		return fmt.Errorf("programlower: could not create repeat Body: %w", err)
+	}
+	if err := l.predeclareLabels(stmt.Stmts); err != nil {
+		return err
 	}
 	l.push(
 		step{
@@ -676,6 +708,9 @@ func (l *lowerer) beginNumberForBody(
 	if err != nil {
 		return fmt.Errorf("programlower: could not create numeric for Body: %w", err)
 	}
+	if err := l.predeclareLabels(stmt.Stmts); err != nil {
+		return err
+	}
 	cellMark := l.controls.CellMark()
 	cell, err := l.scopes.DeclareLoop(id, l.positionSpan(stmt.NamePosition))
 	if err != nil {
@@ -730,6 +765,9 @@ func (l *lowerer) beginGenericForBody(
 	if err != nil {
 		return fmt.Errorf("programlower: could not create generic for Body: %w", err)
 	}
+	if err := l.predeclareLabels(stmt.Stmts); err != nil {
+		return err
+	}
 	cellMark := l.controls.CellMark()
 	for i, id := range ids {
 		if id == 0 {
@@ -767,7 +805,7 @@ func (l *lowerer) finishLoopBody(current step) error {
 	if l.owner() != current.whenTrue {
 		return fmt.Errorf("programlower: mismatched loop Body")
 	}
-	body, flow, err := l.finishBody(current.span)
+	body, err := l.finishBody()
 	if err != nil {
 		return err
 	}
@@ -784,19 +822,18 @@ func (l *lowerer) finishLoopBody(current step) error {
 	default:
 		return fmt.Errorf("programlower: invalid loop continuation %T", current.node)
 	}
-	term, outerFlow, err := l.controls.Loop(
+	term, err := l.controls.Loop(
 		l.span(current.node),
 		l.owner(),
 		body,
 		current.condition,
 		current.mark,
 		kind,
-		flow,
 	)
 	if err != nil {
 		return err
 	}
-	return l.scopes.Append(term, outerFlow)
+	return l.scopes.Append(term)
 }
 
 func (l *lowerer) finishLocal(current step) error {
@@ -1141,6 +1178,9 @@ func (l *lowerer) startFunction(fn *ast.FunctionExpr) error {
 	if _, err := l.scopes.EnterFunction(span, fn); err != nil {
 		return fmt.Errorf("programlower: could not create function Body")
 	}
+	if err := l.predeclareLabels(fn.Stmts); err != nil {
+		return err
+	}
 	l.push(step{
 		kind:      stepFunctionParams,
 		fn:        fn,
@@ -1349,16 +1389,25 @@ func (l *lowerer) push(steps ...step) {
 	l.steps = append(l.steps, steps...)
 }
 
-func (l *lowerer) finishBody(span program.Span) (program.Term, lexical.Flow, error) {
-	var normalValues program.Term
-	if l.scopes.FallsThrough() {
-		var err error
-		normalValues, err = l.packs.Empty(span, l.owner())
-		if err != nil {
-			return 0, lexical.Flow{}, err
+func (l *lowerer) finishBody() (program.Term, error) {
+	return l.scopes.Finish()
+}
+
+func (l *lowerer) predeclareLabels(stmts []ast.Stmt) error {
+	owner := l.owner()
+	for _, stmt := range stmts {
+		label, ok := stmt.(*ast.LabelStmt)
+		if !ok {
+			continue
+		}
+		if !astNodePresent(label) {
+			return fmt.Errorf("programlower: absent statement %T", stmt)
+		}
+		if err := l.controls.PredeclareLabel(label, l.span(label), owner); err != nil {
+			return err
 		}
 	}
-	return l.scopes.Finish(normalValues)
+	return nil
 }
 
 func (l *lowerer) owner() program.Term {
