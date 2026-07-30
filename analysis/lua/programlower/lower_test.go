@@ -1966,19 +1966,6 @@ func TestFunctionAndCallEvidenceLossFailsClosed(t *testing.T) {
 			t.Fatalf("%q error = %v", source, err)
 		}
 	}
-	for _, source := range []string{
-		`function f() end`,
-		`function t.f() end`,
-	} {
-		stmts, err := parse.ParseString(source, "definition.lua")
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = programlower.Lower("definition.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
-		if err == nil || !strings.Contains(err.Error(), "non-local") {
-			t.Fatalf("%q error = %v", source, err)
-		}
-	}
 	stmts, err := parse.ParseString(`local t = {}
 function t:f() end`, "method-definition.lua")
 	if err != nil {
@@ -2383,6 +2370,308 @@ func TestLocalFunctionDefinitionTermAndAllocationGrowthIsLinear(t *testing.T) {
 			"function-definition allocation growth exceeds law: 1K=%dB 2K=%dB",
 			small.bytes,
 			large.bytes,
+		)
+	}
+}
+
+func globalCell(t *testing.T, p *program.Program, want string) program.Term {
+	t.Helper()
+	for index := 0; index < p.CellCount(); index++ {
+		cell, ok := p.CellAt(index)
+		if !ok {
+			t.Fatalf("CellAt(%d) failed", index)
+		}
+		name, _, ok := p.Global(cell)
+		if ok && name == want {
+			return cell
+		}
+	}
+	t.Fatalf("Program has no global Cell %q", want)
+	return 0
+}
+
+func TestGlobalReadsShareCanonicalCellAndKeepImplicitEvidence(t *testing.T) {
+	p := parseBindLower(t, `return missing, missing`)
+	missing := globalCell(t, p, "missing")
+	if p.ImplicitReadCount() != 1 {
+		t.Fatalf("implicit global reads = %d; want first unresolved occurrence only", p.ImplicitReadCount())
+	}
+	returned := entryRoots(t, p)[0]
+	_, values, ok := p.Return(returned)
+	if !ok {
+		t.Fatalf("Entry root %v is not Return", returned)
+	}
+	for index := 0; index < 2; index++ {
+		read := valueAt(t, p, values, index)
+		if index == 0 {
+			if evidence, ok := p.ImplicitReadAt(0); !ok || evidence != read {
+				t.Fatalf("implicit occurrence = %v, %v; want Read %v", evidence, ok, read)
+			}
+		}
+		if _, source, ok := p.Read(read); !ok || source != missing {
+			t.Fatalf("global Read %d source = %v, %v; want shared Cell %v", index, source, ok, missing)
+		}
+	}
+}
+
+func TestGlobalShadowingAndNestedFunctionDoNotCreateCaptures(t *testing.T) {
+	p := parseBindLower(t, `local before = shadow
+local shadow = 1
+return before, shadow, function() return shadow, outer end`)
+	globalShadow := globalCell(t, p, "shadow")
+	outer := globalCell(t, p, "outer")
+	roots := entryRoots(t, p)
+	if len(roots) != 3 {
+		t.Fatalf("Entry roots = %v; want three Bind/Bind/Return roots", roots)
+	}
+	_, firstValues, ok := p.Bind(roots[0])
+	if !ok {
+		t.Fatal("first root is not Bind")
+	}
+	if _, source, ok := p.Read(valueAt(t, p, firstValues, 0)); !ok || source != globalShadow {
+		t.Fatalf("pre-shadow read = source %v, %v; want global %v", source, ok, globalShadow)
+	}
+	localBefore := boundCell(t, p, roots[0], 0)
+	localShadow := boundCell(t, p, roots[1], 0)
+	_, lastValues, ok := p.Return(roots[2])
+	if !ok {
+		t.Fatal("last root is not Return")
+	}
+	if _, source, ok := p.Read(valueAt(t, p, lastValues, 0)); !ok || source != localBefore {
+		t.Fatalf("before read = source %v, %v; want local Cell %v", source, ok, localBefore)
+	}
+	if _, source, ok := p.Read(valueAt(t, p, lastValues, 1)); !ok || source != localShadow {
+		t.Fatalf("post-shadow read = source %v, %v; want local Cell %v", source, ok, localShadow)
+	}
+	function := valueAt(t, p, lastValues, 2)
+	if count, ok := p.FunctionCaptureCount(function); !ok || count != 1 {
+		t.Fatalf("Function captures = %d, %v; want local shadow only", count, ok)
+	}
+	_, body, _, ok := p.Function(function)
+	if !ok {
+		t.Fatalf("value %v is not Function", function)
+	}
+	bodyRoots := bodyRoots(t, p, body)
+	_, bodyValues, ok := p.Return(bodyRoots[0])
+	if !ok {
+		t.Fatal("function root is not Return")
+	}
+	if _, source, ok := p.Read(valueAt(t, p, bodyValues, 1)); !ok || source != outer {
+		t.Fatalf("nested global read = source %v, %v; want global %v", source, ok, outer)
+	}
+}
+
+func TestGlobalFunctionDefinitionsKeepDynamicIdentityAndExactLensPath(t *testing.T) {
+	p := parseBindLower(t, `function f(a) return f(a) end
+function module.a.f() return 1 end`)
+	roots := entryRoots(t, p)
+	if len(roots) != 2 {
+		t.Fatalf("Entry roots = %v; want two Assign roots", roots)
+	}
+	f := globalCell(t, p, "f")
+	if target := mustTarget(t, p, roots[0], 0); target != f {
+		t.Fatalf("global definition target = %v; want global Cell %v", target, f)
+	}
+	function := functionAssignedBy(t, p, roots[0])
+	if count, ok := p.FunctionCaptureCount(function); !ok || count != 0 {
+		t.Fatalf("global function captures = %d, %v; want none", count, ok)
+	}
+	if mu, ok := p.Mu(function); ok || mu != 0 {
+		t.Fatalf("global definition Function Mu = %v, %v; want no direct identity", mu, ok)
+	}
+	_, body, _, ok := p.Function(function)
+	if !ok {
+		t.Fatalf("assigned value %v is not Function", function)
+	}
+	_, returned, ok := p.Return(bodyRoots(t, p, body)[0])
+	if !ok {
+		t.Fatal("global function body root is not Return")
+	}
+	call := valuesTail(t, p, returned)
+	if call == 0 {
+		call = valueAt(t, p, returned, 0)
+	}
+	_, callee, _, _, direct, ok := p.Call(call)
+	if !ok || direct != 0 {
+		t.Fatalf("recursive global call = callee %v direct %v ok %v; want dynamic", callee, direct, ok)
+	}
+	if _, source, ok := p.Read(callee); !ok || source != f {
+		t.Fatalf("recursive global callee = source %v, %v; want Cell %v", source, ok, f)
+	}
+
+	target := mustTarget(t, p, roots[1], 0)
+	_, base, key, kind, _, ok := p.Lens(target)
+	if !ok || kind != program.FieldName {
+		t.Fatalf("deep global target Lens = base %v key %v kind %v ok %v", base, key, kind, ok)
+	}
+	if _, name, _, ok := p.Name(key); !ok || name != "f" {
+		t.Fatalf("deep global target key = %q, %v; want f", name, ok)
+	}
+	_, innerLens, ok := p.Read(base)
+	if !ok {
+		t.Fatalf("deep global target base %v is not an evaluated lens", base)
+	}
+	_, innerBase, innerKey, innerKind, _, ok := p.Lens(innerLens)
+	if !ok || innerKind != program.FieldName {
+		t.Fatalf("deep global inner Lens = base %v key %v kind %v ok %v", innerBase, innerKey, innerKind, ok)
+	}
+	if _, name, _, ok := p.Name(innerKey); !ok || name != "a" {
+		t.Fatalf("deep global inner key = %q, %v; want a", name, ok)
+	}
+	module := globalCell(t, p, "module")
+	if _, source, ok := p.Read(innerBase); !ok || source != module {
+		t.Fatalf("deep global root Read = source %v, %v; want global Cell %v", source, ok, module)
+	}
+}
+
+func TestGlobalEnvironmentNamesStayOrdinary(t *testing.T) {
+	p := parseBindLower(t, `return _ENV, _G`)
+	for _, name := range []string{"_ENV", "_G"} {
+		global := globalCell(t, p, name)
+		if owner, ok := p.Cell(global); !ok || owner != 0 {
+			t.Fatalf("%s Cell owner = %v, %v; want Program-global", name, owner, ok)
+		}
+	}
+}
+
+func TestGlobalMultiAssignmentRetainsTargetAndValueOrder(t *testing.T) {
+	p := parseBindLower(t, `g, h = h, g`)
+	roots := entryRoots(t, p)
+	if len(roots) != 1 {
+		t.Fatalf("Entry roots = %v; want one Assign", roots)
+	}
+	assign := roots[0]
+	g := globalCell(t, p, "g")
+	h := globalCell(t, p, "h")
+	if target := mustTarget(t, p, assign, 0); target != g {
+		t.Fatalf("first target = %v; want g Cell %v", target, g)
+	}
+	if target := mustTarget(t, p, assign, 1); target != h {
+		t.Fatalf("second target = %v; want h Cell %v", target, h)
+	}
+	_, values, ok := p.Assign(assign)
+	if !ok {
+		t.Fatalf("Entry root %v is not Assign", assign)
+	}
+	if _, source, ok := p.Read(valueAt(t, p, values, 0)); !ok || source != h {
+		t.Fatalf("first RHS = source %v, %v; want h Cell %v", source, ok, h)
+	}
+	if _, source, ok := p.Read(valueAt(t, p, values, 1)); !ok || source != g {
+		t.Fatalf("second RHS = source %v, %v; want g Cell %v", source, ok, g)
+	}
+}
+
+func TestUnreachableImplicitReadRemainsAuthoredEvidence(t *testing.T) {
+	p := parseBindLower(t, `goto done
+do
+  return missing
+end
+::done::
+return 1`)
+	if p.ImplicitReadCount() != 1 {
+		t.Fatalf("implicit global reads = %d; want unreachable authored occurrence", p.ImplicitReadCount())
+	}
+	roots := entryRoots(t, p)
+	if len(roots) != 3 {
+		t.Fatalf("Entry roots = %v; want Goto, Body, Return", roots)
+	}
+	childRoots := bodyRoots(t, p, roots[1])
+	if len(childRoots) != 1 {
+		t.Fatalf("unreachable child Body roots = %v; want Return", childRoots)
+	}
+	_, values, ok := p.Return(childRoots[0])
+	if !ok {
+		t.Fatalf("unreachable root %v is not Return", childRoots[0])
+	}
+	read := valueAt(t, p, values, 0)
+	if evidence, ok := p.ImplicitReadAt(0); !ok || evidence != read {
+		t.Fatalf("implicit evidence = %v, %v; want unreachable Read %v", evidence, ok, read)
+	}
+}
+
+func globalFunctionDefinitionsSource(count int) string {
+	var source strings.Builder
+	source.Grow(count * 48)
+	for index := 0; index < count; index++ {
+		source.WriteString("function global_")
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString("(a) return global_")
+		source.WriteString(strconv.Itoa(index))
+		source.WriteString("(a) end\n")
+	}
+	return source.String()
+}
+
+func TestFourThousandGlobalFunctionDefinitionsLowerIteratively(t *testing.T) {
+	const count = 4 * 1024
+	p := parseBindLower(t, globalFunctionDefinitionsSource(count))
+	if p.FunctionCount() != count || p.AssignCount() != count ||
+		p.BodyCount() != count+1 || p.CellCount() != count*2 {
+		t.Fatalf(
+			"4K global definition families: functions=%d assigns=%d bodies=%d cells=%d",
+			p.FunctionCount(), p.AssignCount(), p.BodyCount(), p.CellCount(),
+		)
+	}
+	roots := entryRoots(t, p)
+	if len(roots) != count {
+		t.Fatalf("4K Entry roots = %d; want %d", len(roots), count)
+	}
+	for index, assign := range roots {
+		target := mustTarget(t, p, assign, 0)
+		name, _, ok := p.Global(target)
+		if !ok || name != "global_"+strconv.Itoa(index) {
+			t.Fatalf("definition %d target = %q, %v; want global_%d", index, name, ok, index)
+		}
+		function := functionAssignedBy(t, p, assign)
+		if mu, ok := p.Mu(function); ok || mu != 0 {
+			t.Fatalf("definition %d Function Mu = %v, %v; want none", index, mu, ok)
+		}
+	}
+}
+
+func TestGlobalFunctionDefinitionTermAndAllocationGrowthIsLinear(t *testing.T) {
+	type measurement struct {
+		bytes int64
+		terms int
+	}
+	measure := func(count int) measurement {
+		t.Helper()
+		stmts, err := parse.ParseString(globalFunctionDefinitionsSource(count), "global-funcdefs.lua")
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding := bind.BindChunk(stmts, bind.Options{})
+		p, err := programlower.Lower("global-funcdefs.lua", stmts, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := testing.Benchmark(func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				loweredSink, err = programlower.Lower("global-funcdefs.lua", stmts, binding)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		return measurement{bytes: result.AllocedBytesPerOp(), terms: p.TermCount()}
+	}
+
+	small := measure(1024)
+	large := measure(2048)
+	t.Logf(
+		"global function-definition scaling: 1K terms=%d bytes=%d; 2K terms=%d bytes=%d",
+		small.terms, small.bytes, large.terms, large.bytes,
+	)
+	if large.terms > small.terms*26/10+16 {
+		t.Fatalf(
+			"global function-definition Term growth exceeds law: 1K=%d 2K=%d",
+			small.terms, large.terms,
+		)
+	}
+	if large.bytes > small.bytes*26/10+64*1024 {
+		t.Fatalf(
+			"global function-definition allocation growth exceeds law: 1K=%dB 2K=%dB",
+			small.bytes, large.bytes,
 		)
 	}
 }

@@ -341,7 +341,10 @@ type Program struct {
 	keys           []keyRow
 	globalKeys     []Key
 	globalCells    []Term
-	exactKeys      []exactKey
+	// implicitReads records only binder-proven unresolved global read
+	// occurrences. It is sparse occurrence evidence, never a Cell property.
+	implicitReads []Term
+	exactKeys     []exactKey
 }
 
 // Builder is the sole mutable construction path for Program.
@@ -402,8 +405,11 @@ type Builder struct {
 	globalKeys     []Key
 	globalCells    []Term
 	globalLookup   map[Key]Term
-	exactKeys      []exactKey
-	exactLookup    map[exactKey]Key
+	// implicitReads is append-only through ImplicitRead, which
+	// mints the ordinary Read occurrence and its evidence together.
+	implicitReads []Term
+	exactKeys     []exactKey
+	exactLookup   map[exactKey]Key
 }
 
 // NewBuilder returns an empty Program builder.
@@ -882,6 +888,23 @@ func (b *Builder) Global(span Span, name string) Term {
 // Read observes a Cell or evaluated Lens. Reading storage has no evaluation
 // predecessor; reading a Lens evaluates that Lens exactly once.
 func (b *Builder) Read(span Span, owner, source Term) Term {
+	return b.read(span, owner, source, false)
+}
+
+// ImplicitRead records one binder-proven unresolved global read. It mints the
+// ordinary Read occurrence and appends that same Term to sparse occurrence
+// evidence atomically. An explicit global read must use Read instead: global
+// identity itself carries no implicitness.
+func (b *Builder) ImplicitRead(span Span, owner, global Term) Term {
+	if _, ok := b.globalCellKey(global); !b.require(ok) {
+		return 0
+	}
+	return b.read(span, owner, global, true)
+}
+
+// read is the sole tagRead mint path. implicit is internal construction state,
+// not a persisted per-Read flag: only the sparse evidence relation retains it.
+func (b *Builder) read(span Span, owner, source Term, implicit bool) Term {
 	if !b.require(b.has(owner, tagBody) && (b.has(source, tagCell) ||
 		b.has(source, tagLensExact) || b.has(source, tagLensKey))) {
 		return 0
@@ -891,6 +914,9 @@ func (b *Builder) Read(span Span, owner, source Term) Term {
 	if term == 0 {
 		b.reads = b.reads[:len(b.reads)-1]
 		return 0
+	}
+	if implicit {
+		b.implicitReads = append(b.implicitReads, term)
 	}
 	return term
 }
@@ -1835,6 +1861,19 @@ func (b *Builder) Seal() (*Program, error) {
 		if !allClaimed(slots) {
 			return nil, errors.New("program: unclaimed source term")
 		}
+	}
+	// Evidence order is increasing Read-Term construction order. Because the
+	// relation only retains implicit occurrences, a monotonic walk proves
+	// canonical order and uniqueness without a dense per-Read membership plane.
+	var priorImplicit Term
+	for _, read := range b.implicitReads {
+		if !b.has(read, tagRead) || read <= priorImplicit {
+			return nil, errors.New("program: invalid implicit Global Read evidence")
+		}
+		if _, ok := b.globalCellKey(b.reads[read.index()-1].source); !ok {
+			return nil, errors.New("program: implicit Global Read source is not Global")
+		}
+		priorImplicit = read
 	}
 
 	breakLoops := make([]Term, len(b.breaks))
@@ -3133,6 +3172,7 @@ func (b *Builder) snapshot(
 		keys:           append([]keyRow(nil), b.keys...),
 		globalKeys:     append([]Key(nil), b.globalKeys...),
 		globalCells:    copyTerms(b.globalCells),
+		implicitReads:  copyTerms(b.implicitReads),
 		exactKeys:      append([]exactKey(nil), b.exactKeys...),
 	}
 	for tag := uint8(1); tag < tagCount; tag++ {
@@ -3465,6 +3505,25 @@ func (p *Program) Read(term Term) (owner, source Term, ok bool) {
 	}
 	row := p.reads[term.index()-1]
 	return row.owner, row.source, true
+}
+
+// ImplicitReadCount returns the number of binder-proven unresolved
+// global read occurrences. Ordinary Reads, including explicit Global reads,
+// are deliberately absent.
+func (p *Program) ImplicitReadCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.implicitReads)
+}
+
+// ImplicitReadAt returns one implicit Read in increasing Read-Term construction
+// order. The returned Term is an ordinary Read and retains its exact span.
+func (p *Program) ImplicitReadAt(index int) (Term, bool) {
+	if p == nil || index < 0 || index >= len(p.implicitReads) {
+		return 0, false
+	}
+	return p.implicitReads[index], true
 }
 
 // Vararg returns the Function vararg Cell anchoring an open source occurrence.

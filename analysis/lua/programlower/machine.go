@@ -919,21 +919,58 @@ func (l *lowerer) runTargets(current step) error {
 func (l *lowerer) runTarget(expr ast.Expr) error {
 	switch expr := expr.(type) {
 	case *ast.IdentExpr:
-		id, ok := l.binding.SymbolOf(expr)
-		if !ok || id == 0 {
-			return fmt.Errorf("programlower: binder has no symbol for identifier target")
-		}
-		cell, ok := l.scopes.Resolve(id)
-		if !ok {
-			return fmt.Errorf("programlower: unsupported non-local identifier target")
-		}
-		l.result = cell
+		return l.resolveIdent(expr, false)
 	case *ast.AttrGetExpr:
 		l.startLens(expr, false)
 	default:
 		return l.unsupportedExpr(expr)
 	}
 	return nil
+}
+
+// resolveIdent lowers one binder-owned value occurrence. Lexical visibility is
+// consulted first and remains the only source of local/capture Cells. The
+// non-lexical path is deliberately narrower: a value-level type reference is
+// not silently treated as a global, and a global must be selected by the
+// binder's opaque identity rather than by identifier spelling alone.
+func (l *lowerer) resolveIdent(expr *ast.IdentExpr, read bool) error {
+	id, ok := l.binding.SymbolOf(expr)
+	if !ok || id == 0 {
+		return fmt.Errorf("programlower: binder has no symbol for identifier occurrence")
+	}
+	if cell, visible := l.scopes.Resolve(id); visible {
+		if !read {
+			l.result = cell
+			return nil
+		}
+		l.result = l.builder.Read(l.span(expr), l.owner(), cell)
+		if l.result == 0 {
+			return fmt.Errorf("programlower: could not read lexical Cell")
+		}
+		return nil
+	}
+	if _, typed := l.binding.TypeValueRef(expr); typed {
+		return fmt.Errorf("programlower: unsupported value-level type reference")
+	}
+	identity, global := l.binding.GlobalIdentity(expr)
+	if !global || !identity.Matches(expr.Value) {
+		return fmt.Errorf("programlower: unsupported non-local identifier binding")
+	}
+	cell, err := l.access.Global(l.span(expr), expr.Value)
+	if err != nil {
+		return err
+	}
+	if !read {
+		l.result = cell
+		return nil
+	}
+	l.result, err = l.access.ReadGlobal(
+		l.span(expr),
+		l.owner(),
+		cell,
+		l.binding.IsImplicitGlobalUse(expr),
+	)
+	return err
 }
 
 func (l *lowerer) runValues(current step) error {
@@ -985,15 +1022,7 @@ func (l *lowerer) runExpr(expr ast.Expr) error {
 	case *ast.StringExpr:
 		l.result = l.builder.String(span, l.owner(), expr.Value)
 	case *ast.IdentExpr:
-		id, ok := l.binding.SymbolOf(expr)
-		if !ok || id == 0 {
-			return fmt.Errorf("programlower: binder has no symbol for identifier occurrence")
-		}
-		cell, ok := l.scopes.Resolve(id)
-		if !ok {
-			return fmt.Errorf("programlower: unsupported non-local identifier binding")
-		}
-		l.result = l.builder.Read(span, l.owner(), cell)
+		return l.resolveIdent(expr, true)
 	case *ast.Comma3Expr:
 		cell, resolveErr := l.scopes.Vararg(l.binding)
 		if resolveErr != nil {

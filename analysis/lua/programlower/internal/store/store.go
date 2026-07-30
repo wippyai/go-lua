@@ -34,6 +34,38 @@ func (a *Access) RememberTarget(target program.Term) {
 	a.targets = append(a.targets, target)
 }
 
+// Global selects the one Program-scoped Cell for an already binder-authorized
+// global name. It is deliberately separate from lexical scope resolution:
+// globals neither enter nor leave a Body scope, and never become captures.
+func (a *Access) Global(span program.Span, name string) (program.Term, error) {
+	term := a.builder.Global(span, name)
+	if term == 0 {
+		return 0, fmt.Errorf("programlower: could not select global Cell")
+	}
+	return term, nil
+}
+
+// ReadGlobal records one global observation. Only a binder-proven unresolved
+// read receives implicit-global occurrence evidence; selected globals and
+// write targets remain ordinary Program relations.
+func (a *Access) ReadGlobal(
+	span program.Span,
+	owner program.Term,
+	global program.Term,
+	implicit bool,
+) (program.Term, error) {
+	var term program.Term
+	if implicit {
+		term = a.builder.ImplicitRead(span, owner, global)
+	} else {
+		term = a.builder.Read(span, owner, global)
+	}
+	if term == 0 {
+		return 0, fmt.Errorf("programlower: could not read global Cell")
+	}
+	return term, nil
+}
+
 // Assign completes and releases one delayed target group.
 func (a *Access) Assign(
 	span program.Span,
