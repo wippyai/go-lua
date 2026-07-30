@@ -100,6 +100,8 @@ const (
 	stepTarget
 	stepAppendTarget
 	stepFinishAssign
+	stepFuncDefFunction
+	stepFinishFuncDef
 	stepFinishCallStmt
 	stepFinishReturn
 	stepFinishIfCondition
@@ -140,6 +142,7 @@ type step struct {
 
 	local   *ast.LocalAssignStmt
 	assign  *ast.AssignStmt
+	funcdef *ast.FuncDefStmt
 	return_ *ast.ReturnStmt
 	if_     *ast.IfStmt
 	call    *ast.FuncCallExpr
@@ -211,6 +214,33 @@ func (l *lowerer) run() error {
 				l.owner(),
 				current.mark,
 				l.result,
+			)
+			if err != nil {
+				return err
+			}
+			if err := l.scopes.Append(term); err != nil {
+				return err
+			}
+		case stepFuncDefFunction:
+			if err := l.startFunctionBody(current.funcdef.Func); err != nil {
+				return err
+			}
+		case stepFinishFuncDef:
+			mark := l.packs.Hold(l.result)
+			values, err := l.packs.Fixed(
+				l.span(current.funcdef),
+				l.owner(),
+				mark,
+				1,
+			)
+			if err != nil {
+				return err
+			}
+			term, err := l.access.Assign(
+				l.span(current.funcdef),
+				l.owner(),
+				current.mark,
+				values,
 			)
 			if err != nil {
 				return err
@@ -455,7 +485,7 @@ func (l *lowerer) runStmts(current step) error {
 			step{kind: stepExpr, expr: call},
 		)
 	case *ast.FuncDefStmt:
-		return fmt.Errorf("programlower: unsupported global or qualified function definition")
+		return l.startFuncDef(stmt)
 	case *ast.ReturnStmt:
 		l.push(
 			step{kind: stepFinishReturn, return_: stmt},
@@ -1157,11 +1187,72 @@ func (l *lowerer) finishLens(current step, key program.Term) error {
 	return nil
 }
 
+func (l *lowerer) startFuncDef(stmt *ast.FuncDefStmt) error {
+	if stmt == nil || stmt.Name == nil || !astNodePresent(stmt.Func) {
+		return fmt.Errorf("programlower: invalid function definition")
+	}
+	if stmt.Name.Method != "" || stmt.Name.Receiver != nil {
+		if stmt.Name.Method == "" || stmt.Name.Receiver == nil || stmt.Name.Func != nil {
+			return fmt.Errorf("programlower: invalid method function definition shape")
+		}
+		return fmt.Errorf(
+			"programlower: unsupported method function definition: AST has no MethodPosition evidence",
+		)
+	}
+	if !astNodePresent(stmt.Name.Func) {
+		return fmt.Errorf("programlower: invalid function definition target")
+	}
+	if !funcDefTargetShape(stmt.Name.Func) {
+		return fmt.Errorf("programlower: unsupported function definition target shape")
+	}
+	origin, ok := l.binding.FunctionOrigin(stmt.Func)
+	if !ok || origin.Kind != bind.FunctionOriginDeclaration ||
+		origin.Func != stmt.Func || origin.Stmt != stmt {
+		return fmt.Errorf("programlower: unsupported ambiguous function declaration origin")
+	}
+
+	mark := l.access.TargetMark()
+	l.push(
+		step{kind: stepFinishFuncDef, funcdef: stmt, mark: mark},
+		step{kind: stepFuncDefFunction, funcdef: stmt},
+		step{kind: stepAppendTarget},
+		step{kind: stepTarget, expr: stmt.Name.Func},
+	)
+	return nil
+}
+
+func funcDefTargetShape(target ast.Expr) bool {
+	for astNodePresent(target) {
+		switch current := target.(type) {
+		case *ast.IdentExpr:
+			return current.Value != ""
+		case *ast.AttrGetExpr:
+			if current.KeySyntax != ast.AttrKeyDot ||
+				!astNodePresent(current.Object) ||
+				!astNodePresent(current.Key) {
+				return false
+			}
+			name, ok := current.Key.(*ast.StringExpr)
+			if !ok || name.Value == "" {
+				return false
+			}
+			target = current.Object
+		default:
+			return false
+		}
+	}
+	return false
+}
+
 func (l *lowerer) startFunction(fn *ast.FunctionExpr) error {
 	origin, ok := l.binding.FunctionOrigin(fn)
 	if !ok || origin.Kind != bind.FunctionOriginLiteral {
 		return fmt.Errorf("programlower: unsupported ambiguous function origin")
 	}
+	return l.startFunctionBody(fn)
+}
+
+func (l *lowerer) startFunctionBody(fn *ast.FunctionExpr) error {
 	if len(fn.TypeParams) != 0 || len(fn.ReturnTypes) != 0 {
 		return fmt.Errorf("programlower: unsupported typed function")
 	}

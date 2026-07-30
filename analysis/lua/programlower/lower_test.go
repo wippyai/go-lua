@@ -1647,6 +1647,35 @@ func TestMalformedNestedASTNodesFailClosed(t *testing.T) {
 	binding := bind.BindChunk(stmts, bind.Options{})
 	fn.Stmts = []ast.Stmt{absentStmt}
 	assertLowerFailsClosed(t, stmts, binding)
+
+	for _, target := range []ast.Expr{
+		&ast.AttrGetExpr{
+			Object:    &ast.IdentExpr{Value: "t"},
+			Key:       number(),
+			KeySyntax: ast.AttrKeyIndex,
+		},
+		&ast.AttrGetExpr{
+			Object:    number(),
+			Key:       &ast.StringExpr{Value: "f"},
+			KeySyntax: ast.AttrKeyDot,
+		},
+		&ast.AttrGetExpr{
+			Object: &ast.FuncCallExpr{
+				Func: &ast.IdentExpr{Value: "factory"},
+			},
+			Key:       &ast.StringExpr{Value: "f"},
+			KeySyntax: ast.AttrKeyDot,
+		},
+	} {
+		declaration := &ast.FuncDefStmt{
+			Name: &ast.FuncName{Func: &ast.IdentExpr{Value: "f"}},
+			Func: &ast.FunctionExpr{},
+		}
+		stmts := []ast.Stmt{declaration}
+		binding := bind.BindChunk(stmts, bind.Options{})
+		declaration.Name.Func = target
+		assertLowerFailsClosed(t, stmts, binding)
+	}
 }
 
 func assertLowerFailsClosed(t *testing.T, stmts []ast.Stmt, binding *bind.Result) {
@@ -1940,18 +1969,45 @@ func TestFunctionAndCallEvidenceLossFailsClosed(t *testing.T) {
 	for _, source := range []string{
 		`function f() end`,
 		`function t.f() end`,
-		`function t:f() end`,
 	} {
 		stmts, err := parse.ParseString(source, "definition.lua")
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, err = programlower.Lower("definition.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
-		if err == nil || !strings.Contains(err.Error(), "global or qualified function definition") {
+		if err == nil || !strings.Contains(err.Error(), "non-local") {
 			t.Fatalf("%q error = %v", source, err)
 		}
 	}
-	stmts, err := parse.ParseString(`return function(a: number) return a end`, "typed.lua")
+	stmts, err := parse.ParseString(`local t = {}
+function t:f() end`, "method-definition.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = programlower.Lower(
+		"method-definition.lua",
+		stmts,
+		bind.BindChunk(stmts, bind.Options{}),
+	)
+	if err == nil || !strings.Contains(err.Error(), "MethodPosition evidence") {
+		t.Fatalf("method definition error = %v", err)
+	}
+
+	stmts, err = parse.ParseString(`local f
+function f(a: number) return a end`, "typed-definition.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = programlower.Lower(
+		"typed-definition.lua",
+		stmts,
+		bind.BindChunk(stmts, bind.Options{}),
+	)
+	if err == nil || !strings.Contains(err.Error(), "typed function parameter") {
+		t.Fatalf("typed function definition error = %v", err)
+	}
+
+	stmts, err = parse.ParseString(`return function(a: number) return a end`, "typed.lua")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1968,6 +2024,366 @@ func TestFunctionAndCallEvidenceLossFailsClosed(t *testing.T) {
 	_, err = programlower.Lower("typed-call.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
 	if err == nil || !strings.Contains(err.Error(), "unsupported typed call") {
 		t.Fatalf("typed Call error = %v", err)
+	}
+}
+
+func functionAssignedBy(
+	t *testing.T,
+	p *program.Program,
+	assign program.Term,
+) program.Term {
+	t.Helper()
+	if count, ok := p.AssignLen(assign); !ok || count != 1 {
+		t.Fatalf("AssignLen(%v) = %d, %v; want one target", assign, count, ok)
+	}
+	_, values, ok := p.Assign(assign)
+	if !ok {
+		t.Fatalf("%v is not Assign", assign)
+	}
+	if count, ok := p.ValuesLen(values); !ok || count != 1 {
+		t.Fatalf("assigned Values = %d, %v; want one fixed Function", count, ok)
+	}
+	if tail := valuesTail(t, p, values); tail != 0 {
+		t.Fatalf("assigned Values tail = %v; want closed", tail)
+	}
+	function := valueAt(t, p, values, 0)
+	if _, _, _, ok := p.Function(function); !ok {
+		t.Fatalf("assigned value %v is not Function", function)
+	}
+	return function
+}
+
+func TestLocalCellFunctionDefinitionIsOneDynamicAssignment(t *testing.T) {
+	p := parseBindLower(t, `local f
+function f(a, ...)
+  return f(a), ...
+end
+return f`)
+	roots := entryRoots(t, p)
+	if len(roots) != 3 {
+		t.Fatalf("Entry roots = %v; want Bind, Assign, Return", roots)
+	}
+	cell := boundCell(t, p, roots[0], 0)
+	assign := roots[1]
+	if target := mustTarget(t, p, assign, 0); target != cell {
+		t.Fatalf("function-definition target = %v; want predeclared Cell %v", target, cell)
+	}
+	function := functionAssignedBy(t, p, assign)
+	entry, _ := p.Entry()
+	owner, body, varargCell, ok := p.Function(function)
+	if !ok || owner != entry || body == 0 || varargCell == 0 {
+		t.Fatalf(
+			"Function = owner %v body %v vararg %v ok %v; want Entry-owned vararg Function",
+			owner,
+			body,
+			varargCell,
+			ok,
+		)
+	}
+	formal, ok := p.FormalAt(function, 0)
+	if !ok {
+		t.Fatal("Function has no formal Cell")
+	}
+	if owner, ok := p.Cell(formal); !ok || owner != body {
+		t.Fatalf("formal owner = %v, %v; want Function Body %v", owner, ok, body)
+	}
+	if owner, ok := p.Cell(varargCell); !ok || owner != body {
+		t.Fatalf("vararg owner = %v, %v; want Function Body %v", owner, ok, body)
+	}
+	if count, ok := p.FunctionCaptureCount(function); !ok || count != 1 {
+		t.Fatalf("Function captures = %d, %v; want target Cell", count, ok)
+	}
+	inner, outer := functionCapture(t, p, function, 0)
+	if outer != cell {
+		t.Fatalf("Function capture = inner %v outer %v; want outer Cell %v", inner, outer, cell)
+	}
+	functionRoots := bodyRoots(t, p, body)
+	if len(functionRoots) != 1 {
+		t.Fatalf("Function Body roots = %v; want Return", functionRoots)
+	}
+	_, returned, ok := p.Return(functionRoots[0])
+	if !ok {
+		t.Fatalf("Function Body root is not Return: %v", functionRoots[0])
+	}
+	if count, ok := p.ValuesLen(returned); !ok || count != 1 {
+		t.Fatalf("Function return fixed prefix = %d, %v; want recursive Call", count, ok)
+	}
+	call := valueAt(t, p, returned, 0)
+	_, callee, receiver, actuals, direct, ok := p.Call(call)
+	if !ok || receiver != 0 || direct != 0 {
+		t.Fatalf(
+			"recursive dynamic Call = callee %v receiver %v direct %v ok %v",
+			callee,
+			receiver,
+			direct,
+			ok,
+		)
+	}
+	if _, source, ok := p.Read(callee); !ok || source != inner {
+		t.Fatalf("recursive callee Read = source %v, %v; want capture Cell %v", source, ok, inner)
+	}
+	if count, ok := p.ValuesLen(actuals); !ok || count != 1 {
+		t.Fatalf("recursive actuals = %d, %v; want formal argument", count, ok)
+	}
+	tail := valuesTail(t, p, returned)
+	if _, source, ok := p.Vararg(tail); !ok || source != varargCell {
+		t.Fatalf("return tail Vararg = Cell %v, %v; want %v", source, ok, varargCell)
+	}
+	if mu, ok := p.Mu(function); ok || mu != 0 {
+		t.Fatalf("assigned mutable Function Mu = %v, %v; want no sealed direct identity", mu, ok)
+	}
+	_, returnedAtEntry, ok := p.Return(roots[2])
+	if !ok {
+		t.Fatalf("Entry root 2 is not Return: %v", roots[2])
+	}
+	if _, source, ok := p.Read(valueAt(t, p, returnedAtEntry, 0)); !ok || source != cell {
+		t.Fatalf("Entry returned Read = source %v, %v; want target Cell %v", source, ok, cell)
+	}
+}
+
+func TestFunctionDefinitionTargetSurvivesNestedBodyAssignmentScratch(t *testing.T) {
+	p := parseBindLower(t, `local f, x
+function f()
+  x = x
+end`)
+	roots := entryRoots(t, p)
+	if len(roots) != 2 {
+		t.Fatalf("Entry roots = %v; want Bind, function-definition Assign", roots)
+	}
+	fCell := boundCell(t, p, roots[0], 0)
+	xCell := boundCell(t, p, roots[0], 1)
+	outerAssign := roots[1]
+	if target := mustTarget(t, p, outerAssign, 0); target != fCell {
+		t.Fatalf("outer retained target = %v; want f Cell %v", target, fCell)
+	}
+	function := functionAssignedBy(t, p, outerAssign)
+	if count, ok := p.FunctionCaptureCount(function); !ok || count != 1 {
+		t.Fatalf("Function captures = %d, %v; want x Cell only", count, ok)
+	}
+	innerX, outerX := functionCapture(t, p, function, 0)
+	if outerX != xCell {
+		t.Fatalf("x Capture = inner %v outer %v; want outer Cell %v", innerX, outerX, xCell)
+	}
+	_, body, _, _ := p.Function(function)
+	functionRoots := bodyRoots(t, p, body)
+	if len(functionRoots) != 1 {
+		t.Fatalf("Function Body roots = %v; want inner Assign", functionRoots)
+	}
+	innerAssign := functionRoots[0]
+	if target := mustTarget(t, p, innerAssign, 0); target != innerX {
+		t.Fatalf("inner Assign target = %v; want captured x Cell %v", target, innerX)
+	}
+	_, values, ok := p.Assign(innerAssign)
+	if !ok {
+		t.Fatalf("Function Body root %v is not Assign", innerAssign)
+	}
+	if _, source, ok := p.Read(valueAt(t, p, values, 0)); !ok || source != innerX {
+		t.Fatalf("inner Assign Read = source %v, %v; want capture Cell %v", source, ok, innerX)
+	}
+}
+
+func TestDeepLocalLensFunctionDefinitionPreservesExactPath(t *testing.T) {
+	p := parseBindLower(t, `local t = {a = {}}
+function t.a.f(a)
+  return t.a.f(a)
+end
+return t.a.f`)
+	roots := entryRoots(t, p)
+	if len(roots) != 3 {
+		t.Fatalf("Entry roots = %v; want Bind, Assign, Return", roots)
+	}
+	tableCell := boundCell(t, p, roots[0], 0)
+	assign := roots[1]
+	target := mustTarget(t, p, assign, 0)
+	_, targetBase, targetKey, targetKind, _, ok := p.Lens(target)
+	if !ok || targetKind != program.FieldName {
+		t.Fatalf("target Lens = base %v key %v kind %v ok %v", targetBase, targetKey, targetKind, ok)
+	}
+	if _, name, _, ok := p.Name(targetKey); !ok || name != "f" {
+		t.Fatalf("target key = %q, %v; want f", name, ok)
+	}
+	_, innerLens, ok := p.Read(targetBase)
+	if !ok {
+		t.Fatalf("target base %v is not the once-evaluated t.a Read", targetBase)
+	}
+	_, innerBase, innerKey, innerKind, _, ok := p.Lens(innerLens)
+	if !ok || innerKind != program.FieldName {
+		t.Fatalf("inner Lens = base %v key %v kind %v ok %v", innerBase, innerKey, innerKind, ok)
+	}
+	if _, name, _, ok := p.Name(innerKey); !ok || name != "a" {
+		t.Fatalf("inner key = %q, %v; want a", name, ok)
+	}
+	if _, source, ok := p.Read(innerBase); !ok || source != tableCell {
+		t.Fatalf("deep target root Read = source %v, %v; want local Cell %v", source, ok, tableCell)
+	}
+	function := functionAssignedBy(t, p, assign)
+	if count, ok := p.FunctionCaptureCount(function); !ok || count != 1 {
+		t.Fatalf("deep Function captures = %d, %v; want table Cell", count, ok)
+	}
+	_, outer := functionCapture(t, p, function, 0)
+	if outer != tableCell {
+		t.Fatalf("deep Function capture outer = %v; want table Cell %v", outer, tableCell)
+	}
+	if mu, ok := p.Mu(function); ok || mu != 0 {
+		t.Fatalf("Lens-assigned Function Mu = %v, %v; want no sealed direct identity", mu, ok)
+	}
+	_, body, _, _ := p.Function(function)
+	bodyRoots := bodyRoots(t, p, body)
+	_, returned, ok := p.Return(bodyRoots[0])
+	if !ok {
+		t.Fatal("deep Function Body does not return recursive Call")
+	}
+	call := valuesTail(t, p, returned)
+	if call == 0 {
+		call = valueAt(t, p, returned, 0)
+	}
+	if _, _, _, _, direct, ok := p.Call(call); !ok || direct != 0 {
+		t.Fatalf("deep recursive Call direct = %v, %v; want dynamic", direct, ok)
+	}
+}
+
+func TestFunctionDefinitionShadowingAndReplacementKeepCellIdentity(t *testing.T) {
+	p := parseBindLower(t, `local f
+do
+  local f
+  function f() return f end
+end
+function f() return f end
+function f() return 2 end
+return f`)
+	roots := entryRoots(t, p)
+	if len(roots) != 5 {
+		t.Fatalf("Entry roots = %v; want Bind, Body, Assign, Assign, Return", roots)
+	}
+	outerCell := boundCell(t, p, roots[0], 0)
+	innerRoots := bodyRoots(t, p, roots[1])
+	if len(innerRoots) != 2 {
+		t.Fatalf("shadow Body roots = %v; want Bind, Assign", innerRoots)
+	}
+	innerCell := boundCell(t, p, innerRoots[0], 0)
+	innerAssign := innerRoots[1]
+	if target := mustTarget(t, p, innerAssign, 0); target != innerCell {
+		t.Fatalf("inner definition target = %v; want inner Cell %v", target, innerCell)
+	}
+	innerFunction := functionAssignedBy(t, p, innerAssign)
+	_, innerOuter := functionCapture(t, p, innerFunction, 0)
+	if innerOuter != innerCell || innerOuter == outerCell {
+		t.Fatalf("inner capture outer = %v; want inner Cell %v", innerOuter, innerCell)
+	}
+
+	firstOuterAssign, secondOuterAssign := roots[2], roots[3]
+	if firstTarget := mustTarget(t, p, firstOuterAssign, 0); firstTarget != outerCell {
+		t.Fatalf("first outer definition target = %v; want %v", firstTarget, outerCell)
+	}
+	if secondTarget := mustTarget(t, p, secondOuterAssign, 0); secondTarget != outerCell {
+		t.Fatalf("replacement target = %v; want %v", secondTarget, outerCell)
+	}
+	firstOuterFunction := functionAssignedBy(t, p, firstOuterAssign)
+	secondOuterFunction := functionAssignedBy(t, p, secondOuterAssign)
+	if firstOuterFunction == secondOuterFunction {
+		t.Fatalf("replacement reused Function identity %v", firstOuterFunction)
+	}
+	_, capturedOuter := functionCapture(t, p, firstOuterFunction, 0)
+	if capturedOuter != outerCell {
+		t.Fatalf("outer capture = %v; want outer Cell %v", capturedOuter, outerCell)
+	}
+	for _, function := range []program.Term{innerFunction, firstOuterFunction, secondOuterFunction} {
+		if mu, ok := p.Mu(function); ok || mu != 0 {
+			t.Fatalf("mutable definition Function %v Mu = %v, %v", function, mu, ok)
+		}
+	}
+}
+
+func localFunctionDefinitionsSource(count int) string {
+	var source strings.Builder
+	source.Grow(8 + count*36)
+	source.WriteString("local f\n")
+	for i := 0; i < count; i++ {
+		source.WriteString("function f(a) return a end\n")
+	}
+	source.WriteString("return f")
+	return source.String()
+}
+
+func TestFourThousandLocalFunctionDefinitionsLowerIteratively(t *testing.T) {
+	const count = 4 * 1024
+	p := parseBindLower(t, localFunctionDefinitionsSource(count))
+	if p.FunctionCount() != count || p.AssignCount() != count ||
+		p.BodyCount() != count+1 || p.BindCount() != 1 {
+		t.Fatalf(
+			"4K definition families: functions=%d assigns=%d bodies=%d binds=%d",
+			p.FunctionCount(),
+			p.AssignCount(),
+			p.BodyCount(),
+			p.BindCount(),
+		)
+	}
+	roots := entryRoots(t, p)
+	if len(roots) != count+2 {
+		t.Fatalf("4K Entry roots = %d; want %d", len(roots), count+2)
+	}
+	cell := boundCell(t, p, roots[0], 0)
+	for i := 0; i < count; i++ {
+		assign := roots[i+1]
+		if target := mustTarget(t, p, assign, 0); target != cell {
+			t.Fatalf("definition %d target = %v; want Cell %v", i, target, cell)
+		}
+		function := functionAssignedBy(t, p, assign)
+		if mu, ok := p.Mu(function); ok || mu != 0 {
+			t.Fatalf("definition %d Function Mu = %v, %v; want none", i, mu, ok)
+		}
+	}
+}
+
+func TestLocalFunctionDefinitionTermAndAllocationGrowthIsLinear(t *testing.T) {
+	type measurement struct {
+		bytes int64
+		terms int
+	}
+	measure := func(count int) measurement {
+		t.Helper()
+		stmts, err := parse.ParseString(localFunctionDefinitionsSource(count), "funcdefs.lua")
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding := bind.BindChunk(stmts, bind.Options{})
+		p, err := programlower.Lower("funcdefs.lua", stmts, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := testing.Benchmark(func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				loweredSink, err = programlower.Lower("funcdefs.lua", stmts, binding)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		return measurement{bytes: result.AllocedBytesPerOp(), terms: p.TermCount()}
+	}
+
+	small := measure(1024)
+	large := measure(2048)
+	t.Logf(
+		"function-definition scaling: 1K terms=%d bytes=%d; 2K terms=%d bytes=%d",
+		small.terms,
+		small.bytes,
+		large.terms,
+		large.bytes,
+	)
+	if large.terms > small.terms*26/10+16 {
+		t.Fatalf(
+			"function-definition Term growth exceeds law: 1K=%d 2K=%d",
+			small.terms,
+			large.terms,
+		)
+	}
+	if large.bytes > small.bytes*26/10+64*1024 {
+		t.Fatalf(
+			"function-definition allocation growth exceeds law: 1K=%dB 2K=%dB",
+			small.bytes,
+			large.bytes,
+		)
 	}
 }
 
