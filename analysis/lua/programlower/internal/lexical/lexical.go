@@ -24,6 +24,8 @@ type Bodies struct {
 	cellInline   [4]program.Term
 	cellOverflow []program.Term
 	cellLen      int
+	reserved     []reservedCell
+	reservedIDs  map[symbol.ID]struct{}
 	captures     []program.Capture
 }
 
@@ -31,6 +33,11 @@ type activeUndo struct {
 	id      symbol.ID
 	prior   program.Term
 	existed bool
+}
+
+type reservedCell struct {
+	id   symbol.ID
+	cell program.Term
 }
 
 type bodyFrame struct {
@@ -173,6 +180,11 @@ func (b *Bodies) CellMark() int {
 	return b.cellLen
 }
 
+// ReservedMark starts one uninstalled local-declaration transaction. Reserved
+// Cells can host static declared types, but are intentionally invisible to
+// initializer lowering until BindReserved atomically publishes them.
+func (b *Bodies) ReservedMark() int { return len(b.reserved) }
+
 // CaptureMark identifies the start of one closure capture group.
 func (b *Bodies) CaptureMark() int {
 	return len(b.captures)
@@ -181,6 +193,30 @@ func (b *Bodies) CaptureMark() int {
 // Declare creates and installs one local, formal, or loop Cell.
 func (b *Bodies) Declare(id symbol.ID, span program.Span) (program.Term, error) {
 	return b.declare(id, span, true)
+}
+
+// Reserve creates one local Cell without installing its binder identity.
+func (b *Bodies) Reserve(id symbol.ID, span program.Span) (program.Term, error) {
+	if id == 0 {
+		return 0, fmt.Errorf("programlower: cannot reserve zero binder symbol")
+	}
+	if _, exists := b.active[id]; exists {
+		return 0, fmt.Errorf("programlower: duplicate active binder symbol")
+	}
+	if _, exists := b.reservedIDs[id]; exists {
+		return 0, fmt.Errorf("programlower: duplicate reserved binder symbol")
+	}
+	cell := b.builder.Cell(span, b.Owner())
+	if cell == 0 {
+		return 0, fmt.Errorf("programlower: could not reserve Cell")
+	}
+	b.appendCell(cell)
+	b.reserved = append(b.reserved, reservedCell{id: id, cell: cell})
+	if b.reservedIDs == nil {
+		b.reservedIDs = make(map[symbol.ID]struct{})
+	}
+	b.reservedIDs[id] = struct{}{}
+	return cell, nil
 }
 
 // DeclareLoop creates and installs one per-iteration Cell without retaining it
@@ -223,6 +259,50 @@ func (b *Bodies) Bind(mark int, span program.Span, values program.Term) error {
 	if term == 0 {
 		return fmt.Errorf("programlower: could not lower local declaration")
 	}
+	b.roots = append(b.roots, term)
+	return nil
+}
+
+// ReservedCell returns one Cell in an unfinished local-declaration transaction.
+func (b *Bodies) ReservedCell(mark, index int) (program.Term, bool) {
+	at := mark + index
+	if mark < 0 || index < 0 || at < mark || at >= len(b.reserved) {
+		return 0, false
+	}
+	return b.reserved[at].cell, true
+}
+
+// BindReserved publishes one reserved local group after its initializer and
+// declared types were lowered. Installation happens only after Builder.Bind
+// succeeds, preserving Lua's initializer visibility boundary.
+func (b *Bodies) BindReserved(cellMark, reservedMark int, span program.Span, values program.Term) error {
+	if cellMark < 0 || cellMark > b.cellLen || reservedMark < 0 || reservedMark > len(b.reserved) {
+		return fmt.Errorf("programlower: invalid reserved local mark")
+	}
+	cells := b.cellSlice()[cellMark:]
+	reserved := b.reserved[reservedMark:]
+	if len(cells) != len(reserved) {
+		return fmt.Errorf("programlower: reserved local Cell range mismatch")
+	}
+	for index, item := range reserved {
+		if item.id == 0 || item.cell != cells[index] || b.Has(item.id) {
+			return fmt.Errorf("programlower: invalid reserved local Cell")
+		}
+		if _, exists := b.reservedIDs[item.id]; !exists {
+			return fmt.Errorf("programlower: missing reserved binder symbol")
+		}
+	}
+	owner := b.Owner()
+	term := b.builder.Bind(span, owner, cells, values)
+	if term == 0 {
+		return fmt.Errorf("programlower: could not lower reserved local declaration")
+	}
+	for _, item := range reserved {
+		b.install(item.id, item.cell)
+		delete(b.reservedIDs, item.id)
+	}
+	b.truncateCells(cellMark)
+	b.reserved = b.reserved[:reservedMark]
 	b.roots = append(b.roots, term)
 	return nil
 }
@@ -344,5 +424,7 @@ func (b *Bodies) Clean() bool {
 		len(b.undo) == 0 &&
 		b.cellLen == 0 &&
 		len(b.cellOverflow) == 0 &&
+		len(b.reserved) == 0 &&
+		len(b.reservedIDs) == 0 &&
 		len(b.captures) == 0
 }

@@ -103,6 +103,7 @@ func TestLocalFunctionUseClosureFailsClosedForEveryNonCallUse(t *testing.T) {
 func TestLocalFunctionUseClosureRejectsRecursiveCapture(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: ident("worker")}
 	definition := localAssign([]string{"worker"}, function(nil, &ast.FuncCallStmt{Expr: call}))
+	definition.LocalFunction = true
 	bindings := BindChunk([]ast.Stmt{definition}, Options{})
 	facts := bindings.LocalFunctionUseClosures()
 	if len(facts) != 1 {

@@ -42,6 +42,10 @@ type LocalAssignStmt struct {
 	NamePositions []Position // Per-name token positions, parallel to Names
 	Types         []TypeExpr // Type annotations, parallel to Names (nil entries = inferred)
 	Exprs         []Expr     // Initializer expressions
+	// LocalFunction is true only for parser-authored `local function f(...)`
+	// syntax. It preserves the recursive declaration form after normalization
+	// into this otherwise ordinary local assignment node.
+	LocalFunction bool
 }
 
 // FuncCallStmt represents a function call used as a statement.

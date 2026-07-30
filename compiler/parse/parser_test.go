@@ -179,6 +179,17 @@ func TestParseLocalWithoutType(t *testing.T) {
 	}
 }
 
+func TestParseLocalFunctionKeepsRecursiveFormEvidence(t *testing.T) {
+	recursive, ok := parseOneString(t, `local function f() return f() end`).(*ast.LocalAssignStmt)
+	if !ok || !recursive.LocalFunction {
+		t.Fatalf("local function evidence = %#v, want true", recursive)
+	}
+	ordinary, ok := parseOneString(t, `local f = function() return f() end`).(*ast.LocalAssignStmt)
+	if !ok || ordinary.LocalFunction {
+		t.Fatalf("ordinary local initializer evidence = %#v, want false", ordinary)
+	}
+}
+
 func TestParseFunctionWithTypes(t *testing.T) {
 	input := "function foo(x: number, y: string): boolean return true end"
 	stmts, err := Parse(strings.NewReader(input), "test")

@@ -753,6 +753,9 @@ func (b *Builder) validateStaticCore() bool {
 			return false
 		}
 	}
+	if !b.validateDeclaredTypes(attach) {
+		return false
+	}
 	for tag, slots := range parents {
 		if uint8(tag) == tagTypeOf {
 			continue
@@ -788,6 +791,11 @@ func (b *Builder) validateStaticCore() bool {
 			switch parent.tag() {
 			case tagTypeAlias, tagTypeParam, tagTypeFunction:
 				if parent != row.scope {
+					return false
+				}
+				goto typeOfAttached
+			case tagDeclaredType:
+				if b.declaredTypes[parent.index()-1].host != row.scope {
 					return false
 				}
 				goto typeOfAttached

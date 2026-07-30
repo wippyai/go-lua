@@ -2,11 +2,33 @@ package bytecode
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"testing"
 
 	lua "github.com/wippyai/go-lua"
 )
+
+func TestLocalFunctionEvidenceDoesNotChangeBytecode(t *testing.T) {
+	const want = "f6e15b55ee0b5c4a9cc0354e3cce429793d8ec00890c09206686f4e02d79bbd1"
+	for _, source := range []string{
+		"local function f(n) if n == 0 then return 0 end return f(n - 1) end return f(3)",
+		"local f = function(n) if n == 0 then return 0 end return f(n - 1) end return f(3)",
+	} {
+		proto, err := lua.CompileString(source, "evidence.lua")
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := Dump(proto)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != want {
+			t.Fatalf("bytecode hash = %s, want %s", got, want)
+		}
+	}
+}
 
 func TestDumpUndumpRoundTripExecutes(t *testing.T) {
 	state := lua.NewState()

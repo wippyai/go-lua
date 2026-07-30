@@ -291,3 +291,46 @@ func TestLowerStaticFunctionTypeGenericIdentity(t *testing.T) {
 		t.Fatalf("return generic ref=%v/%v/%v", state, target, ok)
 	}
 }
+
+func TestLowerDeclaredLocalTypesPreserveCellIdentityAndStaticScope(t *testing.T) {
+	p := parseBindLower(t, `local outer = 1
+local first: number, second: typeof(outer), third = 2, outer, 3`)
+	if p.DeclaredTypeCount() != 2 {
+		t.Fatalf("declared types=%d", p.DeclaredTypeCount())
+	}
+	secondBind, ok := p.BindAt(1)
+	if !ok {
+		t.Fatal("second local bind")
+	}
+	first, second, third := boundCell(t, p, secondBind, 0), boundCell(t, p, secondBind, 1), boundCell(t, p, secondBind, 2)
+	firstDeclared, ok := p.CellDeclaredType(first)
+	if !ok {
+		t.Fatal("first declared type")
+	}
+	_, firstType, ok := p.DeclaredType(firstDeclared)
+	if !ok {
+		t.Fatal("first declared type query")
+	}
+	if kind, ok := p.Primitive(firstType); !ok || kind != program.PrimitiveNumber {
+		t.Fatalf("first type=%v/%v", kind, ok)
+	}
+	secondDeclared, ok := p.CellDeclaredType(second)
+	if !ok {
+		t.Fatal("second declared type")
+	}
+	host, secondType, ok := p.DeclaredType(secondDeclared)
+	if !ok || host != second {
+		t.Fatalf("second declaration=%v/%v", host, ok)
+	}
+	scope, operand, ok := p.TypeOf(secondType)
+	if !ok || scope != second {
+		t.Fatalf("second typeof=%v/%v/%v", scope, operand, ok)
+	}
+	outerBind, _ := p.BindAt(0)
+	if _, source, ok := p.Read(operand); !ok || source != boundCell(t, p, outerBind, 0) {
+		t.Fatalf("typeof operand source=%v/%v", source, ok)
+	}
+	if declared, ok := p.CellDeclaredType(third); ok || declared != 0 {
+		t.Fatalf("untyped local declaration=%v/%v", declared, ok)
+	}
+}

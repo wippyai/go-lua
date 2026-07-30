@@ -153,6 +153,7 @@ const (
 	// separate from tagFunction, which owns an executable Body.
 	tagTypeFunction
 	tagTypeAsserts
+	tagDeclaredType
 	// tagTypeOf is a static type relation. Its child expression still uses the
 	// ordinary expression families, but Seal proves static containment so it
 	// never enters executable control/effect evidence.
@@ -380,6 +381,8 @@ type Program struct {
 	signatures        []signatureRow
 	signatureParams   []signatureParamRow
 	assertions        []assertionRow
+	declaredTypes     []declaredTypeRow
+	cellDeclaredTypes []Term
 	typeParamTerms    []Term
 	staticTypeTerms   []Term
 }
@@ -463,6 +466,7 @@ type Builder struct {
 	signatures        []signatureRow
 	signatureParams   []signatureParamRow
 	assertions        []assertionRow
+	declaredTypes     []declaredTypeRow
 	typeParamTerms    []Term
 	staticTypeTerms   []Term
 }
@@ -1447,6 +1451,8 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.signatures))
 	case tagTypeAsserts:
 		return index <= uint32(len(b.assertions))
+	case tagDeclaredType:
+		return index <= uint32(len(b.declaredTypes))
 	case tagTypeOf:
 		return index <= uint32(len(b.typeOfs))
 	}
@@ -1567,6 +1573,10 @@ func (b *Builder) Seal() (*Program, error) {
 	}
 	if !b.validateStaticCore() {
 		return nil, errors.New("program: invalid static type core")
+	}
+	cellDeclaredTypes, declaredTypesOK := b.declaredTypeLookup()
+	if !declaredTypesOK {
+		return nil, errors.New("program: invalid declared Cell type")
 	}
 	var staticTerms staticSet
 	if len(b.typeOfs) != 0 {
@@ -1972,7 +1982,9 @@ func (b *Builder) Seal() (*Program, error) {
 		return nil, err
 	}
 	controlMu[tagFunction] = functionMu
-	return b.snapshot(controlMu, direct, breakLoops, staticTerms), nil
+	sealed := b.snapshot(controlMu, direct, breakLoops, staticTerms)
+	sealed.cellDeclaredTypes = cellDeclaredTypes
+	return sealed, nil
 }
 
 // containingRoot projects one occurrence to its unique executable source root
@@ -3295,6 +3307,7 @@ func (b *Builder) snapshot(
 		signatures:        append([]signatureRow(nil), b.signatures...),
 		signatureParams:   append([]signatureParamRow(nil), b.signatureParams...),
 		assertions:        append([]assertionRow(nil), b.assertions...),
+		declaredTypes:     append([]declaredTypeRow(nil), b.declaredTypes...),
 		typeParamTerms:    copyTerms(b.typeParamTerms),
 		staticTypeTerms:   copyTerms(b.staticTypeTerms),
 	}
@@ -3397,6 +3410,8 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.signatures))
 	case tagTypeAsserts:
 		return index <= uint32(len(p.assertions))
+	case tagDeclaredType:
+		return index <= uint32(len(p.declaredTypes))
 	case tagTypeOf:
 		return index <= uint32(len(p.typeOfs))
 	}

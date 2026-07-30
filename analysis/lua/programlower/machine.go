@@ -154,6 +154,8 @@ const (
 	stepStaticSignatureReturns
 	stepFinishStaticSignature
 	stepFinishStaticAssertion
+	stepStaticLocalDeclaredTypes
+	stepFinishStaticLocalDeclaredType
 )
 
 // step is a closed, phase-private instruction. Its AST fields keep the
@@ -230,6 +232,14 @@ func (l *lowerer) run() error {
 			}
 		case stepFinishLocal:
 			if err := l.finishLocal(current); err != nil {
+				return err
+			}
+		case stepStaticLocalDeclaredTypes:
+			if err := l.runStaticLocalDeclaredTypes(current); err != nil {
+				return err
+			}
+		case stepFinishStaticLocalDeclaredType:
+			if err := l.static.DeclareCellType(current.typeHost, current.typeExpr, l.result); err != nil {
 				return err
 			}
 		case stepTargets:
@@ -655,23 +665,34 @@ func (l *lowerer) runStmts(current step) error {
 		if len(stmt.Names) == 0 {
 			return fmt.Errorf("programlower: local assignment has no declarations")
 		}
-		for i, declared := range stmt.Types {
-			if declared != nil {
-				return fmt.Errorf("programlower: unsupported declared type for local slot %d", i)
+		if stmt.LocalFunction {
+			for i, declared := range stmt.Types {
+				if declared != nil {
+					return fmt.Errorf("programlower: unsupported declared type for local function slot %d", i)
+				}
 			}
-		}
-		for i, expr := range stmt.Exprs {
-			if fn, ambiguous := expr.(*ast.FunctionExpr); ambiguous && fn != nil {
-				return fmt.Errorf(
-					"programlower: unsupported function initializer for local slot %d: recursive-local syntax was erased",
-					i,
-				)
+			mark := l.scopes.CellMark()
+			if len(stmt.Names) != 1 || len(stmt.Exprs) != 1 {
+				return fmt.Errorf("programlower: invalid recursive local function shape")
 			}
+			fn, ok := stmt.Exprs[0].(*ast.FunctionExpr)
+			if !ok || fn == nil {
+				return fmt.Errorf("programlower: invalid recursive local function initializer")
+			}
+			id, ok := l.binding.LocalSymbolAt(stmt, 0)
+			if !ok || id == 0 {
+				return fmt.Errorf("programlower: binder has no symbol for recursive local function")
+			}
+			if _, err := l.scopes.Declare(id, l.nameSpan(stmt, 0)); err != nil {
+				return fmt.Errorf("programlower: could not predeclare recursive local function: %w", err)
+			}
+			l.push(
+				step{kind: stepFinishLocal, local: stmt, mark: mark},
+				step{kind: stepValues, exprs: stmt.Exprs, span: l.span(stmt), mark: l.packs.Mark()},
+			)
+			return nil
 		}
-		l.push(
-			step{kind: stepFinishLocal, local: stmt, mark: l.scopes.CellMark()},
-			step{kind: stepValues, exprs: stmt.Exprs, span: l.span(stmt), mark: l.packs.Mark()},
-		)
+		return l.startLocal(stmt)
 	case *ast.AssignStmt:
 		if len(stmt.Lhs) == 0 {
 			return fmt.Errorf("programlower: assignment has no targets")
@@ -1386,12 +1407,18 @@ func (l *lowerer) finishLoopBody(current step) error {
 
 func (l *lowerer) finishLocal(current step) error {
 	stmt := current.local
+	if !stmt.LocalFunction {
+		return l.scopes.BindReserved(current.mark, current.valueMark, l.span(stmt), l.result)
+	}
 	for i := range stmt.Names {
 		id, ok := l.binding.LocalSymbolAt(stmt, i)
 		if !ok || id == 0 {
 			return fmt.Errorf("programlower: binder has no symbol for local slot %d", i)
 		}
 		if l.scopes.Has(id) {
+			if current.local.LocalFunction && i == 0 {
+				continue
+			}
 			return fmt.Errorf("programlower: duplicate binder symbol for local slot %d", i)
 		}
 		if _, err := l.scopes.Declare(id, l.nameSpan(stmt, i)); err != nil {
@@ -1399,6 +1426,69 @@ func (l *lowerer) finishLocal(current step) error {
 		}
 	}
 	return l.scopes.Bind(current.mark, l.span(stmt), l.result)
+}
+
+// startLocal reserves Cells before declared-type lowering but does not install
+// them. This preserves the binder's order: types bind before local symbols,
+// and initializers still resolve only pre-existing lexical identities.
+func (l *lowerer) startLocal(stmt *ast.LocalAssignStmt) error {
+	if stmt == nil || len(stmt.Types) > len(stmt.Names) {
+		return fmt.Errorf("programlower: invalid local declared-type list")
+	}
+	cellMark, reservedMark := l.scopes.CellMark(), l.scopes.ReservedMark()
+	for index := range stmt.Names {
+		id, ok := l.binding.LocalSymbolAt(stmt, index)
+		if !ok || id == 0 || l.scopes.Has(id) {
+			return fmt.Errorf("programlower: invalid binder symbol for local slot %d", index)
+		}
+		if _, err := l.scopes.Reserve(id, l.nameSpan(stmt, index)); err != nil {
+			return fmt.Errorf("programlower: could not reserve local Cell %d: %w", index, err)
+		}
+	}
+	l.push(step{kind: stepStaticLocalDeclaredTypes, local: stmt, mark: cellMark, valueMark: reservedMark})
+	return nil
+}
+
+func (l *lowerer) runStaticLocalDeclaredTypes(current step) error {
+	stmt := current.local
+	if stmt == nil || current.index < 0 || current.index > len(stmt.Names) {
+		return fmt.Errorf("programlower: invalid local declared-type cursor")
+	}
+	if current.index == len(stmt.Names) {
+		l.push(
+			step{kind: stepFinishLocal, local: stmt, mark: current.mark, valueMark: current.valueMark},
+			step{kind: stepValues, exprs: stmt.Exprs, span: l.span(stmt), mark: l.packs.Mark()},
+		)
+		return nil
+	}
+	index := current.index
+	current.index++
+	var declared ast.TypeExpr
+	if index < len(stmt.Types) {
+		declared = stmt.Types[index]
+	}
+	if declared == nil {
+		l.push(current)
+		return nil
+	}
+	id, ok := l.binding.LocalSymbolAt(stmt, index)
+	if !ok || id == 0 {
+		return fmt.Errorf("programlower: binder has no symbol for typed local slot %d", index)
+	}
+	bound, ok := l.binding.SymbolTypeAnnotation(id)
+	if !ok || bound != declared {
+		return fmt.Errorf("programlower: binder has mismatched declared type for local slot %d", index)
+	}
+	host, ok := l.scopes.ReservedCell(current.valueMark, index)
+	if !ok {
+		return fmt.Errorf("programlower: missing reserved Cell for typed local slot %d", index)
+	}
+	l.push(
+		current,
+		step{kind: stepFinishStaticLocalDeclaredType, typeExpr: declared, typeHost: host},
+		step{kind: stepStaticType, typeExpr: declared, typeHost: host},
+	)
+	return nil
 }
 
 func (l *lowerer) runTargets(current step) error {
@@ -1797,7 +1887,17 @@ func funcDefTargetShape(target ast.Expr) bool {
 
 func (l *lowerer) startFunction(fn *ast.FunctionExpr) error {
 	origin, ok := l.binding.FunctionOrigin(fn)
-	if !ok || origin.Kind != bind.FunctionOriginLiteral {
+	if !ok {
+		return fmt.Errorf("programlower: unsupported ambiguous function origin")
+	}
+	switch origin.Kind {
+	case bind.FunctionOriginLiteral:
+	case bind.FunctionOriginLocalAssignment:
+		stmt, valid := origin.Stmt.(*ast.LocalAssignStmt)
+		if !valid || stmt == nil || origin.LocalIndex < 0 || origin.LocalIndex >= len(stmt.Exprs) || stmt.Exprs[origin.LocalIndex] != fn {
+			return fmt.Errorf("programlower: unsupported local function origin")
+		}
+	default:
 		return fmt.Errorf("programlower: unsupported ambiguous function origin")
 	}
 	return l.startFunctionBody(fn)

@@ -1230,7 +1230,7 @@ yydefault:
 		yyDollar = yyS[yypt-4 : yypt+1]
 //line parser.go.y:275
 		{
-			yyVAL.stmt = &ast.LocalAssignStmt{Names: []string{yyDollar[3].token.Str}, NamePositions: []ast.Position{yyDollar[3].token.Pos}, Exprs: []ast.Expr{yyDollar[4].funcexpr}}
+			yyVAL.stmt = &ast.LocalAssignStmt{Names: []string{yyDollar[3].token.Str}, NamePositions: []ast.Position{yyDollar[3].token.Pos}, Exprs: []ast.Expr{yyDollar[4].funcexpr}, LocalFunction: true}
 			yyVAL.stmt.SetPosFromToken(yyDollar[1].token.Pos)
 			yyVAL.stmt.CopyLastPos(yyDollar[4].funcexpr)
 		}

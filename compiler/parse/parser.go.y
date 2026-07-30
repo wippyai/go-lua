@@ -273,7 +273,7 @@ stat:
             $$.CopyLastPos($3)
         } |
         TLocal TFunction TIdent funcbody {
-            $$ = &ast.LocalAssignStmt{Names:[]string{$3.Str}, NamePositions: []ast.Position{$3.Pos}, Exprs: []ast.Expr{$4}}
+            $$ = &ast.LocalAssignStmt{Names:[]string{$3.Str}, NamePositions: []ast.Position{$3.Pos}, Exprs: []ast.Expr{$4}, LocalFunction: true}
             $$.SetPosFromToken($1.Pos)
             $$.CopyLastPos($4)
         } |

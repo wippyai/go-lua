@@ -165,6 +165,7 @@ func TestShadowingAndDeferredLocalRules(t *testing.T) {
 	afterShadowRead := ident("x")
 	selfRead := ident("f")
 	localFn := localAssign([]string{"f"}, function(nil, ret(selfRead)))
+	localFn.LocalFunction = true
 
 	r = BindChunk([]ast.Stmt{
 		outer,
@@ -506,6 +507,7 @@ func TestFunctionOrigins(t *testing.T) {
 
 	localFunctionFn := function(nil)
 	localFunctionStmt := localAssign([]string{"localFunction"}, localFunctionFn)
+	localFunctionStmt.LocalFunction = true
 
 	localAssignmentFn := function(nil)
 	localAssignmentStmt := localAssign([]string{"value", "localAssignment"}, number("1"), localAssignmentFn)
@@ -566,6 +568,9 @@ func TestFunctionOrigins(t *testing.T) {
 	if !localFunctionOrigin.HasTargetSymbol || localFunctionOrigin.TargetSymbol != localFunctionTargetID {
 		t.Fatalf("local function target = %d/%v, want %d/true", localFunctionOrigin.TargetSymbol, localFunctionOrigin.HasTargetSymbol, localFunctionTargetID)
 	}
+	if !localFunctionStmt.LocalFunction {
+		t.Fatal("local function origin lost recursive source evidence")
+	}
 
 	localAssignmentOrigin := mustOrigin(t, r, localAssignmentFn)
 	localAssignmentTargetID := mustLocalAt(t, r, localAssignmentStmt, 1)
@@ -574,6 +579,9 @@ func TestFunctionOrigins(t *testing.T) {
 	}
 	if !localAssignmentOrigin.HasTargetSymbol || localAssignmentOrigin.TargetSymbol != localAssignmentTargetID {
 		t.Fatalf("local assignment target = %d/%v, want %d/true", localAssignmentOrigin.TargetSymbol, localAssignmentOrigin.HasTargetSymbol, localAssignmentTargetID)
+	}
+	if localAssignmentStmt.LocalFunction {
+		t.Fatal("ordinary local initializer was marked recursive")
 	}
 
 	methodOrigin := mustOrigin(t, r, methodFn)
@@ -592,6 +600,37 @@ func TestFunctionOrigins(t *testing.T) {
 	origins[0].Kind = 0
 	if got := mustOrigin(t, r, globalFn).Kind; got != FunctionOriginDeclaration {
 		t.Fatalf("FunctionOrigins returned mutable origin storage; kind = %v", got)
+	}
+}
+
+func TestParsedLocalFunctionOriginRetainsRecursiveEvidence(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local function recursive() return recursive end
+local ordinary = function() return ordinary end
+`, "bind_test.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recursive := stmts[0].(*ast.LocalAssignStmt)
+	ordinary := stmts[1].(*ast.LocalAssignStmt)
+	recursiveFn := recursive.Exprs[0].(*ast.FunctionExpr)
+	ordinaryFn := ordinary.Exprs[0].(*ast.FunctionExpr)
+	r := BindChunk(stmts, Options{})
+
+	recursiveOrigin := mustOrigin(t, r, recursiveFn)
+	ordinaryOrigin := mustOrigin(t, r, ordinaryFn)
+	if recursiveOrigin.Stmt != recursive || ordinaryOrigin.Stmt != ordinary || !recursive.LocalFunction || ordinary.LocalFunction {
+		t.Fatalf("function origins did not retain exact parser local forms")
+	}
+	recursiveRead := recursiveFn.Stmts[0].(*ast.ReturnStmt).Exprs[0].(*ast.IdentExpr)
+	recursiveID := mustLocalAt(t, r, recursive, 0)
+	if got := mustSymbol(t, r, recursiveRead); got != recursiveID {
+		t.Fatalf("recursive body read = %d, want local %d", got, recursiveID)
+	}
+	ordinaryRead := ordinaryFn.Stmts[0].(*ast.ReturnStmt).Exprs[0].(*ast.IdentExpr)
+	ordinaryID := mustLocalAt(t, r, ordinary, 0)
+	if got := mustSymbol(t, r, ordinaryRead); got == ordinaryID {
+		t.Fatalf("ordinary body read incorrectly resolved to local %d", ordinaryID)
 	}
 }
 
@@ -1215,11 +1254,11 @@ func TestFunctionDefinitionsAndNestedScopes(t *testing.T) {
 	r = BindChunk([]ast.Stmt{mutual}, Options{})
 	fID := mustLocalAt(t, r, mutual, 0)
 	gID := mustLocalAt(t, r, mutual, 1)
-	if got := mustSymbol(t, r, gRead); got != gID {
-		t.Fatalf("f body g read resolved to %d, want g local %d", got, gID)
+	if got := mustSymbol(t, r, gRead); got == gID {
+		t.Fatalf("ordinary local initializer g read resolved to local %d", gID)
 	}
-	if got := mustSymbol(t, r, fRead); got != fID {
-		t.Fatalf("g body f read resolved to %d, want f local %d", got, fID)
+	if got := mustSymbol(t, r, fRead); got == fID {
+		t.Fatalf("ordinary local initializer f read resolved to local %d", fID)
 	}
 
 	outer := localAssign([]string{"x"}, number("1"))

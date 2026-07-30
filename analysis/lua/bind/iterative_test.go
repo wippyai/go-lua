@@ -185,11 +185,11 @@ func TestIterativeBinderWideListsAndDeferredVisibility(t *testing.T) {
 	deferred := BindChunk([]ast.Stmt{group}, Options{})
 	fID, _ := deferred.LocalSymbolAt(group, 0)
 	gID, _ := deferred.LocalSymbolAt(group, 1)
-	if got, ok := deferred.SymbolOf(fRead); !ok || got != fID {
-		t.Fatalf("deferred f read = %d/%v, want %d", got, ok, fID)
+	if got, ok := deferred.SymbolOf(fRead); !ok || got == fID {
+		t.Fatalf("ordinary initializer f read = %d/%v, must not resolve local %d", got, ok, fID)
 	}
-	if got, ok := deferred.SymbolOf(gRead); !ok || got != gID {
-		t.Fatalf("deferred g read = %d/%v, want %d", got, ok, gID)
+	if got, ok := deferred.SymbolOf(gRead); !ok || got == gID {
+		t.Fatalf("ordinary initializer g read = %d/%v, must not resolve local %d", got, ok, gID)
 	}
 }
 

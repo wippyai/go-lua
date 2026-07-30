@@ -341,7 +341,10 @@ func (b *binder) beginLocal(stmt *ast.LocalAssignStmt) {
 		}
 	}
 	b.result.localSymbols[stmt] = ids
-	mark := b.pushPending(pending)
+	mark := len(b.pending)
+	if stmt.LocalFunction {
+		mark = b.pushPending(pending)
+	}
 	b.push(bindStep{kind: stepLocalFinish, node: stmt, mark: mark})
 	b.push(bindStep{kind: stepLocalValues, node: stmt})
 }

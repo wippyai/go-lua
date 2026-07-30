@@ -917,14 +917,42 @@ return {1, named = 2, 3, f()}`)
 	}
 }
 
-func TestTypedLocalFailsUntilAuthoredTypesLand(t *testing.T) {
-	stmts, err := parse.ParseString(`local x: number = 1`, "typed.lua")
+func TestTypedLocalDeclaredTypeUsesOuterVisibilityBeforePublication(t *testing.T) {
+	stmts, err := parse.ParseString(`local x = 1
+local x: typeof(x) = x`, "typed.lua")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = programlower.Lower("typed.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
-	if err == nil || !strings.Contains(err.Error(), "unsupported declared type for local slot 0") {
-		t.Fatalf("typed local error = %v", err)
+	p, err := programlower.Lower("typed.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outerBind, _ := p.BindAt(0)
+	typedBind, _ := p.BindAt(1)
+	outer := boundCell(t, p, outerBind, 0)
+	typed := boundCell(t, p, typedBind, 0)
+	declared, ok := p.CellDeclaredType(typed)
+	if !ok {
+		t.Fatal("typed local has no declared type")
+	}
+	host, target, ok := p.DeclaredType(declared)
+	if !ok || host != typed {
+		t.Fatalf("declared type host=%v/%v", host, ok)
+	}
+	scope, operand, ok := p.TypeOf(target)
+	if !ok || scope != typed {
+		t.Fatalf("typeof scope=%v/%v/%v", scope, operand, ok)
+	}
+	if _, source, ok := p.Read(operand); !ok || source != outer {
+		t.Fatalf("typeof source=%v/%v", source, ok)
+	}
+	_, values, ok := p.Bind(typedBind)
+	if !ok {
+		t.Fatal("typed Bind")
+	}
+	initializer := valueAt(t, p, values, 0)
+	if _, source, ok := p.Read(initializer); !ok || source != outer {
+		t.Fatalf("initializer source=%v/%v", source, ok)
 	}
 }
 
@@ -2030,18 +2058,14 @@ return t:m(1)`, "method.lua")
 	})
 }
 
-func TestFunctionAndCallEvidenceLossFailsClosed(t *testing.T) {
-	for _, source := range []string{
-		`local function f() end`,
-		`local f = function() end`,
-	} {
+func TestLocalFunctionEvidenceAndFunctionFormValidation(t *testing.T) {
+	for _, source := range []string{`local function f() return f end`, `local f = function() return f end`} {
 		stmts, err := parse.ParseString(source, "ambiguous.lua")
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = programlower.Lower("ambiguous.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
-		if err == nil || !strings.Contains(err.Error(), "recursive-local syntax was erased") {
-			t.Fatalf("%q error = %v", source, err)
+		if _, err = programlower.Lower("ambiguous.lua", stmts, bind.BindChunk(stmts, bind.Options{})); err != nil {
+			t.Fatalf("%q lower error = %v", source, err)
 		}
 	}
 	stmts, err := parse.ParseString(`local t = {}
