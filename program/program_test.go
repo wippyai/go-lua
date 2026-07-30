@@ -263,3 +263,211 @@ func TestDeterministicMinting(t *testing.T) {
 		t.Fatal("equivalent builders did not mint deterministically")
 	}
 }
+
+func TestLexicalCaptureReadAndDelayedMutation(t *testing.T) {
+	b := program.NewBuilder()
+	span := program.Span{File: "closure.lua", Start: 1, End: 20}
+	outerBody := b.Body(span)
+	outerCell := b.Cell(span, outerBody)
+	innerBody := b.Body(span)
+	innerCell := b.Cell(span, innerBody)
+	capture := b.Capture(span, innerCell, outerCell)
+	read := b.Read(span, innerCell)
+	table := b.Table(span)
+	key := b.String(span, "field")
+	lens := b.LensExact(span, table, key)
+	rhs := b.Values(span, []program.Term{read}, 0)
+	assign := b.Assign(span, []program.Term{innerCell, lens}, rhs)
+	function := b.Function(span, innerBody, []program.Term{innerCell}, true)
+	if !b.SetBody(innerBody, capture, read, assign) {
+		t.Fatal("SetBody(inner) failed")
+	}
+	if !b.SetBody(outerBody, outerCell, table, lens, function) {
+		t.Fatal("SetBody(outer) failed")
+	}
+
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner, ok := p.Cell(innerCell); !ok || owner != innerBody {
+		t.Fatalf("Cell = %v, %v", owner, ok)
+	}
+	if cell, ok := p.Read(read); !ok || cell != innerCell {
+		t.Fatalf("Read = %v, %v", cell, ok)
+	}
+	if inner, outer, ok := p.Capture(capture); !ok || inner != innerCell || outer != outerCell {
+		t.Fatalf("Capture = %v, %v, %v", inner, outer, ok)
+	}
+	if body, vararg, ok := p.Function(function); !ok || body != innerBody || !vararg {
+		t.Fatalf("Function = %v, %v, %v", body, vararg, ok)
+	}
+	if formal, ok := p.FormalAt(function, 0); !ok || formal != innerCell {
+		t.Fatalf("FormalAt = %v, %v", formal, ok)
+	}
+	if got, ok := p.AppendOrder(assign, nil); !ok || !reflect.DeepEqual(got, []program.Term{innerCell, lens, rhs}) {
+		t.Fatalf("delayed Assign order = %v, %v", got, ok)
+	}
+	if targets, values, ok := p.AppendAssign(assign, nil); !ok ||
+		!reflect.DeepEqual(targets, []program.Term{innerCell, lens}) || values != rhs {
+		t.Fatalf("Assign = %v, %v, %v", targets, values, ok)
+	}
+}
+
+func TestDirectRecursiveCallMuAndBodyFill(t *testing.T) {
+	b := program.NewBuilder()
+	span := program.Span{File: "recursive.lua", Start: 0, End: 12}
+	body := b.Body(span)
+	formal := b.Cell(span, body)
+	function := b.Function(span, body, []program.Term{formal}, false)
+	argument := b.Integer(span, 1)
+	actuals := b.Values(span, []program.Term{argument}, 0)
+	call := b.Call(span, function, actuals)
+	mu := b.Mu(span, function, call)
+	if !b.SetBody(body, formal, call, mu) {
+		t.Fatal("SetBody failed")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callee, gotActuals, ok := p.Call(call); !ok || callee != function || gotActuals != actuals {
+		t.Fatalf("Call = %v, %v, %v", callee, gotActuals, ok)
+	}
+	if head, back, ok := p.Mu(mu); !ok || head != function || back != call {
+		t.Fatalf("Mu = %v, %v, %v", head, back, ok)
+	}
+	if got, ok := p.AppendBody(body, nil); !ok ||
+		!reflect.DeepEqual(got, []program.Term{formal, call, mu}) {
+		t.Fatalf("Body = %v, %v", got, ok)
+	}
+
+	unfilled := program.NewBuilder()
+	unfilled.Body(span)
+	if _, err := unfilled.Seal(); err == nil {
+		t.Fatal("Seal accepted an unfilled Body")
+	}
+
+	doubleFill := program.NewBuilder()
+	doubleBody := doubleFill.Body(span)
+	if !doubleFill.SetBody(doubleBody) || doubleFill.SetBody(doubleBody) {
+		t.Fatal("SetBody did not enforce exactly-once fill")
+	}
+	if _, err := doubleFill.Seal(); err == nil {
+		t.Fatal("Seal accepted a multiply-filled Body")
+	}
+}
+
+func TestBranchAndTableAssignmentKeys(t *testing.T) {
+	b := program.NewBuilder()
+	span := program.Span{File: "flow.lua", Start: 0, End: 9}
+	whenTrue := b.Body(span)
+	whenFalse := b.Body(span)
+	if !b.SetBody(whenTrue) || !b.SetBody(whenFalse) {
+		t.Fatal("empty branch Body fill failed")
+	}
+	condition := b.Bool(span, true)
+	branch := b.Branch(span, condition, whenTrue, whenFalse)
+	table := b.Table(span)
+	stringKey := b.String(span, "name")
+	numericKey := b.Integer(span, 1)
+	stringLens := b.LensExact(span, table, stringKey)
+	numericLens := b.LensExact(span, table, numericKey)
+	value := b.String(span, "value")
+	rhs := b.Values(span, []program.Term{value}, 0)
+	assign := b.Assign(span, []program.Term{stringLens, numericLens}, rhs)
+	body := b.Body(span)
+	if !b.SetBody(body, table, stringLens, numericLens, assign, branch) {
+		t.Fatal("SetBody failed")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Table(table) {
+		t.Fatal("Table identity was not retained")
+	}
+	if gotCondition, gotTrue, gotFalse, ok := p.Branch(branch); !ok ||
+		gotCondition != condition || gotTrue != whenTrue || gotFalse != whenFalse {
+		t.Fatalf("Branch = %v, %v, %v, %v", gotCondition, gotTrue, gotFalse, ok)
+	}
+	if count, ok := p.AssignLen(assign); !ok || count != 2 {
+		t.Fatalf("AssignLen = %d, %v", count, ok)
+	}
+}
+
+func TestNewFamiliesFailClosed(t *testing.T) {
+	span := program.Span{File: "bad.lua", Start: 0, End: 1}
+	tests := []func(*program.Builder){
+		func(b *program.Builder) { b.Cell(span, b.Integer(span, 1)) },
+		func(b *program.Builder) { b.Read(span, b.Integer(span, 1)) },
+		func(b *program.Builder) {
+			value := b.Integer(span, 1)
+			b.Assign(span, []program.Term{value}, b.Values(span, []program.Term{value}, 0))
+		},
+		func(b *program.Builder) {
+			body := b.Body(span)
+			other := b.Body(span)
+			formal := b.Cell(span, other)
+			b.Function(span, body, []program.Term{formal}, false)
+			b.SetBody(body)
+			b.SetBody(other)
+		},
+		func(b *program.Builder) {
+			callee := b.String(span, "f")
+			b.Call(span, callee, b.Integer(span, 1))
+		},
+		func(b *program.Builder) {
+			condition := b.Bool(span, true)
+			b.Branch(span, condition, b.Integer(span, 1), b.Integer(span, 2))
+		},
+	}
+	for i, build := range tests {
+		b := program.NewBuilder()
+		build(b)
+		if _, err := b.Seal(); err == nil {
+			t.Fatalf("invalid family case %d sealed", i)
+		}
+	}
+}
+
+func TestBodyOwnershipAndClosureIdentityFailClosed(t *testing.T) {
+	span := program.Span{File: "ownership.lua", Start: 0, End: 1}
+
+	duplicate := program.NewBuilder()
+	duplicateBody := duplicate.Body(span)
+	duplicateTerm := duplicate.Integer(span, 1)
+	duplicate.SetBody(duplicateBody, duplicateTerm, duplicateTerm)
+	if _, err := duplicate.Seal(); err == nil {
+		t.Fatal("Seal accepted duplicate ownership within one Body")
+	}
+
+	shared := program.NewBuilder()
+	firstBody := shared.Body(span)
+	secondBody := shared.Body(span)
+	sharedTerm := shared.Integer(span, 1)
+	shared.SetBody(firstBody, sharedTerm)
+	shared.SetBody(secondBody, sharedTerm)
+	if _, err := shared.Seal(); err == nil {
+		t.Fatal("Seal accepted one top-level term in two Bodies")
+	}
+
+	ambiguousFunction := program.NewBuilder()
+	functionBody := ambiguousFunction.Body(span)
+	firstFunction := ambiguousFunction.Function(span, functionBody, nil, false)
+	secondFunction := ambiguousFunction.Function(span, functionBody, nil, true)
+	ambiguousFunction.SetBody(functionBody, firstFunction, secondFunction)
+	if _, err := ambiguousFunction.Seal(); err == nil {
+		t.Fatal("Seal accepted two Functions for one Body")
+	}
+
+	localCapture := program.NewBuilder()
+	localBody := localCapture.Body(span)
+	firstCell := localCapture.Cell(span, localBody)
+	secondCell := localCapture.Cell(span, localBody)
+	capture := localCapture.Capture(span, firstCell, secondCell)
+	localCapture.SetBody(localBody, firstCell, secondCell, capture)
+	if _, err := localCapture.Seal(); err == nil {
+		t.Fatal("Seal accepted a Capture within one Body")
+	}
+}
