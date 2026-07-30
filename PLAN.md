@@ -2,6 +2,30 @@
 
 Status: binding design.
 
+## Current authorized wave
+
+This wave builds and validates the canonical Program and direct
+AST-to-Program lowering for the formal analyzer.
+
+`compiler/`, the root VM/runtime, and V2 are read-only. This wave does not
+integrate Program with the existing compiler, bytecode generator, VM, runtime,
+or V2. Program is designed as their future semantic input, but that integration
+is a separately authorized wave.
+
+No Program-to-CFG, Program-to-WIR, Program-to-old-equation, manifest
+compatibility, or dual-entry adapter is permitted. The obsolete live analyzer
+entrypoints become unavailable at the destructive cut rather than selecting
+between old and new representations.
+
+`__legacy/` remains reference-only semantic archaeology. It has no live import,
+test, gate, adapter, or fallback authority. “Remove legacy” means removing the
+obsolete mechanisms and parallel authorities from the current live analyzer;
+it does not mean deleting the reference tree.
+
+Where later stages discuss Program-to-backend or runtime integration, they
+state future consumer obligations only and do not authorize that work in this
+wave. This section controls when later wording conflicts with it.
+
 ## Goal
 
 Build one formal, symbolic, modular abstract interpreter whose core has no Lua
@@ -386,9 +410,11 @@ outside the design.
 
 ## Canonical Program
 
-`compiler/program.Program` is the sole immutable semantic IR.
-`compiler/bind` is the sole lexical authority. Program is built directly from
-the AST and binder result.
+`program.Program` is the sole immutable semantic IR.
+`analysis/lua/bind` is the transient lexical-resolution authority for this
+wave. Program is built directly from the AST and binder result. Lowering copies
+resolved lexical identity into the sealed Program; no downstream consumer
+receives binder state or AST pointers.
 
 Program records exact causes, never abstract conclusions:
 
