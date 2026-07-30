@@ -100,8 +100,10 @@ const (
 	OP_VARARG /*     A B     R(A) R(A+1) ... R(A+B-1) = vararg            */
 
 	OP_NOP /* NOP */
+
+	OP_LOADTYPE /*  A Bx    R(A) := Type(Bx) (lookup by name)                 */
 )
-const opCodeMax = OP_NOP
+const opCodeMax = OP_LOADTYPE
 
 type opArgMode int
 
@@ -179,6 +181,7 @@ var opProps = []opProp{
 	{"CLOSURE", false, true, opArgModeU, opArgModeN, opTypeABx},
 	{"VARARG", false, true, opArgModeU, opArgModeN, opTypeABC},
 	{"NOP", false, false, opArgModeR, opArgModeN, opTypeASbx},
+	{"LOADTYPE", false, true, opArgModeK, opArgModeN, opTypeABx},
 }
 
 func opGetOpCode(inst uint32) int {

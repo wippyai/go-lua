@@ -1,6 +1,7 @@
 package bytecode
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -56,6 +57,8 @@ func TestDumpUndumpPreservesProtoMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadString failed: %v", err)
 	}
+	fn.Proto.TypeInfo = []byte("manifest-v1")
+
 	data, err := Dump(fn.Proto)
 	if err != nil {
 		t.Fatalf("Dump failed: %v", err)
@@ -75,6 +78,14 @@ func TestDumpUndumpPreservesProtoMetadata(t *testing.T) {
 	}
 	if len(decoded.FunctionPrototypes) != len(fn.Proto.FunctionPrototypes) {
 		t.Fatalf("nested proto count = %d, want %d", len(decoded.FunctionPrototypes), len(fn.Proto.FunctionPrototypes))
+	}
+	if !bytes.Equal(decoded.TypeInfo, fn.Proto.TypeInfo) {
+		t.Fatalf("TypeInfo = %q, want %q", decoded.TypeInfo, fn.Proto.TypeInfo)
+	}
+	for _, child := range decoded.FunctionPrototypes {
+		if !bytes.Equal(child.TypeInfo, fn.Proto.TypeInfo) {
+			t.Fatalf("nested TypeInfo = %q, want %q", child.TypeInfo, fn.Proto.TypeInfo)
+		}
 	}
 	if len(decoded.Constants) != len(fn.Proto.Constants) {
 		t.Fatalf("constant count = %d, want %d", len(decoded.Constants), len(fn.Proto.Constants))

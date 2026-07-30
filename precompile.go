@@ -25,5 +25,6 @@ func CompileReader(reader io.Reader, name string) (*FunctionProto, error) {
 // LoadProto creates an LFunction from a precompiled FunctionProto.
 // This is much faster than Load() since it skips parsing and compilation.
 func (ls *LState) LoadProto(proto *FunctionProto) *LFunction {
+	ls.injectProtoTypes(proto)
 	return newLFunctionL(proto, ls.currentEnv(), 0)
 }

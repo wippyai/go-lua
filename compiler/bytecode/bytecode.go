@@ -16,7 +16,7 @@ import (
 
 const (
 	headerMagic = 0x4C554143 // "LUAC"
-	version     = 3          // v3 removes analysis metadata from executable bytecode.
+	version     = 2          // v2 includes FunctionProto.TypeInfo.
 )
 
 var (
@@ -63,6 +63,9 @@ func Undump(data []byte) (*lua.FunctionProto, error) {
 	}
 
 	rebuildStringConstants(proto)
+	if len(proto.TypeInfo) > 0 {
+		proto.SetTypeInfo(proto.TypeInfo)
+	}
 	return proto, nil
 }
 
@@ -176,6 +179,8 @@ func (w *writer) writeProto(proto *lua.FunctionProto) {
 	for _, upvalue := range proto.DbgUpvalues {
 		w.writeString(upvalue)
 	}
+
+	w.writeBytes(proto.TypeInfo)
 }
 
 func (w *writer) writeConstant(v lua.LValue) {
@@ -333,6 +338,7 @@ func (r *reader) readProto() (*lua.FunctionProto, error) {
 		proto.DbgUpvalues[i] = r.readString()
 	}
 
+	proto.TypeInfo = r.readBytes()
 	if r.err != nil {
 		return nil, ErrCorruptedBytecode
 	}
