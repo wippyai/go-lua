@@ -943,6 +943,85 @@ func TestParamSlotsMethodSelf(t *testing.T) {
 	}
 }
 
+func TestAssertedParamUsesImmediateCallableFormalOrdinal(t *testing.T) {
+	stmts, err := parse.ParseString(`
+function runtime(first: any, target: any): asserts target is string
+end
+function missing(value: any): asserts absent
+end
+function duplicate(value: any, value: any): asserts value
+end
+type Static = (first: any, target: any) -> asserts target is string
+type StaticMissing = (value: any) -> asserts absent
+type StaticDuplicate = (value: any, value: any) -> asserts value
+type Nested = (outer: any) -> ((inner: any) -> asserts outer)
+function Object:method(value: any): asserts self
+end
+type Query = typeof(function(value: any): asserts value end)
+`, "asserted_param.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	if len(stmts) != 9 {
+		t.Fatalf("statements = %d, want 9", len(stmts))
+	}
+
+	bindings := BindChunk(stmts, Options{})
+	runtime := stmts[0].(*ast.FuncDefStmt).Func
+	runtimeAssert := runtime.ReturnTypes[0].(*ast.AssertsTypeExpr)
+	if got, ok := bindings.AssertedParam(runtimeAssert); !ok || got != 1 {
+		t.Fatalf("runtime AssertedParam = %d/%v, want 1/true", got, ok)
+	}
+	if slots := bindings.ParamSlots(runtime); len(slots) != 2 || slots[1].Symbol == 0 {
+		t.Fatalf("runtime ParamSlots = %#v, want two exact runtime formals", slots)
+	}
+
+	missing := stmts[1].(*ast.FuncDefStmt).Func.ReturnTypes[0].(*ast.AssertsTypeExpr)
+	if got, ok := bindings.AssertedParam(missing); ok || got != 0 {
+		t.Fatalf("missing AssertedParam = %d/%v, want 0/false", got, ok)
+	}
+
+	duplicate := stmts[2].(*ast.FuncDefStmt).Func.ReturnTypes[0].(*ast.AssertsTypeExpr)
+	if got, ok := bindings.AssertedParam(duplicate); !ok || got != 1 {
+		t.Fatalf("duplicate runtime AssertedParam = %d/%v, want final formal 1/true", got, ok)
+	}
+
+	static := stmts[3].(*ast.TypeDefStmt).Type.(*ast.FunctionTypeExpr)
+	staticAssert := static.Returns[0].(*ast.AssertsTypeExpr)
+	if got, ok := bindings.AssertedParam(staticAssert); !ok || got != 1 {
+		t.Fatalf("static AssertedParam = %d/%v, want 1/true", got, ok)
+	}
+
+	staticMissing := stmts[4].(*ast.TypeDefStmt).Type.(*ast.FunctionTypeExpr).Returns[0].(*ast.AssertsTypeExpr)
+	if got, ok := bindings.AssertedParam(staticMissing); ok || got != 0 {
+		t.Fatalf("static missing AssertedParam = %d/%v, want 0/false", got, ok)
+	}
+
+	staticDuplicate := stmts[5].(*ast.TypeDefStmt).Type.(*ast.FunctionTypeExpr).Returns[0].(*ast.AssertsTypeExpr)
+	if got, ok := bindings.AssertedParam(staticDuplicate); !ok || got != 1 {
+		t.Fatalf("duplicate static AssertedParam = %d/%v, want final formal 1/true", got, ok)
+	}
+
+	nested := stmts[6].(*ast.TypeDefStmt).Type.(*ast.FunctionTypeExpr)
+	inner := nested.Returns[0].(*ast.FunctionTypeExpr)
+	innerAssert := inner.Returns[0].(*ast.AssertsTypeExpr)
+	if got, ok := bindings.AssertedParam(innerAssert); ok || got != 0 {
+		t.Fatalf("nested outer-formal AssertedParam = %d/%v, want 0/false", got, ok)
+	}
+
+	method := stmts[7].(*ast.FuncDefStmt).Func
+	methodAssert := method.ReturnTypes[0].(*ast.AssertsTypeExpr)
+	if got, ok := bindings.AssertedParam(methodAssert); !ok || got != 0 {
+		t.Fatalf("implicit-self AssertedParam = %d/%v, want 0/true", got, ok)
+	}
+
+	query := stmts[8].(*ast.TypeDefStmt).Type.(*ast.TypeOfExpr).Expr.(*ast.FunctionExpr)
+	queryAssert := query.ReturnTypes[0].(*ast.AssertsTypeExpr)
+	if got, ok := bindings.AssertedParam(queryAssert); !ok || got != 0 {
+		t.Fatalf("signature-only AssertedParam = %d/%v, want 0/true", got, ok)
+	}
+}
+
 func TestMethodSelfParam(t *testing.T) {
 	receiver := ident("obj")
 	selfRead := ident("self")
@@ -1654,6 +1733,229 @@ func TestEntryCaptureStreamingScalesWithBoundaryEdges(t *testing.T) {
 	}
 	if large.allocs > small.allocs*3 {
 		t.Fatalf("entry capture allocation growth is non-linear: depth256=%.0f depth512=%.0f", small.allocs, large.allocs)
+	}
+}
+
+func TestParsedAnnotationArgumentsBindAsStaticQueries(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local anchor = 1
+local function probe(value) return value end
+local scalar: number @scalar(anchor, probe(anchor)) = 0
+local elements: {number @element(anchor, probe(anchor))} = {}
+local values: {number} @array(anchor, probe(anchor)) = {}
+type Row = { value: number @field(anchor, probe(anchor)) }
+`, "annotation_args.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	if len(stmts) != 6 {
+		t.Fatalf("statements = %d, want 6", len(stmts))
+	}
+
+	anchorDecl, ok := stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("statement 0 = %T, want LocalAssignStmt", stmts[0])
+	}
+	probeDecl, ok := stmts[1].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("statement 1 = %T, want LocalAssignStmt", stmts[1])
+	}
+	scalarDecl, ok := stmts[2].(*ast.LocalAssignStmt)
+	if !ok || len(scalarDecl.Types) != 1 {
+		t.Fatalf("statement 2 = %#v, want typed local", stmts[2])
+	}
+	scalarType, ok := scalarDecl.Types[0].(*ast.PrimitiveTypeExpr)
+	if !ok || len(scalarType.Annotations) != 1 {
+		t.Fatalf("scalar type = %#v, want annotated primitive", scalarDecl.Types[0])
+	}
+	elementsDecl, ok := stmts[3].(*ast.LocalAssignStmt)
+	if !ok || len(elementsDecl.Types) != 1 {
+		t.Fatalf("statement 3 = %#v, want typed local", stmts[3])
+	}
+	elementsType, ok := elementsDecl.Types[0].(*ast.ArrayTypeExpr)
+	if !ok {
+		t.Fatalf("element type = %#v, want array", elementsDecl.Types[0])
+	}
+	elementPrimitive, ok := elementsType.Element.(*ast.PrimitiveTypeExpr)
+	if !ok || len(elementPrimitive.Annotations) != 1 {
+		t.Fatalf("array element = %#v, want annotated primitive", elementsType.Element)
+	}
+	valuesDecl, ok := stmts[4].(*ast.LocalAssignStmt)
+	if !ok || len(valuesDecl.Types) != 1 {
+		t.Fatalf("statement 4 = %#v, want typed local", stmts[4])
+	}
+	valuesType, ok := valuesDecl.Types[0].(*ast.ArrayTypeExpr)
+	if !ok || len(valuesType.ArrayAnnotations) != 1 {
+		t.Fatalf("values type = %#v, want array annotation", valuesDecl.Types[0])
+	}
+	row, ok := stmts[5].(*ast.TypeDefStmt)
+	if !ok {
+		t.Fatalf("statement 5 = %T, want TypeDefStmt", stmts[5])
+	}
+	record, ok := row.Type.(*ast.RecordTypeExpr)
+	if !ok || len(record.Fields) != 1 {
+		t.Fatalf("Row type = %#v, want single-field record", row.Type)
+	}
+	fieldType, ok := record.Fields[0].Type.(*ast.PrimitiveTypeExpr)
+	if !ok || len(fieldType.Annotations) != 1 {
+		t.Fatalf("record field type = %#v, want annotated primitive", record.Fields[0].Type)
+	}
+
+	r := BindChunk(stmts, Options{})
+	anchorID := mustLocalAt(t, r, anchorDecl, 0)
+	probeID := mustLocalAt(t, r, probeDecl, 0)
+	annotations := [][]ast.AnnotationExpr{
+		scalarType.Annotations,
+		elementPrimitive.Annotations,
+		valuesType.ArrayAnnotations,
+		fieldType.Annotations,
+	}
+	for _, group := range annotations {
+		for _, annotation := range group {
+			if len(annotation.Args) != 2 {
+				t.Fatalf("annotation %q args = %d, want 2", annotation.Name, len(annotation.Args))
+			}
+			anchorUse, ok := annotation.Args[0].(*ast.IdentExpr)
+			if !ok {
+				t.Fatalf("annotation %q argument 0 = %T, want IdentExpr", annotation.Name, annotation.Args[0])
+			}
+			call, ok := annotation.Args[1].(*ast.FuncCallExpr)
+			if !ok {
+				t.Fatalf("annotation %q argument 1 = %T, want FuncCallExpr", annotation.Name, annotation.Args[1])
+			}
+			callee, ok := call.Func.(*ast.IdentExpr)
+			if !ok || len(call.Args) != 1 {
+				t.Fatalf("annotation %q call = %#v, want probe(anchor)", annotation.Name, call)
+			}
+			callAnchor, ok := call.Args[0].(*ast.IdentExpr)
+			if !ok {
+				t.Fatalf("annotation %q call argument = %T, want IdentExpr", annotation.Name, call.Args[0])
+			}
+			if got := mustSymbol(t, r, anchorUse); got != anchorID {
+				t.Fatalf("annotation %q first argument = %d, want anchor %d", annotation.Name, got, anchorID)
+			}
+			if got := mustSymbol(t, r, callee); got != probeID {
+				t.Fatalf("annotation %q callee = %d, want probe %d", annotation.Name, got, probeID)
+			}
+			if got := mustSymbol(t, r, callAnchor); got != anchorID {
+				t.Fatalf("annotation %q call argument = %d, want anchor %d", annotation.Name, got, anchorID)
+			}
+		}
+	}
+	for _, id := range []symbol.ID{anchorID, probeID} {
+		if r.HasRead(id) {
+			t.Fatalf("annotation query recorded runtime read for symbol %d", id)
+		}
+		if occurrences := r.Occurrences(id); len(occurrences) != 0 {
+			t.Fatalf("annotation query recorded runtime occurrences for symbol %d: %#v", id, occurrences)
+		}
+	}
+	for _, closure := range r.LocalFunctionUseClosures() {
+		if closure.TargetSymbol == probeID && len(closure.DirectCalls) != 0 {
+			t.Fatalf("annotation call entered runtime direct-call evidence: %#v", closure.DirectCalls)
+		}
+	}
+}
+
+func TestParsedAnnotationArgumentsPreserveStaticQueryOrder(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local value: number @order(
+    function<T>(input: T): T return input end,
+    function<U>(input: U): U return input end
+) = 0
+`, "annotation_order.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	local, ok := stmts[0].(*ast.LocalAssignStmt)
+	if !ok || len(local.Types) != 1 {
+		t.Fatalf("statement = %#v, want typed local", stmts[0])
+	}
+	primitive, ok := local.Types[0].(*ast.PrimitiveTypeExpr)
+	if !ok || len(primitive.Annotations) != 1 || len(primitive.Annotations[0].Args) != 2 {
+		t.Fatalf("type = %#v, want two ordered annotation arguments", local.Types[0])
+	}
+	first, ok := primitive.Annotations[0].Args[0].(*ast.FunctionExpr)
+	if !ok {
+		t.Fatalf("first argument = %T, want FunctionExpr", primitive.Annotations[0].Args[0])
+	}
+	second, ok := primitive.Annotations[0].Args[1].(*ast.FunctionExpr)
+	if !ok {
+		t.Fatalf("second argument = %T, want FunctionExpr", primitive.Annotations[0].Args[1])
+	}
+	firstParam, ok := first.ParList.Types[0].(*ast.PrimitiveTypeExpr)
+	if !ok {
+		t.Fatalf("first parameter type = %T, want PrimitiveTypeExpr", first.ParList.Types[0])
+	}
+	secondParam, ok := second.ParList.Types[0].(*ast.PrimitiveTypeExpr)
+	if !ok {
+		t.Fatalf("second parameter type = %T, want PrimitiveTypeExpr", second.ParList.Types[0])
+	}
+
+	r := BindChunk(stmts, Options{})
+	firstDecl := mustPrimitiveTypeRef(t, r, firstParam)
+	secondDecl := mustPrimitiveTypeRef(t, r, secondParam)
+	if firstDecl.Name != "T" || secondDecl.Name != "U" {
+		t.Fatalf("annotation function parameter declarations = %#v, %#v; want T then U", firstDecl, secondDecl)
+	}
+	if firstDecl.ID >= secondDecl.ID {
+		t.Fatalf("static annotation query order reversed: T id %d, U id %d", firstDecl.ID, secondDecl.ID)
+	}
+	if bodyUse, ok := first.Stmts[0].(*ast.ReturnStmt).Exprs[0].(*ast.IdentExpr); ok {
+		if _, bound := r.SymbolOf(bodyUse); bound {
+			t.Fatalf("annotation function body received runtime binding evidence")
+		}
+	}
+}
+
+func TestParsedAnnotationQueryDoesNotCaptureSignatureOuter(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local anchor = 1
+local function check(value) return value end
+local function validate(value: number @proof(check(anchor))): number
+    return value
+end
+`, "annotation_capture.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	anchorDecl := stmts[0].(*ast.LocalAssignStmt)
+	checkDecl := stmts[1].(*ast.LocalAssignStmt)
+	validateDecl := stmts[2].(*ast.LocalAssignStmt)
+	validate, ok := validateDecl.Exprs[0].(*ast.FunctionExpr)
+	if !ok || validate.ParList == nil || len(validate.ParList.Types) != 1 {
+		t.Fatalf("validate = %#v, want typed function", validateDecl)
+	}
+	parameter, ok := validate.ParList.Types[0].(*ast.PrimitiveTypeExpr)
+	if !ok || len(parameter.Annotations) != 1 || len(parameter.Annotations[0].Args) != 1 {
+		t.Fatalf("parameter type = %#v, want annotated primitive", validate.ParList.Types[0])
+	}
+	call, ok := parameter.Annotations[0].Args[0].(*ast.FuncCallExpr)
+	if !ok || len(call.Args) != 1 {
+		t.Fatalf("annotation argument = %#v, want check(anchor)", parameter.Annotations[0].Args[0])
+	}
+	callee := call.Func.(*ast.IdentExpr)
+	use := call.Args[0].(*ast.IdentExpr)
+
+	r := BindChunk(stmts, Options{})
+	anchorID := mustLocalAt(t, r, anchorDecl, 0)
+	checkID := mustLocalAt(t, r, checkDecl, 0)
+	if got := mustSymbol(t, r, use); got != anchorID {
+		t.Fatalf("annotation anchor = %d, want %d", got, anchorID)
+	}
+	if got := mustSymbol(t, r, callee); got != checkID {
+		t.Fatalf("annotation callee = %d, want %d", got, checkID)
+	}
+	if r.HasRead(anchorID) || r.HasRead(checkID) {
+		t.Fatalf("annotation query entered runtime reads")
+	}
+	if captures := r.DirectCaptures(validate); len(captures) != 0 {
+		t.Fatalf("annotation query entered runtime captures: %#v", captures)
+	}
+	for _, closure := range r.LocalFunctionUseClosures() {
+		if closure.TargetSymbol == checkID && len(closure.DirectCalls) != 0 {
+			t.Fatalf("annotation call entered runtime direct calls: %#v", closure.DirectCalls)
+		}
 	}
 }
 

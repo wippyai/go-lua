@@ -634,6 +634,7 @@ func (b *binder) visitType(expr ast.TypeExpr) {
 	switch e := expr.(type) {
 	case nil:
 	case *ast.PrimitiveTypeExpr:
+		b.scheduleAnnotationArgs(e.Annotations)
 		b.bindPrimitiveTypeRef(e)
 	case *ast.SelfTypeExpr, *ast.LiteralTypeExpr:
 	case *ast.OptionalTypeExpr:
@@ -643,6 +644,7 @@ func (b *binder) visitType(expr ast.TypeExpr) {
 	case *ast.IntersectionTypeExpr:
 		b.push(bindStep{kind: stepTypeList, node: e, phase: phaseIntersection})
 	case *ast.ArrayTypeExpr:
+		b.scheduleAnnotationArgs(e.ArrayAnnotations)
 		b.scheduleType(e.Element)
 	case *ast.MapTypeExpr:
 		b.scheduleType(e.Value)
@@ -687,6 +689,20 @@ func (b *binder) visitRecordFields(step bindStep) {
 	step.index++
 	b.push(step)
 	b.scheduleType(field.Type)
+}
+
+// scheduleAnnotationArgs binds validation-annotation expressions as static
+// queries. Annotations are attached to type syntax, never executable syntax:
+// their expressions receive lexical identities without contributing runtime
+// reads, captures, or call evidence. Scheduling backwards preserves source
+// argument order under the binder's LIFO work stack without recursion.
+func (b *binder) scheduleAnnotationArgs(annotations []ast.AnnotationExpr) {
+	for annotationIndex := len(annotations) - 1; annotationIndex >= 0; annotationIndex-- {
+		args := annotations[annotationIndex].Args
+		for argumentIndex := len(args) - 1; argumentIndex >= 0; argumentIndex-- {
+			b.scheduleExpr(args[argumentIndex], exprBindTypeQuery)
+		}
+	}
 }
 
 func (b *binder) visitTypeParamConstraints(step bindStep) {
@@ -778,6 +794,7 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool) {
 		})
 	}
 	b.result.paramSlots[fn] = slots
+	b.recordFunctionAssertedParams(fn, slots)
 
 	b.push(bindStep{kind: stepFunctionLeave, node: fn})
 	b.scheduleStmtList(fn, phaseBody)
@@ -806,6 +823,7 @@ func (b *binder) enterFunctionSignature(fn *ast.FunctionExpr) {
 }
 
 func (b *binder) finishFunctionSignature(fn *ast.FunctionExpr) {
+	b.recordFunctionSignatureAssertedParams(fn)
 	b.pushTypeScope()
 	b.defineTypeParams(fn.TypeParams)
 	b.push(bindStep{kind: stepTypeScopeLeave})
@@ -871,10 +889,75 @@ func (b *binder) visitInterfaceMembers(step bindStep) {
 func (b *binder) finishFunctionType(expr *ast.FunctionTypeExpr) {
 	b.pushTypeScope()
 	b.defineTypeParams(expr.TypeParams)
+	b.recordFunctionTypeAssertedParams(expr)
 	b.push(bindStep{kind: stepTypeScopeLeave})
 	b.push(bindStep{kind: stepTypeList, node: expr, phase: phaseFunctionTypeReturns})
 	b.scheduleType(expr.Variadic)
 	b.push(bindStep{kind: stepFunctionParamTypes, node: expr})
+}
+
+func (b *binder) recordFunctionAssertedParams(fn *ast.FunctionExpr, slots []ParamSlot) {
+	if fn == nil {
+		return
+	}
+	for _, returnType := range fn.ReturnTypes {
+		assertion, ok := returnType.(*ast.AssertsTypeExpr)
+		if !ok {
+			continue
+		}
+		for ordinal := len(slots) - 1; ordinal >= 0; ordinal-- {
+			if slots[ordinal].Name == assertion.ParamName {
+				b.recordAssertedParam(assertion, ordinal)
+				break
+			}
+		}
+	}
+}
+
+func (b *binder) recordFunctionTypeAssertedParams(fn *ast.FunctionTypeExpr) {
+	if fn == nil {
+		return
+	}
+	for _, returnType := range fn.Returns {
+		assertion, ok := returnType.(*ast.AssertsTypeExpr)
+		if !ok {
+			continue
+		}
+		for ordinal := len(fn.Params) - 1; ordinal >= 0; ordinal-- {
+			if fn.Params[ordinal].Name == assertion.ParamName {
+				b.recordAssertedParam(assertion, ordinal)
+				break
+			}
+		}
+	}
+}
+
+func (b *binder) recordFunctionSignatureAssertedParams(fn *ast.FunctionExpr) {
+	if fn == nil || fn.ParList == nil {
+		return
+	}
+	for _, returnType := range fn.ReturnTypes {
+		assertion, ok := returnType.(*ast.AssertsTypeExpr)
+		if !ok {
+			continue
+		}
+		for ordinal := len(fn.ParList.Names) - 1; ordinal >= 0; ordinal-- {
+			if fn.ParList.Names[ordinal] == assertion.ParamName {
+				b.recordAssertedParam(assertion, ordinal)
+				break
+			}
+		}
+	}
+}
+
+func (b *binder) recordAssertedParam(assertion *ast.AssertsTypeExpr, ordinal int) {
+	if assertion == nil || ordinal < 0 {
+		return
+	}
+	if b.result.assertedParams == nil {
+		b.result.assertedParams = make(map[*ast.AssertsTypeExpr]int)
+	}
+	b.result.assertedParams[assertion] = ordinal
 }
 
 func (b *binder) visitFunctionParamTypes(step bindStep) {

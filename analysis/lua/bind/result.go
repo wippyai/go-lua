@@ -68,6 +68,7 @@ type Result struct {
 	typeDefParams        map[*ast.TypeDefStmt][]TypeDecl
 	functionTypeParams   map[*ast.FunctionExpr][]TypeDecl
 	methodReceiverTypes  map[*ast.FunctionExpr]TypeDecl
+	assertedParams       map[*ast.AssertsTypeExpr]int
 	qualifiedTypeRefs    map[*ast.TypeRefExpr]QualifiedTypeAlias
 	qualifiedTypeAliases map[qualifiedTypeAliasKey]QualifiedTypeAlias
 	// qualifiedTypeRoots records value-namespace roots used only by qualified
