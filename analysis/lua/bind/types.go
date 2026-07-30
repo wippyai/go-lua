@@ -151,12 +151,24 @@ func (r *Result) TypeDefParams(stmt *ast.TypeDefStmt) []TypeDecl {
 	return cloneTypeDecls(r.typeDefParams[stmt])
 }
 
-// FunctionTypeParams returns the lexical type parameters declared by fn.
-func (r *Result) FunctionTypeParams(fn *ast.FunctionExpr) []TypeDecl {
-	if r == nil || fn == nil {
+// FunctionTypeParams returns the lexical type parameters declared by a
+// function expression or static function type.
+func (r *Result) FunctionTypeParams(fn ast.PositionHolder) []TypeDecl {
+	if r == nil || !functionTypeParamNode(fn) {
 		return nil
 	}
 	return cloneTypeDecls(r.functionTypeParams[fn])
+}
+
+func functionTypeParamNode(node ast.PositionHolder) bool {
+	switch node := node.(type) {
+	case *ast.FunctionExpr:
+		return node != nil
+	case *ast.FunctionTypeExpr:
+		return node != nil
+	default:
+		return false
+	}
 }
 
 // MethodReceiverType returns the type declaration that types the implicit

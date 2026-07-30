@@ -69,7 +69,7 @@ type Result struct {
 	typeDefDecls         map[*ast.TypeDefStmt]TypeDecl
 	interfaceDecls       map[*ast.InterfaceDefStmt]TypeDecl
 	typeDefParams        map[*ast.TypeDefStmt][]TypeDecl
-	functionTypeParams   map[*ast.FunctionExpr][]TypeDecl
+	functionTypeParams   map[ast.PositionHolder][]TypeDecl
 	methodReceiverTypes  map[*ast.FunctionExpr]TypeDecl
 	assertedParams       map[*ast.AssertsTypeExpr]int
 	qualifiedTypeRefs    map[*ast.TypeRefExpr]QualifiedTypeAlias
@@ -118,7 +118,7 @@ func newResult(opts Options) *Result {
 		typeDefDecls:          make(map[*ast.TypeDefStmt]TypeDecl),
 		interfaceDecls:        make(map[*ast.InterfaceDefStmt]TypeDecl),
 		typeDefParams:         make(map[*ast.TypeDefStmt][]TypeDecl),
-		functionTypeParams:    make(map[*ast.FunctionExpr][]TypeDecl),
+		functionTypeParams:    make(map[ast.PositionHolder][]TypeDecl),
 		methodReceiverTypes:   make(map[*ast.FunctionExpr]TypeDecl),
 		qualifiedTypeRefs:     make(map[*ast.TypeRefExpr]QualifiedTypeAlias),
 		qualifiedTypeAliases:  make(map[qualifiedTypeAliasKey]QualifiedTypeAlias),

@@ -935,7 +935,10 @@ func (b *binder) visitInterfaceMembers(step bindStep) {
 
 func (b *binder) finishFunctionType(expr *ast.FunctionTypeExpr) {
 	b.pushTypeScope()
-	b.defineTypeParams(expr.TypeParams)
+	fnTypeParams := b.defineTypeParams(expr.TypeParams)
+	if len(fnTypeParams) > 0 {
+		b.result.functionTypeParams[expr] = fnTypeParams
+	}
 	b.recordFunctionTypeAssertedParams(expr)
 	b.push(bindStep{kind: stepTypeScopeLeave})
 	b.push(bindStep{kind: stepTypeList, node: expr, phase: phaseFunctionTypeReturns})

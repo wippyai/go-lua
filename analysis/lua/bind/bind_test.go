@@ -1503,6 +1503,30 @@ func TestFunctionTypeParamsBindTypeRefs(t *testing.T) {
 	}
 }
 
+func TestStaticFunctionTypeParamsBindTypeRefs(t *testing.T) {
+	paramRef := typeRef("T")
+	returnRef := typeRef("T")
+	fn := &ast.FunctionTypeExpr{
+		TypeParams: []ast.TypeParamExpr{{Name: "T"}},
+		Params:     []ast.FunctionParamExpr{{Name: "value", Type: paramRef}},
+		Returns:    []ast.TypeExpr{returnRef},
+	}
+
+	r := BindChunk([]ast.Stmt{&ast.TypeDefStmt{Name: "Identity", Type: fn}}, Options{})
+	paramDecl := mustTypeRef(t, r, paramRef)
+	returnDecl := mustTypeRef(t, r, returnRef)
+	if paramDecl.Kind != TypeDeclParam {
+		t.Fatalf("param ref kind = %v, want TypeDeclParam", paramDecl.Kind)
+	}
+	if returnDecl.ID != paramDecl.ID {
+		t.Fatalf("return ref type param = %#v, want same declaration %#v", returnDecl, paramDecl)
+	}
+	params := r.FunctionTypeParams(fn)
+	if len(params) != 1 || params[0].ID != paramDecl.ID {
+		t.Fatalf("FunctionTypeParams = %#v, want %#v", params, paramDecl)
+	}
+}
+
 func TestBindChunkAssignsDeterministicSymbolIDsAcrossIndependentBinds(t *testing.T) {
 	source := `
 local function alpha(value: number): number
