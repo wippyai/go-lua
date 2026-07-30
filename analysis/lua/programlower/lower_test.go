@@ -1,7 +1,6 @@
 package programlower_test
 
 import (
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,25 +28,78 @@ func parseBindLower(t *testing.T, source string) *program.Program {
 	return lowered
 }
 
+func bodyRoots(t *testing.T, p *program.Program, body program.Term) []program.Term {
+	t.Helper()
+	count, ok := p.BodyLen(body)
+	if !ok {
+		t.Fatalf("%v is not a Body", body)
+	}
+	roots := make([]program.Term, count)
+	for i := range roots {
+		var ok bool
+		roots[i], ok = p.Root(body, i)
+		if !ok {
+			t.Fatalf("Root(%v, %d) failed", body, i)
+		}
+	}
+	return roots
+}
+
+func valuesTail(t *testing.T, p *program.Program, values program.Term) program.Term {
+	t.Helper()
+	_, tail, ok := p.Values(values)
+	if !ok {
+		t.Fatalf("%v is not Values", values)
+	}
+	return tail
+}
+
+func valueAt(t *testing.T, p *program.Program, values program.Term, index int) program.Term {
+	t.Helper()
+	value, ok := p.Value(values, index)
+	if !ok {
+		t.Fatalf("Value(%v, %d) failed", values, index)
+	}
+	return value
+}
+
+func boundCell(t *testing.T, p *program.Program, bind program.Term, index int) program.Term {
+	t.Helper()
+	cell, ok := p.BoundCell(bind, index)
+	if !ok {
+		t.Fatalf("BoundCell(%v, %d) failed", bind, index)
+	}
+	return cell
+}
+
+func functionCapture(t *testing.T, p *program.Program, function program.Term, index int) (program.Term, program.Term) {
+	t.Helper()
+	inner, outer, ok := p.FunctionCapture(function, index)
+	if !ok {
+		t.Fatalf("FunctionCapture(%v, %d) failed", function, index)
+	}
+	return inner, outer
+}
+
 func TestEmptyChunkHasOneCanonicalEntry(t *testing.T) {
 	p := parseBindLower(t, "")
 	entry, ok := p.Entry()
 	if !ok {
 		t.Fatal("empty chunk has no Entry")
 	}
-	roots, ok := p.AppendBody(entry, nil)
-	if !ok || len(roots) != 1 {
-		t.Fatalf("empty Entry roots = %v, %v; want one Normal outcome", roots, ok)
+	roots := bodyRoots(t, p, entry)
+	if len(roots) != 1 {
+		t.Fatalf("empty Entry roots = %v; want one Normal outcome", roots)
 	}
-	values, ok := p.Normal(roots[0])
-	if !ok {
+	owner, values, ok := p.Normal(roots[0])
+	if !ok || owner != entry {
 		t.Fatalf("empty Entry root is not Normal: %v", roots[0])
 	}
 	if count, ok := p.ValuesLen(values); !ok || count != 0 {
 		t.Fatalf("empty Entry ValuesLen = %d, %v", count, ok)
 	}
-	if tail, ok := p.ValuesTail(values); !ok || tail != 0 {
-		t.Fatalf("empty Entry tail = %v, %v", tail, ok)
+	if tail := valuesTail(t, p, values); tail != 0 {
+		t.Fatalf("empty Entry tail = %v", tail)
 	}
 }
 
@@ -59,67 +111,55 @@ x = 3
 return x, t
 `)
 
-	var bodies, cells, reads, binds, assigns, tables, lenses, returns int
+	var tableTerm, returnValues program.Term
 	rootBody, ok := p.Entry()
 	if !ok {
 		t.Fatal("Program has no Entry")
 	}
-	var tableTerm, returnValues program.Term
 	var cellTerms, bindTerms []program.Term
-	for i := 0; i < p.TermCount(); i++ {
-		term, ok := p.TermAt(i)
+	for i := 0; i < p.CellCount(); i++ {
+		cell, ok := p.CellAt(i)
 		if !ok {
-			t.Fatalf("TermAt(%d) failed", i)
+			t.Fatalf("CellAt(%d) failed", i)
 		}
-		if _, ok := p.BodyLen(term); ok {
-			bodies++
+		cellTerms = append(cellTerms, cell)
+	}
+	for i := 0; i < p.BindCount(); i++ {
+		binding, ok := p.BindAt(i)
+		if !ok {
+			t.Fatalf("BindAt(%d) failed", i)
 		}
-		if _, ok := p.Cell(term); ok {
-			cells++
-			cellTerms = append(cellTerms, term)
-		}
-		if _, ok := p.Read(term); ok {
-			reads++
-		}
-		if _, ok := p.BindLen(term); ok {
-			binds++
-			bindTerms = append(bindTerms, term)
-		}
-		if _, ok := p.AssignLen(term); ok {
-			assigns++
-		}
-		if p.Table(term) {
-			tables++
-			tableTerm = term
-		}
-		if _, _, dynamic, ok := p.Lens(term); ok {
-			_ = dynamic
-			lenses++
-		}
-		if values, ok := p.Return(term); ok {
-			returns++
-			returnValues = values
-		}
-		if value, ok := p.Integer(term); ok && value == 1 {
+		bindTerms = append(bindTerms, binding)
+	}
+	if count := p.IntegerCount(); count != 3 {
+		t.Fatalf("IntegerCount = %d, want 3", count)
+	}
+	for i := 0; i < p.IntegerCount(); i++ {
+		term, _ := p.IntegerAt(i)
+		_, value, ok := p.Integer(term)
+		if ok && value == 1 {
 			span, ok := p.Span(term)
 			if !ok || span.File != "fixture.lua" || span.StartLine != 2 {
 				t.Fatalf("literal span = %#v, %v", span, ok)
 			}
 		}
 	}
-	if bodies != 1 || cells != 2 || reads != 4 || binds != 2 || assigns != 1 || tables != 1 {
-		t.Fatalf("counts: bodies=%d cells=%d reads=%d binds=%d assigns=%d tables=%d",
-			bodies, cells, reads, binds, assigns, tables)
+	if p.BodyCount() != 1 || p.CellCount() != 2 || p.ReadCount() != 4 || p.BindCount() != 2 || p.AssignCount() != 1 || p.TableCount() != 1 {
+		t.Fatalf("typed family counts: bodies=%d cells=%d reads=%d binds=%d assigns=%d tables=%d",
+			p.BodyCount(), p.CellCount(), p.ReadCount(), p.BindCount(), p.AssignCount(), p.TableCount())
 	}
-	if lenses != 0 {
-		t.Fatalf("constructor minted %d Lens terms; want none", lenses)
+	if p.LensExactCount()+p.LensKeyCount() != 0 {
+		t.Fatalf("constructor minted lenses: exact=%d dynamic=%d", p.LensExactCount(), p.LensKeyCount())
 	}
-	if returns != 1 {
-		t.Fatalf("returns = %d", returns)
+	if p.ReturnCount() != 1 {
+		t.Fatalf("ReturnCount = %d", p.ReturnCount())
 	}
-	roots, ok := p.AppendBody(rootBody, nil)
-	if !ok || len(roots) != 4 {
-		t.Fatalf("root Body = %v, %v; want four statement roots", roots, ok)
+	tableTerm, _ = p.TableAt(0)
+	returnTerm, _ := p.ReturnAt(0)
+	_, returnValues, _ = p.Return(returnTerm)
+	roots := bodyRoots(t, p, rootBody)
+	if len(roots) != 4 {
+		t.Fatalf("root Body = %v; want four statement roots", roots)
 	}
 	if _, ok := p.BindLen(roots[0]); !ok {
 		t.Fatalf("root 0 is not Bind: %v", roots[0])
@@ -130,17 +170,13 @@ return x, t
 	if _, ok := p.AssignLen(roots[2]); !ok {
 		t.Fatalf("root 2 is not Assign: %v", roots[2])
 	}
-	if _, ok := p.Return(roots[3]); !ok {
+	if _, _, ok := p.Return(roots[3]); !ok {
 		t.Fatalf("root 3 is not Return: %v", roots[3])
 	}
 	for i, binding := range bindTerms {
-		values, ok := p.BindValues(binding)
-		if !ok {
-			t.Fatalf("BindValues(%d) failed", i)
-		}
-		order, ok := p.AppendOrder(binding, nil)
-		if !ok || len(order) != 1 || order[0] != values {
-			t.Fatalf("Bind %d order = %v, %v; want only RHS Values %v", i, order, ok, values)
+		owner, values, ok := p.Bind(binding)
+		if !ok || owner != rootBody || values == 0 {
+			t.Fatalf("Bind %d = owner %v values %v ok %v", i, owner, values, ok)
 		}
 	}
 	for i, cell := range cellTerms {
@@ -156,65 +192,44 @@ return x, t
 	if count, ok := p.TableLen(tableTerm); !ok || count != 3 {
 		t.Fatalf("TableLen = %d, %v; want three direct fields", count, ok)
 	}
-	for i, wantKind := range []program.FieldKind{program.FieldExact, program.FieldExact, program.FieldKey} {
-		key, values, kind, ok := p.TableAt(tableTerm, i)
-		if !ok || key == 0 || values == 0 || kind != wantKind {
-			t.Fatalf("TableAt(%d) = key %v values %v kind %v ok %v", i, key, values, kind, ok)
+	for i, wantKind := range []program.FieldKind{program.FieldName, program.FieldExact, program.FieldKey} {
+		source, values, kind, _, ok := p.Field(tableTerm, i)
+		if !ok || source == 0 || values == 0 || kind != wantKind {
+			t.Fatalf("Field(%d) = source %v values %v kind %v ok %v", i, source, values, kind, ok)
 		}
 		if count, ok := p.ValuesLen(values); !ok || count != 1 {
 			t.Fatalf("field %d ValuesLen = %d, %v", i, count, ok)
 		}
 		if i == 0 {
-			if got, ok := p.String(key); !ok || got != "name" {
+			_, got, _, ok := p.Name(source)
+			if !ok || got != "name" {
 				t.Fatalf("field 0 key = %q, %v", got, ok)
 			}
 		}
 		if i == 1 {
-			if got, ok := p.Integer(key); !ok || got != 2 {
+			_, got, ok := p.Integer(source)
+			if !ok || got != 2 {
 				t.Fatalf("field 1 key = %d, %v", got, ok)
 			}
-			if span, ok := p.Span(key); !ok || span.StartLine != 3 || span.StartCol != 23 {
+			if span, ok := p.Span(source); !ok || span.StartLine != 3 || span.StartCol != 23 {
 				t.Fatalf("field 1 key span = %#v, %v; want bracket key token", span, ok)
 			}
 		}
 		if i == 2 {
-			if _, ok := p.Read(key); !ok {
-				t.Fatalf("dynamic field key is not a bound Read: %v", key)
+			if _, _, ok := p.Read(source); !ok {
+				t.Fatalf("dynamic field key is not a bound Read: %v", source)
 			}
 		}
-	}
-	seen := map[program.Term]bool{tableTerm: true}
-	work := []program.Term{tableTerm}
-	for len(work) != 0 {
-		current := work[len(work)-1]
-		work = work[:len(work)-1]
-		count, ok := p.OrderCount(current)
-		if !ok {
-			continue
-		}
-		for i := 0; i < count; i++ {
-			child, ok := p.OrderAt(current, i)
-			if !ok {
-				t.Fatalf("OrderAt(%v, %d) failed", current, i)
-			}
-			if child == tableTerm {
-				t.Fatal("Table constructor order reaches its own allocation")
-			}
-			if !seen[child] {
-				seen[child] = true
-				work = append(work, child)
-			}
+		if source == tableTerm || values == tableTerm {
+			t.Fatal("Table constructor contains its own allocation identity")
 		}
 	}
 	if count, ok := p.ValuesLen(returnValues); !ok || count != 2 {
 		t.Fatalf("return Values = %d, %v", count, ok)
 	}
 	for i := 0; i < 2; i++ {
-		value, ok := p.ValuesAt(returnValues, i)
-		if !ok {
-			t.Fatalf("return ValuesAt(%d) failed", i)
-		}
-		if _, ok := p.Read(value); !ok {
+		value := valueAt(t, p, returnValues, i)
+		if _, _, ok := p.Read(value); !ok {
 			t.Fatalf("return value %d is not a bound Read", i)
 		}
 	}
@@ -232,29 +247,26 @@ end
 	if !ok {
 		t.Fatal("Program has no Entry")
 	}
-	var cells []program.Term
-	for i := 0; i < p.TermCount(); i++ {
-		term, _ := p.TermAt(i)
-		if _, ok := p.Cell(term); ok {
-			cells = append(cells, term)
-		}
+	cells := make([]program.Term, p.CellCount())
+	for i := range cells {
+		cells[i], _ = p.CellAt(i)
 	}
 	if len(cells) != 2 {
 		t.Fatalf("cells = %d", len(cells))
 	}
-	outerRoots, ok := p.AppendBody(entry, nil)
-	if !ok || len(outerRoots) != 2 {
-		t.Fatalf("outer Body = %v, %v; want Bind then child Body", outerRoots, ok)
+	outerRoots := bodyRoots(t, p, entry)
+	if len(outerRoots) != 2 {
+		t.Fatalf("outer Body = %v; want Bind then child Body", outerRoots)
 	}
 	innerBody := outerRoots[1]
 	if _, ok := p.BodyLen(innerBody); !ok || innerBody == entry {
 		t.Fatalf("nested Body = %v, %v; Entry = %v", innerBody, ok, entry)
 	}
-	innerRoots, ok := p.AppendBody(innerBody, nil)
-	if !ok || len(innerRoots) != 2 {
-		t.Fatalf("inner Body = %v, %v; want Bind then Return", innerRoots, ok)
+	innerRoots := bodyRoots(t, p, innerBody)
+	if len(innerRoots) != 2 {
+		t.Fatalf("inner Body = %v; want Bind then Return", innerRoots)
 	}
-	returnValues, ok := p.Return(innerRoots[1])
+	_, returnValues, ok := p.Return(innerRoots[1])
 	if !ok {
 		t.Fatalf("nested root is not Return: %v", innerRoots[1])
 	}
@@ -264,27 +276,109 @@ end
 	if owner, ok := p.Cell(cells[1]); !ok || owner != innerBody {
 		t.Fatalf("inner Cell owner = %v, %v; want %v", owner, ok, innerBody)
 	}
-	value, ok := p.ValuesAt(returnValues, 0)
-	if !ok {
-		t.Fatal("missing return value")
-	}
-	cell, ok := p.Read(value)
+	value := valueAt(t, p, returnValues, 0)
+	_, cell, ok := p.Read(value)
 	if !ok || cell != cells[1] || cell == cells[0] {
 		t.Fatalf("shadowed Read cell = %v, want inner %v", cell, cells[1])
 	}
 }
 
+func TestLocalInitializerReadsOuterBindingBeforeNewCellExists(t *testing.T) {
+	p := parseBindLower(t, `local x = 1
+local x = x
+return x`)
+	roots := entryRoots(t, p)
+	if len(roots) != 3 {
+		t.Fatalf("Entry roots = %v, want two Bind roots and Return", roots)
+	}
+	outer := boundCell(t, p, roots[0], 0)
+	inner := boundCell(t, p, roots[1], 0)
+	if outer == inner {
+		t.Fatal("shadowing declaration reused its outer Cell")
+	}
+	_, values, ok := p.Bind(roots[1])
+	if !ok {
+		t.Fatal("second root is not Bind")
+	}
+	read := valueAt(t, p, values, 0)
+	_, source, ok := p.Read(read)
+	if !ok || source != outer || source == inner {
+		t.Fatalf("initializer Read source = %v, want outer Cell %v", source, outer)
+	}
+}
+
+func TestParallelAttributeAssignmentPreservesBothTargetLenses(t *testing.T) {
+	p := parseBindLower(t, `local t = {}
+local k = 1
+t[k], t[2] = 3, 4`)
+	roots := entryRoots(t, p)
+	if len(roots) != 4 {
+		t.Fatalf("Entry roots = %v, want two Bind roots, Assign, and terminal Normal", roots)
+	}
+	assign := roots[2]
+	if _, _, ok := p.Normal(roots[3]); !ok {
+		t.Fatal("nonterminal Entry has no Normal outcome")
+	}
+	if count, ok := p.AssignLen(assign); !ok || count != 2 {
+		t.Fatalf("AssignLen = %d, %v; want 2", count, ok)
+	}
+	first := mustTarget(t, p, assign, 0)
+	second := mustTarget(t, p, assign, 1)
+	_, _, firstSource, firstKind, _, ok := p.Lens(first)
+	if !ok || firstKind != program.FieldKey || firstSource == 0 {
+		t.Fatalf("first target Lens = source %v kind %v ok %v", firstSource, firstKind, ok)
+	}
+	_, _, secondSource, secondKind, _, ok := p.Lens(second)
+	if !ok || secondKind != program.FieldExact || secondSource == 0 {
+		t.Fatalf("second target Lens = source %v kind %v ok %v", secondSource, secondKind, ok)
+	}
+}
+
+func mustTarget(t *testing.T, p *program.Program, assign program.Term, index int) program.Term {
+	t.Helper()
+	target, ok := p.Target(assign, index)
+	if !ok {
+		t.Fatalf("Target(%v, %d) failed", assign, index)
+	}
+	return target
+}
+
+func TestBodyCompletionIsNormalOnlyForNonterminalBodies(t *testing.T) {
+	p := parseBindLower(t, `do local x = 1 end`)
+	roots := entryRoots(t, p)
+	if len(roots) != 2 {
+		t.Fatalf("Entry roots = %v, want child Body then Normal", roots)
+	}
+	child := roots[0]
+	childRoots := bodyRoots(t, p, child)
+	if len(childRoots) != 2 {
+		t.Fatalf("do Body roots = %v, want Bind then Normal", childRoots)
+	}
+	if _, _, ok := p.Normal(childRoots[1]); !ok {
+		t.Fatal("nonterminal child Body has no Normal outcome")
+	}
+	if _, _, ok := p.Normal(roots[1]); !ok {
+		t.Fatal("nonterminal Entry has no Normal outcome")
+	}
+
+	p = parseBindLower(t, `do return 1 end`)
+	child = entryRoots(t, p)[0]
+	childRoots = bodyRoots(t, p, child)
+	if len(childRoots) != 1 {
+		t.Fatalf("terminal do Body roots = %v, want only Return", childRoots)
+	}
+	if _, _, ok := p.Return(childRoots[0]); !ok {
+		t.Fatal("terminal child Body did not retain Return")
+	}
+}
+
 func TestSyntheticListKeyHasGeneratedCoordinates(t *testing.T) {
 	p := parseBindLower(t, `return {"first"}`)
-	var table program.Term
-	for i := 0; i < p.TermCount(); i++ {
-		term, _ := p.TermAt(i)
-		if p.Table(term) {
-			table = term
-			break
-		}
+	if p.TableCount() != 1 {
+		t.Fatalf("TableCount = %d, want 1", p.TableCount())
 	}
-	key, _, kind, ok := p.TableAt(table, 0)
+	table, _ := p.TableAt(0)
+	key, _, kind, _, ok := p.Field(table, 0)
 	if !ok {
 		t.Fatal("missing table field")
 	}
@@ -295,6 +389,46 @@ func TestSyntheticListKeyHasGeneratedCoordinates(t *testing.T) {
 	if !ok || span.File != "fixture.lua" ||
 		span.StartLine != 0 || span.StartCol != 0 || span.EndLine != 0 || span.EndCol != 0 {
 		t.Fatalf("synthetic key span = %#v, %v", span, ok)
+	}
+}
+
+func TestInterleavedListKeysKeepOrdinalsAndOnlyFinalListStaysOpen(t *testing.T) {
+	p := parseBindLower(t, `local f
+return {1, named = 2, 3, f()}`)
+	roots := entryRoots(t, p)
+	_, returned, ok := p.Return(roots[1])
+	if !ok {
+		t.Fatal("Entry return missing")
+	}
+	table := valueAt(t, p, returned, 0)
+	if count, ok := p.TableLen(table); !ok || count != 4 {
+		t.Fatalf("TableLen = %d, %v; want 4", count, ok)
+	}
+	for i, want := range []struct {
+		kind    program.FieldKind
+		ordinal int64
+	}{
+		{program.FieldList, 1},
+		{program.FieldName, 0},
+		{program.FieldList, 2},
+		{program.FieldList, 3},
+	} {
+		source, values, kind, _, ok := p.Field(table, i)
+		if !ok || kind != want.kind {
+			t.Fatalf("Field(%d) kind = %v, ok %v; want %v", i, kind, ok, want.kind)
+		}
+		if want.kind == program.FieldList {
+			_, ordinal, _, ok := p.List(source)
+			if !ok || ordinal != want.ordinal {
+				t.Fatalf("Field(%d) list ordinal = %d, %v; want %d", i, ordinal, ok, want.ordinal)
+			}
+		}
+		if i != 3 && valuesTail(t, p, values) != 0 {
+			t.Fatalf("non-final field %d retained an open tail", i)
+		}
+		if i == 3 && valuesTail(t, p, values) == 0 {
+			t.Fatal("final list field did not retain its open call tail")
+		}
 	}
 }
 
@@ -326,16 +460,9 @@ func TestUnknownTableKeySyntaxFailsExplicitly(t *testing.T) {
 
 func TestNilKeysRemainExactAuthoredOccurrences(t *testing.T) {
 	p := parseBindLower(t, `return {[nil] = 1}`)
-	var table program.Term
-	for i := 0; i < p.TermCount(); i++ {
-		term, _ := p.TermAt(i)
-		if p.Table(term) {
-			table = term
-			break
-		}
-	}
-	key, _, kind, ok := p.TableAt(table, 0)
-	if !ok || kind != program.FieldExact || !p.Nil(key) {
+	table, _ := p.TableAt(0)
+	key, _, kind, _, ok := p.Field(table, 0)
+	if _, nilKey := p.Nil(key); !ok || kind != program.FieldExact || !nilKey {
 		t.Fatalf("nil table field = key %v kind %v ok %v", key, kind, ok)
 	}
 
@@ -344,19 +471,13 @@ local t = {}
 t[nil] = 1
 return t
 `)
-	var lens program.Term
-	for i := 0; i < p.TermCount(); i++ {
-		term, _ := p.TermAt(i)
-		if _, _, _, ok := p.Lens(term); ok {
-			if lens != 0 {
-				t.Fatal("nil target minted more than one Lens")
-			}
-			lens = term
-		}
+	if p.LensExactCount() != 1 || p.LensKeyCount() != 0 {
+		t.Fatalf("nil target lenses exact=%d dynamic=%d", p.LensExactCount(), p.LensKeyCount())
 	}
-	_, key, dynamic, ok := p.Lens(lens)
-	if !ok || dynamic || !p.Nil(key) {
-		t.Fatalf("nil assignment Lens = key %v dynamic %v ok %v", key, dynamic, ok)
+	lens, _ := p.LensExactAt(0)
+	_, _, key, kind, _, ok = p.Lens(lens)
+	if _, nilKey := p.Nil(key); !ok || kind != program.FieldExact || !nilKey {
+		t.Fatalf("nil assignment Lens = key %v kind %v ok %v", key, kind, ok)
 	}
 }
 
@@ -371,23 +492,17 @@ func loweredReturnValue(t *testing.T, source string) (*program.Program, program.
 	for len(bodies) != 0 {
 		body := bodies[len(bodies)-1]
 		bodies = bodies[:len(bodies)-1]
-		roots, ok := p.AppendBody(body, nil)
-		if !ok {
-			t.Fatalf("Entry-reachable term is not Body: %v", body)
-		}
+		roots := bodyRoots(t, p, body)
 		for _, root := range roots {
 			if _, ok := p.BodyLen(root); ok {
 				bodies = append(bodies, root)
 				continue
 			}
-			values, ok := p.Return(root)
+			_, values, ok := p.Return(root)
 			if !ok {
 				continue
 			}
-			value, ok := p.ValuesAt(values, 0)
-			if !ok {
-				t.Fatal("Return has no first value")
-			}
+			value := valueAt(t, p, values, 0)
 			return p, value
 		}
 	}
@@ -408,13 +523,9 @@ func TestEveryClosedUnaryOperatorLowers(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.source, func(t *testing.T) {
 			p, term := loweredReturnValue(t, test.source)
-			op, operand, ok := p.Unary(term)
+			_, op, operand, ok := p.Unary(term)
 			if !ok || op != test.want || operand == 0 {
 				t.Fatalf("Unary = op %v operand %v ok %v", op, operand, ok)
-			}
-			order, ok := p.AppendOrder(term, nil)
-			if !ok || !reflect.DeepEqual(order, []program.Term{operand}) {
-				t.Fatalf("Unary order = %v, %v", order, ok)
 			}
 		})
 	}
@@ -448,13 +559,9 @@ func TestEveryClosedBinaryOperatorLowers(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.source, func(t *testing.T) {
 			p, term := loweredReturnValue(t, test.source)
-			op, left, right, ok := p.Binary(term)
+			_, op, left, right, ok := p.Binary(term)
 			if !ok || op != test.want || left == 0 || right == 0 {
 				t.Fatalf("Binary = op %v left %v right %v ok %v", op, left, right, ok)
-			}
-			order, ok := p.AppendOrder(term, nil)
-			if !ok || !reflect.DeepEqual(order, []program.Term{left, right}) {
-				t.Fatalf("Binary order = %v, %v", order, ok)
 			}
 			span, ok := p.Span(term)
 			if !ok || span.File != "fixture.lua" || span.StartLine != 1 ||
@@ -475,16 +582,12 @@ func TestLogicalSelectionKeepsRightSideConditional(t *testing.T) {
 	} {
 		t.Run(test.source, func(t *testing.T) {
 			p, term := loweredReturnValue(t, test.source)
-			op, left, right, ok := p.Select(term)
+			_, op, left, right, ok := p.Select(term)
 			if !ok || op != test.want || left == 0 || right == 0 {
 				t.Fatalf("Select = op %v left %v right %v ok %v", op, left, right, ok)
 			}
-			if _, _, _, ok := p.Binary(right); !ok {
+			if _, _, _, _, ok := p.Binary(right); !ok {
 				t.Fatalf("conditional right operand is not retained Binary: %v", right)
-			}
-			order, ok := p.AppendOrder(term, nil)
-			if !ok || !reflect.DeepEqual(order, []program.Term{left}) {
-				t.Fatalf("Select eager order = %v, %v; want only left %v", order, ok, left)
 			}
 		})
 	}
@@ -496,38 +599,34 @@ func TestAttributeReadsPreserveExactAndDynamicLenses(t *testing.T) {
 	if !ok {
 		t.Fatal("Program has no Entry")
 	}
-	roots, ok := p.AppendBody(entry, nil)
-	if !ok || len(roots) != 3 {
-		t.Fatalf("Entry roots = %v, %v", roots, ok)
+	roots := bodyRoots(t, p, entry)
+	if len(roots) != 3 {
+		t.Fatalf("Entry roots = %v", roots)
 	}
-	returned, ok := p.Return(roots[2])
+	_, returned, ok := p.Return(roots[2])
 	if !ok {
 		t.Fatalf("Entry root 2 is not Return: %v", roots[2])
 	}
-	for i, wantDynamic := range []bool{false, false, true} {
-		read, ok := p.ValuesAt(returned, i)
-		if !ok {
-			t.Fatalf("return ValuesAt(%d) failed", i)
-		}
-		lens, ok := p.Read(read)
+	for i, wantKind := range []program.FieldKind{program.FieldName, program.FieldExact, program.FieldKey} {
+		read := valueAt(t, p, returned, i)
+		_, lens, ok := p.Read(read)
 		if !ok {
 			t.Fatalf("return value %d is not Read", i)
 		}
-		base, key, dynamic, ok := p.Lens(lens)
-		if !ok || base == 0 || key == 0 || dynamic != wantDynamic {
-			t.Fatalf("Lens %d = base %v key %v dynamic %v ok %v", i, base, key, dynamic, ok)
+		_, base, key, kind, _, ok := p.Lens(lens)
+		if !ok || base == 0 || key == 0 || kind != wantKind {
+			t.Fatalf("Lens %d = base %v key %v kind %v ok %v", i, base, key, kind, ok)
 		}
 		if i == 0 {
-			if value, ok := p.String(key); !ok || value != "name" {
+			_, value, _, ok := p.Name(key)
+			if !ok || value != "name" {
 				t.Fatalf("dot key = %q, %v", value, ok)
 			}
 		}
-		if i == 1 && !p.Nil(key) {
-			t.Fatalf("nil index key = %v", key)
-		}
-		order, ok := p.AppendOrder(read, nil)
-		if !ok || !reflect.DeepEqual(order, []program.Term{lens}) {
-			t.Fatalf("Read %d order = %v, %v", i, order, ok)
+		if i == 1 {
+			if _, ok := p.Nil(key); !ok {
+				t.Fatalf("nil index key = %v", key)
+			}
 		}
 		span, ok := p.Span(read)
 		if !ok || span.StartLine != 3 || span.StartCol == 0 || span.EndCol == 0 {
@@ -576,6 +675,77 @@ func TestUnsupportedSyntaxIsHonest(t *testing.T) {
 	if _, err := programlower.Lower("unsupported.lua", stmts, nil); err == nil {
 		t.Fatal("nil binding result was accepted")
 	}
+	for _, source := range []string{
+		`if true then end`,
+		`while false do end`,
+		`repeat until true`,
+		`for i = 1, 1 do end`,
+	} {
+		stmts, err := parse.ParseString(source, "unsupported-control.lua")
+		if err != nil {
+			t.Fatalf("parse %q: %v", source, err)
+		}
+		if _, err := programlower.Lower("unsupported-control.lua", stmts, bind.BindChunk(stmts, bind.Options{})); err == nil {
+			t.Fatalf("unsupported control flow lowered: %q", source)
+		}
+	}
+	if _, err := programlower.Lower("malformed.lua", []ast.Stmt{nil}, bind.BindChunk(nil, bind.Options{})); err == nil {
+		t.Fatal("nil statement was accepted")
+	}
+}
+
+func TestTypedNilASTNodesFailClosed(t *testing.T) {
+	emptyBinding := bind.BindChunk(nil, bind.Options{})
+	for _, stmts := range [][]ast.Stmt{
+		{(*ast.LocalAssignStmt)(nil)},                                // supported statement
+		{(*ast.WhileStmt)(nil)},                                      // unsupported statement
+		{&ast.ReturnStmt{Exprs: []ast.Expr{(*ast.NumberExpr)(nil)}}}, // supported expression
+		{&ast.ReturnStmt{Exprs: []ast.Expr{(*ast.CastExpr)(nil)}}},   // unsupported expression
+	} {
+		assertLowerFailsClosed(t, stmts, emptyBinding)
+	}
+}
+
+func TestMalformedNestedASTNodesFailClosed(t *testing.T) {
+	number := func() ast.Expr { return &ast.NumberExpr{Value: "1"} }
+	var absentExpr ast.Expr = (*ast.NumberExpr)(nil)
+	var absentStmt ast.Stmt = (*ast.ReturnStmt)(nil)
+	cases := [][]ast.Stmt{
+		{&ast.ReturnStmt{Exprs: []ast.Expr{&ast.ArithmeticOpExpr{Operator: "+", Lhs: absentExpr, Rhs: number()}}}},
+		{&ast.ReturnStmt{Exprs: []ast.Expr{&ast.UnaryNotOpExpr{Expr: absentExpr}}}},
+		{&ast.ReturnStmt{Exprs: []ast.Expr{&ast.AttrGetExpr{Object: absentExpr, Key: number(), KeySyntax: ast.AttrKeyIndex}}}},
+		{&ast.ReturnStmt{Exprs: []ast.Expr{&ast.AttrGetExpr{Object: number(), Key: absentExpr, KeySyntax: ast.AttrKeyIndex}}}},
+		{&ast.ReturnStmt{Exprs: []ast.Expr{&ast.TableExpr{Fields: []*ast.Field{{Value: absentExpr}}}}}},
+		{&ast.ReturnStmt{Exprs: []ast.Expr{&ast.TableExpr{Fields: []*ast.Field{{Key: absentExpr, KeySyntax: ast.AttrKeyIndex, Value: number()}}}}}},
+		{&ast.ReturnStmt{Exprs: []ast.Expr{&ast.FuncCallExpr{Func: absentExpr}}}},
+		{&ast.ReturnStmt{Exprs: []ast.Expr{&ast.FuncCallExpr{Func: number(), Args: []ast.Expr{absentExpr}}}}},
+		{&ast.FuncCallStmt{Expr: (*ast.FuncCallExpr)(nil)}},
+		{&ast.DoBlockStmt{Stmts: []ast.Stmt{absentStmt}}},
+	}
+	for _, stmts := range cases {
+		assertLowerFailsClosed(t, stmts, bind.BindChunk(nil, bind.Options{}))
+	}
+
+	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{&ast.ReturnStmt{}}}
+	stmts := []ast.Stmt{&ast.ReturnStmt{Exprs: []ast.Expr{fn}}}
+	binding := bind.BindChunk(stmts, bind.Options{})
+	fn.Stmts = []ast.Stmt{absentStmt}
+	assertLowerFailsClosed(t, stmts, binding)
+}
+
+func assertLowerFailsClosed(t *testing.T, stmts []ast.Stmt, binding *bind.Result) {
+	t.Helper()
+	var previous string
+	for range 2 {
+		_, err := programlower.Lower("malformed.lua", stmts, binding)
+		if err == nil {
+			t.Fatalf("malformed AST lowered: %#v", stmts)
+		}
+		if previous != "" && err.Error() != previous {
+			t.Fatalf("nondeterministic malformed-AST errors: %q then %q", previous, err)
+		}
+		previous = err.Error()
+	}
 }
 
 func entryRoots(t *testing.T, p *program.Program) []program.Term {
@@ -584,19 +754,15 @@ func entryRoots(t *testing.T, p *program.Program) []program.Term {
 	if !ok {
 		t.Fatal("Program has no Entry")
 	}
-	roots, ok := p.AppendBody(entry, nil)
-	if !ok {
-		t.Fatalf("Entry %v is not a Body", entry)
-	}
-	return roots
+	return bodyRoots(t, p, entry)
 }
 
 func TestAnonymousFunctionFormalsVarargAndOpenValues(t *testing.T) {
 	p, function := loweredReturnValue(t, `return function(a, ...) return a, ... end`)
 	entry, _ := p.Entry()
-	owner, body, bindingCell, varargCell, ok := p.Function(function)
-	if !ok || owner != entry || body == 0 || bindingCell != 0 || varargCell == 0 {
-		t.Fatalf("Function = owner %v body %v binding %v vararg %v ok %v", owner, body, bindingCell, varargCell, ok)
+	owner, body, varargCell, ok := p.Function(function)
+	if !ok || owner != entry || body == 0 || varargCell == 0 {
+		t.Fatalf("Function = owner %v body %v vararg %v ok %v", owner, body, varargCell, ok)
 	}
 	if count, ok := p.FormalLen(function); !ok || count != 1 {
 		t.Fatalf("FormalLen = %d, %v", count, ok)
@@ -611,25 +777,25 @@ func TestAnonymousFunctionFormalsVarargAndOpenValues(t *testing.T) {
 	if varargOwner, ok := p.Cell(varargCell); !ok || varargOwner != body {
 		t.Fatalf("vararg owner = %v, %v; want %v", varargOwner, ok, body)
 	}
-	if count, ok := p.FunctionCaptureLen(function); !ok || count != 0 {
-		t.Fatalf("FunctionCaptureLen = %d, %v", count, ok)
+	if count, ok := p.FunctionCaptureCount(function); !ok || count != 0 {
+		t.Fatalf("FunctionCaptureCount = %d, %v", count, ok)
 	}
-	bodyRoots, ok := p.AppendBody(body, nil)
-	if !ok || len(bodyRoots) != 1 {
-		t.Fatalf("Function Body roots = %v, %v", bodyRoots, ok)
+	bodyRoots := bodyRoots(t, p, body)
+	if len(bodyRoots) != 1 {
+		t.Fatalf("Function Body roots = %v", bodyRoots)
 	}
-	returned, ok := p.Return(bodyRoots[0])
+	_, returned, ok := p.Return(bodyRoots[0])
 	if !ok {
 		t.Fatalf("Function root is not Return: %v", bodyRoots[0])
 	}
 	if count, ok := p.ValuesLen(returned); !ok || count != 1 {
 		t.Fatalf("function return fixed prefix = %d, %v", count, ok)
 	}
-	tail, ok := p.ValuesTail(returned)
-	if !ok || tail == 0 {
-		t.Fatalf("function return tail = %v, %v", tail, ok)
+	tail := valuesTail(t, p, returned)
+	if tail == 0 {
+		t.Fatalf("function return tail = %v", tail)
 	}
-	if cell, ok := p.Vararg(tail); !ok || cell != varargCell {
+	if _, cell, ok := p.Vararg(tail); !ok || cell != varargCell {
 		t.Fatalf("vararg occurrence = Cell %v, %v; want %v", cell, ok, varargCell)
 	}
 }
@@ -641,24 +807,18 @@ return function(a) return x, a end, function(a) return x, a end`)
 	if len(roots) != 2 {
 		t.Fatalf("Entry roots = %v", roots)
 	}
-	boundOuter, ok := p.BindAt(roots[0], 0)
-	if !ok {
-		t.Fatal("missing outer x Cell")
-	}
-	returned, ok := p.Return(roots[1])
+	boundOuter := boundCell(t, p, roots[0], 0)
+	_, returned, ok := p.Return(roots[1])
 	if !ok {
 		t.Fatal("Entry root 1 is not Return")
 	}
 	functions := make([]program.Term, 2)
 	for i := range functions {
-		functions[i], ok = p.ValuesAt(returned, i)
-		if !ok {
-			t.Fatalf("missing returned Function %d", i)
-		}
+		functions[i] = valueAt(t, p, returned, i)
 	}
 	var priorFormal, priorInner program.Term
 	for i, function := range functions {
-		_, body, _, _, ok := p.Function(function)
+		_, body, _, ok := p.Function(function)
 		if !ok {
 			t.Fatalf("value %d is not Function", i)
 		}
@@ -666,27 +826,23 @@ return function(a) return x, a end, function(a) return x, a end`)
 		if !ok {
 			t.Fatalf("Function %d has no formal", i)
 		}
-		if count, ok := p.FunctionCaptureLen(function); !ok || count != 1 {
+		if count, ok := p.FunctionCaptureCount(function); !ok || count != 1 {
 			t.Fatalf("Function %d capture count = %d, %v", i, count, ok)
 		}
-		capture, ok := p.FunctionCaptureAt(function, 0)
-		if !ok {
-			t.Fatalf("Function %d capture missing", i)
-		}
-		captureFunction, inner, outer, ok := p.Capture(capture)
-		if !ok || captureFunction != function || outer != boundOuter {
-			t.Fatalf("Capture %d = function %v inner %v outer %v ok %v", i, captureFunction, inner, outer, ok)
+		inner, outer := functionCapture(t, p, function, 0)
+		if outer != boundOuter {
+			t.Fatalf("Capture %d = inner %v outer %v; want outer %v", i, inner, outer, boundOuter)
 		}
 		if innerOwner, ok := p.Cell(inner); !ok || innerOwner != body {
 			t.Fatalf("Capture %d inner owner = %v, %v; want %v", i, innerOwner, ok, body)
 		}
-		bodyRoots, _ := p.AppendBody(body, nil)
-		functionValues, ok := p.Return(bodyRoots[0])
+		bodyRoots := bodyRoots(t, p, body)
+		_, functionValues, ok := p.Return(bodyRoots[0])
 		if !ok {
 			t.Fatalf("Function %d Body root is not Return", i)
 		}
-		capturedRead, _ := p.ValuesAt(functionValues, 0)
-		if source, ok := p.Read(capturedRead); !ok || source != inner {
+		capturedRead := valueAt(t, p, functionValues, 0)
+		if _, source, ok := p.Read(capturedRead); !ok || source != inner {
 			t.Fatalf("Function %d captured Read source = %v, %v; want inner %v", i, source, ok, inner)
 		}
 		if i != 0 && (formal == priorFormal || inner == priorInner) {
@@ -702,44 +858,36 @@ return function(a)
   return function(b) return x, a, b end
 end`)
 	roots := entryRoots(t, p)
-	chunkX, ok := p.BindAt(roots[0], 0)
-	if !ok {
-		t.Fatal("chunk x Cell missing")
-	}
-	outerValues, ok := p.Return(roots[1])
+	chunkX := boundCell(t, p, roots[0], 0)
+	_, outerValues, ok := p.Return(roots[1])
 	if !ok {
 		t.Fatal("outer Return missing")
 	}
-	outerFunction, _ := p.ValuesAt(outerValues, 0)
-	_, outerBody, _, _, ok := p.Function(outerFunction)
+	outerFunction := valueAt(t, p, outerValues, 0)
+	_, outerBody, _, ok := p.Function(outerFunction)
 	if !ok {
 		t.Fatal("outer value is not Function")
 	}
 	outerFormal, _ := p.FormalAt(outerFunction, 0)
-	if count, ok := p.FunctionCaptureLen(outerFunction); !ok || count != 1 {
+	if count, ok := p.FunctionCaptureCount(outerFunction); !ok || count != 1 {
 		t.Fatalf("outer capture count = %d, %v; want propagated chunk x", count, ok)
 	}
-	outerCapture, _ := p.FunctionCaptureAt(outerFunction, 0)
-	_, outerX, outerSource, ok := p.Capture(outerCapture)
-	if !ok || outerSource != chunkX {
-		t.Fatalf("outer x Capture = inner %v outer %v ok %v; want chunk Cell %v", outerX, outerSource, ok, chunkX)
+	outerX, outerSource := functionCapture(t, p, outerFunction, 0)
+	if outerSource != chunkX {
+		t.Fatalf("outer x Capture = inner %v outer %v; want chunk Cell %v", outerX, outerSource, chunkX)
 	}
-	outerBodyRoots, _ := p.AppendBody(outerBody, nil)
-	innerValues, ok := p.Return(outerBodyRoots[0])
+	outerBodyRoots := bodyRoots(t, p, outerBody)
+	_, innerValues, ok := p.Return(outerBodyRoots[0])
 	if !ok {
 		t.Fatal("outer Function does not return inner Function")
 	}
-	innerFunction, _ := p.ValuesAt(innerValues, 0)
-	if count, ok := p.FunctionCaptureLen(innerFunction); !ok || count != 2 {
+	innerFunction := valueAt(t, p, innerValues, 0)
+	if count, ok := p.FunctionCaptureCount(innerFunction); !ok || count != 2 {
 		t.Fatalf("inner capture count = %d, %v", count, ok)
 	}
 	seenOuter := map[program.Term]bool{}
 	for i := 0; i < 2; i++ {
-		capture, _ := p.FunctionCaptureAt(innerFunction, i)
-		_, _, outer, ok := p.Capture(capture)
-		if !ok {
-			t.Fatalf("inner Capture %d invalid", i)
-		}
+		_, outer := functionCapture(t, p, innerFunction, i)
 		seenOuter[outer] = true
 	}
 	if !seenOuter[outerX] || !seenOuter[outerFormal] || seenOuter[chunkX] {
@@ -757,22 +905,22 @@ return f(3), 4, f(5)`)
 		if len(roots) != 3 {
 			t.Fatalf("Entry roots = %v", roots)
 		}
-		callee, receiver, actuals, direct, ok := p.Call(roots[1])
+		_, callee, receiver, actuals, direct, ok := p.Call(roots[1])
 		if !ok || callee == 0 || receiver != 0 || actuals == 0 || direct != 0 {
 			t.Fatalf("statement Call = callee %v receiver %v actuals %v direct %v ok %v", callee, receiver, actuals, direct, ok)
 		}
 		if count, ok := p.ValuesLen(actuals); !ok || count != 2 {
 			t.Fatalf("statement actuals = %d, %v", count, ok)
 		}
-		returned, _ := p.Return(roots[2])
+		_, returned, _ := p.Return(roots[2])
 		if count, ok := p.ValuesLen(returned); !ok || count != 2 {
 			t.Fatalf("return fixed prefix = %d, %v", count, ok)
 		}
-		tail, ok := p.ValuesTail(returned)
-		if !ok || tail == 0 {
-			t.Fatalf("return open tail = %v, %v", tail, ok)
+		tail := valuesTail(t, p, returned)
+		if tail == 0 {
+			t.Fatalf("return open tail = %v", tail)
 		}
-		if _, _, _, _, ok := p.Call(tail); !ok {
+		if _, _, _, _, _, ok := p.Call(tail); !ok {
 			t.Fatalf("return tail is not Call: %v", tail)
 		}
 	})
@@ -781,38 +929,38 @@ return f(3), 4, f(5)`)
 		p := parseBindLower(t, `local f
 return f(1, f(2)), {f(3), f(4)}`)
 		roots := entryRoots(t, p)
-		returned, _ := p.Return(roots[1])
-		outerCall, _ := p.ValuesAt(returned, 0)
-		_, _, actuals, _, ok := p.Call(outerCall)
+		_, returned, _ := p.Return(roots[1])
+		outerCall := valueAt(t, p, returned, 0)
+		_, _, _, actuals, _, ok := p.Call(outerCall)
 		if !ok {
 			t.Fatalf("first return value is not Call: %v", outerCall)
 		}
 		if count, ok := p.ValuesLen(actuals); !ok || count != 1 {
 			t.Fatalf("outer actual fixed prefix = %d, %v", count, ok)
 		}
-		if tail, ok := p.ValuesTail(actuals); !ok || tail == 0 {
-			t.Fatalf("outer actual tail = %v, %v", tail, ok)
+		if tail := valuesTail(t, p, actuals); tail == 0 {
+			t.Fatalf("outer actual tail = %v", tail)
 		}
-		table, _ := p.ValuesAt(returned, 1)
+		table := valueAt(t, p, returned, 1)
 		if count, ok := p.TableLen(table); !ok || count != 2 {
 			t.Fatalf("TableLen = %d, %v", count, ok)
 		}
-		_, firstValues, firstKind, _ := p.TableAt(table, 0)
-		_, lastValues, lastKind, _ := p.TableAt(table, 1)
+		_, firstValues, firstKind, _, _ := p.Field(table, 0)
+		_, lastValues, lastKind, _, _ := p.Field(table, 1)
 		if firstKind != program.FieldList || lastKind != program.FieldList {
 			t.Fatalf("table field kinds = %v, %v", firstKind, lastKind)
 		}
 		if count, ok := p.ValuesLen(firstValues); !ok || count != 1 {
 			t.Fatalf("non-final list field fixed prefix = %d, %v", count, ok)
 		}
-		if tail, ok := p.ValuesTail(firstValues); !ok || tail != 0 {
-			t.Fatalf("non-final list field tail = %v, %v", tail, ok)
+		if tail := valuesTail(t, p, firstValues); tail != 0 {
+			t.Fatalf("non-final list field tail = %v", tail)
 		}
 		if count, ok := p.ValuesLen(lastValues); !ok || count != 0 {
 			t.Fatalf("final list field fixed prefix = %d, %v", count, ok)
 		}
-		if tail, ok := p.ValuesTail(lastValues); !ok || tail == 0 {
-			t.Fatalf("final list field tail = %v, %v", tail, ok)
+		if tail := valuesTail(t, p, lastValues); tail == 0 {
+			t.Fatalf("final list field tail = %v", tail)
 		}
 	})
 
@@ -820,25 +968,25 @@ return f(1, f(2)), {f(3), f(4)}`)
 		p := parseBindLower(t, `local f
 return (f())`)
 		roots := entryRoots(t, p)
-		returned, _ := p.Return(roots[1])
+		_, returned, _ := p.Return(roots[1])
 		if count, ok := p.ValuesLen(returned); !ok || count != 1 {
 			t.Fatalf("adjusted return fixed prefix = %d, %v", count, ok)
 		}
-		if tail, ok := p.ValuesTail(returned); !ok || tail != 0 {
-			t.Fatalf("adjusted return tail = %v, %v", tail, ok)
+		if tail := valuesTail(t, p, returned); tail != 0 {
+			t.Fatalf("adjusted return tail = %v", tail)
 		}
 	})
 
 	t.Run("immediate", func(t *testing.T) {
 		p := parseBindLower(t, `return (function(a) return a end)(1)`)
 		roots := entryRoots(t, p)
-		returned, _ := p.Return(roots[0])
-		call, _ := p.ValuesTail(returned)
-		callee, receiver, actuals, direct, ok := p.Call(call)
+		_, returned, _ := p.Return(roots[0])
+		call := valuesTail(t, p, returned)
+		_, callee, receiver, actuals, direct, ok := p.Call(call)
 		if !ok || receiver != 0 || direct != callee {
 			t.Fatalf("immediate Call = callee %v receiver %v direct %v ok %v", callee, receiver, direct, ok)
 		}
-		if _, _, _, _, ok := p.Function(callee); !ok {
+		if _, _, _, ok := p.Function(callee); !ok {
 			t.Fatalf("immediate callee is not Function: %v", callee)
 		}
 		if count, ok := p.ValuesLen(actuals); !ok || count != 1 {
@@ -945,27 +1093,20 @@ func TestWideSiblingCaptureAliasesStayIsolated(t *testing.T) {
 	const siblings = 96
 	p := parseBindLower(t, wideClosureSource(32, siblings))
 	roots := entryRoots(t, p)
-	outer, ok := p.BindAt(roots[0], 0)
-	if !ok {
-		t.Fatal("outer declaration Cell missing")
-	}
-	returned, ok := p.Return(roots[1])
+	outer := boundCell(t, p, roots[0], 0)
+	_, returned, ok := p.Return(roots[1])
 	if !ok {
 		t.Fatal("wide Return missing")
 	}
 	seenInner := make(map[program.Term]struct{}, siblings)
 	for i := 0; i < siblings; i++ {
-		function, ok := p.ValuesAt(returned, i)
-		if !ok {
-			t.Fatalf("Function %d missing", i)
-		}
-		if count, ok := p.FunctionCaptureLen(function); !ok || count != 1 {
+		function := valueAt(t, p, returned, i)
+		if count, ok := p.FunctionCaptureCount(function); !ok || count != 1 {
 			t.Fatalf("Function %d capture count = %d, %v", i, count, ok)
 		}
-		capture, _ := p.FunctionCaptureAt(function, 0)
-		_, inner, gotOuter, ok := p.Capture(capture)
-		if !ok || gotOuter != outer {
-			t.Fatalf("Function %d Capture = inner %v outer %v ok %v; want outer %v", i, inner, gotOuter, ok, outer)
+		inner, gotOuter := functionCapture(t, p, function, 0)
+		if gotOuter != outer {
+			t.Fatalf("Function %d Capture = inner %v outer %v; want outer %v", i, inner, gotOuter, outer)
 		}
 		if _, duplicate := seenInner[inner]; duplicate {
 			t.Fatalf("Function %d reused capture-inner Cell %v", i, inner)
@@ -980,28 +1121,23 @@ return function()
   return function() return x end
 end`)
 	roots := entryRoots(t, p)
-	chunkX, _ := p.BindAt(roots[0], 0)
-	outerValues, _ := p.Return(roots[1])
-	outerFunction, _ := p.ValuesAt(outerValues, 0)
-	if count, ok := p.FunctionCaptureLen(outerFunction); !ok || count != 1 {
+	chunkX := boundCell(t, p, roots[0], 0)
+	_, outerValues, _ := p.Return(roots[1])
+	outerFunction := valueAt(t, p, outerValues, 0)
+	if count, ok := p.FunctionCaptureCount(outerFunction); !ok || count != 1 {
 		t.Fatalf("outer Function captures = %d, %v; want propagated x", count, ok)
 	}
-	outerCapture, _ := p.FunctionCaptureAt(outerFunction, 0)
-	_, outerInner, gotOuter, ok := p.Capture(outerCapture)
-	if !ok || gotOuter != chunkX {
-		t.Fatalf("outer Capture = inner %v outer %v ok %v; want chunk declaration %v", outerInner, gotOuter, ok, chunkX)
+	outerInner, gotOuter := functionCapture(t, p, outerFunction, 0)
+	if gotOuter != chunkX {
+		t.Fatalf("outer Capture = inner %v outer %v; want chunk declaration %v", outerInner, gotOuter, chunkX)
 	}
-	_, outerBody, _, _, _ := p.Function(outerFunction)
-	outerRoots, _ := p.AppendBody(outerBody, nil)
-	innerValues, _ := p.Return(outerRoots[0])
-	innerFunction, _ := p.ValuesAt(innerValues, 0)
-	capture, ok := p.FunctionCaptureAt(innerFunction, 0)
-	if !ok {
-		t.Fatal("inner Function capture missing")
-	}
-	_, _, gotOuter, ok = p.Capture(capture)
-	if !ok || gotOuter != outerInner || gotOuter == chunkX {
-		t.Fatalf("grandchild Capture outer = %v, %v; want parent capture Cell %v", gotOuter, ok, outerInner)
+	_, outerBody, _, _ := p.Function(outerFunction)
+	outerRoots := bodyRoots(t, p, outerBody)
+	_, innerValues, _ := p.Return(outerRoots[0])
+	innerFunction := valueAt(t, p, innerValues, 0)
+	_, gotOuter = functionCapture(t, p, innerFunction, 0)
+	if gotOuter != outerInner || gotOuter == chunkX {
+		t.Fatalf("grandchild Capture outer = %v; want parent capture Cell %v", gotOuter, outerInner)
 	}
 }
 
@@ -1013,45 +1149,39 @@ end`)
 	roots := entryRoots(t, p)
 	chunk := make([]program.Term, 3)
 	for i := range chunk {
-		var ok bool
-		chunk[i], ok = p.BindAt(roots[0], i)
-		if !ok {
-			t.Fatalf("chunk Cell %d missing", i)
-		}
+		chunk[i] = boundCell(t, p, roots[0], i)
 	}
-	values, _ := p.Return(roots[1])
-	outerFunction, _ := p.ValuesAt(values, 0)
-	if count, ok := p.FunctionCaptureLen(outerFunction); !ok || count != 3 {
+	_, values, _ := p.Return(roots[1])
+	outerFunction := valueAt(t, p, values, 0)
+	if count, ok := p.FunctionCaptureCount(outerFunction); !ok || count != 3 {
 		t.Fatalf("outer capture count = %d, %v; want x,y,z once", count, ok)
 	}
 	outerInner := make([]program.Term, 3)
 	for i := range outerInner {
-		capture, _ := p.FunctionCaptureAt(outerFunction, i)
-		_, inner, outer, ok := p.Capture(capture)
-		if !ok || outer != chunk[i] {
-			t.Fatalf("outer Capture %d = inner %v outer %v ok %v; want chunk Cell %v",
-				i, inner, outer, ok, chunk[i])
+		inner, outer := functionCapture(t, p, outerFunction, i)
+		if outer != chunk[i] {
+			t.Fatalf("outer Capture %d = inner %v outer %v; want chunk Cell %v",
+				i, inner, outer, chunk[i])
 		}
 		outerInner[i] = inner
 	}
 
-	_, body, _, _, _ := p.Function(outerFunction)
-	bodyRoots, _ := p.AppendBody(body, nil)
-	returned, _ := p.Return(bodyRoots[0])
+	_, body, _, _ := p.Function(outerFunction)
+	bodyRoots := bodyRoots(t, p, body)
+	_, returned, _ := p.Return(bodyRoots[0])
 	for childIndex, want := range [][]program.Term{
 		{outerInner[1], outerInner[0]},
 		{outerInner[2], outerInner[1]},
 	} {
-		child, _ := p.ValuesAt(returned, childIndex+1)
-		if count, ok := p.FunctionCaptureLen(child); !ok || count != len(want) {
+		child := valueAt(t, p, returned, childIndex+1)
+		if count, ok := p.FunctionCaptureCount(child); !ok || count != len(want) {
 			t.Fatalf("child %d capture count = %d, %v; want %d", childIndex, count, ok, len(want))
 		}
 		for i, wantOuter := range want {
-			capture, _ := p.FunctionCaptureAt(child, i)
-			_, _, outer, ok := p.Capture(capture)
-			if !ok || outer != wantOuter {
-				t.Fatalf("child %d Capture %d outer = %v, %v; want parent Cell %v",
-					childIndex, i, outer, ok, wantOuter)
+			_, outer := functionCapture(t, p, child, i)
+			if outer != wantOuter {
+				t.Fatalf("child %d Capture %d outer = %v; want parent Cell %v",
+					childIndex, i, outer, wantOuter)
 			}
 		}
 	}
@@ -1087,48 +1217,38 @@ func TestDeepDescendantCaptureLoweringScalesWithBoundaryEdges(t *testing.T) {
 			t.Fatal(err)
 		}
 		roots := entryRoots(t, p)
-		declaration, ok := p.BindAt(roots[0], 0)
-		if !ok {
-			t.Fatalf("depth %d chunk declaration missing", depth)
-		}
-		values, ok := p.Return(roots[1])
+		declaration := boundCell(t, p, roots[0], 0)
+		_, values, ok := p.Return(roots[1])
 		if !ok {
 			t.Fatalf("depth %d Entry return missing", depth)
 		}
-		function, ok := p.ValuesAt(values, 0)
-		if !ok {
-			t.Fatalf("depth %d outer Function missing", depth)
-		}
+		function := valueAt(t, p, values, 0)
 		wantOuter := declaration
 		for level := 0; level < depth; level++ {
-			_, body, _, _, ok := p.Function(function)
+			_, body, _, ok := p.Function(function)
 			if !ok {
 				t.Fatalf("depth %d level %d is not a Function", depth, level)
 			}
-			if count, ok := p.FunctionCaptureLen(function); !ok || count != 1 {
+			if count, ok := p.FunctionCaptureCount(function); !ok || count != 1 {
 				t.Fatalf("depth %d level %d capture count = %d, %v; want one boundary edge",
 					depth, level, count, ok)
 			}
-			capture, _ := p.FunctionCaptureAt(function, 0)
-			_, inner, outer, ok := p.Capture(capture)
-			if !ok || outer != wantOuter {
-				t.Fatalf("depth %d level %d Capture = inner %v outer %v ok %v; want outer %v",
-					depth, level, inner, outer, ok, wantOuter)
+			inner, outer := functionCapture(t, p, function, 0)
+			if outer != wantOuter {
+				t.Fatalf("depth %d level %d Capture = inner %v outer %v; want outer %v",
+					depth, level, inner, outer, wantOuter)
 			}
-			bodyRoots, ok := p.AppendBody(body, nil)
-			if !ok || len(bodyRoots) != 1 {
-				t.Fatalf("depth %d level %d Body roots = %v, %v", depth, level, bodyRoots, ok)
+			bodyRoots := bodyRoots(t, p, body)
+			if len(bodyRoots) != 1 {
+				t.Fatalf("depth %d level %d Body roots = %v", depth, level, bodyRoots)
 			}
-			returned, ok := p.Return(bodyRoots[0])
+			_, returned, ok := p.Return(bodyRoots[0])
 			if !ok {
 				t.Fatalf("depth %d level %d Body return missing", depth, level)
 			}
-			value, ok := p.ValuesAt(returned, 0)
-			if !ok {
-				t.Fatalf("depth %d level %d return value missing", depth, level)
-			}
+			value := valueAt(t, p, returned, 0)
 			if level == depth-1 {
-				if read, ok := p.Read(value); !ok || read != inner {
+				if _, read, ok := p.Read(value); !ok || read != inner {
 					t.Fatalf("depth %d terminal Read = %v, %v; want terminal capture Cell %v",
 						depth, read, ok, inner)
 				}

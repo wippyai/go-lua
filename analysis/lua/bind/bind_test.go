@@ -127,6 +127,15 @@ func captureIDs(captures []Capture) []symbol.ID {
 	return ids
 }
 
+func entryCaptureIDs(r *Result) map[*ast.FunctionExpr][]symbol.ID {
+	entries := make(map[*ast.FunctionExpr][]symbol.ID)
+	r.ForEachEntryCapture(func(fn *ast.FunctionExpr, capture Capture) bool {
+		entries[fn] = append(entries[fn], capture.Captured)
+		return true
+	})
+	return entries
+}
+
 func TestShadowingAndDeferredLocalRules(t *testing.T) {
 	outer := localAssign([]string{"x"}, number("1"))
 	inner := localAssign([]string{"x"}, number("2"))
@@ -1553,7 +1562,8 @@ func TestLexicalFunctionIndexDeepAndWide(t *testing.T) {
 	if !deepBindings.FunctionDescendsFrom(leaf, nil) {
 		t.Fatal("nil chunk ancestor did not contain known function")
 	}
-	if !deepBindings.HasEntryCaptures(deep[1]) {
+	deepEntries := entryCaptureIDs(deepBindings)
+	if len(deepEntries[deep[1]]) == 0 {
 		t.Fatal("deep child entry captures unexpectedly empty")
 	}
 	visited := 0
@@ -1578,14 +1588,15 @@ func TestLexicalFunctionIndexDeepAndWide(t *testing.T) {
 	if visited != len(wide)-1 {
 		t.Fatalf("wide descendants = %d, want %d", visited, len(wide)-1)
 	}
+	wideEntries := entryCaptureIDs(wideBindings)
 	for _, child := range wide[1:] {
-		if !wideBindings.HasEntryCaptures(child) {
+		if len(wideEntries[child]) == 0 {
 			t.Fatal("wide child entry captures unexpectedly empty")
 		}
 	}
 }
 
-func TestEntryCapturesPreserveAncestorRelativeOwnership(t *testing.T) {
+func TestCaptureStreamPreservesBoundaryOwnership(t *testing.T) {
 	grandReadX, grandReadY := ident("x"), ident("y")
 	grand := function(nil, ret(grandReadX, grandReadY))
 	yDecl := localAssign([]string{"y"}, number("2"))
@@ -1595,43 +1606,54 @@ func TestEntryCapturesPreserveAncestorRelativeOwnership(t *testing.T) {
 	r := BindFunction(root, Options{})
 	x := mustLocalAt(t, r, xDecl, 0)
 	y := mustLocalAt(t, r, yDecl, 0)
-	if got := captureIDs(r.EntryCaptures(root)); !reflect.DeepEqual(got, []symbol.ID{y}) {
-		t.Fatalf("EntryCaptures(root) = %v, want descendant-owned y only", got)
+	entries := entryCaptureIDs(r)
+	if got := entries[root]; len(got) != 0 {
+		t.Fatalf("Entry captures(root) = %v, want none: child-owned y crosses no root boundary", got)
 	}
-	if got := captureIDs(r.EntryCaptures(child)); !reflect.DeepEqual(got, []symbol.ID{x}) {
-		t.Fatalf("EntryCaptures(child) = %v, want ancestor-owned x only", got)
+	if got := entries[child]; !reflect.DeepEqual(got, []symbol.ID{x}) {
+		t.Fatalf("Entry captures(child) = %v, want ancestor-owned x only", got)
 	}
-	if got := captureIDs(r.EntryCaptures(grand)); !reflect.DeepEqual(got, []symbol.ID{x, y}) {
-		t.Fatalf("EntryCaptures(grand) = %v, want direct x,y order", got)
+	if got := entries[grand]; !reflect.DeepEqual(got, []symbol.ID{x, y}) {
+		t.Fatalf("Entry captures(grand) = %v, want direct x,y order", got)
 	}
 }
 
-func TestLexicalCaptureIndexRetainsLinearMetadata(t *testing.T) {
-	root, functions := deepCaptureFunctions(1024)
-	r := BindFunction(root, Options{})
-	if got, want := len(r.functionIndex), len(functions); got != want {
-		t.Fatalf("function index entries = %d, want %d", got, want)
+func TestEntryCaptureStreamingScalesWithBoundaryEdges(t *testing.T) {
+	type measurement struct {
+		events int
+		allocs float64
 	}
-	if got, want := len(r.functionSubtreeEnd), len(functions); got != want {
-		t.Fatalf("subtree end entries = %d, want %d", got, want)
+	measure := func(depth int) measurement {
+		t.Helper()
+		root, functions := deepCaptureFunctions(depth)
+		bindings := BindFunction(root, Options{})
+		entries := entryCaptureIDs(bindings)
+		if got := len(entries[functions[len(functions)-1]]); got != 1 {
+			t.Fatalf("depth %d leaf entry captures = %d, want 1", depth, got)
+		}
+		count := func() int {
+			events := 0
+			bindings.ForEachEntryCapture(func(_ *ast.FunctionExpr, _ Capture) bool {
+				events++
+				return true
+			})
+			return events
+		}
+		events := count()
+		allocs := testing.AllocsPerRun(5, func() {
+			if got := count(); got != events {
+				t.Fatalf("streamed event count changed: %d then %d", events, got)
+			}
+		})
+		return measurement{events: events, allocs: allocs}
 	}
-	if got, want := len(r.hasEntryCaptures), len(functions); got != want {
-		t.Fatalf("capture presence entries = %d, want %d", got, want)
+	small := measure(256)
+	large := measure(512)
+	if large.events > small.events*3 {
+		t.Fatalf("entry capture event growth is non-linear: depth256=%d depth512=%d", small.events, large.events)
 	}
-	direct := 0
-	for _, captures := range r.directCaptures {
-		direct += len(captures)
-	}
-	if direct > len(functions) {
-		t.Fatalf("direct capture records = %d for %d functions, fixture should remain linear", direct, len(functions))
-	}
-	// A leaf query materializes only its own output and cannot populate retained
-	// transitive projections because Result stores no such cache.
-	if got := len(r.EntryCaptures(functions[len(functions)-1])); got != 1 {
-		t.Fatalf("leaf entry captures = %d, want 1", got)
-	}
-	if len(r.hasEntryCaptures) != len(functions) {
-		t.Fatal("entry capture query grew retained metadata")
+	if large.allocs > small.allocs*3 {
+		t.Fatalf("entry capture allocation growth is non-linear: depth256=%.0f depth512=%.0f", small.allocs, large.allocs)
 	}
 }
 
@@ -1642,11 +1664,16 @@ func BenchmarkLexicalFunctionIndexes(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		total := 0
-		for _, fn := range functions[1:] {
+		seen := make(map[*ast.FunctionExpr]struct{}, len(functions))
+		bindings.ForEachEntryCapture(func(fn *ast.FunctionExpr, capture Capture) bool {
 			if bindings.FunctionDescendsFrom(fn, root) {
-				if bindings.HasEntryCaptures(fn) {
-					total++
-				}
+				seen[fn] = struct{}{}
+			}
+			return true
+		})
+		for fn := range seen {
+			if fn != root {
+				total++
 			}
 		}
 		if total != len(functions)-1 {

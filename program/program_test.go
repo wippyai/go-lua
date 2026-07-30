@@ -2,1601 +2,1947 @@ package program_test
 
 import (
 	"math"
-	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/program"
 )
 
-// newProgramBuilder supplies the canonical empty shard entry for tests that
-// exercise a relation in isolation. Tests of entry construction use the raw
-// builder directly so missing and invalid entry laws remain observable.
-func newProgramBuilder(t *testing.T) *program.Builder {
+var (
+	queryTerm      program.Term
+	queryTerm2     program.Term
+	queryTerm3     program.Term
+	queryTerm4     program.Term
+	queryTerm5     program.Term
+	queryKey       program.Key
+	queryFieldKind program.FieldKind
+	queryUnary     program.UnaryOp
+	queryBinary    program.BinaryOp
+	querySelect    program.SelectOp
+	querySpan      program.Span
+	queryInt       int
+	queryInt64     int64
+	queryFloat64   float64
+	queryString    string
+	queryBool      bool
+	queryOK        bool
+	queryProgram   *program.Program
+)
+
+func entryBuilder(t *testing.T) (*program.Builder, program.Term) {
 	t.Helper()
 	b := program.NewBuilder()
 	entry := b.Body(program.Span{})
-	if !b.SetBody(entry) || !b.SetEntry(entry) {
-		t.Fatal("failed to establish test Entry Body")
-	}
-	return b
-}
-
-func newClosureBuilder(t *testing.T, span program.Span) (*program.Builder, program.Term) {
-	t.Helper()
-	b := program.NewBuilder()
-	entry := b.Body(span)
 	if !b.SetEntry(entry) {
-		t.Fatal("failed to establish closure test Entry Body")
+		t.Fatal("SetEntry")
 	}
 	return b, entry
 }
 
-func fillEmptyEntry(t *testing.T, b *program.Builder, entry program.Term) {
-	t.Helper()
-	if !b.SetBody(entry) {
-		t.Fatal("failed to fill closure test Entry Body")
-	}
-}
-
-func TestSealRejectsInvalidReferencesAndExactKeyTypes(t *testing.T) {
-	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
-
-	b := newProgramBuilder(t)
-	b.Values(span, []program.Term{program.Term(0x0101)}, 0)
-	if _, err := b.Seal(); err == nil {
-		t.Fatal("Seal accepted an invalid Values reference")
-	}
-
-	b = newProgramBuilder(t)
-	base := b.String(span, "base")
-	value := b.Integer(span, 1)
-	b.LensExact(span, base, b.Values(span, []program.Term{value}, 0))
-	if _, err := b.Seal(); err == nil {
-		t.Fatal("Seal accepted a non-literal exact Lens key")
-	}
-
-	b = newProgramBuilder(t)
-	b.Values(span, nil, b.Integer(span, 1))
-	if _, err := b.Seal(); err == nil || err.Error() != "program: invalid Values tail" {
-		t.Fatalf("Seal accepted scalar Values tail: %v", err)
-	}
-
-	b = newProgramBuilder(t)
-	body := b.Body(span)
-	b.Values(span, []program.Term{body}, 0)
-	if _, err := b.Seal(); err == nil || err.Error() != "program: invalid Values reference" {
-		t.Fatalf("Seal accepted Body in Values: %v", err)
-	}
-
-	b = newProgramBuilder(t)
-	if term := b.Integer(program.Span{StartLine: -1}, 1); term != 0 {
-		t.Fatal("invalid span minted a term")
-	}
-	if _, err := b.Seal(); err == nil {
-		t.Fatal("invalid construction did not poison Builder")
-	}
-}
-
-func TestLiteralsAreDistinctOccurrences(t *testing.T) {
-	b := newProgramBuilder(t)
-	first := b.Integer(program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}, 7)
-	second := b.Integer(program.Span{File: "x.lua", StartLine: 1, StartCol: 9, EndLine: 1, EndCol: 10}, 7)
-	if first == second || first == 0 || second == 0 {
-		t.Fatalf("equal literal occurrences were not distinct: %v %v", first, second)
-	}
-	p, err := b.Seal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, ok := p.Integer(first); !ok || got != 7 {
-		t.Fatalf("first literal = %v, %v", got, ok)
-	}
-	if got, ok := p.Integer(second); !ok || got != 7 {
-		t.Fatalf("second literal = %v, %v", got, ok)
-	}
-	span, ok := p.Span(second)
-	if !ok || span.StartCol != 9 {
-		t.Fatalf("distinct literal span lost: %#v %v", span, ok)
-	}
-}
-
-func TestValuePositionsRejectNonValueRelations(t *testing.T) {
-	span := program.Span{File: "value-position.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-
-	lens := newProgramBuilder(t)
-	lens.LensKey(span, lens.Body(span), lens.Integer(span, 1))
-	if _, err := lens.Seal(); err == nil || err.Error() != "program: invalid dynamic Lens reference" {
-		t.Fatalf("Lens value-position error = %v", err)
-	}
-
+func TestTypedContainmentAndOwners(t *testing.T) {
 	b := program.NewBuilder()
-	entryBody := b.Body(span)
-	if !b.SetBody(entryBody) || !b.SetEntry(entryBody) {
-		t.Fatal("Entry setup failed")
+	entry := b.Body(program.Span{})
+	if !b.SetEntry(entry) {
+		t.Fatal("SetEntry")
 	}
-	values := b.Values(span, nil, 0)
-	b.Branch(span, entryBody, b.Normal(span, values), b.Normal(span, values))
-	if _, err := b.Seal(); err == nil || err.Error() != "program: Branch requires condition and Body/Outcome arms" {
-		t.Fatalf("Branch value-position error = %v", err)
-	}
-
-	table := program.NewBuilder()
-	tableEntry := table.Body(span)
-	if !table.SetBody(tableEntry) || !table.SetEntry(tableEntry) {
-		t.Fatal("Entry setup failed")
-	}
-	term := table.Table(span)
-	fieldValues := table.Values(span, nil, 0)
-	if !table.SetTable(term, []program.Term{tableEntry}, []program.Term{fieldValues}, []program.FieldKind{program.FieldKey}) {
-		t.Fatal("SetTable failed")
-	}
-	if _, err := table.Seal(); err == nil || err.Error() != "program: invalid dynamic Table key" {
-		t.Fatalf("Table value-position error = %v", err)
-	}
-}
-
-func TestSpanLineColumnContract(t *testing.T) {
-	b := newProgramBuilder(t)
-	generated := b.Nil(program.Span{})
-	point := b.Bool(program.Span{File: "x.lua", StartLine: 3, StartCol: 7}, true)
-	full := b.Integer(program.Span{File: "x.lua", StartLine: 3, StartCol: 8, EndLine: 4, EndCol: 2}, 1)
-	p, err := b.Seal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, ok := p.Span(generated); !ok || got != (program.Span{}) {
-		t.Fatalf("generated span = %#v, %v", got, ok)
-	}
-	if got, ok := p.Span(point); !ok || got.EndLine != 0 || got.EndCol != 0 {
-		t.Fatalf("point span = %#v, %v", got, ok)
-	}
-	if got, ok := p.Span(full); !ok || got.StartLine != 3 || got.EndLine != 4 || got.EndCol != 2 {
-		t.Fatalf("full span = %#v, %v", got, ok)
-	}
-
-	invalid := []program.Span{
-		{StartLine: 1},
-		{StartLine: 1, StartCol: 1, EndLine: 2},
-		{StartLine: 2, StartCol: 1, EndLine: 1, EndCol: 1},
-	}
-	for _, span := range invalid {
-		bad := newProgramBuilder(t)
-		if term := bad.Nil(span); term != 0 {
-			t.Fatalf("invalid span minted term: %#v", span)
-		}
-		if _, err := bad.Seal(); err == nil {
-			t.Fatalf("invalid span did not poison Builder: %#v", span)
-		}
-	}
-}
-
-func TestEntryBodyLaws(t *testing.T) {
-	span := program.Span{File: "entry.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-
-	missing := program.NewBuilder()
-	if _, err := missing.Seal(); err == nil || err.Error() != "program: missing Entry Body" {
-		t.Fatalf("missing Entry error = %v", err)
-	}
-
-	invalid := program.NewBuilder()
-	notBody := invalid.Integer(span, 1)
-	if invalid.SetEntry(notBody) {
-		t.Fatal("SetEntry accepted a non-Body term")
-	}
-	if _, err := invalid.Seal(); err == nil || err.Error() != "program: poisoned builder" {
-		t.Fatalf("invalid Entry error = %v", err)
-	}
-
-	double := program.NewBuilder()
-	first := double.Body(span)
-	second := double.Body(span)
-	if !double.SetBody(first) || !double.SetBody(second) || !double.SetEntry(first) || double.SetEntry(second) {
-		t.Fatal("SetEntry did not enforce exactly-once construction")
-	}
-	if _, err := double.Seal(); err == nil || err.Error() != "program: poisoned builder" {
-		t.Fatalf("double Entry error = %v", err)
-	}
-
-	nested := program.NewBuilder()
-	parent := nested.Body(span)
-	child := nested.Body(span)
-	if !nested.SetBody(child) || !nested.SetBody(parent, child) || !nested.SetEntry(child) {
-		t.Fatal("nested Entry setup failed")
-	}
-	if _, err := nested.Seal(); err == nil || err.Error() != "program: Entry Body cannot be nested" {
-		t.Fatalf("nested Entry error = %v", err)
-	}
-
-	function := program.NewBuilder()
-	owner := function.Body(span)
-	functionBody := function.Body(span)
-	fn := function.Function(span, owner, functionBody, 0, nil, 0)
-	if !function.SetFunctionCaptures(fn, nil) {
-		t.Fatal("Function capture setup failed")
-	}
-	if !function.SetBody(owner) || !function.SetBody(functionBody) || !function.SetEntry(functionBody) {
-		t.Fatal("Function Entry setup failed")
-	}
-	if _, err := function.Seal(); err == nil || err.Error() != "program: Entry Body cannot be a Function body" {
-		t.Fatalf("Function Entry error = %v", err)
-	}
-
-	empty := program.NewBuilder()
-	entry := empty.Body(span)
-	if !empty.SetBody(entry) || !empty.SetEntry(entry) {
-		t.Fatal("empty Entry setup failed")
-	}
-	p, err := empty.Seal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, ok := p.Entry(); !ok || got != entry {
-		t.Fatalf("Entry = %v, %v", got, ok)
-	}
-	if length, ok := p.BodyLen(entry); !ok || length != 0 {
-		t.Fatalf("empty Entry length = %d, %v", length, ok)
-	}
-	if allocations := testing.AllocsPerRun(1000, func() {
-		hotTerm, hotOK = p.Entry()
-	}); allocations != 0 {
-		t.Fatalf("Entry query allocated: %.2f", allocations)
-	}
-}
-
-func TestEntryRejectsFunctionFreeOrphanBody(t *testing.T) {
-	span := program.Span{File: "orphan.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b := program.NewBuilder()
-	entry := b.Body(span)
-	orphan := b.Body(span)
-	if !b.SetBody(entry) || !b.SetBody(orphan) || !b.SetEntry(entry) {
-		t.Fatal("orphan Body setup failed")
-	}
-	if _, err := b.Seal(); err == nil || err.Error() != "program: non-Entry Body requires exactly one structural parent" {
-		t.Fatalf("function-free orphan Body error = %v", err)
-	}
-}
-
-func TestLensExactNormalizesKeys(t *testing.T) {
-	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b, entry := newClosureBuilder(t, span)
-	body := b.Body(span)
-	base := b.String(span, "base")
-	oneInt := b.Integer(span, 1)
-	oneFloat := b.Float(span, 1)
-	minusZero := b.Float(span, math.Copysign(0, -1))
-	zero := b.Integer(span, 0)
-	truth := b.Bool(span, true)
-	text := b.String(span, "1")
-	firstNil := b.Nil(span)
-	secondNil := b.Nil(span)
-	firstNaN := b.Float(span, math.NaN())
-	secondNaN := b.Float(span, math.NaN())
-
-	integerLens := b.LensExact(span, base, oneInt)
-	floatLens := b.LensExact(span, base, oneFloat)
-	minusZeroLens := b.LensExact(span, base, minusZero)
-	zeroLens := b.LensExact(span, base, zero)
-	boolLens := b.LensExact(span, base, truth)
-	stringLens := b.LensExact(span, base, text)
-	firstNilLens := b.LensExact(span, base, firstNil)
-	secondNilLens := b.LensExact(span, base, secondNil)
-	firstNaNLens := b.LensExact(span, base, firstNaN)
-	secondNaNLens := b.LensExact(span, base, secondNaN)
-	dynamicLens := b.LensKey(span, base, oneInt)
-	writeValues := b.Values(span, nil, 0)
-	nilWrite := b.Assign(span, []program.Term{firstNilLens}, writeValues)
-	if !b.SetBody(body, nilWrite) {
-		t.Fatal("SetBody failed")
-	}
-	if !b.SetBody(entry, body) {
-		t.Fatal("SetBody(entry) failed")
+	value := b.Integer(program.Span{}, entry, 7)
+	values := b.Values(program.Span{}, entry, []program.Term{value}, 0)
+	result := b.Normal(program.Span{}, entry, values)
+	if !b.SetBody(entry, result) {
+		t.Fatal("SetBody")
 	}
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if !p.SameKey(integerLens, floatLens) {
-		t.Fatal("integer and equal float keys were not normalized")
+	owner, got, ok := p.Integer(value)
+	if !ok || owner != entry || got != 7 {
+		t.Fatalf("Integer = %v, %v, %v", owner, got, ok)
 	}
-	if !p.SameKey(minusZeroLens, zeroLens) {
-		t.Fatal("signed zero keys were not normalized")
+	owner, tail, ok := p.Values(values)
+	if !ok || owner != entry || tail != 0 {
+		t.Fatalf("Values = %v, %v, %v", owner, tail, ok)
 	}
-	if p.SameKey(integerLens, boolLens) || p.SameKey(integerLens, stringLens) {
-		t.Fatal("unequal exact keys compared equal")
-	}
-	if p.SameKey(integerLens, dynamicLens) {
-		t.Fatal("dynamic Lens key compared as exact")
-	}
-	if !p.SameKey(firstNilLens, secondNilLens) {
-		t.Fatal("nil exact key sources did not retain their literal identity class")
-	}
-	if p.SameKey(firstNaNLens, secondNaNLens) || p.SameKey(firstNaNLens, firstNaNLens) {
-		t.Fatal("NaN exact key sources compared equal")
-	}
-	if _, key, dynamic, ok := p.Lens(firstNilLens); !ok || dynamic || key != firstNil {
-		t.Fatalf("nil exact Lens = %v, %v, %v", key, dynamic, ok)
-	}
-	if got, ok := p.Float(minusZero); !ok || !math.Signbit(got) {
-		t.Fatal("literal float bits were normalized instead of preserved")
+	owner, gotValues, ok := p.Normal(result)
+	if !ok || owner != entry || gotValues != values {
+		t.Fatalf("Normal = %v, %v, %v", owner, gotValues, ok)
 	}
 }
 
-var (
-	hotTerm   program.Term
-	hotCount  int
-	hotOK     bool
-	hotProg   *program.Program
-	hotUnary  program.UnaryOp
-	hotBinary program.BinaryOp
-	hotSelect program.SelectOp
-)
-
-func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
-	build := func(rows int) (*program.Program, program.Term, program.Term) {
-		b := newProgramBuilder(t)
-		span := program.Span{File: "shared.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
-		base := b.String(span, "base")
-		key := b.Integer(span, 1)
-		var values, order program.Term
-		for i := 0; i < rows; i++ {
-			values = b.Values(span, []program.Term{base, key}, 0)
-			order = b.LensKey(span, base, key)
-		}
+func TestEntryAndSpanContractsFailClosed(t *testing.T) {
+	t.Run("valid spans round trip", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		generated := b.Nil(program.Span{}, entry)
+		point := b.Bool(program.Span{File: "span.lua", StartLine: 3, StartCol: 7}, entry, true)
+		full := b.Integer(program.Span{File: "span.lua", StartLine: 3, StartCol: 8, EndLine: 4, EndCol: 2}, entry, 1)
+		values := b.Values(program.Span{}, entry, []program.Term{generated, point, full}, 0)
+		b.SetBody(entry, b.Normal(program.Span{}, entry, values))
 		p, err := b.Seal()
 		if err != nil {
 			t.Fatal(err)
 		}
-		return p, values, order
-	}
-	p, values, order := build(256)
-	if got, ok := p.TermAt(p.TermCount() - 1); !ok || got != order {
-		t.Fatalf("TermAt = %v, %v", got, ok)
-	}
-	termBacking := make([]program.Term, p.TermCount())
-	terms := p.AppendTerms(termBacking[:0])
-	if len(terms) != p.TermCount() || &terms[0] != &termBacking[0] {
-		t.Fatal("AppendTerms did not reuse destination capacity")
-	}
-	if count, ok := p.ValuesLen(values); !ok || count != 2 {
-		t.Fatalf("ValuesLen = %d, %v", count, ok)
-	}
-	if got, ok := p.ValuesAt(values, 1); !ok || got == 0 {
-		t.Fatalf("ValuesAt = %v, %v", got, ok)
-	}
-	if tail, ok := p.ValuesTail(values); !ok || tail != 0 {
-		t.Fatalf("ValuesTail = %v, %v", tail, ok)
-	}
-	if count, ok := p.OrderCount(order); !ok || count != 2 {
-		t.Fatalf("OrderCount = %d, %v", count, ok)
-	}
-	if got, ok := p.OrderAt(order, 0); !ok || got == 0 {
-		t.Fatalf("OrderAt = %v, %v", got, ok)
-	}
-	if got := testing.AllocsPerRun(1000, func() {
-		hotTerm, hotOK = p.TermAt(0)
-		hotCount, hotOK = p.ValuesLen(values)
-		hotTerm, hotOK = p.ValuesAt(values, 0)
-		hotTerm, hotOK = p.ValuesTail(values)
-		hotCount, hotOK = p.OrderCount(order)
-		hotTerm, hotOK = p.OrderAt(order, 0)
-	}); got != 0 {
-		t.Fatalf("indexed hot-path queries allocated: %.2f", got)
-	}
-	_ = hotTerm
-	_ = hotCount
-	_ = hotOK
-
-	// The ratio guards against one retained allocation per Values/order row.
-	sealedAllocs := func(rows int) float64 {
-		b := newProgramBuilder(t)
-		span := program.Span{File: "shared.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
-		base := b.String(span, "base")
-		key := b.Integer(span, 1)
-		for i := 0; i < rows; i++ {
-			b.Values(span, []program.Term{base, key}, 0)
-			b.LensKey(span, base, key)
+		if got, ok := p.Span(generated); !ok || got != (program.Span{}) {
+			t.Fatalf("generated Span = %#v, %v", got, ok)
 		}
-		return testing.AllocsPerRun(30, func() {
-			var err error
-			hotProg, err = b.Seal()
-			if err != nil {
-				t.Fatal(err)
+		if got, ok := p.Span(point); !ok || got.File != "span.lua" || got.StartLine != 3 || got.StartCol != 7 || got.EndLine != 0 || got.EndCol != 0 {
+			t.Fatalf("point Span = %#v, %v", got, ok)
+		}
+		if got, ok := p.Span(full); !ok || got.File != "span.lua" || got.StartLine != 3 || got.StartCol != 8 || got.EndLine != 4 || got.EndCol != 2 {
+			t.Fatalf("full Span = %#v, %v", got, ok)
+		}
+	})
+
+	invalidSpans := []struct {
+		name string
+		span program.Span
+	}{
+		{name: "negative line", span: program.Span{StartLine: -1}},
+		{name: "negative column", span: program.Span{StartCol: -1}},
+		{name: "missing start column", span: program.Span{StartLine: 1}},
+		{name: "missing start line", span: program.Span{StartCol: 1}},
+		{name: "missing end column", span: program.Span{StartLine: 1, StartCol: 1, EndLine: 2}},
+		{name: "missing end line", span: program.Span{StartLine: 1, StartCol: 1, EndCol: 2}},
+		{name: "reversed lines", span: program.Span{StartLine: 2, StartCol: 1, EndLine: 1, EndCol: 1}},
+		{name: "reversed columns", span: program.Span{StartLine: 2, StartCol: 2, EndLine: 2, EndCol: 1}},
+	}
+	for _, test := range invalidSpans {
+		t.Run(test.name, func(t *testing.T) {
+			b, entry := entryBuilder(t)
+			if term := b.Nil(test.span, entry); term != 0 {
+				t.Fatalf("invalid span minted %v", term)
+			}
+			if _, err := b.Seal(); err == nil {
+				t.Fatal("invalid span did not poison Builder")
 			}
 		})
 	}
-	small, large := sealedAllocs(1), sealedAllocs(512)
-	if large > small+4 {
-		t.Fatalf("Seal allocations grew per relation: small=%.2f large=%.2f", small, large)
-	}
 
-	richSealAllocs := func(rows int) float64 {
-		span := program.Span{File: "rich.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
-		b, entry := newClosureBuilder(t, span)
-		body := b.Body(span)
-		roots := make([]program.Term, 0, rows*2)
-		for i := 0; i < rows; i++ {
-			cell := b.Cell(span, body)
-			value := b.Integer(span, int64(i))
-			values := b.Values(span, []program.Term{value}, 0)
-			roots = append(roots, b.Bind(span, []program.Term{cell}, values))
-			roots = append(roots, b.Assign(span, []program.Term{cell}, values))
+	t.Run("missing entry", func(t *testing.T) {
+		if _, err := program.NewBuilder().Seal(); err == nil {
+			t.Fatal("missing Entry was accepted")
 		}
-		if !b.SetBody(body, roots...) {
-			t.Fatal("SetBody failed")
+	})
+	t.Run("entry must be Body", func(t *testing.T) {
+		b := program.NewBuilder()
+		body := b.Body(program.Span{})
+		value := b.Integer(program.Span{}, body, 1)
+		if b.SetEntry(value) {
+			t.Fatal("SetEntry accepted non-Body")
 		}
-		if !b.SetBody(entry, body) {
-			t.Fatal("SetBody(entry) failed")
-		}
-		return testing.AllocsPerRun(30, func() {
-			var err error
-			hotProg, err = b.Seal()
-			if err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-	richSmall, richLarge := richSealAllocs(1), richSealAllocs(512)
-	if richLarge > richSmall+4 {
-		t.Fatalf("Bind/Body-rich Seal allocations grew per statement: small=%.2f large=%.2f", richSmall, richLarge)
-	}
-}
-
-func TestScalarRelationsAreTypedAndPreserveEvaluationOrder(t *testing.T) {
-	span := program.Span{File: "scalar.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b, entry := newClosureBuilder(t, span)
-	body := b.Body(span)
-	cell := b.Cell(span, body)
-	base := b.String(span, "table")
-	key := b.String(span, "field")
-	lens := b.LensKey(span, base, key)
-	cellRead := b.Read(span, cell)
-	lensRead := b.Read(span, lens)
-	unary := b.Unary(span, program.UnaryBitNot, lensRead)
-	binary := b.Binary(span, program.BinaryIDiv, cellRead, unary)
-	selectTerm := b.Select(span, program.SelectAnd, binary, lensRead)
-	values := b.Values(span, []program.Term{selectTerm}, 0)
-	result := b.Return(span, values)
-	if !b.SetBody(body, result) {
-		t.Fatal("SetBody failed")
-	}
-	if !b.SetBody(entry, body) {
-		t.Fatal("SetBody(entry) failed")
-	}
-	p, err := b.Seal()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if source, ok := p.Read(cellRead); !ok || source != cell {
-		t.Fatalf("Cell Read = %v, %v", source, ok)
-	}
-	if source, ok := p.Read(lensRead); !ok || source != lens {
-		t.Fatalf("Lens Read = %v, %v", source, ok)
-	}
-	if count, ok := p.OrderCount(cellRead); !ok || count != 0 {
-		t.Fatalf("Cell Read order count = %d, %v", count, ok)
-	}
-	if order, ok := p.AppendOrder(cellRead, nil); !ok || len(order) != 0 {
-		t.Fatalf("Cell Read order = %v, %v", order, ok)
-	}
-	if order, ok := p.AppendOrder(lensRead, nil); !ok || !reflect.DeepEqual(order, []program.Term{lens}) {
-		t.Fatalf("Lens Read order = %v, %v", order, ok)
-	}
-	if op, operand, ok := p.Unary(unary); !ok || op != program.UnaryBitNot || operand != lensRead {
-		t.Fatalf("Unary = %v, %v, %v", op, operand, ok)
-	}
-	if order, ok := p.AppendOrder(unary, nil); !ok || !reflect.DeepEqual(order, []program.Term{lensRead}) {
-		t.Fatalf("Unary order = %v, %v", order, ok)
-	}
-	if op, left, right, ok := p.Binary(binary); !ok || op != program.BinaryIDiv || left != cellRead || right != unary {
-		t.Fatalf("Binary = %v, %v, %v, %v", op, left, right, ok)
-	}
-	if order, ok := p.AppendOrder(binary, nil); !ok || !reflect.DeepEqual(order, []program.Term{cellRead, unary}) {
-		t.Fatalf("Binary order = %v, %v", order, ok)
-	}
-	if op, left, right, ok := p.Select(selectTerm); !ok || op != program.SelectAnd || left != binary || right != lensRead {
-		t.Fatalf("Select = %v, %v, %v, %v", op, left, right, ok)
-	}
-	if order, ok := p.AppendOrder(selectTerm, nil); !ok || !reflect.DeepEqual(order, []program.Term{binary}) {
-		t.Fatalf("Select order = %v, %v", order, ok)
-	}
-
-	if allocations := testing.AllocsPerRun(1000, func() {
-		hotTerm, hotOK = p.Read(lensRead)
-		hotUnary, hotTerm, hotOK = p.Unary(unary)
-		hotBinary, hotTerm, _, hotOK = p.Binary(binary)
-		hotSelect, hotTerm, _, hotOK = p.Select(selectTerm)
-		hotCount, hotOK = p.OrderCount(selectTerm)
-		hotTerm, hotOK = p.OrderAt(selectTerm, 0)
-	}); allocations != 0 {
-		t.Fatalf("scalar queries allocated: %.2f", allocations)
-	}
-}
-
-func TestScalarRelationsFailClosedAndSealWithoutPerRowAllocation(t *testing.T) {
-	span := program.Span{File: "bad-scalar.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	invalid := []func(*program.Builder){
-		func(b *program.Builder) { b.Read(span, b.Integer(span, 1)) },
-		func(b *program.Builder) { b.Unary(span, program.UnaryOp(255), b.Integer(span, 1)) },
-		func(b *program.Builder) {
-			b.Binary(span, program.BinaryOp(255), b.Integer(span, 1), b.Integer(span, 2))
-		},
-		func(b *program.Builder) {
-			b.Select(span, program.SelectOp(255), b.Bool(span, true), b.Integer(span, 1))
-		},
-		func(b *program.Builder) { b.Unary(span, program.UnaryNeg, program.Term(0x0101)) },
-		func(b *program.Builder) { b.Binary(span, program.BinaryAdd, b.Integer(span, 1), program.Term(0x0101)) },
-		func(b *program.Builder) { b.Select(span, program.SelectOr, program.Term(0x0101), b.Integer(span, 1)) },
-	}
-	for i, build := range invalid {
-		b := newProgramBuilder(t)
-		build(b)
 		if _, err := b.Seal(); err == nil {
-			t.Fatalf("invalid scalar relation %d sealed", i)
+			t.Fatal("invalid Entry did not poison Builder")
 		}
-	}
-
-	sealedAllocs := func(rows int) float64 {
-		b := newProgramBuilder(t)
-		span := program.Span{File: "scalar-alloc.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-		left := b.Integer(span, 1)
-		right := b.Integer(span, 2)
-		for i := 0; i < rows; i++ {
-			unary := b.Unary(span, program.UnaryNeg, left)
-			binary := b.Binary(span, program.BinaryAdd, unary, right)
-			b.Select(span, program.SelectOr, binary, left)
+	})
+	t.Run("entry is one shot", func(t *testing.T) {
+		b := program.NewBuilder()
+		first, second := b.Body(program.Span{}), b.Body(program.Span{})
+		b.SetBody(first)
+		b.SetBody(second)
+		if !b.SetEntry(first) || b.SetEntry(second) {
+			t.Fatal("SetEntry one-shot law failed")
 		}
-		return testing.AllocsPerRun(30, func() {
-			var err error
-			hotProg, err = b.Seal()
-			if err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-	if small, large := sealedAllocs(64), sealedAllocs(512); large > small+2 {
-		t.Fatalf("scalar Seal allocations grew per relation: small=%.2f large=%.2f", small, large)
-	}
-}
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("second Entry did not poison Builder")
+		}
+	})
+	t.Run("entry must be filled once", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("unfilled Entry was accepted")
+		}
 
-func TestValuesLensOrderAndCopies(t *testing.T) {
-	b := newProgramBuilder(t)
-	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 3, EndLine: 1, EndCol: 5}
-	base := b.String(span, "base")
-	key := b.Integer(span, 3)
-	tail := b.Call(span, b.String(span, "open"), 0, b.Values(span, nil, 0), 0)
-	fixed := []program.Term{base, key}
-	values := b.Values(span, fixed, tail)
-	fixed[0] = 0
-	dynamic := b.LensKey(span, base, key)
-	exact := b.LensExact(span, base, key)
-	p, err := b.Seal()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	gotFixed, gotTail, ok := p.AppendValues(values, make([]program.Term, 0, 2))
-	if !ok || !reflect.DeepEqual(gotFixed, []program.Term{base, key}) || gotTail != tail {
-		t.Fatalf("Values = %v, %v, %v", gotFixed, gotTail, ok)
-	}
-	valueBacking := make([]program.Term, 2)
-	valueDst, _, ok := p.AppendValues(values, valueBacking[:0])
-	if !ok || &valueDst[0] != &valueBacking[0] {
-		t.Fatal("AppendValues did not reuse destination capacity")
-	}
-	if got, ok := p.AppendOrder(values, make([]program.Term, 0, 3)); !ok || !reflect.DeepEqual(got, []program.Term{base, key, tail}) {
-		t.Fatalf("Values order = %v", got)
-	}
-	if got, ok := p.AppendOrder(dynamic, make([]program.Term, 0, 2)); !ok || !reflect.DeepEqual(got, []program.Term{base, key}) {
-		t.Fatalf("dynamic Lens order = %v", got)
-	}
-	if got, ok := p.AppendOrder(exact, make([]program.Term, 0, 1)); !ok || !reflect.DeepEqual(got, []program.Term{base}) {
-		t.Fatalf("exact Lens order = %v", got)
-	}
-}
-
-func TestDeterministicMinting(t *testing.T) {
-	build := func() []program.Term {
-		b := newProgramBuilder(t)
-		span := program.Span{File: "same.lua"}
-		base := b.String(span, "base")
-		key := b.Integer(span, 1)
-		values := b.Values(span, []program.Term{base}, 0)
-		b.LensExact(span, base, key)
-		b.Return(span, values)
+		b, entry = entryBuilder(t)
+		if !b.SetBody(entry) || b.SetBody(entry) {
+			t.Fatal("SetBody one-shot law failed")
+		}
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("second Body fill did not poison Builder")
+		}
+	})
+	t.Run("entry cannot be nested", func(t *testing.T) {
+		b := program.NewBuilder()
+		parent, child := b.Body(program.Span{}), b.Body(program.Span{})
+		b.SetEntry(child)
+		b.SetBody(child)
+		b.SetBody(parent, child)
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("nested Entry was accepted")
+		}
+	})
+	t.Run("entry cannot be Function body", func(t *testing.T) {
+		b := program.NewBuilder()
+		owner, body := b.Body(program.Span{}), b.Body(program.Span{})
+		b.SetEntry(body)
+		fn := b.Function(program.Span{}, owner, body, nil, 0, nil)
+		bodyValues := b.Values(program.Span{}, body, nil, 0)
+		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+		fnValues := b.Values(program.Span{}, owner, []program.Term{fn}, 0)
+		b.SetBody(owner, b.Normal(program.Span{}, owner, fnValues))
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("Function Body was accepted as Entry")
+		}
+	})
+	t.Run("empty entry queries do not allocate", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		b.SetBody(entry)
 		p, err := b.Seal()
 		if err != nil {
 			t.Fatal(err)
 		}
-		return p.AppendTerms(nil)
-	}
-	if !reflect.DeepEqual(build(), build()) {
-		t.Fatal("equivalent builders did not mint deterministically")
-	}
+		if got, ok := p.Entry(); !ok || got != entry {
+			t.Fatalf("Entry = %v, %v", got, ok)
+		}
+		if count, ok := p.BodyLen(entry); !ok || count != 0 {
+			t.Fatalf("BodyLen = %d, %v", count, ok)
+		}
+		if allocations := testing.AllocsPerRun(1000, func() {
+			queryTerm, queryOK = p.Entry()
+			queryInt, queryOK = p.BodyLen(entry)
+		}); allocations != 0 {
+			t.Fatalf("Entry queries allocated: %g", allocations)
+		}
+	})
 }
 
-func TestFunctionCaptureVarargAndDirectCall(t *testing.T) {
-	span := program.Span{File: "closure.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 20}
-	b, entry := newClosureBuilder(t, span)
-	binding := b.Cell(span, entry)
-	body := b.Body(span)
-	formal := b.Cell(span, body)
-	varargCell := b.Cell(span, body)
-	captured := b.Cell(span, body)
-	function := b.Function(span, entry, body, binding, []program.Term{formal}, varargCell)
-	capture := b.Capture(span, function, captured, binding)
-	if !b.SetFunctionCaptures(function, []program.Term{capture}) {
-		t.Fatal("SetFunctionCaptures failed")
-	}
-	callee := b.Read(span, captured)
-	actuals := b.Values(span, nil, 0)
-	call := b.Call(span, callee, 0, actuals, function)
-	vararg := b.Vararg(span, varargCell)
-	result := b.Return(span, b.Values(span, []program.Term{call}, vararg))
-	if !b.SetBody(body, result) {
-		t.Fatal("SetBody(function) failed")
-	}
-	fillEmptyEntry(t, b, entry)
-
+func TestFieldSyntaxPreservesEvaluationKind(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	name := b.Name(program.Span{}, entry, "x")
+	fieldLiteral := b.Integer(program.Span{}, entry, 1)
+	fieldValue := b.Values(program.Span{}, entry, []program.Term{fieldLiteral}, 0)
+	table := b.Table(program.Span{}, entry, []program.Term{name}, []program.Term{fieldValue}, []program.FieldKind{program.FieldName})
+	values := b.Values(program.Span{}, entry, []program.Term{table}, 0)
+	result := b.Normal(program.Span{}, entry, values)
+	b.SetBody(entry, result)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owner, gotBody, gotBinding, gotVararg, ok := p.Function(function); !ok ||
-		owner != entry || gotBody != body || gotBinding != binding || gotVararg != varargCell {
-		t.Fatalf("Function = %v, %v, %v, %v, %v", owner, gotBody, gotBinding, gotVararg, ok)
+	if p.StringCount() != 0 {
+		t.Fatal("static Name leaked into String family")
 	}
-	if got, ok := p.FormalAt(function, 0); !ok || got != formal {
-		t.Fatalf("FormalAt = %v, %v", got, ok)
+	owner, ok := p.Table(table)
+	if !ok || owner != entry {
+		t.Fatalf("Table owner = %v, %v", owner, ok)
 	}
-	if count, ok := p.FunctionCaptureLen(function); !ok || count != 1 {
-		t.Fatalf("FunctionCaptureLen = %d, %v", count, ok)
-	}
-	if got, ok := p.FunctionCaptureAt(function, 0); !ok || got != capture {
-		t.Fatalf("FunctionCaptureAt = %v, %v", got, ok)
-	}
-	if gotFunction, inner, outer, ok := p.Capture(capture); !ok || gotFunction != function || inner != captured || outer != binding {
-		t.Fatalf("Capture = %v, %v, %v, %v", gotFunction, inner, outer, ok)
-	}
-	if got, ok := p.Vararg(vararg); !ok || got != varargCell {
-		t.Fatalf("Vararg = %v, %v", got, ok)
-	}
-	if callee, receiver, gotActuals, direct, ok := p.Call(call); !ok ||
-		callee == 0 || receiver != 0 || gotActuals != actuals || direct != function {
-		t.Fatalf("Call = %v, %v, %v, %v, %v", callee, receiver, gotActuals, direct, ok)
-	}
-	if order, ok := p.AppendOrder(call, nil); !ok || !reflect.DeepEqual(order, []program.Term{callee, actuals}) {
-		t.Fatalf("Call order = %v, %v", order, ok)
-	}
-	if head, ok := p.Mu(function); !ok || head != function {
-		t.Fatalf("self direct-call Mu = %v, %v", head, ok)
-	}
-	if allocations := testing.AllocsPerRun(1000, func() {
-		_, hotTerm, hotTerm, hotTerm, hotOK = p.Function(function)
-		hotCount, hotOK = p.FunctionCaptureLen(function)
-		hotTerm, hotOK = p.FunctionCaptureAt(function, 0)
-		_, hotTerm, hotTerm, hotOK = p.Capture(capture)
-		hotTerm, hotOK = p.Vararg(vararg)
-		_, hotTerm, hotTerm, hotTerm, hotOK = p.Call(call)
-	}); allocations != 0 {
-		t.Fatalf("Function/Capture/Call queries allocated: %.2f", allocations)
+	source, _, kind, _, ok := p.Field(table, 0)
+	if !ok || source != name || kind != program.FieldName {
+		t.Fatalf("Field = %v, %v, %v", source, kind, ok)
 	}
 }
 
-func TestFunctionCaptureCallLawsFailClosed(t *testing.T) {
-	span := program.Span{File: "bad-closure.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	sealError := func(t *testing.T, b *program.Builder, want string) {
-		t.Helper()
-		if _, err := b.Seal(); err == nil || err.Error() != want {
-			t.Fatalf("Seal error = %v, want %q", err, want)
-		}
+func TestConstructorRejectsForgedFutureChild(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	if got := b.Values(program.Span{}, entry, []program.Term{program.Term(1<<8 | 3)}, 0); got != 0 {
+		t.Fatalf("Values accepted forged child %v", got)
 	}
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("forged child did not poison builder")
+	}
+}
 
-	t.Run("captures must be filled", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		body := b.Body(span)
-		b.Function(span, entry, body, 0, nil, 0)
-		b.SetBody(body)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Function captures were not filled")
-	})
-	t.Run("captures fill exactly once", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		body := b.Body(span)
-		function := b.Function(span, entry, body, 0, nil, 0)
-		if !b.SetFunctionCaptures(function, nil) || b.SetFunctionCaptures(function, nil) {
-			t.Fatal("SetFunctionCaptures did not enforce exactly-once fill")
+func TestLiteralOccurrencesAndInputRangesRemainDistinct(t *testing.T) {
+	b, entry := entryBuilder(t)
+	first := b.Integer(
+		program.Span{File: "literal.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2},
+		entry,
+		7,
+	)
+	second := b.Integer(
+		program.Span{File: "literal.lua", StartLine: 1, StartCol: 9, EndLine: 1, EndCol: 10},
+		entry,
+		7,
+	)
+	if first == 0 || second == 0 || first == second {
+		t.Fatalf("equal literal occurrences collapsed: %v, %v", first, second)
+	}
+	fixed := []program.Term{first, second}
+	values := b.Values(program.Span{}, entry, fixed, 0)
+	fixed[0], fixed[1] = 0, 0
+	b.SetBody(entry, b.Normal(program.Span{}, entry, values))
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := p.Value(values, 0); !ok || got != first {
+		t.Fatalf("first Value = %v, %v", got, ok)
+	}
+	if got, ok := p.Value(values, 1); !ok || got != second {
+		t.Fatalf("second Value = %v, %v", got, ok)
+	}
+	if _, got, ok := p.Integer(first); !ok || got != 7 {
+		t.Fatalf("first Integer = %d, %v", got, ok)
+	}
+	if _, got, ok := p.Integer(second); !ok || got != 7 {
+		t.Fatalf("second Integer = %d, %v", got, ok)
+	}
+	if span, ok := p.Span(second); !ok || span.StartCol != 9 {
+		t.Fatalf("second Span = %#v, %v", span, ok)
+	}
+}
+
+func TestTypedConstructorsRejectWrongRelationFamilies(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(*program.Builder, program.Term) program.Term
+	}{
+		{
+			name: "Values fixed Body",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Values(program.Span{}, owner, []program.Term{owner}, 0)
+			},
+		},
+		{
+			name: "Values scalar tail",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Values(program.Span{}, owner, nil, b.Integer(program.Span{}, owner, 1))
+			},
+		},
+		{
+			name: "exact Lens nonliteral key",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				base := b.Table(program.Span{}, owner, nil, nil, nil)
+				key := b.Values(program.Span{}, owner, nil, 0)
+				return b.LensExact(program.Span{}, owner, base, key, program.FieldExact)
+			},
+		},
+		{
+			name: "dynamic Lens nonvalue base",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				key := b.Integer(program.Span{}, owner, 1)
+				return b.LensKey(program.Span{}, owner, owner, key)
+			},
+		},
+		{
+			name: "Call nonvalue callee",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				actuals := b.Values(program.Span{}, owner, nil, 0)
+				return b.Call(program.Span{}, owner, owner, 0, actuals)
+			},
+		},
+		{
+			name: "Call actuals",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				callee := b.Table(program.Span{}, owner, nil, nil, nil)
+				return b.Call(program.Span{}, owner, callee, 0, b.Integer(program.Span{}, owner, 1))
+			},
+		},
+		{
+			name: "Assign requires target",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				values := b.Values(program.Span{}, owner, nil, 0)
+				return b.Assign(program.Span{}, owner, nil, values)
+			},
+		},
+		{
+			name: "Assign target family",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				target := b.Integer(program.Span{}, owner, 1)
+				values := b.Values(program.Span{}, owner, nil, 0)
+				return b.Assign(program.Span{}, owner, []program.Term{target}, values)
+			},
+		},
+		{
+			name: "Assign Values",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				cell := b.Cell(program.Span{}, owner)
+				return b.Assign(program.Span{}, owner, []program.Term{cell}, b.Integer(program.Span{}, owner, 1))
+			},
+		},
+		{
+			name: "Branch condition",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				values := b.Values(program.Span{}, owner, nil, 0)
+				arm := b.Normal(program.Span{}, owner, values)
+				return b.Branch(program.Span{}, owner, owner, arm, arm)
+			},
+		},
+		{
+			name: "Branch arm",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				condition := b.Bool(program.Span{}, owner, true)
+				return b.Branch(program.Span{}, owner, condition, b.Integer(program.Span{}, owner, 1), owner)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b, entry := entryBuilder(t)
+			if term := test.build(b, entry); term != 0 {
+				t.Fatalf("invalid relation minted %v", term)
+			}
+			if _, err := b.Seal(); err == nil {
+				t.Fatal("invalid relation did not poison Builder")
+			}
+		})
+	}
+}
+
+func TestBranchBodyIsStructuralAuthority(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	whenTrue := b.Body(program.Span{})
+	whenFalse := b.Body(program.Span{})
+	b.SetEntry(entry)
+	condition := b.Bool(program.Span{}, entry, true)
+	trueValues := b.Values(program.Span{}, whenTrue, nil, 0)
+	falseValues := b.Values(program.Span{}, whenFalse, nil, 0)
+	trueResult := b.Normal(program.Span{}, whenTrue, trueValues)
+	falseResult := b.Normal(program.Span{}, whenFalse, falseValues)
+	b.SetBody(whenTrue, trueResult)
+	b.SetBody(whenFalse, falseResult)
+	branch := b.Branch(program.Span{}, entry, condition, whenTrue, whenFalse)
+	b.SetBody(entry, branch)
+	if _, err := b.Seal(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExactKeysNormalizeWithoutSharingOccurrences(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	leftBase := b.Table(program.Span{}, entry, nil, nil, nil)
+	rightBase := b.Table(program.Span{}, entry, nil, nil, nil)
+	minusZero := b.Float(program.Span{}, entry, -0.0)
+	integerZero := b.Integer(program.Span{}, entry, 0)
+	left := b.LensExact(program.Span{}, entry, leftBase, minusZero, program.FieldExact)
+	right := b.LensExact(program.Span{}, entry, rightBase, integerZero, program.FieldExact)
+	if leftBase == 0 || rightBase == 0 || minusZero == 0 || integerZero == 0 || left == 0 || right == 0 {
+		t.Fatalf("mint failed: %v %v %v %v %v %v", leftBase, rightBase, minusZero, integerZero, left, right)
+	}
+	leftValues := b.Values(program.Span{}, entry, nil, 0)
+	rightValues := b.Values(program.Span{}, entry, nil, 0)
+	leftAssign := b.Assign(program.Span{}, entry, []program.Term{left}, leftValues)
+	rightAssign := b.Assign(program.Span{}, entry, []program.Term{right}, rightValues)
+	if !b.SetBody(entry, leftAssign, rightAssign) {
+		t.Fatal("SetBody")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, _, leftKey, _ := p.Lens(left)
+	_, _, _, _, rightKey, _ := p.Lens(right)
+	if leftKey == 0 || leftKey != rightKey {
+		t.Fatal("-0 and integer 0 must normalize to one exact key")
+	}
+}
+
+func TestExactKeyEqualityClasses(t *testing.T) {
+	b, entry := entryBuilder(t)
+	keys := []program.Term{
+		b.Integer(program.Span{}, entry, 1),
+		b.Float(program.Span{}, entry, 1),
+		b.Bool(program.Span{}, entry, true),
+		b.String(program.Span{}, entry, "true"),
+	}
+	lenses := make([]program.Term, len(keys))
+	roots := make([]program.Term, len(keys))
+	for i, key := range keys {
+		base := b.Table(program.Span{}, entry, nil, nil, nil)
+		lenses[i] = b.LensExact(program.Span{}, entry, base, key, program.FieldExact)
+		values := b.Values(program.Span{}, entry, nil, 0)
+		roots[i] = b.Assign(program.Span{}, entry, []program.Term{lenses[i]}, values)
+	}
+	b.SetBody(entry, roots...)
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalized := make([]program.Key, len(lenses))
+	for i, lens := range lenses {
+		_, _, _, _, normalized[i], _ = p.Lens(lens)
+	}
+	if normalized[0] == 0 || normalized[0] != normalized[1] {
+		t.Fatalf("integer/float equality class = %v", normalized)
+	}
+	if normalized[2] == 0 || normalized[3] == 0 || normalized[2] == normalized[3] || normalized[0] == normalized[2] || normalized[0] == normalized[3] {
+		t.Fatalf("typed exact-key classes collapsed: %v", normalized)
+	}
+}
+
+func TestNilExactKeysRemainDistinctSources(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	leftBase, rightBase := b.Table(program.Span{}, entry, nil, nil, nil), b.Table(program.Span{}, entry, nil, nil, nil)
+	leftNil, rightNil := b.Nil(program.Span{}, entry), b.Nil(program.Span{}, entry)
+	left := b.LensExact(program.Span{}, entry, leftBase, leftNil, program.FieldExact)
+	right := b.LensExact(program.Span{}, entry, rightBase, rightNil, program.FieldExact)
+	leftValues, rightValues := b.Values(program.Span{}, entry, nil, 0), b.Values(program.Span{}, entry, nil, 0)
+	b.SetBody(entry, b.Assign(program.Span{}, entry, []program.Term{left}, leftValues), b.Assign(program.Span{}, entry, []program.Term{right}, rightValues))
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, _, leftKey, _ := p.Lens(left)
+	_, _, _, _, rightKey, _ := p.Lens(right)
+	if leftKey != 0 || rightKey != 0 {
+		t.Fatal("nil exact keys must have no normalized Key")
+	}
+}
+
+func TestNaNExactKeyDoesNotBecomeComparable(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	leftBase, rightBase := b.Table(program.Span{}, entry, nil, nil, nil), b.Table(program.Span{}, entry, nil, nil, nil)
+	leftNaN, rightNaN := b.Float(program.Span{}, entry, math.NaN()), b.Float(program.Span{}, entry, math.NaN())
+	left := b.LensExact(program.Span{}, entry, leftBase, leftNaN, program.FieldExact)
+	right := b.LensExact(program.Span{}, entry, rightBase, rightNaN, program.FieldExact)
+	leftValues, rightValues := b.Values(program.Span{}, entry, nil, 0), b.Values(program.Span{}, entry, nil, 0)
+	b.SetBody(entry, b.Assign(program.Span{}, entry, []program.Term{left}, leftValues), b.Assign(program.Span{}, entry, []program.Term{right}, rightValues))
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, _, leftKey, _ := p.Lens(left)
+	_, _, _, _, rightKey, _ := p.Lens(right)
+	if leftKey != 0 || rightKey != 0 {
+		t.Fatal("NaN keys must not be comparable")
+	}
+}
+
+func TestTypedScalarRelations(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	left := b.Integer(program.Span{}, entry, 2)
+	negated := b.Unary(program.Span{}, entry, program.UnaryNeg, left)
+	right := b.Integer(program.Span{}, entry, 3)
+	sum := b.Binary(program.Span{}, entry, program.BinaryAdd, negated, right)
+	condition := b.Bool(program.Span{}, entry, true)
+	selected := b.Select(program.Span{}, entry, program.SelectAnd, condition, sum)
+	values := b.Values(program.Span{}, entry, []program.Term{selected}, 0)
+	b.SetBody(entry, b.Normal(program.Span{}, entry, values))
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, op, operand, ok := p.Unary(negated)
+	if !ok || owner != entry || op != program.UnaryNeg || operand != left {
+		t.Fatalf("Unary = %v, %v, %v, %v", owner, op, operand, ok)
+	}
+	owner, binary, gotLeft, gotRight, ok := p.Binary(sum)
+	if !ok || owner != entry || binary != program.BinaryAdd || gotLeft != negated || gotRight != right {
+		t.Fatalf("Binary = %v, %v, %v, %v, %v", owner, binary, gotLeft, gotRight, ok)
+	}
+	owner, selectOp, gotCondition, gotRight, ok := p.Select(selected)
+	if !ok || owner != entry || selectOp != program.SelectAnd || gotCondition != condition || gotRight != sum {
+		t.Fatalf("Select = %v, %v, %v, %v, %v", owner, selectOp, gotCondition, gotRight, ok)
+	}
+}
+
+func TestScalarFamiliesFailClosed(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(*program.Builder, program.Term) program.Term
+	}{
+		{
+			name: "Read source",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Read(program.Span{}, owner, b.Integer(program.Span{}, owner, 1))
+			},
+		},
+		{
+			name: "Vararg source",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Vararg(program.Span{}, owner, b.Integer(program.Span{}, owner, 1))
+			},
+		},
+		{
+			name: "Unary zero operator",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Unary(program.Span{}, owner, 0, b.Integer(program.Span{}, owner, 1))
+			},
+		},
+		{
+			name: "Unary high operator",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Unary(program.Span{}, owner, program.UnaryOp(255), b.Integer(program.Span{}, owner, 1))
+			},
+		},
+		{
+			name: "Unary operand",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Unary(program.Span{}, owner, program.UnaryNeg, owner)
+			},
+		},
+		{
+			name: "Binary zero operator",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				left, right := b.Integer(program.Span{}, owner, 1), b.Integer(program.Span{}, owner, 2)
+				return b.Binary(program.Span{}, owner, 0, left, right)
+			},
+		},
+		{
+			name: "Binary high operator",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				left, right := b.Integer(program.Span{}, owner, 1), b.Integer(program.Span{}, owner, 2)
+				return b.Binary(program.Span{}, owner, program.BinaryOp(255), left, right)
+			},
+		},
+		{
+			name: "Binary left operand",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Binary(program.Span{}, owner, program.BinaryAdd, owner, b.Integer(program.Span{}, owner, 2))
+			},
+		},
+		{
+			name: "Binary right operand",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Binary(program.Span{}, owner, program.BinaryAdd, b.Integer(program.Span{}, owner, 1), owner)
+			},
+		},
+		{
+			name: "Select zero operator",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				left, right := b.Bool(program.Span{}, owner, true), b.Integer(program.Span{}, owner, 2)
+				return b.Select(program.Span{}, owner, 0, left, right)
+			},
+		},
+		{
+			name: "Select high operator",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				left, right := b.Bool(program.Span{}, owner, true), b.Integer(program.Span{}, owner, 2)
+				return b.Select(program.Span{}, owner, program.SelectOp(255), left, right)
+			},
+		},
+		{
+			name: "Select left operand",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Select(program.Span{}, owner, program.SelectAnd, owner, b.Integer(program.Span{}, owner, 2))
+			},
+		},
+		{
+			name: "Select right operand",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Select(program.Span{}, owner, program.SelectOr, b.Bool(program.Span{}, owner, true), owner)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b, entry := entryBuilder(t)
+			if term := test.build(b, entry); term != 0 {
+				t.Fatalf("invalid scalar constructor minted %v", term)
+			}
+			if _, err := b.Seal(); err == nil {
+				t.Fatal("invalid scalar constructor did not poison Builder")
+			}
+		})
+	}
+}
+
+func TestLensAndTableShareNormalizedKey(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	fieldName := b.Name(program.Span{}, entry, "x")
+	lensName := b.Name(program.Span{}, entry, "x")
+	fieldLiteral := b.Integer(program.Span{}, entry, 1)
+	fieldValues := b.Values(program.Span{}, entry, []program.Term{fieldLiteral}, 0)
+	table := b.Table(program.Span{}, entry, []program.Term{fieldName}, []program.Term{fieldValues}, []program.FieldKind{program.FieldName})
+	lens := b.LensExact(program.Span{}, entry, table, lensName, program.FieldName)
+	rhs := b.Values(program.Span{}, entry, nil, 0)
+	b.SetBody(entry, b.Assign(program.Span{}, entry, []program.Term{lens}, rhs))
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, _, lensKey, ok := p.Lens(lens)
+	if !ok || lensKey == 0 {
+		t.Fatalf("Lens Key = %v, %v", lensKey, ok)
+	}
+	_, _, _, fieldKey, ok := p.Field(table, 0)
+	if !ok || fieldKey != lensKey {
+		t.Fatalf("Field Key = %v, %v; Lens Key = %v", fieldKey, ok, lensKey)
+	}
+}
+
+func TestSealIsAllocationBoundedAndIterative(t *testing.T) {
+	build := func(depth int) *program.Builder {
+		b := program.NewBuilder()
+		bodies := make([]program.Term, depth)
+		for i := range bodies {
+			bodies[i] = b.Body(program.Span{})
 		}
-		b.SetBody(body)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: poisoned builder")
-	})
-	t.Run("function body has one parent", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		body := b.Body(span)
-		function := b.Function(span, entry, body, 0, nil, 0)
-		b.SetFunctionCaptures(function, nil)
-		orphan := b.Body(span)
-		b.SetBody(body)
-		b.SetBody(orphan)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: non-Entry Body requires exactly one structural parent")
-	})
-	t.Run("capture inner is not a formal", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		binding := b.Cell(span, entry)
-		body := b.Body(span)
-		formal := b.Cell(span, body)
-		function := b.Function(span, entry, body, 0, []program.Term{formal}, 0)
-		capture := b.Capture(span, function, formal, binding)
-		b.SetFunctionCaptures(function, []program.Term{capture})
-		b.SetBody(body)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Capture inner Cell conflicts with Function local role")
-	})
-	t.Run("vararg is distinct from formals", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		body := b.Body(span)
-		cell := b.Cell(span, body)
-		function := b.Function(span, entry, body, 0, []program.Term{cell}, cell)
-		b.SetFunctionCaptures(function, nil)
-		b.SetBody(body)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Function formal and vararg Cells must be distinct")
-	})
-	t.Run("capture outer is strict ancestor", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		leftBody := b.Body(span)
-		rightBody := b.Body(span)
-		leftInner := b.Cell(span, leftBody)
-		rightOuter := b.Cell(span, rightBody)
-		left := b.Function(span, entry, leftBody, 0, nil, 0)
-		right := b.Function(span, entry, rightBody, 0, nil, 0)
-		capture := b.Capture(span, left, leftInner, rightOuter)
-		b.SetFunctionCaptures(left, []program.Term{capture})
-		b.SetFunctionCaptures(right, nil)
-		b.SetBody(leftBody)
-		b.SetBody(rightBody)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Capture outer Cell must belong to strict lexical ancestor")
-	})
-	t.Run("binding is unique", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		binding := b.Cell(span, entry)
-		firstBody := b.Body(span)
-		secondBody := b.Body(span)
-		first := b.Function(span, entry, firstBody, binding, nil, 0)
-		second := b.Function(span, entry, secondBody, binding, nil, 0)
-		b.SetFunctionCaptures(first, nil)
-		b.SetFunctionCaptures(second, nil)
-		b.SetBody(firstBody)
-		b.SetBody(secondBody)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Function binding Cell is not unique")
-	})
-	t.Run("capture inner has one outer alias", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		firstOuter := b.Cell(span, entry)
-		secondOuter := b.Cell(span, entry)
-		body := b.Body(span)
-		inner := b.Cell(span, body)
-		function := b.Function(span, entry, body, 0, nil, 0)
-		first := b.Capture(span, function, inner, firstOuter)
-		second := b.Capture(span, function, inner, secondOuter)
-		b.SetFunctionCaptures(function, []program.Term{first, second})
-		b.SetBody(body)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Capture inner Cell has more than one outer alias")
-	})
-	t.Run("direct Function evidence is mandatory", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		callerBody := b.Body(span)
-		calleeBody := b.Body(span)
-		caller := b.Function(span, entry, callerBody, 0, nil, 0)
-		callee := b.Function(span, entry, calleeBody, 0, nil, 0)
-		b.SetFunctionCaptures(caller, nil)
-		b.SetFunctionCaptures(callee, nil)
-		call := b.Call(span, callee, 0, b.Values(span, nil, 0), 0)
-		b.SetBody(callerBody, call)
-		b.SetBody(calleeBody)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Function callee requires matching direct target")
-	})
-	t.Run("Read direct evidence follows capture to binding", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		callerBinding := b.Cell(span, entry)
-		calleeBinding := b.Cell(span, entry)
-		callerBody := b.Body(span)
-		calleeBody := b.Body(span)
-		inner := b.Cell(span, callerBody)
-		caller := b.Function(span, entry, callerBody, callerBinding, nil, 0)
-		callee := b.Function(span, entry, calleeBody, calleeBinding, nil, 0)
-		capture := b.Capture(span, caller, inner, callerBinding)
-		b.SetFunctionCaptures(caller, []program.Term{capture})
-		b.SetFunctionCaptures(callee, nil)
-		call := b.Call(span, b.Read(span, inner), 0, b.Values(span, nil, 0), callee)
-		b.SetBody(callerBody, call)
-		b.SetBody(calleeBody)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Call Cell binding requires matching direct target")
-	})
-	t.Run("bound Cell Read cannot omit direct evidence", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		binding := b.Cell(span, entry)
-		body := b.Body(span)
-		inner := b.Cell(span, body)
-		function := b.Function(span, entry, body, binding, nil, 0)
-		capture := b.Capture(span, function, inner, binding)
-		b.SetFunctionCaptures(function, []program.Term{capture})
-		b.SetBody(body, b.Call(span, b.Read(span, inner), 0, b.Values(span, nil, 0), 0))
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Call Cell binding requires matching direct target")
-	})
-	t.Run("unbound Cell Read cannot claim direct evidence", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		binding := b.Cell(span, entry)
-		unbound := b.Cell(span, entry)
-		callerBody := b.Body(span)
-		targetBody := b.Body(span)
-		inner := b.Cell(span, callerBody)
-		caller := b.Function(span, entry, callerBody, 0, nil, 0)
-		target := b.Function(span, entry, targetBody, binding, nil, 0)
-		capture := b.Capture(span, caller, inner, unbound)
-		b.SetFunctionCaptures(caller, []program.Term{capture})
-		b.SetFunctionCaptures(target, nil)
-		b.SetBody(callerBody, b.Call(span, b.Read(span, inner), 0, b.Values(span, nil, 0), target))
-		b.SetBody(targetBody)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Call Cell binding has no direct Function")
-	})
-	t.Run("unbound Cell Read remains dynamic without direct evidence", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		unbound := b.Cell(span, entry)
-		body := b.Body(span)
-		function := b.Function(span, entry, body, 0, nil, 0)
-		b.SetFunctionCaptures(function, nil)
-		call := b.Call(span, b.Read(span, unbound), 0, b.Values(span, nil, 0), 0)
-		b.SetBody(body, call)
-		fillEmptyEntry(t, b, entry)
-		if _, err := b.Seal(); err != nil {
+		b.SetEntry(bodies[0])
+		leafValue := b.Integer(program.Span{}, bodies[depth-1], 1)
+		leafValues := b.Values(program.Span{}, bodies[depth-1], []program.Term{leafValue}, 0)
+		b.SetBody(bodies[depth-1], b.Normal(program.Span{}, bodies[depth-1], leafValues))
+		for i := depth - 2; i >= 0; i-- {
+			b.SetBody(bodies[i], bodies[i+1])
+		}
+		return b
+	}
+	small, large := build(128), build(4096)
+	if _, err := large.Seal(); err != nil {
+		t.Fatalf("deep Seal: %v", err)
+	}
+	smallAllocs := testing.AllocsPerRun(20, func() {
+		if _, err := small.Seal(); err != nil {
 			t.Fatal(err)
 		}
 	})
-	t.Run("Vararg anchors only Function vararg Cell", func(t *testing.T) {
-		b, entry := newClosureBuilder(t, span)
-		body := b.Body(span)
-		cell := b.Cell(span, body)
-		function := b.Function(span, entry, body, 0, nil, 0)
-		b.SetFunctionCaptures(function, nil)
-		b.Vararg(span, cell)
-		b.SetBody(body)
-		fillEmptyEntry(t, b, entry)
-		sealError(t, b, "program: Vararg requires Function vararg Cell")
+	largeAllocs := testing.AllocsPerRun(20, func() {
+		if _, err := large.Seal(); err != nil {
+			t.Fatal(err)
+		}
 	})
+	if largeAllocs > smallAllocs+2 {
+		t.Fatalf("Seal allocations grow with depth: small=%g large=%g", smallAllocs, largeAllocs)
+	}
 }
 
-func TestBindRetainsDeclarationVisibilityAndRHSOrder(t *testing.T) {
-	span := program.Span{File: "bind.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 10}
-	b, entry := newClosureBuilder(t, span)
-	body := b.Body(span)
-	first := b.Cell(span, body)
-	second := b.Cell(span, body)
-	left := b.Integer(span, 1)
-	right := b.Integer(span, 2)
-	values := b.Values(span, []program.Term{left, right}, 0)
-	bind := b.Bind(span, []program.Term{first, second}, values)
-	if !b.SetBody(body, bind) {
-		t.Fatal("SetBody failed")
-	}
-	if !b.SetBody(entry, body) {
-		t.Fatal("SetBody(entry) failed")
-	}
+func TestFunctionBindingAuthorityComesOnlyFromBind(t *testing.T) {
+	b := program.NewBuilder()
+	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+	binding := b.Cell(program.Span{}, entry)
+	fn := b.Function(program.Span{}, entry, body, nil, 0, nil)
+	bodyValues := b.Values(program.Span{}, body, nil, 0)
+	b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+	wrong := b.Integer(program.Span{}, entry, 1)
+	wrongValues := b.Values(program.Span{}, entry, []program.Term{wrong}, 0)
+	actuals := b.Values(program.Span{}, entry, nil, 0)
+	read := b.Read(program.Span{}, entry, binding)
+	call := b.Call(program.Span{}, entry, read, 0, actuals)
+	functionValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+	b.SetBody(entry,
+		b.Bind(program.Span{}, entry, []program.Term{binding}, wrongValues),
+		b.Normal(program.Span{}, entry, functionValues),
+		call,
+	)
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count, ok := p.BindLen(bind); !ok || count != 2 {
-		t.Fatalf("BindLen = %d, %v", count, ok)
-	}
-	if cell, ok := p.BindAt(bind, 1); !ok || cell != second {
-		t.Fatalf("BindAt = %v, %v", cell, ok)
-	}
-	if cells, gotValues, ok := p.AppendBind(bind, nil); !ok ||
-		!reflect.DeepEqual(cells, []program.Term{first, second}) || gotValues != values {
-		t.Fatalf("Bind = %v, %v, %v", cells, gotValues, ok)
-	}
-	if gotValues, ok := p.BindValues(bind); !ok || gotValues != values {
-		t.Fatalf("BindValues = %v, %v", gotValues, ok)
-	}
-	if order, ok := p.AppendOrder(bind, nil); !ok ||
-		!reflect.DeepEqual(order, []program.Term{values}) {
-		t.Fatalf("Bind order = %v, %v", order, ok)
+	_, _, _, _, direct, ok := p.Call(call)
+	if !ok || direct != 0 {
+		t.Fatalf("non-Function Bind invented direct authority: %v, %v", direct, ok)
 	}
 }
 
-func TestBindLawsFailClosed(t *testing.T) {
-	span := program.Span{File: "bad-bind.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-
-	empty := newProgramBuilder(t)
-	emptyBody := empty.Body(span)
-	emptyValues := empty.Values(span, nil, 0)
-	emptyBind := empty.Bind(span, nil, emptyValues)
-	empty.SetBody(emptyBody, emptyBind)
-	if _, err := empty.Seal(); err == nil {
-		t.Fatal("Seal accepted Bind without Cells")
-	}
-
-	unowned := newProgramBuilder(t)
-	unownedBody := unowned.Body(span)
-	unownedCell := unowned.Cell(span, unownedBody)
-	unownedValues := unowned.Values(span, nil, 0)
-	unowned.Bind(span, []program.Term{unownedCell}, unownedValues)
-	unowned.SetBody(unownedBody)
-	if _, err := unowned.Seal(); err == nil {
-		t.Fatal("Seal accepted Bind without Body ownership")
-	}
-
-	crossBody := newProgramBuilder(t)
-	owner := crossBody.Body(span)
-	other := crossBody.Body(span)
-	otherCell := crossBody.Cell(span, other)
-	crossValues := crossBody.Values(span, nil, 0)
-	crossBind := crossBody.Bind(span, []program.Term{otherCell}, crossValues)
-	crossBody.SetBody(owner, crossBind)
-	crossBody.SetBody(other)
-	if _, err := crossBody.Seal(); err == nil {
-		t.Fatal("Seal accepted Bind for another Body's Cell")
-	}
-
-	rebound := newProgramBuilder(t)
-	reboundBody := rebound.Body(span)
-	reboundCell := rebound.Cell(span, reboundBody)
-	reboundValues := rebound.Values(span, nil, 0)
-	firstBind := rebound.Bind(span, []program.Term{reboundCell}, reboundValues)
-	secondBind := rebound.Bind(span, []program.Term{reboundCell}, reboundValues)
-	rebound.SetBody(reboundBody, firstBind, secondBind)
-	if _, err := rebound.Seal(); err == nil {
-		t.Fatal("Seal accepted a Cell bound more than once")
-	}
-
-	wrongValues := newProgramBuilder(t)
-	wrongBody := wrongValues.Body(span)
-	wrongCell := wrongValues.Cell(span, wrongBody)
-	notValues := wrongValues.Integer(span, 1)
-	wrongBind := wrongValues.Bind(span, []program.Term{wrongCell}, notValues)
-	wrongValues.SetBody(wrongBody, wrongBind)
-	if _, err := wrongValues.Seal(); err == nil {
-		t.Fatal("Seal accepted Bind without RHS Values")
-	}
-}
-
-func TestDirectRecursiveCallMuAndBodyFill(t *testing.T) {
-	span := program.Span{File: "recursive.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 12}
-	b, entry := newClosureBuilder(t, span)
-	body := b.Body(span)
-	binding := b.Cell(span, entry)
-	inner := b.Cell(span, body)
-	function := b.Function(span, entry, body, binding, nil, 0)
-	capture := b.Capture(span, function, inner, binding)
-	if !b.SetFunctionCaptures(function, []program.Term{capture}) {
-		t.Fatal("SetFunctionCaptures failed")
-	}
-	argument := b.Integer(span, 1)
-	actuals := b.Values(span, []program.Term{argument}, 0)
-	callee := b.Read(span, inner)
-	call := b.Call(span, callee, 0, actuals, function)
-	if !b.SetBody(body, call) {
-		t.Fatal("SetBody failed")
-	}
-	fillEmptyEntry(t, b, entry)
+func TestDirectEvidenceIsDerivedFromCaptureChain(t *testing.T) {
+	b := program.NewBuilder()
+	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+	binding, inner := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, body)
+	fn := b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{{Inner: inner, Outer: binding}})
+	actuals := b.Values(program.Span{}, body, nil, 0)
+	callee := b.Read(program.Span{}, body, inner)
+	call := b.Call(program.Span{}, body, callee, 0, actuals)
+	returned := b.Values(program.Span{}, body, nil, call)
+	b.SetBody(body, b.Return(program.Span{}, body, returned))
+	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotCallee, receiver, gotActuals, direct, ok := p.Call(call); !ok ||
-		gotCallee != callee || receiver != 0 || gotActuals != actuals || direct != function {
-		t.Fatalf("Call = %v, %v, %v, %v, %v", gotCallee, receiver, gotActuals, direct, ok)
+	if count, ok := p.FunctionCaptureCount(fn); !ok || count != 1 {
+		t.Fatalf("FunctionCaptureCount = %d, %v", count, ok)
 	}
-	if head, ok := p.Mu(function); !ok || head != function {
-		t.Fatalf("Mu head = %v, %v; want %v, true", head, ok, function)
+	gotInner, gotOuter, ok := p.FunctionCapture(fn, 0)
+	if !ok || gotInner != inner || gotOuter != binding {
+		t.Fatalf("FunctionCapture = %v, %v, %v", gotInner, gotOuter, ok)
 	}
-	if _, ok := p.Mu(call); ok {
-		t.Fatal("non-Function term has a Mu annotation")
+	if _, _, ok := p.FunctionCapture(fn, 1); ok {
+		t.Fatal("FunctionCapture accepted out-of-range index")
 	}
-	if got, ok := p.AppendBody(body, nil); !ok ||
-		!reflect.DeepEqual(got, []program.Term{call}) {
-		t.Fatalf("Body = %v, %v", got, ok)
-	}
-
-	unfilled := newProgramBuilder(t)
-	unfilled.Body(span)
-	if _, err := unfilled.Seal(); err == nil {
-		t.Fatal("Seal accepted an unfilled Body")
-	}
-
-	doubleFill := newProgramBuilder(t)
-	doubleBody := doubleFill.Body(span)
-	if !doubleFill.SetBody(doubleBody) || doubleFill.SetBody(doubleBody) {
-		t.Fatal("SetBody did not enforce exactly-once fill")
-	}
-	if _, err := doubleFill.Seal(); err == nil {
-		t.Fatal("Seal accepted a multiply-filled Body")
+	_, _, _, _, direct, ok := p.Call(call)
+	if !ok || direct != fn {
+		t.Fatalf("derived direct = %v, %v", direct, ok)
 	}
 }
 
-func TestMutualDirectCallMuUsesCanonicalExistingHead(t *testing.T) {
-	span := program.Span{File: "mutual.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b, entry := newClosureBuilder(t, span)
-	firstBody := b.Body(span)
-	secondBody := b.Body(span)
-	firstBinding := b.Cell(span, entry)
-	secondBinding := b.Cell(span, entry)
-	firstCalleeCell := b.Cell(span, firstBody)
-	secondCalleeCell := b.Cell(span, secondBody)
-	first := b.Function(span, entry, firstBody, firstBinding, nil, 0)
-	second := b.Function(span, entry, secondBody, secondBinding, nil, 0)
-	firstCapture := b.Capture(span, first, firstCalleeCell, secondBinding)
-	secondCapture := b.Capture(span, second, secondCalleeCell, firstBinding)
-	if !b.SetFunctionCaptures(first, []program.Term{firstCapture}) || !b.SetFunctionCaptures(second, []program.Term{secondCapture}) {
-		t.Fatal("SetFunctionCaptures failed")
-	}
-	firstActuals := b.Values(span, nil, 0)
-	secondActuals := b.Values(span, nil, 0)
-	firstCallee := b.Read(span, firstCalleeCell)
-	secondCallee := b.Read(span, secondCalleeCell)
-	firstCall := b.Call(span, firstCallee, 0, firstActuals, second)
-	secondCall := b.Call(span, secondCallee, 0, secondActuals, first)
-	if !b.SetBody(firstBody, firstCall) || !b.SetBody(secondBody, secondCall) {
-		t.Fatal("SetBody failed")
-	}
-	fillEmptyEntry(t, b, entry)
+func TestCapturedAliasWriteInvalidatesDirectEvidence(t *testing.T) {
+	b := program.NewBuilder()
+	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+	binding, inner := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, body)
+	fn := b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{{Inner: inner, Outer: binding}})
+	actuals := b.Values(program.Span{}, body, nil, 0)
+	callee := b.Read(program.Span{}, body, inner)
+	call := b.Call(program.Span{}, body, callee, 0, actuals)
+	returned := b.Values(program.Span{}, body, nil, call)
+	writeLiteral := b.Integer(program.Span{}, body, 1)
+	writeValues := b.Values(program.Span{}, body, []program.Term{writeLiteral}, 0)
+	write := b.Assign(program.Span{}, body, []program.Term{inner}, writeValues)
+	b.SetBody(body, write, b.Return(program.Span{}, body, returned))
+	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if head, ok := p.Mu(first); !ok || head != first {
-		t.Fatalf("first Mu head = %v, %v; want %v, true", head, ok, first)
-	}
-	if head, ok := p.Mu(second); !ok || head != first {
-		t.Fatalf("second Mu head = %v, %v; want %v, true", head, ok, first)
+	_, _, _, _, direct, ok := p.Call(call)
+	if !ok || direct != 0 {
+		t.Fatalf("captured binding write retained direct evidence: %v, %v", direct, ok)
 	}
 }
 
-func TestDirectCallMuFindsCallNestedInValues(t *testing.T) {
-	span := program.Span{File: "nested-call.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b, entry := newClosureBuilder(t, span)
-	body := b.Body(span)
-	binding := b.Cell(span, entry)
-	calleeCell := b.Cell(span, body)
-	function := b.Function(span, entry, body, binding, nil, 0)
-	capture := b.Capture(span, function, calleeCell, binding)
-	if !b.SetFunctionCaptures(function, []program.Term{capture}) {
-		t.Fatal("SetFunctionCaptures failed")
-	}
-	actuals := b.Values(span, nil, 0)
-	callee := b.Read(span, calleeCell)
-	call := b.Call(span, callee, 0, actuals, function)
-	values := b.Values(span, []program.Term{call}, 0)
-	result := b.Return(span, values)
-	if !b.SetBody(body, result) {
-		t.Fatal("SetBody failed")
-	}
-	fillEmptyEntry(t, b, entry)
+func TestSealedProgramDoesNotAliasBuilderPools(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	value := b.Integer(program.Span{}, entry, 1)
+	values := b.Values(program.Span{}, entry, []program.Term{value}, 0)
+	b.SetBody(entry, b.Normal(program.Span{}, entry, values))
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if head, ok := p.Mu(function); !ok || head != function {
-		t.Fatalf("nested direct call Mu = %v, %v", head, ok)
+	before := p.IntegerCount()
+	if extra := b.Integer(program.Span{}, entry, 2); extra == 0 {
+		t.Fatal("post-seal builder mint failed")
 	}
-}
-
-func TestDirectCallMuFindsCallOnlyInSelectRHS(t *testing.T) {
-	span := program.Span{File: "select-recursive.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b, entry := newClosureBuilder(t, span)
-	body := b.Body(span)
-	binding := b.Cell(span, entry)
-	calleeCell := b.Cell(span, body)
-	function := b.Function(span, entry, body, binding, nil, 0)
-	capture := b.Capture(span, function, calleeCell, binding)
-	if !b.SetFunctionCaptures(function, []program.Term{capture}) {
-		t.Fatal("SetFunctionCaptures failed")
-	}
-	callee := b.Read(span, calleeCell)
-	call := b.Call(span, callee, 0, b.Values(span, nil, 0), function)
-	condition := b.Bool(span, false)
-	selectTerm := b.Select(span, program.SelectOr, condition, call)
-	result := b.Return(span, b.Values(span, []program.Term{selectTerm}, 0))
-	if !b.SetBody(body, result) {
-		t.Fatal("SetBody failed")
-	}
-	fillEmptyEntry(t, b, entry)
-	p, err := b.Seal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if head, ok := p.Mu(function); !ok || head != function {
-		t.Fatalf("Select RHS direct-call Mu = %v, %v", head, ok)
-	}
-	if order, ok := p.AppendOrder(selectTerm, nil); !ok || !reflect.DeepEqual(order, []program.Term{condition}) {
-		t.Fatalf("Select order = %v, %v", order, ok)
+	if after := p.IntegerCount(); after != before {
+		t.Fatalf("sealed IntegerCount changed: %d -> %d", before, after)
 	}
 }
 
 func TestAcyclicDirectCallHasNoMu(t *testing.T) {
-	span := program.Span{File: "acyclic.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b, entry := newClosureBuilder(t, span)
-	callerBody := b.Body(span)
-	calleeBody := b.Body(span)
-	callerBinding := b.Cell(span, entry)
-	calleeBinding := b.Cell(span, entry)
-	callerCalleeCell := b.Cell(span, callerBody)
-	caller := b.Function(span, entry, callerBody, callerBinding, nil, 0)
-	callee := b.Function(span, entry, calleeBody, calleeBinding, nil, 0)
-	callerCapture := b.Capture(span, caller, callerCalleeCell, calleeBinding)
-	if !b.SetFunctionCaptures(caller, []program.Term{callerCapture}) || !b.SetFunctionCaptures(callee, nil) {
-		t.Fatal("SetFunctionCaptures failed")
-	}
-	actuals := b.Values(span, nil, 0)
-	calleeRead := b.Read(span, callerCalleeCell)
-	call := b.Call(span, calleeRead, 0, actuals, callee)
-	if !b.SetBody(callerBody, call) || !b.SetBody(calleeBody) {
-		t.Fatal("SetBody failed")
-	}
-	fillEmptyEntry(t, b, entry)
+	b := program.NewBuilder()
+	entry, callerBody, calleeBody := b.Body(program.Span{}), b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+	callerBinding, calleeBinding := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, entry)
+	captureCell := b.Cell(program.Span{}, callerBody)
+	caller := b.Function(program.Span{}, entry, callerBody, nil, 0, []program.Capture{{Inner: captureCell, Outer: calleeBinding}})
+	callee := b.Function(program.Span{}, entry, calleeBody, nil, 0, nil)
+	actuals := b.Values(program.Span{}, callerBody, nil, 0)
+	read := b.Read(program.Span{}, callerBody, captureCell)
+	call := b.Call(program.Span{}, callerBody, read, 0, actuals)
+	callerValues := b.Values(program.Span{}, callerBody, nil, call)
+	b.SetBody(callerBody, b.Return(program.Span{}, callerBody, callerValues))
+	calleeValues := b.Values(program.Span{}, calleeBody, nil, 0)
+	b.SetBody(calleeBody, b.Return(program.Span{}, calleeBody, calleeValues))
+	callerValue := b.Values(program.Span{}, entry, []program.Term{caller}, 0)
+	calleeValue := b.Values(program.Span{}, entry, []program.Term{callee}, 0)
+	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{callerBinding}, callerValue), b.Bind(program.Span{}, entry, []program.Term{calleeBinding}, calleeValue))
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if head, ok := p.Mu(caller); ok || head != 0 {
-		t.Fatalf("acyclic caller Mu = %v, %v", head, ok)
+		t.Fatalf("caller Mu = %v, %v", head, ok)
 	}
 	if head, ok := p.Mu(callee); ok || head != 0 {
-		t.Fatalf("acyclic callee Mu = %v, %v", head, ok)
+		t.Fatalf("callee Mu = %v, %v", head, ok)
 	}
 }
 
-func TestDirectCallMuLongChainStaysIterativeAndAllocationBounded(t *testing.T) {
-	build := func(functionCount int) *program.Program {
-		span := program.Span{File: "chain.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-		b, entry := newClosureBuilder(t, span)
-		bodies := make([]program.Term, functionCount)
-		functions := make([]program.Term, functionCount)
-		for i := 0; i < functionCount; i++ {
-			bodies[i] = b.Body(span)
-			functions[i] = b.Function(span, entry, bodies[i], 0, nil, 0)
-			if !b.SetFunctionCaptures(functions[i], nil) {
-				t.Fatal("SetFunctionCaptures failed")
-			}
+func TestOpenCallTailAndDirectMu(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	functionBody := b.Body(program.Span{})
+	b.SetEntry(entry)
+	binding := b.Cell(program.Span{}, entry)
+	inner := b.Cell(program.Span{}, functionBody)
+	fn := b.Function(program.Span{}, entry, functionBody, nil, 0, []program.Capture{{Inner: inner, Outer: binding}})
+	actuals := b.Values(program.Span{}, functionBody, nil, 0)
+	callee := b.Read(program.Span{}, functionBody, inner)
+	call := b.Call(program.Span{}, functionBody, callee, 0, actuals)
+	callValues := b.Values(program.Span{}, functionBody, nil, call)
+	callResult := b.Return(program.Span{}, functionBody, callValues)
+	b.SetBody(functionBody, callResult)
+	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+	bind := b.Bind(program.Span{}, entry, []program.Term{binding}, bound)
+	b.SetBody(entry, bind)
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := p.Mu(fn); !ok || got != fn {
+		t.Fatalf("Mu = %v, %v", got, ok)
+	}
+}
+
+func TestMethodReceiverRequiresNameSyntax(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	receiver := b.Table(program.Span{}, entry, nil, nil, nil)
+	name := b.Name(program.Span{}, entry, "m")
+	lens := b.LensExact(program.Span{}, entry, receiver, name, program.FieldName)
+	callee := b.Read(program.Span{}, entry, lens)
+	actuals := b.Values(program.Span{}, entry, nil, 0)
+	call := b.Call(program.Span{}, entry, callee, receiver, actuals)
+	values := b.Values(program.Span{}, entry, []program.Term{call}, 0)
+	result := b.Normal(program.Span{}, entry, values)
+	b.SetBody(entry, result)
+	if _, err := b.Seal(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCellMustHaveExactlyOneRole(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	_ = b.Cell(program.Span{}, entry)
+	values := b.Values(program.Span{}, entry, nil, 0)
+	result := b.Normal(program.Span{}, entry, values)
+	b.SetBody(entry, result)
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("unbound Cell was accepted")
+	}
+}
+
+func TestListOrdinalSkipsNamedFields(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	listOne := b.List(program.Span{}, entry, 1)
+	name := b.Name(program.Span{}, entry, "x")
+	listTwo := b.List(program.Span{}, entry, 2)
+	firstValue := b.Integer(program.Span{}, entry, 10)
+	secondValue := b.Integer(program.Span{}, entry, 20)
+	thirdValue := b.Integer(program.Span{}, entry, 30)
+	first := b.Values(program.Span{}, entry, []program.Term{firstValue}, 0)
+	second := b.Values(program.Span{}, entry, []program.Term{secondValue}, 0)
+	third := b.Values(program.Span{}, entry, []program.Term{thirdValue}, 0)
+	table := b.Table(program.Span{}, entry, []program.Term{listOne, name, listTwo}, []program.Term{first, second, third}, []program.FieldKind{program.FieldList, program.FieldName, program.FieldList})
+	values := b.Values(program.Span{}, entry, []program.Term{table}, 0)
+	result := b.Normal(program.Span{}, entry, values)
+	b.SetBody(entry, result)
+	if _, err := b.Seal(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTypedFamilyEnumeration(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	value := b.Integer(program.Span{}, entry, 1)
+	values := b.Values(program.Span{}, entry, []program.Term{value}, 0)
+	result := b.Normal(program.Span{}, entry, values)
+	b.SetBody(entry, result)
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := p.IntegerCount(); count != 1 {
+		t.Fatalf("IntegerCount = %d", count)
+	}
+	if term, ok := p.IntegerAt(0); !ok || term != value {
+		t.Fatalf("IntegerAt = %v, %v", term, ok)
+	}
+	if count := p.CallCount(); count != 0 {
+		t.Fatalf("CallCount = %d", count)
+	}
+}
+
+func TestSealRejectsSharedOccurrence(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	value := b.Integer(program.Span{}, entry, 1)
+	first := b.Values(program.Span{}, entry, []program.Term{value}, 0)
+	second := b.Values(program.Span{}, entry, []program.Term{value}, 0)
+	firstResult := b.Normal(program.Span{}, entry, first)
+	secondResult := b.Normal(program.Span{}, entry, second)
+	b.SetBody(entry, firstResult, secondResult)
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("shared occurrence was accepted")
+	}
+}
+
+func TestReadCannotCrossFunctionActivation(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	functionBody := b.Body(program.Span{})
+	b.SetEntry(entry)
+	outer := b.Cell(program.Span{}, entry)
+	fn := b.Function(program.Span{}, entry, functionBody, nil, 0, nil)
+	read := b.Read(program.Span{}, functionBody, outer)
+	functionValues := b.Values(program.Span{}, functionBody, []program.Term{read}, 0)
+	functionResult := b.Return(program.Span{}, functionBody, functionValues)
+	b.SetBody(functionBody, functionResult)
+	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+	bind := b.Bind(program.Span{}, entry, []program.Term{outer}, bound)
+	b.SetBody(entry, bind)
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("cross-activation Cell Read was accepted")
+	}
+}
+
+func TestMutualDirectMuUsesCanonicalHead(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	leftBody, rightBody := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+	leftBinding, rightBinding := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, entry)
+	leftCapture, rightCapture := b.Cell(program.Span{}, leftBody), b.Cell(program.Span{}, rightBody)
+	left := b.Function(program.Span{}, entry, leftBody, nil, 0, []program.Capture{{Inner: leftCapture, Outer: rightBinding}})
+	right := b.Function(program.Span{}, entry, rightBody, nil, 0, []program.Capture{{Inner: rightCapture, Outer: leftBinding}})
+	leftActuals := b.Values(program.Span{}, leftBody, nil, 0)
+	leftRead := b.Read(program.Span{}, leftBody, leftCapture)
+	leftCall := b.Call(program.Span{}, leftBody, leftRead, 0, leftActuals)
+	leftResultValues := b.Values(program.Span{}, leftBody, nil, leftCall)
+	b.SetBody(leftBody, b.Return(program.Span{}, leftBody, leftResultValues))
+	rightActuals := b.Values(program.Span{}, rightBody, nil, 0)
+	rightRead := b.Read(program.Span{}, rightBody, rightCapture)
+	rightCall := b.Call(program.Span{}, rightBody, rightRead, 0, rightActuals)
+	rightResultValues := b.Values(program.Span{}, rightBody, nil, rightCall)
+	b.SetBody(rightBody, b.Return(program.Span{}, rightBody, rightResultValues))
+	leftValue := b.Values(program.Span{}, entry, []program.Term{left}, 0)
+	rightValue := b.Values(program.Span{}, entry, []program.Term{right}, 0)
+	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{leftBinding}, leftValue), b.Bind(program.Span{}, entry, []program.Term{rightBinding}, rightValue))
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, function := range []program.Term{left, right} {
+		if head, ok := p.Mu(function); !ok || head != left {
+			t.Fatalf("Mu(%v) = %v, %v", function, head, ok)
 		}
-		for i := 0; i+1 < functionCount; i++ {
-			actuals := b.Values(span, nil, 0)
-			call := b.Call(span, functions[i+1], 0, actuals, functions[i+1])
-			if !b.SetBody(bodies[i], call) {
-				t.Fatal("SetBody failed")
-			}
-		}
-		if !b.SetBody(bodies[functionCount-1]) {
-			t.Fatal("SetBody failed")
-		}
-		fillEmptyEntry(t, b, entry)
+	}
+}
+
+func TestDirectMuFindsConditionalSelectRight(t *testing.T) {
+	b := program.NewBuilder()
+	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+	binding, captureCell := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, body)
+	fn := b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{{Inner: captureCell, Outer: binding}})
+	actuals := b.Values(program.Span{}, body, nil, 0)
+	callee := b.Read(program.Span{}, body, captureCell)
+	call := b.Call(program.Span{}, body, callee, 0, actuals)
+	left := b.Bool(program.Span{}, body, true)
+	selectTerm := b.Select(program.Span{}, body, program.SelectAnd, left, call)
+	values := b.Values(program.Span{}, body, []program.Term{selectTerm}, 0)
+	b.SetBody(body, b.Return(program.Span{}, body, values))
+	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if head, ok := p.Mu(fn); !ok || head != fn {
+		t.Fatalf("Mu = %v, %v", head, ok)
+	}
+}
+
+func TestVarargHasFunctionLocalRole(t *testing.T) {
+	b := program.NewBuilder()
+	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+	binding, varargCell := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, body)
+	fn := b.Function(program.Span{}, entry, body, nil, varargCell, nil)
+	vararg := b.Vararg(program.Span{}, body, varargCell)
+	values := b.Values(program.Span{}, body, nil, vararg)
+	b.SetBody(body, b.Return(program.Span{}, body, values))
+	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{binding}, bound))
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, cell, ok := p.Vararg(vararg)
+	if !ok || owner != body || cell != varargCell {
+		t.Fatalf("Vararg = %v, %v, %v", owner, cell, ok)
+	}
+}
+
+func TestBindFormalAndVarargRolePermutations(t *testing.T) {
+	t.Run("valid distinct roles", func(t *testing.T) {
+		b := program.NewBuilder()
+		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+		b.SetEntry(entry)
+		binding, local := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, entry)
+		formal, varargCell, captured := b.Cell(program.Span{}, body), b.Cell(program.Span{}, body), b.Cell(program.Span{}, body)
+		fn := b.Function(
+			program.Span{},
+			entry,
+			body,
+			[]program.Term{formal},
+			varargCell,
+			[]program.Capture{{Inner: captured, Outer: binding}},
+		)
+		formalRead := b.Read(program.Span{}, body, formal)
+		formalValues := b.Values(program.Span{}, body, []program.Term{formalRead}, 0)
+		vararg := b.Vararg(program.Span{}, body, varargCell)
+		varargValues := b.Values(program.Span{}, body, nil, vararg)
+		b.SetBody(body,
+			b.Normal(program.Span{}, body, formalValues),
+			b.Return(program.Span{}, body, varargValues),
+		)
+		functionValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+		localValue := b.Integer(program.Span{}, entry, 1)
+		localValues := b.Values(program.Span{}, entry, []program.Term{localValue}, 0)
+		bindFunction := b.Bind(program.Span{}, entry, []program.Term{binding}, functionValues)
+		bindLocal := b.Bind(program.Span{}, entry, []program.Term{local}, localValues)
+		b.SetBody(entry, bindFunction, bindLocal)
 		p, err := b.Seal()
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, function := range functions {
-			if head, ok := p.Mu(function); ok || head != 0 {
-				t.Fatal("acyclic chain received Mu")
+		if count, ok := p.BindLen(bindLocal); !ok || count != 1 {
+			t.Fatalf("BindLen = %d, %v", count, ok)
+		}
+		if got, ok := p.BoundCell(bindLocal, 0); !ok || got != local {
+			t.Fatalf("BoundCell = %v, %v", got, ok)
+		}
+		if owner, values, ok := p.Bind(bindLocal); !ok || owner != entry || values != localValues {
+			t.Fatalf("Bind = %v, %v, %v", owner, values, ok)
+		}
+		if count, ok := p.FormalLen(fn); !ok || count != 1 {
+			t.Fatalf("FormalLen = %d, %v", count, ok)
+		}
+		if got, ok := p.FormalAt(fn, 0); !ok || got != formal {
+			t.Fatalf("FormalAt = %v, %v", got, ok)
+		}
+		if owner, cell, ok := p.Vararg(vararg); !ok || owner != body || cell != varargCell {
+			t.Fatalf("Vararg = %v, %v, %v", owner, cell, ok)
+		}
+	})
+
+	t.Run("Bind requires cells", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		values := b.Values(program.Span{}, entry, nil, 0)
+		if got := b.Bind(program.Span{}, entry, nil, values); got != 0 {
+			t.Fatalf("empty Bind minted %v", got)
+		}
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("empty Bind was accepted")
+		}
+	})
+	t.Run("Bind requires Values", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		cell := b.Cell(program.Span{}, entry)
+		value := b.Integer(program.Span{}, entry, 1)
+		if got := b.Bind(program.Span{}, entry, []program.Term{cell}, value); got != 0 {
+			t.Fatalf("Bind without Values minted %v", got)
+		}
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("Bind without Values was accepted")
+		}
+	})
+	t.Run("Bind Cell belongs to owner", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		child := b.Body(program.Span{})
+		cell := b.Cell(program.Span{}, child)
+		values := b.Values(program.Span{}, entry, nil, 0)
+		bind := b.Bind(program.Span{}, entry, []program.Term{cell}, values)
+		b.SetBody(child)
+		b.SetBody(entry, child, bind)
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("cross-Body Bind was accepted")
+		}
+	})
+	t.Run("Bind Cell is unique within row", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		cell := b.Cell(program.Span{}, entry)
+		values := b.Values(program.Span{}, entry, nil, 0)
+		bind := b.Bind(program.Span{}, entry, []program.Term{cell, cell}, values)
+		b.SetBody(entry, bind)
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("duplicate Cell in Bind was accepted")
+		}
+	})
+	t.Run("Bind Cell is unique across rows", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		cell := b.Cell(program.Span{}, entry)
+		firstValues := b.Values(program.Span{}, entry, nil, 0)
+		secondValues := b.Values(program.Span{}, entry, nil, 0)
+		first := b.Bind(program.Span{}, entry, []program.Term{cell}, firstValues)
+		second := b.Bind(program.Span{}, entry, []program.Term{cell}, secondValues)
+		b.SetBody(entry, first, second)
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("Cell rebound by two Binds")
+		}
+	})
+	t.Run("formal belongs to Function Body", func(t *testing.T) {
+		b := program.NewBuilder()
+		entry, body, other := b.Body(program.Span{}), b.Body(program.Span{}), b.Body(program.Span{})
+		b.SetEntry(entry)
+		formal := b.Cell(program.Span{}, other)
+		fn := b.Function(program.Span{}, entry, body, []program.Term{formal}, 0, nil)
+		bodyValues := b.Values(program.Span{}, body, nil, 0)
+		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+		b.SetBody(other)
+		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+		b.SetBody(entry, other, b.Normal(program.Span{}, entry, fnValues))
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("foreign formal Cell was accepted")
+		}
+	})
+	t.Run("formal is unique", func(t *testing.T) {
+		b := program.NewBuilder()
+		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+		b.SetEntry(entry)
+		formal := b.Cell(program.Span{}, body)
+		fn := b.Function(program.Span{}, entry, body, []program.Term{formal, formal}, 0, nil)
+		bodyValues := b.Values(program.Span{}, body, nil, 0)
+		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+		b.SetBody(entry, b.Normal(program.Span{}, entry, fnValues))
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("duplicate formal Cell was accepted")
+		}
+	})
+	t.Run("formal and vararg are distinct", func(t *testing.T) {
+		b := program.NewBuilder()
+		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+		b.SetEntry(entry)
+		cell := b.Cell(program.Span{}, body)
+		fn := b.Function(program.Span{}, entry, body, []program.Term{cell}, cell, nil)
+		bodyValues := b.Values(program.Span{}, body, nil, 0)
+		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+		b.SetBody(entry, b.Normal(program.Span{}, entry, fnValues))
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("formal/vararg role collision was accepted")
+		}
+	})
+	t.Run("vararg belongs to Function Body", func(t *testing.T) {
+		b := program.NewBuilder()
+		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+		b.SetEntry(entry)
+		cell := b.Cell(program.Span{}, entry)
+		fn := b.Function(program.Span{}, entry, body, nil, cell, nil)
+		bodyValues := b.Values(program.Span{}, body, nil, 0)
+		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+		b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{cell}, fnValues))
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("foreign vararg Cell was accepted")
+		}
+	})
+	t.Run("Vararg occurrence requires declared vararg role", func(t *testing.T) {
+		b := program.NewBuilder()
+		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+		b.SetEntry(entry)
+		formal := b.Cell(program.Span{}, body)
+		fn := b.Function(program.Span{}, entry, body, []program.Term{formal}, 0, nil)
+		vararg := b.Vararg(program.Span{}, body, formal)
+		bodyValues := b.Values(program.Span{}, body, nil, vararg)
+		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+		b.SetBody(entry, b.Normal(program.Span{}, entry, fnValues))
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("Vararg occurrence on formal Cell was accepted")
+		}
+	})
+	t.Run("Vararg occurrence stays in Function activation", func(t *testing.T) {
+		b := program.NewBuilder()
+		entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+		b.SetEntry(entry)
+		varargCell := b.Cell(program.Span{}, body)
+		fn := b.Function(program.Span{}, entry, body, nil, varargCell, nil)
+		bodyValues := b.Values(program.Span{}, body, nil, 0)
+		b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+		vararg := b.Vararg(program.Span{}, entry, varargCell)
+		entryVarargs := b.Values(program.Span{}, entry, nil, vararg)
+		fnValues := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+		b.SetBody(entry,
+			b.Normal(program.Span{}, entry, entryVarargs),
+			b.Normal(program.Span{}, entry, fnValues),
+		)
+		if _, err := b.Seal(); err == nil {
+			t.Fatal("cross-activation Vararg was accepted")
+		}
+	})
+}
+
+func TestMethodReceiverRejectsBracketKey(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	receiver := b.Table(program.Span{}, entry, nil, nil, nil)
+	key := b.String(program.Span{}, entry, "m")
+	lens := b.LensExact(program.Span{}, entry, receiver, key, program.FieldExact)
+	callee := b.Read(program.Span{}, entry, lens)
+	actuals := b.Values(program.Span{}, entry, nil, 0)
+	call := b.Call(program.Span{}, entry, callee, receiver, actuals)
+	values := b.Values(program.Span{}, entry, []program.Term{call}, 0)
+	b.SetBody(entry, b.Normal(program.Span{}, entry, values))
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("bracket method key was accepted")
+	}
+}
+
+func TestMethodReceiverMustMatchNameLensBase(t *testing.T) {
+	b, entry := entryBuilder(t)
+	receiver := b.Table(program.Span{}, entry, nil, nil, nil)
+	other := b.Table(program.Span{}, entry, nil, nil, nil)
+	name := b.Name(program.Span{}, entry, "m")
+	lens := b.LensExact(program.Span{}, entry, other, name, program.FieldName)
+	callee := b.Read(program.Span{}, entry, lens)
+	actuals := b.Values(program.Span{}, entry, nil, 0)
+	call := b.Call(program.Span{}, entry, callee, receiver, actuals)
+	receiverValues := b.Values(program.Span{}, entry, []program.Term{receiver}, 0)
+	b.SetBody(entry, b.Normal(program.Span{}, entry, receiverValues), call)
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("method receiver disagreed with name Lens base")
+	}
+}
+
+func TestTypedQueriesAllocateZero(t *testing.T) {
+	b := program.NewBuilder()
+	entry, functionBody := b.Body(program.Span{}), b.Body(program.Span{})
+	whenTrue, whenFalse := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+
+	binding, local := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, entry)
+	formal := b.Cell(program.Span{}, functionBody)
+	varargCell := b.Cell(program.Span{}, functionBody)
+	captured := b.Cell(program.Span{}, functionBody)
+	function := b.Function(
+		program.Span{},
+		entry,
+		functionBody,
+		[]program.Term{formal},
+		varargCell,
+		[]program.Capture{{Inner: captured, Outer: binding}},
+	)
+	capturedRead := b.Read(program.Span{}, functionBody, captured)
+	actuals := b.Values(program.Span{}, functionBody, nil, 0)
+	call := b.Call(program.Span{}, functionBody, capturedRead, 0, actuals)
+	vararg := b.Vararg(program.Span{}, functionBody, varargCell)
+	returnValues := b.Values(program.Span{}, functionBody, nil, vararg)
+	returned := b.Return(program.Span{}, functionBody, returnValues)
+	b.SetBody(functionBody, call, returned)
+
+	functionValues := b.Values(program.Span{}, entry, []program.Term{function}, 0)
+	bindFunction := b.Bind(program.Span{}, entry, []program.Term{binding}, functionValues)
+	localLiteral := b.Integer(program.Span{}, entry, 41)
+	localValues := b.Values(program.Span{}, entry, []program.Term{localLiteral}, 0)
+	bindLocal := b.Bind(program.Span{}, entry, []program.Term{local}, localValues)
+
+	left := b.Integer(program.Span{}, entry, 1)
+	unary := b.Unary(program.Span{}, entry, program.UnaryNeg, left)
+	right := b.Integer(program.Span{}, entry, 2)
+	binary := b.Binary(program.Span{}, entry, program.BinaryAdd, unary, right)
+	condition := b.Bool(program.Span{}, entry, true)
+	selected := b.Select(program.Span{}, entry, program.SelectAnd, condition, binary)
+	localRead := b.Read(program.Span{}, entry, local)
+	nilValue := b.Nil(program.Span{}, entry)
+	floatValue := b.Float(program.Span{}, entry, -0.0)
+	stringValue := b.String(program.Span{}, entry, "value")
+	scalarValues := b.Values(
+		program.Span{},
+		entry,
+		[]program.Term{selected, localRead, nilValue, floatValue, stringValue},
+		0,
+	)
+	normal := b.Normal(program.Span{}, entry, scalarValues)
+
+	exactBase := b.Table(program.Span{}, entry, nil, nil, nil)
+	name := b.Name(program.Span{}, entry, "field")
+	exactLens := b.LensExact(program.Span{}, entry, exactBase, name, program.FieldName)
+	lensRead := b.Read(program.Span{}, entry, exactLens)
+	lensValues := b.Values(program.Span{}, entry, []program.Term{lensRead}, 0)
+	lensResult := b.Normal(program.Span{}, entry, lensValues)
+
+	dynamicBase := b.Table(program.Span{}, entry, nil, nil, nil)
+	dynamicKey := b.String(program.Span{}, entry, "dynamic")
+	dynamicLens := b.LensKey(program.Span{}, entry, dynamicBase, dynamicKey)
+	assignedValue := b.Integer(program.Span{}, entry, 9)
+	assignedValues := b.Values(program.Span{}, entry, []program.Term{assignedValue}, 0)
+	assign := b.Assign(program.Span{}, entry, []program.Term{dynamicLens}, assignedValues)
+
+	list := b.List(program.Span{}, entry, 1)
+	fieldLiteral := b.String(program.Span{}, entry, "field value")
+	fieldValues := b.Values(program.Span{}, entry, []program.Term{fieldLiteral}, 0)
+	table := b.Table(
+		program.Span{},
+		entry,
+		[]program.Term{list},
+		[]program.Term{fieldValues},
+		[]program.FieldKind{program.FieldList},
+	)
+	tableValues := b.Values(program.Span{}, entry, []program.Term{table}, 0)
+	tableResult := b.Normal(program.Span{}, entry, tableValues)
+
+	trueValues := b.Values(program.Span{}, whenTrue, nil, 0)
+	falseValues := b.Values(program.Span{}, whenFalse, nil, 0)
+	b.SetBody(whenTrue, b.Normal(program.Span{}, whenTrue, trueValues))
+	b.SetBody(whenFalse, b.Normal(program.Span{}, whenFalse, falseValues))
+	branchCondition := b.Bool(program.Span{}, entry, false)
+	branch := b.Branch(program.Span{}, entry, branchCondition, whenTrue, whenFalse)
+
+	throwValues := b.Values(program.Span{}, entry, nil, 0)
+	yieldValues := b.Values(program.Span{}, entry, nil, 0)
+	breakValues := b.Values(program.Span{}, entry, nil, 0)
+	continueValues := b.Values(program.Span{}, entry, nil, 0)
+	thrown := b.Throw(program.Span{}, entry, throwValues)
+	yielded := b.Yield(program.Span{}, entry, yieldValues)
+	broken := b.Break(program.Span{}, entry, breakValues)
+	continued := b.Continue(program.Span{}, entry, continueValues)
+
+	b.SetBody(
+		entry,
+		bindFunction,
+		bindLocal,
+		normal,
+		lensResult,
+		assign,
+		tableResult,
+		branch,
+		thrown,
+		yielded,
+		broken,
+		continued,
+	)
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	allocations := testing.AllocsPerRun(1000, func() {
+		queryInt = p.TermCount()
+		querySpan, queryOK = p.Span(stringValue)
+		queryTerm, queryOK = p.Entry()
+		queryTerm, queryOK = p.Nil(nilValue)
+		queryTerm, queryBool, queryOK = p.Bool(condition)
+		queryTerm, queryInt64, queryOK = p.Integer(left)
+		queryTerm, queryFloat64, queryOK = p.Float(floatValue)
+		queryTerm, queryString, queryOK = p.String(stringValue)
+		queryInt, queryOK = p.ValuesLen(scalarValues)
+		queryTerm, queryOK = p.Value(scalarValues, 0)
+		queryTerm, queryTerm2, queryOK = p.Values(scalarValues)
+		queryTerm, queryTerm2, queryTerm3, queryFieldKind, queryKey, queryOK = p.Lens(exactLens)
+		queryTerm, queryTerm2, queryOK = p.Outcome(normal)
+		queryTerm, queryTerm2, queryOK = p.Normal(normal)
+		queryTerm, queryTerm2, queryOK = p.Return(returned)
+		queryTerm, queryTerm2, queryOK = p.Throw(thrown)
+		queryTerm, queryTerm2, queryOK = p.Yield(yielded)
+		queryTerm, queryTerm2, queryOK = p.Break(broken)
+		queryTerm, queryTerm2, queryOK = p.Continue(continued)
+		queryTerm, queryOK = p.Mu(function)
+		queryInt, queryOK = p.BodyLen(entry)
+		queryTerm, queryOK = p.Root(entry, 0)
+		queryTerm, queryOK = p.Cell(local)
+		queryTerm, queryTerm2, queryOK = p.Read(localRead)
+		queryTerm, queryTerm2, queryOK = p.Vararg(vararg)
+		queryTerm, queryUnary, queryTerm2, queryOK = p.Unary(unary)
+		queryTerm, queryBinary, queryTerm2, queryTerm3, queryOK = p.Binary(binary)
+		queryTerm, querySelect, queryTerm2, queryTerm3, queryOK = p.Select(selected)
+		queryInt, queryOK = p.BindLen(bindLocal)
+		queryTerm, queryOK = p.BoundCell(bindLocal, 0)
+		queryTerm, queryTerm2, queryOK = p.Bind(bindLocal)
+		queryInt, queryOK = p.AssignLen(assign)
+		queryTerm, queryOK = p.Target(assign, 0)
+		queryTerm, queryTerm2, queryOK = p.Assign(assign)
+		queryTerm, queryTerm2, queryTerm3, queryOK = p.Function(function)
+		queryInt, queryOK = p.FormalLen(function)
+		queryTerm, queryOK = p.FormalAt(function, 0)
+		queryInt, queryOK = p.FunctionCaptureCount(function)
+		queryTerm, queryTerm2, queryOK = p.FunctionCapture(function, 0)
+		queryTerm, queryTerm2, queryTerm3, queryTerm4, queryTerm5, queryOK = p.Call(call)
+		queryTerm, queryTerm2, queryTerm3, queryTerm4, queryOK = p.Branch(branch)
+		queryTerm, queryOK = p.Table(table)
+		queryTerm, queryString, queryKey, queryOK = p.Name(name)
+		queryTerm, queryInt64, queryKey, queryOK = p.List(list)
+		queryInt, queryOK = p.TableLen(table)
+		queryTerm, queryTerm2, queryFieldKind, queryKey, queryOK = p.Field(table, 0)
+		queryInt = p.IntegerCount()
+		queryTerm, queryOK = p.IntegerAt(0)
+		queryInt = p.ValuesCount()
+		queryTerm, queryOK = p.ValuesAt(0)
+		queryInt = p.BodyCount()
+		queryTerm, queryOK = p.BodyAt(0)
+		queryInt = p.FunctionCount()
+		queryTerm, queryOK = p.FunctionAt(0)
+		queryInt = p.CallCount()
+		queryTerm, queryOK = p.CallAt(0)
+	})
+	if allocations != 0 {
+		t.Fatalf("typed queries allocated: %g", allocations)
+	}
+}
+
+func TestLongDirectCycleIsIterative(t *testing.T) {
+	const count = 128
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	bodies := make([]program.Term, count)
+	bindings := make([]program.Term, count)
+	inners := make([]program.Term, count)
+	functions := make([]program.Term, count)
+	for i := range functions {
+		bodies[i] = b.Body(program.Span{})
+		bindings[i] = b.Cell(program.Span{}, entry)
+		inners[i] = b.Cell(program.Span{}, bodies[i])
+	}
+	for i := range functions {
+		next := (i + 1) % count
+		functions[i] = b.Function(program.Span{}, entry, bodies[i], nil, 0, []program.Capture{{Inner: inners[i], Outer: bindings[next]}})
+	}
+	for i := range functions {
+		actuals := b.Values(program.Span{}, bodies[i], nil, 0)
+		callee := b.Read(program.Span{}, bodies[i], inners[i])
+		call := b.Call(program.Span{}, bodies[i], callee, 0, actuals)
+		result := b.Values(program.Span{}, bodies[i], nil, call)
+		if !b.SetBody(bodies[i], b.Return(program.Span{}, bodies[i], result)) {
+			t.Fatal("SetBody")
+		}
+	}
+	roots := make([]program.Term, count)
+	for i := range functions {
+		bound := b.Values(program.Span{}, entry, []program.Term{functions[i]}, 0)
+		roots[i] = b.Bind(program.Span{}, entry, []program.Term{bindings[i]}, bound)
+	}
+	if !b.SetBody(entry, roots...) {
+		t.Fatal("SetBody")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, function := range functions {
+		if head, ok := p.Mu(function); !ok || head != functions[0] {
+			t.Fatalf("Mu(%v) = %v, %v", function, head, ok)
+		}
+	}
+}
+
+func TestLongAcyclicDirectCallChainIsIterativeAndAllocationBounded(t *testing.T) {
+	build := func(count int) (*program.Builder, []program.Term) {
+		b := program.NewBuilder()
+		entry := b.Body(program.Span{})
+		b.SetEntry(entry)
+		bodies := make([]program.Term, count)
+		bindings := make([]program.Term, count)
+		inners := make([]program.Term, count-1)
+		functions := make([]program.Term, count)
+		for i := range bodies {
+			bodies[i] = b.Body(program.Span{})
+			bindings[i] = b.Cell(program.Span{}, entry)
+			if i+1 < count {
+				inners[i] = b.Cell(program.Span{}, bodies[i])
 			}
 		}
-		return p
+		for i := range functions {
+			var captures []program.Capture
+			if i+1 < count {
+				captures = []program.Capture{{Inner: inners[i], Outer: bindings[i+1]}}
+			}
+			functions[i] = b.Function(program.Span{}, entry, bodies[i], nil, 0, captures)
+		}
+		for i := 0; i+1 < count; i++ {
+			callee := b.Read(program.Span{}, bodies[i], inners[i])
+			actuals := b.Values(program.Span{}, bodies[i], nil, 0)
+			b.SetBody(bodies[i], b.Call(program.Span{}, bodies[i], callee, 0, actuals))
+		}
+		lastValues := b.Values(program.Span{}, bodies[count-1], nil, 0)
+		b.SetBody(bodies[count-1], b.Return(program.Span{}, bodies[count-1], lastValues))
+		roots := make([]program.Term, count)
+		for i, function := range functions {
+			values := b.Values(program.Span{}, entry, []program.Term{function}, 0)
+			roots[i] = b.Bind(program.Span{}, entry, []program.Term{bindings[i]}, values)
+		}
+		b.SetBody(entry, roots...)
+		return b, functions
 	}
-	_ = build(4096)
 
-	sealedAllocs := func(functionCount int) float64 {
-		span := program.Span{File: "chain-alloc.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-		b, entry := newClosureBuilder(t, span)
-		bodies := make([]program.Term, functionCount)
-		functions := make([]program.Term, functionCount)
-		for i := 0; i < functionCount; i++ {
-			bodies[i] = b.Body(span)
-			functions[i] = b.Function(span, entry, bodies[i], 0, nil, 0)
-			b.SetFunctionCaptures(functions[i], nil)
+	deep, functions := build(4096)
+	p, err := deep.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, function := range functions {
+		if head, ok := p.Mu(function); ok || head != 0 {
+			t.Fatalf("acyclic Function received Mu head %v", head)
 		}
-		for i := 0; i+1 < functionCount; i++ {
-			call := b.Call(span, functions[i+1], 0, b.Values(span, nil, 0), functions[i+1])
-			b.SetBody(bodies[i], call)
-		}
-		b.SetBody(bodies[functionCount-1])
-		fillEmptyEntry(t, b, entry)
+	}
+
+	sealAllocations := func(count int) float64 {
+		b, _ := build(count)
 		return testing.AllocsPerRun(20, func() {
 			var err error
-			hotProg, err = b.Seal()
+			queryProgram, err = b.Seal()
 			if err != nil {
 				t.Fatal(err)
 			}
 		})
 	}
-	// Both samples activate the same relation families and prewarm their small
-	// backing slices; the 16x comparison catches retained per-row allocation.
-	if small, large := sealedAllocs(64), sealedAllocs(512); large > small+2 {
-		t.Fatalf("direct-call Seal allocations grew per relation: small=%.2f large=%.2f", small, large)
+	small, large := sealAllocations(64), sealAllocations(512)
+	if large > small+2 {
+		t.Fatalf("acyclic direct-call Seal allocations grew per relation: small=%g large=%g", small, large)
 	}
 }
 
-func TestMethodCallRetainsReceiverWithoutDuplicateEvaluation(t *testing.T) {
-	span := program.Span{File: "method.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b, entry := newClosureBuilder(t, span)
-	receiver := b.Table(span)
-	if !b.SetTable(receiver, nil, nil, nil) {
-		t.Fatal("SetTable failed")
+func TestSpanAndTypedMintingAreDeterministic(t *testing.T) {
+	build := func() (*program.Program, program.Term, error) {
+		b := program.NewBuilder()
+		entry := b.Body(program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2})
+		b.SetEntry(entry)
+		value := b.String(program.Span{File: "x.lua", StartLine: 2, StartCol: 3, EndLine: 2, EndCol: 6}, entry, "abc")
+		values := b.Values(program.Span{}, entry, []program.Term{value}, 0)
+		b.SetBody(entry, b.Normal(program.Span{}, entry, values))
+		p, err := b.Seal()
+		return p, value, err
 	}
-	key := b.String(span, "method")
-	lens := b.LensExact(span, receiver, key)
-	callee := b.Read(span, lens)
-	actuals := b.Values(span, nil, 0)
-	call := b.Call(span, callee, receiver, actuals, 0)
-	body := b.Body(span)
-	if !b.SetBody(body, call) {
-		t.Fatal("SetBody failed")
-	}
-	if !b.SetBody(entry, body) {
-		t.Fatal("SetBody(entry) failed")
-	}
-	p, err := b.Seal()
+	left, leftValue, err := build()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotCallee, gotReceiver, gotActuals, direct, ok := p.Call(call); !ok ||
-		gotCallee != callee || gotReceiver != receiver || gotActuals != actuals || direct != 0 {
-		t.Fatalf("Call = %v, %v, %v, %v, %v", gotCallee, gotReceiver, gotActuals, direct, ok)
-	}
-	if order, ok := p.AppendOrder(call, nil); !ok || !reflect.DeepEqual(order, []program.Term{callee, actuals}) {
-		t.Fatalf("Call order = %v, %v", order, ok)
-	}
-	if order, ok := p.AppendOrder(callee, nil); !ok || !reflect.DeepEqual(order, []program.Term{lens}) {
-		t.Fatalf("callee order = %v, %v", order, ok)
-	}
-	if order, ok := p.AppendOrder(lens, nil); !ok || !reflect.DeepEqual(order, []program.Term{receiver}) {
-		t.Fatalf("Lens order = %v, %v", order, ok)
-	}
-}
-
-func TestMethodCallReceiverMustMatchExactMethodCallee(t *testing.T) {
-	span := program.Span{File: "bad-method.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b, entry := newClosureBuilder(t, span)
-	receiver := b.Table(span)
-	other := b.Table(span)
-	if !b.SetTable(receiver, nil, nil, nil) || !b.SetTable(other, nil, nil, nil) {
-		t.Fatal("SetTable failed")
-	}
-	method := b.Read(span, b.LensExact(span, other, b.String(span, "method")))
-	body := b.Body(span)
-	if !b.SetBody(body, b.Call(span, method, receiver, b.Values(span, nil, 0), 0)) || !b.SetBody(entry, body) {
-		t.Fatal("SetBody failed")
-	}
-	if _, err := b.Seal(); err == nil || err.Error() != "program: Call receiver disagrees with method callee" {
-		t.Fatalf("method receiver error = %v", err)
-	}
-}
-
-func TestBranchAndTableAssignmentKeys(t *testing.T) {
-	span := program.Span{File: "flow.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 9}
-	b, entry := newClosureBuilder(t, span)
-	whenTrue := b.Body(span)
-	whenFalse := b.Body(span)
-	if !b.SetBody(whenTrue) || !b.SetBody(whenFalse) {
-		t.Fatal("empty branch Body fill failed")
-	}
-	condition := b.Bool(span, true)
-	branch := b.Branch(span, condition, whenTrue, whenFalse)
-	table := b.Table(span)
-	stringKey := b.String(span, "name")
-	numericKey := b.Integer(span, 1)
-	stringValue := b.String(span, "string value")
-	numericValue := b.String(span, "numeric value")
-	stringRHS := b.Values(span, []program.Term{stringValue}, 0)
-	numericRHS := b.Values(span, []program.Term{numericValue}, 0)
-	if !b.SetTable(
-		table,
-		[]program.Term{stringKey, numericKey},
-		[]program.Term{stringRHS, numericRHS},
-		[]program.FieldKind{program.FieldExact, program.FieldList},
-	) {
-		t.Fatal("SetTable failed")
-	}
-	body := b.Body(span)
-	if !b.SetBody(body, branch, whenTrue, whenFalse) {
-		t.Fatal("SetBody failed")
-	}
-	if !b.SetBody(entry, body) {
-		t.Fatal("SetBody(entry) failed")
-	}
-	p, err := b.Seal()
+	right, rightValue, err := build()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !p.Table(table) {
-		t.Fatal("Table identity was not retained")
+	if leftValue != rightValue || left.TermCount() != right.TermCount() {
+		t.Fatal("typed minting is not deterministic")
 	}
-	if gotCondition, gotTrue, gotFalse, ok := p.Branch(branch); !ok ||
-		gotCondition != condition || gotTrue != whenTrue || gotFalse != whenFalse {
-		t.Fatalf("Branch = %v, %v, %v, %v", gotCondition, gotTrue, gotFalse, ok)
-	}
-	if count, ok := p.TableLen(table); !ok || count != 2 {
-		t.Fatalf("TableLen = %d, %v", count, ok)
-	}
-	if key, values, kind, ok := p.TableAt(table, 1); !ok ||
-		key != numericKey || values != numericRHS || kind != program.FieldList {
-		t.Fatalf("TableAt = %v, %v, %v, %v", key, values, kind, ok)
-	}
-	if order, ok := p.AppendOrder(table, nil); !ok ||
-		!reflect.DeepEqual(order, []program.Term{stringRHS, numericRHS}) {
-		t.Fatalf("Table order = %v, %v", order, ok)
+	span, ok := left.Span(leftValue)
+	if !ok || span.File != "x.lua" || span.StartLine != 2 || span.StartCol != 3 || span.EndLine != 2 || span.EndCol != 6 {
+		t.Fatalf("Span = %#v, %v", span, ok)
 	}
 }
 
-func TestNewFamiliesFailClosed(t *testing.T) {
-	span := program.Span{File: "bad.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	tests := []func(*program.Builder){
-		func(b *program.Builder) { b.Cell(span, b.Integer(span, 1)) },
-		func(b *program.Builder) { b.Read(span, b.Integer(span, 1)) },
-		func(b *program.Builder) {
-			value := b.Integer(span, 1)
-			b.Assign(span, []program.Term{value}, b.Values(span, []program.Term{value}, 0))
-		},
-		func(b *program.Builder) {
-			value := b.Integer(span, 1)
-			b.Assign(span, nil, b.Values(span, []program.Term{value}, 0))
-		},
-		func(b *program.Builder) {
-			owner := b.Body(span)
-			body := b.Body(span)
-			other := b.Body(span)
-			formal := b.Cell(span, other)
-			function := b.Function(span, owner, body, 0, []program.Term{formal}, 0)
-			b.SetFunctionCaptures(function, nil)
-			b.SetBody(owner)
-			b.SetBody(body)
-			b.SetBody(other)
-		},
-		func(b *program.Builder) {
-			callee := b.String(span, "f")
-			b.Call(span, callee, 0, b.Integer(span, 1), 0)
-		},
-		func(b *program.Builder) {
-			condition := b.Bool(span, true)
-			b.Branch(span, condition, b.Integer(span, 1), b.Integer(span, 2))
-		},
+func TestInvalidValuePositionAndTableSyntaxFailClosed(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	if got := b.Values(program.Span{}, entry, []program.Term{entry}, 0); got != 0 {
+		t.Fatalf("Values accepted Body %v", got)
 	}
-	for i, build := range tests {
-		b := newProgramBuilder(t)
-		build(b)
-		if _, err := b.Seal(); err == nil {
-			t.Fatalf("invalid family case %d sealed", i)
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("invalid value position did not poison builder")
+	}
+
+	b = program.NewBuilder()
+	entry = b.Body(program.Span{})
+	b.SetEntry(entry)
+	badName := b.Integer(program.Span{}, entry, 1)
+	fieldValues := b.Values(program.Span{}, entry, nil, 0)
+	if got := b.Table(program.Span{}, entry, []program.Term{badName}, []program.Term{fieldValues}, []program.FieldKind{program.FieldName}); got != 0 {
+		t.Fatalf("Table accepted non-string FieldName %v", got)
+	}
+}
+
+func TestTableExactAndDynamicFieldLaws(t *testing.T) {
+	t.Run("typed syntax and normalized keys", func(t *testing.T) {
+		b, entry := entryBuilder(t)
+		list := b.List(program.Span{}, entry, 1)
+		name := b.Name(program.Span{}, entry, "named")
+		exactInteger := b.Integer(program.Span{}, entry, 7)
+		exactNil := b.Nil(program.Span{}, entry)
+		exactNaN := b.Float(program.Span{}, entry, math.NaN())
+		dynamic := b.Integer(program.Span{}, entry, 7)
+		keys := []program.Term{list, name, exactInteger, exactNil, exactNaN, dynamic}
+		kinds := []program.FieldKind{
+			program.FieldList,
+			program.FieldName,
+			program.FieldExact,
+			program.FieldExact,
+			program.FieldExact,
+			program.FieldKey,
 		}
+		fieldValues := make([]program.Term, len(keys))
+		for i := range fieldValues {
+			value := b.String(program.Span{}, entry, "value")
+			fieldValues[i] = b.Values(program.Span{}, entry, []program.Term{value}, 0)
+		}
+		table := b.Table(program.Span{}, entry, keys, fieldValues, kinds)
+		values := b.Values(program.Span{}, entry, []program.Term{table}, 0)
+		b.SetBody(entry, b.Normal(program.Span{}, entry, values))
+		p, err := b.Seal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if count, ok := p.TableLen(table); !ok || count != len(keys) {
+			t.Fatalf("TableLen = %d, %v", count, ok)
+		}
+		var normalized []program.Key
+		for i := range keys {
+			source, gotValues, kind, key, ok := p.Field(table, i)
+			if !ok || source != keys[i] || gotValues != fieldValues[i] || kind != kinds[i] {
+				t.Fatalf("Field(%d) = %v, %v, %v, %v, %v", i, source, gotValues, kind, key, ok)
+			}
+			normalized = append(normalized, key)
+		}
+		if normalized[0] == 0 || normalized[1] == 0 || normalized[2] == 0 {
+			t.Fatalf("storable static keys were not normalized: %v", normalized)
+		}
+		if normalized[3] != 0 || normalized[4] != 0 || normalized[5] != 0 {
+			t.Fatalf("nil, NaN, or dynamic syntax gained equality identity: %v", normalized)
+		}
+		if owner, ordinal, key, ok := p.List(list); !ok || owner != entry || ordinal != 1 || key != normalized[0] {
+			t.Fatalf("List = %v, %d, %v, %v", owner, ordinal, key, ok)
+		}
+		if owner, text, key, ok := p.Name(name); !ok || owner != entry || text != "named" || key != normalized[1] {
+			t.Fatalf("Name = %v, %q, %v, %v", owner, text, key, ok)
+		}
+	})
+
+	tests := []struct {
+		name  string
+		build func(*program.Builder, program.Term) program.Term
+	}{
+		{
+			name: "misaligned columns",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				return b.Table(program.Span{}, owner, []program.Term{b.Name(program.Span{}, owner, "x")}, nil, nil)
+			},
+		},
+		{
+			name: "invalid field kind",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				key := b.Integer(program.Span{}, owner, 1)
+				value := b.String(program.Span{}, owner, "value")
+				values := b.Values(program.Span{}, owner, []program.Term{value}, 0)
+				return b.Table(program.Span{}, owner, []program.Term{key}, []program.Term{values}, []program.FieldKind{0})
+			},
+		},
+		{
+			name: "field requires Values",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				key := b.Integer(program.Span{}, owner, 1)
+				value := b.String(program.Span{}, owner, "value")
+				return b.Table(program.Span{}, owner, []program.Term{key}, []program.Term{value}, []program.FieldKind{program.FieldExact})
+			},
+		},
+		{
+			name: "exact key is scalar literal",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				key := b.Values(program.Span{}, owner, nil, 0)
+				value := b.String(program.Span{}, owner, "value")
+				values := b.Values(program.Span{}, owner, []program.Term{value}, 0)
+				return b.Table(program.Span{}, owner, []program.Term{key}, []program.Term{values}, []program.FieldKind{program.FieldExact})
+			},
+		},
+		{
+			name: "dynamic key is value occurrence",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				key := b.Name(program.Span{}, owner, "x")
+				value := b.String(program.Span{}, owner, "value")
+				values := b.Values(program.Span{}, owner, []program.Term{value}, 0)
+				return b.Table(program.Span{}, owner, []program.Term{key}, []program.Term{values}, []program.FieldKind{program.FieldKey})
+			},
+		},
+		{
+			name: "name key uses name syntax",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				key := b.String(program.Span{}, owner, "x")
+				value := b.String(program.Span{}, owner, "value")
+				values := b.Values(program.Span{}, owner, []program.Term{value}, 0)
+				return b.Table(program.Span{}, owner, []program.Term{key}, []program.Term{values}, []program.FieldKind{program.FieldName})
+			},
+		},
+		{
+			name: "list ordinal follows list fields",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				key := b.List(program.Span{}, owner, 2)
+				value := b.String(program.Span{}, owner, "value")
+				values := b.Values(program.Span{}, owner, []program.Term{value}, 0)
+				return b.Table(program.Span{}, owner, []program.Term{key}, []program.Term{values}, []program.FieldKind{program.FieldList})
+			},
+		},
+		{
+			name: "non-list field has one result",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				key := b.Integer(program.Span{}, owner, 1)
+				left := b.String(program.Span{}, owner, "left")
+				right := b.String(program.Span{}, owner, "right")
+				values := b.Values(program.Span{}, owner, []program.Term{left, right}, 0)
+				return b.Table(program.Span{}, owner, []program.Term{key}, []program.Term{values}, []program.FieldKind{program.FieldExact})
+			},
+		},
+		{
+			name: "only final list field may stay open",
+			build: func(b *program.Builder, owner program.Term) program.Term {
+				callee := b.Table(program.Span{}, owner, nil, nil, nil)
+				actuals := b.Values(program.Span{}, owner, nil, 0)
+				open := b.Call(program.Span{}, owner, callee, 0, actuals)
+				firstValues := b.Values(program.Span{}, owner, nil, open)
+				secondLiteral := b.String(program.Span{}, owner, "second")
+				secondValues := b.Values(program.Span{}, owner, []program.Term{secondLiteral}, 0)
+				return b.Table(
+					program.Span{},
+					owner,
+					[]program.Term{b.List(program.Span{}, owner, 1), b.List(program.Span{}, owner, 2)},
+					[]program.Term{firstValues, secondValues},
+					[]program.FieldKind{program.FieldList, program.FieldList},
+				)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b, entry := entryBuilder(t)
+			if table := test.build(b, entry); table != 0 {
+				t.Fatalf("invalid Table minted %v", table)
+			}
+			if _, err := b.Seal(); err == nil {
+				t.Fatal("invalid Table did not poison Builder")
+			}
+		})
 	}
 }
 
-func TestTableConstructionLaws(t *testing.T) {
-	span := program.Span{File: "table.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-
-	unfilled := newProgramBuilder(t)
-	unfilled.Table(span)
-	if _, err := unfilled.Seal(); err == nil {
-		t.Fatal("Seal accepted an unfilled Table")
+func TestBodyForestRejectsOrphanAndCycle(t *testing.T) {
+	b := program.NewBuilder()
+	entry, orphan := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+	entryValues := b.Values(program.Span{}, entry, nil, 0)
+	orphanValues := b.Values(program.Span{}, orphan, nil, 0)
+	b.SetBody(entry, b.Normal(program.Span{}, entry, entryValues))
+	b.SetBody(orphan, b.Normal(program.Span{}, orphan, orphanValues))
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("orphan Body was accepted")
 	}
 
-	doubleFill := newProgramBuilder(t)
-	doubleTable := doubleFill.Table(span)
-	if !doubleFill.SetTable(doubleTable, nil, nil, nil) ||
-		doubleFill.SetTable(doubleTable, nil, nil, nil) {
-		t.Fatal("SetTable did not enforce exactly-once fill")
-	}
-	if _, err := doubleFill.Seal(); err == nil {
-		t.Fatal("Seal accepted a multiply-filled Table")
-	}
-
-	nilExact := newProgramBuilder(t)
-	exactTable := nilExact.Table(span)
-	nilKey := nilExact.Nil(span)
-	exactValues := nilExact.Values(span, nil, 0)
-	nilExact.SetTable(
-		exactTable,
-		[]program.Term{nilKey},
-		[]program.Term{exactValues},
-		[]program.FieldKind{program.FieldExact},
-	)
-	nilProgram, err := nilExact.Seal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if key, values, kind, ok := nilProgram.TableAt(exactTable, 0); !ok ||
-		key != nilKey || values != exactValues || kind != program.FieldExact {
-		t.Fatalf("nil exact Table field = %v, %v, %v, %v", key, values, kind, ok)
-	}
-
-	nanExact := newProgramBuilder(t)
-	nanTable := nanExact.Table(span)
-	nanKey := nanExact.Float(span, math.NaN())
-	nanValues := nanExact.Values(span, nil, 0)
-	nanExact.SetTable(
-		nanTable,
-		[]program.Term{nanKey},
-		[]program.Term{nanValues},
-		[]program.FieldKind{program.FieldExact},
-	)
-	nanProgram, err := nanExact.Seal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if key, _, kind, ok := nanProgram.TableAt(nanTable, 0); !ok ||
-		key != nanKey || kind != program.FieldExact {
-		t.Fatalf("NaN exact Table field = %v, %v, %v", key, kind, ok)
-	}
-
-	nonliteralExact := newProgramBuilder(t)
-	nonliteralTable := nonliteralExact.Table(span)
-	nonliteralKey := nonliteralExact.Values(span, nil, 0)
-	nonliteralValues := nonliteralExact.Values(span, nil, 0)
-	nonliteralExact.SetTable(
-		nonliteralTable,
-		[]program.Term{nonliteralKey},
-		[]program.Term{nonliteralValues},
-		[]program.FieldKind{program.FieldExact},
-	)
-	if _, err := nonliteralExact.Seal(); err == nil {
-		t.Fatal("Seal accepted non-literal exact Table key")
-	}
-
-	wrongValues := newProgramBuilder(t)
-	wrongTable := wrongValues.Table(span)
-	wrongKey := wrongValues.String(span, "key")
-	notValues := wrongValues.Integer(span, 1)
-	wrongValues.SetTable(
-		wrongTable,
-		[]program.Term{wrongKey},
-		[]program.Term{notValues},
-		[]program.FieldKind{program.FieldExact},
-	)
-	if _, err := wrongValues.Seal(); err == nil {
-		t.Fatal("Seal accepted non-Values Table field")
-	}
-
-	invalidKind := newProgramBuilder(t)
-	kindTable := invalidKind.Table(span)
-	kindKey := invalidKind.String(span, "key")
-	kindValues := invalidKind.Values(span, nil, 0)
-	invalidKind.SetTable(
-		kindTable,
-		[]program.Term{kindKey},
-		[]program.Term{kindValues},
-		[]program.FieldKind{0},
-	)
-	if _, err := invalidKind.Seal(); err == nil {
-		t.Fatal("Seal accepted invalid Table field kind")
-	}
-
-	misaligned := newProgramBuilder(t)
-	misalignedTable := misaligned.Table(span)
-	if misaligned.SetTable(misalignedTable, []program.Term{1}, nil, nil) {
-		t.Fatal("SetTable accepted misaligned fields")
-	}
-	if _, err := misaligned.Seal(); err == nil {
-		t.Fatal("Seal accepted misaligned Table construction")
-	}
-
-	dynamic := newProgramBuilder(t)
-	dynamicTable := dynamic.Table(span)
-	dynamicKey := dynamic.Integer(span, 1)
-	dynamicValue := dynamic.String(span, "value")
-	dynamicValues := dynamic.Values(span, []program.Term{dynamicValue}, 0)
-	if !dynamic.SetTable(
-		dynamicTable,
-		[]program.Term{dynamicKey},
-		[]program.Term{dynamicValues},
-		[]program.FieldKind{program.FieldKey},
-	) {
-		t.Fatal("dynamic SetTable failed")
-	}
-	p, err := dynamic.Seal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if order, ok := p.AppendOrder(dynamicTable, nil); !ok ||
-		!reflect.DeepEqual(order, []program.Term{dynamicKey, dynamicValues}) {
-		t.Fatalf("dynamic Table order = %v, %v", order, ok)
-	}
-
-	nonStatement := newProgramBuilder(t)
-	nonStatementBody := nonStatement.Body(span)
-	nestedValue := nonStatement.Integer(span, 1)
-	nonStatement.SetBody(nonStatementBody, nestedValue)
-	if _, err := nonStatement.Seal(); err == nil {
-		t.Fatal("Seal accepted nested evaluation as a Body statement root")
+	b = program.NewBuilder()
+	left, right := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(left)
+	b.SetBody(left, right)
+	b.SetBody(right, left)
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("Body cycle was accepted")
 	}
 }
 
-func TestNestedBodyOwnershipAndCycles(t *testing.T) {
-	span := program.Span{File: "block.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b, entry := newClosureBuilder(t, span)
-	parent := b.Body(span)
-	child := b.Body(span)
-	if !b.SetBody(child) || !b.SetBody(parent, child) || !b.SetBody(entry, parent) {
-		t.Fatal("nested Body fill failed")
+func TestFunctionRejectsDuplicateCaptureOuter(t *testing.T) {
+	b := program.NewBuilder()
+	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+	outer := b.Cell(program.Span{}, entry)
+	innerOne, innerTwo := b.Cell(program.Span{}, body), b.Cell(program.Span{}, body)
+	fn := b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{
+		{Inner: innerOne, Outer: outer},
+		{Inner: innerTwo, Outer: outer},
+	})
+	bodyValues := b.Values(program.Span{}, body, nil, 0)
+	b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+	bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+	b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{outer}, bound))
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("duplicate outer capture was accepted")
 	}
+}
+
+func TestFunctionRejectsCaptureOutsideLexicalAncestry(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(*program.Builder, program.Term, program.Term, program.Term) program.Term
+	}{
+		{
+			name: "inner belongs to owner",
+			build: func(b *program.Builder, entry, body, outer program.Term) program.Term {
+				return b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{{Inner: outer, Outer: outer}})
+			},
+		},
+		{
+			name: "outer belongs to function body",
+			build: func(b *program.Builder, entry, body, _ program.Term) program.Term {
+				inner := b.Cell(program.Span{}, body)
+				localOuter := b.Cell(program.Span{}, body)
+				return b.Function(program.Span{}, entry, body, nil, 0, []program.Capture{{Inner: inner, Outer: localOuter}})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b := program.NewBuilder()
+			entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+			b.SetEntry(entry)
+			outer := b.Cell(program.Span{}, entry)
+			fn := test.build(b, entry, body, outer)
+			bodyValues := b.Values(program.Span{}, body, nil, 0)
+			b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+			bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+			b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{outer}, bound))
+			if _, err := b.Seal(); err == nil {
+				t.Fatal("non-ancestral Capture was accepted")
+			}
+		})
+	}
+}
+
+func TestFunctionRejectsCaptureDefinitionRoleCollisions(t *testing.T) {
+	tests := []struct {
+		name     string
+		function func(*program.Builder, program.Term, program.Term, program.Term, program.Term) program.Term
+	}{
+		{
+			name: "formal and capture",
+			function: func(b *program.Builder, entry, body, inner, outer program.Term) program.Term {
+				return b.Function(program.Span{}, entry, body, []program.Term{inner}, 0, []program.Capture{{Inner: inner, Outer: outer}})
+			},
+		},
+		{
+			name: "vararg and capture",
+			function: func(b *program.Builder, entry, body, inner, outer program.Term) program.Term {
+				return b.Function(program.Span{}, entry, body, nil, inner, []program.Capture{{Inner: inner, Outer: outer}})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b := program.NewBuilder()
+			entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+			b.SetEntry(entry)
+			outer, inner := b.Cell(program.Span{}, entry), b.Cell(program.Span{}, body)
+			fn := test.function(b, entry, body, inner, outer)
+			bodyValues := b.Values(program.Span{}, body, nil, 0)
+			b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+			bound := b.Values(program.Span{}, entry, []program.Term{fn}, 0)
+			b.SetBody(entry, b.Bind(program.Span{}, entry, []program.Term{outer}, bound))
+			if _, err := b.Seal(); err == nil {
+				t.Fatal("Capture role collision was accepted")
+			}
+		})
+	}
+}
+
+func TestFunctionBodyHasExactlyOneStructuralAuthority(t *testing.T) {
+	b := program.NewBuilder()
+	entry, body := b.Body(program.Span{}), b.Body(program.Span{})
+	b.SetEntry(entry)
+	left := b.Function(program.Span{}, entry, body, nil, 0, nil)
+	right := b.Function(program.Span{}, entry, body, nil, 0, nil)
+	bodyValues := b.Values(program.Span{}, body, nil, 0)
+	b.SetBody(body, b.Return(program.Span{}, body, bodyValues))
+	functions := b.Values(program.Span{}, entry, []program.Term{left, right}, 0)
+	b.SetBody(entry, b.Normal(program.Span{}, entry, functions))
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("two Functions claimed one Body")
+	}
+}
+
+func TestTableFieldRequiresOneExpressionExceptFinalListTail(t *testing.T) {
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	b.SetEntry(entry)
+	callee := b.Table(program.Span{}, entry, nil, nil, nil)
+	actuals := b.Values(program.Span{}, entry, nil, 0)
+	open := b.Call(program.Span{}, entry, callee, 0, actuals)
+	field := b.Values(program.Span{}, entry, nil, open)
+	key := b.Name(program.Span{}, entry, "x")
+	if table := b.Table(program.Span{}, entry, []program.Term{key}, []program.Term{field}, []program.FieldKind{program.FieldName}); table != 0 {
+		t.Fatalf("named field accepted open tail %v", table)
+	}
+
+	b = program.NewBuilder()
+	entry = b.Body(program.Span{})
+	b.SetEntry(entry)
+	callee = b.Table(program.Span{}, entry, nil, nil, nil)
+	actuals = b.Values(program.Span{}, entry, nil, 0)
+	open = b.Call(program.Span{}, entry, callee, 0, actuals)
+	field = b.Values(program.Span{}, entry, nil, open)
+	listKey := b.List(program.Span{}, entry, 1)
+	table := b.Table(program.Span{}, entry, []program.Term{listKey}, []program.Term{field}, []program.FieldKind{program.FieldList})
+	if table == 0 {
+		t.Fatal("final list field rejected open tail")
+	}
+	values := b.Values(program.Span{}, entry, []program.Term{table}, 0)
+	b.SetBody(entry, b.Normal(program.Span{}, entry, values))
 	p, err := b.Seal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if owned, ok := p.BodyAt(parent, 0); !ok || owned != child {
-		t.Fatalf("nested Body = %v, %v", owned, ok)
-	}
-
-	selfCycle := newProgramBuilder(t)
-	self := selfCycle.Body(span)
-	selfCycle.SetBody(self, self)
-	if _, err := selfCycle.Seal(); err == nil {
-		t.Fatal("Seal accepted self-owned Body")
-	}
-
-	multiCycle := newProgramBuilder(t)
-	first := multiCycle.Body(span)
-	second := multiCycle.Body(span)
-	multiCycle.SetBody(first, second)
-	multiCycle.SetBody(second, first)
-	if _, err := multiCycle.Seal(); err == nil {
-		t.Fatal("Seal accepted Body ownership cycle")
-	}
-}
-
-func TestBodyOwnershipAndClosureIdentityFailClosed(t *testing.T) {
-	span := program.Span{File: "ownership.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-
-	duplicate := newProgramBuilder(t)
-	duplicateBody := duplicate.Body(span)
-	duplicateValue := duplicate.Integer(span, 1)
-	duplicateActuals := duplicate.Values(span, []program.Term{duplicateValue}, 0)
-	duplicateTerm := duplicate.Call(span, duplicateValue, 0, duplicateActuals, 0)
-	duplicate.SetBody(duplicateBody, duplicateTerm, duplicateTerm)
-	if _, err := duplicate.Seal(); err == nil {
-		t.Fatal("Seal accepted duplicate ownership within one Body")
-	}
-
-	shared := newProgramBuilder(t)
-	firstBody := shared.Body(span)
-	secondBody := shared.Body(span)
-	sharedValue := shared.Integer(span, 1)
-	sharedActuals := shared.Values(span, []program.Term{sharedValue}, 0)
-	sharedTerm := shared.Call(span, sharedValue, 0, sharedActuals, 0)
-	shared.SetBody(firstBody, sharedTerm)
-	shared.SetBody(secondBody, sharedTerm)
-	if _, err := shared.Seal(); err == nil {
-		t.Fatal("Seal accepted one top-level term in two Bodies")
-	}
-
-	ambiguousFunction := newProgramBuilder(t)
-	functionOwner := ambiguousFunction.Body(span)
-	functionBody := ambiguousFunction.Body(span)
-	ambiguousFunction.Function(span, functionOwner, functionBody, 0, nil, 0)
-	ambiguousFunction.Function(span, functionOwner, functionBody, 0, nil, 0)
-	ambiguousFunction.SetBody(functionOwner)
-	ambiguousFunction.SetBody(functionBody)
-	if _, err := ambiguousFunction.Seal(); err == nil {
-		t.Fatal("Seal accepted two Functions for one Body")
-	}
-
-	localCapture, captureEntry := newClosureBuilder(t, span)
-	localBody := localCapture.Body(span)
-	firstCell := localCapture.Cell(span, localBody)
-	secondCell := localCapture.Cell(span, localBody)
-	function := localCapture.Function(span, captureEntry, localBody, 0, nil, 0)
-	capture := localCapture.Capture(span, function, firstCell, secondCell)
-	localCapture.SetFunctionCaptures(function, []program.Term{capture})
-	localCapture.SetBody(localBody)
-	fillEmptyEntry(t, localCapture, captureEntry)
-	if _, err := localCapture.Seal(); err == nil {
-		t.Fatal("Seal accepted a Capture within one Body")
+	source, gotValues, kind, _, ok := p.Field(table, 0)
+	if !ok || source != listKey || gotValues != field || kind != program.FieldList {
+		t.Fatalf("open final list Field = %v, %v, %v, %v", source, gotValues, kind, ok)
 	}
 }

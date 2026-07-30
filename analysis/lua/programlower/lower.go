@@ -3,6 +3,7 @@ package programlower
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -17,14 +18,21 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 	if binding == nil {
 		return nil, fmt.Errorf("programlower: nil binding result")
 	}
+	var captures map[*ast.FunctionExpr][]bind.Capture
+	binding.ForEachEntryCapture(func(fn *ast.FunctionExpr, capture bind.Capture) bool {
+		if captures == nil {
+			captures = make(map[*ast.FunctionExpr][]bind.Capture)
+		}
+		captures[fn] = append(captures[fn], capture)
+		return true
+	})
 	l := lowerer{
 		sourceName: sourceName,
 		binding:    binding,
 		builder:    program.NewBuilder(),
 		cells:      make(map[symbol.ID]program.Term),
 		aliases:    make(map[symbol.ID]program.Term),
-		functions:  make(map[symbol.ID]program.Term),
-		captures:   prepareCaptures(binding),
+		captures:   captures,
 	}
 	bodySpan := l.chunkSpan(stmts)
 	l.body = l.builder.Body(bodySpan)
@@ -39,8 +47,8 @@ func Lower(sourceName string, stmts []ast.Stmt, binding *bind.Result) (*program.
 		return nil, err
 	}
 	if !terminated {
-		values := l.builder.Values(bodySpan, nil, 0)
-		l.appendRoot(l.builder.Normal(bodySpan, values))
+		values := l.builder.Values(bodySpan, l.body, nil, 0)
+		l.appendRoot(l.builder.Normal(bodySpan, l.body, values))
 	}
 	if !l.builder.SetBody(l.body, l.roots...) {
 		return nil, fmt.Errorf("programlower: could not finalize chunk body")
@@ -60,62 +68,20 @@ type lowerer struct {
 	function   *ast.FunctionExpr
 	cells      map[symbol.ID]program.Term
 	aliases    map[symbol.ID]program.Term
-	functions  map[symbol.ID]program.Term
 	captures   map[*ast.FunctionExpr][]bind.Capture
 	roots      []program.Term
 }
 
-// prepareCaptures computes the closure cells that must cross each lexical
-// function boundary. FunctionOrigins is lexical preorder, so an already-seen
-// edge also proves that the same symbol was propagated through every earlier
-// ancestor boundary and propagation can stop.
-func prepareCaptures(binding *bind.Result) map[*ast.FunctionExpr][]bind.Capture {
-	origins := binding.FunctionOrigins()
-	if len(origins) == 0 {
-		return nil
+// astNodePresent is the sole AST pointer-presence boundary for lowering.
+// AST interfaces can contain typed nil pointers. PositionHolder is the
+// canonical shared AST boundary, so newly added pointer node families inherit
+// this check without duplicating an AST schema in the lowerer.
+func astNodePresent(node ast.PositionHolder) bool {
+	if node == nil {
+		return false
 	}
-
-	parents := make(map[*ast.FunctionExpr]*ast.FunctionExpr, len(origins))
-	direct := make(map[*ast.FunctionExpr][]bind.Capture, len(origins))
-	captures := make(map[*ast.FunctionExpr][]bind.Capture, len(origins))
-	seen := make(map[*ast.FunctionExpr]map[symbol.ID]struct{}, len(origins))
-	add := func(fn *ast.FunctionExpr, capture bind.Capture) bool {
-		if fn == nil || capture.Captured == 0 {
-			return false
-		}
-		symbols := seen[fn]
-		if symbols == nil {
-			symbols = make(map[symbol.ID]struct{})
-			seen[fn] = symbols
-		}
-		if _, exists := symbols[capture.Captured]; exists {
-			return false
-		}
-		symbols[capture.Captured] = struct{}{}
-		captures[fn] = append(captures[fn], capture)
-		return true
-	}
-
-	for _, origin := range origins {
-		if origin.Func == nil {
-			continue
-		}
-		parents[origin.Func] = origin.Parent
-		direct[origin.Func] = binding.DirectCaptures(origin.Func)
-		for _, capture := range direct[origin.Func] {
-			add(origin.Func, capture)
-		}
-	}
-	for _, origin := range origins {
-		for _, capture := range direct[origin.Func] {
-			for parent := origin.Parent; parent != nil && parent != capture.DeclaringFunction; parent = parents[parent] {
-				if !add(parent, capture) {
-					break
-				}
-			}
-		}
-	}
-	return captures
+	value := reflect.ValueOf(node)
+	return value.Kind() != reflect.Ptr || !value.IsNil()
 }
 
 // appendRoot is the only path into Body ownership. Expressions and the
@@ -142,8 +108,8 @@ func (l *lowerer) cell(id symbol.ID) (program.Term, bool) {
 func (l *lowerer) lowerStmts(stmts []ast.Stmt) (bool, error) {
 	terminated := false
 	for _, stmt := range stmts {
-		if stmt == nil {
-			return false, fmt.Errorf("programlower: nil statement")
+		if !astNodePresent(stmt) {
+			return false, fmt.Errorf("programlower: absent statement %T", stmt)
 		}
 		if terminated {
 			return false, fmt.Errorf("programlower: statement after terminal %T", stmt)
@@ -197,8 +163,8 @@ func (l *lowerer) lowerDoBlock(stmt *ast.DoBlockStmt) (bool, error) {
 		return false, err
 	}
 	if !terminated {
-		values := l.builder.Values(bodySpan, nil, 0)
-		child.appendRoot(l.builder.Normal(bodySpan, values))
+		values := l.builder.Values(bodySpan, child.body, nil, 0)
+		child.appendRoot(l.builder.Normal(bodySpan, child.body, values))
 	}
 	if !l.builder.SetBody(body, child.roots...) {
 		return false, fmt.Errorf("programlower: could not finalize do-block body")
@@ -217,7 +183,7 @@ func (l *lowerer) lowerLocalAssign(stmt *ast.LocalAssignStmt) error {
 		}
 	}
 	for i, expr := range stmt.Exprs {
-		if _, ambiguous := expr.(*ast.FunctionExpr); ambiguous {
+		if fn, ambiguous := expr.(*ast.FunctionExpr); ambiguous && fn != nil {
 			return fmt.Errorf("programlower: unsupported function initializer for local slot %d: recursive-local syntax was erased", i)
 		}
 	}
@@ -241,7 +207,7 @@ func (l *lowerer) lowerLocalAssign(stmt *ast.LocalAssignStmt) error {
 		l.cells[id] = cell
 		targets[i] = cell
 	}
-	if l.appendRoot(l.builder.Bind(l.span(stmt), targets, values)) == 0 {
+	if l.appendRoot(l.builder.Bind(l.span(stmt), l.body, targets, values)) == 0 {
 		return fmt.Errorf("programlower: could not lower local declaration")
 	}
 	return nil
@@ -263,7 +229,7 @@ func (l *lowerer) lowerAssign(stmt *ast.AssignStmt) error {
 	if err != nil {
 		return err
 	}
-	if l.appendRoot(l.builder.Assign(l.span(stmt), targets, values)) == 0 {
+	if l.appendRoot(l.builder.Assign(l.span(stmt), l.body, targets, values)) == 0 {
 		return fmt.Errorf("programlower: could not lower assignment")
 	}
 	return nil
@@ -274,7 +240,7 @@ func (l *lowerer) lowerReturn(stmt *ast.ReturnStmt) error {
 	if err != nil {
 		return err
 	}
-	if l.appendRoot(l.builder.Return(l.span(stmt), values)) == 0 {
+	if l.appendRoot(l.builder.Return(l.span(stmt), l.body, values)) == 0 {
 		return fmt.Errorf("programlower: could not lower return")
 	}
 	return nil
@@ -284,8 +250,8 @@ func (l *lowerer) lowerValues(span program.Span, exprs []ast.Expr) (program.Term
 	fixed := make([]program.Term, 0, len(exprs))
 	var tail program.Term
 	for i, expr := range exprs {
-		if expr == nil {
-			return 0, fmt.Errorf("programlower: nil expression in value list")
+		if !astNodePresent(expr) {
+			return 0, fmt.Errorf("programlower: absent expression in value list at index %d: %T", i, expr)
 		}
 		term, err := l.lowerExpr(expr)
 		if err != nil {
@@ -297,7 +263,7 @@ func (l *lowerer) lowerValues(span program.Span, exprs []ast.Expr) (program.Term
 			fixed = append(fixed, term)
 		}
 	}
-	values := l.builder.Values(span, fixed, tail)
+	values := l.builder.Values(span, l.body, fixed, tail)
 	if values == 0 {
 		return 0, fmt.Errorf("programlower: could not create Values")
 	}
@@ -305,6 +271,9 @@ func (l *lowerer) lowerValues(span program.Span, exprs []ast.Expr) (program.Term
 }
 
 func openProducer(expr ast.Expr) bool {
+	if !astNodePresent(expr) {
+		return false
+	}
 	switch e := expr.(type) {
 	case *ast.FuncCallExpr:
 		return !e.AdjustRet
@@ -316,27 +285,30 @@ func openProducer(expr ast.Expr) bool {
 }
 
 func (l *lowerer) lowerExpr(expr ast.Expr) (program.Term, error) {
+	if !astNodePresent(expr) {
+		return 0, fmt.Errorf("programlower: absent expression %T", expr)
+	}
 	span := l.span(expr)
 	var term program.Term
 	switch e := expr.(type) {
 	case *ast.NilExpr:
-		term = l.builder.Nil(span)
+		term = l.builder.Nil(span, l.body)
 	case *ast.TrueExpr:
-		term = l.builder.Bool(span, true)
+		term = l.builder.Bool(span, l.body, true)
 	case *ast.FalseExpr:
-		term = l.builder.Bool(span, false)
+		term = l.builder.Bool(span, l.body, false)
 	case *ast.NumberExpr:
 		if integer, ok := numparse.ParseIntegerLiteral(e.Value); ok {
-			term = l.builder.Integer(span, integer)
+			term = l.builder.Integer(span, l.body, integer)
 			break
 		}
 		value, ok := numparse.ParseFloatLiteral(e.Value)
 		if !ok {
 			return 0, fmt.Errorf("programlower: invalid numeric literal %q", e.Value)
 		}
-		term = l.builder.Float(span, value)
+		term = l.builder.Float(span, l.body, value)
 	case *ast.StringExpr:
-		term = l.builder.String(span, e.Value)
+		term = l.builder.String(span, l.body, e.Value)
 	case *ast.IdentExpr:
 		id, ok := l.binding.SymbolOf(e)
 		if !ok || id == 0 {
@@ -346,7 +318,7 @@ func (l *lowerer) lowerExpr(expr ast.Expr) (program.Term, error) {
 		if !ok {
 			return 0, fmt.Errorf("programlower: unsupported non-local identifier binding")
 		}
-		term = l.builder.Read(span, cell)
+		term = l.builder.Read(span, l.body, cell)
 	case *ast.Comma3Expr:
 		if l.function == nil {
 			return 0, fmt.Errorf("programlower: vararg expression outside function")
@@ -359,7 +331,7 @@ func (l *lowerer) lowerExpr(expr ast.Expr) (program.Term, error) {
 		if !ok {
 			return 0, fmt.Errorf("programlower: missing vararg Cell")
 		}
-		term = l.builder.Vararg(span, cell)
+		term = l.builder.Vararg(span, l.body, cell)
 	case *ast.AttrGetExpr:
 		base, err := l.lowerExpr(e.Object)
 		if err != nil {
@@ -369,7 +341,7 @@ func (l *lowerer) lowerExpr(expr ast.Expr) (program.Term, error) {
 		if err != nil {
 			return 0, err
 		}
-		term = l.builder.Read(span, lens)
+		term = l.builder.Read(span, l.body, lens)
 	case *ast.UnaryMinusOpExpr:
 		return l.lowerUnary(span, program.UnaryNeg, e.Expr)
 	case *ast.UnaryNotOpExpr:
@@ -405,7 +377,7 @@ func (l *lowerer) lowerExpr(expr ast.Expr) (program.Term, error) {
 		if err != nil {
 			return 0, err
 		}
-		term = l.builder.Select(span, op, left, right)
+		term = l.builder.Select(span, l.body, op, left, right)
 	case *ast.FunctionExpr:
 		return l.lowerFunction(e)
 	case *ast.FuncCallExpr:
@@ -422,8 +394,8 @@ func (l *lowerer) lowerExpr(expr ast.Expr) (program.Term, error) {
 }
 
 func (l *lowerer) lowerFunction(fn *ast.FunctionExpr) (program.Term, error) {
-	if fn == nil {
-		return 0, fmt.Errorf("programlower: nil function expression")
+	if !astNodePresent(fn) {
+		return 0, fmt.Errorf("programlower: absent function expression %T", fn)
 	}
 	origin, ok := l.binding.FunctionOrigin(fn)
 	if !ok || origin.Kind != bind.FunctionOriginLiteral {
@@ -464,21 +436,8 @@ func (l *lowerer) lowerFunction(fn *ast.FunctionExpr) (program.Term, error) {
 			formals = append(formals, cell)
 		}
 	}
-	function := l.builder.Function(span, l.body, body, 0, formals, vararg)
-	if function == 0 {
-		return 0, fmt.Errorf("programlower: could not create Function")
-	}
-	functionSymbol, ok := l.binding.FunctionSymbol(fn)
-	if !ok {
-		return 0, fmt.Errorf("programlower: binder has no function identity")
-	}
-	if l.functions[functionSymbol] != 0 {
-		return 0, fmt.Errorf("programlower: duplicate function identity")
-	}
-	l.functions[functionSymbol] = function
-
 	captures := l.captures[fn]
-	captureTerms := make([]program.Term, 0, len(captures))
+	capturePairs := make([]program.Capture, 0, len(captures))
 	type savedAlias struct {
 		id      symbol.ID
 		alias   program.Term
@@ -494,14 +453,16 @@ func (l *lowerer) lowerFunction(fn *ast.FunctionExpr) (program.Term, error) {
 		if inner == 0 {
 			return 0, fmt.Errorf("programlower: could not create capture Cell")
 		}
+		capturePairs = append(capturePairs, program.Capture{Inner: inner, Outer: outer})
 		prior, existed := l.aliases[capture.Captured]
 		saved = append(saved, savedAlias{id: capture.Captured, alias: prior, existed: existed})
-		l.aliases[capture.Captured] = inner
-		relation := l.builder.Capture(span, function, inner, outer)
-		if relation == 0 {
-			return 0, fmt.Errorf("programlower: could not create Capture")
-		}
-		captureTerms = append(captureTerms, relation)
+	}
+	function := l.builder.Function(span, l.body, body, formals, vararg, capturePairs)
+	if function == 0 {
+		return 0, fmt.Errorf("programlower: could not create Function")
+	}
+	for i, capture := range captures {
+		l.aliases[capture.Captured] = capturePairs[i].Inner
 	}
 
 	child := *l
@@ -521,27 +482,24 @@ func (l *lowerer) lowerFunction(fn *ast.FunctionExpr) (program.Term, error) {
 		return 0, err
 	}
 	if !terminated {
-		values := l.builder.Values(span, nil, 0)
-		child.appendRoot(l.builder.Normal(span, values))
+		values := l.builder.Values(span, child.body, nil, 0)
+		child.appendRoot(l.builder.Normal(span, child.body, values))
 	}
 	if !l.builder.SetBody(body, child.roots...) {
 		return 0, fmt.Errorf("programlower: could not finalize function Body")
-	}
-	if !l.builder.SetFunctionCaptures(function, captureTerms) {
-		return 0, fmt.Errorf("programlower: could not finalize Function captures")
 	}
 	return function, nil
 }
 
 func (l *lowerer) lowerCallExpr(call *ast.FuncCallExpr) (program.Term, error) {
-	if call == nil {
-		return 0, fmt.Errorf("programlower: nil call expression")
+	if !astNodePresent(call) {
+		return 0, fmt.Errorf("programlower: absent call expression %T", call)
 	}
 	if len(call.TypeArgs) != 0 {
 		return 0, fmt.Errorf("programlower: unsupported typed call")
 	}
 	span := l.span(call)
-	var callee, receiver, direct program.Term
+	var callee, receiver program.Term
 	if call.Method != "" || call.Receiver != nil {
 		if call.Method == "" || call.Receiver == nil || call.Func != nil {
 			return 0, fmt.Errorf("programlower: invalid method call shape")
@@ -556,22 +514,12 @@ func (l *lowerer) lowerCallExpr(call *ast.FuncCallExpr) (program.Term, error) {
 		if err != nil {
 			return 0, err
 		}
-		switch target := call.Func.(type) {
-		case *ast.FunctionExpr:
-			direct = callee
-		case *ast.IdentExpr:
-			if binding, ok := l.binding.SymbolOf(target); ok {
-				if identity, stable := l.binding.StableLocalFunctionIdentity(binding); stable {
-					direct = l.functions[identity]
-				}
-			}
-		}
 	}
 	actuals, err := l.lowerValues(span, call.Args)
 	if err != nil {
 		return 0, err
 	}
-	term := l.builder.Call(span, callee, receiver, actuals, direct)
+	term := l.builder.Call(span, l.body, callee, receiver, actuals)
 	if term == 0 {
 		return 0, fmt.Errorf("programlower: could not create Call")
 	}
@@ -579,6 +527,9 @@ func (l *lowerer) lowerCallExpr(call *ast.FuncCallExpr) (program.Term, error) {
 }
 
 func (l *lowerer) lowerTarget(expr ast.Expr) (program.Term, error) {
+	if !astNodePresent(expr) {
+		return 0, fmt.Errorf("programlower: absent assignment target %T", expr)
+	}
 	switch e := expr.(type) {
 	case *ast.IdentExpr:
 		id, ok := l.binding.SymbolOf(e)
@@ -602,31 +553,32 @@ func (l *lowerer) lowerTarget(expr ast.Expr) (program.Term, error) {
 }
 
 func (l *lowerer) lowerTable(table *ast.TableExpr) (program.Term, error) {
-	tableTerm := l.builder.Table(l.span(table))
-	if tableTerm == 0 {
-		return 0, fmt.Errorf("programlower: could not create table allocation")
-	}
 	keys := make([]program.Term, 0, len(table.Fields))
 	values := make([]program.Term, 0, len(table.Fields))
 	kinds := make([]program.FieldKind, 0, len(table.Fields))
 	arrayIndex := int64(1)
 	for i, field := range table.Fields {
-		if field == nil || field.Value == nil {
-			return 0, fmt.Errorf("programlower: invalid table field %d", i)
+		if field == nil || !astNodePresent(field.Value) {
+			return 0, fmt.Errorf("programlower: absent table field value %d", i)
 		}
 		var key program.Term
 		var kind program.FieldKind
 		if field.Key == nil {
-			key = l.builder.Integer(program.Span{File: l.sourceName}, arrayIndex)
+			key = l.builder.List(program.Span{File: l.sourceName}, l.body, arrayIndex)
 			arrayIndex++
 			kind = program.FieldList
 		} else {
+			if !astNodePresent(field.Key) {
+				return 0, fmt.Errorf("programlower: absent table field key %d", i)
+			}
 			switch field.KeySyntax {
 			case ast.AttrKeyDot:
-				if _, ok := field.Key.(*ast.StringExpr); !ok {
+				name, ok := field.Key.(*ast.StringExpr)
+				if !ok {
 					return 0, fmt.Errorf("programlower: table field %d dot key is not a string literal", i)
 				}
-				kind = program.FieldExact
+				key = l.builder.Name(l.span(field.Key), l.body, name.Value)
+				kind = program.FieldName
 			case ast.AttrKeyIndex:
 				switch field.Key.(type) {
 				case *ast.NilExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NumberExpr, *ast.StringExpr:
@@ -639,10 +591,12 @@ func (l *lowerer) lowerTable(table *ast.TableExpr) (program.Term, error) {
 			default:
 				return 0, fmt.Errorf("programlower: unsupported table field %d key syntax %d", i, field.KeySyntax)
 			}
-			var err error
-			key, err = l.lowerExpr(field.Key)
-			if err != nil {
-				return 0, fmt.Errorf("programlower: table field %d key: %w", i, err)
+			if key == 0 {
+				var err error
+				key, err = l.lowerExpr(field.Key)
+				if err != nil {
+					return 0, fmt.Errorf("programlower: table field %d key: %w", i, err)
+				}
 			}
 		}
 		fieldValues, err := l.lowerTableFieldValues(
@@ -659,8 +613,9 @@ func (l *lowerer) lowerTable(table *ast.TableExpr) (program.Term, error) {
 		values = append(values, fieldValues)
 		kinds = append(kinds, kind)
 	}
-	if !l.builder.SetTable(tableTerm, keys, values, kinds) {
-		return 0, fmt.Errorf("programlower: could not finalize table initialization")
+	tableTerm := l.builder.Table(l.span(table), l.body, keys, values, kinds)
+	if tableTerm == 0 {
+		return 0, fmt.Errorf("programlower: could not create table allocation")
 	}
 	return tableTerm, nil
 }
@@ -677,7 +632,7 @@ func (l *lowerer) lowerTableFieldValues(expr ast.Expr, allowOpen bool) (program.
 	} else {
 		fixed = []program.Term{value}
 	}
-	values := l.builder.Values(l.span(expr), fixed, tail)
+	values := l.builder.Values(l.span(expr), l.body, fixed, tail)
 	if values == 0 {
 		return 0, fmt.Errorf("programlower: could not create table field Values")
 	}
@@ -685,35 +640,43 @@ func (l *lowerer) lowerTableFieldValues(expr ast.Expr, allowOpen bool) (program.
 }
 
 func (l *lowerer) lowerLens(span program.Span, base program.Term, keyExpr ast.Expr, syntax ast.AttrKeySyntax) (program.Term, error) {
-	if keyExpr == nil {
-		return 0, fmt.Errorf("programlower: attribute has no key")
+	if !astNodePresent(keyExpr) {
+		return 0, fmt.Errorf("programlower: absent attribute key %T", keyExpr)
 	}
-	exact := false
+	var kind program.FieldKind
+	var key program.Term
 	switch syntax {
 	case ast.AttrKeyDot:
-		if _, ok := keyExpr.(*ast.StringExpr); !ok {
+		name, ok := keyExpr.(*ast.StringExpr)
+		if !ok {
 			return 0, fmt.Errorf("programlower: dot attribute key is not a string literal")
 		}
-		exact = true
+		key = l.builder.Name(l.span(keyExpr), l.body, name.Value)
+		kind = program.FieldName
 	case ast.AttrKeyIndex:
 		switch keyExpr.(type) {
 		case *ast.NilExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NumberExpr, *ast.StringExpr:
-			exact = true
+			kind = program.FieldExact
+		default:
+			kind = program.FieldKey
 		}
 	case ast.AttrKeyUnknown:
 		return 0, fmt.Errorf("programlower: unsupported attribute with unknown key syntax")
 	default:
 		return 0, fmt.Errorf("programlower: unsupported attribute key syntax %d", syntax)
 	}
-	key, err := l.lowerExpr(keyExpr)
-	if err != nil {
-		return 0, err
+	if key == 0 {
+		var err error
+		key, err = l.lowerExpr(keyExpr)
+		if err != nil {
+			return 0, err
+		}
 	}
 	var lens program.Term
-	if exact {
-		lens = l.builder.LensExact(span, base, key)
+	if kind == program.FieldName || kind == program.FieldExact {
+		lens = l.builder.LensExact(span, l.body, base, key, kind)
 	} else {
-		lens = l.builder.LensKey(span, base, key)
+		lens = l.builder.LensKey(span, l.body, base, key)
 	}
 	if lens == 0 {
 		return 0, fmt.Errorf("programlower: could not create Lens")
@@ -726,7 +689,7 @@ func (l *lowerer) lowerUnary(span program.Span, op program.UnaryOp, operandExpr 
 	if err != nil {
 		return 0, err
 	}
-	term := l.builder.Unary(span, op, operand)
+	term := l.builder.Unary(span, l.body, op, operand)
 	if term == 0 {
 		return 0, fmt.Errorf("programlower: could not create unary operation")
 	}
@@ -742,7 +705,7 @@ func (l *lowerer) lowerBinary(span program.Span, op program.BinaryOp, leftExpr, 
 	if err != nil {
 		return 0, err
 	}
-	term := l.builder.Binary(span, op, left, right)
+	term := l.builder.Binary(span, l.body, op, left, right)
 	if term == 0 {
 		return 0, fmt.Errorf("programlower: could not create binary operation")
 	}
@@ -811,15 +774,21 @@ func selectOp(operator string) (program.SelectOp, bool) {
 }
 
 func (l *lowerer) unsupportedStmt(stmt ast.Stmt) error {
+	if !astNodePresent(stmt) {
+		return fmt.Errorf("programlower: absent statement %T", stmt)
+	}
 	return fmt.Errorf("programlower: unsupported statement %T at %d:%d", stmt, stmt.Line(), stmt.Column())
 }
 
 func (l *lowerer) unsupportedExpr(expr ast.Expr) error {
+	if !astNodePresent(expr) {
+		return fmt.Errorf("programlower: absent expression %T", expr)
+	}
 	return fmt.Errorf("programlower: unsupported expression %T at %d:%d", expr, expr.Line(), expr.Column())
 }
 
 func (l *lowerer) span(holder ast.PositionHolder) program.Span {
-	if holder == nil {
+	if !astNodePresent(holder) {
 		return program.Span{File: l.sourceName}
 	}
 	endLine, endCol := holder.LastLine(), holder.LastColumn()
@@ -875,7 +844,7 @@ func (l *lowerer) chunkSpan(stmts []ast.Stmt) program.Span {
 		return program.Span{File: l.sourceName}
 	}
 	first, last := stmts[0], stmts[len(stmts)-1]
-	if first == nil || last == nil {
+	if !astNodePresent(first) || !astNodePresent(last) {
 		return program.Span{File: l.sourceName}
 	}
 	endLine, endCol := last.LastLine(), last.LastColumn()

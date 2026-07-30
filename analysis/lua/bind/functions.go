@@ -376,48 +376,51 @@ func (r *Result) DirectCaptures(fn *ast.FunctionExpr) []Capture {
 	return cloneCaptures(r.directCaptures[fn])
 }
 
-// EntryCaptures returns the order-preserving closure inputs required by fn and
-// its descendants, excluding declarations owned by fn itself. Lexical subtree
-// intervals localize enumeration; the transitive slice is deliberately
-// ephemeral so deeply nested programs do not retain quadratic capture lists.
-func (r *Result) EntryCaptures(fn *ast.FunctionExpr) []Capture {
-	if r == nil || fn == nil {
-		return nil
+// ForEachEntryCapture streams each function's effective closure-entry inputs
+// in lexical first-use and boundary order. A capture is emitted once for every
+// lexical function boundary it crosses, stopping at its declaring function.
+// The temporary dedup state is bounded by emitted boundary edges; Result does
+// not retain a transitive capture projection.
+func (r *Result) ForEachEntryCapture(visit func(*ast.FunctionExpr, Capture) bool) {
+	if r == nil || visit == nil {
+		return
 	}
-	start, known := r.functionIndex[fn]
-	if !known || !r.hasEntryCaptures[fn] {
-		return nil
+	var seen map[*ast.FunctionExpr]map[symbol.ID]struct{}
+	mark := func(fn *ast.FunctionExpr, capture Capture) bool {
+		if fn == nil || capture.Captured == 0 {
+			return false
+		}
+		if seen == nil {
+			seen = make(map[*ast.FunctionExpr]map[symbol.ID]struct{})
+		}
+		symbols := seen[fn]
+		if symbols == nil {
+			symbols = make(map[symbol.ID]struct{})
+			seen[fn] = symbols
+		}
+		if _, exists := symbols[capture.Captured]; exists {
+			return false
+		}
+		symbols[capture.Captured] = struct{}{}
+		return true
 	}
-	out := cloneCaptures(r.directCaptures[fn])
-	seen := make(map[symbol.ID]struct{}, len(out))
-	for _, capture := range out {
-		if capture.Captured != 0 {
-			seen[capture.Captured] = struct{}{}
+	for _, fn := range r.functions {
+		for _, capture := range r.directCaptures[fn] {
+			for current := fn; current != nil && current != capture.DeclaringFunction; {
+				if !mark(current, capture) {
+					break
+				}
+				if !visit(current, capture) {
+					return
+				}
+				parent, known := r.ParentFunction(current)
+				if !known {
+					break
+				}
+				current = parent
+			}
 		}
 	}
-	for _, descendant := range r.functions[start+1 : r.functionSubtreeEnd[fn]] {
-		for _, capture := range r.directCaptures[descendant] {
-			if capture.Captured == 0 || capture.DeclaringFunction == fn {
-				continue
-			}
-			if _, exists := seen[capture.Captured]; exists {
-				continue
-			}
-			seen[capture.Captured] = struct{}{}
-			out = append(out, capture)
-		}
-	}
-	return out
-}
-
-// HasEntryCaptures reports in constant time whether EntryCaptures is non-empty.
-// This is the solve-loop query; it stores one bit per function rather than all
-// transitive capture projections.
-func (r *Result) HasEntryCaptures(fn *ast.FunctionExpr) bool {
-	if r == nil || fn == nil {
-		return false
-	}
-	return r.hasEntryCaptures[fn]
 }
 
 // DirectGlobalReads returns global symbols directly read by fn in first-use
@@ -513,8 +516,6 @@ func (r *Result) registerFunction(fn, parent *ast.FunctionExpr, details function
 }
 
 // finalizeFunctionIndexes seals lexical indexes after the binder has finished.
-// It also records only whether an effective entry capture exists. Full
-// transitive lists are enumerated ephemerally from the sealed subtree interval.
 func (r *Result) finalizeFunctionIndexes() {
 	if r == nil || len(r.functions) == 0 {
 		return
@@ -522,23 +523,12 @@ func (r *Result) finalizeFunctionIndexes() {
 	for index, fn := range r.functions {
 		r.functionIndex[fn] = index
 		r.functionSubtreeEnd[fn] = index + 1
-		r.hasEntryCaptures[fn] = len(r.directCaptures[fn]) != 0
 	}
 	for index := len(r.functions) - 1; index >= 0; index-- {
 		fn := r.functions[index]
 		origin := r.functionOrigins[fn]
 		if origin.Parent != nil && r.functionSubtreeEnd[origin.Parent] < r.functionSubtreeEnd[fn] {
 			r.functionSubtreeEnd[origin.Parent] = r.functionSubtreeEnd[fn]
-		}
-	}
-	for _, descendant := range r.functions {
-		for _, capture := range r.directCaptures[descendant] {
-			for ancestor := r.functionOrigins[descendant].Parent; ancestor != nil; ancestor = r.functionOrigins[ancestor].Parent {
-				if capture.Captured == 0 || capture.DeclaringFunction == ancestor {
-					continue
-				}
-				r.hasEntryCaptures[ancestor] = true
-			}
 		}
 	}
 }
