@@ -345,44 +345,80 @@ func (r *Result) global(name string, predeclared bool) symbol.ID {
 	return id
 }
 
-type scope struct {
+type pendingScope struct {
 	names map[string]symbol.ID
 }
 
-type deferredScope struct {
-	scopeIndex int
-	names      map[string]symbol.ID
+type valueHead struct {
+	id    symbol.ID
+	depth int
+}
+
+type valueUndo struct {
+	name    string
+	prior   valueHead
+	existed bool
+}
+
+type pendingHead struct {
+	batch int
+	depth int
+	id    symbol.ID
 }
 
 type binder struct {
-	result     *Result
-	scopes     []scope
-	typeScopes []typeScope
+	result *Result
 
-	functionStack []*ast.FunctionExpr
+	valueHeads map[string]valueHead
+	valueUndo  []valueUndo
+	valueMarks []int
 
-	deferred        []deferredScope
-	visibleDeferred int
+	functions []functionFrame
+
+	pending        []pendingScope
+	pendingByName  map[string][]pendingHead
+	visiblePending int
+	rootStmts      []ast.Stmt
+	work           []bindStep
+
+	typeHeads map[string]TypeDecl
+	typeUndo  []typeUndo
+	typeMarks []int
 }
 
 func (b *binder) pushScope() {
-	b.scopes = append(b.scopes, scope{names: make(map[string]symbol.ID)})
+	b.valueMarks = append(b.valueMarks, len(b.valueUndo))
 	b.pushTypeScope()
 }
 
 func (b *binder) popScope() {
-	if len(b.scopes) == 0 {
+	if len(b.valueMarks) == 0 {
 		return
 	}
-	b.scopes = b.scopes[:len(b.scopes)-1]
+	mark := b.valueMarks[len(b.valueMarks)-1]
+	for i := len(b.valueUndo) - 1; i >= mark; i-- {
+		undo := b.valueUndo[i]
+		if undo.existed {
+			b.valueHeads[undo.name] = undo.prior
+		} else {
+			delete(b.valueHeads, undo.name)
+		}
+	}
+	b.valueUndo = b.valueUndo[:mark]
+	b.valueMarks = b.valueMarks[:len(b.valueMarks)-1]
 	b.popTypeScope()
 }
 
 func (b *binder) define(name string, id symbol.ID) {
-	if name == "" || len(b.scopes) == 0 || id == 0 {
+	if name == "" || len(b.valueMarks) == 0 || id == 0 {
 		return
 	}
-	b.scopes[len(b.scopes)-1].names[name] = id
+	if b.valueHeads == nil {
+		b.valueHeads = make(map[string]valueHead)
+	}
+	prior, existed := b.valueHeads[name]
+	b.valueUndo = append(b.valueUndo, valueUndo{name: name, prior: prior, existed: existed})
+	b.valueHeads[name] = valueHead{id: id, depth: len(b.valueMarks) - 1}
 }
 
 func (b *binder) newSymbol(name string, kind symbol.Kind) symbol.ID {
@@ -397,18 +433,13 @@ func (b *binder) lookup(name string) (symbol.ID, bool, bool) {
 	if name == "" {
 		return 0, false, false
 	}
-	for i := len(b.scopes) - 1; i >= 0; i-- {
-		for j := b.visibleDeferred - 1; j >= 0; j-- {
-			if b.deferred[j].scopeIndex != i {
-				continue
-			}
-			if id, ok := b.deferred[j].names[name]; ok {
-				return id, false, true
-			}
-		}
-		if id, ok := b.scopes[i].names[name]; ok {
-			return id, false, true
-		}
+	active, activeOK := b.valueHeads[name]
+	pending, pendingOK := b.visiblePendingHead(name)
+	if pendingOK && (!activeOK || pending.depth >= active.depth) {
+		return pending.id, false, true
+	}
+	if activeOK {
+		return active.id, false, true
 	}
 	if g, ok := b.result.globals[name]; ok {
 		return g.id, true, true
@@ -416,19 +447,72 @@ func (b *binder) lookup(name string) (symbol.ID, bool, bool) {
 	return 0, false, false
 }
 
-func (b *binder) bindLValue(expr ast.Expr) {
-	switch expr := expr.(type) {
-	case nil:
-	case *ast.IdentExpr:
-		b.bindWriteIdent(expr)
-	case *ast.AttrGetExpr:
-		b.bindExpr(expr.Object)
-		if expr.KeySyntax != ast.AttrKeyDot {
-			b.bindExpr(expr.Key)
-		}
-	default:
-		b.bindExpr(expr)
+func (b *binder) pushPending(names map[string]symbol.ID) int {
+	mark := len(b.pending)
+	if len(names) == 0 || len(b.valueMarks) == 0 {
+		return mark
 	}
+	depth := len(b.valueMarks) - 1
+	b.pending = append(b.pending, pendingScope{names: names})
+	if b.pendingByName == nil {
+		b.pendingByName = make(map[string][]pendingHead)
+	}
+	for name, id := range names {
+		if name == "" || id == 0 {
+			continue
+		}
+		b.pendingByName[name] = append(b.pendingByName[name], pendingHead{
+			batch: mark,
+			depth: depth,
+			id:    id,
+		})
+	}
+	return mark
+}
+
+func (b *binder) popPending(mark int) {
+	if mark < 0 || mark > len(b.pending) {
+		return
+	}
+	for i := len(b.pending) - 1; i >= mark; i-- {
+		for name := range b.pending[i].names {
+			heads := b.pendingByName[name]
+			if len(heads) == 0 {
+				continue
+			}
+			heads = heads[:len(heads)-1]
+			if len(heads) == 0 {
+				delete(b.pendingByName, name)
+			} else {
+				b.pendingByName[name] = heads
+			}
+		}
+	}
+	b.pending = b.pending[:mark]
+	if b.visiblePending > mark {
+		b.visiblePending = mark
+	}
+}
+
+func (b *binder) visiblePendingHead(name string) (pendingHead, bool) {
+	heads := b.pendingByName[name]
+	limit := b.visiblePending
+	if len(heads) == 0 || limit <= 0 {
+		return pendingHead{}, false
+	}
+	lo, hi := 0, len(heads)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if heads[mid].batch < limit {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo == 0 {
+		return pendingHead{}, false
+	}
+	return heads[lo-1], true
 }
 
 func (b *binder) bindReadIdent(ident *ast.IdentExpr) {

@@ -296,14 +296,16 @@ func (r *Result) MethodOriginReceiverSymbol(origin FunctionOrigin) (symbol.ID, b
 }
 
 func (r *Result) receiverRootSymbol(expr ast.Expr) (symbol.ID, bool) {
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		id, ok := r.SymbolOf(e)
-		return id, ok && id != 0
-	case *ast.AttrGetExpr:
-		return r.receiverRootSymbol(e.Object)
-	default:
-		return 0, false
+	for {
+		switch e := expr.(type) {
+		case *ast.IdentExpr:
+			id, ok := r.SymbolOf(e)
+			return id, ok && id != 0
+		case *ast.AttrGetExpr:
+			expr = e.Object
+		default:
+			return 0, false
+		}
 	}
 }
 
@@ -534,10 +536,10 @@ func (r *Result) finalizeFunctionIndexes() {
 }
 
 func (b *binder) currentFunction() *ast.FunctionExpr {
-	if len(b.functionStack) == 0 {
+	if len(b.functions) == 0 {
 		return nil
 	}
-	return b.functionStack[len(b.functionStack)-1]
+	return b.functions[len(b.functions)-1].fn
 }
 
 func (b *binder) recordDirectCapture(id symbol.ID) {
@@ -618,95 +620,6 @@ func (b *binder) bindVararg(expr *ast.Comma3Expr) {
 	b.recordDirectCapture(id)
 }
 
-func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool, origin functionOriginDetails) {
-	if fn == nil {
-		return
-	}
-
-	parent := b.currentFunction()
-	b.result.registerFunction(fn, parent, origin)
-	b.functionStack = append(b.functionStack, fn)
-
-	oldVisibleDeferred := b.visibleDeferred
-	b.visibleDeferred = len(b.deferred)
-
-	b.pushScope()
-	b.bindTypeParamConstraints(fn.TypeParams)
-	fnTypeParams := b.defineTypeParams(fn.TypeParams)
-	if len(fnTypeParams) > 0 {
-		b.result.functionTypeParams[fn] = fnTypeParams
-	}
-
-	params := make([]symbol.ID, 0)
-	slots := make([]ParamSlot, 0)
-	names := []string(nil)
-	types := []ast.TypeExpr(nil)
-	hasVargs := false
-	varargType := ast.TypeExpr(nil)
-	if fn.ParList != nil {
-		names = fn.ParList.Names
-		types = fn.ParList.Types
-		hasVargs = fn.ParList.HasVargs
-		varargType = fn.ParList.VarargType
-	}
-	if method && (len(names) == 0 || names[0] != "self") {
-		id := b.newSymbol("self", symbol.Param)
-		b.result.setDeclaration(id, Declaration{Synthetic: true})
-		params = append(params, id)
-		b.define("self", id)
-		slots = append(slots, ParamSlot{
-			Symbol:       id,
-			Name:         "self",
-			SourceIndex:  -1,
-			ImplicitSelf: true,
-		})
-	}
-	for i, name := range names {
-		id := b.newSymbol(name, symbol.Param)
-		position := positionAt(fn.ParList, i)
-		b.result.setDeclaration(id, declarationForPosition(position, name, false))
-		params = append(params, id)
-		b.define(name, id)
-		slots = append(slots, ParamSlot{
-			Symbol:      id,
-			Name:        name,
-			Position:    position,
-			Type:        typeAt(types, i),
-			SourceIndex: i,
-		})
-	}
-	if origin.hasReceiverType {
-		b.result.methodReceiverTypes[fn] = origin.receiverType
-	}
-	b.result.paramSymbols[fn] = params
-	if hasVargs {
-		id := b.newSymbol("...", symbol.Param)
-		varargPosition := ast.Position{}
-		if fn.ParList != nil {
-			varargPosition = fn.ParList.VarargPosition
-		}
-		b.result.setDeclaration(id, declarationForPosition(varargPosition, "...", true))
-		b.result.varargSymbols[fn] = id
-		slots = append(slots, ParamSlot{
-			Symbol:      id,
-			Name:        "...",
-			Position:    varargPosition,
-			Type:        varargType,
-			SourceIndex: len(names),
-			Vararg:      true,
-		})
-	}
-	b.result.paramSlots[fn] = slots
-	b.bindTypeExprs(types)
-	b.bindTypeExpr(varargType)
-	b.bindTypeExprs(fn.ReturnTypes)
-	b.bindStmts(fn.Stmts)
-	b.popScope()
-
-	b.visibleDeferred = oldVisibleDeferred
-	b.functionStack = b.functionStack[:len(b.functionStack)-1]
-}
-
 func positionAt(parlist *ast.ParList, index int) ast.Position {
 	if parlist == nil || index < 0 || index >= len(parlist.NamePositions) {
 		return ast.Position{}
@@ -719,21 +632,6 @@ func namePosition(positions []ast.Position, index int) ast.Position {
 		return ast.Position{}
 	}
 	return positions[index]
-}
-
-func (b *binder) bindFunctionTypeSignature(fn *ast.FunctionExpr) {
-	if fn == nil {
-		return
-	}
-	b.bindTypeParamConstraints(fn.TypeParams)
-	b.pushTypeScope()
-	b.defineTypeParams(fn.TypeParams)
-	if fn.ParList != nil {
-		b.bindTypeExprs(fn.ParList.Types)
-		b.bindTypeExpr(fn.ParList.VarargType)
-	}
-	b.bindTypeExprs(fn.ReturnTypes)
-	b.popTypeScope()
 }
 
 func typeAt(types []ast.TypeExpr, index int) ast.TypeExpr {

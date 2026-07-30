@@ -196,38 +196,51 @@ func (r *Result) newTypeDecl(kind TypeDeclKind, name string, typeDef *ast.TypeDe
 	return decl
 }
 
-type typeScope struct {
-	names map[string]TypeDecl
+type typeUndo struct {
+	name    string
+	prior   TypeDecl
+	existed bool
 }
 
 func (b *binder) pushTypeScope() {
-	b.typeScopes = append(b.typeScopes, typeScope{names: make(map[string]TypeDecl)})
+	b.typeMarks = append(b.typeMarks, len(b.typeUndo))
 }
 
 func (b *binder) popTypeScope() {
-	if len(b.typeScopes) == 0 {
+	if len(b.typeMarks) == 0 {
 		return
 	}
-	b.typeScopes = b.typeScopes[:len(b.typeScopes)-1]
+	mark := b.typeMarks[len(b.typeMarks)-1]
+	for i := len(b.typeUndo) - 1; i >= mark; i-- {
+		undo := b.typeUndo[i]
+		if undo.existed {
+			b.typeHeads[undo.name] = undo.prior
+		} else {
+			delete(b.typeHeads, undo.name)
+		}
+	}
+	b.typeUndo = b.typeUndo[:mark]
+	b.typeMarks = b.typeMarks[:len(b.typeMarks)-1]
 }
 
 func (b *binder) defineType(name string, decl TypeDecl) {
-	if name == "" || len(b.typeScopes) == 0 || decl.ID == 0 {
+	if name == "" || len(b.typeMarks) == 0 || decl.ID == 0 {
 		return
 	}
-	b.typeScopes[len(b.typeScopes)-1].names[name] = decl
+	if b.typeHeads == nil {
+		b.typeHeads = make(map[string]TypeDecl)
+	}
+	prior, existed := b.typeHeads[name]
+	b.typeUndo = append(b.typeUndo, typeUndo{name: name, prior: prior, existed: existed})
+	b.typeHeads[name] = decl
 }
 
 func (b *binder) lookupType(name string) (TypeDecl, bool) {
 	if name == "" {
 		return TypeDecl{}, false
 	}
-	for i := len(b.typeScopes) - 1; i >= 0; i-- {
-		if decl, ok := b.typeScopes[i].names[name]; ok && decl.ID != 0 {
-			return decl, true
-		}
-	}
-	return TypeDecl{}, false
+	decl, ok := b.typeHeads[name]
+	return decl, ok && decl.ID != 0
 }
 
 // declareTypeDef introduces the alias name into the current type scope. It is
@@ -257,45 +270,6 @@ func (b *binder) declareInterfaceDef(stmt *ast.InterfaceDefStmt) {
 	b.defineType(stmt.Name, decl)
 }
 
-func (b *binder) bindTypeDef(stmt *ast.TypeDefStmt) {
-	if stmt == nil {
-		return
-	}
-	b.declareTypeDef(stmt)
-	b.bindTypeParamConstraints(stmt.TypeParams)
-	b.pushTypeScope()
-	params := b.defineTypeParams(stmt.TypeParams)
-	if len(params) > 0 {
-		b.result.typeDefParams[stmt] = params
-	}
-	b.bindTypeExpr(stmt.Type)
-	b.popTypeScope()
-}
-
-func (b *binder) bindInterfaceDef(stmt *ast.InterfaceDefStmt) {
-	if stmt == nil {
-		return
-	}
-	b.declareInterfaceDef(stmt)
-	for _, ref := range stmt.Extends {
-		b.bindTypeRef(ref)
-	}
-	for _, field := range stmt.Fields {
-		b.bindTypeExpr(field.Type)
-	}
-	for _, method := range stmt.Methods {
-		if method.Type != nil {
-			b.bindTypeExpr(method.Type)
-		}
-	}
-}
-
-func (b *binder) bindTypeParamConstraints(params []ast.TypeParamExpr) {
-	for _, param := range params {
-		b.bindTypeExpr(param.Constraint)
-	}
-}
-
 func (b *binder) defineTypeParams(params []ast.TypeParamExpr) []TypeDecl {
 	if len(params) == 0 {
 		return nil
@@ -310,69 +284,6 @@ func (b *binder) defineTypeParams(params []ast.TypeParamExpr) []TypeDecl {
 		decls = append(decls, decl)
 	}
 	return decls
-}
-
-func (b *binder) bindTypeExprs(exprs []ast.TypeExpr) {
-	for _, expr := range exprs {
-		b.bindTypeExpr(expr)
-	}
-}
-
-func (b *binder) bindTypeExpr(expr ast.TypeExpr) {
-	switch expr := expr.(type) {
-	case nil:
-	case *ast.PrimitiveTypeExpr:
-		b.bindPrimitiveTypeRef(expr)
-	case *ast.SelfTypeExpr, *ast.LiteralTypeExpr:
-	case *ast.OptionalTypeExpr:
-		b.bindTypeExpr(expr.Inner)
-	case *ast.UnionTypeExpr:
-		b.bindTypeExprs(expr.Types)
-	case *ast.IntersectionTypeExpr:
-		b.bindTypeExprs(expr.Types)
-	case *ast.ArrayTypeExpr:
-		b.bindTypeExpr(expr.Element)
-	case *ast.MapTypeExpr:
-		b.bindTypeExpr(expr.Key)
-		b.bindTypeExpr(expr.Value)
-	case *ast.RecordTypeExpr:
-		for _, field := range expr.Fields {
-			b.bindTypeExpr(field.Type)
-		}
-	case *ast.FunctionTypeExpr:
-		b.bindTypeParamConstraints(expr.TypeParams)
-		b.pushTypeScope()
-		b.defineTypeParams(expr.TypeParams)
-		for _, param := range expr.Params {
-			b.bindTypeExpr(param.Type)
-		}
-		b.bindTypeExpr(expr.Variadic)
-		b.bindTypeExprs(expr.Returns)
-		b.popTypeScope()
-	case *ast.AssertsTypeExpr:
-		b.bindTypeExpr(expr.NarrowTo)
-	case *ast.TypeRefExpr:
-		b.bindTypeRef(expr)
-	case *ast.GenericTypeExpr:
-		b.bindTypeRef(expr.Base)
-		b.bindTypeExprs(expr.Args)
-	case *ast.MetaTypeExpr:
-		b.bindTypeExpr(expr.Inner)
-	case *ast.TupleTypeExpr:
-		b.bindTypeExprs(expr.Elements)
-	case *ast.TypeOfExpr:
-		b.bindTypeQueryExpr(expr.Expr)
-	case *ast.KeyOfExpr:
-		b.bindTypeExpr(expr.Inner)
-	case *ast.IndexAccessExpr:
-		b.bindTypeExpr(expr.Object)
-		b.bindTypeExpr(expr.Index)
-	case *ast.ConditionalTypeExpr:
-		b.bindTypeExpr(expr.Check)
-		b.bindTypeExpr(expr.Extends)
-		b.bindTypeExpr(expr.Then)
-		b.bindTypeExpr(expr.Else)
-	}
 }
 
 func (b *binder) bindTypeRef(ref *ast.TypeRefExpr) {
@@ -449,24 +360,30 @@ func (b *binder) qualifiedTypeAliasSource(expr ast.Expr) (QualifiedTypeAlias, bo
 }
 
 func dottedTypeValuePath(expr ast.Expr) (*ast.IdentExpr, []string, bool) {
-	switch expr := expr.(type) {
-	case *ast.IdentExpr:
-		return expr, nil, expr.Value != ""
-	case *ast.AttrGetExpr:
-		if expr.KeySyntax != ast.AttrKeyDot {
+	var reverse []string
+	for {
+		switch e := expr.(type) {
+		case *ast.IdentExpr:
+			if e.Value == "" {
+				return nil, nil, false
+			}
+			for left, right := 0, len(reverse)-1; left < right; left, right = left+1, right-1 {
+				reverse[left], reverse[right] = reverse[right], reverse[left]
+			}
+			return e, reverse, true
+		case *ast.AttrGetExpr:
+			if e.KeySyntax != ast.AttrKeyDot {
+				return nil, nil, false
+			}
+			name := ast.KeyName(e.Key)
+			if name == "" {
+				return nil, nil, false
+			}
+			reverse = append(reverse, name)
+			expr = e.Object
+		default:
 			return nil, nil, false
 		}
-		name := ast.KeyName(expr.Key)
-		if name == "" {
-			return nil, nil, false
-		}
-		root, suffix, ok := dottedTypeValuePath(expr.Object)
-		if !ok {
-			return nil, nil, false
-		}
-		return root, append(suffix, name), true
-	default:
-		return nil, nil, false
 	}
 }
 

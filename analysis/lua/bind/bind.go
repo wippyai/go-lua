@@ -10,10 +10,11 @@ import (
 func BindFunction(fn *ast.FunctionExpr, opts Options) *Result {
 	r := newResult(opts)
 	b := binder{result: r}
-	b.bindFunction(fn, false, functionOriginDetails{
+	b.enterFunction(fn, false, functionOriginDetails{
 		kind:       FunctionOriginLiteral,
 		localIndex: -1,
 	})
+	b.run()
 	r.finalizeFunctionIndexes()
 	return r
 }
@@ -21,9 +22,10 @@ func BindFunction(fn *ast.FunctionExpr, opts Options) *Result {
 // BindChunk binds a chunk statement list with a fresh global seed.
 func BindChunk(stmts []ast.Stmt, opts Options) *Result {
 	r := newResult(opts)
-	b := binder{result: r}
+	b := binder{result: r, rootStmts: stmts}
 	b.pushScope()
-	b.bindStmts(stmts)
+	b.scheduleStmtList(nil, phaseChunk)
+	b.run()
 	b.popScope()
 	r.finalizeFunctionIndexes()
 	return r
