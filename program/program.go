@@ -230,6 +230,7 @@ type Program struct {
 	breaks      []outcomeRow
 	continues   []outcomeRow
 	muFunctions []Term // dense Seal-derived canonical heads for cyclic Functions
+	entry       Term   // the one canonical non-Function shard entry Body
 	bodies      []bodyRow
 	cells       []cellRow
 	reads       []readRow
@@ -276,6 +277,7 @@ type Builder struct {
 	yields      []outcomeRow
 	breaks      []outcomeRow
 	continues   []outcomeRow
+	entry       Term
 	bodies      []bodyRow
 	cells       []cellRow
 	reads       []readRow
@@ -574,6 +576,18 @@ func (b *Builder) SetBody(body Term, owned ...Term) bool {
 	row.owned = order
 	row.filled = true
 	b.setOrderRange(body, order)
+	return true
+}
+
+// SetEntry fixes the shard's one canonical top-level Body. It may be called
+// exactly once; Seal verifies that the selected Body is neither nested nor a
+// Function body.
+func (b *Builder) SetEntry(body Term) bool {
+	if !b.has(body, tagBody) || b.entry != 0 {
+		b.poison = true
+		return false
+	}
+	b.entry = body
 	return true
 }
 
@@ -983,6 +997,12 @@ func (b *Builder) Seal() (*Program, error) {
 			}
 		}
 	}
+	if b.entry == 0 {
+		return nil, errors.New("program: missing Entry Body")
+	}
+	if !b.has(b.entry, tagBody) {
+		return nil, errors.New("program: invalid Entry Body")
+	}
 	var ownerOffset [tagCount]int
 	ownerCount := 0
 	for tag := uint8(1); tag < tagCount; tag++ {
@@ -1031,6 +1051,9 @@ func (b *Builder) Seal() (*Program, error) {
 			bodyState[body] = 2
 			body = bodyParent[body]
 		}
+	}
+	if bodyParent[b.entry.index()] != 0 {
+		return nil, errors.New("program: Entry Body cannot be nested")
 	}
 	for _, row := range b.cells {
 		if !b.has(row.body, tagBody) {
@@ -1124,6 +1147,9 @@ func (b *Builder) Seal() (*Program, error) {
 				return nil, errors.New("program: Function formal requires Cell owned by its Body")
 			}
 		}
+	}
+	if functionByBody[b.entry.index()] != 0 {
+		return nil, errors.New("program: Entry Body cannot be a Function body")
 	}
 	for _, row := range b.captures {
 		if !b.has(row.inner, tagCell) || !b.has(row.outer, tagCell) {
@@ -1422,6 +1448,7 @@ func (b *Builder) snapshot(muFunctions []Term) *Program {
 		breaks:      append([]outcomeRow(nil), b.breaks...),
 		continues:   append([]outcomeRow(nil), b.continues...),
 		muFunctions: copyTerms(muFunctions),
+		entry:       b.entry,
 		bodies:      append([]bodyRow(nil), b.bodies...),
 		cells:       append([]cellRow(nil), b.cells...),
 		reads:       append([]readRow(nil), b.reads...),
@@ -1719,6 +1746,14 @@ func (p *Program) Mu(term Term) (Term, bool) {
 	}
 	head := p.muFunctions[term.index()]
 	return head, head != 0
+}
+
+// Entry returns the shard's one canonical top-level Body in O(1).
+func (p *Program) Entry() (Term, bool) {
+	if p == nil || !p.has(p.entry, tagBody) {
+		return 0, false
+	}
+	return p.entry, true
 }
 
 func (p *Program) BodyLen(term Term) (int, bool) {

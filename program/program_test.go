@@ -8,16 +8,29 @@ import (
 	"github.com/wippyai/go-lua/program"
 )
 
+// newProgramBuilder supplies the canonical empty shard entry for tests that
+// exercise a relation in isolation. Tests of entry construction use the raw
+// builder directly so missing and invalid entry laws remain observable.
+func newProgramBuilder(t *testing.T) *program.Builder {
+	t.Helper()
+	b := program.NewBuilder()
+	entry := b.Body(program.Span{})
+	if !b.SetBody(entry) || !b.SetEntry(entry) {
+		t.Fatal("failed to establish test Entry Body")
+	}
+	return b
+}
+
 func TestSealRejectsInvalidReferencesAndExactKeyTypes(t *testing.T) {
 	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	b.Values(span, []program.Term{program.Term(0x0101)}, 0)
 	if _, err := b.Seal(); err == nil {
 		t.Fatal("Seal accepted an invalid Values reference")
 	}
 
-	b = program.NewBuilder()
+	b = newProgramBuilder(t)
 	base := b.String(span, "base")
 	value := b.Integer(span, 1)
 	b.LensExact(span, base, b.Values(span, []program.Term{value}, 0))
@@ -25,7 +38,7 @@ func TestSealRejectsInvalidReferencesAndExactKeyTypes(t *testing.T) {
 		t.Fatal("Seal accepted a non-literal exact Lens key")
 	}
 
-	b = program.NewBuilder()
+	b = newProgramBuilder(t)
 	if term := b.Integer(program.Span{StartLine: -1}, 1); term != 0 {
 		t.Fatal("invalid span minted a term")
 	}
@@ -35,7 +48,7 @@ func TestSealRejectsInvalidReferencesAndExactKeyTypes(t *testing.T) {
 }
 
 func TestLiteralsAreDistinctOccurrences(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	first := b.Integer(program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}, 7)
 	second := b.Integer(program.Span{File: "x.lua", StartLine: 1, StartCol: 9, EndLine: 1, EndCol: 10}, 7)
 	if first == second || first == 0 || second == 0 {
@@ -58,7 +71,7 @@ func TestLiteralsAreDistinctOccurrences(t *testing.T) {
 }
 
 func TestSpanLineColumnContract(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	generated := b.Nil(program.Span{})
 	point := b.Bool(program.Span{File: "x.lua", StartLine: 3, StartCol: 7}, true)
 	full := b.Integer(program.Span{File: "x.lua", StartLine: 3, StartCol: 8, EndLine: 4, EndCol: 2}, 1)
@@ -82,7 +95,7 @@ func TestSpanLineColumnContract(t *testing.T) {
 		{StartLine: 2, StartCol: 1, EndLine: 1, EndCol: 1},
 	}
 	for _, span := range invalid {
-		bad := program.NewBuilder()
+		bad := newProgramBuilder(t)
 		if term := bad.Nil(span); term != 0 {
 			t.Fatalf("invalid span minted term: %#v", span)
 		}
@@ -92,8 +105,77 @@ func TestSpanLineColumnContract(t *testing.T) {
 	}
 }
 
+func TestEntryBodyLaws(t *testing.T) {
+	span := program.Span{File: "entry.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+
+	missing := program.NewBuilder()
+	if _, err := missing.Seal(); err == nil || err.Error() != "program: missing Entry Body" {
+		t.Fatalf("missing Entry error = %v", err)
+	}
+
+	invalid := program.NewBuilder()
+	notBody := invalid.Integer(span, 1)
+	if invalid.SetEntry(notBody) {
+		t.Fatal("SetEntry accepted a non-Body term")
+	}
+	if _, err := invalid.Seal(); err == nil || err.Error() != "program: poisoned builder" {
+		t.Fatalf("invalid Entry error = %v", err)
+	}
+
+	double := program.NewBuilder()
+	first := double.Body(span)
+	second := double.Body(span)
+	if !double.SetBody(first) || !double.SetBody(second) || !double.SetEntry(first) || double.SetEntry(second) {
+		t.Fatal("SetEntry did not enforce exactly-once construction")
+	}
+	if _, err := double.Seal(); err == nil || err.Error() != "program: poisoned builder" {
+		t.Fatalf("double Entry error = %v", err)
+	}
+
+	nested := program.NewBuilder()
+	parent := nested.Body(span)
+	child := nested.Body(span)
+	if !nested.SetBody(child) || !nested.SetBody(parent, child) || !nested.SetEntry(child) {
+		t.Fatal("nested Entry setup failed")
+	}
+	if _, err := nested.Seal(); err == nil || err.Error() != "program: Entry Body cannot be nested" {
+		t.Fatalf("nested Entry error = %v", err)
+	}
+
+	function := program.NewBuilder()
+	functionBody := function.Body(span)
+	function.Function(span, functionBody, nil, false)
+	if !function.SetBody(functionBody) || !function.SetEntry(functionBody) {
+		t.Fatal("Function Entry setup failed")
+	}
+	if _, err := function.Seal(); err == nil || err.Error() != "program: Entry Body cannot be a Function body" {
+		t.Fatalf("Function Entry error = %v", err)
+	}
+
+	empty := program.NewBuilder()
+	entry := empty.Body(span)
+	if !empty.SetBody(entry) || !empty.SetEntry(entry) {
+		t.Fatal("empty Entry setup failed")
+	}
+	p, err := empty.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := p.Entry(); !ok || got != entry {
+		t.Fatalf("Entry = %v, %v", got, ok)
+	}
+	if length, ok := p.BodyLen(entry); !ok || length != 0 {
+		t.Fatalf("empty Entry length = %d, %v", length, ok)
+	}
+	if allocations := testing.AllocsPerRun(1000, func() {
+		hotTerm, hotOK = p.Entry()
+	}); allocations != 0 {
+		t.Fatalf("Entry query allocated: %.2f", allocations)
+	}
+}
+
 func TestLensExactNormalizesKeys(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 	body := b.Body(span)
 	base := b.String(span, "base")
@@ -167,7 +249,7 @@ var (
 
 func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 	build := func(rows int) (*program.Program, program.Term, program.Term) {
-		b := program.NewBuilder()
+		b := newProgramBuilder(t)
 		span := program.Span{File: "shared.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 		base := b.String(span, "base")
 		key := b.Integer(span, 1)
@@ -222,7 +304,7 @@ func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 
 	// The ratio guards against one retained allocation per Values/order row.
 	sealedAllocs := func(rows int) float64 {
-		b := program.NewBuilder()
+		b := newProgramBuilder(t)
 		span := program.Span{File: "shared.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 		base := b.String(span, "base")
 		key := b.Integer(span, 1)
@@ -244,7 +326,7 @@ func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 	}
 
 	richSealAllocs := func(rows int) float64 {
-		b := program.NewBuilder()
+		b := newProgramBuilder(t)
 		span := program.Span{File: "rich.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 		body := b.Body(span)
 		roots := make([]program.Term, 0, rows*2)
@@ -273,7 +355,7 @@ func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 }
 
 func TestScalarRelationsAreTypedAndPreserveEvaluationOrder(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "scalar.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 	body := b.Body(span)
 	cell := b.Cell(span, body)
@@ -357,7 +439,7 @@ func TestScalarRelationsFailClosedAndSealWithoutPerRowAllocation(t *testing.T) {
 		func(b *program.Builder) { b.Select(span, program.SelectOr, program.Term(0x0101), b.Integer(span, 1)) },
 	}
 	for i, build := range invalid {
-		b := program.NewBuilder()
+		b := newProgramBuilder(t)
 		build(b)
 		if _, err := b.Seal(); err == nil {
 			t.Fatalf("invalid scalar relation %d sealed", i)
@@ -365,7 +447,7 @@ func TestScalarRelationsFailClosedAndSealWithoutPerRowAllocation(t *testing.T) {
 	}
 
 	sealedAllocs := func(rows int) float64 {
-		b := program.NewBuilder()
+		b := newProgramBuilder(t)
 		span := program.Span{File: "scalar-alloc.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 		left := b.Integer(span, 1)
 		right := b.Integer(span, 2)
@@ -388,7 +470,7 @@ func TestScalarRelationsFailClosedAndSealWithoutPerRowAllocation(t *testing.T) {
 }
 
 func TestValuesLensOrderAndCopies(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 3, EndLine: 1, EndCol: 5}
 	base := b.String(span, "base")
 	key := b.Integer(span, 3)
@@ -425,7 +507,7 @@ func TestValuesLensOrderAndCopies(t *testing.T) {
 
 func TestDeterministicMinting(t *testing.T) {
 	build := func() []program.Term {
-		b := program.NewBuilder()
+		b := newProgramBuilder(t)
 		span := program.Span{File: "same.lua"}
 		base := b.String(span, "base")
 		key := b.Integer(span, 1)
@@ -444,7 +526,7 @@ func TestDeterministicMinting(t *testing.T) {
 }
 
 func TestLexicalCaptureReadAndDelayedMutation(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "closure.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 20}
 	outerBody := b.Body(span)
 	outerCell := b.Cell(span, outerBody)
@@ -497,7 +579,7 @@ func TestLexicalCaptureReadAndDelayedMutation(t *testing.T) {
 }
 
 func TestBindRetainsDeclarationVisibilityAndRHSOrder(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "bind.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 10}
 	body := b.Body(span)
 	first := b.Cell(span, body)
@@ -535,7 +617,7 @@ func TestBindRetainsDeclarationVisibilityAndRHSOrder(t *testing.T) {
 func TestBindLawsFailClosed(t *testing.T) {
 	span := program.Span{File: "bad-bind.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 
-	empty := program.NewBuilder()
+	empty := newProgramBuilder(t)
 	emptyBody := empty.Body(span)
 	emptyValues := empty.Values(span, nil, 0)
 	emptyBind := empty.Bind(span, nil, emptyValues)
@@ -544,7 +626,7 @@ func TestBindLawsFailClosed(t *testing.T) {
 		t.Fatal("Seal accepted Bind without Cells")
 	}
 
-	unowned := program.NewBuilder()
+	unowned := newProgramBuilder(t)
 	unownedBody := unowned.Body(span)
 	unownedCell := unowned.Cell(span, unownedBody)
 	unownedValues := unowned.Values(span, nil, 0)
@@ -554,7 +636,7 @@ func TestBindLawsFailClosed(t *testing.T) {
 		t.Fatal("Seal accepted Bind without Body ownership")
 	}
 
-	crossBody := program.NewBuilder()
+	crossBody := newProgramBuilder(t)
 	owner := crossBody.Body(span)
 	other := crossBody.Body(span)
 	otherCell := crossBody.Cell(span, other)
@@ -566,7 +648,7 @@ func TestBindLawsFailClosed(t *testing.T) {
 		t.Fatal("Seal accepted Bind for another Body's Cell")
 	}
 
-	rebound := program.NewBuilder()
+	rebound := newProgramBuilder(t)
 	reboundBody := rebound.Body(span)
 	reboundCell := rebound.Cell(span, reboundBody)
 	reboundValues := rebound.Values(span, nil, 0)
@@ -577,7 +659,7 @@ func TestBindLawsFailClosed(t *testing.T) {
 		t.Fatal("Seal accepted a Cell bound more than once")
 	}
 
-	wrongValues := program.NewBuilder()
+	wrongValues := newProgramBuilder(t)
 	wrongBody := wrongValues.Body(span)
 	wrongCell := wrongValues.Cell(span, wrongBody)
 	notValues := wrongValues.Integer(span, 1)
@@ -589,7 +671,7 @@ func TestBindLawsFailClosed(t *testing.T) {
 }
 
 func TestDirectRecursiveCallMuAndBodyFill(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "recursive.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 12}
 	body := b.Body(span)
 	formal := b.Cell(span, body)
@@ -615,21 +697,21 @@ func TestDirectRecursiveCallMuAndBodyFill(t *testing.T) {
 	if _, ok := p.Mu(call); ok {
 		t.Fatal("non-Function term has a Mu annotation")
 	}
-	if p.TermCount() != 7 {
-		t.Fatalf("Seal minted a recurrence Term: TermCount=%d, want 7", p.TermCount())
+	if p.TermCount() != 8 { // seven recurrence terms plus the canonical Entry Body
+		t.Fatalf("Seal minted a recurrence Term: TermCount=%d, want 8", p.TermCount())
 	}
 	if got, ok := p.AppendBody(body, nil); !ok ||
 		!reflect.DeepEqual(got, []program.Term{call}) {
 		t.Fatalf("Body = %v, %v", got, ok)
 	}
 
-	unfilled := program.NewBuilder()
+	unfilled := newProgramBuilder(t)
 	unfilled.Body(span)
 	if _, err := unfilled.Seal(); err == nil {
 		t.Fatal("Seal accepted an unfilled Body")
 	}
 
-	doubleFill := program.NewBuilder()
+	doubleFill := newProgramBuilder(t)
 	doubleBody := doubleFill.Body(span)
 	if !doubleFill.SetBody(doubleBody) || doubleFill.SetBody(doubleBody) {
 		t.Fatal("SetBody did not enforce exactly-once fill")
@@ -640,7 +722,7 @@ func TestDirectRecursiveCallMuAndBodyFill(t *testing.T) {
 }
 
 func TestMutualDirectCallMuUsesCanonicalExistingHead(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "mutual.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 	firstBody := b.Body(span)
 	secondBody := b.Body(span)
@@ -670,7 +752,7 @@ func TestMutualDirectCallMuUsesCanonicalExistingHead(t *testing.T) {
 }
 
 func TestDirectCallMuFindsCallNestedInValues(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "nested-call.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 	body := b.Body(span)
 	calleeCell := b.Cell(span, body)
@@ -693,7 +775,7 @@ func TestDirectCallMuFindsCallNestedInValues(t *testing.T) {
 }
 
 func TestDirectCallMuFindsCallOnlyInSelectRHS(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "select-recursive.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 	body := b.Body(span)
 	calleeCell := b.Cell(span, body)
@@ -719,7 +801,7 @@ func TestDirectCallMuFindsCallOnlyInSelectRHS(t *testing.T) {
 }
 
 func TestAcyclicDirectCallHasNoMu(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "acyclic.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 	callerBody := b.Body(span)
 	calleeBody := b.Body(span)
@@ -746,7 +828,7 @@ func TestAcyclicDirectCallHasNoMu(t *testing.T) {
 
 func TestDirectCallMuLongChainStaysIterativeAndAllocationBounded(t *testing.T) {
 	build := func(functionCount int) *program.Program {
-		b := program.NewBuilder()
+		b := newProgramBuilder(t)
 		span := program.Span{File: "chain.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 		bodies := make([]program.Term, functionCount)
 		cells := make([]program.Term, functionCount)
@@ -781,7 +863,7 @@ func TestDirectCallMuLongChainStaysIterativeAndAllocationBounded(t *testing.T) {
 	_ = build(4096)
 
 	sealedAllocs := func(functionCount int) float64 {
-		b := program.NewBuilder()
+		b := newProgramBuilder(t)
 		span := program.Span{File: "chain-alloc.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 		bodies := make([]program.Term, functionCount)
 		cells := make([]program.Term, functionCount)
@@ -812,7 +894,7 @@ func TestDirectCallMuLongChainStaysIterativeAndAllocationBounded(t *testing.T) {
 }
 
 func TestBranchAndTableAssignmentKeys(t *testing.T) {
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	span := program.Span{File: "flow.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 9}
 	whenTrue := b.Body(span)
 	whenFalse := b.Body(span)
@@ -895,7 +977,7 @@ func TestNewFamiliesFailClosed(t *testing.T) {
 		},
 	}
 	for i, build := range tests {
-		b := program.NewBuilder()
+		b := newProgramBuilder(t)
 		build(b)
 		if _, err := b.Seal(); err == nil {
 			t.Fatalf("invalid family case %d sealed", i)
@@ -906,13 +988,13 @@ func TestNewFamiliesFailClosed(t *testing.T) {
 func TestTableConstructionLaws(t *testing.T) {
 	span := program.Span{File: "table.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 
-	unfilled := program.NewBuilder()
+	unfilled := newProgramBuilder(t)
 	unfilled.Table(span)
 	if _, err := unfilled.Seal(); err == nil {
 		t.Fatal("Seal accepted an unfilled Table")
 	}
 
-	doubleFill := program.NewBuilder()
+	doubleFill := newProgramBuilder(t)
 	doubleTable := doubleFill.Table(span)
 	if !doubleFill.SetTable(doubleTable, nil, nil, nil) ||
 		doubleFill.SetTable(doubleTable, nil, nil, nil) {
@@ -922,7 +1004,7 @@ func TestTableConstructionLaws(t *testing.T) {
 		t.Fatal("Seal accepted a multiply-filled Table")
 	}
 
-	nilExact := program.NewBuilder()
+	nilExact := newProgramBuilder(t)
 	exactTable := nilExact.Table(span)
 	nilKey := nilExact.Nil(span)
 	exactValues := nilExact.Values(span, nil, 0)
@@ -941,7 +1023,7 @@ func TestTableConstructionLaws(t *testing.T) {
 		t.Fatalf("nil exact Table field = %v, %v, %v, %v", key, values, kind, ok)
 	}
 
-	nanExact := program.NewBuilder()
+	nanExact := newProgramBuilder(t)
 	nanTable := nanExact.Table(span)
 	nanKey := nanExact.Float(span, math.NaN())
 	nanValues := nanExact.Values(span, nil, 0)
@@ -960,7 +1042,7 @@ func TestTableConstructionLaws(t *testing.T) {
 		t.Fatalf("NaN exact Table field = %v, %v, %v", key, kind, ok)
 	}
 
-	nonliteralExact := program.NewBuilder()
+	nonliteralExact := newProgramBuilder(t)
 	nonliteralTable := nonliteralExact.Table(span)
 	nonliteralKey := nonliteralExact.Values(span, nil, 0)
 	nonliteralValues := nonliteralExact.Values(span, nil, 0)
@@ -974,7 +1056,7 @@ func TestTableConstructionLaws(t *testing.T) {
 		t.Fatal("Seal accepted non-literal exact Table key")
 	}
 
-	wrongValues := program.NewBuilder()
+	wrongValues := newProgramBuilder(t)
 	wrongTable := wrongValues.Table(span)
 	wrongKey := wrongValues.String(span, "key")
 	notValues := wrongValues.Integer(span, 1)
@@ -988,7 +1070,7 @@ func TestTableConstructionLaws(t *testing.T) {
 		t.Fatal("Seal accepted non-Values Table field")
 	}
 
-	invalidKind := program.NewBuilder()
+	invalidKind := newProgramBuilder(t)
 	kindTable := invalidKind.Table(span)
 	kindKey := invalidKind.String(span, "key")
 	kindValues := invalidKind.Values(span, nil, 0)
@@ -1002,7 +1084,7 @@ func TestTableConstructionLaws(t *testing.T) {
 		t.Fatal("Seal accepted invalid Table field kind")
 	}
 
-	misaligned := program.NewBuilder()
+	misaligned := newProgramBuilder(t)
 	misalignedTable := misaligned.Table(span)
 	if misaligned.SetTable(misalignedTable, []program.Term{1}, nil, nil) {
 		t.Fatal("SetTable accepted misaligned fields")
@@ -1011,7 +1093,7 @@ func TestTableConstructionLaws(t *testing.T) {
 		t.Fatal("Seal accepted misaligned Table construction")
 	}
 
-	dynamic := program.NewBuilder()
+	dynamic := newProgramBuilder(t)
 	dynamicTable := dynamic.Table(span)
 	dynamicKey := dynamic.Integer(span, 1)
 	dynamicValue := dynamic.String(span, "value")
@@ -1033,7 +1115,7 @@ func TestTableConstructionLaws(t *testing.T) {
 		t.Fatalf("dynamic Table order = %v, %v", order, ok)
 	}
 
-	nonStatement := program.NewBuilder()
+	nonStatement := newProgramBuilder(t)
 	nonStatementBody := nonStatement.Body(span)
 	nestedValue := nonStatement.Integer(span, 1)
 	nonStatement.SetBody(nonStatementBody, nestedValue)
@@ -1044,7 +1126,7 @@ func TestTableConstructionLaws(t *testing.T) {
 
 func TestNestedBodyOwnershipAndCycles(t *testing.T) {
 	span := program.Span{File: "block.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
-	b := program.NewBuilder()
+	b := newProgramBuilder(t)
 	parent := b.Body(span)
 	child := b.Body(span)
 	if !b.SetBody(child) || !b.SetBody(parent, child) {
@@ -1058,14 +1140,14 @@ func TestNestedBodyOwnershipAndCycles(t *testing.T) {
 		t.Fatalf("nested Body = %v, %v", owned, ok)
 	}
 
-	selfCycle := program.NewBuilder()
+	selfCycle := newProgramBuilder(t)
 	self := selfCycle.Body(span)
 	selfCycle.SetBody(self, self)
 	if _, err := selfCycle.Seal(); err == nil {
 		t.Fatal("Seal accepted self-owned Body")
 	}
 
-	multiCycle := program.NewBuilder()
+	multiCycle := newProgramBuilder(t)
 	first := multiCycle.Body(span)
 	second := multiCycle.Body(span)
 	multiCycle.SetBody(first, second)
@@ -1078,7 +1160,7 @@ func TestNestedBodyOwnershipAndCycles(t *testing.T) {
 func TestBodyOwnershipAndClosureIdentityFailClosed(t *testing.T) {
 	span := program.Span{File: "ownership.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 
-	duplicate := program.NewBuilder()
+	duplicate := newProgramBuilder(t)
 	duplicateBody := duplicate.Body(span)
 	duplicateValue := duplicate.Integer(span, 1)
 	duplicateActuals := duplicate.Values(span, []program.Term{duplicateValue}, 0)
@@ -1088,7 +1170,7 @@ func TestBodyOwnershipAndClosureIdentityFailClosed(t *testing.T) {
 		t.Fatal("Seal accepted duplicate ownership within one Body")
 	}
 
-	shared := program.NewBuilder()
+	shared := newProgramBuilder(t)
 	firstBody := shared.Body(span)
 	secondBody := shared.Body(span)
 	sharedValue := shared.Integer(span, 1)
@@ -1100,7 +1182,7 @@ func TestBodyOwnershipAndClosureIdentityFailClosed(t *testing.T) {
 		t.Fatal("Seal accepted one top-level term in two Bodies")
 	}
 
-	ambiguousFunction := program.NewBuilder()
+	ambiguousFunction := newProgramBuilder(t)
 	functionBody := ambiguousFunction.Body(span)
 	ambiguousFunction.Function(span, functionBody, nil, false)
 	ambiguousFunction.Function(span, functionBody, nil, true)
@@ -1109,7 +1191,7 @@ func TestBodyOwnershipAndClosureIdentityFailClosed(t *testing.T) {
 		t.Fatal("Seal accepted two Functions for one Body")
 	}
 
-	localCapture := program.NewBuilder()
+	localCapture := newProgramBuilder(t)
 	localBody := localCapture.Body(span)
 	firstCell := localCapture.Cell(span, localBody)
 	secondCell := localCapture.Cell(span, localBody)
