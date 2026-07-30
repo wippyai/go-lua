@@ -1,6 +1,7 @@
 package programlower_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -329,16 +330,196 @@ return t
 	}
 }
 
+func loweredReturnValue(t *testing.T, source string) (*program.Program, program.Term) {
+	t.Helper()
+	p := parseBindLower(t, source)
+	for i := 0; i < p.TermCount(); i++ {
+		term, _ := p.TermAt(i)
+		values, ok := p.Return(term)
+		if !ok {
+			continue
+		}
+		value, ok := p.ValuesAt(values, 0)
+		if !ok {
+			t.Fatal("Return has no first value")
+		}
+		return p, value
+	}
+	t.Fatal("Program has no Return")
+	return nil, 0
+}
+
+func TestEveryClosedUnaryOperatorLowers(t *testing.T) {
+	tests := []struct {
+		source string
+		want   program.UnaryOp
+	}{
+		{`return -1`, program.UnaryNeg},
+		{`return not true`, program.UnaryNot},
+		{`return #"x"`, program.UnaryLen},
+		{`return ~1`, program.UnaryBitNot},
+	}
+	for _, test := range tests {
+		t.Run(test.source, func(t *testing.T) {
+			p, term := loweredReturnValue(t, test.source)
+			op, operand, ok := p.Unary(term)
+			if !ok || op != test.want || operand == 0 {
+				t.Fatalf("Unary = op %v operand %v ok %v", op, operand, ok)
+			}
+			order, ok := p.AppendOrder(term, nil)
+			if !ok || !reflect.DeepEqual(order, []program.Term{operand}) {
+				t.Fatalf("Unary order = %v, %v", order, ok)
+			}
+		})
+	}
+}
+
+func TestEveryClosedBinaryOperatorLowers(t *testing.T) {
+	tests := []struct {
+		source string
+		want   program.BinaryOp
+	}{
+		{`return 1 + 2`, program.BinaryAdd},
+		{`return 1 - 2`, program.BinarySub},
+		{`return 1 * 2`, program.BinaryMul},
+		{`return 1 / 2`, program.BinaryDiv},
+		{`return 1 // 2`, program.BinaryIDiv},
+		{`return 1 % 2`, program.BinaryMod},
+		{`return 1 ^ 2`, program.BinaryPow},
+		{`return "a" .. "b"`, program.BinaryConcat},
+		{`return 1 & 2`, program.BinaryBitAnd},
+		{`return 1 | 2`, program.BinaryBitOr},
+		{`return 1 ~ 2`, program.BinaryBitXor},
+		{`return 1 << 2`, program.BinaryShiftLeft},
+		{`return 1 >> 2`, program.BinaryShiftRight},
+		{`return 1 == 2`, program.BinaryEqual},
+		{`return 1 ~= 2`, program.BinaryNotEqual},
+		{`return 1 < 2`, program.BinaryLess},
+		{`return 1 <= 2`, program.BinaryLessEqual},
+		{`return 1 > 2`, program.BinaryGreater},
+		{`return 1 >= 2`, program.BinaryGreaterEqual},
+	}
+	for _, test := range tests {
+		t.Run(test.source, func(t *testing.T) {
+			p, term := loweredReturnValue(t, test.source)
+			op, left, right, ok := p.Binary(term)
+			if !ok || op != test.want || left == 0 || right == 0 {
+				t.Fatalf("Binary = op %v left %v right %v ok %v", op, left, right, ok)
+			}
+			order, ok := p.AppendOrder(term, nil)
+			if !ok || !reflect.DeepEqual(order, []program.Term{left, right}) {
+				t.Fatalf("Binary order = %v, %v", order, ok)
+			}
+			span, ok := p.Span(term)
+			if !ok || span.File != "fixture.lua" || span.StartLine != 1 ||
+				span.StartCol != 8 || span.EndLine != 1 || span.EndCol == 0 {
+				t.Fatalf("Binary span = %#v, %v", span, ok)
+			}
+		})
+	}
+}
+
+func TestLogicalSelectionKeepsRightSideConditional(t *testing.T) {
+	for _, test := range []struct {
+		source string
+		want   program.SelectOp
+	}{
+		{`return false and (1 + 2)`, program.SelectAnd},
+		{`return true or (1 + 2)`, program.SelectOr},
+	} {
+		t.Run(test.source, func(t *testing.T) {
+			p, term := loweredReturnValue(t, test.source)
+			op, left, right, ok := p.Select(term)
+			if !ok || op != test.want || left == 0 || right == 0 {
+				t.Fatalf("Select = op %v left %v right %v ok %v", op, left, right, ok)
+			}
+			if _, _, _, ok := p.Binary(right); !ok {
+				t.Fatalf("conditional right operand is not retained Binary: %v", right)
+			}
+			order, ok := p.AppendOrder(term, nil)
+			if !ok || !reflect.DeepEqual(order, []program.Term{left}) {
+				t.Fatalf("Select eager order = %v, %v; want only left %v", order, ok, left)
+			}
+		})
+	}
+}
+
+func TestAttributeReadsPreserveExactAndDynamicLenses(t *testing.T) {
+	p := parseBindLower(t, "local t = {}\nlocal k = \"name\"\nreturn t.name, t[nil], t[k]")
+	var returned program.Term
+	for i := 0; i < p.TermCount(); i++ {
+		term, _ := p.TermAt(i)
+		if values, ok := p.Return(term); ok {
+			returned = values
+			break
+		}
+	}
+	for i, wantDynamic := range []bool{false, false, true} {
+		read, ok := p.ValuesAt(returned, i)
+		if !ok {
+			t.Fatalf("return ValuesAt(%d) failed", i)
+		}
+		lens, ok := p.Read(read)
+		if !ok {
+			t.Fatalf("return value %d is not Read", i)
+		}
+		base, key, dynamic, ok := p.Lens(lens)
+		if !ok || base == 0 || key == 0 || dynamic != wantDynamic {
+			t.Fatalf("Lens %d = base %v key %v dynamic %v ok %v", i, base, key, dynamic, ok)
+		}
+		if i == 0 {
+			if value, ok := p.String(key); !ok || value != "name" {
+				t.Fatalf("dot key = %q, %v", value, ok)
+			}
+		}
+		if i == 1 && !p.Nil(key) {
+			t.Fatalf("nil index key = %v", key)
+		}
+		order, ok := p.AppendOrder(read, nil)
+		if !ok || !reflect.DeepEqual(order, []program.Term{lens}) {
+			t.Fatalf("Read %d order = %v, %v", i, order, ok)
+		}
+		span, ok := p.Span(read)
+		if !ok || span.StartLine != 3 || span.StartCol == 0 || span.EndCol == 0 {
+			t.Fatalf("Read %d span = %#v, %v", i, span, ok)
+		}
+	}
+}
+
+func TestInvalidOperatorAndUnknownAttributeSyntaxFail(t *testing.T) {
+	badOp := &ast.ArithmeticOpExpr{
+		Operator: "??",
+		Lhs:      &ast.NumberExpr{Value: "1"},
+		Rhs:      &ast.NumberExpr{Value: "2"},
+	}
+	stmts := []ast.Stmt{&ast.ReturnStmt{Exprs: []ast.Expr{badOp}}}
+	_, err := programlower.Lower("manual.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
+	if err == nil || !strings.Contains(err.Error(), `unsupported arithmetic operator "??"`) {
+		t.Fatalf("invalid operator error = %v", err)
+	}
+
+	attr := &ast.AttrGetExpr{
+		Object:    &ast.StringExpr{Value: "base"},
+		Key:       &ast.StringExpr{Value: "key"},
+		KeySyntax: ast.AttrKeyUnknown,
+	}
+	stmts = []ast.Stmt{&ast.ReturnStmt{Exprs: []ast.Expr{attr}}}
+	_, err = programlower.Lower("manual.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
+	if err == nil || !strings.Contains(err.Error(), "unknown key syntax") {
+		t.Fatalf("unknown attribute syntax error = %v", err)
+	}
+}
+
 func TestUnsupportedSyntaxIsHonest(t *testing.T) {
-	stmts, err := parse.ParseString(`return 1 + 2`, "unsupported.lua")
+	stmts, err := parse.ParseString(`return function() end`, "unsupported.lua")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = programlower.Lower("unsupported.lua", stmts, bind.BindChunk(stmts, bind.Options{}))
 	if err == nil {
-		t.Fatal("arithmetic expression lowered without a typed Program relation")
+		t.Fatal("function expression lowered without a typed Program relation")
 	}
-	if !strings.Contains(err.Error(), "unsupported expression *ast.ArithmeticOpExpr") {
+	if !strings.Contains(err.Error(), "unsupported expression *ast.FunctionExpr") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

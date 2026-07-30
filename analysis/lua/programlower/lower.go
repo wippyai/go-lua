@@ -242,6 +242,52 @@ func (l *lowerer) lowerExpr(expr ast.Expr) (program.Term, error) {
 			return 0, fmt.Errorf("programlower: unsupported non-local identifier binding")
 		}
 		term = l.builder.Read(span, cell)
+	case *ast.AttrGetExpr:
+		base, err := l.lowerExpr(e.Object)
+		if err != nil {
+			return 0, err
+		}
+		lens, err := l.lowerLens(span, base, e.Key, e.KeySyntax)
+		if err != nil {
+			return 0, err
+		}
+		term = l.builder.Read(span, lens)
+	case *ast.UnaryMinusOpExpr:
+		return l.lowerUnary(span, program.UnaryNeg, e.Expr)
+	case *ast.UnaryNotOpExpr:
+		return l.lowerUnary(span, program.UnaryNot, e.Expr)
+	case *ast.UnaryLenOpExpr:
+		return l.lowerUnary(span, program.UnaryLen, e.Expr)
+	case *ast.UnaryBNotOpExpr:
+		return l.lowerUnary(span, program.UnaryBitNot, e.Expr)
+	case *ast.ArithmeticOpExpr:
+		op, ok := arithmeticOp(e.Operator)
+		if !ok {
+			return 0, fmt.Errorf("programlower: unsupported arithmetic operator %q", e.Operator)
+		}
+		return l.lowerBinary(span, op, e.Lhs, e.Rhs)
+	case *ast.StringConcatOpExpr:
+		return l.lowerBinary(span, program.BinaryConcat, e.Lhs, e.Rhs)
+	case *ast.RelationalOpExpr:
+		op, ok := relationalOp(e.Operator)
+		if !ok {
+			return 0, fmt.Errorf("programlower: unsupported relational operator %q", e.Operator)
+		}
+		return l.lowerBinary(span, op, e.Lhs, e.Rhs)
+	case *ast.LogicalOpExpr:
+		op, ok := selectOp(e.Operator)
+		if !ok {
+			return 0, fmt.Errorf("programlower: unsupported logical operator %q", e.Operator)
+		}
+		left, err := l.lowerExpr(e.Lhs)
+		if err != nil {
+			return 0, err
+		}
+		right, err := l.lowerExpr(e.Rhs)
+		if err != nil {
+			return 0, err
+		}
+		term = l.builder.Select(span, op, left, right)
 	case *ast.TableExpr:
 		return l.lowerTable(e)
 	default:
@@ -270,7 +316,7 @@ func (l *lowerer) lowerTarget(expr ast.Expr) (program.Term, error) {
 		if err != nil {
 			return 0, err
 		}
-		return l.lowerLens(l.span(e), base, e.Key)
+		return l.lowerLens(l.span(e), base, e.Key, e.KeySyntax)
 	default:
 		return 0, l.unsupportedExpr(expr)
 	}
@@ -338,28 +384,130 @@ func (l *lowerer) lowerTable(table *ast.TableExpr) (program.Term, error) {
 	return tableTerm, nil
 }
 
-func (l *lowerer) lowerLens(span program.Span, base program.Term, keyExpr ast.Expr, keys ...program.Term) (program.Term, error) {
-	var key program.Term
-	if len(keys) != 0 {
-		key = keys[0]
-	} else {
-		var err error
-		key, err = l.lowerExpr(keyExpr)
-		if err != nil {
-			return 0, err
+func (l *lowerer) lowerLens(span program.Span, base program.Term, keyExpr ast.Expr, syntax ast.AttrKeySyntax) (program.Term, error) {
+	if keyExpr == nil {
+		return 0, fmt.Errorf("programlower: attribute has no key")
+	}
+	exact := false
+	switch syntax {
+	case ast.AttrKeyDot:
+		if _, ok := keyExpr.(*ast.StringExpr); !ok {
+			return 0, fmt.Errorf("programlower: dot attribute key is not a string literal")
 		}
+		exact = true
+	case ast.AttrKeyIndex:
+		switch keyExpr.(type) {
+		case *ast.NilExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NumberExpr, *ast.StringExpr:
+			exact = true
+		}
+	case ast.AttrKeyUnknown:
+		return 0, fmt.Errorf("programlower: unsupported attribute with unknown key syntax")
+	default:
+		return 0, fmt.Errorf("programlower: unsupported attribute key syntax %d", syntax)
+	}
+	key, err := l.lowerExpr(keyExpr)
+	if err != nil {
+		return 0, err
 	}
 	var lens program.Term
-	switch keyExpr.(type) {
-	case nil, *ast.NilExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NumberExpr, *ast.StringExpr:
+	if exact {
 		lens = l.builder.LensExact(span, base, key)
-	default:
+	} else {
 		lens = l.builder.LensKey(span, base, key)
 	}
 	if lens == 0 {
 		return 0, fmt.Errorf("programlower: could not create Lens")
 	}
 	return lens, nil
+}
+
+func (l *lowerer) lowerUnary(span program.Span, op program.UnaryOp, operandExpr ast.Expr) (program.Term, error) {
+	operand, err := l.lowerExpr(operandExpr)
+	if err != nil {
+		return 0, err
+	}
+	term := l.builder.Unary(span, op, operand)
+	if term == 0 {
+		return 0, fmt.Errorf("programlower: could not create unary operation")
+	}
+	return term, nil
+}
+
+func (l *lowerer) lowerBinary(span program.Span, op program.BinaryOp, leftExpr, rightExpr ast.Expr) (program.Term, error) {
+	left, err := l.lowerExpr(leftExpr)
+	if err != nil {
+		return 0, err
+	}
+	right, err := l.lowerExpr(rightExpr)
+	if err != nil {
+		return 0, err
+	}
+	term := l.builder.Binary(span, op, left, right)
+	if term == 0 {
+		return 0, fmt.Errorf("programlower: could not create binary operation")
+	}
+	return term, nil
+}
+
+func arithmeticOp(operator string) (program.BinaryOp, bool) {
+	switch operator {
+	case "+":
+		return program.BinaryAdd, true
+	case "-":
+		return program.BinarySub, true
+	case "*":
+		return program.BinaryMul, true
+	case "/":
+		return program.BinaryDiv, true
+	case "//":
+		return program.BinaryIDiv, true
+	case "%":
+		return program.BinaryMod, true
+	case "^":
+		return program.BinaryPow, true
+	case "&":
+		return program.BinaryBitAnd, true
+	case "|":
+		return program.BinaryBitOr, true
+	case "~":
+		return program.BinaryBitXor, true
+	case "<<":
+		return program.BinaryShiftLeft, true
+	case ">>":
+		return program.BinaryShiftRight, true
+	default:
+		return 0, false
+	}
+}
+
+func relationalOp(operator string) (program.BinaryOp, bool) {
+	switch operator {
+	case "==":
+		return program.BinaryEqual, true
+	case "~=":
+		return program.BinaryNotEqual, true
+	case "<":
+		return program.BinaryLess, true
+	case "<=":
+		return program.BinaryLessEqual, true
+	case ">":
+		return program.BinaryGreater, true
+	case ">=":
+		return program.BinaryGreaterEqual, true
+	default:
+		return 0, false
+	}
+}
+
+func selectOp(operator string) (program.SelectOp, bool) {
+	switch operator {
+	case "and":
+		return program.SelectAnd, true
+	case "or":
+		return program.SelectOr, true
+	default:
+		return 0, false
+	}
 }
 
 func (l *lowerer) unsupportedStmt(stmt ast.Stmt) error {
