@@ -50,15 +50,22 @@ func makeTerm(tag uint8, index uint32) Term { return Term(index<<tagBits | uint3
 func (t Term) tag() uint8                   { return uint8(uint32(t) & tagMask) }
 func (t Term) index() uint32                { return uint32(t) >> tagBits }
 
-// Span identifies a source byte extent. File may be empty for generated code.
+// Span identifies a 1-based source line/column extent. Zero end coordinates
+// mean that the extent is point-like or unknown. An all-zero coordinate set is
+// valid for generated code.
 type Span struct {
-	File       string
-	Start, End int
+	File                string
+	StartLine, StartCol int
+	EndLine, EndCol     int
 }
 
 // termRange indexes one contiguous Term pool. It never owns a slice.
 type termRange struct{ start, end uint32 }
-type storedSpan struct{ file, start, end uint32 }
+type storedSpan struct {
+	file                uint32
+	startLine, startCol uint32
+	endLine, endCol     uint32
+}
 type valuesRow struct {
 	fixed termRange
 	tail  Term
@@ -191,7 +198,24 @@ type Builder struct {
 func NewBuilder() *Builder { return &Builder{} }
 
 func validSpan(span Span) bool {
-	return span.Start >= 0 && span.End >= span.Start && uint64(span.Start) <= math.MaxUint32 && uint64(span.End) <= math.MaxUint32
+	coords := [...]int{span.StartLine, span.StartCol, span.EndLine, span.EndCol}
+	allZero := true
+	for _, coord := range coords {
+		if coord < 0 || uint64(coord) > math.MaxUint32 {
+			return false
+		}
+		allZero = allZero && coord == 0
+	}
+	if allZero {
+		return true
+	}
+	if span.StartLine == 0 || span.StartCol == 0 {
+		return false
+	}
+	if span.EndLine == 0 || span.EndCol == 0 {
+		return span.EndLine == 0 && span.EndCol == 0
+	}
+	return span.EndLine > span.StartLine || span.EndLine == span.StartLine && span.EndCol >= span.StartCol
 }
 
 func (b *Builder) compactSpan(span Span) (storedSpan, bool) {
@@ -212,7 +236,13 @@ func (b *Builder) compactSpan(span Span) (storedSpan, bool) {
 		b.files = append(b.files, span.File)
 		b.fileIndex[span.File] = index
 	}
-	return storedSpan{file: index, start: uint32(span.Start), end: uint32(span.End)}, true
+	return storedSpan{
+		file:      index,
+		startLine: uint32(span.StartLine),
+		startCol:  uint32(span.StartCol),
+		endLine:   uint32(span.EndLine),
+		endCol:    uint32(span.EndCol),
+	}, true
 }
 
 func (b *Builder) mint(tag uint8, span Span, index uint32) Term {
@@ -964,7 +994,13 @@ func (p *Program) Span(term Term) (Span, bool) {
 		return Span{}, false
 	}
 	row := p.spans[term.tag()][term.index()-1]
-	return Span{File: p.files[row.file], Start: int(row.start), End: int(row.end)}, true
+	return Span{
+		File:      p.files[row.file],
+		StartLine: int(row.startLine),
+		StartCol:  int(row.startCol),
+		EndLine:   int(row.endLine),
+		EndCol:    int(row.endCol),
+	}, true
 }
 func (p *Program) Nil(term Term) bool { return p.has(term, tagNil) }
 func (p *Program) Bool(term Term) (bool, bool) {

@@ -9,7 +9,7 @@ import (
 )
 
 func TestSealRejectsInvalidReferencesAndExactKeyTypes(t *testing.T) {
-	span := program.Span{File: "x.lua", Start: 1, End: 2}
+	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 
 	b := program.NewBuilder()
 	b.Values(span, []program.Term{program.Term(0x0101)}, 0)
@@ -40,7 +40,7 @@ func TestSealRejectsInvalidReferencesAndExactKeyTypes(t *testing.T) {
 	}
 
 	b = program.NewBuilder()
-	if term := b.Integer(program.Span{Start: -1, End: 0}, 1); term != 0 {
+	if term := b.Integer(program.Span{StartLine: -1}, 1); term != 0 {
 		t.Fatal("invalid span minted a term")
 	}
 	if _, err := b.Seal(); err == nil {
@@ -50,8 +50,8 @@ func TestSealRejectsInvalidReferencesAndExactKeyTypes(t *testing.T) {
 
 func TestLiteralsAreDistinctOccurrences(t *testing.T) {
 	b := program.NewBuilder()
-	first := b.Integer(program.Span{File: "x.lua", Start: 1, End: 2}, 7)
-	second := b.Integer(program.Span{File: "x.lua", Start: 9, End: 10}, 7)
+	first := b.Integer(program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}, 7)
+	second := b.Integer(program.Span{File: "x.lua", StartLine: 1, StartCol: 9, EndLine: 1, EndCol: 10}, 7)
 	if first == second || first == 0 || second == 0 {
 		t.Fatalf("equal literal occurrences were not distinct: %v %v", first, second)
 	}
@@ -66,14 +66,49 @@ func TestLiteralsAreDistinctOccurrences(t *testing.T) {
 		t.Fatalf("second literal = %v, %v", got, ok)
 	}
 	span, ok := p.Span(second)
-	if !ok || span.Start != 9 {
+	if !ok || span.StartCol != 9 {
 		t.Fatalf("distinct literal span lost: %#v %v", span, ok)
+	}
+}
+
+func TestSpanLineColumnContract(t *testing.T) {
+	b := program.NewBuilder()
+	generated := b.Nil(program.Span{})
+	point := b.Bool(program.Span{File: "x.lua", StartLine: 3, StartCol: 7}, true)
+	full := b.Integer(program.Span{File: "x.lua", StartLine: 3, StartCol: 8, EndLine: 4, EndCol: 2}, 1)
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := p.Span(generated); !ok || got != (program.Span{}) {
+		t.Fatalf("generated span = %#v, %v", got, ok)
+	}
+	if got, ok := p.Span(point); !ok || got.EndLine != 0 || got.EndCol != 0 {
+		t.Fatalf("point span = %#v, %v", got, ok)
+	}
+	if got, ok := p.Span(full); !ok || got.StartLine != 3 || got.EndLine != 4 || got.EndCol != 2 {
+		t.Fatalf("full span = %#v, %v", got, ok)
+	}
+
+	invalid := []program.Span{
+		{StartLine: 1},
+		{StartLine: 1, StartCol: 1, EndLine: 2},
+		{StartLine: 2, StartCol: 1, EndLine: 1, EndCol: 1},
+	}
+	for _, span := range invalid {
+		bad := program.NewBuilder()
+		if term := bad.Nil(span); term != 0 {
+			t.Fatalf("invalid span minted term: %#v", span)
+		}
+		if _, err := bad.Seal(); err == nil {
+			t.Fatalf("invalid span did not poison Builder: %#v", span)
+		}
 	}
 }
 
 func TestLensExactNormalizesKeys(t *testing.T) {
 	b := program.NewBuilder()
-	span := program.Span{File: "x.lua", Start: 0, End: 1}
+	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 	base := b.String(span, "base")
 	oneInt := b.Integer(span, 1)
 	oneFloat := b.Float(span, 1)
@@ -121,7 +156,7 @@ var (
 func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 	build := func(rows int) (*program.Program, program.Term, program.Term) {
 		b := program.NewBuilder()
-		span := program.Span{File: "shared.lua", Start: 1, End: 2}
+		span := program.Span{File: "shared.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 		base := b.String(span, "base")
 		key := b.Integer(span, 1)
 		var values, order program.Term
@@ -176,7 +211,7 @@ func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 	// The ratio guards against one retained allocation per Values/order row.
 	sealedAllocs := func(rows int) float64 {
 		b := program.NewBuilder()
-		span := program.Span{File: "shared.lua", Start: 1, End: 2}
+		span := program.Span{File: "shared.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 		base := b.String(span, "base")
 		key := b.Integer(span, 1)
 		for i := 0; i < rows; i++ {
@@ -199,7 +234,7 @@ func TestIndexedQueriesAndPooledSealAllocations(t *testing.T) {
 
 func TestValuesLensMuOrderAndCopies(t *testing.T) {
 	b := program.NewBuilder()
-	span := program.Span{File: "x.lua", Start: 3, End: 5}
+	span := program.Span{File: "x.lua", StartLine: 1, StartCol: 3, EndLine: 1, EndCol: 5}
 	base := b.String(span, "base")
 	key := b.Integer(span, 3)
 	tail := b.String(span, "tail")
@@ -247,7 +282,7 @@ func TestValuesLensMuOrderAndCopies(t *testing.T) {
 func TestDeterministicMinting(t *testing.T) {
 	build := func() []program.Term {
 		b := program.NewBuilder()
-		span := program.Span{File: "same.lua", Start: 0, End: 0}
+		span := program.Span{File: "same.lua"}
 		base := b.String(span, "base")
 		key := b.Integer(span, 1)
 		values := b.Values(span, []program.Term{base}, 0)
@@ -266,7 +301,7 @@ func TestDeterministicMinting(t *testing.T) {
 
 func TestLexicalCaptureReadAndDelayedMutation(t *testing.T) {
 	b := program.NewBuilder()
-	span := program.Span{File: "closure.lua", Start: 1, End: 20}
+	span := program.Span{File: "closure.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 20}
 	outerBody := b.Body(span)
 	outerCell := b.Cell(span, outerBody)
 	innerBody := b.Body(span)
@@ -316,7 +351,7 @@ func TestLexicalCaptureReadAndDelayedMutation(t *testing.T) {
 
 func TestDirectRecursiveCallMuAndBodyFill(t *testing.T) {
 	b := program.NewBuilder()
-	span := program.Span{File: "recursive.lua", Start: 0, End: 12}
+	span := program.Span{File: "recursive.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 12}
 	body := b.Body(span)
 	formal := b.Cell(span, body)
 	function := b.Function(span, body, []program.Term{formal}, false)
@@ -360,7 +395,7 @@ func TestDirectRecursiveCallMuAndBodyFill(t *testing.T) {
 
 func TestBranchAndTableAssignmentKeys(t *testing.T) {
 	b := program.NewBuilder()
-	span := program.Span{File: "flow.lua", Start: 0, End: 9}
+	span := program.Span{File: "flow.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 9}
 	whenTrue := b.Body(span)
 	whenFalse := b.Body(span)
 	if !b.SetBody(whenTrue) || !b.SetBody(whenFalse) {
@@ -397,7 +432,7 @@ func TestBranchAndTableAssignmentKeys(t *testing.T) {
 }
 
 func TestNewFamiliesFailClosed(t *testing.T) {
-	span := program.Span{File: "bad.lua", Start: 0, End: 1}
+	span := program.Span{File: "bad.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 	tests := []func(*program.Builder){
 		func(b *program.Builder) { b.Cell(span, b.Integer(span, 1)) },
 		func(b *program.Builder) { b.Read(span, b.Integer(span, 1)) },
@@ -432,7 +467,7 @@ func TestNewFamiliesFailClosed(t *testing.T) {
 }
 
 func TestBodyOwnershipAndClosureIdentityFailClosed(t *testing.T) {
-	span := program.Span{File: "ownership.lua", Start: 0, End: 1}
+	span := program.Span{File: "ownership.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
 
 	duplicate := program.NewBuilder()
 	duplicateBody := duplicate.Body(span)
