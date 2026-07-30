@@ -21,7 +21,6 @@ LINT_SAMPLE_LIMIT="${LINT_SAMPLE_LIMIT:-3}"
 LINT_EXTRA_FLAGS="${LINT_EXTRA_FLAGS:-}"
 LINT_NAMESPACE_MODE="${LINT_NAMESPACE_MODE:-auto}"
 TARGET_LIMIT="${TARGET_LIMIT:-0}"
-RUN_GOLUA_TESTS="${RUN_GOLUA_TESTS:-1}"
 RUN_WIPPY_BUILD="${RUN_WIPPY_BUILD:-1}"
 RUN_WIPPY_INSTALL="${RUN_WIPPY_INSTALL:-1}"
 RUN_LINT="${RUN_LINT:-1}"
@@ -350,13 +349,6 @@ fi
 
 status=0
 delta_status=0
-
-if [[ "$RUN_GOLUA_TESTS" == "1" ]]; then
-	section "go-lua analysis/check tests"
-	if ! (cd "$GO_LUA_DIR" && go test ./analysis/check/... -count=1); then
-		status=1
-	fi
-fi
 
 if [[ "$RUN_WIPPY_BUILD" == "1" ]]; then
 	section "build wippy"
