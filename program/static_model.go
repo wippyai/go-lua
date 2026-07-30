@@ -49,6 +49,34 @@ type literalTypeRow struct {
 	exact Key
 	bits  uint64
 }
+type arrayTypeRow struct {
+	element  Term
+	readonly bool
+}
+type mapTypeRow struct {
+	key, value Term
+	readonly   bool
+}
+type recordTypeRow struct {
+	fields   recordFieldRange
+	readonly bool
+}
+type recordFieldRange struct{ start, end uint32 }
+type recordFieldRow struct {
+	key      Key
+	typ      Term
+	nameSpan storedSpan
+	optional bool
+}
+
+// RecordField is one exact authored record member. Key must be a TypeKey;
+// it is metadata rather than an evaluated Lua key occurrence.
+type RecordField struct {
+	Key      Key
+	Type     Term
+	NameSpan Span
+	Optional bool
+}
 
 // LiteralValue is a compact closed query result. FloatBits is the authored
 // IEEE-754 payload rather than a normalized numeric key, retaining -0 and NaN

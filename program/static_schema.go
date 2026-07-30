@@ -341,12 +341,69 @@ func (b *Builder) Generic(span Span, base Term, args []Term) Term {
 	return term
 }
 
+// Array records parser-authored {Element} syntax and its explicit readonly
+// modifier. The element is the array's unique type child.
+func (b *Builder) Array(span Span, element Term, readonly bool) Term {
+	if !b.require(b.staticTypeNode(element)) {
+		return 0
+	}
+	b.arrayTypes = append(b.arrayTypes, arrayTypeRow{element: element, readonly: readonly})
+	term := b.mint(tagTypeArray, span, b.familyIndex(len(b.arrayTypes)))
+	if term == 0 {
+		b.arrayTypes = b.arrayTypes[:len(b.arrayTypes)-1]
+	}
+	return term
+}
+
+// Map records parser-authored {Key: Value} syntax and its explicit readonly
+// modifier. Key and value are distinct ordered type children.
+func (b *Builder) Map(span Span, key, value Term, readonly bool) Term {
+	if !b.require(b.staticTypeNode(key) && b.staticTypeNode(value)) {
+		return 0
+	}
+	b.mapTypes = append(b.mapTypes, mapTypeRow{key: key, value: value, readonly: readonly})
+	term := b.mint(tagTypeMap, span, b.familyIndex(len(b.mapTypes)))
+	if term == 0 {
+		b.mapTypes = b.mapTypes[:len(b.mapTypes)-1]
+	}
+	return term
+}
+
+// Record stores its source-ordered exact-name fields in a compact CSR pool.
+// No name conversion occurs here: callers provide TypeKey identities directly.
+func (b *Builder) Record(span Span, fields []RecordField, readonly bool) Term {
+	for _, field := range fields {
+		if !b.require(b.staticTypeKey(field.Key) && b.staticTypeNode(field.Type)) {
+			return 0
+		}
+	}
+	start, end, ok := boundedRange(len(b.recordFields), len(fields))
+	if !ok {
+		b.poison = true
+		return 0
+	}
+	for _, field := range fields {
+		nameSpan, ok := b.compactSpan(field.NameSpan)
+		if !ok {
+			return 0
+		}
+		b.recordFields = append(b.recordFields, recordFieldRow{key: field.Key, typ: field.Type, nameSpan: nameSpan, optional: field.Optional})
+	}
+	b.recordTypes = append(b.recordTypes, recordTypeRow{fields: recordFieldRange{start: start, end: end}, readonly: readonly})
+	term := b.mint(tagTypeRecord, span, b.familyIndex(len(b.recordTypes)))
+	if term == 0 {
+		b.recordTypes = b.recordTypes[:len(b.recordTypes)-1]
+		b.recordFields = b.recordFields[:start]
+	}
+	return term
+}
+
 func (b *Builder) staticTypeNode(term Term) bool {
 	if !b.valid(term) {
 		return false
 	}
 	switch term.tag() {
-	case tagTypePrimitive, tagTypeLiteral, tagTypeOptional, tagTypeUnion, tagTypeIntersection, tagTypeRef, tagTypeGeneric, tagTypeOf:
+	case tagTypePrimitive, tagTypeLiteral, tagTypeOptional, tagTypeUnion, tagTypeIntersection, tagTypeRef, tagTypeGeneric, tagTypeArray, tagTypeMap, tagTypeRecord, tagTypeOf:
 		return true
 	default:
 		return false
@@ -375,6 +432,9 @@ func (b *Builder) validateStaticCore() bool {
 	parents[tagTypeIntersection] = make([]Term, len(b.intersectionTypes))
 	parents[tagTypeRef] = make([]Term, len(b.typeRefs))
 	parents[tagTypeGeneric] = make([]Term, len(b.genericTypes))
+	parents[tagTypeArray] = make([]Term, len(b.arrayTypes))
+	parents[tagTypeMap] = make([]Term, len(b.mapTypes))
+	parents[tagTypeRecord] = make([]Term, len(b.recordTypes))
 	parents[tagTypeOf] = make([]Term, len(b.typeOfs))
 	attach := func(parent, child Term) bool {
 		if !b.staticTypeNode(child) || !b.valid(parent) {
@@ -403,6 +463,21 @@ func (b *Builder) validateStaticCore() bool {
 			}
 		}
 		return true
+	}
+	validRecordFields := func(r recordFieldRange) bool {
+		return r.start <= r.end && uint64(r.end) <= uint64(len(b.recordFields))
+	}
+	validRecordNameSpan := func(span storedSpan) bool {
+		if uint64(span.file) >= uint64(len(b.files)) {
+			return false
+		}
+		return validSpan(Span{
+			File:      b.files[span.file],
+			StartLine: int(span.startLine),
+			StartCol:  int(span.startCol),
+			EndLine:   int(span.endLine),
+			EndCol:    int(span.endCol),
+		})
 	}
 	for i, row := range b.typeAliases {
 		alias := makeTerm(tagTypeAlias, uint32(i+1))
@@ -501,6 +576,28 @@ func (b *Builder) validateStaticCore() bool {
 		}
 		for _, child := range b.staticTypeTerms[row.args.start:row.args.end] {
 			if !attach(makeTerm(tagTypeGeneric, uint32(i+1)), child) {
+				return false
+			}
+		}
+	}
+	for i, row := range b.arrayTypes {
+		if !attach(makeTerm(tagTypeArray, uint32(i+1)), row.element) {
+			return false
+		}
+	}
+	for i, row := range b.mapTypes {
+		parent := makeTerm(tagTypeMap, uint32(i+1))
+		if !attach(parent, row.key) || !attach(parent, row.value) {
+			return false
+		}
+	}
+	for i, row := range b.recordTypes {
+		if !validRecordFields(row.fields) {
+			return false
+		}
+		parent := makeTerm(tagTypeRecord, uint32(i+1))
+		for _, field := range b.recordFields[row.fields.start:row.fields.end] {
+			if !b.staticTypeKey(field.key) || !validRecordNameSpan(field.nameSpan) || !attach(parent, field.typ) {
 				return false
 			}
 		}
@@ -671,6 +768,43 @@ func (p *Program) GenericArgAt(term Term, index int) (Term, bool) {
 	return p.staticTypeTerms[at], true
 }
 
+func (p *Program) Array(term Term) (element Term, readonly bool, ok bool) {
+	if !p.has(term, tagTypeArray) {
+		return 0, false, false
+	}
+	r := p.arrayTypes[term.index()-1]
+	return r.element, r.readonly, true
+}
+
+func (p *Program) Map(term Term) (key, value Term, readonly bool, ok bool) {
+	if !p.has(term, tagTypeMap) {
+		return 0, 0, false, false
+	}
+	r := p.mapTypes[term.index()-1]
+	return r.key, r.value, r.readonly, true
+}
+
+func (p *Program) Record(term Term) (readonly bool, fieldCount int, ok bool) {
+	if !p.has(term, tagTypeRecord) {
+		return false, 0, false
+	}
+	r := p.recordTypes[term.index()-1]
+	return r.readonly, int(r.fields.end - r.fields.start), true
+}
+
+func (p *Program) RecordField(term Term, index int) (key Key, typ Term, nameSpan Span, optional bool, ok bool) {
+	if !p.has(term, tagTypeRecord) || index < 0 {
+		return 0, 0, Span{}, false, false
+	}
+	r := p.recordTypes[term.index()-1]
+	at := r.fields.start + uint32(index)
+	if at >= r.fields.end {
+		return 0, 0, Span{}, false, false
+	}
+	field := p.recordFields[at]
+	return field.key, field.typ, p.storedSpan(field.nameSpan), field.optional, true
+}
+
 func (p *Program) TypeAliasCount() int {
 	if p == nil {
 		return 0
@@ -751,4 +885,29 @@ func (p *Program) GenericCount() int {
 }
 func (p *Program) GenericAt(index int) (Term, bool) {
 	return familyTerm(tagTypeGeneric, p.GenericCount(), index)
+}
+func (p *Program) ArrayCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.arrayTypes)
+}
+func (p *Program) ArrayAt(index int) (Term, bool) {
+	return familyTerm(tagTypeArray, p.ArrayCount(), index)
+}
+func (p *Program) MapCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.mapTypes)
+}
+func (p *Program) MapAt(index int) (Term, bool) { return familyTerm(tagTypeMap, p.MapCount(), index) }
+func (p *Program) RecordCount() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.recordTypes)
+}
+func (p *Program) RecordAt(index int) (Term, bool) {
+	return familyTerm(tagTypeRecord, p.RecordCount(), index)
 }

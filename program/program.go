@@ -146,6 +146,9 @@ const (
 	tagTypeIntersection
 	tagTypeRef
 	tagTypeGeneric
+	tagTypeArray
+	tagTypeMap
+	tagTypeRecord
 	// tagTypeOf is a static type relation. Its child expression still uses the
 	// ordinary expression families, but Seal proves static containment so it
 	// never enters executable control/effect evidence.
@@ -366,6 +369,10 @@ type Program struct {
 	typeRefs          []typeRefRow
 	typeRefPathKeys   []Key
 	genericTypes      []genericTypeRow
+	arrayTypes        []arrayTypeRow
+	mapTypes          []mapTypeRow
+	recordTypes       []recordTypeRow
+	recordFields      []recordFieldRow
 	typeParamTerms    []Term
 	staticTypeTerms   []Term
 }
@@ -442,6 +449,10 @@ type Builder struct {
 	typeRefs          []typeRefRow
 	typeRefPathKeys   []Key
 	genericTypes      []genericTypeRow
+	arrayTypes        []arrayTypeRow
+	mapTypes          []mapTypeRow
+	recordTypes       []recordTypeRow
+	recordFields      []recordFieldRow
 	typeParamTerms    []Term
 	staticTypeTerms   []Term
 }
@@ -1416,6 +1427,12 @@ func (b *Builder) valid(term Term) bool {
 		return index <= uint32(len(b.typeRefs))
 	case tagTypeGeneric:
 		return index <= uint32(len(b.genericTypes))
+	case tagTypeArray:
+		return index <= uint32(len(b.arrayTypes))
+	case tagTypeMap:
+		return index <= uint32(len(b.mapTypes))
+	case tagTypeRecord:
+		return index <= uint32(len(b.recordTypes))
 	case tagTypeOf:
 		return index <= uint32(len(b.typeOfs))
 	}
@@ -3257,6 +3274,10 @@ func (b *Builder) snapshot(
 		typeRefs:          append([]typeRefRow(nil), b.typeRefs...),
 		typeRefPathKeys:   append([]Key(nil), b.typeRefPathKeys...),
 		genericTypes:      append([]genericTypeRow(nil), b.genericTypes...),
+		arrayTypes:        append([]arrayTypeRow(nil), b.arrayTypes...),
+		mapTypes:          append([]mapTypeRow(nil), b.mapTypes...),
+		recordTypes:       append([]recordTypeRow(nil), b.recordTypes...),
+		recordFields:      append([]recordFieldRow(nil), b.recordFields...),
 		typeParamTerms:    copyTerms(b.typeParamTerms),
 		staticTypeTerms:   copyTerms(b.staticTypeTerms),
 	}
@@ -3349,6 +3370,12 @@ func (p *Program) Valid(term Term) bool {
 		return index <= uint32(len(p.typeRefs))
 	case tagTypeGeneric:
 		return index <= uint32(len(p.genericTypes))
+	case tagTypeArray:
+		return index <= uint32(len(p.arrayTypes))
+	case tagTypeMap:
+		return index <= uint32(len(p.mapTypes))
+	case tagTypeRecord:
+		return index <= uint32(len(p.recordTypes))
 	case tagTypeOf:
 		return index <= uint32(len(p.typeOfs))
 	}
@@ -3371,13 +3398,17 @@ func (p *Program) Span(term Term) (Span, bool) {
 		return Span{}, false
 	}
 	row := p.spans[term.tag()][term.index()-1]
+	return p.storedSpan(row), true
+}
+
+func (p *Program) storedSpan(row storedSpan) Span {
 	return Span{
 		File:      p.files[row.file],
 		StartLine: int(row.startLine),
 		StartCol:  int(row.startCol),
 		EndLine:   int(row.endLine),
 		EndCol:    int(row.endCol),
-	}, true
+	}
 }
 func (p *Program) Nil(term Term) (owner Term, ok bool) {
 	if !p.has(term, tagNil) {

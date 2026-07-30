@@ -177,6 +177,56 @@ func TestStaticSchemaBareUnresolvedRef(t *testing.T) {
 	}
 }
 
+func TestStaticSchemaArrayMapRecord(t *testing.T) {
+	b, entry := staticEntry(t)
+	alias := staticAlias(t, b, entry, "Shape")
+	stringType := b.Primitive(Span{}, PrimitiveString)
+	integerType := b.Primitive(Span{}, PrimitiveInteger)
+	booleanType := b.Primitive(Span{}, PrimitiveBoolean)
+	array := b.Array(Span{}, stringType, true)
+	mapType := b.Map(Span{}, integerType, booleanType, false)
+	nameKey, valuesKey := b.TypeKey("name"), b.TypeKey("values")
+	nameSpan := Span{File: "shape.lua", StartLine: 2, StartCol: 2, EndLine: 2, EndCol: 5}
+	valuesSpan := Span{File: "shape.lua", StartLine: 3, StartCol: 2, EndLine: 3, EndCol: 7}
+	record := b.Record(Span{File: "shape.lua"}, []RecordField{
+		{Key: nameKey, Type: array, NameSpan: nameSpan},
+		{Key: valuesKey, Type: mapType, NameSpan: valuesSpan, Optional: true},
+	}, true)
+	if record == 0 || !b.SetTypeAliasParams(alias, nil) || !b.FillTypeAlias(alias, record) || !b.SetBody(entry) {
+		t.Fatal("build structured static types")
+	}
+	p, err := b.Seal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if element, readonly, ok := p.Array(array); !ok || element != stringType || !readonly {
+		t.Fatalf("array = %v %v %v", element, readonly, ok)
+	}
+	if key, value, readonly, ok := p.Map(mapType); !ok || key != integerType || value != booleanType || readonly {
+		t.Fatalf("map = %v %v %v %v", key, value, readonly, ok)
+	}
+	if readonly, count, ok := p.Record(record); !ok || !readonly || count != 2 {
+		t.Fatalf("record = %v %d %v", readonly, count, ok)
+	}
+	key, typ, span, optional, ok := p.RecordField(record, 1)
+	if !ok || key != valuesKey || typ != mapType || !optional || span != valuesSpan {
+		t.Fatalf("record field = %v %v %#v %v %v", key, typ, span, optional, ok)
+	}
+}
+
+func TestStaticSchemaStructuredTypesRejectSharedChild(t *testing.T) {
+	b, entry := staticEntry(t)
+	alias := staticAlias(t, b, entry, "Bad")
+	child := b.Primitive(Span{}, PrimitiveString)
+	mapType := b.Map(Span{}, child, child, false)
+	if mapType == 0 || !b.SetTypeAliasParams(alias, nil) || !b.FillTypeAlias(alias, mapType) || !b.SetBody(entry) {
+		t.Fatal("build shared map child")
+	}
+	if _, err := b.Seal(); err == nil {
+		t.Fatal("Seal accepted shared map child")
+	}
+}
+
 func TestStaticSchemaQualifiedReferenceResolution(t *testing.T) {
 	t.Run("qualified source resolves to declaration", func(t *testing.T) {
 		b, entry := staticEntry(t)
