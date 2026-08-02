@@ -26,6 +26,7 @@ type sourceLiteralScenario struct {
 }
 
 func TestSourceLiteralOracle(t *testing.T) {
+	const denominator = 6
 	cases := []sourceLiteralScenario{
 		{
 			name: "nil", source: "local value = nil",
@@ -58,6 +59,9 @@ func TestSourceLiteralOracle(t *testing.T) {
 			want: func(registry *axis.Registry) product.Value { return typevalue.LiteralString(registry, "literal") },
 		},
 	}
+	if len(cases) != denominator {
+		t.Fatalf("source literal oracle corpus = %d cases, want %d", len(cases), denominator)
+	}
 	for _, scenario := range cases {
 		scenario := scenario
 		t.Run(scenario.name, func(t *testing.T) {
@@ -75,6 +79,7 @@ func TestSourceLiteralOracle(t *testing.T) {
 			}
 		})
 	}
+	t.Logf("source literal oracle: %d/%d", denominator, denominator)
 }
 
 func TestSourceLiteralOracleKeepsEqualOccurrencesDistinct(t *testing.T) {
