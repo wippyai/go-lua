@@ -19,6 +19,9 @@ import (
 
 func TestRegistryBundleFrozenAndStable(t *testing.T) {
 	reg := Registry()
+	if reg != product.CanonicalRegistry() {
+		t.Fatal("standard registry must expose the analyzer-owned canonical registry")
+	}
 	want := []string{
 		"variantorigin",
 		"identity",

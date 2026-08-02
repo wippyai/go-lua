@@ -13,12 +13,11 @@ import (
 func main() {
 	inventoryPath := flag.String("inventory", "", "reviewed inventory input")
 	bindingsPath := flag.String("bindings", "", "owner-local generator bindings")
-	statePath := flag.String("state", "", "generated state output")
-	servicePath := flag.String("service", "", "generated service output")
+	productPath := flag.String("product", "", "generated analyzer value-registry output")
 	check := flag.Bool("check", false, "verify outputs without writing")
 	flag.Parse()
-	if *inventoryPath == "" || *bindingsPath == "" || *statePath == "" || *servicePath == "" {
-		fail(fmt.Errorf("inventory, bindings, state, and service paths are required"))
+	if *inventoryPath == "" || *bindingsPath == "" || *productPath == "" {
+		fail(fmt.Errorf("inventory, bindings, and product paths are required"))
 	}
 	source, err := os.ReadFile(*inventoryPath)
 	if err != nil {
@@ -39,18 +38,11 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	stateSource, err := gen.RenderState(in, bindings)
+	productSource, err := gen.RenderProduct(in, bindings)
 	if err != nil {
 		fail(err)
 	}
-	serviceSource, err := gen.RenderService(in, bindings)
-	if err != nil {
-		fail(err)
-	}
-	if err := publish(*statePath, stateSource, *check); err != nil {
-		fail(err)
-	}
-	if err := publish(*servicePath, serviceSource, *check); err != nil {
+	if err := publish(*productPath, productSource, *check); err != nil {
 		fail(err)
 	}
 }
