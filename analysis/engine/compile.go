@@ -626,6 +626,17 @@ func (solver *Solver) compileQueries(active []activeRelation) bool {
 		if !cyclic {
 			continue
 		}
+		// A cyclic equation sweeps the complete correlated Fiber tuple. Every
+		// sealed Factor column is therefore a member of this Mu tuple, including
+		// columns untouched by the component's present Rule outputs. Widen has a
+		// termination proof only for ranked columns, so do not construct a Mu
+		// schedule unless every member can lawfully participate. Acyclic
+		// components never take this path and may contain unranked Factors.
+		for _, declaration := range solver.factors {
+			if declaration.widen == nil {
+				return false
+			}
+		}
 		slot, valid := solver.coordinate.Slot(actions[action].coordinate)
 		if !valid || slot < 0 {
 			return false
