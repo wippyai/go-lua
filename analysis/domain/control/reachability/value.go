@@ -1,11 +1,12 @@
-// Package reachability owns the minimal may-reachability judgment for
-// canonical Program occurrences and outcomes.
+// Package reachability owns the minimal syntactic may-reachability judgment
+// for canonical Program occurrences and outcomes.
 package reachability
 
 import "github.com/wippyai/go-lua/analysis/lattice"
 
-// Value is the two-point may-reachability lattice. Reachable means at least
-// one concrete execution can reach the exact Program coordinate.
+// Value is the two-point syntactic may-reachability lattice. Reachable means
+// unconditional canonical control propagation reaches the coordinate; it is
+// not a proof of a concrete execution until condition pruning is installed.
 type Value uint8
 
 const (

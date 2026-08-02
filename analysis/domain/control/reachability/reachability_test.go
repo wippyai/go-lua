@@ -2,11 +2,13 @@ package reachability_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/control/reachability"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/program"
+	"github.com/wippyai/go-lua/program/artifact"
 	"github.com/wippyai/go-lua/program/link"
 	programlower "github.com/wippyai/go-lua/program/lower"
 	"github.com/wippyai/go-lua/program/target"
@@ -66,19 +68,15 @@ func TestSourceControlCorpusReachability(t *testing.T) {
 	if len(sourceControlCorpus) != denominator {
 		t.Fatalf("source-control reachability corpus = %d cases, want %d", len(sourceControlCorpus), denominator)
 	}
-	passed := 0
 	for _, scenario := range sourceControlCorpus {
 		scenario := scenario
-		if t.Run(scenario.name, func(t *testing.T) {
+		if !t.Run(scenario.name, func(t *testing.T) {
 			assertScenarioReachability(t, scenario)
 		}) {
-			passed++
+			return
 		}
 	}
-	t.Logf("source-control reachability corpus: %d/%d scenarios", passed, denominator)
-	if passed != denominator {
-		t.Fatalf("source-control reachability numerator = %d/%d", passed, denominator)
-	}
+	t.Logf("source-control reachability corpus: %d/%d scenarios", denominator, denominator)
 }
 
 func assertScenarioReachability(t *testing.T, scenario controlScenario) {
@@ -148,6 +146,7 @@ func reachabilityQueries(t *testing.T, domain *reachability.Domain, shard link.S
 	}
 	root := sourceRootOnLine(t, source, entry, scenario.line)
 	terms := reachabilityWitnesses(t, source, root, scenario.witness)
+	assertEntryReachableTerms(t, source, terms)
 	queries := make([]reachabilityObservation, 0, len(terms))
 	for _, term := range terms {
 		query, ok := domain.Query(shard, term)
@@ -157,6 +156,118 @@ func reachabilityQueries(t *testing.T, domain *reachability.Domain, shard link.S
 		queries = append(queries, reachabilityObservation{term: term, query: query})
 	}
 	return queries
+}
+
+// assertEntryReachableTerms keeps the oracle on canonical causal coordinates.
+// It is a test-only guard over the public Program edge rows; it does not
+// expose topology from the reachability package.
+func assertEntryReachableTerms(t *testing.T, source *program.Program, terms []program.Term) {
+	t.Helper()
+	entry, ok := source.Entry()
+	if !ok {
+		t.Fatal("source has no entry")
+	}
+	count, ok := source.ActivationEdgeCount(entry)
+	if !ok {
+		t.Fatalf("ActivationEdgeCount(%v) absent", entry)
+	}
+	reachable := map[program.Term]bool{entry: true}
+	for changed := true; changed; {
+		changed = false
+		for index := 0; index < count; index++ {
+			edge, ok := source.ActivationEdgeAt(entry, index)
+			if !ok {
+				t.Fatalf("ActivationEdgeAt(%v, %d) absent", entry, index)
+			}
+			if reachable[edge.From()] && !reachable[edge.To()] {
+				reachable[edge.To()] = true
+				changed = true
+			}
+		}
+	}
+	for _, term := range terms {
+		activation, ok := source.Activation(term)
+		if !ok || activation != entry || !reachable[term] {
+			t.Fatalf("query term %v is not on an Entry-reachable activation path", term)
+		}
+	}
+}
+
+func TestEquationCacheStableUnderUnrelatedModuleOrder(t *testing.T) {
+	main := lowerReachabilityProgram(t, "main.lua", "local value = 1")
+	unrelated := lowerReachabilityProgram(t, "unrelated.lua", "local other = 2")
+
+	cacheFor := func(modules []link.Module) artifact.EquationCache {
+		contract, err := target.Seal(&target.Spec{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		project, err := link.Seal(&link.Spec{Target: contract, Modules: modules})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var shard link.Shard
+		for index := 0; index < project.ShardCount(); index++ {
+			candidate, ok := project.ShardAt(index)
+			if programValue, found := project.Program(candidate); ok && found && programValue == main {
+				shard = candidate
+				break
+			}
+		}
+		if shard == 0 {
+			t.Fatal("main shard")
+		}
+		solver, err := engine.New(project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		domain, ok := reachability.Install(solver, project)
+		if !ok {
+			t.Fatal("install reachability domain")
+		}
+		entry, ok := main.Entry()
+		if !ok {
+			t.Fatal("main entry")
+		}
+		root := sourceRootOnLine(t, main, entry, 1)
+		term, ok := main.BindValuesEntry(root)
+		if !ok {
+			t.Fatal("main BindValuesEntry")
+		}
+		assertEntryReachableTerms(t, main, []program.Term{term})
+		if _, ok := domain.Query(shard, term); !ok || !solver.Seal() {
+			t.Fatal("seal main reachability query")
+		}
+		cache, ok := solver.EquationCache(shard)
+		if !ok {
+			t.Fatal("reachability equation cache")
+		}
+		return cache
+	}
+
+	base := cacheFor([]link.Module{{Name: "main", Program: main}})
+	added := cacheFor([]link.Module{
+		{Name: "main", Program: main},
+		{Name: "unrelated", Program: unrelated},
+	})
+	reordered := cacheFor([]link.Module{
+		{Name: "unrelated", Program: unrelated},
+		{Name: "main", Program: main},
+	})
+	for _, candidate := range []artifact.EquationCache{added, reordered} {
+		if !reflect.DeepEqual(base.Rules, candidate.Rules) || !reflect.DeepEqual(base.Boundary, candidate.Boundary) {
+			t.Fatal("unrelated module order changed main reachability cache identities")
+		}
+	}
+}
+
+func lowerReachabilityProgram(t *testing.T, name, text string) *program.Program {
+	t.Helper()
+	source, err := programlower.Lower(programlower.Source{Name: name, Text: []byte(text)})
+	if err != nil {
+		t.Fatalf("lower %s: %v", name, err)
+	}
+	return source
 }
 
 func sourceRootOnLine(t *testing.T, source *program.Program, body program.Term, line int) program.Term {

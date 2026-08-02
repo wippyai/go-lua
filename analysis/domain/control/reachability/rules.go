@@ -22,7 +22,7 @@ func installProgramRules(solver *engine.Solver, source *link.Link, factor *engin
 
 func installShardRules(solver *engine.Solver, factor *engine.Factor[uint64, Value], shard link.Shard, source *program.Program) bool {
 	entry, ok := source.Entry()
-	if !ok || !declareEntryRule(solver, factor, shard, entry) {
+	if !ok || !declareEntryRule(solver, factor, shard, source, entry) {
 		return false
 	}
 	activations, ok := activations(source, entry)
@@ -36,7 +36,7 @@ func installShardRules(solver *engine.Solver, factor *engine.Factor[uint64, Valu
 		}
 		for index := 0; index < count; index++ {
 			edge, ok := source.ActivationEdgeAt(activation, index)
-			if !ok || !declareTransferRule(solver, factor, shard, edge) {
+			if !ok || !declareTransferRule(solver, factor, shard, source, activation, index, edge) {
 				return false
 			}
 		}
@@ -65,8 +65,8 @@ func activations(source *program.Program, entry program.Term) ([]program.Term, b
 	return result, true
 }
 
-func declareEntryRule(solver *engine.Solver, factor *engine.Factor[uint64, Value], shard link.Shard, entry program.Term) bool {
-	_, ok := engine.DeclareRule(solver, factor, semantic("entry"), func(binding *engine.RuleBinding) bool {
+func declareEntryRule(solver *engine.Solver, factor *engine.Factor[uint64, Value], shard link.Shard, source *program.Program, entry program.Term) bool {
+	_, ok := engine.DeclareRule(solver, factor, semanticProgram("entry", source, uint64(entry)), func(binding *engine.RuleBinding) bool {
 		return binding.At(shard, entry)
 	}, func(access engine.Access[uint64, Value]) bool {
 		return access.Set(key, Reachable)
@@ -74,9 +74,10 @@ func declareEntryRule(solver *engine.Solver, factor *engine.Factor[uint64, Value
 	return ok
 }
 
-func declareTransferRule(solver *engine.Solver, factor *engine.Factor[uint64, Value], shard link.Shard, edge program.Edge) bool {
+func declareTransferRule(solver *engine.Solver, factor *engine.Factor[uint64, Value], shard link.Shard, source *program.Program, activation program.Term, ordinal int, edge program.Edge) bool {
 	var input engine.ReadRef[uint64, Value]
-	rule, ok := engine.DeclareRule(solver, factor, semantic("transfer"), func(binding *engine.RuleBinding) bool {
+	rule, ok := engine.DeclareRule(solver, factor, semanticProgram("transfer", source,
+		uint64(activation), uint64(ordinal)), func(binding *engine.RuleBinding) bool {
 		return binding.From(shard, edge)
 	}, func(access engine.Access[uint64, Value]) bool {
 		return engine.Carry(access, input)
