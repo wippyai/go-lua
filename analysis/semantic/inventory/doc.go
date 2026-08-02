@@ -3,4 +3,4 @@
 // the JSON subset of YAML 1.2 so generation remains standard-library-only.
 package inventory
 
-//go:generate go run ./cmd/inventorygen -inventory builtins.yaml -bindings bindings.yaml -value ../../domain/value/zz_generated_registry.go
+//go:generate go run ./cmd/inventorygen -inventory builtins.yaml -bindings bindings.yaml -registry ../../domain/value/registry/zz_generated_registry.go

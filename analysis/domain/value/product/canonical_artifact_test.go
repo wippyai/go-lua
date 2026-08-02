@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
@@ -16,13 +15,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/registry"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestCanonicalArtifactMaterializesLiteralAndCompleteStandardInventory(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	literal := typevalue.LiteralBool(reg, true)
 	if product.RetentionSafe(reg, literal) {
 		t.Fatal("pointer-backed literal unexpectedly crossed the ordinary retention boundary")
@@ -48,7 +48,7 @@ func TestCanonicalArtifactMaterializesLiteralAndCompleteStandardInventory(t *tes
 }
 
 func TestCanonicalArtifactOwnsBytesAndReconstructedTypeGraph(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	callerType := typ.NewArray(typ.String)
 	value := typevalue.WithWitness(reg, typevalue.FromType(reg, callerType), callerType)
 	artifact, err := product.SealCanonical(context.Background(), reg, value)
@@ -77,7 +77,7 @@ func TestCanonicalArtifactOwnsBytesAndReconstructedTypeGraph(t *testing.T) {
 }
 
 func TestCanonicalArtifactRejectsMalformedSchemaAndCancellationWithoutPublication(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	artifact, err := product.SealCanonical(context.Background(), reg, typevalue.LiteralBool(reg, false))
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestCanonicalArtifactRejectsMalformedSchemaAndCancellationWithoutPublicatio
 }
 
 func TestDecodeCanonicalRejectsConstructorUnreachableAxisPayloads(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cases := []struct {
 		name   string
 		axisID string
@@ -164,7 +164,7 @@ func TestDecodeCanonicalRejectsConstructorUnreachableAxisPayloads(t *testing.T) 
 }
 
 func TestCanonicalArtifactRejectsRecursiveWitnessAndEncodeOnlyAxis(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	recursive := typ.NewRecursive("Node", func(self typ.Type) typ.Type { return typ.NewArray(self) })
 	value := typevalue.WithWitness(reg, product.Top(), recursive)
 	artifact, err := product.SealCanonical(context.Background(), reg, value)

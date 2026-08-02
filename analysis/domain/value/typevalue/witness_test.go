@@ -6,12 +6,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value"
+	"github.com/wippyai/go-lua/analysis/domain/value/registry"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestWitnessOfRequiresExplicitTypeWitness(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
 
@@ -27,7 +27,7 @@ func TestWitnessOfRequiresExplicitTypeWitness(t *testing.T) {
 }
 
 func TestWitnessOfReturnsExplicitTypeWitness(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	value := WithWitness(reg, FromType(reg, typ.String), typ.String)
 
 	got, ok := WitnessOf(reg, value)
@@ -40,7 +40,7 @@ func TestWitnessOfReturnsExplicitTypeWitness(t *testing.T) {
 }
 
 func TestStringLiteralOfRequiresExplicitStringLiteralWitness(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	value := WithWitness(reg, FromType(reg, typ.LiteralString("#")), typ.LiteralString("#"))
 
 	got, ok := StringLiteralOf(reg, value)

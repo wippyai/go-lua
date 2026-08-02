@@ -6,6 +6,7 @@ package value
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	valueregistry "github.com/wippyai/go-lua/analysis/domain/value/registry"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/program"
 	"github.com/wippyai/go-lua/program/link"
@@ -31,7 +32,7 @@ func Install(solver *engine.Solver, source *link.Link) (*Domain, bool) {
 	if solver == nil || source == nil {
 		return nil, false
 	}
-	registry := Registry()
+	registry := valueregistry.Registry()
 	authority, ok := registryAuthority(registry)
 	if !ok {
 		return nil, false

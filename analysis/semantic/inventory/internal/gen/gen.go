@@ -30,17 +30,17 @@ func RenderState(in inventory.Inventory, bindings Bindings) ([]byte, error) {
 	return formatted("state lane inventory", out.Bytes())
 }
 
-// RenderValue emits the one analyzer-owned canonical value-axis registry.
+// RenderRegistry emits the one analyzer-owned canonical value-axis registry.
 // The generated package deliberately owns the singleton so consumers do not
 // need a second, hand-maintained axis bundle.
-func RenderValue(in inventory.Inventory, bindings Bindings) ([]byte, error) {
+func RenderRegistry(in inventory.Inventory, bindings Bindings) ([]byte, error) {
 	_, valueAxes, err := orderedBindings(in, bindings)
 	if err != nil {
 		return nil, err
 	}
 	var out bytes.Buffer
 	out.WriteString(generatedHeader)
-	out.WriteString("package value\n\nimport (\n")
+	out.WriteString("package registry\n\nimport (\n")
 	out.WriteString("\t\"github.com/wippyai/go-lua/analysis/domain/value/axis\"\n")
 	for _, valueAxis := range valueAxes {
 		fmt.Fprintf(&out, "\t%s %q\n", valueAxis.Alias, valueAxis.ImportPath)
@@ -56,7 +56,7 @@ func RenderValue(in inventory.Inventory, bindings Bindings) ([]byte, error) {
 		fmt.Fprintf(&out, "\t\t%s.%s().Erase(),\n", valueAxis.Alias, valueAxis.SpecSymbol)
 	}
 	out.WriteString("\t)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\treturn registry\n}\n")
-	return formatted("value registry", out.Bytes())
+	return formatted("value registry leaf", out.Bytes())
 }
 
 func formatted(label string, source []byte) ([]byte, error) {

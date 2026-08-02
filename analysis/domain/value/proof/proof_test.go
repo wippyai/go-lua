@@ -12,16 +12,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/registry"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
-	"github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestValueProofAdmissibleRejectsAnyClaimWithoutRuntimeProof(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
 	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.AnyClaim))
@@ -32,7 +32,7 @@ func TestValueProofAdmissibleRejectsAnyClaimWithoutRuntimeProof(t *testing.T) {
 }
 
 func TestValueProofAdmissibleAcceptsAnyClaimForTopLikeContract(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.Any)
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
 	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.AnyClaim))
@@ -79,7 +79,7 @@ func TestTopLikeAndRuntimeKindRefinementTraverseDeepGraphsExactly(t *testing.T) 
 }
 
 func TestValueProofAdmissibleRejectsAnyClaimForRecordWithConcreteField(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typetable.NewRecord().
 		Field("id", typ.String).
 		Field("payload", typ.Any).
@@ -97,7 +97,7 @@ func TestValueProofAdmissibleRejectsAnyClaimForRecordWithConcreteField(t *testin
 }
 
 func TestValueProofAdmissibleRejectsRuntimeTableKindForOptionalFieldRecord(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.RuntimeClaim))
 	want := typetable.NewRecord().
@@ -111,7 +111,7 @@ func TestValueProofAdmissibleRejectsRuntimeTableKindForOptionalFieldRecord(t *te
 }
 
 func TestValueProofAdmissibleRejectsBuiltinTableTopAsMapOrArrayProof(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.BuiltinTableTopMarker())
 	proofs := New(reg, typevalue.NewCache())
 
@@ -126,7 +126,7 @@ func TestValueProofAdmissibleRejectsBuiltinTableTopAsMapOrArrayProof(t *testing.
 }
 
 func TestValueProofAdmissibleAcceptsRuntimeProof(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
 	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.RuntimeClaim))
@@ -137,7 +137,7 @@ func TestValueProofAdmissibleAcceptsRuntimeProof(t *testing.T) {
 }
 
 func TestValueProofAdmissibleRuntimeCastDepthExhaustionFailsClosed(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	cache := typevalue.NewCache()
 	actual := nestedRecordType(257, typ.Number)
 	want := nestedRecordType(257, typ.String)
@@ -151,7 +151,7 @@ func TestValueProofAdmissibleRuntimeCastDepthExhaustionFailsClosed(t *testing.T)
 }
 
 func TestValueProofAdmissibleRejectsAbsentRuntimeProofForNonNilContract(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
 	value = product.Set(reg, value, evidence.Key, evidence.ExplicitTop())
 	value = product.Set(reg, value, assertion.Key, assertion.Of(assertion.RuntimeClaim))
@@ -166,7 +166,7 @@ func TestValueProofAdmissibleRejectsAbsentRuntimeProofForNonNilContract(t *testi
 }
 
 func TestValueProofAdmissiblePresentValueUsesNonNilWitness(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	cache := typevalue.NewCache()
 	for _, want := range []typ.Type{
 		typ.String,
@@ -181,7 +181,7 @@ func TestValueProofAdmissiblePresentValueUsesNonNilWitness(t *testing.T) {
 }
 
 func TestValueProofAdmissibleFreshRecordWitnessUsesConstructorWidening(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	cache := typevalue.NewCache()
 	methods := typ.MaterializeUnion([]typ.Type{
 		typ.LiteralString("GET"),
@@ -211,7 +211,7 @@ func TestValueProofAdmissibleFreshRecordWitnessUsesConstructorWidening(t *testin
 }
 
 func TestExplicitTopFreshRecordWitnessUsesConstructorWidening(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	cache := typevalue.NewCache()
 	source := typetable.NewRecord().
 		Field("next", typ.Nil).
@@ -231,7 +231,7 @@ func TestExplicitTopFreshRecordWitnessUsesConstructorWidening(t *testing.T) {
 }
 
 func TestExplicitTopAnyClaimFreshRecordWitnessDoesNotUseConstructorWidening(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	cache := typevalue.NewCache()
 	source := typetable.NewRecord().
 		Field("next", typ.Nil).
@@ -252,7 +252,7 @@ func TestExplicitTopAnyClaimFreshRecordWitnessDoesNotUseConstructorWidening(t *t
 }
 
 func TestValueTypeWithPresenceKeepsNilInMaybeValues(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
 	value = product.WithPresence(reg, value, presence.Maybe())
 
@@ -266,7 +266,7 @@ func TestValueTypeWithPresenceKeepsNilInMaybeValues(t *testing.T) {
 }
 
 func TestValueStructuralTypeProjectsWitnessShape(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	cache := typevalue.NewCache()
 	record := typetable.NewRecord().Field("id", typ.String).Build()
 	value := cache.FromTypeWithWitness(reg, record)
@@ -281,7 +281,7 @@ func TestValueStructuralTypeProjectsWitnessShape(t *testing.T) {
 }
 
 func TestValueHasReadableConcreteWitness(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	cache := typevalue.NewCache()
 	proofs := New(reg, cache)
 	for _, tc := range []struct {
@@ -305,7 +305,7 @@ func TestValueHasReadableConcreteWitness(t *testing.T) {
 }
 
 func TestRefineDeclaredTypeOptionalByPresentEvidence(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.String))
 
@@ -319,7 +319,7 @@ func TestRefineDeclaredTypeOptionalByPresentEvidence(t *testing.T) {
 }
 
 func TestRefineDeclaredTypeProjectsRuntimeKindForUnknownDeclaredType(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	proofs := New(reg, typevalue.NewCache())
 	for _, tc := range []struct {
 		name string
@@ -344,7 +344,7 @@ func TestRefineDeclaredTypeProjectsRuntimeKindForUnknownDeclaredType(t *testing.
 }
 
 func TestRuntimeKindProjectionKeepsTableAndFunctionEvidence(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	tableValue := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	tableValue = product.Set(reg, tableValue, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	if got, ok := RuntimeKindType(reg, tableValue, product.PresenceOf(tableValue)); !ok || got.Kind() != kind.Map {
@@ -364,7 +364,7 @@ func TestRuntimeKindProjectionKeepsTableAndFunctionEvidence(t *testing.T) {
 }
 
 func TestRuntimeKindReducedTypeNarrowsByRuntimeKindExclusion(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	proofs := New(reg, typevalue.NewCache())
 	declared := typ.MaterializeUnion([]typ.Type{typ.Number, typ.String})
 	excluded := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
@@ -386,7 +386,7 @@ func TestRuntimeKindReducedTypeNarrowsByRuntimeKindExclusion(t *testing.T) {
 }
 
 func TestVariantOriginTypeAndFullFamilyProjection(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	dog := typetable.NewRecord().
 		Field("kind", typ.LiteralString("dog")).
 		Field("bark", typ.String).
@@ -453,7 +453,7 @@ func TestOptionalProjectionPredicates(t *testing.T) {
 }
 
 func TestValueWitnessProvenMismatchRejectsMaybePresenceForNonNilContract(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
 	value = product.WithPresence(reg, value, presence.Maybe())
 
@@ -466,7 +466,7 @@ func TestValueWitnessProvenMismatchRejectsMaybePresenceForNonNilContract(t *test
 }
 
 func TestValueTypeProjectsExplicitTopBoundaryAsAny(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	value := typevalue.NewCache().FromType(reg, typ.Any)
 
 	got, ok := New(reg, typevalue.NewCache()).ValueType(value)
@@ -476,7 +476,7 @@ func TestValueTypeProjectsExplicitTopBoundaryAsAny(t *testing.T) {
 }
 
 func TestValueHasExactIdentityOwnsPureIdentityProof(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	proofs := New(reg, typevalue.NewCache())
 	value := identityvalue.WithExact(reg, product.Top(), testTableIdentity(2, 7))
 
@@ -492,7 +492,7 @@ func TestValueHasExactIdentityOwnsPureIdentityProof(t *testing.T) {
 }
 
 func TestTypeEvidenceUsableForInferenceHonorsRuntimeClaims(t *testing.T) {
-	reg := registry()
+	reg := canonicalRegistry()
 	base := typevalue.NewCache().FromTypeWithWitness(reg, typ.String)
 	proofs := New(reg, typevalue.NewCache())
 
@@ -514,7 +514,7 @@ func TestTypeEvidenceUsableForInferenceHonorsRuntimeClaims(t *testing.T) {
 	}
 }
 
-func registry() *axis.Registry { return value.Registry() }
+func canonicalRegistry() *axis.Registry { return registry.Registry() }
 
 func nestedRecordType(depth int, leaf typ.Type) typ.Type {
 	result := leaf

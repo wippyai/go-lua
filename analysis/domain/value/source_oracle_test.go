@@ -8,6 +8,7 @@ import (
 	value "github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/registry"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/program"
@@ -74,7 +75,7 @@ func TestSourceLiteralOracle(t *testing.T) {
 				t.Fatalf("%s literal term", scenario.name)
 			}
 			got := solveLiteral(t, project, shard, term)
-			if want := scenario.want(value.Registry()); !product.Equal(value.Registry(), got, want) {
+			if want := scenario.want(registry.Registry()); !product.Equal(registry.Registry(), got, want) {
 				t.Fatalf("%s source literal value differs from its typed Program payload", scenario.name)
 			}
 		})
@@ -122,10 +123,10 @@ func TestSourceLiteralOracleKeepsEqualOccurrencesDistinct(t *testing.T) {
 	if !ok || state == nil {
 		t.Fatal("solve duplicate literal oracle")
 	}
-	want := typevalue.LiteralInt(value.Registry(), 7)
+	want := typevalue.LiteralInt(registry.Registry(), 7)
 	for name, query := range map[string]*engine.Query[uint64, product.Value]{"first": left, "second": right} {
 		got, present := query.Read(state)
-		if !present || !product.Equal(value.Registry(), got, want) {
+		if !present || !product.Equal(registry.Registry(), got, want) {
 			t.Fatalf("%s equal literal query = present %t, want its exact literal fact", name, present)
 		}
 	}

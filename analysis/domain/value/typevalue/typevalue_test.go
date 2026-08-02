@@ -11,8 +11,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/typewitness"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/domain/value/registry"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
-	"github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -21,7 +21,7 @@ import (
 )
 
 func TestFromTypeMaterializesConcreteRuntimeKinds(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 
 	tests := []struct {
 		name string
@@ -47,7 +47,7 @@ func TestFromTypeMaterializesConcreteRuntimeKinds(t *testing.T) {
 }
 
 func TestHasConcreteTypeRejectsTopLikeTypes(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 
 	tests := []struct {
 		name string
@@ -70,7 +70,7 @@ func TestHasConcreteTypeRejectsTopLikeTypes(t *testing.T) {
 }
 
 func TestTypeValuePredicatesUseSubtypeWitnesses(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	integerLiteral := WithWitness(reg, FromType(reg, typ.LiteralInt(4)), typ.LiteralInt(4))
 	number := WithWitness(reg, FromType(reg, typ.Number), typ.Number)
 	nilValue := Nil(reg)
@@ -91,7 +91,7 @@ func TestTypeValuePredicatesUseSubtypeWitnesses(t *testing.T) {
 }
 
 func TestRuntimeIndexUsesUnknownKeyFallbackForTypedMaps(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cache := NewCache()
 	mapType := typetable.NewMap(typ.String, typ.Number)
 	tableValue := cache.FromTypeWithWitness(reg, mapType)
@@ -171,7 +171,7 @@ func TestDefinitelyNonEmptyIndexContainerUsesProductiveRecursiveProof(t *testing
 }
 
 func TestTypeOfMaterializedTaggedAliasReturnsCompatibleType(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	target := typetable.NewRecord().
 		Field("__tag", typ.LiteralString("int")).
 		Build()
@@ -190,7 +190,7 @@ func TestTypeOfMaterializedTaggedAliasReturnsCompatibleType(t *testing.T) {
 }
 
 func TestCacheReusesEquivalentWitnessValuesByShape(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cache := NewCache()
 	first := typetable.NewRecord().
 		Field("kind", typ.LiteralString("job")).
@@ -215,7 +215,7 @@ func TestCacheReusesEquivalentWitnessValuesByShape(t *testing.T) {
 }
 
 func TestRuntimeTypeProfileOfCachesClosedRecursiveUnknownScan(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cache := NewCache()
 
 	tree := typ.NewRecursivePlaceholder("Tree")
@@ -252,7 +252,7 @@ func TestRuntimeTypeProfileOfCachesClosedRecursiveUnknownScan(t *testing.T) {
 }
 
 func TestTypeOfRuntimeKindFunctionReturnsConservativeCallable(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
 
@@ -264,7 +264,7 @@ func TestTypeOfRuntimeKindFunctionReturnsConservativeCallable(t *testing.T) {
 }
 
 func TestTypeOfRuntimeKindTableReturnsBuiltinTable(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	value := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
 	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 
@@ -276,7 +276,7 @@ func TestTypeOfRuntimeKindTableReturnsBuiltinTable(t *testing.T) {
 }
 
 func TestFromTypeMaterializesOptionalAndUnionPresence(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 
 	optionalString := typeexpr.Optional(typ.String)
 	gotOptional := FromType(reg, optionalString)
@@ -302,7 +302,7 @@ func TestFromTypeMaterializesOptionalAndUnionPresence(t *testing.T) {
 }
 
 func TestFromTypeMaterializesAliasAndRecursivePresence(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 
 	tests := []struct {
 		name string
@@ -351,7 +351,7 @@ func TestFromTypeMaterializesAliasAndRecursivePresence(t *testing.T) {
 }
 
 func TestFromTypeMaterializesInterfacePresence(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	iface := typ.NewInterface("Resource", []typ.Method{
 		{
 			Name: "close",
@@ -367,7 +367,7 @@ func TestFromTypeMaterializesInterfacePresence(t *testing.T) {
 }
 
 func TestFromTypeMaterializesInstantiatedAmbientInterfacePresence(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	channel := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
 
 	got := FromType(reg, channel)
@@ -375,7 +375,7 @@ func TestFromTypeMaterializesInstantiatedAmbientInterfacePresence(t *testing.T) 
 }
 
 func TestFromTypeMarksUnknownAndAnyAsExplicitTop(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 
 	for _, tt := range []struct {
 		name     string
@@ -399,7 +399,7 @@ func TestFromTypeMarksUnknownAndAnyAsExplicitTop(t *testing.T) {
 }
 
 func TestMergeDeclaredTypeFactsMergesPresenceKindAndSharedTopOrigin(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	gradual := product.Set(reg, FromType(reg, typ.String), evidence.Key, evidence.GradualTop())
 	declaredGradual := product.Set(reg, FromType(reg, typ.Number), evidence.Key, evidence.GradualTop())
 	declaredExplicit := product.Set(reg, FromType(reg, typ.Number), evidence.Key, evidence.ExplicitTop())
@@ -422,7 +422,7 @@ func TestMergeDeclaredTypeFactsMergesPresenceKindAndSharedTopOrigin(t *testing.T
 }
 
 func TestDeclaredTypeFactsPresenceOnly(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	nodeType := typetable.NewRecord().Field("id", typ.String).Build()
 	value := WithWitness(reg, FromType(reg, nodeType), nodeType)
 	declared := WithWitness(reg, FromType(reg, typeexpr.Optional(nodeType)), typeexpr.Optional(nodeType))
@@ -434,7 +434,7 @@ func TestDeclaredTypeFactsPresenceOnly(t *testing.T) {
 }
 
 func TestDeclaredTypeFactsPresenceOnlyRejectsWiderType(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	valueType := typetable.NewRecord().Field("id", typ.String).Build()
 	declaredType := typetable.NewRecord().Field("id", typ.String).Field("name", typ.String).Build()
 	value := WithWitness(reg, FromType(reg, valueType), valueType)
@@ -446,7 +446,7 @@ func TestDeclaredTypeFactsPresenceOnlyRejectsWiderType(t *testing.T) {
 }
 
 func TestFromTypeMaterializesVariantOrigin(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	left := typetable.NewRecord().
 		Field("kind", typ.LiteralString("left")).
 		Field("value", typ.Number).
@@ -475,7 +475,7 @@ func TestFromTypeMaterializesVariantOrigin(t *testing.T) {
 }
 
 func TestTypeOfPrefersWitnessOverVariantOrigin(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	left := typetable.NewRecord().
 		Field("kind", typ.LiteralString("left")).
 		Field("value", typ.Number).
@@ -501,7 +501,7 @@ func TestTypeOfPrefersWitnessOverVariantOrigin(t *testing.T) {
 }
 
 func TestTypeOfNarrowsDeclaredWitnessByVariantOrigin(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	left := typetable.NewRecord().
 		Field("kind", typ.LiteralString("left")).
 		Field("value", typ.Number).
@@ -525,7 +525,7 @@ func TestTypeOfNarrowsDeclaredWitnessByVariantOrigin(t *testing.T) {
 }
 
 func TestCacheTypeOfNarrowsDeclaredWitnessByVariantOrigin(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cache := NewCache()
 	left := typetable.NewRecord().
 		Field("kind", typ.LiteralString("left")).
@@ -550,7 +550,7 @@ func TestCacheTypeOfNarrowsDeclaredWitnessByVariantOrigin(t *testing.T) {
 }
 
 func TestTypeOfUsesSubtypeOriginWhenWitnessFamilyDiffers(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	msg := typetable.NewRecord().
 		Field("kind", typ.LiteralString("msg")).
 		Field("value", typ.String).
@@ -574,7 +574,7 @@ func TestTypeOfUsesSubtypeOriginWhenWitnessFamilyDiffers(t *testing.T) {
 }
 
 func TestStructuralTypeOfPrefersCompatibleWitnessOverOpenVariantOrigin(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	tp := typ.NewTypeParam("T", nil)
 	result := typ.NewGeneric("Result", []*typ.TypeParam{tp}, typeexpr.Union(
 		typetable.NewRecord().
@@ -605,7 +605,7 @@ func TestStructuralTypeOfPrefersCompatibleWitnessOverOpenVariantOrigin(t *testin
 }
 
 func TestTypeOfFallsBackWhenVariantOriginCannotReconstruct(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	value := product.Set(reg, FromType(reg, typ.Number), variantorigin.Key, variantorigin.Singleton(0x5afe0c1d, 1))
 
 	got, ok := TypeOf(reg, value)
@@ -615,7 +615,7 @@ func TestTypeOfFallsBackWhenVariantOriginCannotReconstruct(t *testing.T) {
 }
 
 func TestCacheRefreshesStaleConcreteVariantOriginProduct(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cache := NewCache()
 	key := typeValueCacheKey{reg: reg, typ: typ.Number}
 	shapeKey := typeValueShapeKey{reg: reg, hash: typ.EqualityHash(typ.Number)}
@@ -656,7 +656,7 @@ func TestCacheRefreshesStaleConcreteVariantOriginProduct(t *testing.T) {
 }
 
 func TestCacheReusesAcyclicStructuralTypeValues(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cache := NewCache()
 	left := typetable.NewRecord().
 		Field("id", typ.String).
@@ -700,7 +700,7 @@ func TestCacheReusesAcyclicStructuralTypeValues(t *testing.T) {
 }
 
 func TestCacheReusesSameRecursiveShapeTypeValues(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cache := NewCache()
 	left := typ.NewRecursive("TreeNode", func(self typ.Type) typ.Type {
 		return typetable.NewRecord().
@@ -736,7 +736,7 @@ func TestCacheReusesSameRecursiveShapeTypeValues(t *testing.T) {
 }
 
 func TestCacheKeepsDifferentRecursiveNamesDistinct(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cache := NewCache()
 	left := typ.NewRecursive("TreeNode", func(self typ.Type) typ.Type {
 		return typetable.NewRecord().OptField("next", self).Build()
@@ -753,7 +753,7 @@ func TestCacheKeepsDifferentRecursiveNamesDistinct(t *testing.T) {
 }
 
 func TestWithWitnessPreservesExistingStructuralWitness(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	left := typetable.NewRecord().
 		Field("id", typ.String).
 		Build()
@@ -773,7 +773,7 @@ func TestWithWitnessPreservesExistingStructuralWitness(t *testing.T) {
 }
 
 func TestWithWitnessPreservesSameRecursiveIdentityWitness(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return typetable.NewRecord().OptField("next", self).Build()
 	})
@@ -789,7 +789,7 @@ func TestWithWitnessPreservesSameRecursiveIdentityWitness(t *testing.T) {
 }
 
 func TestWithWitnessKeepsDistinctRecursiveIdentityWitnessesDistinct(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	leftNode := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return typetable.NewRecord().OptField("next", self).Build()
 	})
@@ -812,7 +812,7 @@ func TestWithWitnessKeepsDistinctRecursiveIdentityWitnessesDistinct(t *testing.T
 }
 
 func TestIntegerLiteralValueProjectsExactIntegerWitness(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	lit := typ.LiteralInt(42)
 	value := WithWitness(reg, FromType(reg, lit), lit)
 
@@ -827,7 +827,7 @@ func TestIntegerLiteralValueProjectsExactIntegerWitness(t *testing.T) {
 }
 
 func TestStructuralTypeOfAppliesPresenceOptions(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	optionalString := typeexpr.Optional(typ.String)
 	presentOptional := WithWitness(reg,
 		product.WithPresence(reg, FromType(reg, optionalString), presence.Present()),
@@ -862,7 +862,7 @@ func TestStructuralTypeOfAppliesPresenceOptions(t *testing.T) {
 }
 
 func TestFromTypeIntersectionPresenceUsesMeetOfKnownMembers(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	record := typetable.NewRecord().
 		Field("platform", typ.String).
 		Build()
@@ -885,7 +885,7 @@ func TestFromTypeIntersectionPresenceUsesMeetOfKnownMembers(t *testing.T) {
 }
 
 func TestFromTypeIntersectionPresenceNarrowsOptionalMembers(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 
 	value := FromType(reg, typeexpr.Intersection(typeexpr.Optional(typ.String), typ.String))
 	assertPresence(t, value, presence.Present())
@@ -1012,7 +1012,7 @@ func TestProjectionHasNilUsesExactRecursivePolarity(t *testing.T) {
 }
 
 func TestFromTypeMaterializesClosedGenericInstantiationAsConcreteTable(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	param := typ.NewTypeParam("T", nil)
 	box := typ.NewGeneric("Box", []*typ.TypeParam{param},
 		typetable.NewRecord().Field("value", param).Build())
@@ -1065,7 +1065,7 @@ func TestRuntimeKindFromType(t *testing.T) {
 }
 
 func TestCacheRefineWitnessByRuntimeKindNarrowsUnion(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cache := NewCache()
 	tableType := typ.NewMap(typ.String, typ.String)
 	value := cache.FromTypeWithWitness(reg, typeexpr.Union(typ.String, tableType))
@@ -1085,7 +1085,7 @@ func TestCacheRefineWitnessByRuntimeKindNarrowsUnion(t *testing.T) {
 }
 
 func TestRecoverRuntimeKindWitnessMeetNarrowsWitness(t *testing.T) {
-	reg := value.Registry()
+	reg := registry.Registry()
 	cache := NewCache()
 	tableType := typ.NewMap(typ.String, typ.String)
 	value := cache.FromTypeWithWitness(reg, typeexpr.Union(typ.String, tableType))
