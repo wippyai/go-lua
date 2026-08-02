@@ -1,6 +1,7 @@
 package typewitness
 
 import (
+	"strconv"
 	"testing"
 	"unsafe"
 
@@ -398,6 +399,7 @@ func TestWidenStableRecordShapeKeepsBranchOnlyFieldsOptional(t *testing.T) {
 		OptField("error", typ.String).
 		Field("migrations_failed", typ.Integer).
 		Field("status", typ.String).
+		SetOpen(true).
 		Build()
 	if !ok || !typ.TypeEquals(gotType, want) {
 		t.Fatalf("Widen(record branch-only field) = %v/%v, want %v", gotType, ok, want)
@@ -484,11 +486,156 @@ func TestWidenStableRecordShapeWithMethodSurfaceAcrossMultipleIterations(t *test
 	}
 }
 
-func TestWidenFallsBackToTopForIncompatibleRecordShape(t *testing.T) {
+func TestWidenUsesOpenRecordForDisjointStableFields(t *testing.T) {
 	prev := typetable.NewRecord().Field("id", typ.String).Build()
 	next := typetable.NewRecord().Field("name", typ.String).Build()
 
-	if got := Widen(Of(prev), Of(next)); !got.IsTop() {
-		t.Fatalf("Widen(incompatible records) = %v, want top", got)
+	got := Widen(Of(prev), Of(next))
+	gotType, ok := got.Type()
+	if !ok {
+		t.Fatalf("Widen(disjoint records) = top, want open record")
 	}
+	want := typetable.NewRecord().
+		OptField("id", typ.String).
+		OptField("name", typ.String).
+		SetOpen(true).
+		Build()
+	if !typ.TypeEquals(gotType, want) {
+		t.Fatalf("Widen(disjoint records) = %v, want %v", gotType, want)
+	}
+	if !LessOrEq(Of(prev), got) || !LessOrEq(Of(next), got) {
+		t.Fatalf("Widen(disjoint records) = %v is not an upper bound", got)
+	}
+}
+
+func TestWidenUpperBoundLawAcrossReachableBranches(t *testing.T) {
+	withMap := func(value typ.Type) typ.Type {
+		return typetable.NewRecord().
+			Field("status", typ.LiteralString("ready")).
+			MapComponent(typ.String, value).
+			Build()
+	}
+	withMetatable := func(metatable typ.Type) typ.Type {
+		return typetable.NewRecord().
+			Field("status", typ.String).
+			Metatable(metatable).
+			Build()
+	}
+
+	tests := []struct {
+		name string
+		prev Value
+		next Value
+	}{
+		{name: "bottom", prev: Bottom(), next: Of(typ.String)},
+		{name: "next bottom", prev: Of(typ.String), next: Bottom()},
+		{name: "top", prev: Top(), next: Of(typ.String)},
+		{name: "already ordered", prev: Of(typ.Integer), next: Of(typ.LiteralInt(1))},
+		{name: "primitive family", prev: Of(typ.LiteralInt(0)), next: Of(typ.LiteralInt(1))},
+		{name: "array elements", prev: Of(typ.NewArray(typ.LiteralString("a"))), next: Of(typ.NewArray(typ.LiteralString("b")))},
+		{name: "array tuple", prev: Of(typ.NewArray(typ.LiteralString("a"))), next: Of(typ.NewTuple(typ.LiteralString("b"), typ.LiteralString("c")))},
+		{name: "empty record array", prev: Of(typetable.NewRecord().Build()), next: Of(typ.NewArray(typ.LiteralString("item")))},
+		{name: "record field", prev: Of(typetable.NewRecord().Field("status", typ.LiteralString("old")).Build()), next: Of(typetable.NewRecord().Field("status", typ.LiteralString("new")).Build())},
+		{name: "record field growth", prev: Of(typetable.NewRecord().Field("status", typ.LiteralString("old")).Build()), next: Of(typetable.NewRecord().Field("status", typ.LiteralString("new")).Field("error", typ.String).Build())},
+		{name: "record static member", prev: Of(typetable.NewRecord().Field("status", typ.String).StaticStringIndex("run", typ.LiteralString("old")).Build()), next: Of(typetable.NewRecord().Field("status", typ.String).StaticStringIndex("run", typ.LiteralString("new")).Build())},
+		{name: "record static member growth", prev: Of(typetable.NewRecord().Field("status", typ.String).StaticStringIndex("run", typ.String).Build()), next: Of(typetable.NewRecord().Field("status", typ.String).StaticStringIndex("run", typ.String).StaticStringIndex("stop", typ.String).Build())},
+		{name: "record map value", prev: Of(withMap(typ.LiteralString("old"))), next: Of(withMap(typ.LiteralString("new")))},
+		{name: "record map shape", prev: Of(typetable.NewRecord().Field("status", typ.LiteralString("ready")).Build()), next: Of(withMap(typ.String))},
+		{name: "record open shape", prev: Of(typetable.NewRecord().Field("status", typ.LiteralString("old")).Build()), next: Of(typetable.NewRecord().Field("status", typ.LiteralString("new")).SetOpen(true).Build())},
+		{name: "fallback top", prev: Of(withMetatable(typ.String)), next: Of(withMetatable(typ.Number))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			widened := Widen(tt.prev, tt.next)
+			if !LessOrEq(tt.prev, widened) {
+				t.Fatalf("prev %v is not below Widen(prev,next) = %v", tt.prev, widened)
+			}
+			if !LessOrEq(tt.next, widened) {
+				t.Fatalf("next %v is not below Widen(prev,next) = %v", tt.next, widened)
+			}
+		})
+	}
+}
+
+func TestWidenArbitrarilyNamedRecordFieldsProducesAnUpperBound(t *testing.T) {
+	prev := Of(recordWithGeneratedFields(typ.LiteralString("cold"), 0))
+	next := Of(recordWithGeneratedFields(typ.LiteralString("hot"), 257))
+
+	widened := Widen(prev, next)
+	if !LessOrEq(prev, widened) || !LessOrEq(next, widened) {
+		t.Fatalf("Widen(%v,%v) = %v is not an upper bound", prev, next, widened)
+	}
+	record, ok := widened.Type()
+	if !ok {
+		t.Fatalf("Widen(record growth) = top, want an open record upper bound")
+	}
+	got, ok := record.(*typ.Record)
+	if !ok || !got.Open {
+		t.Fatalf("Widen(record growth) = %v, want open record", record)
+	}
+	for index := 0; index < 257; index++ {
+		field := got.GetField(generatedRecordFieldName(index))
+		if field == nil || !field.Optional || !typ.TypeEquals(field.Type, typ.String) {
+			t.Fatalf("generated field %q = %#v, want optional string", generatedRecordFieldName(index), field)
+		}
+	}
+}
+
+func TestWidenRecordFieldGrowthStabilizesWithoutFieldBudget(t *testing.T) {
+	current := Widen(
+		Of(recordWithGeneratedFields(typ.LiteralString("cold"), 0)),
+		Of(recordWithGeneratedFields(typ.LiteralString("hot"), 1)),
+	)
+	if current.IsTop() {
+		t.Fatal("initial record field growth widened to top")
+	}
+
+	for count := 2; count <= 257; count++ {
+		next := Of(recordWithGeneratedFields(typ.LiteralString("hot"), count))
+		widened := Widen(current, next)
+		if !Equal(widened, current) {
+			t.Fatalf("record widening grew at %d fields: %v -> %v", count, current, widened)
+		}
+		if !LessOrEq(next, widened) {
+			t.Fatalf("record with %d generated fields is not below stable widened value %v", count, widened)
+		}
+	}
+}
+
+func TestWidenNestedArrayShapeGrowthStabilizes(t *testing.T) {
+	current := Widen(Of(nestedArray(typ.String, 1)), Of(nestedArray(typ.String, 2)))
+	if current.IsTop() {
+		t.Fatal("nested array growth widened to top instead of retaining the array witness")
+	}
+	for depth := 3; depth <= 128; depth++ {
+		next := Of(nestedArray(typ.String, depth))
+		widened := Widen(current, next)
+		if !Equal(widened, current) {
+			t.Fatalf("nested array widening grew at depth %d: %v -> %v", depth, current, widened)
+		}
+		if !LessOrEq(next, widened) {
+			t.Fatalf("nested array at depth %d is not below stable widened value %v", depth, widened)
+		}
+	}
+}
+
+func recordWithGeneratedFields(status typ.Type, count int) typ.Type {
+	fields := make([]typ.Field, 0, count+1)
+	fields = append(fields, typ.Field{Name: "status", Type: status})
+	for index := 0; index < count; index++ {
+		fields = append(fields, typ.Field{Name: generatedRecordFieldName(index), Type: typ.String})
+	}
+	return typ.RebuildRecord(typ.RecordParts{Fields: fields})
+}
+
+func generatedRecordFieldName(index int) string {
+	return "generated/field-" + strconv.FormatInt(int64(index*7919+17), 36) + "-" + strconv.FormatInt(int64((index*97)%257), 10)
+}
+
+func nestedArray(element typ.Type, depth int) typ.Type {
+	for range depth {
+		element = typ.NewArray(element)
+	}
+	return element
 }

@@ -227,7 +227,9 @@ func LessOrEq(a, b Value) bool {
 // under repeated Widen are eventually stationary. Join synthesizes unions, so
 // Widen cannot remain Join without risking unbounded witness growth at loop
 // heads; but literal scalar growth such as 0, 1, 2 should widen to integer, not
-// erase the proof entirely.
+// erase the proof entirely. A record shape expansion widens to an open record:
+// it keeps the known optional fields from the two inputs while admitting later
+// arbitrary fields without extending the record shape again.
 func Widen(prev, next Value) Value {
 	if prev.IsBottom() {
 		return next
@@ -279,7 +281,7 @@ func widenedArrayElement(arrayLike, other typ.Type) (typ.Type, bool) {
 	}
 	switch t := unwrap.Annotated(other).(type) {
 	case *typ.Array:
-		return widenRecordMemberType(array.Element, t.Element)
+		return widenSequenceElement(array.Element, t.Element), true
 	case *typ.Tuple:
 		return widenedArrayTupleElement(array.Element, t.Elements)
 	case *typ.Record:
@@ -293,13 +295,29 @@ func widenedArrayElement(arrayLike, other typ.Type) (typ.Type, bool) {
 func widenedArrayTupleElement(element typ.Type, tuple []typ.Type) (typ.Type, bool) {
 	out := widenedPrimitiveOrSelf(element)
 	for _, tupleElement := range tuple {
-		var ok bool
-		out, ok = widenRecordMemberType(out, tupleElement)
-		if !ok {
-			return nil, false
-		}
+		out = widenSequenceElement(out, tupleElement)
 	}
 	return out, true
+}
+
+// widenSequenceElement preserves nested collection precision where the same
+// stable abstraction exists. All other element-shape changes use the existing
+// nested any type: unlike a growing union, it is a stationary upper bound while
+// retaining the outer array witness.
+func widenSequenceElement(prev, next typ.Type) typ.Type {
+	if sameWitnessType(prev, next) {
+		return prev
+	}
+	if family, ok := widenedPrimitiveFamily(prev, next); ok {
+		return family
+	}
+	if widened, ok := widenedStableSequence(prev, next); ok {
+		return widened
+	}
+	if widened, ok := widenedStableRecord(prev, next); ok {
+		return widened
+	}
+	return typ.Any
 }
 
 func widenedPrimitiveOrSelf(t typ.Type) typ.Type {
@@ -324,49 +342,49 @@ func widenedStableRecord(a, b typ.Type) (typ.Type, bool) {
 	if !aOK || !bOK {
 		return nil, false
 	}
-	if ar.Open != br.Open ||
-		!sameWitnessType(ar.Metatable, br.Metatable) ||
-		!sameWitnessType(ar.MapKey, br.MapKey) {
+	if !sameWitnessType(ar.Metatable, br.Metatable) {
 		return nil, false
 	}
-	var mapValue typ.Type
-	switch {
-	case ar.MapValue == nil && br.MapValue == nil:
-	case ar.MapValue == nil || br.MapValue == nil:
-		return nil, false
-	default:
+	sameMap := ar.HasMapComponent() && br.HasMapComponent() && sameWitnessType(ar.MapKey, br.MapKey)
+	var mapKey, mapValue typ.Type
+	if sameMap {
 		widened, ok := widenRecordMemberType(ar.MapValue, br.MapValue)
 		if !ok {
 			return nil, false
 		}
+		mapKey = ar.MapKey
 		mapValue = widened
+	} else {
+		// With no shared map shape, leave both map pieces nil. When either input
+		// has a differing map component, the open result below carries unknown
+		// access evidence instead of incorrectly requiring either branch's map.
 	}
-	fields, commonFields, ok := widenedStableRecordFields(ar.Fields, br.Fields)
+	fields, ok := widenedStableRecordFields(ar.Fields, br.Fields)
 	if !ok {
 		return nil, false
 	}
-	members, commonMembers, ok := widenedStableRecordMembers(ar.StaticMembers, br.StaticMembers)
+	members, ok := widenedStableRecordMembers(ar.StaticMembers, br.StaticMembers)
 	if !ok {
 		return nil, false
 	}
-	if commonFields+commonMembers == 0 {
-		return nil, false
-	}
+	shapeExpanded := len(fields) > len(ar.Fields) || len(fields) > len(br.Fields) ||
+		len(members) > len(ar.StaticMembers) || len(members) > len(br.StaticMembers) ||
+		ar.HasMapComponent() != br.HasMapComponent() ||
+		(ar.HasMapComponent() && br.HasMapComponent() && !sameMap)
 	return typ.RebuildRecord(typ.RecordParts{
 		Fields:        fields,
 		StaticMembers: members,
 		Metatable:     ar.Metatable,
-		MapKey:        ar.MapKey,
+		MapKey:        mapKey,
 		MapValue:      mapValue,
-		Open:          ar.Open,
+		Open:          ar.Open || br.Open || shapeExpanded,
 		AssumeSorted:  true,
 	}), true
 }
 
-func widenedStableRecordFields(a, b []typ.Field) ([]typ.Field, int, bool) {
+func widenedStableRecordFields(a, b []typ.Field) ([]typ.Field, bool) {
 	out := make([]typ.Field, 0, len(a)+len(b))
 	i, j := 0, 0
-	common := 0
 	for i < len(a) || j < len(b) {
 		switch {
 		case i >= len(a):
@@ -377,17 +395,16 @@ func widenedStableRecordFields(a, b []typ.Field) ([]typ.Field, int, bool) {
 			i++
 		case a[i].Name == b[j].Name:
 			if a[i].Readonly != b[j].Readonly {
-				return nil, 0, false
+				return nil, false
 			}
 			widened, ok := widenRecordMemberType(a[i].Type, b[j].Type)
 			if !ok {
-				return nil, 0, false
+				return nil, false
 			}
 			field := a[i]
 			field.Type = widened
 			field.Optional = a[i].Optional || b[j].Optional
 			out = append(out, field)
-			common++
 			i++
 			j++
 		case a[i].Name < b[j].Name:
@@ -398,7 +415,7 @@ func widenedStableRecordFields(a, b []typ.Field) ([]typ.Field, int, bool) {
 			j++
 		}
 	}
-	return out, common, true
+	return out, true
 }
 
 func optionalBranchField(field typ.Field) typ.Field {
@@ -406,10 +423,9 @@ func optionalBranchField(field typ.Field) typ.Field {
 	return field
 }
 
-func widenedStableRecordMembers(a, b []typ.StaticMember) ([]typ.StaticMember, int, bool) {
+func widenedStableRecordMembers(a, b []typ.StaticMember) ([]typ.StaticMember, bool) {
 	out := make([]typ.StaticMember, 0, len(a)+len(b))
 	i, j := 0, 0
-	common := 0
 	for i < len(a) || j < len(b) {
 		switch {
 		case i >= len(a):
@@ -423,17 +439,16 @@ func widenedStableRecordMembers(a, b []typ.StaticMember) ([]typ.StaticMember, in
 			switch {
 			case cmp == 0:
 				if a[i].Readonly != b[j].Readonly {
-					return nil, 0, false
+					return nil, false
 				}
 				widened, ok := widenRecordMemberType(a[i].Type, b[j].Type)
 				if !ok {
-					return nil, 0, false
+					return nil, false
 				}
 				member := a[i]
 				member.Type = widened
 				member.Optional = a[i].Optional || b[j].Optional
 				out = append(out, member)
-				common++
 				i++
 				j++
 			case cmp < 0:
@@ -445,7 +460,7 @@ func widenedStableRecordMembers(a, b []typ.StaticMember) ([]typ.StaticMember, in
 			}
 		}
 	}
-	return out, common, true
+	return out, true
 }
 
 func optionalBranchStaticMember(member typ.StaticMember) typ.StaticMember {
@@ -457,13 +472,39 @@ func widenRecordMemberType(prev, next typ.Type) (typ.Type, bool) {
 	if sameWitnessType(prev, next) {
 		return prev, true
 	}
+	if witnessTypeLeq(next, prev) {
+		return prev, true
+	}
+	if witnessTypeLeq(prev, next) {
+		return next, true
+	}
+	if optional, ok := unwrap.Annotated(prev).(*typ.Optional); ok {
+		widened, _ := widenRecordMemberType(optional.Inner, next)
+		return typ.MaterializeOptional(widened), true
+	}
+	if optional, ok := unwrap.Annotated(next).(*typ.Optional); ok {
+		widened, _ := widenRecordMemberType(prev, optional.Inner)
+		return typ.MaterializeOptional(widened), true
+	}
+	if typ.TypeEquals(prev, typ.Nil) {
+		return typ.MaterializeOptional(next), true
+	}
+	if typ.TypeEquals(next, typ.Nil) {
+		return typ.MaterializeOptional(prev), true
+	}
 	if family, ok := widenedPrimitiveFamily(prev, next); ok {
 		return family, true
 	}
 	if widened, ok := widenedStableRecord(prev, next); ok {
 		return widened, true
 	}
-	return normalizeWitnessUnion(prev, next), true
+	if widened, ok := widenedStableSequence(prev, next); ok {
+		return widened, true
+	}
+	// A widening must not retain an unbounded series of unrelated member
+	// alternatives. The surrounding record preserves the access-path evidence;
+	// nested any is the stable upper bound for the member itself.
+	return typ.Any, true
 }
 
 func sameWitnessType(a, b typ.Type) bool {
@@ -534,7 +575,16 @@ func scalarLeq(a, b typ.Type) bool {
 	if typ.TypeEquals(a, b) {
 		return true
 	}
+	if typ.IsAny(b) {
+		return true
+	}
 	if emptyRecordArrayLeq(a, b) {
+		return true
+	}
+	if sequenceWitnessLeq(a, b) {
+		return true
+	}
+	if recordWitnessLeq(a, b) {
 		return true
 	}
 	if opt, ok := unwrap.Annotated(b).(*typ.Optional); ok {
@@ -553,6 +603,143 @@ func emptyRecordArrayLeq(a, b typ.Type) bool {
 	}
 	_, arrayOK := unwrap.Annotated(b).(*typ.Array)
 	return arrayOK
+}
+
+// sequenceWitnessLeq is the structural containment needed by the array
+// widenings. Array elements are covariant evidence, tuples are contained when
+// each position is, and an empty closed record is the table literal witness for
+// an empty array.
+func sequenceWitnessLeq(a, b typ.Type) bool {
+	target, ok := unwrap.Annotated(b).(*typ.Array)
+	if !ok {
+		return false
+	}
+	switch source := unwrap.Annotated(a).(type) {
+	case *typ.Array:
+		return witnessTypeLeq(source.Element, target.Element)
+	case *typ.Tuple:
+		for _, element := range source.Elements {
+			if !witnessTypeLeq(element, target.Element) {
+				return false
+			}
+		}
+		return true
+	case *typ.Record:
+		return emptyStableRecord(source)
+	default:
+		return false
+	}
+}
+
+// recordWitnessLeq recognizes the structural upper bounds constructed by
+// widenedStableRecord. A target open record absorbs source-only members; known
+// target members still have to be present when required and contain the source
+// evidence. The relation deliberately keeps metatable, map-key, and readonly
+// identities exact because widening never changes them while retaining a map
+// component.
+func recordWitnessLeq(a, b typ.Type) bool {
+	source, sourceOK := unwrap.Annotated(a).(*typ.Record)
+	target, targetOK := unwrap.Annotated(b).(*typ.Record)
+	if !sourceOK || !targetOK ||
+		(source.Open && !target.Open) ||
+		!sameWitnessType(source.Metatable, target.Metatable) ||
+		!recordMapWitnessLeq(source, target) {
+		return false
+	}
+	return recordFieldsWitnessLeq(source.Fields, target.Fields, target.Open) &&
+		recordStaticMembersWitnessLeq(source.StaticMembers, target.StaticMembers, target.Open)
+}
+
+func recordMapWitnessLeq(source, target *typ.Record) bool {
+	switch {
+	case !source.HasMapComponent() && !target.HasMapComponent():
+		return true
+	case source.HasMapComponent() && target.HasMapComponent():
+		return sameWitnessType(source.MapKey, target.MapKey) &&
+			witnessTypeLeq(source.MapValue, target.MapValue)
+	case source.HasMapComponent() && !target.HasMapComponent():
+		return target.Open
+	default:
+		return false
+	}
+}
+
+func recordFieldsWitnessLeq(source, target []typ.Field, targetOpen bool) bool {
+	i, j := 0, 0
+	for i < len(source) || j < len(target) {
+		switch {
+		case i >= len(source):
+			if !target[j].Optional {
+				return false
+			}
+			j++
+		case j >= len(target):
+			if !targetOpen {
+				return false
+			}
+			i++
+		case source[i].Name < target[j].Name:
+			if !targetOpen {
+				return false
+			}
+			i++
+		case source[i].Name > target[j].Name:
+			if !target[j].Optional {
+				return false
+			}
+			j++
+		default:
+			if (source[i].Optional && !target[j].Optional) ||
+				source[i].Readonly != target[j].Readonly ||
+				!witnessTypeLeq(source[i].Type, target[j].Type) {
+				return false
+			}
+			i++
+			j++
+		}
+	}
+	return true
+}
+
+func recordStaticMembersWitnessLeq(source, target []typ.StaticMember, targetOpen bool) bool {
+	i, j := 0, 0
+	for i < len(source) || j < len(target) {
+		switch {
+		case i >= len(source):
+			if !target[j].Optional {
+				return false
+			}
+			j++
+		case j >= len(target):
+			if !targetOpen {
+				return false
+			}
+			i++
+		default:
+			cmp := typ.CompareStaticMembers(source[i], target[j])
+			switch {
+			case cmp < 0:
+				if !targetOpen {
+					return false
+				}
+				i++
+			case cmp > 0:
+				if !target[j].Optional {
+					return false
+				}
+				j++
+			default:
+				if (source[i].Optional && !target[j].Optional) ||
+					source[i].Readonly != target[j].Readonly ||
+					!witnessTypeLeq(source[i].Type, target[j].Type) {
+					return false
+				}
+				i++
+				j++
+			}
+		}
+	}
+	return true
 }
 
 // alternativeLeqType reports whether a single alternative is contained in some
