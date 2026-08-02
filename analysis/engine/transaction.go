@@ -117,53 +117,46 @@ func (solver *Solver) Solve(ctx context.Context, base *State) (*State, bool) {
 	solver.evaluating = true
 	defer func() { solver.evaluating = false }()
 
-	mark := solver.coordinate.Mark()
-	prior := solver.snapshotEpoch()
 	for {
 		// Every rebuilt epoch belongs to this one caller request. Do not begin
 		// a new generation after its cancellation has become observable.
 		if canceled(done) {
-			solver.restoreEpoch(prior)
-			solver.coordinate.Rewind(mark)
 			return nil, false
 		}
 		transaction, ok := solver.beginEpoch(done)
 		if !ok {
-			solver.restoreEpoch(prior)
-			solver.coordinate.Rewind(mark)
 			return nil, false
 		}
 		if transaction.canceled() || !transaction.run() || transaction.canceled() {
 			transaction.abort()
-			solver.restoreEpoch(prior)
-			solver.coordinate.Rewind(mark)
 			return nil, false
 		}
 		if transaction.rebuild {
 			if transaction.canceled() {
 				transaction.abort()
-				solver.restoreEpoch(prior)
-				solver.coordinate.Rewind(mark)
 				return nil, false
 			}
-			relations, valid := transaction.nextActiveEpoch()
-			stopped := transaction.canceled()
+			relations, valid := transaction.nextAcceptedRelations()
 			transaction.abort()
+			if !valid {
+				return nil, false
+			}
+			// This assignment is the one structural acceptance cut. It is
+			// deliberately independent of the caller's cancellation channel:
+			// accepted Program/Link relations are harmless cached structure, not
+			// a semantic result, and survive an interrupted solve.
+			solver.active = relations
 			// U is Link's sealed Candidate universe and E grows only by a new
 			// exact (template, caller Coordinate, Candidate, selector) fact.
 			// Rebuilding the disposable epoch from canonical Init is therefore
 			// finite without a round bound, Go recursion, or a stale carrier.
-			if stopped || canceled(done) || !valid || !solver.rebuildEpoch(relations) {
-				solver.restoreEpoch(prior)
-				solver.coordinate.Rewind(mark)
+			if !solver.rebuildEpoch(relations) {
 				return nil, false
 			}
 			continue
 		}
 		state, ok := transaction.publish()
 		if !ok {
-			solver.restoreEpoch(prior)
-			solver.coordinate.Rewind(mark)
 			return nil, false
 		}
 		return state, true
