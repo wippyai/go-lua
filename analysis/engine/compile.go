@@ -618,6 +618,7 @@ func (solver *Solver) compileQueries(active []activeRelation) bool {
 		members []int
 	}
 	componentTuples := make([]outerTuple, prepared.ComponentCount())
+	cyclicTupleRanked := false
 	for action := range actions {
 		component, cyclic, present := prepared.ComponentOf(schedule.Node(action))
 		if !present || component < 0 || component >= len(componentTuples) {
@@ -626,16 +627,19 @@ func (solver *Solver) compileQueries(active []activeRelation) bool {
 		if !cyclic {
 			continue
 		}
-		// A cyclic equation sweeps the complete correlated Fiber tuple. Every
-		// sealed Factor column is therefore a member of this Mu tuple, including
-		// columns untouched by the component's present Rule outputs. Widen has a
-		// termination proof only for ranked columns, so do not construct a Mu
-		// schedule unless every member can lawfully participate. Acyclic
-		// components never take this path and may contain unranked Factors.
-		for _, declaration := range solver.factors {
-			if declaration.widen == nil {
-				return false
+		if !cyclicTupleRanked {
+			// A cyclic equation sweeps the complete correlated Fiber tuple. Every
+			// sealed Factor column is therefore a member of every Mu tuple,
+			// including columns untouched by this component's present Rule outputs.
+			// Widen has a termination proof only for ranked columns, so preflight
+			// the fixed schema once before constructing any Mu schedule. Acyclic
+			// components never take this path and may contain unranked Factors.
+			for _, declaration := range solver.factors {
+				if declaration.widen == nil {
+					return false
+				}
 			}
+			cyclicTupleRanked = true
 		}
 		slot, valid := solver.coordinate.Slot(actions[action].coordinate)
 		if !valid || slot < 0 {
