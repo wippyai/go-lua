@@ -2,6 +2,7 @@ package value_test
 
 import (
 	"context"
+	"math"
 	"reflect"
 	"testing"
 
@@ -20,48 +21,59 @@ import (
 
 type sourceLiteralScenario struct {
 	name   string
+	family string
 	source string
 	count  func(*program.Program) int
 	at     func(*program.Program, int) (program.Term, bool)
 	want   func(*axis.Registry) product.Value
 }
 
-func TestSourceLiteralOracle(t *testing.T) {
-	const denominator = 6
+func TestSourceLiteralSemantics(t *testing.T) {
+	const (
+		familyDenominator  = 5
+		fixtureDenominator = 6
+	)
 	cases := []sourceLiteralScenario{
 		{
-			name: "nil", source: "local value = nil",
+			name: "nil", family: "nil", source: "local value = nil",
 			count: (*program.Program).NilCount, at: (*program.Program).NilAt,
 			want: typevalue.Nil,
 		},
 		{
-			name: "false", source: "local value = false",
+			name: "false", family: "bool", source: "local value = false",
 			count: (*program.Program).BoolCount, at: (*program.Program).BoolAt,
 			want: func(registry *axis.Registry) product.Value { return typevalue.LiteralBool(registry, false) },
 		},
 		{
-			name: "true", source: "local value = true",
+			name: "true", family: "bool", source: "local value = true",
 			count: (*program.Program).BoolCount, at: (*program.Program).BoolAt,
 			want: func(registry *axis.Registry) product.Value { return typevalue.LiteralBool(registry, true) },
 		},
 		{
-			name: "integer", source: "local value = 41",
+			name: "integer", family: "integer", source: "local value = 41",
 			count: (*program.Program).IntegerCount, at: (*program.Program).IntegerAt,
 			want: func(registry *axis.Registry) product.Value { return typevalue.LiteralInt(registry, 41) },
 		},
 		{
-			name: "float", source: "local value = 3.5",
+			name: "float", family: "float", source: "local value = 3.5",
 			count: (*program.Program).FloatCount, at: (*program.Program).FloatAt,
 			want: func(registry *axis.Registry) product.Value { return typevalue.LiteralNumber(registry, 3.5) },
 		},
 		{
-			name: "string", source: "local value = \"literal\"",
+			name: "string", family: "string", source: "local value = \"literal\"",
 			count: (*program.Program).StringCount, at: (*program.Program).StringAt,
 			want: func(registry *axis.Registry) product.Value { return typevalue.LiteralString(registry, "literal") },
 		},
 	}
-	if len(cases) != denominator {
-		t.Fatalf("source literal oracle corpus = %d cases, want %d", len(cases), denominator)
+	if len(cases) != fixtureDenominator {
+		t.Fatalf("source literal fixtures = %d, want %d", len(cases), fixtureDenominator)
+	}
+	families := make(map[string]struct{}, len(cases))
+	for _, scenario := range cases {
+		families[scenario.family] = struct{}{}
+	}
+	if len(families) != familyDenominator {
+		t.Fatalf("source literal families = %d, want %d", len(families), familyDenominator)
 	}
 	for _, scenario := range cases {
 		scenario := scenario
@@ -74,16 +86,16 @@ func TestSourceLiteralOracle(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s literal term", scenario.name)
 			}
-			got := solveLiteral(t, project, shard, term)
+			got := solveSourceLiteral(t, project, shard, term)
 			if want := scenario.want(registry.Registry()); !product.Equal(registry.Registry(), got, want) {
 				t.Fatalf("%s source literal value differs from its typed Program payload", scenario.name)
 			}
 		})
 	}
-	t.Logf("source literal oracle: %d/%d", denominator, denominator)
+	t.Logf("source literal families: %d/%d; fixtures: %d", familyDenominator, familyDenominator, fixtureDenominator)
 }
 
-func TestSourceLiteralOracleKeepsEqualOccurrencesDistinct(t *testing.T) {
+func TestSourceLiteralSemanticsKeepsEqualOccurrencesDistinct(t *testing.T) {
 	project, shard, source := sourceProject(t, "duplicates.lua", "local first = 7\nlocal second = 7")
 	if got := source.IntegerCount(); got != 2 {
 		t.Fatalf("integer source rows = %d, want 2", got)
@@ -106,7 +118,7 @@ func TestSourceLiteralOracleKeepsEqualOccurrencesDistinct(t *testing.T) {
 	}
 	domain, ok := value.Install(solver, project)
 	if !ok {
-		t.Fatal("install source literal oracle")
+		t.Fatal("install source literal semantics")
 	}
 	left, ok := domain.Query(shard, first)
 	if !ok {
@@ -117,11 +129,11 @@ func TestSourceLiteralOracleKeepsEqualOccurrencesDistinct(t *testing.T) {
 		t.Fatal("query second literal")
 	}
 	if !solver.Seal() {
-		t.Fatal("seal duplicate literal oracle")
+		t.Fatal("seal duplicate literal semantics")
 	}
 	state, ok := solver.Solve(context.Background(), nil)
 	if !ok || state == nil {
-		t.Fatal("solve duplicate literal oracle")
+		t.Fatal("solve duplicate literal semantics")
 	}
 	want := typevalue.LiteralInt(registry.Registry(), 7)
 	for name, query := range map[string]*engine.Query[uint64, product.Value]{"first": left, "second": right} {
@@ -132,7 +144,7 @@ func TestSourceLiteralOracleKeepsEqualOccurrencesDistinct(t *testing.T) {
 	}
 }
 
-func TestSourceLiteralOracleRejectsUnsupportedTerms(t *testing.T) {
+func TestSourceLiteralSemanticsRejectsUnsupportedTerms(t *testing.T) {
 	project, shard, source := sourceProject(t, "unsupported.lua", "type Subject = string\nlocal converted = string(1)\nlocal table = {}")
 	solver, err := engine.New(project)
 	if err != nil {
@@ -140,7 +152,7 @@ func TestSourceLiteralOracleRejectsUnsupportedTerms(t *testing.T) {
 	}
 	domain, ok := value.Install(solver, project)
 	if !ok {
-		t.Fatal("install source literal oracle")
+		t.Fatal("install source literal semantics")
 	}
 
 	values, ok := source.ValuesAt(0)
@@ -171,7 +183,7 @@ func TestSourceLiteralOracleRejectsUnsupportedTerms(t *testing.T) {
 		"pack": values, "cell": cell, "table": table, "call": call, "type value": typeValue, "static": static,
 	} {
 		if query, accepted := domain.Query(shard, term); accepted || query != nil {
-			t.Fatalf("%s term %v was accepted by literal oracle", name, term)
+			t.Fatalf("%s term %v was accepted by source literal semantics", name, term)
 		}
 	}
 
@@ -182,7 +194,7 @@ func TestSourceLiteralOracleRejectsUnsupportedTerms(t *testing.T) {
 	}
 	nestedDomain, ok := value.Install(nestedSolver, nestedProject)
 	if !ok {
-		t.Fatal("install nested source literal oracle")
+		t.Fatal("install nested source literal semantics")
 	}
 	nestedLiteral, ok := nested.IntegerAt(0)
 	if !ok {
@@ -190,6 +202,53 @@ func TestSourceLiteralOracleRejectsUnsupportedTerms(t *testing.T) {
 	}
 	if query, accepted := nestedDomain.Query(nestedShard, nestedLiteral); accepted || query != nil {
 		t.Fatal("non-Entry literal was accepted as a root query")
+	}
+}
+
+func TestSourceLiteralSemanticsMinusZeroStaysUnaryOutsideTranche(t *testing.T) {
+	project, shard, source := sourceProject(t, "minus-zero.lua", "local value = -0.0")
+	if source.FloatCount() != 1 || source.UnaryCount() != 1 {
+		t.Fatalf("minus-zero Float/Unary rows = %d/%d, want 1/1", source.FloatCount(), source.UnaryCount())
+	}
+	unary, ok := source.UnaryAt(0)
+	if !ok {
+		t.Fatal("minus-zero Unary")
+	}
+	_, operation, operand, ok := source.Unary(unary)
+	if !ok || operation != program.UnaryNeg {
+		t.Fatalf("minus-zero Unary = %v/%t, want UnaryNeg", operation, ok)
+	}
+	_, number, ok := source.Float(operand)
+	if !ok || math.Float64bits(number) != math.Float64bits(0) {
+		t.Fatalf("minus-zero operand Float = %x/%t, want canonical +0", math.Float64bits(number), ok)
+	}
+
+	solver, err := engine.New(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	domain, ok := value.Install(solver, project)
+	if !ok {
+		t.Fatal("install source literal semantics")
+	}
+	if query, accepted := domain.Query(shard, unary); accepted || query != nil {
+		t.Fatal("Unary negation was admitted as a source literal")
+	}
+	query, ok := domain.Query(shard, operand)
+	if !ok {
+		t.Fatal("canonical +0 operand was not admitted")
+	}
+	if !solver.Seal() {
+		t.Fatal("seal canonical +0 literal")
+	}
+	state, ok := solver.Solve(context.Background(), nil)
+	if !ok || state == nil {
+		t.Fatal("solve canonical +0 literal")
+	}
+	got, present := query.Read(state)
+	want := typevalue.LiteralNumber(registry.Registry(), 0)
+	if !present || !product.Equal(registry.Registry(), got, want) {
+		t.Fatalf("canonical +0 literal = present %t, want exact +0 fact", present)
 	}
 }
 
@@ -210,7 +269,7 @@ func TestSourceLiteralEquationCacheIgnoresUnrelatedModules(t *testing.T) {
 		}
 		domain, ok := value.Install(solver, project)
 		if !ok {
-			t.Fatal("install source literal oracle")
+			t.Fatal("install source literal semantics")
 		}
 		if _, ok := domain.Query(shard, term); !ok || !solver.Seal() {
 			t.Fatal("seal source literal cache")
@@ -233,7 +292,7 @@ func TestSourceLiteralEquationCacheIgnoresUnrelatedModules(t *testing.T) {
 	}
 }
 
-func solveLiteral(t *testing.T, project *link.Link, shard link.Shard, term program.Term) product.Value {
+func solveSourceLiteral(t *testing.T, project *link.Link, shard link.Shard, term program.Term) product.Value {
 	t.Helper()
 	solver, err := engine.New(project)
 	if err != nil {
@@ -241,22 +300,22 @@ func solveLiteral(t *testing.T, project *link.Link, shard link.Shard, term progr
 	}
 	domain, ok := value.Install(solver, project)
 	if !ok {
-		t.Fatal("install source literal oracle")
+		t.Fatal("install source literal semantics")
 	}
 	query, ok := domain.Query(shard, term)
 	if !ok {
 		t.Fatalf("query source literal %v", term)
 	}
 	if !solver.Seal() {
-		t.Fatal("seal source literal oracle")
+		t.Fatal("seal source literal semantics")
 	}
 	state, ok := solver.Solve(context.Background(), nil)
 	if !ok || state == nil {
-		t.Fatal("solve source literal oracle")
+		t.Fatal("solve source literal semantics")
 	}
 	got, ok := query.Read(state)
 	if !ok {
-		t.Fatal("read source literal oracle")
+		t.Fatal("read source literal semantics")
 	}
 	return got
 }

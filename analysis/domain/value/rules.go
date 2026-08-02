@@ -1,6 +1,8 @@
 package value
 
 import (
+	"math"
+
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
@@ -71,7 +73,7 @@ func declareSourceLiteralRule(solver *engine.Solver, factor *engine.Factor[uint6
 }
 
 // sourceLiteral projects only the five typed source-literal Program families.
-// All other Program terms intentionally remain outside this first oracle.
+// All other Program terms intentionally remain outside this first tranche.
 func sourceLiteral(registry *axis.Registry, source *program.Program, term program.Term) (product.Value, bool) {
 	if _, ok := source.Nil(term); ok {
 		return typevalue.Nil(registry), true
@@ -82,11 +84,44 @@ func sourceLiteral(registry *axis.Registry, source *program.Program, term progra
 	if _, value, ok := source.Integer(term); ok {
 		return typevalue.LiteralInt(registry, value), true
 	}
-	if _, value, ok := source.Float(term); ok {
+	if _, value, ok := source.Float(term); ok && sourceFloatRepresentable(value) {
 		return typevalue.LiteralNumber(registry, value), true
 	}
 	if _, value, ok := source.String(term); ok {
 		return typevalue.LiteralString(registry, value), true
 	}
 	return product.Value{}, false
+}
+
+// sourceLiteralTerm admits only typed Program literal families supported by
+// this semantics tranche. It deliberately performs no value materialization:
+// Query needs only coordinate admission, while Rules alone project a payload
+// into product.
+func sourceLiteralTerm(source *program.Program, term program.Term) bool {
+	if source == nil {
+		return false
+	}
+	if _, ok := source.Nil(term); ok {
+		return true
+	}
+	if _, _, ok := source.Bool(term); ok {
+		return true
+	}
+	if _, _, ok := source.Integer(term); ok {
+		return true
+	}
+	if _, value, ok := source.Float(term); ok {
+		return sourceFloatRepresentable(value)
+	}
+	if _, _, ok := source.String(term); ok {
+		return true
+	}
+	return false
+}
+
+// sourceFloatRepresentable rejects payloads the current typevalue numeric
+// constructor cannot preserve exactly. Program itself retains those raw bits;
+// this initial source-literal tranche fails closed until its value domain does too.
+func sourceFloatRepresentable(value float64) bool {
+	return !math.IsNaN(value) && !(value == 0 && math.Signbit(value))
 }

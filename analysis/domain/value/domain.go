@@ -4,7 +4,6 @@
 package value
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	valueregistry "github.com/wippyai/go-lua/analysis/domain/value/registry"
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -14,19 +13,18 @@ import (
 
 const occurrenceKey uint64 = 0
 
-// Domain is the installed source-literal oracle. It owns no separate source
-// model: Program remains the authority for literal rows and Link remains the
-// authority for their shard coordinates.
+// Domain is the installed source-literal semantics tranche. It owns no
+// separate source model: Program remains the authority for literal rows and
+// Link remains the authority for their shard coordinates.
 type Domain struct {
-	solver   *engine.Solver
-	source   *link.Link
-	factor   *engine.Factor[uint64, product.Value]
-	registry *axis.Registry
+	solver *engine.Solver
+	source *link.Link
+	factor *engine.Factor[uint64, product.Value]
 }
 
 // Install declares the canonical source-literal Factor and rules for exactly
 // the Program Nil, Bool, Integer, Float, and String rows. The Factor has no
-// widening rank: its first oracle slice is valid only in acyclic equations,
+// widening rank: its first source-literal tranche is valid only in acyclic equations,
 // which the engine proves while sealing the demanded composition.
 func Install(solver *engine.Solver, source *link.Link) (*Domain, bool) {
 	if solver == nil || source == nil {
@@ -48,21 +46,21 @@ func Install(solver *engine.Solver, source *link.Link) (*Domain, bool) {
 	if !ok || !installSourceRules(solver, source, factor, registry, authority) {
 		return nil, false
 	}
-	return &Domain{solver: solver, source: source, factor: factor, registry: registry}, true
+	return &Domain{solver: solver, source: source, factor: factor}, true
 }
 
 // Query observes one exact Entry-activation literal occurrence. It deliberately
 // does not create candidate queries or infer values for calls, packs, Cells,
 // tables, or static Program forms.
 func (domain *Domain) Query(shard link.Shard, term program.Term) (*engine.Query[uint64, product.Value], bool) {
-	if domain == nil || domain.solver == nil || domain.source == nil || domain.factor == nil || domain.registry == nil {
+	if domain == nil || domain.solver == nil || domain.source == nil || domain.factor == nil {
 		return nil, false
 	}
 	source, ok := domain.source.Program(shard)
 	if !ok || source == nil {
 		return nil, false
 	}
-	if _, ok := sourceLiteral(domain.registry, source, term); !ok {
+	if !sourceLiteralTerm(source, term) {
 		return nil, false
 	}
 	entry, ok := source.Entry()

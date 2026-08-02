@@ -22,9 +22,9 @@ func registryAuthority(registry *axis.Registry) (axis.SchemaIdentity, bool) {
 	return plan.AuthorityIdentity()
 }
 
-// semanticFactor identifies the literal oracle's carrier. The canonical
-// registry authority is part of the identity because it determines every
-// product lane's meaning.
+// semanticFactor identifies the source-literal semantics carrier. The
+// canonical registry authority is part of the identity because it determines
+// every product lane's meaning.
 func semanticFactor(authority axis.SchemaIdentity) engine.SemanticKey {
 	return semantic("factor", authority, nil)
 }
