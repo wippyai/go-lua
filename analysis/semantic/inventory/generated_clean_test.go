@@ -28,11 +28,11 @@ func TestGeneratedInventoryIsClean(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := gen.RenderProduct(in, bindings)
+	want, err := gen.RenderValue(in, bindings)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertGeneratedFile(t, filepath.Join(dir, "..", "..", "domain", "value", "product", "zz_generated_value_registry.go"), want)
+	assertGeneratedFile(t, filepath.Join(dir, "..", "..", "domain", "value", "zz_generated_registry.go"), want)
 }
 
 func inventoryDir(t *testing.T) string {

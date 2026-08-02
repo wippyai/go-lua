@@ -13,11 +13,11 @@ import (
 func main() {
 	inventoryPath := flag.String("inventory", "", "reviewed inventory input")
 	bindingsPath := flag.String("bindings", "", "owner-local generator bindings")
-	productPath := flag.String("product", "", "generated analyzer value-registry output")
+	valuePath := flag.String("value", "", "generated analyzer value-registry output")
 	check := flag.Bool("check", false, "verify outputs without writing")
 	flag.Parse()
-	if *inventoryPath == "" || *bindingsPath == "" || *productPath == "" {
-		fail(fmt.Errorf("inventory, bindings, and product paths are required"))
+	if *inventoryPath == "" || *bindingsPath == "" || *valuePath == "" {
+		fail(fmt.Errorf("inventory, bindings, and value paths are required"))
 	}
 	source, err := os.ReadFile(*inventoryPath)
 	if err != nil {
@@ -38,11 +38,11 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	productSource, err := gen.RenderProduct(in, bindings)
+	valueSource, err := gen.RenderValue(in, bindings)
 	if err != nil {
 		fail(err)
 	}
-	if err := publish(*productPath, productSource, *check); err != nil {
+	if err := publish(*valuePath, valueSource, *check); err != nil {
 		fail(err)
 	}
 }

@@ -14,7 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -514,7 +514,7 @@ func TestTypeEvidenceUsableForInferenceHonorsRuntimeClaims(t *testing.T) {
 	}
 }
 
-func registry() *axis.Registry { return standard.Registry() }
+func registry() *axis.Registry { return value.Registry() }
 
 func nestedRecordType(depth int, leaf typ.Type) typ.Type {
 	result := leaf

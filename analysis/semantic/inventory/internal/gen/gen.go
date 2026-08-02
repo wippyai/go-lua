@@ -30,37 +30,33 @@ func RenderState(in inventory.Inventory, bindings Bindings) ([]byte, error) {
 	return formatted("state lane inventory", out.Bytes())
 }
 
-// RenderProduct emits the one analyzer-owned canonical value-axis registry.
+// RenderValue emits the one analyzer-owned canonical value-axis registry.
 // The generated package deliberately owns the singleton so consumers do not
 // need a second, hand-maintained axis bundle.
-func RenderProduct(in inventory.Inventory, bindings Bindings) ([]byte, error) {
+func RenderValue(in inventory.Inventory, bindings Bindings) ([]byte, error) {
 	_, valueAxes, err := orderedBindings(in, bindings)
 	if err != nil {
 		return nil, err
 	}
 	var out bytes.Buffer
 	out.WriteString(generatedHeader)
-	out.WriteString("package product\n\nimport (\n")
+	out.WriteString("package value\n\nimport (\n")
 	out.WriteString("\t\"github.com/wippyai/go-lua/analysis/domain/value/axis\"\n")
 	for _, valueAxis := range valueAxes {
 		fmt.Fprintf(&out, "\t%s %q\n", valueAxis.Alias, valueAxis.ImportPath)
 	}
-	out.WriteString(")\n\nvar canonicalRegistry = mustCanonicalRegistry()\n\n")
-	out.WriteString("// CanonicalRegistry returns the frozen analyzer-owned value-axis registry.\n")
+	out.WriteString("\t\"github.com/wippyai/go-lua/analysis/domain/value/product\"\n")
+	out.WriteString(")\n\nvar registry = mustRegistry()\n\n")
+	out.WriteString("// Registry returns the frozen analyzer-owned value-axis registry.\n")
 	out.WriteString("// Its sparse-axis order is generated from the reviewed semantic inventory.\n")
-	out.WriteString("func CanonicalRegistry() *axis.Registry { return canonicalRegistry }\n\n")
-	out.WriteString("// RegistryWithCanonicalAxes returns a fresh frozen registry containing the\n")
-	out.WriteString("// canonical sparse axes followed by caller-provided sparse axes.\n")
-	out.WriteString("func RegistryWithCanonicalAxes(specs ...axis.ErasedSpec) (*axis.Registry, error) {\n")
-	out.WriteString("\tcanonical := []axis.ErasedSpec{\n")
+	out.WriteString("func Registry() *axis.Registry { return registry }\n\n")
+	out.WriteString("func mustRegistry() *axis.Registry {\n")
+	out.WriteString("\tregistry, err := product.RegistryWithAxes(\n")
 	for _, valueAxis := range valueAxes {
 		fmt.Fprintf(&out, "\t\t%s.%s().Erase(),\n", valueAxis.Alias, valueAxis.SpecSymbol)
 	}
-	out.WriteString("\t}\n\tcanonical = append(canonical, specs...)\n\treturn RegistryWithAxes(canonical...)\n}\n\n")
-	out.WriteString("func mustCanonicalRegistry() *axis.Registry {\n")
-	out.WriteString("\tregistry, err := RegistryWithCanonicalAxes()\n")
-	out.WriteString("\tif err != nil {\n\t\tpanic(err)\n\t}\n\treturn registry\n}\n")
-	return formatted("product value registry", out.Bytes())
+	out.WriteString("\t)\n\tif err != nil {\n\t\tpanic(err)\n\t}\n\treturn registry\n}\n")
+	return formatted("value registry", out.Bytes())
 }
 
 func formatted(label string, source []byte) ([]byte, error) {

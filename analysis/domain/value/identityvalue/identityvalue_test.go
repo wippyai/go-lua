@@ -7,11 +7,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/test/value/standard"
+	"github.com/wippyai/go-lua/analysis/domain/value"
 )
 
 func TestExactIDReadsOnlySingletonIdentity(t *testing.T) {
-	reg := standard.Registry()
+	reg := value.Registry()
 	id := identity.LuaFunction(17)
 	value := WithExact(reg, product.Top(), id)
 
@@ -36,7 +36,7 @@ func TestExactIDReadsOnlySingletonIdentity(t *testing.T) {
 }
 
 func TestPresentMaterializesPresentIdentityValue(t *testing.T) {
-	reg := standard.Registry()
+	reg := value.Registry()
 	id := identity.LuaFunction(23)
 	value := Present(reg, id)
 
