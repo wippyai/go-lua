@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	typeaccess "github.com/wippyai/go-lua/analysis/type/access"
 	"github.com/wippyai/go-lua/analysis/type/ambient"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -532,6 +533,7 @@ func TestWidenUpperBoundLawAcrossReachableBranches(t *testing.T) {
 		{name: "top", prev: Top(), next: Of(typ.String)},
 		{name: "already ordered", prev: Of(typ.Integer), next: Of(typ.LiteralInt(1))},
 		{name: "primitive family", prev: Of(typ.LiteralInt(0)), next: Of(typ.LiteralInt(1))},
+		{name: "integer number family", prev: Of(typ.Integer), next: Of(typ.Number)},
 		{name: "array elements", prev: Of(typ.NewArray(typ.LiteralString("a"))), next: Of(typ.NewArray(typ.LiteralString("b")))},
 		{name: "array tuple", prev: Of(typ.NewArray(typ.LiteralString("a"))), next: Of(typ.NewTuple(typ.LiteralString("b"), typ.LiteralString("c")))},
 		{name: "empty record array", prev: Of(typetable.NewRecord().Build()), next: Of(typ.NewArray(typ.LiteralString("item")))},
@@ -617,6 +619,249 @@ func TestWidenNestedArrayShapeGrowthStabilizes(t *testing.T) {
 		if !LessOrEq(next, widened) {
 			t.Fatalf("nested array at depth %d is not below stable widened value %v", depth, widened)
 		}
+	}
+}
+
+func TestLessOrEqContainsOptionalInnerEvidence(t *testing.T) {
+	recordA := typetable.NewRecord().Field("a", typ.String).Build()
+	openRecord := typetable.NewRecord().
+		OptField("a", typ.String).
+		OptField("b", typ.String).
+		SetOpen(true).
+		Build()
+	optionalLiterals := typ.MaterializeOptional(typ.MaterializeUnion([]typ.Type{
+		typ.LiteralString("a"),
+		typ.LiteralString("b"),
+	}))
+
+	tests := []struct {
+		name   string
+		source typ.Type
+		target typ.Type
+	}{
+		{name: "nil", source: typ.Nil, target: typ.MaterializeOptional(typ.String)},
+		{name: "record", source: typ.MaterializeOptional(recordA), target: typ.MaterializeOptional(openRecord)},
+		{name: "array", source: typ.MaterializeOptional(typ.NewArray(typ.String)), target: typ.MaterializeOptional(typ.NewArray(typ.Any))},
+		{name: "union", source: optionalLiterals, target: typ.MaterializeOptional(typ.String)},
+		{name: "optional into explicit union", source: typ.MaterializeOptional(recordA), target: typ.MaterializeUnion([]typ.Type{typ.Nil, openRecord})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !LessOrEq(Of(tt.source), Of(tt.target)) {
+				t.Fatalf("optional source %v is not contained in target %v", tt.source, tt.target)
+			}
+		})
+	}
+}
+
+func TestOfCanonicalizesOptionalAndExplicitNilUnion(t *testing.T) {
+	record := typetable.NewRecord().Field("id", typ.String).Build()
+	optional := Of(typ.MaterializeOptional(record))
+	explicit := Of(typ.MaterializeUnion([]typ.Type{typ.Nil, record}))
+	if !Equal(optional, explicit) {
+		t.Fatalf("Of(optional %v) = %v, Of(nil union %v) = %v; equivalent witnesses must compare equal", record, optional, record, explicit)
+	}
+	if !LessOrEq(optional, explicit) || !LessOrEq(explicit, optional) {
+		t.Fatalf("optional and explicit nil-union witnesses must be mutually contained: %v, %v", optional, explicit)
+	}
+}
+
+func TestWidenOptionalRecordFieldIsAnUpperBound(t *testing.T) {
+	prev := typetable.NewRecord().
+		Field("x", typ.MaterializeOptional(typetable.NewRecord().Field("a", typ.String).Build())).
+		Build()
+	next := typetable.NewRecord().
+		Field("x", typ.MaterializeOptional(typetable.NewRecord().Field("b", typ.String).Build())).
+		Build()
+
+	widened := Widen(Of(prev), Of(next))
+	if !LessOrEq(Of(prev), widened) || !LessOrEq(Of(next), widened) {
+		t.Fatalf("Widen(%v,%v) = %v is not an upper bound", prev, next, widened)
+	}
+}
+
+func TestWidenReconcilesDotAndStaticStringKeys(t *testing.T) {
+	staticRecord := func(name string, value typ.Type, optional, readonly bool) typ.Type {
+		return typetable.NewRecord().AddStaticMember(typ.StaticMember{
+			Kind:     typ.StaticMemberStringIndex,
+			Name:     name,
+			Type:     value,
+			Optional: optional,
+			Readonly: readonly,
+		}).Build()
+	}
+	tests := []struct {
+		name    string
+		prev    typ.Type
+		next    typ.Type
+		want    typ.Type
+		wantTop bool
+	}{
+		{
+			name: "field then static",
+			prev: typetable.NewRecord().Field("id", typ.String).Build(),
+			next: staticRecord("id", typ.Number, false, false),
+			want: typetable.NewRecord().Field("id", typ.Any).Build(),
+		},
+		{
+			name: "static then field",
+			prev: staticRecord("id", typ.Number, false, false),
+			next: typetable.NewRecord().Field("id", typ.String).Build(),
+			want: typetable.NewRecord().Field("id", typ.Any).Build(),
+		},
+		{
+			name: "optional field then required static",
+			prev: typetable.NewRecord().OptField("id", typ.String).Build(),
+			next: staticRecord("id", typ.String, false, false),
+			want: typetable.NewRecord().OptField("id", typ.String).Build(),
+		},
+		{
+			name: "required static then optional field",
+			prev: staticRecord("id", typ.String, false, false),
+			next: typetable.NewRecord().OptField("id", typ.String).Build(),
+			want: typetable.NewRecord().OptField("id", typ.String).Build(),
+		},
+		{
+			name: "readonly field then readonly static",
+			prev: typetable.NewRecord().ReadonlyField("id", typ.Integer).Build(),
+			next: staticRecord("id", typ.Number, false, true),
+			want: typetable.NewRecord().ReadonlyField("id", typ.Number).Build(),
+		},
+		{
+			name: "readonly static then readonly field",
+			prev: staticRecord("id", typ.Integer, false, true),
+			next: typetable.NewRecord().ReadonlyField("id", typ.Number).Build(),
+			want: typetable.NewRecord().ReadonlyField("id", typ.Number).Build(),
+		},
+		{
+			name:    "readonly mismatch",
+			prev:    typetable.NewRecord().ReadonlyField("id", typ.String).Build(),
+			next:    staticRecord("id", typ.String, false, false),
+			wantTop: true,
+		},
+		{
+			name:    "readonly mismatch reverse",
+			prev:    staticRecord("id", typ.String, false, false),
+			next:    typetable.NewRecord().ReadonlyField("id", typ.String).Build(),
+			wantTop: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prev, next := Of(tt.prev), Of(tt.next)
+			widened := Widen(prev, next)
+			if tt.wantTop {
+				if !widened.IsTop() {
+					t.Fatalf("Widen(%v,%v) = %v, want top", tt.prev, tt.next, widened)
+				}
+				return
+			}
+			got, ok := widened.Type()
+			if !ok || !typ.TypeEquals(got, tt.want) {
+				t.Fatalf("Widen(%v,%v) = %v/%v, want %v", tt.prev, tt.next, got, ok, tt.want)
+			}
+			if !LessOrEq(prev, widened) || !LessOrEq(next, widened) {
+				t.Fatalf("Widen(%v,%v) = %v is not an upper bound", tt.prev, tt.next, widened)
+			}
+		})
+	}
+}
+
+func TestLessOrEqPreservesDotFieldPrecedenceOverStaticStringMember(t *testing.T) {
+	conflicted := typetable.NewRecord().
+		OptField("id", typ.String).
+		AddStaticMember(typ.StaticMember{
+			Kind: typ.StaticMemberStringIndex,
+			Name: "id",
+			Type: typ.String,
+		}).
+		Build()
+
+	got, ok := typeaccess.Field(conflicted, "id")
+	want := typ.MaterializeOptional(typ.String)
+	if !ok || !typ.TypeEquals(got, want) {
+		t.Fatalf("Field(conflicted, id) = %v/%v, want %v", got, ok, want)
+	}
+	required := typetable.NewRecord().Field("id", typ.String).Build()
+	if LessOrEq(Of(conflicted), Of(required)) {
+		t.Fatalf("optional dot-field evidence %v was accepted under required target %v", conflicted, required)
+	}
+}
+
+func TestWidenCoversOpenAndMapLookupEvidence(t *testing.T) {
+	mapOnly := typetable.NewRecord().MapComponent(typ.String, typ.Number).Build()
+	mapAndStatic := typetable.NewRecord().
+		StaticStringIndex("id", typ.String).
+		MapComponent(typ.String, typ.Number).
+		Build()
+	tests := []struct {
+		name string
+		prev typ.Type
+		next typ.Type
+	}{
+		{
+			name: "open record missing field",
+			prev: typetable.NewRecord().Field("id", typ.String).SetOpen(true).Build(),
+			next: typetable.NewRecord().SetOpen(true).Build(),
+		},
+		{name: "map record missing static key", prev: mapOnly, next: mapAndStatic},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prev, next := Of(tt.prev), Of(tt.next)
+			widened := Widen(prev, next)
+			if !LessOrEq(prev, widened) || !LessOrEq(next, widened) {
+				t.Fatalf("Widen(%v,%v) = %v is not an upper bound", tt.prev, tt.next, widened)
+			}
+			widenedType, ok := widened.Type()
+			if !ok {
+				t.Fatalf("Widen(%v,%v) = top, want open record upper bound", tt.prev, tt.next)
+			}
+			got, ok := typeaccess.Field(widenedType, "id")
+			if !ok || !typ.TypeEquals(got, typ.Any) {
+				t.Fatalf("Field(Widen(%v,%v), id) = %v/%v, want any", tt.prev, tt.next, got, ok)
+			}
+		})
+	}
+}
+
+func TestLessOrEqContainsPrimitiveFamilyWideningInNestedShapes(t *testing.T) {
+	tests := []struct {
+		name   string
+		source typ.Type
+		target typ.Type
+	}{
+		{name: "integer number", source: typ.Integer, target: typ.Number},
+		{name: "integer literal number", source: typ.LiteralInt(1), target: typ.Number},
+		{name: "optional integer number", source: typ.MaterializeOptional(typ.Integer), target: typ.MaterializeOptional(typ.Number)},
+		{name: "array integer number", source: typ.NewArray(typ.Integer), target: typ.NewArray(typ.Number)},
+		{name: "record integer number", source: typetable.NewRecord().Field("value", typ.Integer).Build(), target: typetable.NewRecord().Field("value", typ.Number).Build()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !LessOrEq(Of(tt.source), Of(tt.target)) {
+				t.Fatalf("source %v is not contained in target %v", tt.source, tt.target)
+			}
+		})
+	}
+}
+
+func TestLessOrEqOrdinaryRecordDoesNotAllocate(t *testing.T) {
+	source := Of(typetable.NewRecord().Field("id", typ.String).Build())
+	target := Of(typetable.NewRecord().
+		Field("id", typ.String).
+		OptField("name", typ.String).
+		Build())
+	if !LessOrEq(source, target) {
+		t.Fatal("test setup: ordinary record must be contained by optional extension")
+	}
+	if allocations := testing.AllocsPerRun(1_000, func() {
+		if !LessOrEq(source, target) {
+			t.Fatal("ordinary record containment changed during allocation check")
+		}
+	}); allocations != 0 {
+		t.Fatalf("LessOrEq(ordinary record) allocations = %v, want 0", allocations)
 	}
 }
 

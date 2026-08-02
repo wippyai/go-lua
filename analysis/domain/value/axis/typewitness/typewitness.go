@@ -1,6 +1,7 @@
 package typewitness
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -10,6 +11,7 @@ import (
 	typelit "github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/refinement"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -151,16 +153,24 @@ func Of(t typ.Type) Value {
 	if t == nil {
 		return Top()
 	}
-	// Canonicalize union witnesses so member order does not affect Equal/Hash.
-	// Containment (LessOrEq) treats number|string and string|number as equal, so
-	// they must also be structurally equal for the partial order to be
-	// antisymmetric and for Hash to stay consistent.
+	// Canonicalize union witnesses so syntactic union spelling does not affect
+	// Equal/Hash. Containment interprets optional as nil plus its inner witness,
+	// so an explicit nil union must canonicalize to the same representation for
+	// the partial order to remain antisymmetric.
 	if u, ok := t.(*typ.Union); ok {
-		canonical := typ.MaterializeUnion(u.Members)
+		canonical := normalize.UnionForEvidence(u.Members...)
 		if _, stillUnion := canonical.(*typ.Union); !stillUnion {
 			return Of(canonical)
 		}
 		t = canonical
+	}
+	if optional, ok := t.(*typ.Optional); ok {
+		if union, ok := unwrap.Annotated(optional.Inner).(*typ.Union); ok {
+			members := make([]typ.Type, 0, len(union.Members)+1)
+			members = append(members, typ.Nil)
+			members = append(members, union.Members...)
+			return Of(normalize.UnionForEvidence(members...))
+		}
 	}
 	value := Value{t: t}
 	if typ.ContainsRecursive(t) {
@@ -345,6 +355,10 @@ func widenedStableRecord(a, b typ.Type) (typ.Type, bool) {
 	if !sameWitnessType(ar.Metatable, br.Metatable) {
 		return nil, false
 	}
+	aParts, bParts, ok := reconciledRecordStringKeyParts(ar, br)
+	if !ok {
+		return nil, false
+	}
 	sameMap := ar.HasMapComponent() && br.HasMapComponent() && sameWitnessType(ar.MapKey, br.MapKey)
 	var mapKey, mapValue typ.Type
 	if sameMap {
@@ -359,16 +373,16 @@ func widenedStableRecord(a, b typ.Type) (typ.Type, bool) {
 		// has a differing map component, the open result below carries unknown
 		// access evidence instead of incorrectly requiring either branch's map.
 	}
-	fields, ok := widenedStableRecordFields(ar.Fields, br.Fields)
+	fields, ok := widenedStableRecordFields(aParts.fields, bParts.fields, ar, br)
 	if !ok {
 		return nil, false
 	}
-	members, ok := widenedStableRecordMembers(ar.StaticMembers, br.StaticMembers)
+	members, ok := widenedStableRecordMembers(aParts.members, bParts.members, ar, br)
 	if !ok {
 		return nil, false
 	}
-	shapeExpanded := len(fields) > len(ar.Fields) || len(fields) > len(br.Fields) ||
-		len(members) > len(ar.StaticMembers) || len(members) > len(br.StaticMembers) ||
+	shapeExpanded := len(fields) > len(aParts.fields) || len(fields) > len(bParts.fields) ||
+		len(members) > len(aParts.members) || len(members) > len(bParts.members) ||
 		ar.HasMapComponent() != br.HasMapComponent() ||
 		(ar.HasMapComponent() && br.HasMapComponent() && !sameMap)
 	return typ.RebuildRecord(typ.RecordParts{
@@ -382,16 +396,135 @@ func widenedStableRecord(a, b typ.Type) (typ.Type, bool) {
 	}), true
 }
 
-func widenedStableRecordFields(a, b []typ.Field) ([]typ.Field, bool) {
+type stableRecordParts struct {
+	fields  []typ.Field
+	members []typ.StaticMember
+}
+
+// reconciledRecordStringKeyParts expresses the Lua key-space equivalence used
+// by access and subtype: a dot field and an exact bracket-string member with a
+// non-empty name denote the same key. Widening must combine them before it
+// creates a result, otherwise field-read precedence can hide one branch's
+// evidence. Static-only names retain their static representation; a colliding
+// name is canonically represented as a field in both inputs.
+func reconciledRecordStringKeyParts(a, b *typ.Record) (stableRecordParts, stableRecordParts, bool) {
+	if !recordsHaveStringKeyCollision(a, b) {
+		return stableRecordParts{fields: a.Fields, members: a.StaticMembers},
+			stableRecordParts{fields: b.Fields, members: b.StaticMembers}, true
+	}
+	collisions := recordStringKeyCollisions(a, b)
+	aParts, ok := reconcileRecordStringKeyParts(a, collisions)
+	if !ok {
+		return stableRecordParts{}, stableRecordParts{}, false
+	}
+	bParts, ok := reconcileRecordStringKeyParts(b, collisions)
+	if !ok {
+		return stableRecordParts{}, stableRecordParts{}, false
+	}
+	return aParts, bParts, true
+}
+
+// recordsHaveStringKeyCollision is the hot no-allocation gate for the cold
+// reconciliation path below. Record fields and static members are already
+// sorted, and GetStaticStringIndex performs a binary search.
+func recordsHaveStringKeyCollision(a, b *typ.Record) bool {
+	for _, field := range a.Fields {
+		if field.Name != "" && (a.GetStaticStringIndex(field.Name) != nil || b.GetStaticStringIndex(field.Name) != nil) {
+			return true
+		}
+	}
+	for _, field := range b.Fields {
+		if field.Name != "" && (a.GetStaticStringIndex(field.Name) != nil || b.GetStaticStringIndex(field.Name) != nil) {
+			return true
+		}
+	}
+	return false
+}
+
+func recordStringKeyCollisions(a, b *typ.Record) map[string]struct{} {
+	fields := make(map[string]struct{}, len(a.Fields)+len(b.Fields))
+	statics := make(map[string]struct{}, len(a.StaticMembers)+len(b.StaticMembers))
+	for _, record := range []*typ.Record{a, b} {
+		for _, field := range record.Fields {
+			if field.Name != "" {
+				fields[field.Name] = struct{}{}
+			}
+		}
+		for _, member := range record.StaticMembers {
+			if member.Kind == typ.StaticMemberStringIndex && member.Name != "" {
+				statics[member.Name] = struct{}{}
+			}
+		}
+	}
+	collisions := make(map[string]struct{})
+	for name := range fields {
+		if _, ok := statics[name]; ok {
+			collisions[name] = struct{}{}
+		}
+	}
+	return collisions
+}
+
+func reconcileRecordStringKeyParts(record *typ.Record, collisions map[string]struct{}) (stableRecordParts, bool) {
+	fields := make([]typ.Field, 0, len(record.Fields)+len(collisions))
+	for _, field := range record.Fields {
+		if _, collision := collisions[field.Name]; !collision {
+			fields = append(fields, field)
+		}
+	}
+	for name := range collisions {
+		field := record.GetField(name)
+		member := record.GetStaticStringIndex(name)
+		switch {
+		case field != nil && member != nil:
+			// A single input carrying contradictory views of one Lua key has no
+			// exact canonical field representation. Widening must fail closed
+			// rather than choose the dot-field access precedence as evidence.
+			if field.Readonly != member.Readonly || !sameWitnessType(field.Type, member.Type) {
+				return stableRecordParts{}, false
+			}
+			merged := *field
+			// Dot-field lookup has precedence over an exact bracket-string member,
+			// so its absence semantics are the observable ones for this key.
+			merged.Optional = field.Optional
+			fields = append(fields, merged)
+		case field != nil:
+			fields = append(fields, *field)
+		case member != nil:
+			fields = append(fields, typ.Field{
+				Name:     member.Name,
+				Type:     member.Type,
+				Optional: member.Optional,
+				Readonly: member.Readonly,
+			})
+		default:
+			return stableRecordParts{}, false
+		}
+	}
+	sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
+
+	members := make([]typ.StaticMember, 0, len(record.StaticMembers))
+	for _, member := range record.StaticMembers {
+		if member.Kind == typ.StaticMemberStringIndex {
+			if _, collision := collisions[member.Name]; collision {
+				continue
+			}
+		}
+		members = append(members, member)
+	}
+	return stableRecordParts{fields: fields, members: members}, true
+}
+
+func widenedStableRecordFields(a, b []typ.Field, ar, br *typ.Record) ([]typ.Field, bool) {
 	out := make([]typ.Field, 0, len(a)+len(b))
 	i, j := 0, 0
 	for i < len(a) || j < len(b) {
 		switch {
 		case i >= len(a):
-			out = append(out, optionalBranchField(b[j]))
+			out = append(out, widenedBranchField(b[j], ar))
 			j++
 		case j >= len(b):
-			out = append(out, optionalBranchField(a[i]))
+			out = append(out, widenedBranchField(a[i], br))
 			i++
 		case a[i].Name == b[j].Name:
 			if a[i].Readonly != b[j].Readonly {
@@ -408,31 +541,38 @@ func widenedStableRecordFields(a, b []typ.Field) ([]typ.Field, bool) {
 			i++
 			j++
 		case a[i].Name < b[j].Name:
-			out = append(out, optionalBranchField(a[i]))
+			out = append(out, widenedBranchField(a[i], br))
 			i++
 		default:
-			out = append(out, optionalBranchField(b[j]))
+			out = append(out, widenedBranchField(b[j], ar))
 			j++
 		}
 	}
 	return out, true
 }
 
-func optionalBranchField(field typ.Field) typ.Field {
+func widenedBranchField(field typ.Field, absent *typ.Record) typ.Field {
 	field.Optional = true
+	if absent.Open {
+		field.Type = typ.Any
+		return field
+	}
+	if absent.HasMapComponent() && typetable.MapComponentKeyMayContainString(absent.MapKey, field.Name) {
+		field.Type, _ = widenRecordMemberType(field.Type, absent.MapValue)
+	}
 	return field
 }
 
-func widenedStableRecordMembers(a, b []typ.StaticMember) ([]typ.StaticMember, bool) {
+func widenedStableRecordMembers(a, b []typ.StaticMember, ar, br *typ.Record) ([]typ.StaticMember, bool) {
 	out := make([]typ.StaticMember, 0, len(a)+len(b))
 	i, j := 0, 0
 	for i < len(a) || j < len(b) {
 		switch {
 		case i >= len(a):
-			out = append(out, optionalBranchStaticMember(b[j]))
+			out = append(out, widenedBranchStaticMember(b[j], ar))
 			j++
 		case j >= len(b):
-			out = append(out, optionalBranchStaticMember(a[i]))
+			out = append(out, widenedBranchStaticMember(a[i], br))
 			i++
 		default:
 			cmp := typ.CompareStaticMembers(a[i], b[j])
@@ -452,10 +592,10 @@ func widenedStableRecordMembers(a, b []typ.StaticMember) ([]typ.StaticMember, bo
 				i++
 				j++
 			case cmp < 0:
-				out = append(out, optionalBranchStaticMember(a[i]))
+				out = append(out, widenedBranchStaticMember(a[i], br))
 				i++
 			default:
-				out = append(out, optionalBranchStaticMember(b[j]))
+				out = append(out, widenedBranchStaticMember(b[j], ar))
 				j++
 			}
 		}
@@ -463,8 +603,15 @@ func widenedStableRecordMembers(a, b []typ.StaticMember) ([]typ.StaticMember, bo
 	return out, true
 }
 
-func optionalBranchStaticMember(member typ.StaticMember) typ.StaticMember {
+func widenedBranchStaticMember(member typ.StaticMember, absent *typ.Record) typ.StaticMember {
 	member.Optional = true
+	if absent.Open {
+		member.Type = typ.Any
+		return member
+	}
+	if absent.HasMapComponent() && typetable.MapComponentKeyMayContainStaticMember(absent.MapKey, member) {
+		member.Type, _ = widenRecordMemberType(member.Type, absent.MapValue)
+	}
 	return member
 }
 
@@ -557,10 +704,19 @@ func Meet(a, b Value) Value {
 	return Of(normalize.UnionForEvidence(kept...))
 }
 
-// witnessAlternatives returns the top-level alternatives of a witness type: the
-// members of a union, or the type itself.
+// witnessAlternatives returns the top-level alternatives of a witness type.
+// Optional is a nil-or-inner witness, so it expands to nil plus the inner
+// alternatives; otherwise optional evidence would be incomparable with the
+// equivalent explicit union shape.
 func witnessAlternatives(t typ.Type) []typ.Type {
-	if u, ok := unwrap.Annotated(t).(*typ.Union); ok {
+	t = unwrap.Alias(t)
+	if optional, ok := t.(*typ.Optional); ok {
+		inner := witnessAlternatives(optional.Inner)
+		alternatives := make([]typ.Type, 0, 1+len(inner))
+		alternatives = append(alternatives, typ.Nil)
+		return append(alternatives, inner...)
+	}
+	if u, ok := t.(*typ.Union); ok {
 		return u.Members
 	}
 	return []typ.Type{t}
@@ -587,13 +743,29 @@ func scalarLeq(a, b typ.Type) bool {
 	if recordWitnessLeq(a, b) {
 		return true
 	}
-	if opt, ok := unwrap.Annotated(b).(*typ.Optional); ok {
-		return typ.TypeEquals(a, typ.Nil) || scalarLeq(a, opt.Inner)
+	if target, ok := optionalWitness(b); ok {
+		if source, ok := optionalWitness(a); ok {
+			// Both shapes include nil. Their remaining evidence is contained
+			// exactly when the non-nil source alternatives are contained in the
+			// target inner type; use witnessTypeLeq so optional union payloads do
+			// not lose an alternative at this scalar boundary.
+			return witnessTypeLeq(source.Inner, target.Inner)
+		}
+		return typ.TypeEquals(a, typ.Nil) || witnessTypeLeq(a, target.Inner)
 	}
-	if base, ok := typelit.FamilyBase(a); ok && typ.SameNodeOrAcyclicEqual(base, b) {
-		return true
+	if aBase, aOK := typelit.FamilyBase(a); aOK {
+		if bBase, bOK := typelit.FamilyBase(b); bOK {
+			if merged, ok := typelit.MergeFamilyBases(aBase, bBase); ok && sameWitnessType(merged, b) {
+				return true
+			}
+		}
 	}
 	return false
+}
+
+func optionalWitness(t typ.Type) (*typ.Optional, bool) {
+	optional, ok := unwrap.Alias(t).(*typ.Optional)
+	return optional, ok && optional != nil
 }
 
 func emptyRecordArrayLeq(a, b typ.Type) bool {
@@ -646,8 +818,12 @@ func recordWitnessLeq(a, b typ.Type) bool {
 		!recordMapWitnessLeq(source, target) {
 		return false
 	}
-	return recordFieldsWitnessLeq(source.Fields, target.Fields, target.Open) &&
-		recordStaticMembersWitnessLeq(source.StaticMembers, target.StaticMembers, target.Open)
+	sourceParts, targetParts, ok := reconciledRecordStringKeyParts(source, target)
+	if !ok {
+		return false
+	}
+	return recordFieldsWitnessLeq(source, sourceParts.fields, targetParts.fields, target.Open) &&
+		recordStaticMembersWitnessLeq(source, sourceParts.members, targetParts.members, target.Open)
 }
 
 func recordMapWitnessLeq(source, target *typ.Record) bool {
@@ -664,12 +840,12 @@ func recordMapWitnessLeq(source, target *typ.Record) bool {
 	}
 }
 
-func recordFieldsWitnessLeq(source, target []typ.Field, targetOpen bool) bool {
+func recordFieldsWitnessLeq(sourceRecord *typ.Record, source, target []typ.Field, targetOpen bool) bool {
 	i, j := 0, 0
 	for i < len(source) || j < len(target) {
 		switch {
 		case i >= len(source):
-			if !target[j].Optional {
+			if !missingStringKeyWitnessLeq(sourceRecord, target[j]) {
 				return false
 			}
 			j++
@@ -684,7 +860,7 @@ func recordFieldsWitnessLeq(source, target []typ.Field, targetOpen bool) bool {
 			}
 			i++
 		case source[i].Name > target[j].Name:
-			if !target[j].Optional {
+			if !missingStringKeyWitnessLeq(sourceRecord, target[j]) {
 				return false
 			}
 			j++
@@ -701,12 +877,26 @@ func recordFieldsWitnessLeq(source, target []typ.Field, targetOpen bool) bool {
 	return true
 }
 
-func recordStaticMembersWitnessLeq(source, target []typ.StaticMember, targetOpen bool) bool {
+func missingStringKeyWitnessLeq(source *typ.Record, target typ.Field) bool {
+	if !target.Optional {
+		return false
+	}
+	if source.Open && !witnessTypeLeq(typ.Any, target.Type) {
+		return false
+	}
+	if source.HasMapComponent() && typetable.MapComponentKeyMayContainString(source.MapKey, target.Name) &&
+		!witnessTypeLeq(source.MapValue, target.Type) {
+		return false
+	}
+	return true
+}
+
+func recordStaticMembersWitnessLeq(sourceRecord *typ.Record, source, target []typ.StaticMember, targetOpen bool) bool {
 	i, j := 0, 0
 	for i < len(source) || j < len(target) {
 		switch {
 		case i >= len(source):
-			if !target[j].Optional {
+			if !missingStaticKeyWitnessLeq(sourceRecord, target[j]) {
 				return false
 			}
 			j++
@@ -724,7 +914,7 @@ func recordStaticMembersWitnessLeq(source, target []typ.StaticMember, targetOpen
 				}
 				i++
 			case cmp > 0:
-				if !target[j].Optional {
+				if !missingStaticKeyWitnessLeq(sourceRecord, target[j]) {
 					return false
 				}
 				j++
@@ -742,15 +932,36 @@ func recordStaticMembersWitnessLeq(source, target []typ.StaticMember, targetOpen
 	return true
 }
 
+func missingStaticKeyWitnessLeq(source *typ.Record, target typ.StaticMember) bool {
+	if !target.Optional {
+		return false
+	}
+	if source.Open && !witnessTypeLeq(typ.Any, target.Type) {
+		return false
+	}
+	if source.HasMapComponent() && typetable.MapComponentKeyMayContainStaticMember(source.MapKey, target) &&
+		!witnessTypeLeq(source.MapValue, target.Type) {
+		return false
+	}
+	return true
+}
+
 // alternativeLeqType reports whether a single alternative is contained in some
 // alternative of t.
 func alternativeLeqType(alt typ.Type, t typ.Type) bool {
-	for _, member := range witnessAlternatives(t) {
-		if scalarLeq(alt, member) {
-			return true
-		}
+	t = unwrap.Alias(t)
+	if optional, ok := t.(*typ.Optional); ok {
+		return scalarLeq(alt, typ.Nil) || alternativeLeqType(alt, optional.Inner)
 	}
-	return false
+	if union, ok := t.(*typ.Union); ok {
+		for _, member := range union.Members {
+			if scalarLeq(alt, member) {
+				return true
+			}
+		}
+		return false
+	}
+	return scalarLeq(alt, t)
 }
 
 // witnessTypeLeq reports whether every alternative of a is contained in some
@@ -759,12 +970,23 @@ func witnessTypeLeq(a, b typ.Type) bool {
 	if typ.SameNodeOrAcyclicEqual(a, b) {
 		return true
 	}
-	for _, alt := range witnessAlternatives(a) {
-		if !alternativeLeqType(alt, b) {
-			return false
-		}
+	return witnessAlternativesLeq(a, b)
+}
+
+func witnessAlternativesLeq(a, b typ.Type) bool {
+	a = unwrap.Alias(a)
+	if optional, ok := a.(*typ.Optional); ok {
+		return alternativeLeqType(typ.Nil, b) && witnessAlternativesLeq(optional.Inner, b)
 	}
-	return true
+	if union, ok := a.(*typ.Union); ok {
+		for _, member := range union.Members {
+			if !alternativeLeqType(member, b) {
+				return false
+			}
+		}
+		return true
+	}
+	return alternativeLeqType(a, b)
 }
 
 // normalizeWitnessUnion builds the canonical union of two witnesses'
