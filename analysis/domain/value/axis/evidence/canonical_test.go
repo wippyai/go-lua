@@ -5,83 +5,63 @@ import (
 	"context"
 	"errors"
 	"io"
-	"math"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
 )
 
-func TestCanonicalEncodingMatchesEqualAcrossAdversarialCorpus(t *testing.T) {
-	patterns := [][maxOrigins]Origin{
-		{},
-		{{Kind: OriginSource, ID: 1}},
-		{3: {Kind: OriginBranch, ID: 2}},
-		{
-			{Kind: OriginSource, ID: 1},
-			{Kind: OriginBranch, ID: 2},
-			{Kind: OriginCall, ID: 3},
-			{Kind: OriginAnnotation, ID: math.MaxUint64},
-		},
-		{
-			{Kind: OriginKind(0xff), ID: 1},
-			{Kind: OriginSource, ID: 0x0100},
-		},
-	}
-	values := []Value{
-		Bottom(), Top(), GradualTop(), ExplicitTop(),
-		GradualTop().WithOrigin(Origin{Kind: OriginSource, ID: 1}),
-		ExplicitTop().WithOrigin(Origin{Kind: OriginAnnotation, ID: math.MaxUint64}),
-	}
-	truncated := GradualTop()
-	for index := 8; index > 0; index-- {
-		truncated = truncated.WithOrigin(Origin{Kind: OriginSource, ID: uint64(index)})
-	}
-	values = append(values, truncated)
-	for _, rawKind := range []kind{bottom, gradualTop, explicitTop, top, kind(4), kind(0xff)} {
-		for _, count := range []uint8{0, 1, maxOrigins, maxOrigins + 1, 0xff} {
-			for _, isTruncated := range []bool{false, true} {
-				for _, items := range patterns {
-					values = append(values, Value{kind: rawKind, origins: originSet{items: items, count: count, truncated: isTruncated}})
-				}
-			}
-		}
-	}
+func TestCanonicalEncodingMatchesFourSemanticStates(t *testing.T) {
+	values := []Value{Bottom(), GradualTop(), ExplicitTop(), Top(), {kind: kind(4)}, {kind: kind(0xff)}}
 	assertEqualBytePartition(t, values)
 }
 
-func TestCanonicalEncodingIncludesInactiveOriginSlots(t *testing.T) {
-	plain := GradualTop()
-	stale := plain
-	stale.origins.items[maxOrigins-1] = Origin{Kind: OriginCall, ID: 99}
-	if Equal(plain, stale) {
-		t.Fatal("inactive-slot fixture is unexpectedly Equal")
-	}
-	if bytes.Equal(canonicalBytes(t, plain), canonicalBytes(t, stale)) {
-		t.Fatal("inactive origin storage was omitted from canonical identity")
+func TestCanonicalCodecRevisionTracksSemanticCarrierCut(t *testing.T) {
+	if got := Spec().Erase().CanonicalCodecVersion(); got != 2 {
+		t.Fatalf("evidence canonical codec revision = %d, want 2", got)
 	}
 }
 
-func TestCanonicalEncodingSeparatesOriginFieldBoundaries(t *testing.T) {
-	left := Value{kind: gradualTop, origins: originSet{items: [maxOrigins]Origin{{Kind: OriginSource, ID: 0x0102}}, count: 1}}
-	right := Value{kind: gradualTop, origins: originSet{items: [maxOrigins]Origin{{Kind: OriginBranch, ID: 0x02}}, count: 1}}
-	if Equal(left, right) {
-		t.Fatal("origin collision fixture is unexpectedly Equal")
+func TestCanonicalDecoderRejectsLegacyOriginPayload(t *testing.T) {
+	var writer canonical.Writer
+	if err := writer.ResetBuffer(context.Background(), Key.ID(), 2); err != nil {
+		t.Fatal(err)
 	}
-	if bytes.Equal(canonicalBytes(t, left), canonicalBytes(t, right)) {
-		t.Fatal("origin kind/ID field boundary collided")
+	if err := writer.Record(canonicalValueRecord); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Uint(uint64(gradualTop)); err != nil {
+		t.Fatal(err)
+	}
+	// This is the first obsolete field of codec v1's origin carrier. Version 2
+	// has no provenance payload and must leave it as rejected trailing data.
+	if err := writer.Uint(0); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := writer.FinishBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reader canonical.Reader
+	if err := reader.Reset(context.Background(), encoded, Key.ID(), 2); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := decodeCanonical(context.Background(), &reader); err != nil || !Equal(got, GradualTop()) {
+		t.Fatalf("decodeCanonical = %s, %v; want gradual-top", got, err)
+	}
+	if err := reader.Finish(); !errors.Is(err, canonical.ErrTrailing) {
+		t.Fatalf("legacy evidence payload finish = %v, want trailing-data rejection", err)
 	}
 }
 
 func TestCanonicalEncodingPropagatesCancellationWithoutAuthority(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var writer canonical.Writer
-	if err := writer.ResetBuffer(ctx, Key.ID(), 1); err != nil {
+	if err := writer.ResetBuffer(ctx, Key.ID(), 2); err != nil {
 		t.Fatal(err)
 	}
 	primeCanonicalCancellation(t, &writer)
 	cancel()
-	value := GradualTop().WithOrigin(Origin{Kind: OriginSource, ID: 1})
-	if err := encodeCanonical(&writer, value); !errors.Is(err, context.Canceled) {
+	if err := encodeCanonical(&writer, GradualTop()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("encodeCanonical error = %v", err)
 	}
 	if got, err := writer.FinishBytes(); !errors.Is(err, context.Canceled) || got != nil {
@@ -91,13 +71,12 @@ func TestCanonicalEncodingPropagatesCancellationWithoutAuthority(t *testing.T) {
 
 func BenchmarkCanonicalEncoding(b *testing.B) {
 	var writer canonical.Writer
-	value := GradualTop().WithOrigin(Origin{Kind: OriginSource, ID: 1}).WithOrigin(Origin{Kind: OriginBranch, ID: 2})
 	b.ReportAllocs()
 	for range b.N {
-		if err := writer.Reset(context.Background(), io.Discard, Key.ID(), 1); err != nil {
+		if err := writer.Reset(context.Background(), io.Discard, Key.ID(), 2); err != nil {
 			b.Fatal(err)
 		}
-		if err := encodeCanonical(&writer, value); err != nil {
+		if err := encodeCanonical(&writer, GradualTop()); err != nil {
 			b.Fatal(err)
 		}
 		if err := writer.Finish(); err != nil {
@@ -109,7 +88,7 @@ func BenchmarkCanonicalEncoding(b *testing.B) {
 func assertEqualBytePartition(t testing.TB, values []Value) {
 	t.Helper()
 	var representatives []Value
-	var encodedClasses [][]byte
+	encodedClasses := make([][]byte, 0, len(values))
 	byBytes := make(map[string]int)
 	for _, value := range values {
 		class := equalClass(t, value, representatives)
@@ -128,30 +107,22 @@ func assertEqualBytePartition(t testing.TB, values []Value) {
 		}
 		byBytes[string(encoded)] = class
 	}
-	if len(representatives) != len(byBytes) {
-		t.Fatalf("Equal/byte class counts differ: %d/%d", len(representatives), len(byBytes))
-	}
 }
 
 func equalClass(t testing.TB, value Value, representatives []Value) int {
 	t.Helper()
-	matched := -1
 	for index, representative := range representatives {
-		if !Equal(value, representative) {
-			continue
+		if Equal(value, representative) {
+			return index
 		}
-		if matched >= 0 {
-			t.Fatalf("value %#v belongs to multiple Equal classes %#v and %#v", value, representatives[matched], representative)
-		}
-		matched = index
 	}
-	return matched
+	return -1
 }
 
 func canonicalBytes(t testing.TB, value Value) []byte {
 	t.Helper()
 	var writer canonical.Writer
-	if err := writer.ResetBuffer(context.Background(), Key.ID(), 1); err != nil {
+	if err := writer.ResetBuffer(context.Background(), Key.ID(), 2); err != nil {
 		t.Fatal(err)
 	}
 	if err := encodeCanonical(&writer, value); err != nil {

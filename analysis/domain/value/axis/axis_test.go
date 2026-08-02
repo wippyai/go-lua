@@ -80,14 +80,9 @@ func TestFiniteAxisSpecsLaws(t *testing.T) {
 	})
 
 	t.Run("evidence", func(t *testing.T) {
-		gradualSource := evidence.GradualTop().WithOrigin(evidence.Origin{Kind: evidence.OriginSource, ID: 1})
-		gradualBranch := evidence.GradualTop().WithOrigin(evidence.Origin{Kind: evidence.OriginBranch, ID: 2})
 		runAxisLaws(t, "evidence", evidence.Spec(), []evidence.Value{
 			evidence.Bottom(),
 			evidence.GradualTop(),
-			gradualSource,
-			gradualBranch,
-			evidence.Join(gradualSource, gradualBranch),
 			evidence.ExplicitTop(),
 			evidence.Top(),
 		})

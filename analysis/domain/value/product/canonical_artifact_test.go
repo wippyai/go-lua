@@ -34,9 +34,7 @@ func TestCanonicalArtifactMaterializesLiteralAndCompleteStandardInventory(t *tes
 	ed.SetPresence(presence.Present())
 	product.EditSet(&ed, assertion.Key, assertion.Of(assertion.TypeClaim, assertion.RuntimeClaim))
 	product.EditSet(&ed, escape.Key, escape.Fresh())
-	product.EditSet(&ed, evidence.Key, evidence.GradualTop().
-		WithOrigin(evidence.Origin{Kind: evidence.OriginSource, ID: 11}).
-		WithOrigin(evidence.Origin{Kind: evidence.OriginCall, ID: 29}))
+	product.EditSet(&ed, evidence.Key, evidence.GradualTop())
 	product.EditSet(&ed, identity.Key, identity.Singleton(identity.ID{Kind: "test.object", Site: "artifact", Index: 7}))
 	product.EditSet(&ed, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	product.EditSet(&ed, variantorigin.Key, variantorigin.Of(91, []int{-3, 0, 8}))
@@ -123,14 +121,7 @@ func TestDecodeCanonicalRejectsConstructorUnreachableAxisPayloads(t *testing.T) 
 			}
 		}},
 		{name: "escape unknown state", axisID: escape.Key.ID(), write: canonicalRawUintAxis(1, 3)},
-		{name: "evidence count five", axisID: evidence.Key.ID(), write: canonicalMalformedEvidence(1, 5, false, nil)},
-		{name: "evidence count 255", axisID: evidence.Key.ID(), write: canonicalMalformedEvidence(1, 255, false, nil)},
-		{name: "evidence unknown kind", axisID: evidence.Key.ID(), write: canonicalMalformedEvidence(4, 0, false, nil)},
-		{name: "evidence unknown active origin", axisID: evidence.Key.ID(), write: canonicalMalformedEvidence(1, 1, false, [][2]uint64{{0, 1}})},
-		{name: "evidence duplicate active origins", axisID: evidence.Key.ID(), write: canonicalMalformedEvidence(1, 2, false, [][2]uint64{{1, 7}, {1, 7}})},
-		{name: "evidence nonzero inactive origin", axisID: evidence.Key.ID(), write: canonicalMalformedEvidence(1, 0, false, [][2]uint64{{1, 7}})},
-		{name: "evidence premature truncation", axisID: evidence.Key.ID(), write: canonicalMalformedEvidence(1, 1, true, [][2]uint64{{1, 7}})},
-		{name: "evidence terminal payload", axisID: evidence.Key.ID(), write: canonicalMalformedEvidence(0, 1, false, [][2]uint64{{1, 7}})},
+		{name: "evidence unknown kind", axisID: evidence.Key.ID(), write: canonicalRawUintAxis(1, 4)},
 		{name: "identity unknown state", axisID: identity.Key.ID(), write: canonicalRawUintAxis(1, 3)},
 		{name: "identity zero singleton", axisID: identity.Key.ID(), write: func(t testing.TB, writer *canonical.Writer) {
 			canonicalWriteRecordUint(t, writer, 1, 1)
@@ -317,30 +308,6 @@ func canonicalWriteRecordUint(t testing.TB, writer *canonical.Writer, record, va
 	}
 	if err := writer.Uint(value); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func canonicalMalformedEvidence(kind, count uint64, truncated bool, origins [][2]uint64) func(testing.TB, *canonical.Writer) {
-	return func(t testing.TB, writer *canonical.Writer) {
-		canonicalWriteRecordUint(t, writer, 1, kind)
-		if err := writer.Uint(count); err != nil {
-			t.Fatal(err)
-		}
-		if err := writer.Bool(truncated); err != nil {
-			t.Fatal(err)
-		}
-		for index := 0; index < 4; index++ {
-			var origin [2]uint64
-			if index < len(origins) {
-				origin = origins[index]
-			}
-			if err := writer.Uint(origin[0]); err != nil {
-				t.Fatal(err)
-			}
-			if err := writer.Uint(origin[1]); err != nil {
-				t.Fatal(err)
-			}
-		}
 	}
 }
 
