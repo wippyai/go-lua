@@ -33,6 +33,9 @@ func (ls *LState) callHook(cf *callFrame) {
 			line := int32(positions[pc])
 			if line != ls.hookLastLine {
 				ls.hookLastLine = line
+				if covOn {
+					covRecordHit(cf.Fn.Proto.SourceName, int(line))
+				}
 				ls.fireHook("line", line)
 			}
 		}
