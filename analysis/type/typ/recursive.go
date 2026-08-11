@@ -1,9 +1,11 @@
 package typ
 
 import (
+	"strconv"
 	"strings"
 	"sync/atomic"
 
+	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
@@ -73,177 +75,411 @@ func (r *Recursive) SetBody(body Type) {
 func (r *Recursive) Kind() kind.Kind { return kind.Recursive }
 
 func (r *Recursive) String() string {
-	return recursiveStringRenderer{active: make(map[*Recursive]bool)}.render(r)
+	return renderTypeString(r)
 }
 
-// recursiveStringRenderer renders a recursive graph as a finite μ expression.
-// A backedge to an active binder is written as that binder's name rather than
-// recursively expanding the graph again.
+// renderTypeString is the one public product renderer. Every composite Type
+// String method enters here so child presentation never falls back to a
+// recursive per-kind String implementation.
+func renderTypeString(root Type) string {
+	renderer := recursiveStringRenderer{active: make(map[*Recursive]bool)}
+	return renderer.render(root)
+}
+
+// recursiveStringRenderer is the canonical finite product renderer. Its
+// explicit frame stack keeps deeply nested graphs off the Go call stack and
+// writes every byte into one builder rather than concatenating child strings.
 type recursiveStringRenderer struct {
 	active map[*Recursive]bool
+	stack  []recursiveStringFrame
+	out    strings.Builder
 }
 
-func (p recursiveStringRenderer) render(t Type) string {
+type recursiveStringFrameKind uint8
+
+const (
+	renderTypeFrame recursiveStringFrameKind = iota
+	writeTextFrame
+	leaveRecursiveFrame
+	writeTypeParamFrame
+	writeAnnotationFrame
+	writeRecordFieldFrame
+	writeStaticMemberFrame
+	writeRecordMapStartFrame
+	writeFunctionParamFrame
+	writeInterfaceMethodFrame
+	writeNameAngleFrame
+)
+
+type recursiveStringFrame struct {
+	kind       recursiveStringFrameKind
+	typ        Type
+	root       bool
+	text       string
+	recursive  *Recursive
+	typeParam  *TypeParam
+	annotated  *Annotated
+	annotation int
+	field      Field
+	member     StaticMember
+	separator  bool
+	param      Param
+	method     Method
+}
+
+func (p *recursiveStringRenderer) render(root Type) string {
+	p.push(recursiveStringFrame{kind: renderTypeFrame, typ: root, root: true})
+	for len(p.stack) > 0 {
+		frame := p.stack[len(p.stack)-1]
+		p.stack = p.stack[:len(p.stack)-1]
+		p.renderFrame(frame)
+	}
+	return p.out.String()
+}
+
+func (p *recursiveStringRenderer) push(frame recursiveStringFrame) { p.stack = append(p.stack, frame) }
+func (p *recursiveStringRenderer) pushText(text string) {
+	p.push(recursiveStringFrame{kind: writeTextFrame, text: text})
+}
+func (p *recursiveStringRenderer) pushType(t Type) {
+	p.push(recursiveStringFrame{kind: renderTypeFrame, typ: t})
+}
+
+func (p *recursiveStringRenderer) pushJoined(types []Type, separator, nilLabel string) {
+	for i := len(types) - 1; i >= 0; i-- {
+		if types[i] == nil {
+			p.pushText(nilLabel)
+		} else {
+			p.pushType(types[i])
+		}
+		if i > 0 {
+			p.pushText(separator)
+		}
+	}
+}
+
+func (p *recursiveStringRenderer) renderFrame(frame recursiveStringFrame) {
+	switch frame.kind {
+	case writeTextFrame:
+		p.out.WriteString(frame.text)
+	case leaveRecursiveFrame:
+		delete(p.active, frame.recursive)
+	case writeTypeParamFrame:
+		p.out.WriteString(frame.typeParam.Name)
+		if frame.typeParam.Constraint != nil {
+			p.out.WriteString(" : ")
+			p.pushType(frame.typeParam.Constraint)
+		}
+	case writeAnnotationFrame:
+		p.writeAnnotation(frame.annotated.Annotations[frame.annotation])
+	case writeRecordFieldFrame:
+		if frame.separator {
+			p.out.WriteString(", ")
+		}
+		if frame.field.Readonly {
+			p.out.WriteString("readonly ")
+		}
+		p.out.WriteString(frame.field.Name)
+		if frame.field.Optional {
+			p.out.WriteString("?")
+		}
+		p.out.WriteString(": ")
+	case writeStaticMemberFrame:
+		if frame.separator {
+			p.out.WriteString(", ")
+		}
+		if frame.member.Readonly {
+			p.out.WriteString("readonly ")
+		}
+		WriteStaticMemberKey(&p.out, frame.member)
+		if frame.member.Optional {
+			p.out.WriteString("?")
+		}
+		p.out.WriteString(": ")
+	case writeRecordMapStartFrame:
+		if frame.separator {
+			p.out.WriteString(", ")
+		}
+		p.out.WriteString("[")
+	case writeFunctionParamFrame:
+		if frame.separator {
+			p.out.WriteString(", ")
+		}
+		if frame.param.Name != "" {
+			p.out.WriteString(frame.param.Name)
+			p.out.WriteString(": ")
+		}
+	case writeInterfaceMethodFrame:
+		if frame.separator {
+			p.out.WriteString("; ")
+		}
+		p.out.WriteString(frame.method.Name)
+		p.out.WriteString(": ")
+	case writeNameAngleFrame:
+		p.out.WriteString(frame.text)
+		p.out.WriteString("<")
+	case renderTypeFrame:
+		p.renderType(frame.typ, frame.root)
+	}
+}
+
+func (p *recursiveStringRenderer) renderType(t Type, root bool) {
 	if t == nil {
-		return "unknown"
+		p.out.WriteString("unknown")
+		return
 	}
 	switch t := t.(type) {
 	case *Recursive:
 		if t == nil {
-			return "unknown"
+			p.out.WriteString("unknown")
+			return
 		}
 		if p.active[t] {
-			return t.Name
+			p.out.WriteString(t.Name)
+			return
 		}
 		p.active[t] = true
-		defer delete(p.active, t)
+		p.out.WriteString("μ")
+		p.out.WriteString(t.Name)
 		if t.Body == nil {
-			return "μ" + t.Name
+			delete(p.active, t)
+			return
 		}
-		return "μ" + t.Name + ". " + p.render(t.Body)
+		p.push(recursiveStringFrame{kind: leaveRecursiveFrame, recursive: t})
+		p.pushType(t.Body)
+		p.out.WriteString(". ")
 	case *Optional:
-		return p.render(t.Inner) + "?"
-	case *Union:
-		return p.join(t.Members, " | ", "nil")
-	case *Intersection:
-		return p.join(t.Members, " & ", "unknown")
-	case *Array:
-		return p.render(t.Element) + "[]"
-	case *Map:
-		return "{[" + p.render(t.Key) + "]: " + p.render(t.Value) + "}"
-	case *ReadonlyMap:
-		return "readonly {[" + p.render(t.Key) + "]: " + p.render(t.Value) + "}"
-	case *Tuple:
-		return "(" + p.join(t.Elements, ", ", "unknown") + ")"
-	case *Record:
-		return p.record(t)
-	case *Function:
-		return p.function(t)
-	case *Interface:
-		if t.Name != "" {
-			return t.Name
-		}
-		parts := make([]string, len(t.Methods))
-		for i, method := range t.Methods {
-			parts[i] = method.Name + ": " + p.function(method.Type)
-		}
-		return "interface { " + strings.Join(parts, "; ") + " }"
-	case *Meta:
-		return "typeof(" + p.render(t.Of) + ")"
-	case *Instantiated:
-		return t.Generic.Name + "<" + p.join(t.TypeArgs, ", ", "unknown") + ">"
-	case *TypeParam:
-		if t.Constraint != nil {
-			return t.Name + " : " + p.render(t.Constraint)
-		}
-		return t.Name
-	default:
-		return t.String()
-	}
-}
-
-func (p recursiveStringRenderer) join(types []Type, sep, nilLabel string) string {
-	parts := make([]string, len(types))
-	for i, t := range types {
 		if t == nil {
-			parts[i] = nilLabel
-			continue
+			p.out.WriteString("unknown")
+			return
 		}
-		parts[i] = p.render(t)
+		// Optional.String historically spelled an invalid root Optional as
+		// "nil?", while the recursive renderer spelled an invalid child as
+		// "unknown?". Keep both public spellings while using one traversal.
+		if root && t.Inner == nil {
+			p.out.WriteString("nil?")
+			return
+		}
+		p.pushText("?")
+		p.pushType(t.Inner)
+	case *Union:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.pushJoined(t.Members, " | ", "nil")
+	case *Intersection:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.pushJoined(t.Members, " & ", "unknown")
+	case *Array:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.pushText("[]")
+		p.pushType(t.Element)
+	case *Map:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.pushText("}")
+		p.pushType(t.Value)
+		p.pushText("]: ")
+		p.pushType(t.Key)
+		p.pushText("{[")
+	case *ReadonlyMap:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.pushText("}")
+		p.pushType(t.Value)
+		p.pushText("]: ")
+		p.pushType(t.Key)
+		p.pushText("readonly {[")
+	case *Tuple:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.pushText(")")
+		p.pushJoined(t.Elements, ", ", "unknown")
+		p.pushText("(")
+	case *Record:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.pushRecord(t)
+	case *Function:
+		p.pushFunction(t)
+	case *Interface:
+		p.pushInterface(t)
+	case *Meta:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.pushText(")")
+		p.pushType(t.Of)
+		p.pushText("typeof(")
+	case *Instantiated:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.pushText(">")
+		p.pushJoined(t.TypeArgs, ", ", "unknown")
+		p.push(recursiveStringFrame{kind: writeNameAngleFrame, text: t.Generic.Name})
+	case *Generic:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.pushText(">")
+		p.pushTypeParams(t.TypeParams)
+		p.push(recursiveStringFrame{kind: writeNameAngleFrame, text: t.Name})
+	case *TypeParam:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		p.push(recursiveStringFrame{kind: writeTypeParamFrame, typeParam: t})
+	case *Annotated:
+		if t == nil {
+			p.out.WriteString("unknown")
+			return
+		}
+		for i := len(t.Annotations) - 1; i >= 0; i-- {
+			p.push(recursiveStringFrame{kind: writeAnnotationFrame, annotated: t, annotation: i})
+		}
+		p.pushType(t.Inner)
+	default:
+		p.out.WriteString(t.String())
 	}
-	return strings.Join(parts, sep)
 }
 
-func (p recursiveStringRenderer) record(record *Record) string {
-	var sb strings.Builder
-	sb.WriteString("{")
-	writeSeparator := func(written *bool) {
-		if *written {
-			sb.WriteString(", ")
+func (p *recursiveStringRenderer) pushTypeParams(params []*TypeParam) {
+	for i := len(params) - 1; i >= 0; i-- {
+		p.push(recursiveStringFrame{kind: writeTypeParamFrame, typeParam: params[i]})
+		if i > 0 {
+			p.pushText(", ")
 		}
-		*written = true
 	}
-	written := false
-	for _, field := range record.Fields {
-		writeSeparator(&written)
-		if field.Readonly {
-			sb.WriteString("readonly ")
-		}
-		sb.WriteString(field.Name)
-		if field.Optional {
-			sb.WriteString("?")
-		}
-		sb.WriteString(": ")
-		sb.WriteString(p.render(field.Type))
-	}
-	for _, member := range record.StaticMembers {
-		writeSeparator(&written)
-		if member.Readonly {
-			sb.WriteString("readonly ")
-		}
-		WriteStaticMemberKey(&sb, member)
-		if member.Optional {
-			sb.WriteString("?")
-		}
-		sb.WriteString(": ")
-		sb.WriteString(p.render(member.Type))
-	}
-	if record.HasMapComponent() {
-		writeSeparator(&written)
-		sb.WriteString("[")
-		sb.WriteString(p.render(record.MapKey))
-		sb.WriteString("]: ")
-		sb.WriteString(p.render(record.MapValue))
-	}
+}
+
+func (p *recursiveStringRenderer) pushRecord(record *Record) {
+	p.pushText("}")
+	fields, members, hasMap := len(record.Fields), len(record.StaticMembers), record.HasMapComponent()
 	if record.Open {
-		writeSeparator(&written)
-		sb.WriteString("...")
+		if fields+members > 0 || hasMap {
+			p.pushText(", ...")
+		} else {
+			p.pushText("...")
+		}
 	}
-	sb.WriteString("}")
-	return sb.String()
+	if hasMap {
+		p.pushType(record.MapValue)
+		p.pushText("]: ")
+		p.pushType(record.MapKey)
+		p.push(recursiveStringFrame{kind: writeRecordMapStartFrame, separator: fields+members > 0})
+	}
+	for i := members - 1; i >= 0; i-- {
+		member := record.StaticMembers[i]
+		p.pushType(member.Type)
+		p.push(recursiveStringFrame{kind: writeStaticMemberFrame, member: member, separator: fields+i > 0})
+	}
+	for i := fields - 1; i >= 0; i-- {
+		field := record.Fields[i]
+		p.pushType(field.Type)
+		p.push(recursiveStringFrame{kind: writeRecordFieldFrame, field: field, separator: i > 0})
+	}
+	p.pushText("{")
 }
 
-func (p recursiveStringRenderer) function(fn *Function) string {
+func (p *recursiveStringRenderer) pushFunction(fn *Function) {
 	if fn == nil {
-		return "unknown"
+		p.out.WriteString("unknown")
+		return
 	}
-	var sb strings.Builder
-	sb.WriteString("fun")
-	if len(fn.TypeParams) > 0 {
-		params := make([]string, len(fn.TypeParams))
-		for i, param := range fn.TypeParams {
-			params[i] = p.render(param)
-		}
-		sb.WriteString("<")
-		sb.WriteString(strings.Join(params, ", "))
-		sb.WriteString(">")
-	}
-	params := make([]string, 0, len(fn.Params)+1)
-	for _, param := range fn.Params {
-		value := p.render(param.Type)
-		if param.Name != "" {
-			value = param.Name + ": " + value
-		}
-		if param.Optional {
-			value += "?"
-		}
-		params = append(params, value)
-	}
-	if fn.Variadic != nil {
-		params = append(params, "..."+p.render(fn.Variadic))
-	}
-	sb.WriteString("(")
-	sb.WriteString(strings.Join(params, ", "))
-	sb.WriteString(")")
 	if len(fn.Returns) == 1 {
-		sb.WriteString(" -> ")
-		sb.WriteString(p.render(fn.Returns[0]))
+		p.pushType(fn.Returns[0])
+		p.pushText(" -> ")
 	} else if len(fn.Returns) > 1 {
-		sb.WriteString(" -> (")
-		sb.WriteString(p.join(fn.Returns, ", ", "unknown"))
-		sb.WriteString(")")
+		p.pushText(")")
+		p.pushJoined(fn.Returns, ", ", "unknown")
+		p.pushText(" -> (")
 	}
-	return sb.String()
+	p.pushText(")")
+	if fn.Variadic != nil {
+		p.pushType(fn.Variadic)
+		p.pushText("...")
+		if len(fn.Params) > 0 {
+			p.pushText(", ")
+		}
+	}
+	for i := len(fn.Params) - 1; i >= 0; i-- {
+		param := fn.Params[i]
+		if param.Optional {
+			p.pushText("?")
+		}
+		p.pushType(param.Type)
+		p.push(recursiveStringFrame{kind: writeFunctionParamFrame, param: param, separator: i > 0})
+	}
+	p.pushText("(")
+	if len(fn.TypeParams) > 0 {
+		p.pushText(">")
+		p.pushTypeParams(fn.TypeParams)
+		p.pushText("<")
+	}
+	p.pushText("fun")
+}
+
+func (p *recursiveStringRenderer) pushInterface(iface *Interface) {
+	if iface == nil {
+		p.out.WriteString("unknown")
+		return
+	}
+	if iface.Name != "" {
+		p.out.WriteString(iface.Name)
+		return
+	}
+	p.pushText(" }")
+	for i := len(iface.Methods) - 1; i >= 0; i-- {
+		method := iface.Methods[i]
+		p.pushType(method.Type)
+		p.push(recursiveStringFrame{kind: writeInterfaceMethodFrame, method: method, separator: i > 0})
+	}
+	p.pushText("interface { ")
+}
+
+func (p *recursiveStringRenderer) writeAnnotation(ann annotation.Annotation) {
+	p.out.WriteString(" @")
+	p.out.WriteString(ann.Name)
+	if ann.Arg.IsNone() {
+		return
+	}
+	p.out.WriteString("(")
+	if value, ok := ann.Arg.AsString(); ok {
+		p.out.WriteString("\"")
+		p.out.WriteString(value)
+		p.out.WriteString("\"")
+	} else if value, ok := ann.Arg.AsFloat64(); ok {
+		p.out.WriteString(formatFloat(value))
+	} else if value, ok := ann.Arg.AsInt64(); ok {
+		p.out.WriteString(strconv.FormatInt(value, 10))
+	} else if value, ok := ann.Arg.AsInt(); ok {
+		p.out.WriteString(strconv.FormatInt(int64(value), 10))
+	} else if value, ok := ann.Arg.AsBool(); ok {
+		p.out.WriteString(strconv.FormatBool(value))
+	} else {
+		p.out.WriteString("...")
+	}
+	p.out.WriteString(")")
 }
 
 // Equals compares two recursive types by their structural identity.

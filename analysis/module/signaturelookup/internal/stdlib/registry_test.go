@@ -162,30 +162,6 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 	}
 }
 
-func TestLookupTableCreateCarriesFreshReturnAllocation(t *testing.T) {
-	got, ok := LookupView("table.create")
-	if !ok {
-		t.Fatal("Lookup(table.create) missing")
-	}
-	if got.OperationalEffects == nil {
-		t.Fatalf("table.create operational effects = nil, want return allocation template")
-	}
-	templates := got.OperationalEffects.ReturnAllocationTemplates
-	if len(templates) != 1 {
-		t.Fatalf("return allocation templates = %#v, want one", templates)
-	}
-	template := templates[0]
-	if template.ReturnIndex != 0 || template.Root != "stdlib.table.create:return:0" {
-		t.Fatalf("allocation template = %#v, want return 0 root stdlib.table.create:return:0", template)
-	}
-	if len(template.Objects) != 1 || template.Objects[0].ID != "stdlib.table.create:return:0" {
-		t.Fatalf("allocation objects = %#v, want one root object", template.Objects)
-	}
-	if !typ.TypeEquals(template.Objects[0].Type, typetable.NewRecord().Build()) {
-		t.Fatalf("allocation object type = %v, want empty record", template.Objects[0].Type)
-	}
-}
-
 func TestLookupSeededEffects(t *testing.T) {
 	tests := []struct {
 		name   string

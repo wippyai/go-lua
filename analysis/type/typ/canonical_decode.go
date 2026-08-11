@@ -579,11 +579,10 @@ func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Typ
 			value = LiteralInt(v)
 		case kind.Number:
 			bits, valid := r.fixed64()
-			v := math.Float64frombits(bits)
-			if !valid || math.IsNaN(v) || v == 0 && bits != 0 {
+			if !valid {
 				return nil, fmt.Errorf("%w: number literal", ErrInvalidCanonicalType)
 			}
-			value = LiteralNumber(v)
+			value = LiteralNumber(math.Float64frombits(bits))
 		case kind.String:
 			v, valid := r.frame()
 			if !valid {
@@ -626,6 +625,11 @@ func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Typ
 		case canonicalIntersection:
 			return materializeCanonicalIntersectionNode(children), nil
 		default:
+			for range children {
+				if err := canonicalDecodeCheckpoint(ctx, steps); err != nil {
+					return nil, err
+				}
+			}
 			return NewTuple(children...), nil
 		}
 	case canonicalArray:
@@ -704,10 +708,16 @@ func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Typ
 		}
 		at := 0
 		for index := range fields {
+			if err := canonicalDecodeCheckpoint(ctx, steps); err != nil {
+				return nil, err
+			}
 			fields[index].Type = children[at]
 			at++
 		}
 		for index := range members {
+			if err := canonicalDecodeCheckpoint(ctx, steps); err != nil {
+				return nil, err
+			}
 			members[index].Type = children[at]
 			at++
 		}
@@ -731,6 +741,9 @@ func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Typ
 		optional := make([]bool, int(paramCount))
 		receiver := make([]bool, int(paramCount))
 		for index := range optional {
+			if err := canonicalDecodeCheckpoint(ctx, steps); err != nil {
+				return nil, err
+			}
 			optional[index], ok = r.bool()
 			receiver[index], paramsOK = r.bool()
 			if !ok || !paramsOK {
@@ -750,6 +763,9 @@ func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Typ
 		at := 0
 		typeParams := make([]*TypeParam, int(typeParamCount))
 		for index := range typeParams {
+			if err := canonicalDecodeCheckpoint(ctx, steps); err != nil {
+				return nil, err
+			}
 			param, valid := children[at].(*TypeParam)
 			if !valid || param == nil {
 				return nil, fmt.Errorf("%w: function type parameter", ErrInvalidCanonicalType)
@@ -758,6 +774,9 @@ func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Typ
 		}
 		params := make([]Param, int(paramCount))
 		for index := range params {
+			if err := canonicalDecodeCheckpoint(ctx, steps); err != nil {
+				return nil, err
+			}
 			name := ""
 			if receiver[index] {
 				name = "self"
@@ -769,7 +788,13 @@ func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Typ
 		if hasVariadic {
 			variadic, at = children[at], at+1
 		}
-		returns := append([]Type(nil), children[at:]...)
+		returns := make([]Type, len(children)-at)
+		for index := range returns {
+			if err := canonicalDecodeCheckpoint(ctx, steps); err != nil {
+				return nil, err
+			}
+			returns[index] = children[at+index]
+		}
 		return RebuildFunction(FunctionParts{TypeParams: typeParams, Params: params, Variadic: variadic, Returns: returns}), nil
 	case canonicalGeneric:
 		name, nameOK := r.frame()
@@ -784,6 +809,9 @@ func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Typ
 		}
 		params := make([]*TypeParam, int(paramCount))
 		for index := range params {
+			if err := canonicalDecodeCheckpoint(ctx, steps); err != nil {
+				return nil, err
+			}
 			param, valid := children[index].(*TypeParam)
 			if !valid || param == nil {
 				return nil, fmt.Errorf("%w: generic type parameter", ErrInvalidCanonicalType)
@@ -830,6 +858,9 @@ func materializeCanonicalNode(ctx context.Context, scalar []byte, children []Typ
 		}
 		methods := make([]Method, int(methodCount))
 		for index := range methods {
+			if err := canonicalDecodeCheckpoint(ctx, steps); err != nil {
+				return nil, err
+			}
 			methodName, ok := r.frame()
 			fn, valid := children[index].(*Function)
 			if !ok || !valid || fn == nil {

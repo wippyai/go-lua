@@ -38,11 +38,7 @@ func NewTypeParam(name string, constraint Type) *TypeParam {
 
 func (t *TypeParam) Kind() kind.Kind { return kind.TypeParam }
 func (t *TypeParam) String() string {
-	if t.Constraint != nil {
-		return t.Name + " : " + t.Constraint.String()
-	}
-
-	return t.Name
+	return renderTypeString(t)
 }
 func (t *TypeParam) Hash() uint64 { return t.hash }
 func (t *TypeParam) Equals(other Type) bool {

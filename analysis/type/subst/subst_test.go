@@ -16,6 +16,24 @@ func requireNoInstantiated(t *testing.T, tt typ.Type) {
 	}
 }
 
+func TestSelfPresenceTraversalTerminatesOnRecursiveGeneric(t *testing.T) {
+	recursive := typ.NewGeneric("Recursive", nil, nil)
+	recursive.SetBody(typetable.NewRecord().ReadonlyField("next", typ.Func().Returns(recursive).Build()).Build())
+	if got := Self(recursive, typ.String); got != recursive {
+		t.Fatal("Self rewrote a recursive Generic graph with no Self occurrence")
+	}
+
+	nonrecursive := typ.NewGeneric("Value", nil, typ.NewMeta(typ.Self))
+	got, ok := Self(nonrecursive, typ.String).(*typ.Generic)
+	if !ok || got == nonrecursive {
+		t.Fatalf("Self(Generic(Meta(Self))) = %T, want rewritten Generic", got)
+	}
+	meta, ok := got.Body.(*typ.Meta)
+	if !ok || meta.Of != typ.String {
+		t.Fatalf("rewritten Generic body = %v, want Meta(string)", got.Body)
+	}
+}
+
 func requireUnionShape(t *testing.T, got typ.Type, wants ...typ.Type) *typ.Union {
 	t.Helper()
 	union, ok := got.(*typ.Union)
@@ -377,6 +395,49 @@ func TestParams(t *testing.T) {
 			t.Fatalf("result field value = %v, want string", resultValue)
 		}
 	})
+}
+
+func TestParamsTraversesTwelveThousandNestedFunctions(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	var input typ.Type = param
+	for range 12000 {
+		input = typ.Func().Param("value", input).Returns(input).Build()
+	}
+	got := Params(input, []*typ.TypeParam{param}, []typ.Type{typ.String})
+	for depth := 0; depth < 12000; depth++ {
+		fn, ok := got.(*typ.Function)
+		if !ok {
+			t.Fatalf("function depth %d = %T, want function", depth, got)
+		}
+		if len(fn.Params) != 1 || len(fn.Returns) != 1 || fn.Params[0].Type != fn.Returns[0] {
+			t.Fatalf("function depth %d lost shared child", depth)
+		}
+		got = fn.Params[0].Type
+	}
+	if got != typ.String {
+		t.Fatalf("nested function leaf = %v, want string", got)
+	}
+}
+
+func TestParamsPreservesRecursiveBackedge(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typetable.NewRecord().Field("value", param).Field("next", self).Build()
+	})
+	got, ok := Params(node, []*typ.TypeParam{param}, []typ.Type{typ.String}).(*typ.Recursive)
+	if !ok || got == node {
+		t.Fatalf("substituted node = %T, want rewritten recursive node", got)
+	}
+	body, ok := got.Body.(*typ.Record)
+	if !ok {
+		t.Fatalf("recursive body = %T, want record", got.Body)
+	}
+	if value := body.GetField("value"); value == nil || value.Type != typ.String {
+		t.Fatalf("recursive value = %v, want string", value)
+	}
+	if next := body.GetField("next"); next == nil || next.Type != got {
+		t.Fatalf("recursive next = %v, want rewritten μ backedge", next)
+	}
 }
 
 func TestSelf(t *testing.T) {
@@ -1011,6 +1072,46 @@ func TestExpandInstantiatedPreservesGenerativeRecurrenceSymbolically(t *testing.
 	array, ok := inst.TypeArgs[0].(*typ.Array)
 	if !ok || array.Element != typ.String {
 		t.Fatalf("generative recurrence argument = %v, want string[]", inst.TypeArgs[0])
+	}
+}
+
+func TestExpandInstantiatedTraversesTwelveThousandDeepProduct(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{param}, typetable.NewRecord().Field("value", param).Build())
+	var input typ.Type = typ.Instantiate(box, typ.String)
+	for range 12000 {
+		input = typ.NewArray(input)
+	}
+
+	got := ExpandInstantiated(input)
+	for depth := 0; depth < 12000; depth++ {
+		array, ok := got.(*typ.Array)
+		if !ok {
+			t.Fatalf("expanded depth %d = %T, want array", depth, got)
+		}
+		got = array.Element
+	}
+	record, ok := got.(*typ.Record)
+	if !ok || record.GetField("value") == nil || record.GetField("value").Type != typ.String {
+		t.Fatalf("expanded leaf = %T %v, want Box<string> record", got, got)
+	}
+}
+
+func TestSelfTraversesTwelveThousandDeepProduct(t *testing.T) {
+	var input typ.Type = typ.Self
+	for range 12000 {
+		input = typ.NewArray(input)
+	}
+	got := Self(input, typ.String)
+	for depth := 0; depth < 12000; depth++ {
+		array, ok := got.(*typ.Array)
+		if !ok {
+			t.Fatalf("rewritten depth %d = %T, want array", depth, got)
+		}
+		got = array.Element
+	}
+	if got != typ.String {
+		t.Fatalf("rewritten leaf = %v, want string", got)
 	}
 }
 

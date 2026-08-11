@@ -33,21 +33,23 @@ func (c *Cache) runtimeTypeProfileOf(reg *axis.Registry, value product.Value) (R
 	if c == nil {
 		return RuntimeTypeProfileOf(reg, nil, value)
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	key := typeProfileCacheKey{reg: reg, value: value}
 	if cached, ok := c.typeProfiles[key]; ok {
 		return cached.profile, cached.ok
 	}
-	t, ok := c.TypeOf(reg, value)
+	t, ok := c.typeOfLocked(reg, value)
 	if !ok || t == nil {
-		c.rememberTypeProfile(key, RuntimeTypeProfile{}, false)
+		c.rememberTypeProfileLocked(key, RuntimeTypeProfile{}, false)
 		return RuntimeTypeProfile{}, false
 	}
-	profile := runtimeTypeProfileForType(t, c)
-	c.rememberTypeProfile(key, profile, true)
+	profile := c.runtimeTypeProfileForTypeLocked(t)
+	c.rememberTypeProfileLocked(key, profile, true)
 	return profile, true
 }
 
-func (c *Cache) rememberTypeProfile(key typeProfileCacheKey, profile RuntimeTypeProfile, ok bool) {
+func (c *Cache) rememberTypeProfileLocked(key typeProfileCacheKey, profile RuntimeTypeProfile, ok bool) {
 	if c == nil {
 		return
 	}
@@ -58,16 +60,32 @@ func (c *Cache) rememberTypeProfile(key typeProfileCacheKey, profile RuntimeType
 }
 
 func runtimeTypeProfileForType(t typ.Type, cache *Cache) RuntimeTypeProfile {
+	if cache != nil {
+		cache.mu.Lock()
+		defer cache.mu.Unlock()
+		return cache.runtimeTypeProfileForTypeLocked(t)
+	}
+	return runtimeTypeProfileForTypeLocked(t, nil)
+}
+
+func (c *Cache) runtimeTypeProfileForTypeLocked(t typ.Type) RuntimeTypeProfile {
+	return runtimeTypeProfileForTypeLocked(t, c)
+}
+
+func runtimeTypeProfileForTypeLocked(t typ.Type, cache *Cache) RuntimeTypeProfile {
 	kinds, kindsOK := RuntimeKindFromType(t)
 	return RuntimeTypeProfile{
 		TopLevelGradual: typ.IsAny(t) || typ.IsUnknown(t),
-		ContainsGradual: typ.ContainsAny(t) || containsUnknownTypeCached(cache, t),
+		ContainsGradual: typ.ContainsAny(t) || containsUnknownTypeCachedLocked(cache, t),
 		RuntimeKind:     kinds,
 		HasRuntimeKind:  kindsOK,
 	}
 }
 
-func containsUnknownTypeCached(cache *Cache, t typ.Type) bool {
+// containsUnknownTypeCachedLocked is called by the cached profile query while
+// Cache.mu is held. The uncached profile passes nil and performs only a local
+// scan, so it does not need an owner lock.
+func containsUnknownTypeCachedLocked(cache *Cache, t typ.Type) bool {
 	if cache == nil || t == nil {
 		result, _ := containsUnknownTypeScan(t)
 		return result

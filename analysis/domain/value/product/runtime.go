@@ -9,21 +9,27 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/lattice"
 )
 
 // registryRuntime caches frozen-registry metadata and boxed axis values.
 // Cached top/bottom values are treated as immutable once published by the
 // registry, which matches the existing axis and product lattice contracts.
 type registryRuntime struct {
-	reg           *axis.Registry
-	err           error
-	retentionSafe bool
-	axes          []axisRuntimeAxis
-	canonicalAxes []uint16
-	byID          map[string]uint16
-	reducers      []reducerEntry
-	reducerDeps   [][]int
-	presenceDeps  []int
+	reg                    *axis.Registry
+	err                    error
+	retentionSafe          bool
+	interner               *interner
+	axes                   []axisRuntimeAxis
+	canonicalAxes          []uint16
+	byID                   map[string]uint16
+	reducers               []reducerEntry
+	reducerDeps            [][]int
+	presenceDeps           []int
+	widenMeasure           []rankComponent
+	reductionMeasure       []rankComponent
+	reducerWrittenOrdinals []uint16
+	presenceReducerWritten bool
 
 	bottomSlots []slot
 
@@ -32,64 +38,47 @@ type registryRuntime struct {
 
 	canonicalCodecOnce sync.Once
 	canonicalCodec     canonicalProductCodec
+
+	domainOnce sync.Once
+	domain     lattice.Lattice[Value]
 }
 
 type axisRuntimeAxis struct {
-	spec      axis.ErasedSpec
-	id        string
-	ordinal   uint16
-	keyHash   uint64
-	topAny    any
-	topType   reflect.Type
-	bottomAny any
-}
-
-var registryRuntimeCache = struct {
-	// Product operations consult this cache on every construction and
-	// comparison. Registries are frozen before they enter it, so the common
-	// lookup path is read-only and may proceed concurrently with other solver
-	// workers.
-	mu    sync.RWMutex
-	byReg map[*axis.Registry]*registryRuntime
-}{
-	byReg: make(map[*axis.Registry]*registryRuntime),
+	spec           axis.ErasedSpec
+	id             string
+	ordinal        uint16
+	keyHash        uint64
+	topAny         any
+	topType        reflect.Type
+	bottomAny      any
+	reducerWritten bool
 }
 
 func runtimeFor(reg *axis.Registry) *registryRuntime {
 	if reg == nil {
-		return &registryRuntime{err: fmt.Errorf("product: registry is required; pass a non-nil frozen registry")}
+		return &registryRuntime{err: fmt.Errorf("product: registry is required; construct it with RegistryWithAxes")}
 	}
 	if !reg.Frozen() {
 		return &registryRuntime{reg: reg, err: fmt.Errorf("product: registry must be frozen before use")}
 	}
-
-	registryRuntimeCache.mu.RLock()
-	if rt, ok := registryRuntimeCache.byReg[reg]; ok {
-		registryRuntimeCache.mu.RUnlock()
-		return rt
-	}
-	registryRuntimeCache.mu.RUnlock()
-
-	rt := buildRegistryRuntime(reg)
-	if rt.err != nil {
-		registryRuntimeCache.mu.Lock()
-		if existing, ok := registryRuntimeCache.byReg[reg]; ok {
-			registryRuntimeCache.mu.Unlock()
-			return existing
+	projection := reg.CompiledProduct()
+	rt, ok := projection.(*registryRuntime)
+	if !ok || rt == nil || rt.reg != reg {
+		return &registryRuntime{
+			reg: reg,
+			err: fmt.Errorf("product: registry has no sealed compiled product runtime; construct it with RegistryWithAxes"),
 		}
-		registryRuntimeCache.byReg[reg] = rt
-		registryRuntimeCache.mu.Unlock()
-		return rt
 	}
-
-	registryRuntimeCache.mu.Lock()
-	if existing, ok := registryRuntimeCache.byReg[reg]; ok {
-		registryRuntimeCache.mu.Unlock()
-		return existing
-	}
-	registryRuntimeCache.byReg[reg] = rt
-	registryRuntimeCache.mu.Unlock()
 	return rt
+}
+
+// Owner implements axis.CompiledProduct. The exact pointer identity is the
+// construction-time ownership fence for every product operation.
+func (rt *registryRuntime) Owner() *axis.Registry {
+	if rt == nil {
+		return nil
+	}
+	return rt.reg
 }
 
 func mustRuntime(reg *axis.Registry) *registryRuntime {
@@ -101,13 +90,9 @@ func mustRuntime(reg *axis.Registry) *registryRuntime {
 }
 
 func buildRegistryRuntime(reg *axis.Registry) *registryRuntime {
-	rt := &registryRuntime{reg: reg, retentionSafe: true}
+	rt := &registryRuntime{reg: reg, retentionSafe: true, interner: newInterner()}
 	if reg == nil {
-		rt.err = fmt.Errorf("product: registry is required; pass a non-nil frozen registry")
-		return rt
-	}
-	if !reg.Frozen() {
-		rt.err = fmt.Errorf("product: registry must be frozen before use")
+		rt.err = fmt.Errorf("product: registry is required; construct it with RegistryWithAxes")
 		return rt
 	}
 	if _, ok := reg.LookupErased(presence.Key.ID()); ok {
@@ -184,7 +169,48 @@ func buildRegistryRuntime(reg *axis.Registry) *registryRuntime {
 		rt.err = err
 		return rt
 	}
+	rt.buildMeasures()
 	return rt
+}
+
+func (rt *registryRuntime) buildMeasures() {
+	// Shape and presence are finite core lanes. Sparse axes are ordered by their
+	// canonical product ordinal, never registration order.
+	widen := make([]rankComponent, 0, len(rt.axes)+2)
+	widen = append(widen, rankComponent{kind: shapeRank}, rankComponent{kind: presenceRank})
+	for ordinal := range rt.canonicalAxes {
+		info := rt.axisOrdinal(uint16(ordinal))
+		width := info.spec.WidenRankWidth()
+		if width <= 0 {
+			// A Product Factor may still be acyclic. Do not manufacture a rank
+			// from axis names, registration order, or a precision budget.
+			widen = nil
+			break
+		}
+		for component := 0; component < width; component++ {
+			widen = append(widen, rankComponent{
+				kind: axisWidenRank, ordinal: uint16(ordinal), component: component,
+			})
+		}
+	}
+	rt.widenMeasure = widen
+
+	if len(rt.reducers) == 0 {
+		return
+	}
+	reduction := make([]rankComponent, 0, len(rt.reducerWrittenOrdinals))
+	for _, ordinal := range rt.reducerWrittenOrdinals {
+		info := rt.axisOrdinal(ordinal)
+		for component := 0; component < info.spec.ReductionRankWidth(); component++ {
+			reduction = append(reduction, rankComponent{
+				kind: axisReductionRank, ordinal: ordinal, component: component,
+			})
+		}
+	}
+	if rt.presenceReducerWritten {
+		reduction = append([]rankComponent{{kind: presenceReductionMeasureKind}}, reduction...)
+	}
+	rt.reductionMeasure = reduction
 }
 
 func (rt *registryRuntime) bottomValue() Value {

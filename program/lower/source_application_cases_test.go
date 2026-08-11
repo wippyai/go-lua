@@ -1,0 +1,46 @@
+package lower_test
+
+// applicationSourceCases is the private source-evidence denominator for this
+// vertical. It deliberately has no schema, claim, or production role.
+func applicationSourceCases() []sourceCase {
+	return []sourceCase{
+		{"application.case.arithmetic.add", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left + right", 2},
+		{"application.case.arithmetic.sub", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left - right", 2},
+		{"application.case.arithmetic.mul", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left * right", 2},
+		{"application.case.arithmetic.div", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left / right", 2},
+		{"application.case.arithmetic.idiv", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left // right", 2},
+		{"application.case.arithmetic.mod", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left % right", 2},
+		{"application.case.arithmetic.pow", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left ^ right", 2},
+		{"application.case.arithmetic.band", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left & right", 2},
+		{"application.case.arithmetic.bor", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left | right", 2},
+		{"application.case.arithmetic.bxor", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left ~ right", 2},
+		{"application.case.arithmetic.shl", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left << right", 2},
+		{"application.case.arithmetic.shr", "ArithmeticOpExpr", "local left, right = 7, 3\nreturn left >> right", 2},
+		{"application.case.concat", "StringConcatOpExpr", "local left, right = \"left\", \"right\"\nreturn left .. right", 2},
+		{"application.case.relational.gt", "RelationalOpExpr", "local left, right = 7, 3\nreturn left > right", 2},
+		{"application.case.relational.lt", "RelationalOpExpr", "local left, right = 7, 3\nreturn left < right", 2},
+		{"application.case.relational.ge", "RelationalOpExpr", "local left, right = 7, 3\nreturn left >= right", 2},
+		{"application.case.relational.le", "RelationalOpExpr", "local left, right = 7, 3\nreturn left <= right", 2},
+		{"application.case.relational.eq", "RelationalOpExpr", "local left, right = 7, 3\nreturn left == right", 2},
+		{"application.case.relational.ne", "RelationalOpExpr", "local left, right = 7, 3\nreturn left ~= right", 2},
+		{"application.case.logical.and", "LogicalOpExpr", "local left, right = 7, 3\nreturn left and right", 2},
+		{"application.case.logical.or", "LogicalOpExpr", "local left, right = false, 3\nreturn left or right", 2},
+		{"application.case.unary.neg", "UnaryMinusOpExpr", "local value = 7\nreturn -value", 2},
+		{"application.case.unary.not", "UnaryNotOpExpr", "local value = false\nreturn not value", 2},
+		{"application.case.unary.len", "UnaryLenOpExpr", "local value = \"value\"\nreturn #value", 2},
+		{"application.case.unary.bnot", "UnaryBNotOpExpr", "local value = 7\nreturn ~value", 2},
+		{"application.case.call.plain.scalar", "FuncCallExpr", "local function f()\n  return 1, 2\nend\nreturn (f())", 4},
+		{"application.case.call.plain.open", "FuncCallExpr", "local function f()\n  return 1, 2\nend\nreturn f()", 4},
+		{"application.case.call.method.scalar", "FuncCallExpr", "local object = {\n  f = function(self)\n    return 1, 2\n  end,\n}\nreturn (object:f())", 6},
+		{"application.case.call.method.open", "FuncCallExpr", "local object = {\n  f = function(self)\n    return 1, 2\n  end,\n}\nreturn object:f()", 6},
+		{"application.case.function.inferred-returns", "FunctionExpr", "local f =\nfunction(value)\n  return value\nend\nreturn f", 2},
+		{"application.case.function.declared-empty-returns", "FunctionExpr", "local f =\nfunction(): ()\n  return\nend\nreturn f", 2},
+		{"application.case.function.declared-returns", "FunctionExpr", "local f =\nfunction(value: number): number\n  return value\nend\nreturn f", 2},
+		{"application.case.function.declared-multiple-returns", "FunctionExpr", "local f =\nfunction(value: number): (number, string)\n  return value, \"ok\"\nend\nreturn f", 2},
+		{"application.case.parameters.fixed", "ParList", "local f =\nfunction(first: number, second: string)\n  return first\nend\nreturn f", 2},
+		{"application.case.parameters.vararg", "ParList", "local f =\nfunction(first, ...)\n  return first\nend\nreturn f", 2},
+		{"application.case.parameters.typed-vararg", "ParList", "local f =\nfunction(first: number, ...: string)\n  return first\nend\nreturn f", 2},
+		{"application.case.function-name.path", "FuncName", "local root = {}\nfunction root.branch(value)\n  return value\nend\nreturn root.branch", 2},
+		{"application.case.function-name.method", "FuncName", "local root = {}\nfunction root:method(value)\n  return value\nend\nreturn root.method", 2},
+	}
+}

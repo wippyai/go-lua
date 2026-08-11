@@ -95,6 +95,32 @@ return receiver:method(2)
 	}
 }
 
+func TestInterfaceDeclarationDoesNotChangeRuntimeBytecode(t *testing.T) {
+	// Keep executable source positions equal: the assertion isolates static
+	// interface evidence rather than debug line metadata.
+	const runtime = "\n\n\n\n\n\nlocal value = 41\nreturn value + 1\n"
+	const withInterface = "\ninterface Evidence\n  id: number\n  function map<T: string>(value: T): T\n  enabled?: boolean\nend\nlocal value = 41\nreturn value + 1\n"
+	without, err := lua.CompileString(runtime, "interface-runtime.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	with, err := lua.CompileString(withInterface, "interface-runtime.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutDump, err := Dump(without)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withDump, err := Dump(with)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(withoutDump, withDump) {
+		t.Fatal("source interface declaration changed runtime bytecode")
+	}
+}
+
 func TestDumpUndumpRoundTripExecutes(t *testing.T) {
 	state := lua.NewState()
 	defer state.Close()

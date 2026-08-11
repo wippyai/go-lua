@@ -33,9 +33,14 @@ type Context struct {
 // and returns nil when it does not apply or when known already covers it.
 type Rule func(fn *typ.Function, known effect.Row, ctx Context) []effect.Label
 
-// Default is the standard rule set. Append to extend the system; order is the
-// application order.
-var Default = []Rule{ErrorReturnFromShape}
+// ApplyDefault applies the package-owned standard derivation rule set.
+//
+// The standard set is deliberately not exposed as a mutable slice: rule
+// selection is semantic policy owned by this package, while callers that need
+// additional rules retain explicit ownership through Apply's variadic rules.
+func ApplyDefault(fn *typ.Function, known effect.Row, ctx Context) effect.Row {
+	return Apply(fn, known, ctx, ErrorReturnFromShape)
+}
 
 // Apply runs rules in order and returns known augmented with every derived
 // label. Duplicate labels are dropped by Row.With, so a rule that restates an

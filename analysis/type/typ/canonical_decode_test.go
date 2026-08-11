@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
 func TestDecodeCanonicalRoundTripsCompleteNonrecursiveCorpus(t *testing.T) {
@@ -63,6 +65,42 @@ func TestDecodeCanonicalRoundTripsCompleteNonrecursiveCorpus(t *testing.T) {
 		roundTrip, err := EncodeCanonical(context.Background(), decoded)
 		if err != nil || !bytes.Equal(encoded, roundTrip) {
 			t.Fatalf("corpus[%d] bytes changed: %x / %x / %v", index, encoded, roundTrip, err)
+		}
+	}
+}
+
+func TestDecodeCanonicalRoundTripsRawIEEEFloatLiterals(t *testing.T) {
+	for _, bits := range []uint64{
+		0x0000000000000000,
+		0x8000000000000000,
+		0x7ff0000000000000,
+		0xfff0000000000000,
+		0x7ff8000000000001,
+		0x7ff8000000000002,
+		0x7ff0000000000001,
+	} {
+		original := LiteralNumber(math.Float64frombits(bits))
+		encoded, err := EncodeCanonical(context.Background(), original)
+		if err != nil {
+			t.Fatalf("encode %#x: %v", bits, err)
+		}
+		decoded, err := DecodeCanonical(context.Background(), encoded)
+		if err != nil {
+			t.Fatalf("decode %#x: %v", bits, err)
+		}
+		literal, ok := decoded.(*Literal)
+		if !ok || literal.Base != kind.Number {
+			t.Fatalf("decoded %#x = %T/%#v", bits, decoded, decoded)
+		}
+		if got := math.Float64bits(literal.Value.(float64)); got != bits {
+			t.Fatalf("decoded bits=%#x, want %#x", got, bits)
+		}
+		if !TypeEquals(original, decoded) {
+			t.Fatalf("decoded %#x lost type identity", bits)
+		}
+		roundTrip, err := EncodeCanonical(context.Background(), decoded)
+		if err != nil || !bytes.Equal(encoded, roundTrip) {
+			t.Fatalf("round trip %#x changed bytes: %x / %x / %v", bits, encoded, roundTrip, err)
 		}
 	}
 }

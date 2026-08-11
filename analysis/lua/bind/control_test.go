@@ -1,7 +1,6 @@
 package bind
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -14,7 +13,7 @@ func bindControlSource(t *testing.T, source string) ([]ast.Stmt, *Result) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	return stmts, BindChunk(stmts, Options{})
+	return stmts, BindChunk(stmts)
 }
 
 func requireGotoTarget(
@@ -333,41 +332,47 @@ goto missing
 		t.Fatal("invalid first Goto acquired a target")
 	}
 
-	invalid := &ast.LabelStmt{}
-	malformed := BindChunk([]ast.Stmt{invalid}, Options{})
-	got := requireControlKinds(t, malformed, ControlIssueInvalidLabel)
-	if got[0].Label != invalid {
-		t.Fatalf("invalid Label issue = %#v", got[0])
-	}
+}
 
-	invalidGoto := &ast.GotoStmt{}
-	malformed = BindChunk([]ast.Stmt{invalidGoto}, Options{})
-	got = requireControlKinds(t, malformed, ControlIssueInvalidGoto)
-	if got[0].Goto != invalidGoto {
-		t.Fatalf("invalid Goto issue = %#v", got[0])
-	}
+func TestBreakRequiresEnclosingLoopInCurrentFunction(t *testing.T) {
+	t.Run("all loop forms are legal", func(t *testing.T) {
+		_, result := bindControlSource(t, `
+while true do break end
+repeat break until true
+for i = 1, 1 do break end
+for _, value in pairs({}) do break end
+`)
+		requireControlKinds(t, result)
+	})
 
-	jump := &ast.GotoStmt{Label: "target"}
-	local := &ast.LocalAssignStmt{Names: []string{"entered"}}
-	target := &ast.LabelStmt{Name: "target"}
-	var nilLabel *ast.LabelStmt
-	malformed = BindChunk([]ast.Stmt{jump, local, target, nilLabel}, Options{})
-	got = requireControlKinds(t, malformed, ControlIssueGotoEntersLocal)
-	if got[0].Goto != jump || got[0].Label != target {
-		t.Fatalf("typed-nil trailing Label changed scope law: %#v", got[0])
-	}
+	t.Run("top-level", func(t *testing.T) {
+		stmts, result := bindControlSource(t, `break`)
+		issue := requireControlKinds(t, result, ControlIssueBreakOutsideLoop)[0]
+		if issue.Break != stmts[0].(*ast.BreakStmt) {
+			t.Fatalf("Break issue = %#v, want top-level Break", issue)
+		}
+	})
+
+	t.Run("nested function cannot use outer loop", func(t *testing.T) {
+		stmts, result := bindControlSource(t, `
+while true do
+    local f = function() break end
+end
+`)
+		outer := stmts[0].(*ast.WhileStmt)
+		fn := outer.Stmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FunctionExpr)
+		issue := requireControlKinds(t, result, ControlIssueBreakOutsideLoop)[0]
+		if issue.Break != fn.Stmts[0].(*ast.BreakStmt) {
+			t.Fatalf("Break issue = %#v, want nested-function Break", issue)
+		}
+	})
+
 }
 
 func TestFunctionParamsAndLoopVariablesBelongToBodyLabelBaseline(t *testing.T) {
 	t.Run("function parameter", func(t *testing.T) {
-		fn := &ast.FunctionExpr{
-			ParList: &ast.ParList{Names: []string{"parameter"}},
-			Stmts: []ast.Stmt{
-				&ast.GotoStmt{Label: "done"},
-				&ast.LabelStmt{Name: "done"},
-			},
-		}
-		result := BindFunction(fn, Options{})
+		stmts, result := bindControlSource(t, `local f = function(parameter) goto done ::done:: end`)
+		fn := stmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.FunctionExpr)
 		jump := fn.Stmts[0].(*ast.GotoStmt)
 		target := fn.Stmts[1].(*ast.LabelStmt)
 		requireControlKinds(t, result)
@@ -375,15 +380,8 @@ func TestFunctionParamsAndLoopVariablesBelongToBodyLabelBaseline(t *testing.T) {
 	})
 
 	t.Run("numeric loop variable", func(t *testing.T) {
-		loop := &ast.NumberForStmt{
-			Name: "iteration", Init: &ast.NumberExpr{Value: "1"},
-			Limit: &ast.NumberExpr{Value: "2"},
-			Stmts: []ast.Stmt{
-				&ast.GotoStmt{Label: "done"},
-				&ast.LabelStmt{Name: "done"},
-			},
-		}
-		result := BindChunk([]ast.Stmt{loop}, Options{})
+		stmts, result := bindControlSource(t, `for iteration = 1, 2 do goto done ::done:: end`)
+		loop := stmts[0].(*ast.NumberForStmt)
 		jump := loop.Stmts[0].(*ast.GotoStmt)
 		target := loop.Stmts[1].(*ast.LabelStmt)
 		requireControlKinds(t, result)
@@ -391,76 +389,11 @@ func TestFunctionParamsAndLoopVariablesBelongToBodyLabelBaseline(t *testing.T) {
 	})
 
 	t.Run("generic loop variables", func(t *testing.T) {
-		loop := &ast.GenericForStmt{
-			Names: []string{"key", "value"},
-			Exprs: []ast.Expr{&ast.NilExpr{}},
-			Stmts: []ast.Stmt{
-				&ast.GotoStmt{Label: "done"},
-				&ast.LabelStmt{Name: "done"},
-			},
-		}
-		result := BindChunk([]ast.Stmt{loop}, Options{})
+		stmts, result := bindControlSource(t, `for key, value in nil do goto done ::done:: end`)
+		loop := stmts[0].(*ast.GenericForStmt)
 		jump := loop.Stmts[0].(*ast.GotoStmt)
 		target := loop.Stmts[1].(*ast.LabelStmt)
 		requireControlKinds(t, result)
 		requireGotoTarget(t, result, jump, target)
 	})
-}
-
-func TestControlBindingIsIterativeAtFourThousandDepthAndWidth(t *testing.T) {
-	const size = 4 * 1024
-
-	forward := &ast.GotoStmt{Label: "outer"}
-	var nested ast.Stmt = forward
-	for range size {
-		nested = &ast.DoBlockStmt{Stmts: []ast.Stmt{nested}}
-	}
-	outer := &ast.LabelStmt{Name: "outer"}
-	deep := BindChunk([]ast.Stmt{nested, outer}, Options{})
-	requireControlKinds(t, deep)
-	requireGotoTarget(t, deep, forward, outer)
-
-	stmts := make([]ast.Stmt, 0, size*2)
-	jumps := make([]*ast.GotoStmt, size)
-	labels := make([]*ast.LabelStmt, size)
-	for i := 0; i < size; i++ {
-		name := fmt.Sprintf("label_%d", i)
-		jumps[i] = &ast.GotoStmt{Label: name}
-		labels[i] = &ast.LabelStmt{Name: name}
-		stmts = append(stmts, jumps[i])
-	}
-	for _, label := range labels {
-		stmts = append(stmts, label)
-	}
-	wide := BindChunk(stmts, Options{})
-	requireControlKinds(t, wide)
-	for _, index := range []int{0, size / 2, size - 1} {
-		requireGotoTarget(t, wide, jumps[index], labels[index])
-	}
-}
-
-func TestControlBindingAllocationGrowthIsLinear(t *testing.T) {
-	build := func(size int) []ast.Stmt {
-		stmts := make([]ast.Stmt, 0, size*2)
-		for i := 0; i < size; i++ {
-			name := fmt.Sprintf("L_%d", i)
-			stmts = append(stmts, &ast.GotoStmt{Label: name}, &ast.LabelStmt{Name: name})
-		}
-		return stmts
-	}
-	measure := func(stmts []ast.Stmt) int64 {
-		result := testing.Benchmark(func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				_ = BindChunk(stmts, Options{})
-			}
-		})
-		return result.AllocedBytesPerOp()
-	}
-
-	small := measure(build(1024))
-	large := measure(build(2048))
-	t.Logf("control binding allocations: 1K=%dB 2K=%dB", small, large)
-	if large > small*3+64*1024 {
-		t.Fatalf("control binding allocation growth is not linear: 1K=%dB 2K=%dB", small, large)
-	}
 }

@@ -1,0 +1,570 @@
+package diagram
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/terminal"
+	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
+)
+
+type testFactor uint64
+type testKey uint64
+
+const (
+	factorFirst  testFactor = 9
+	factorSecond testFactor = 2
+)
+
+type diagramFixture struct {
+	diagram    *Diagram[testFactor, testKey, uint8]
+	manager    *guard.Manager
+	trueAtOne  support.Mask
+	falseAtOne support.Mask
+	trueAtTwo  support.Mask
+	values     [3]terminal.ID[uint8]
+}
+
+func newDiagramFixture(t testing.TB) diagramFixture {
+	t.Helper()
+	manager, err := guard.New([]guard.Atom{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	masks := support.New(manager)
+	if masks == nil {
+		t.Fatal("support work creation failed")
+	}
+	trueAtOne, ok := masks.Literal(1, true)
+	if !ok {
+		t.Fatal("first literal failed")
+	}
+	falseAtOne, ok := masks.Not(trueAtOne)
+	if !ok {
+		t.Fatal("first complement failed")
+	}
+	trueAtTwo, ok := masks.Literal(2, true)
+	if !ok {
+		t.Fatal("second literal failed")
+	}
+	if !masks.Seal() {
+		t.Fatal("support seal failed")
+	}
+	values, ok := terminal.New(terminal.Config[uint8]{
+		Equal:       func(left, right uint8) bool { return left == right },
+		Fingerprint: func(value uint8) uint64 { return uint64(value) },
+	})
+	if !ok {
+		t.Fatal("terminal arena creation failed")
+	}
+	var ids [3]terminal.ID[uint8]
+	for index, value := range []uint8{10, 20, 30} {
+		ids[index], ok = values.Admit(value)
+		if !ok {
+			t.Fatalf("terminal %d admission failed", value)
+		}
+	}
+	if !values.Seal() {
+		t.Fatal("terminal seal failed")
+	}
+	diagram, ok := New(Config[testFactor, testKey, uint8]{
+		// The intentionally nonnumeric order is the schema order tested below.
+		Factors:   []testFactor{factorFirst, factorSecond},
+		Terminals: values,
+		Guards:    manager,
+	})
+	if !ok {
+		t.Fatal("diagram creation failed")
+	}
+	return diagramFixture{diagram: diagram, manager: manager, trueAtOne: trueAtOne, falseAtOne: falseAtOne, trueAtTwo: trueAtTwo, values: ids}
+}
+
+func valuation(one, two bool) func(guard.Atom) bool {
+	return func(atom guard.Atom) bool {
+		switch atom {
+		case 1:
+			return one
+		case 2:
+			return two
+		default:
+			return false
+		}
+	}
+}
+
+func (fixture diagramFixture) assertAt(t testing.TB, root Root[testFactor, testKey, uint8], factor testFactor, key testKey, when func(guard.Atom) bool, want terminal.ID[uint8], present bool) {
+	t.Helper()
+	got, gotPresent, valid := fixture.diagram.At(root, factor, key, when)
+	if !valid || gotPresent != present || got != want {
+		t.Fatalf("At(%d,%d) = %v/%t/%t, want %v/%t/true", factor, key, got, gotPresent, valid, want, present)
+	}
+}
+
+func TestPartitionValueTerminalsTraversesDeepPublicDecisionChainIteratively(t *testing.T) {
+	// Build the deep symbolic input through the public fact boundary. Every
+	// literal contributes one disjoint stored region; the remaining valuation
+	// is sparse. Partitioning must visit the exact terminal regions without
+	// enumerating valuations or consuming the Go call stack.
+	const depth = 256
+	atoms := make([]guard.Atom, depth)
+	for index := range atoms {
+		atoms[index] = guard.Atom(index + 1)
+	}
+	manager, err := guard.New(atoms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, ok := terminal.New(terminal.Config[uint8]{
+		Equal:       func(left, right uint8) bool { return left == right },
+		Fingerprint: func(value uint8) uint64 { return uint64(value) },
+	})
+	if !ok {
+		t.Fatal("terminal arena")
+	}
+	stored, ok := values.Admit(1)
+	if !ok || !values.Seal() {
+		t.Fatal("terminal setup")
+	}
+	diagram, ok := New(Config[testFactor, testKey, uint8]{
+		Factors:   []testFactor{factorFirst},
+		Terminals: values,
+		Guards:    manager,
+	})
+	if !ok {
+		t.Fatal("diagram")
+	}
+	regions := support.New(manager)
+	if regions == nil {
+		t.Fatal("support work")
+	}
+	literals := make([]support.Mask, depth)
+	for index := range literals {
+		literals[index], ok = regions.Literal(atoms[index], true)
+		if !ok {
+			t.Fatalf("literal %d", index)
+		}
+	}
+	if !regions.Seal() {
+		t.Fatal("support seal")
+	}
+	whole, ok := support.True(manager)
+	if !ok {
+		t.Fatal("whole support")
+	}
+	builder := diagram.Begin()
+	root := diagram.Empty()
+	for index, literal := range literals {
+		root, ok = builder.Set(root, factorFirst, 1, literal, stored)
+		if !ok {
+			t.Fatalf("deep write %d", index)
+		}
+	}
+	root, ok = builder.Seal(root)
+	if !ok || !diagram.Valid(root) {
+		t.Fatal("deep root seal")
+	}
+	value, present, valid := diagram.Get(root, factorFirst, 1)
+	if !valid || !present {
+		t.Fatal("deep value unavailable")
+	}
+	storedLeaves, absentLeaves := 0, 0
+	completed, valid := diagram.PartitionValueTerminals(value, whole, func(id terminal.ID[uint8], _ support.Mask) bool {
+		if id == stored {
+			storedLeaves++
+		} else if id == (terminal.ID[uint8]{}) {
+			absentLeaves++
+		} else {
+			t.Fatal("foreign terminal")
+		}
+		return true
+	})
+	if !completed || !valid || storedLeaves != depth || absentLeaves != 1 {
+		t.Fatalf("deep partition = completed:%t valid:%t stored:%d absent:%d", completed, valid, storedLeaves, absentLeaves)
+	}
+	if _, present, valid := diagram.At(root, factorFirst, 1, func(guard.Atom) bool { return false }); !valid || present {
+		t.Fatal("all-false valuation must select sparse absence")
+	}
+	if got, present, valid := diagram.At(root, factorFirst, 1, func(atom guard.Atom) bool { return atom == 1 }); !valid || !present || got != stored {
+		t.Fatal("stored literal valuation was not preserved")
+	}
+}
+
+func TestColumnCarriesDistinctTerminalsOnOppositeBranches(t *testing.T) {
+	fixture := newDiagramFixture(t)
+	builder := fixture.diagram.Begin()
+	root, ok := builder.Set(fixture.diagram.Empty(), factorFirst, 4, fixture.trueAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("true-branch fact write failed")
+	}
+	root, ok = builder.Set(root, factorFirst, 4, fixture.falseAtOne, fixture.values[1])
+	if !ok {
+		t.Fatal("false-branch fact write failed")
+	}
+	root, ok = builder.Seal(root)
+	if !ok || !fixture.diagram.Valid(root) {
+		t.Fatal("branch-valued root did not publish")
+	}
+	if count, ok := fixture.diagram.Count(root); !ok || count != 1 {
+		t.Fatalf("branch-valued column count = %d/%t, want 1/true", count, ok)
+	}
+	fixture.assertAt(t, root, factorFirst, 4, valuation(true, false), fixture.values[0], true)
+	fixture.assertAt(t, root, factorFirst, 4, valuation(false, false), fixture.values[1], true)
+	fixture.assertAt(t, root, factorFirst, 5, valuation(true, false), terminal.ID[uint8]{}, false)
+}
+
+func TestSetDeleteArePersistentExactITEs(t *testing.T) {
+	fixture := newDiagramFixture(t)
+	firstBuilder := fixture.diagram.Begin()
+	first, ok := firstBuilder.Set(fixture.diagram.Empty(), factorFirst, 4, fixture.trueAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("first write failed")
+	}
+	first, ok = firstBuilder.Seal(first)
+	if !ok {
+		t.Fatal("first root seal failed")
+	}
+
+	secondBuilder := fixture.diagram.Begin()
+	second, ok := secondBuilder.Set(first, factorFirst, 4, fixture.falseAtOne, fixture.values[1])
+	if !ok {
+		t.Fatal("second write failed")
+	}
+	second, ok = secondBuilder.Seal(second)
+	if !ok {
+		t.Fatal("second root seal failed")
+	}
+	// Updating the successor cannot mutate its predecessor.
+	fixture.assertAt(t, first, factorFirst, 4, valuation(true, false), fixture.values[0], true)
+	fixture.assertAt(t, first, factorFirst, 4, valuation(false, false), terminal.ID[uint8]{}, false)
+	fixture.assertAt(t, second, factorFirst, 4, valuation(true, false), fixture.values[0], true)
+	fixture.assertAt(t, second, factorFirst, 4, valuation(false, false), fixture.values[1], true)
+
+	thirdBuilder := fixture.diagram.Begin()
+	third, ok := thirdBuilder.Set(second, factorFirst, 4, fixture.trueAtOne, fixture.values[2])
+	if !ok {
+		t.Fatal("ITE replacement failed")
+	}
+	third, ok = thirdBuilder.Seal(third)
+	if !ok {
+		t.Fatal("ITE replacement seal failed")
+	}
+	fixture.assertAt(t, third, factorFirst, 4, valuation(true, false), fixture.values[2], true)
+	fixture.assertAt(t, third, factorFirst, 4, valuation(false, false), fixture.values[1], true)
+
+	deleteBuilder := fixture.diagram.Begin()
+	deleted, ok := deleteBuilder.Delete(third, factorFirst, 4, fixture.trueAtOne)
+	if !ok {
+		t.Fatal("branch deletion failed")
+	}
+	deleted, ok = deleteBuilder.Seal(deleted)
+	if !ok {
+		t.Fatal("branch deletion seal failed")
+	}
+	fixture.assertAt(t, deleted, factorFirst, 4, valuation(true, false), terminal.ID[uint8]{}, false)
+	fixture.assertAt(t, deleted, factorFirst, 4, valuation(false, false), fixture.values[1], true)
+
+	removeBuilder := fixture.diagram.Begin()
+	removed, ok := removeBuilder.Delete(deleted, factorFirst, 4, fixture.falseAtOne)
+	if !ok {
+		t.Fatal("final branch deletion failed")
+	}
+	removed, ok = removeBuilder.Seal(removed)
+	if !ok {
+		t.Fatal("final branch deletion seal failed")
+	}
+	if count, ok := fixture.diagram.Count(removed); !ok || count != 0 {
+		t.Fatalf("fully undefined column count = %d/%t, want 0/true", count, ok)
+	}
+	fixture.assertAt(t, removed, factorFirst, 4, valuation(true, false), terminal.ID[uint8]{}, false)
+	fixture.assertAt(t, removed, factorFirst, 4, valuation(false, false), terminal.ID[uint8]{}, false)
+}
+
+func TestColumnsPreserveSharedGuardCorrelationAndSchemaOrder(t *testing.T) {
+	fixture := newDiagramFixture(t)
+	builder := fixture.diagram.Begin()
+	root, ok := builder.Set(fixture.diagram.Empty(), factorSecond, 7, fixture.trueAtOne, fixture.values[2])
+	if !ok {
+		t.Fatal("second-factor true branch failed")
+	}
+	root, ok = builder.Set(root, factorSecond, 7, fixture.falseAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("second-factor false branch failed")
+	}
+	root, ok = builder.Set(root, factorFirst, 9, fixture.trueAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("first-factor high key failed")
+	}
+	root, ok = builder.Set(root, factorFirst, 1, fixture.trueAtTwo, fixture.values[1])
+	if !ok {
+		t.Fatal("first-factor low key failed")
+	}
+	root, ok = builder.Seal(root)
+	if !ok {
+		t.Fatal("correlated root seal failed")
+	}
+
+	// Both columns branch on atom 1.  The two complete valuations must select
+	// the paired values, not an independently mixed combination.
+	fixture.assertAt(t, root, factorSecond, 7, valuation(true, false), fixture.values[2], true)
+	fixture.assertAt(t, root, factorSecond, 7, valuation(false, false), fixture.values[0], true)
+	fixture.assertAt(t, root, factorFirst, 9, valuation(true, false), fixture.values[0], true)
+	fixture.assertAt(t, root, factorFirst, 9, valuation(false, false), terminal.ID[uint8]{}, false)
+
+	seen := make([][2]uint64, 0, 3)
+	completed, valid := fixture.diagram.ForEach(root, func(fact Fact[testFactor, testKey, uint8]) bool {
+		seen = append(seen, [2]uint64{uint64(fact.Factor), uint64(fact.Key)})
+		return true
+	})
+	if !completed || !valid {
+		t.Fatal("ordered fact stream failed")
+	}
+	want := [][2]uint64{{uint64(factorFirst), 1}, {uint64(factorFirst), 9}, {uint64(factorSecond), 7}}
+	if len(seen) != len(want) {
+		t.Fatalf("streamed %v, want %v", seen, want)
+	}
+	for index := range want {
+		if seen[index] != want[index] {
+			t.Fatalf("fact order %v, want %v", seen, want)
+		}
+	}
+}
+
+func TestBuilderMasksZipsAndExistsWithoutBreakingGuardCorrelation(t *testing.T) {
+	fixture := newDiagramFixture(t)
+	seed := fixture.diagram.Begin()
+	root, ok := seed.Set(fixture.diagram.Empty(), factorFirst, 4, fixture.trueAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("true branch seed failed")
+	}
+	root, ok = seed.Set(root, factorFirst, 4, fixture.falseAtOne, fixture.values[1])
+	if !ok {
+		t.Fatal("false branch seed failed")
+	}
+	root, ok = seed.Seal(root)
+	if !ok {
+		t.Fatal("seed seal failed")
+	}
+
+	work := fixture.diagram.Begin()
+	value, present, valid := work.Get(root, factorFirst, 4)
+	if !valid || !present {
+		t.Fatal("seed value unavailable")
+	}
+	masked, ok := work.Mask(value, fixture.trueAtOne)
+	if !ok {
+		t.Fatal("mask failed")
+	}
+	maskedRoot, ok := work.Put(fixture.diagram.Empty(), factorFirst, 4, masked)
+	if !ok {
+		t.Fatal("masked put failed")
+	}
+
+	// Zip retains exact low/high pairing.  Its operation handles undefined as
+	// the sparse identity and otherwise selects the greater terminal value.
+	joined, ok := work.Zip(value, masked, func(left, right terminal.ID[uint8]) (terminal.ID[uint8], bool) {
+		if left == (terminal.ID[uint8]{}) {
+			return right, true
+		}
+		if right == (terminal.ID[uint8]{}) {
+			return left, true
+		}
+		leftValue, leftValid := fixture.diagram.Terminals().Value(left)
+		rightValue, rightValid := fixture.diagram.Terminals().Value(right)
+		if !leftValid || !rightValid {
+			return terminal.ID[uint8]{}, false
+		}
+		if leftValue >= rightValue {
+			return left, true
+		}
+		return right, true
+	})
+	if !ok {
+		t.Fatal("zip failed")
+	}
+	exists, ok := work.Exists(joined, 1, func(left, right terminal.ID[uint8]) (terminal.ID[uint8], bool) {
+		if left == (terminal.ID[uint8]{}) {
+			return right, true
+		}
+		if right == (terminal.ID[uint8]{}) {
+			return left, true
+		}
+		leftValue, leftValid := fixture.diagram.Terminals().Value(left)
+		rightValue, rightValid := fixture.diagram.Terminals().Value(right)
+		if !leftValid || !rightValid {
+			return terminal.ID[uint8]{}, false
+		}
+		if leftValue >= rightValue {
+			return left, true
+		}
+		return right, true
+	})
+	if !ok {
+		t.Fatal("exists failed")
+	}
+	result, ok := work.Put(maskedRoot, factorFirst, 9, exists)
+	if !ok {
+		t.Fatal("exists put failed")
+	}
+	result, ok = work.Seal(result)
+	if !ok {
+		t.Fatal("semantic primitive seal failed")
+	}
+	fixture.assertAt(t, result, factorFirst, 4, valuation(true, false), fixture.values[0], true)
+	fixture.assertAt(t, result, factorFirst, 4, valuation(false, false), terminal.ID[uint8]{}, false)
+	// ∃ atom1 joins the two original branches: max(10,20) = 20 under every
+	// remaining valuation, so the discharged atom cannot leak back in.
+	fixture.assertAt(t, result, factorFirst, 9, valuation(true, false), fixture.values[1], true)
+	fixture.assertAt(t, result, factorFirst, 9, valuation(false, true), fixture.values[1], true)
+}
+
+func TestCandidateTerminalPublishesOnlyWithItsFactRoot(t *testing.T) {
+	fixture := newDiagramFixture(t)
+	terminals := fixture.diagram.Terminals().Begin()
+	if terminals == nil {
+		t.Fatal("candidate terminal work creation failed")
+	}
+	created, ok := terminals.Admit(99)
+	if !ok {
+		t.Fatal("dynamic terminal admission failed")
+	}
+	if fixture.diagram.Terminals().Valid(created) {
+		t.Fatal("base arena exposed a candidate terminal before fact publication")
+	}
+	builder := fixture.diagram.BeginWithTerminals(terminals)
+	if builder == nil {
+		t.Fatal("candidate fact builder creation failed")
+	}
+	root, ok := builder.Set(fixture.diagram.Empty(), factorFirst, 99, fixture.trueAtOne, created)
+	if !ok {
+		t.Fatal("candidate terminal write was rejected")
+	}
+	if fixture.diagram.Valid(root) {
+		t.Fatal("candidate root escaped before coordinated seal")
+	}
+	root, ok = builder.Seal(root)
+	if !ok || !fixture.diagram.Valid(root) {
+		t.Fatal("candidate fact root did not publish")
+	}
+	if value, valid := fixture.diagram.Terminals().Value(created); !valid || value != 99 {
+		t.Fatalf("published dynamic terminal = %d/%t, want 99/true", value, valid)
+	}
+	fixture.assertAt(t, root, factorFirst, 99, valuation(true, false), created, true)
+	fixture.assertAt(t, root, factorFirst, 99, valuation(false, false), terminal.ID[uint8]{}, false)
+
+	// Importing a root that contains a terminal published from Work must retain
+	// its exact meaning under the base Arena's authority.
+	reuse := fixture.diagram.Begin()
+	noop, ok := reuse.Set(root, factorFirst, 99, fixture.trueAtOne, created)
+	if !ok || fixture.diagram.Valid(noop) {
+		t.Fatal("published candidate terminal was not safely accepted as a private no-op")
+	}
+	published, ok := reuse.Seal(noop)
+	if !ok || !fixture.diagram.Equal(published, root) {
+		t.Fatal("candidate-terminal no-op did not preserve the sealed relation")
+	}
+}
+
+func TestDiagramRejectsForeignTerminalAndGuardUniverses(t *testing.T) {
+	fixture := newDiagramFixture(t)
+	foreignTerminals, ok := terminal.New(terminal.Config[uint8]{
+		Equal:       func(left, right uint8) bool { return left == right },
+		Fingerprint: func(value uint8) uint64 { return uint64(value) },
+	})
+	if !ok {
+		t.Fatal("foreign terminal arena creation failed")
+	}
+	foreignValue, ok := foreignTerminals.Admit(10)
+	if !ok || !foreignTerminals.Seal() {
+		t.Fatal("foreign terminal publication failed")
+	}
+	foreignManager, err := guard.New([]guard.Atom{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignMasks := support.New(foreignManager)
+	foreignMask, ok := foreignMasks.Literal(1, true)
+	if !ok || !foreignMasks.Seal() {
+		t.Fatal("foreign support publication failed")
+	}
+	builder := fixture.diagram.Begin()
+	if _, ok := builder.Set(fixture.diagram.Empty(), factorFirst, 1, fixture.trueAtOne, foreignValue); ok {
+		t.Fatal("foreign terminal identity entered fact diagram")
+	}
+	if _, ok := builder.Set(fixture.diagram.Empty(), factorFirst, 1, foreignMask, fixture.values[0]); ok {
+		t.Fatal("foreign guard universe entered fact diagram")
+	}
+	if root, ok := builder.Seal(fixture.diagram.Empty()); !ok || !fixture.diagram.Valid(root) {
+		t.Fatal("rejected candidate left builder unable to publish valid predecessor")
+	}
+}
+
+func TestCandidateColumnsCannotEscapePublication(t *testing.T) {
+	fixture := newDiagramFixture(t)
+	builder := fixture.diagram.Begin()
+	candidate, ok := builder.Set(fixture.diagram.Empty(), factorFirst, 1, fixture.trueAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("candidate write failed")
+	}
+	// A candidate is inspectable only by its owning Builder.  The immutable
+	// Diagram boundary must never make a half-built fact visible as State.
+	if _, _, valid := fixture.diagram.At(candidate, factorFirst, 1, valuation(true, false)); valid {
+		t.Fatal("candidate fact escaped through immutable Diagram reader")
+	}
+	if _, present, valid := builder.Get(candidate, factorFirst, 1); !valid || !present {
+		t.Fatal("owning Builder could not inspect its candidate fact")
+	}
+	builder.Discard()
+	if _, _, valid := builder.Get(candidate, factorFirst, 1); valid {
+		t.Fatal("discarded candidate remained readable")
+	}
+}
+
+func TestPersistentNoOpsPreserveMeaningWithoutPublishingCandidate(t *testing.T) {
+	fixture := newDiagramFixture(t)
+	seed := fixture.diagram.Begin()
+	base, ok := seed.Set(fixture.diagram.Empty(), factorFirst, 4, fixture.trueAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("seed write failed")
+	}
+	base, ok = seed.Seal(base)
+	if !ok {
+		t.Fatal("seed seal failed")
+	}
+
+	builder := fixture.diagram.Begin()
+	if _, ok := builder.Constant(terminal.ID[uint8]{}); !ok {
+		t.Fatal("candidate undefined terminal creation failed")
+	}
+	if _, ok := builder.Constant(fixture.values[0]); !ok {
+		t.Fatal("candidate terminal creation failed")
+	}
+	setNoop, ok := builder.Set(base, factorFirst, 4, fixture.trueAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("exact no-op Set failed")
+	}
+	if fixture.diagram.Valid(setNoop) {
+		t.Fatal("shared no-op candidate escaped before seal")
+	}
+	deleteNoop, ok := builder.Delete(setNoop, factorFirst, 4, fixture.falseAtOne)
+	if !ok {
+		t.Fatal("exact no-op Delete failed")
+	}
+	value, present, valid := builder.Get(deleteNoop, factorFirst, 4)
+	if !valid || !present {
+		t.Fatal("seed value unavailable to transform")
+	}
+	weakNoop, ok := builder.Transform(value, fixture.trueAtOne, func(value terminal.ID[uint8]) (terminal.ID[uint8], bool) {
+		return value, true
+	})
+	if !ok {
+		t.Fatal("identity transform failed")
+	}
+	transformNoop, ok := builder.Put(deleteNoop, factorFirst, 4, weakNoop)
+	if !ok {
+		t.Fatal("weak-style no-op transform failed")
+	}
+	published, ok := builder.Seal(transformNoop)
+	if !ok || !fixture.diagram.Valid(published) || !fixture.diagram.Equal(published, base) {
+		t.Fatal("no-op sequence did not publish the original fact relation")
+	}
+}

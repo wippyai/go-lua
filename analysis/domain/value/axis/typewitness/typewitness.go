@@ -2,7 +2,6 @@ package typewitness
 
 import (
 	"sort"
-	"sync"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -20,14 +19,25 @@ var Key = axis.NewKey[Value]("typewitness")
 
 func Spec() axis.Spec[Value] {
 	return axis.Spec[Value]{
-		Key:           Key,
-		Bottom:        Bottom,
-		Top:           Top,
-		Equal:         Equal,
-		LessOrEq:      LessOrEq,
-		Join:          Join,
-		Meet:          Meet,
-		Widen:         Widen,
+		Key:      Key,
+		Bottom:   Bottom,
+		Top:      Top,
+		Equal:    Equal,
+		LessOrEq: LessOrEq,
+		Join:     Join,
+		Meet:     Meet,
+		Widen:    Widen,
+		// The only reducer-owned transition on this axis is
+		// reduceByRuntimeKind. It removes one or more concrete union members;
+		// it never refines a member in place or synthesizes a new alternative.
+		// Counting canonical alternatives is therefore a well-founded descent
+		// measure for that transition. Top is omitted from sparse product slots
+		// and cannot be reduced, but is ranked above every finite witness so the
+		// measure is total over the axis states.
+		ReductionRank: axis.Rank[Value]{
+			Width: 1,
+			At:    reductionRank,
+		},
 		Hash:          Value.Hash,
 		Retention:     axis.ValidatedRetention(retentionSafe),
 		Canonical:     canonicalDescriptor(),
@@ -36,6 +46,19 @@ func Spec() axis.Spec[Value] {
 		ReducerReads:  []string{Key.ID(), runtimekind.Key.ID()},
 		ReducerWrites: []string{Key.ID()},
 	}
+}
+
+func reductionRank(value Value, _ int) uint64 {
+	switch {
+	case value.IsBottom():
+		return 0
+	case value.IsTop():
+		return ^uint64(0)
+	}
+	if union, ok := unwrap.Annotated(value.t).(*typ.Union); ok {
+		return uint64(len(union.Members))
+	}
+	return 1
 }
 
 // retentionSafe admits only exact package-owned singleton identities. Kind is
@@ -103,19 +126,13 @@ type Value struct {
 	recursive *recursiveSignature
 }
 
-// recursiveSignature is interned because recursive identity sets are immutable
-// canonical values. Keeping the 80-byte typ signature behind this pointer keeps
-// the frequently erased Value small while preserving the exact, stable hash
-// representation used outside this package.
+// recursiveSignature keeps the 80-byte typ signature behind a pointer so the
+// frequently erased Value stays small. Signatures are immutable and compared
+// structurally; they are intentionally not interned in a process-global map.
+// A witness therefore retains only the signature it owns and dies with the
+// value, rather than pinning every recursive type ever observed.
 type recursiveSignature struct {
 	signature typ.RecursiveIdentitySignature
-}
-
-var recursiveSignatures = struct {
-	mu      sync.Mutex
-	byValue map[typ.RecursiveIdentitySignature]*recursiveSignature
-}{
-	byValue: make(map[typ.RecursiveIdentitySignature]*recursiveSignature),
 }
 
 // bottomSignature is a private sentinel. Concrete values always have a type,
@@ -123,15 +140,8 @@ var recursiveSignatures = struct {
 // states without growing Value past its type interface plus one pointer.
 var bottomSignature = &recursiveSignature{}
 
-func internRecursiveSignature(signature typ.RecursiveIdentitySignature) *recursiveSignature {
-	recursiveSignatures.mu.Lock()
-	defer recursiveSignatures.mu.Unlock()
-	if interned := recursiveSignatures.byValue[signature]; interned != nil {
-		return interned
-	}
-	interned := &recursiveSignature{signature: signature}
-	recursiveSignatures.byValue[signature] = interned
-	return interned
+func newRecursiveSignature(signature typ.RecursiveIdentitySignature) *recursiveSignature {
+	return &recursiveSignature{signature: signature}
 }
 
 func Bottom() Value { return Value{recursive: bottomSignature} }
@@ -175,7 +185,7 @@ func Of(t typ.Type) Value {
 	value := Value{t: t}
 	if typ.ContainsRecursive(t) {
 		if sig, ok := typ.RecursiveIdentitySignatureOf(t); ok {
-			value.recursive = internRecursiveSignature(sig)
+			value.recursive = newRecursiveSignature(sig)
 		}
 	}
 	return value

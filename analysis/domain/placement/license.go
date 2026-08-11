@@ -85,7 +85,7 @@ func NewAllocationSiteLicenses(
 	frameLocalUse bool,
 	diesBeforeSuspension bool,
 	hasDiesBeforeSuspension bool,
-	value Value,
+	value Placement,
 	hasPlacement bool,
 ) AllocationSiteLicenses {
 	licenses := AllocationSiteLicenses{}.

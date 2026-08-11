@@ -22,7 +22,20 @@ func RuntimeKindFromType(t typ.Type) (runtimekind.Value, bool) {
 // type. This keeps callers outside typevalue from importing type internals just
 // to reject never after runtime-kind restriction.
 func (c *Cache) RefineWitnessByRuntimeKind(reg *axis.Registry, value product.Value, allowed runtimekind.Value) (product.Value, bool) {
-	t, ok := c.TypeOf(reg, value)
+	if c == nil {
+		t, ok := TypeOf(reg, value)
+		if !ok {
+			return product.Value{}, false
+		}
+		narrowed, changed := runtimekindof.RestrictTypeToRuntimeKind(t, allowed)
+		if !changed || typ.IsNever(narrowed) {
+			return product.Value{}, false
+		}
+		return WithWitness(reg, FromType(reg, narrowed), narrowed), true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t, ok := c.typeOfLocked(reg, value)
 	if !ok {
 		return product.Value{}, false
 	}
@@ -30,7 +43,7 @@ func (c *Cache) RefineWitnessByRuntimeKind(reg *axis.Registry, value product.Val
 	if !changed || typ.IsNever(narrowed) {
 		return product.Value{}, false
 	}
-	return c.FromTypeWithWitness(reg, narrowed), true
+	return c.fromTypeWithWitnessLocked(reg, narrowed), true
 }
 
 // HasLuaTypeEvidenceAxes reports whether reg contains the standard sparse axes

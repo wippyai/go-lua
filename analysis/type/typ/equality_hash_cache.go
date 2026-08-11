@@ -90,34 +90,32 @@ func equalityHashDependenciesValid(deps []equalityHashDependency) bool {
 func equalityHashDependencies(t Type) ([]equalityHashDependency, bool) {
 	seen := make(map[Type]bool)
 	deps := make([]equalityHashDependency, 0, 2)
-	var visit func(Type) bool
-	visit = func(current Type) bool {
-		if current == nil {
-			return true
-		}
-		current = unwrapAnnotated(current)
+	work := []Type{t}
+	for len(work) != 0 {
+		last := len(work) - 1
+		current := unwrapAnnotated(work[last])
+		work = work[:last]
 		if current == nil || seen[current] {
-			return true
+			continue
 		}
 		seen[current] = true
 
-		switch n := current.(type) {
+		switch node := current.(type) {
 		case *Recursive:
-			if n.Body == nil {
-				return false
+			if node.Body == nil {
+				return nil, false
 			}
-			deps = append(deps, equalityHashDependency{rec: n, recRev: n.rev})
+			deps = append(deps, equalityHashDependency{rec: node, recRev: node.rev})
 		case *Generic:
-			if n.Body == nil {
-				return false
+			if node.Body == nil {
+				return nil, false
 			}
-			deps = append(deps, equalityHashDependency{gen: n, genRev: n.rev})
+			deps = append(deps, equalityHashDependency{gen: node, genRev: node.rev})
 		}
-
-		return recursiveTypeChildrenAll(current, visit)
-	}
-	if !visit(t) {
-		return nil, false
+		WalkChildren(current, func(child Type) bool {
+			work = append(work, child)
+			return false
+		})
 	}
 	return deps, true
 }

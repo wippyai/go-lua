@@ -1,6 +1,7 @@
 package derive
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
@@ -26,7 +27,41 @@ func errorReturnsOf(row effect.Row) []returns.ErrorReturn {
 }
 
 func applyDefault(fn *typ.Function, known effect.Row, e typ.Type) effect.Row {
-	return Apply(fn, known, Context{ErrorType: e}, Default...)
+	return ApplyDefault(fn, known, Context{ErrorType: e})
+}
+
+func TestApplyDefaultMatchesExplicitStandardRule(t *testing.T) {
+	fn := typ.Func().Returns(typ.Any, typeexpr.Optional(errType())).Build()
+	ctx := Context{ErrorType: errType()}
+	got := ApplyDefault(fn, effect.Empty, ctx)
+	want := Apply(fn, effect.Empty, ctx, ErrorReturnFromShape)
+	if !got.Equals(want) {
+		t.Fatalf("ApplyDefault = %v, explicit standard rule = %v", got, want)
+	}
+}
+
+func TestApplyDefaultConcurrentResultsAreDeterministic(t *testing.T) {
+	fn := typ.Func().Returns(typ.String, typ.Any, typeexpr.Optional(errType())).Build()
+	ctx := Context{ErrorType: errType()}
+	want := ApplyDefault(fn, effect.Empty, ctx)
+
+	const callers = 16
+	results := make(chan effect.Row, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for range callers {
+		go func() {
+			defer wg.Done()
+			results <- ApplyDefault(fn, effect.Empty, ctx)
+		}()
+	}
+	wg.Wait()
+	close(results)
+	for got := range results {
+		if !got.Equals(want) {
+			t.Fatalf("concurrent ApplyDefault = %v, want %v", got, want)
+		}
+	}
 }
 
 // Two-return convention: a single value correlated with the trailing error.
@@ -65,7 +100,7 @@ func TestErrorReturnFromShape_NonErrorTrailingOptional(t *testing.T) {
 // Nil ErrorType disables the rule entirely.
 func TestErrorReturnFromShape_NoErrorTypeIsInert(t *testing.T) {
 	fn := typ.Func().Returns(typ.Any, typeexpr.Optional(errType())).Build()
-	if got := errorReturnsOf(Apply(fn, effect.Empty, Context{}, Default...)); len(got) != 0 {
+	if got := errorReturnsOf(ApplyDefault(fn, effect.Empty, Context{})); len(got) != 0 {
 		t.Fatalf("got %v, want rule inert without ErrorType", got)
 	}
 }
@@ -90,5 +125,18 @@ func TestApply_ComposesRules(t *testing.T) {
 	}
 	if !row.Has(func(l effect.Label) bool { return l.Equals(marker) }) {
 		t.Fatalf("second rule did not contribute: %v", row.Labels)
+	}
+}
+
+func TestApplyKeepsCustomRulesCallerOwned(t *testing.T) {
+	marker := returns.Return{ReturnIndex: 0}
+	rules := []Rule{func(*typ.Function, effect.Row, Context) []effect.Label {
+		return []effect.Label{marker}
+	}}
+	fn := typ.Func().Returns(typ.Any).Build()
+	got := Apply(fn, effect.Empty, Context{}, rules...)
+	rules[0] = nil
+	if !got.Has(func(label effect.Label) bool { return label.Equals(marker) }) {
+		t.Fatalf("Apply did not retain caller-owned rule result: %v", got.Labels)
 	}
 }

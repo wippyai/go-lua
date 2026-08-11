@@ -5,13 +5,13 @@ import "github.com/wippyai/go-lua/analysis/type/typ"
 
 // Field resolves a dot-field projection against a type.
 func Field(t typ.Type, name string) (typ.Type, bool) {
-	return newQuery().field(t, name, 0, fieldResult{}).materialize()
+	return newQuery().resolveField(t, name).materialize()
 }
 
 // MissingFieldReadsNil reports whether a missing field read on t has defined
 // Lua table semantics and produces nil instead of an indexing error.
 func MissingFieldReadsNil(t typ.Type) bool {
-	return newQuery().missingFieldReadsNil(t, 0, false)
+	return newQuery().resolveMissing(t)
 }
 
 type query struct {

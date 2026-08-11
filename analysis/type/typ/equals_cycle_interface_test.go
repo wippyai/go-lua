@@ -4,7 +4,7 @@ import "testing"
 
 // TestEqualsRecursiveThroughInterfaceTerminates proves the coinductive cycle
 // guard holds when a recursive type cycles through an interface method signature.
-// Before the Interface/Meta cases were added to typeEqualsGuard, the seen-set was
+// Before the Interface/Meta cases were added to the equality walker, the seen-set was
 // dropped at the Interface.Equals -> Function.Equals -> typeEquals(nil seen)
 // boundary, so this comparison recursed forever (stack overflow).
 func TestEqualsRecursiveThroughInterfaceTerminates(t *testing.T) {
@@ -48,7 +48,7 @@ func TestEqualsRecursiveThroughMetaTerminates(t *testing.T) {
 // TestEqualsRecursiveThroughEveryCompoundKindTerminates is a drift guard: for
 // each structural carrier that can host a recursion, a recursive type cycling
 // through it must compare equal and terminate. A new compound kind added without
-// an explicit seen-threading case in typeEqualsGuard would fall to the default
+// an explicit seen-threading case in the equality walker would fall to the default
 // arm, drop the coinductive guard, and stack-overflow here.
 func TestEqualsRecursiveThroughEveryCompoundKindTerminates(t *testing.T) {
 	carriers := map[string]func(self Type) Type{

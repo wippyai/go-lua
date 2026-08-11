@@ -85,3 +85,59 @@ func TestSortHashedTypesStableForSameHashSameStringCollision(t *testing.T) {
 		t.Fatal("intersection equality should survive same-hash same-string adversarial members")
 	}
 }
+
+func TestRecursiveIdentitySignatureAndUnionDedupTraverseDeepFiniteProducts(t *testing.T) {
+	const depth = 12_000
+
+	rec := NewRecursivePlaceholder("Leaf")
+	rec.SetBody(String)
+	build := func() Type {
+		var current Type = rec
+		for range depth {
+			current = NewArray(current)
+		}
+		return current
+	}
+
+	left, right := build(), build()
+	signature, ok := RecursiveIdentitySignatureOf(left)
+	if !ok || signature.SmallLen != 1 || signature.Small[0] != rec.ID {
+		t.Fatalf("deep finite product signature = %#v, %t; want recursive identity %d", signature, ok, rec.ID)
+	}
+	if survivors, _ := deduplicateTypesWithHashes([]Type{left, right}); len(survivors) != 1 {
+		t.Fatalf("deep equivalent products survived union dedup %d times, want 1", len(survivors))
+	}
+	if union := MaterializeUnion([]Type{left, right}); union != left {
+		t.Fatalf("public union construction retained a duplicate deep product: %T", union)
+	}
+}
+
+func TestRecursiveIdentitySignatureAndUnionDedupTraverseDeepCycles(t *testing.T) {
+	const depth = 12_000
+
+	build := func() *Recursive {
+		rec := NewRecursivePlaceholder("Node")
+		var body Type = rec
+		for range depth {
+			body = NewArray(body)
+		}
+		rec.SetBody(body)
+		return rec
+	}
+
+	left, right := build(), build()
+	leftSignature, leftOK := RecursiveIdentitySignatureOf(left)
+	rightSignature, rightOK := RecursiveIdentitySignatureOf(right)
+	if !leftOK || !rightOK || leftSignature.SmallLen != 1 || rightSignature.SmallLen != 1 {
+		t.Fatalf("deep cyclic signatures = %#v/%#v, ok=%t/%t; want one inline identity each", leftSignature, rightSignature, leftOK, rightOK)
+	}
+	if leftSignature.Equal(rightSignature) {
+		t.Fatal("distinct bisimilar recursive declarations shared an identity signature")
+	}
+	if survivors, _ := deduplicateTypesWithHashes([]Type{left, right}); len(survivors) != 2 {
+		t.Fatalf("distinct deep cyclic identity graphs collapsed in union dedup: %d survivors", len(survivors))
+	}
+	if !sameRecursiveIdentityGraph(NewArray(left), left) {
+		t.Fatal("a deep cyclic wrapper must retain its root recursive identity graph")
+	}
+}

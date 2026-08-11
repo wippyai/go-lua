@@ -2,7 +2,6 @@ package variant
 
 import (
 	"sort"
-	"sync"
 
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -26,51 +25,78 @@ type originFamily struct {
 	cases     []originCase
 }
 
-var (
-	originCatalogMu       sync.Mutex
-	originCatalog         = make(map[uint64]originFamily)
-	originCatalogRevision = make(map[uint64]uint64)
-	originCatalogPoisoned = make(map[uint64]struct{})
-)
+// storeOriginFamily records one family in the caller-owned variant cache.
+// Family IDs are portable evidence tokens; their type payload is deliberately
+// retained only by this cache, never in a process-global catalog.
+func (c *Cache) storeOriginFamily(f originFamily) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.storeOriginFamilyLocked(f)
+}
 
-func storeOriginFamily(f originFamily) bool {
+func (c *Cache) storeOriginFamilyLocked(f originFamily) bool {
+	if c == nil {
+		return false
+	}
 	if f.id == 0 || f.kind == 0 || len(f.cases) == 0 {
 		return false
 	}
-	originCatalogMu.Lock()
-	defer originCatalogMu.Unlock()
-	if _, poisoned := originCatalogPoisoned[f.id]; poisoned {
-		return false
+	if c.originPoisoned != nil {
+		if _, poisoned := c.originPoisoned[f.id]; poisoned {
+			return false
+		}
 	}
-	if existing, ok := originCatalog[f.id]; ok {
+	if c.originFamilies == nil {
+		c.originFamilies = make(map[uint64]originFamily)
+	}
+	if c.originRevisions == nil {
+		c.originRevisions = make(map[uint64]uint64)
+	}
+	if existing, ok := c.originFamilies[f.id]; ok {
 		if originFamilyCovers(existing, f) {
 			return true
 		}
 		if !originFamiliesCompatible(existing, f) {
-			delete(originCatalog, f.id)
-			originCatalogPoisoned[f.id] = struct{}{}
-			originCatalogRevision[f.id]++
+			delete(c.originFamilies, f.id)
+			if c.originPoisoned == nil {
+				c.originPoisoned = make(map[uint64]struct{})
+			}
+			c.originPoisoned[f.id] = struct{}{}
+			c.originRevisions[f.id]++
 			return false
 		}
 		f.cases = mergeOriginCases(existing.cases, f.cases)
 	} else {
 		f = cloneOriginFamily(f)
 	}
-	if existing, ok := originCatalog[f.id]; ok && originFamiliesEqual(existing, f) {
+	if existing, ok := c.originFamilies[f.id]; ok && originFamiliesEqual(existing, f) {
 		return true
 	}
-	originCatalogRevision[f.id]++
-	originCatalog[f.id] = f
+	c.originRevisions[f.id]++
+	c.originFamilies[f.id] = f
 	return true
 }
 
-func loadOriginFamily(id uint64) (originFamily, bool) {
-	originCatalogMu.Lock()
-	defer originCatalogMu.Unlock()
-	if _, poisoned := originCatalogPoisoned[id]; poisoned {
+func (c *Cache) loadOriginFamily(id uint64) (originFamily, bool) {
+	if c == nil {
 		return originFamily{}, false
 	}
-	family, ok := originCatalog[id]
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.loadOriginFamilyLocked(id)
+}
+
+func (c *Cache) loadOriginFamilyLocked(id uint64) (originFamily, bool) {
+	if c == nil {
+		return originFamily{}, false
+	}
+	if _, poisoned := c.originPoisoned[id]; poisoned {
+		return originFamily{}, false
+	}
+	family, ok := c.originFamilies[id]
 	if ok {
 		family = cloneOriginFamily(family)
 	}
@@ -91,16 +117,26 @@ func cloneOriginCases(cases []originCase) []originCase {
 	return out
 }
 
-func originFamilyRevision(id uint64) (uint64, bool) {
-	originCatalogMu.Lock()
-	defer originCatalogMu.Unlock()
-	if _, poisoned := originCatalogPoisoned[id]; poisoned {
+func (c *Cache) originFamilyRevision(id uint64) (uint64, bool) {
+	if c == nil {
 		return 0, false
 	}
-	if _, ok := originCatalog[id]; !ok {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.originFamilyRevisionLocked(id)
+}
+
+func (c *Cache) originFamilyRevisionLocked(id uint64) (uint64, bool) {
+	if c == nil {
 		return 0, false
 	}
-	return originCatalogRevision[id], true
+	if _, poisoned := c.originPoisoned[id]; poisoned {
+		return 0, false
+	}
+	if _, ok := c.originFamilies[id]; !ok {
+		return 0, false
+	}
+	return c.originRevisions[id], true
 }
 
 func originFamiliesCompatible(existing, next originFamily) bool {

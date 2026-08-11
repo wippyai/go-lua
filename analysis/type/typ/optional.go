@@ -52,12 +52,7 @@ func newRawOptionalNode(inner Type) Type {
 func (o *Optional) Kind() kind.Kind { return kind.Optional }
 
 func (o *Optional) String() string {
-	return o.strCache.get(func() string {
-		if o.Inner == nil {
-			return "nil?"
-		}
-		return o.Inner.String() + "?"
-	})
+	return o.strCache.get(func() string { return renderTypeString(o) })
 }
 
 func (o *Optional) Hash() uint64 { return o.hash }

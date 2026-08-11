@@ -126,9 +126,9 @@ func TestParseResolverPathAndLocalKeyForVersionRoundTrip(t *testing.T) {
 	if !ok || sym != 42 || version != 3 || suffix != `.field["k"]` {
 		t.Fatalf("ParseResolverPath = %d/%d/%q/%v, want 42/3/.field[\"k\"]/true", sym, version, suffix, ok)
 	}
-	segments, ok := segment.InternFormattedSegments(suffix)
+	segments, ok := segment.ParseFormattedSegments(suffix)
 	if !ok {
-		t.Fatal("InternFormattedSegments failed")
+		t.Fatal("ParseFormattedSegments failed")
 	}
 	local, ok := LocalKeyForVersion(sym, version, segments)
 	if !ok || local.PathKey() != key {

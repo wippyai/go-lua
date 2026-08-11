@@ -249,19 +249,35 @@ func (s *recursivePointerSet) enter(ptr uintptr) bool {
 }
 
 func collectRecursiveIdentities(t Type, ids *recursiveIdentitySet, seen *recursivePointerSet) {
-	t = unwrapAnnotatedOrNil(t)
 	if t == nil {
 		return
 	}
-	ptr := typePointer(t)
-	if !seen.enter(ptr) {
-		return
+	if seen == nil {
+		seen = &recursivePointerSet{}
 	}
-	if rec, ok := t.(*Recursive); ok {
-		ids.add(rec.ID)
+
+	// Identity collection is a graph property, not a call-stack property. Keep
+	// the traversal explicit so deep product chains and recursive back-edges
+	// cannot grow the Go stack. `seen` remains the declaration/node memo: once a
+	// pointer has been entered, its descendants have either been scheduled or
+	// were already scheduled by the first encounter.
+	work := []Type{t}
+	for len(work) != 0 {
+		last := len(work) - 1
+		current := unwrapAnnotatedOrNil(work[last])
+		work = work[:last]
+		if current == nil {
+			continue
+		}
+		if !seen.enter(typePointer(current)) {
+			continue
+		}
+		if rec, ok := current.(*Recursive); ok {
+			ids.add(rec.ID)
+		}
+		WalkChildren(current, func(child Type) bool {
+			work = append(work, child)
+			return false
+		})
 	}
-	WalkChildren(t, func(child Type) bool {
-		collectRecursiveIdentities(child, ids, seen)
-		return false
-	})
 }

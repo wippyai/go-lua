@@ -30,7 +30,7 @@ func fromType(reg *axis.Registry, t typ.Type, cache *Cache) product.Value {
 	if kindValue, ok := RuntimeKindFromType(t); ok {
 		product.EditSet(&ed, runtimekind.Key, kindValue)
 	}
-	if family, cases, ok := cache.Variants().OriginOfType(t); ok {
+	if family, cases, ok := cache.variantsLocked().OriginOfType(t); ok {
 		product.EditSet(&ed, variantorigin.Key, variantorigin.Of(family, cases))
 	}
 	return ed.Done()
@@ -77,16 +77,21 @@ func String(reg *axis.Registry) product.Value {
 // prefer over a broader cached declaration. Unknown, any, and never are not
 // concrete refinements.
 func HasConcreteType(reg *axis.Registry, value product.Value) bool {
-	return hasConcreteType(reg, value, nil)
+	return hasConcreteType(reg, value)
 }
 
 // HasConcreteType reports whether value carries concrete type evidence using
 // this cache's query surface.
 func (c *Cache) HasConcreteType(reg *axis.Registry, value product.Value) bool {
-	return hasConcreteType(reg, value, c)
+	if c == nil {
+		return HasConcreteType(reg, value)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.hasConcreteTypeLocked(reg, value)
 }
 
-func hasConcreteType(reg *axis.Registry, value product.Value, cache *Cache) bool {
+func hasConcreteType(reg *axis.Registry, value product.Value) bool {
 	if reg == nil || product.Equal(reg, value, product.Bottom(reg)) || product.Equal(reg, value, product.Top()) {
 		return false
 	}
@@ -95,7 +100,20 @@ func hasConcreteType(reg *axis.Registry, value product.Value, cache *Cache) bool
 			return false
 		}
 	}
-	t, ok := cache.TypeOf(reg, value)
+	t, ok := TypeOf(reg, value)
+	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) && !typ.IsNever(t)
+}
+
+func (c *Cache) hasConcreteTypeLocked(reg *axis.Registry, value product.Value) bool {
+	if reg == nil || product.Equal(reg, value, product.Bottom(reg)) || product.Equal(reg, value, product.Top()) {
+		return false
+	}
+	if witness := product.Get(reg, value, typewitness.Key); !witness.IsTop() {
+		if t, ok := witness.Type(); ok && typ.IsNever(t) {
+			return false
+		}
+	}
+	t, ok := c.typeOfLocked(reg, value)
 	return ok && t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) && !typ.IsNever(t)
 }
 

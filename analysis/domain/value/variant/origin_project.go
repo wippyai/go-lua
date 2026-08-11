@@ -7,26 +7,29 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// ProjectOrigin projects origin evidence through a static record path.
-func ProjectOrigin(familyID uint64, cases caseset.View, suffix []segment.Segment) (uint64, []int, bool) {
-	if familyID == 0 || cases.Len() == 0 || len(suffix) == 0 {
+// ProjectOrigin projects origin evidence through this cache's owner-local
+// family payload.
+func (cache *Cache) ProjectOrigin(familyID uint64, cases caseset.View, suffix []segment.Segment) (uint64, []int, bool) {
+	if cache == nil || familyID == 0 || cases.Len() == 0 || len(suffix) == 0 {
 		return 0, nil, false
 	}
-	family, ok := loadOriginFamily(familyID)
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	family, ok := cache.loadOriginFamilyLocked(familyID)
 	if !ok {
 		return 0, nil, false
 	}
 	var outFamily uint64
 	var outCases []int
-	for _, c := range family.cases {
-		if !containsCase(cases, c.index) {
+	for _, item := range family.cases {
+		if !containsCase(cases, item.index) {
 			continue
 		}
-		field, ok := fieldAtPath(c.typ, suffix)
+		field, ok := fieldAtPath(item.typ, suffix)
 		if !ok {
 			return 0, nil, false
 		}
-		childFamily, childCases, ok := OriginOfType(field)
+		childFamily, childCases, ok := cache.originOfTypeLocked(field)
 		if !ok {
 			return 0, nil, false
 		}
@@ -95,36 +98,38 @@ func originByPathLiteralWithCache(cache *Cache, t typ.Type, suffix []segment.Seg
 	return family.id, out, true
 }
 
-// NarrowOriginByPath keeps parent cases whose path projection is compatible
-// with constraint. When equal is false it keeps the cases proven incompatible.
-func NarrowOriginByPath(parentFamily uint64, parentCases caseset.View, suffix []segment.Segment, constraintFamily uint64, constraintCases caseset.View, equal bool) ([]int, bool) {
-	if parentFamily == 0 || parentCases.Len() == 0 || len(suffix) == 0 || constraintFamily == 0 || constraintCases.Len() == 0 {
+// NarrowOriginByPath narrows a parent family using this cache's owner-local
+// payload. When equal is false it keeps the cases proven incompatible.
+func (cache *Cache) NarrowOriginByPath(parentFamily uint64, parentCases caseset.View, suffix []segment.Segment, constraintFamily uint64, constraintCases caseset.View, equal bool) ([]int, bool) {
+	if cache == nil || parentFamily == 0 || parentCases.Len() == 0 || len(suffix) == 0 || constraintFamily == 0 || constraintCases.Len() == 0 {
 		return nil, false
 	}
-	family, ok := loadOriginFamily(parentFamily)
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	family, ok := cache.loadOriginFamilyLocked(parentFamily)
 	if !ok {
 		return nil, false
 	}
 	out := make([]int, 0, parentCases.Len())
-	for _, c := range family.cases {
-		if !containsCase(parentCases, c.index) {
+	for _, item := range family.cases {
+		if !containsCase(parentCases, item.index) {
 			continue
 		}
-		field, ok := fieldAtPath(c.typ, suffix)
+		field, ok := fieldAtPath(item.typ, suffix)
 		if !ok {
 			if !equal {
-				out = append(out, c.index)
+				out = append(out, item.index)
 			}
 			continue
 		}
-		childFamily, childCases, ok := OriginOfType(field)
+		childFamily, childCases, ok := cache.originOfTypeLocked(field)
 		if !ok || childFamily != constraintFamily {
-			out = append(out, c.index)
+			out = append(out, item.index)
 			continue
 		}
 		intersects := casesIntersect(constraintCases, childCases)
 		if intersects == equal {
-			out = append(out, c.index)
+			out = append(out, item.index)
 		}
 	}
 	if !allCasesKnown(parentCases, family.cases) {
@@ -137,33 +142,35 @@ func NarrowOriginByPath(parentFamily uint64, parentCases caseset.View, suffix []
 	return out, true
 }
 
-// NarrowOriginByPathType keeps parent cases whose path projection is compatible
-// with a concrete constraint type. It covers equality tests where one side is a
+// NarrowOriginByPathType narrows a parent family against a type using this
+// cache's owner-local payload. It covers equality tests where one side is a
 // projected union field and the other side is a concrete local value rather than
 // another variant-origin path.
-func NarrowOriginByPathType(parentFamily uint64, parentCases caseset.View, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
-	if parentFamily == 0 || parentCases.Len() == 0 || len(suffix) == 0 || constraint == nil {
+func (cache *Cache) NarrowOriginByPathType(parentFamily uint64, parentCases caseset.View, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
+	if cache == nil || parentFamily == 0 || parentCases.Len() == 0 || len(suffix) == 0 || constraint == nil {
 		return nil, false
 	}
-	family, ok := loadOriginFamily(parentFamily)
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	family, ok := cache.loadOriginFamilyLocked(parentFamily)
 	if !ok {
 		return nil, false
 	}
 	out := make([]int, 0, parentCases.Len())
-	for _, c := range family.cases {
-		if !containsCase(parentCases, c.index) {
+	for _, item := range family.cases {
+		if !containsCase(parentCases, item.index) {
 			continue
 		}
-		field, ok := fieldAtPath(c.typ, suffix)
+		field, ok := fieldAtPath(item.typ, suffix)
 		if !ok {
 			if !equal {
-				out = append(out, c.index)
+				out = append(out, item.index)
 			}
 			continue
 		}
 		compatible := typesOverlap(field, constraint)
 		if compatible == equal {
-			out = append(out, c.index)
+			out = append(out, item.index)
 		}
 	}
 	if !allCasesKnown(parentCases, family.cases) {

@@ -155,6 +155,34 @@ func TestCrossGenerationSemanticCanonicality(t *testing.T) {
 	}
 }
 
+func TestEntailsIdentityAndTerminalsHaveNoTraversalAllocation(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	region := literal(t, work, testA)
+	work.Seal()
+
+	if !manager.Entails(region, region) {
+		t.Fatal("identical guard did not entail itself")
+	}
+	if !manager.Entails(manager.False(), region) || !manager.Entails(region, manager.True()) {
+		t.Fatal("terminal entailment law failed")
+	}
+	if manager.Entails(manager.True(), region) || manager.Entails(region, manager.False()) || manager.Entails(manager.True(), manager.False()) {
+		t.Fatal("terminal non-entailment law failed")
+	}
+
+	// Warm the assertion path, then prove the direct identity result avoids the
+	// satisfiability stack and seen map entirely.
+	_ = manager.Entails(region, region)
+	if allocations := testing.AllocsPerRun(1_000, func() {
+		if !manager.Entails(region, region) {
+			t.Fatal("identical guard did not entail itself")
+		}
+	}); allocations != 0 {
+		t.Fatalf("identical Entails allocated %f times", allocations)
+	}
+}
+
 func TestWorkReadsSealedPriorAndCurrentLocalWithoutObserverAllocation(t *testing.T) {
 	manager := newTestManager(t)
 	priorWork := manager.NewWork()

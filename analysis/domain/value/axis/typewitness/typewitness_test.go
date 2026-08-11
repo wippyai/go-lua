@@ -16,11 +16,17 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typeexpr"
 )
 
+func testRegistry(t *testing.T) *axis.Registry {
+	t.Helper()
+	reg, err := product.RegistryWithAxes(runtimekind.Spec().Erase(), Spec().Erase())
+	if err != nil {
+		t.Fatalf("RegistryWithAxes(test registry): %v", err)
+	}
+	return reg
+}
+
 func TestArtifactRetentionRejectsRecursivePlaceholderBeforeAndAfterSetBody(t *testing.T) {
-	reg := axis.NewRegistry()
-	axis.Register(reg, runtimekind.Spec())
-	axis.Register(reg, Spec())
-	reg.Freeze()
+	reg := testRegistry(t)
 	placeholder := typ.NewRecursivePlaceholder("Mutable")
 	stored := product.Set(reg, product.Top(), Key, Of(placeholder))
 	if product.RetentionSafe(reg, stored) {
@@ -33,10 +39,7 @@ func TestArtifactRetentionRejectsRecursivePlaceholderBeforeAndAfterSetBody(t *te
 }
 
 func TestArtifactRetentionAdmitsExactPrimitiveSingletonWitnesses(t *testing.T) {
-	reg := axis.NewRegistry()
-	axis.Register(reg, runtimekind.Spec())
-	axis.Register(reg, Spec())
-	reg.Freeze()
+	reg := testRegistry(t)
 	for _, witness := range []Value{Bottom(), Top(), Of(typ.Nil), Of(typ.Boolean), Of(typ.Integer), Of(typ.Number), Of(typ.String), Of(typ.Never)} {
 		stored := product.Set(reg, product.Top(), Key, witness)
 		if !product.RetentionSafe(reg, stored) {
@@ -45,11 +48,27 @@ func TestArtifactRetentionAdmitsExactPrimitiveSingletonWitnesses(t *testing.T) {
 	}
 }
 
+func TestRuntimeKindReductionHasStrictWitnessRankDescent(t *testing.T) {
+	reg, err := product.RegistryWithAxes(runtimekind.Spec().Erase(), Spec().Erase())
+	if err != nil {
+		t.Fatalf("RegistryWithAxes() error = %v", err)
+	}
+	union := Of(typ.MaterializeUnion([]typ.Type{typ.Number, typ.String, typ.Boolean}))
+	value := product.Set(reg, product.Top(), Key, union)
+	value = product.Set(reg, value, runtimekind.Key, runtimekind.Singleton(runtimekind.String))
+
+	got := product.Get(reg, value, Key)
+	want := Of(typ.String)
+	if !Equal(got, want) {
+		t.Fatalf("runtime-kind reduction witness = %v, want %v", got, want)
+	}
+	if before, after := reductionRank(union, 0), reductionRank(got, 0); after >= before {
+		t.Fatalf("runtime-kind reduction rank = %d -> %d, want strict descent", before, after)
+	}
+}
+
 func TestArtifactRetentionRejectsCompositeAndNominalWitnesses(t *testing.T) {
-	reg := axis.NewRegistry()
-	axis.Register(reg, runtimekind.Spec())
-	axis.Register(reg, Spec())
-	reg.Freeze()
+	reg := testRegistry(t)
 	param := typ.NewTypeParam("T", nil)
 	for name, valueType := range map[string]typ.Type{
 		"array":   typ.NewArray(typ.String),
@@ -76,10 +95,7 @@ func (*forgedStringType) Hash() uint64                 { return 1 }
 func (f *forgedStringType) Equals(other typ.Type) bool { return f == other }
 
 func TestArtifactRetentionRejectsKindForgedPrimitiveAndMutableLiteral(t *testing.T) {
-	reg := axis.NewRegistry()
-	axis.Register(reg, runtimekind.Spec())
-	axis.Register(reg, Spec())
-	reg.Freeze()
+	reg := testRegistry(t)
 	forged := &forgedStringType{mutable: "before"}
 	if product.RetentionSafe(reg, product.Set(reg, product.Top(), Key, Value{t: forged})) {
 		t.Fatal("custom type forged as kind.String crossed artifact boundary")
@@ -97,7 +113,7 @@ func TestArtifactRetentionRejectsKindForgedPrimitiveAndMutableLiteral(t *testing
 	}
 }
 
-func TestValueStaysSmallAndInternsRecursiveSignatures(t *testing.T) {
+func TestValueStaysSmallAndOwnsRecursiveSignatures(t *testing.T) {
 	if got := unsafe.Sizeof(Value{}); got != 24 {
 		t.Fatalf("typewitness Value size = %d, want 24 bytes", got)
 	}
@@ -105,8 +121,14 @@ func TestValueStaysSmallAndInternsRecursiveSignatures(t *testing.T) {
 		return typ.NewArray(self)
 	})
 	first, second := Of(recursive), Of(recursive)
-	if first.recursive == nil || first.recursive != second.recursive {
-		t.Fatal("equivalent recursive signatures must use one canonical handle")
+	if first.recursive == nil || second.recursive == nil {
+		t.Fatal("recursive witnesses lost their identity signatures")
+	}
+	if first.recursive == second.recursive {
+		t.Fatal("recursive signatures unexpectedly use process-global interning")
+	}
+	if !first.recursive.signature.Equal(second.recursive.signature) || !Equal(first, second) {
+		t.Fatal("equivalent recursive signatures no longer compare structurally")
 	}
 }
 

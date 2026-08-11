@@ -22,7 +22,7 @@ func typeEquals(a, b Type) bool {
 		return true
 	}
 	seen := typePairSet{}
-	equal := typeEqualsGuard(a, b, &seen)
+	equal := typeEqualsIterative(a, b, &seen)
 	seen.release()
 	// The cycle table stores non-owning pointer identities. Keep both immutable
 	// roots live until every identity has been consumed and the table released.

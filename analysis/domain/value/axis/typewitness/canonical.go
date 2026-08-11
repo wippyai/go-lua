@@ -105,9 +105,19 @@ func canonicalState(value Value) (state, error) {
 	default:
 		canonical := Of(value.t)
 		if canonical.IsTop() || canonical.IsBottom() ||
-			value.recursive != canonical.recursive || !Equal(value, canonical) {
+			!recursiveSignaturesEqual(value.recursive, canonical.recursive) || !Equal(value, canonical) {
 			return 0, fmt.Errorf("typewitness: malformed or unsupported concrete value")
 		}
 		return concrete, nil
 	}
+}
+
+func recursiveSignaturesEqual(left, right *recursiveSignature) bool {
+	if left == right {
+		return true
+	}
+	if left == nil || right == nil {
+		return false
+	}
+	return left.signature.Equal(right.signature)
 }

@@ -30,16 +30,17 @@ func SymbolStableKey(sym symbol.ID, segments []segment.Segment) StableKey {
 	return StableKey{key: pathdom.FormatKey(pathdom.Path{Symbol: sym, Segments: segments})}
 }
 
-// ParseSymbolPathKey inverts SymbolPathKey and returns a defensive segment copy.
+// ParseSymbolPathKey inverts SymbolPathKey and returns fresh caller-owned
+// segments from the canonical key parser.
 func ParseSymbolPathKey(key pathdom.PathKey) (symbol.ID, []segment.Segment, bool) {
-	sym, segments, ok := parseInternedSymbolPathKey(key)
+	sym, segments, ok := parseSymbolPathKey(key)
 	if !ok {
 		return 0, nil, false
 	}
-	return sym, cloneSegments(segments), true
+	return sym, segments, true
 }
 
-func parseInternedSymbolPathKey(key pathdom.PathKey) (symbol.ID, []segment.Segment, bool) {
+func parseSymbolPathKey(key pathdom.PathKey) (symbol.ID, []segment.Segment, bool) {
 	path, ok := pathdom.ParseKey(key)
 	if !ok || path.Symbol == 0 || path.Version != 0 {
 		return 0, nil, false

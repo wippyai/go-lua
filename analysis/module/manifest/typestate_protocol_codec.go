@@ -7,9 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/lifecycle"
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
-	"github.com/wippyai/go-lua/analysis/module/signature"
 )
 
 type typestateProtocolWire struct {
@@ -133,11 +131,6 @@ func validateManifestTypestateUsage(m *Manifest) error {
 		if err := validateEffectRowTypestateUsage(defs, sig.Effect); err != nil {
 			return fmt.Errorf("manifest: function signature %q effect: %w", name, err)
 		}
-		if sig.OperationalEffects != nil {
-			if err := validateOperationalTypestateUsage(defs, *sig.OperationalEffects); err != nil {
-				return fmt.Errorf("manifest: function signature %q operational effects: %w", name, err)
-			}
-		}
 	}
 	return nil
 }
@@ -160,69 +153,6 @@ func validateEffectRowTypestateUsage(defs map[typestate.Protocol]typestate.Defin
 		}
 	}
 	return nil
-}
-
-func validateOperationalTypestateUsage(defs map[typestate.Protocol]typestate.Definition, effects signature.OperationalEffects) error {
-	for _, fact := range effects.LifecycleEffects {
-		if err := validateOperationalLifecycleTarget(fact.Target); err != nil {
-			return err
-		}
-		switch fact.Kind {
-		case signature.LifecycleAcquire:
-			if err := validateLifecycleAcquire(defs, fact.Protocol, fact.To, fact.Obligation); err != nil {
-				return err
-			}
-		case signature.LifecycleTransition:
-			if err := validateLifecycleTransition(defs, fact.Protocol, fact.From, fact.To); err != nil {
-				return err
-			}
-		case signature.LifecycleEscape:
-			if _, err := declaredTypestateProtocol(defs, fact.Protocol); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unsupported lifecycle kind %d", fact.Kind)
-		}
-	}
-	for _, requirement := range effects.TypestateRequirements {
-		if err := validateOperationalTypestateRequirementTarget(requirement.Target); err != nil {
-			return err
-		}
-		def, err := declaredTypestateProtocol(defs, requirement.Protocol)
-		if err != nil {
-			return err
-		}
-		if requirement.State == "" {
-			return fmt.Errorf("typestate requirement missing state")
-		}
-		if !def.HasState(requirement.State) {
-			return fmt.Errorf("protocol %q does not declare requirement state %q", requirement.Protocol, requirement.State)
-		}
-	}
-	return nil
-}
-
-func validateOperationalTypestateRequirementTarget(target pathdom.Path) error {
-	if !target.IsPlaceholder() {
-		return fmt.Errorf("typestate requirement target %q is not a parameter", target.String())
-	}
-	if target.PlaceholderIndex() < 0 {
-		return fmt.Errorf("typestate requirement has negative parameter index %d", target.PlaceholderIndex())
-	}
-	return nil
-}
-
-func validateOperationalLifecycleTarget(target pathdom.Path) error {
-	if target.IsPlaceholder() {
-		if target.PlaceholderIndex() < 0 {
-			return fmt.Errorf("lifecycle target has negative parameter index %d", target.PlaceholderIndex())
-		}
-		return nil
-	}
-	if _, ok := returnSlotPathIndex(target); ok {
-		return nil
-	}
-	return fmt.Errorf("lifecycle target %q is not a parameter or return slot", target.String())
 }
 
 func validateLifecycleAcquire(defs map[typestate.Protocol]typestate.Definition, protocol typestate.Protocol, state typestate.State, obligation typestate.Obligation) error {

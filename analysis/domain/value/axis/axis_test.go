@@ -335,6 +335,38 @@ func TestAxisSpecRejectsMalformedReducerDeclarations(t *testing.T) {
 	}
 }
 
+func TestAxisSpecRejectsPartialDescentRanks(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*axis.Spec[int])
+	}{
+		{"widen-width-only", func(spec *axis.Spec[int]) {
+			spec.WidenRank = axis.Rank[int]{Width: 1}
+		}},
+		{"widen-function-only", func(spec *axis.Spec[int]) {
+			spec.WidenRank = axis.Rank[int]{At: func(int, int) uint64 { return 0 }}
+		}},
+		{"reduction-width-only", func(spec *axis.Spec[int]) {
+			spec.ReductionRank = axis.Rank[int]{Width: 1}
+		}},
+		{"reduction-function-only", func(spec *axis.Spec[int]) {
+			spec.ReductionRank = axis.Rank[int]{At: func(int, int) uint64 { return 0 }}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := registryTestSpec("test.rank."+test.name, nil)
+			test.edit(&spec)
+			defer func() {
+				if recover() == nil {
+					t.Fatal("partial rank did not fail closed")
+				}
+			}()
+			_ = spec.Erase()
+		})
+	}
+}
+
 func runAxisLaws[T any](t *testing.T, name string, spec axis.Spec[T], sample []T) {
 	t.Helper()
 	suite := latticelaws.LawSuite[T]{

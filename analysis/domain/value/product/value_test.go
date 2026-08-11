@@ -587,7 +587,7 @@ func TestProductRequiresFrozenRegistry(t *testing.T) {
 		_ = Domain(reg)
 	})
 
-	reg.Freeze()
+	freezeTestRegistry(reg)
 	d := Domain(reg)
 	v := Set(reg, d.Top(), syntheticKey, syntheticLow)
 	mustPanic(t, func() {
@@ -675,19 +675,10 @@ func TestReducerMutatesOwnedWorkSlotsOnly(t *testing.T) {
 	}
 }
 
-func TestReducerCanUseExplicitPresenceHelpers(t *testing.T) {
-	reg := mustRegistry(t, presenceHelperReducerSpec().Erase())
-
-	v := Set(reg, Top(), syntheticKey, syntheticHigh)
-
-	if ShapeOf(v) != ShapeBottom {
-		t.Fatalf("ShapeOf = %s, want %s", ShapeOf(v), ShapeBottom)
-	}
-	if got := PresenceOf(v); !presence.Equal(got, presence.Absent()) {
-		t.Fatalf("PresenceOf = %s, want absent", got)
-	}
-	if got := Get(reg, v, syntheticKey); got != syntheticLow {
-		t.Fatalf("sparse slot = %v, want %v", got, syntheticLow)
+func TestReducerRegistrationRejectsPresenceOnlyReducer(t *testing.T) {
+	if _, err := RegistryWithAxes(presenceHelperReducerSpec().Erase()); err == nil ||
+		!strings.Contains(err.Error(), `requires at least one declared sparse read`) {
+		t.Fatalf("RegistryWithAxes error = %v, want presence-only reducer rejection", err)
 	}
 }
 
@@ -718,6 +709,12 @@ func TestReducerDependencyClosureHasNoPassCapAndIsRegistrationOrderIndependent(t
 
 	forward, forwardTrace := build(false)
 	reverse, reverseTrace := build(true)
+	for _, reg := range []*axis.Registry{forward, reverse} {
+		measure, ok := ReductionMeasure(reg)
+		if !ok || measure.Width() != chainLength {
+			t.Fatalf("ReductionMeasure = width %d, ready %t; want width %d, ready", measure.Width(), ok, chainLength)
+		}
+	}
 	forwardValue := Set(forward, Top(), keys[chainLength], 1)
 	reverseValue := Set(reverse, Top(), keys[chainLength], 1)
 
@@ -753,16 +750,198 @@ func TestReducerRejectsNonReductiveWrite(t *testing.T) {
 	})
 }
 
+func TestReducerRegistrationRequiresReductionRank(t *testing.T) {
+	writer := syntheticSpec()
+	writer.Reducer = func(w axis.Writer) bool {
+		axis.Set(w, syntheticKey, syntheticLow)
+		return true
+	}
+	writer.ReductionRank = axis.Rank[synthetic]{}
+	writer.ReducerWrites = []string{syntheticKey.ID()}
+
+	if _, err := RegistryWithAxes(writer.Erase()); err == nil ||
+		!strings.Contains(err.Error(), `writes axis "test.synthetic" without a ReductionRank`) {
+		t.Fatalf("RegistryWithAxes error = %v, want missing ReductionRank", err)
+	}
+}
+
+func TestReducedWidenFailsClosedWhenClosureDropsANormalizedOperand(t *testing.T) {
+	leftKey := axis.NewKey[int]("test.reducer.upper-bound.left")
+	rightKey := axis.NewKey[int]("test.reducer.upper-bound.right")
+	base := func(key axis.Key[int]) axis.Spec[int] {
+		return axis.Spec[int]{
+			Key:    key,
+			Bottom: func() int { return 0 },
+			// Sparse products omit Top coordinates. Keep the reducer trigger (2)
+			// distinct from Top so this law actually exercises a normalized,
+			// reducer-written coordinate rather than silently deleting it.
+			Top:       func() int { return 3 },
+			Equal:     func(a, b int) bool { return a == b },
+			LessOrEq:  func(a, b int) bool { return a <= b },
+			Join:      func(a, b int) int { return max(a, b) },
+			Meet:      func(a, b int) int { return min(a, b) },
+			Widen:     func(a, b int) int { return max(a, b) },
+			WidenRank: axis.Rank[int]{Width: 1, At: func(value int, _ int) uint64 { return uint64(3 - value) }},
+			ReductionRank: axis.Rank[int]{Width: 1, At: func(value int, _ int) uint64 {
+				return uint64(value)
+			}},
+			Hash:      func(value int) uint64 { return uint64(value) },
+			Boundary:  axis.PortableIdentity,
+			Retention: axis.ImmutableRetention[int](),
+			Canonical: axis.PendingCanonical[int]("test-only closure law"),
+		}
+	}
+	left := base(leftKey)
+	left.ReducerReads = []string{leftKey.ID(), rightKey.ID()}
+	left.ReducerWrites = []string{rightKey.ID()}
+	left.Reducer = func(w axis.Writer) bool {
+		left, _ := axis.Get(w, leftKey)
+		right, _ := axis.Get(w, rightKey)
+		// This is reductive but deliberately non-monotone. It makes two
+		// normalized operands whose pointwise widening is subsequently reduced
+		// below one operand. Product must never publish that result.
+		if left == 2 && right == 2 {
+			axis.Set(w, rightKey, 1)
+		}
+		return true
+	}
+
+	reg := mustRegistry(t, left.Erase(), base(rightKey).Erase())
+	x := Set(reg, Set(reg, Top(), rightKey, 2), leftKey, 1)
+	y := Set(reg, Set(reg, Top(), rightKey, 1), leftKey, 2)
+	mustPanicContaining(t, "product: reduced Join is not an upper bound", func() {
+		_ = Join(reg, x, y)
+	})
+	mustPanicContaining(t, "product: reduced Widen is not an upper bound", func() {
+		_ = Widen(reg, x, y)
+	})
+}
+
+func TestWidenMeasureIsCanonicalAndStrictlyDescendsOnProductWiden(t *testing.T) {
+	reg := mustRegistry(t, syntheticSpec().Erase(), secondSyntheticSpec().Erase())
+	measure, ok := WidenMeasure(reg)
+	if !ok || measure.Width() != 4 { // shape, presence, two one-component axes
+		t.Fatalf("WidenMeasure = width %d, ready %t; want width 4, ready", measure.Width(), ok)
+	}
+
+	values := []Value{
+		Bottom(reg),
+		Set(reg, Top(), syntheticKey, syntheticLow),
+		Set(reg, Top(), secondSyntheticKey, syntheticHigh),
+		Top(),
+	}
+	for _, before := range values {
+		for _, incoming := range values {
+			after := Widen(reg, before, incoming)
+			if Equal(reg, before, after) {
+				continue
+			}
+			if !measureDescends(measure, before, after) {
+				t.Fatalf("WidenMeasure did not descend for %s -> %s", formatValue(before), formatValue(after))
+			}
+		}
+	}
+}
+
+func TestWidenMeasureWithholdsCyclicAuthorityForAnUnrankedSparseAxis(t *testing.T) {
+	spec := syntheticSpec()
+	spec.WidenRank = axis.Rank[synthetic]{}
+	reg := mustRegistry(t, spec.Erase())
+	if measure, ok := WidenMeasure(reg); ok || measure.Width() != 0 {
+		t.Fatalf("WidenMeasure = width %d, ready %t; want unavailable for an unranked axis", measure.Width(), ok)
+	}
+}
+
+func TestReducedMergeScaleLawOnlyRechecksReducerWritableAxes(t *testing.T) {
+	const axisCount = 48
+	keys := make([]axis.Key[int], axisCount)
+	lessCalls := 0
+	specs := make([]axis.ErasedSpec, 0, axisCount)
+	for index := range keys {
+		key := axis.NewKey[int](fmt.Sprintf("test.reducer.scale.%03d", index))
+		keys[index] = key
+		spec := axis.Spec[int]{
+			Key:    key,
+			Bottom: func() int { return 0 },
+			// The expected hot-path checks require both operands to carry every
+			// coordinate. In the sparse representation 2 would be Top and absent,
+			// so use a distinct top element.
+			Top:       func() int { return 3 },
+			Equal:     func(a, b int) bool { return a == b },
+			LessOrEq:  func(a, b int) bool { lessCalls++; return a <= b },
+			Join:      func(a, b int) int { return max(a, b) },
+			Meet:      func(a, b int) int { return min(a, b) },
+			Widen:     func(a, b int) int { return max(a, b) },
+			WidenRank: axis.Rank[int]{Width: 1, At: func(value int, _ int) uint64 { return uint64(3 - value) }},
+			ReductionRank: axis.Rank[int]{Width: 1, At: func(value int, _ int) uint64 {
+				return uint64(value)
+			}},
+			Hash:      func(value int) uint64 { return uint64(value) },
+			Boundary:  axis.PortableIdentity,
+			Retention: axis.ImmutableRetention[int](),
+			Canonical: axis.PendingCanonical[int]("test-only reduced scale law"),
+		}
+		if index == 0 {
+			spec.ReducerReads = []string{key.ID()}
+			spec.ReducerWrites = []string{key.ID()}
+			spec.Reducer = func(axis.Writer) bool { return false }
+		}
+		specs = append(specs, spec.Erase())
+	}
+	reg := mustRegistry(t, specs...)
+	left, right := Top(), Top()
+	for _, key := range keys {
+		left = Set(reg, left, key, 1)
+		right = Set(reg, right, key, 2)
+	}
+	_ = Widen(reg, left, right) // warm the canonical result before measuring semantic work.
+
+	lessCalls = 0
+	_ = Widen(reg, left, right)
+	// Pointwise merge checks both operands for every materialized axis. Closure
+	// may then recheck only the one declared writer. If this regresses to a
+	// whole-product post-reduction scan, the count grows by two per untouched
+	// axis and this law fails.
+	if got, want := lessCalls, axisCount*2+2; got != want {
+		t.Fatalf("reduced Widen LessOrEq calls = %d, want %d (pointwise lanes plus one reducer writer)", got, want)
+	}
+}
+
+func measureDescends(measure Measure, before, after Value) bool {
+	for component := 0; component < measure.Width(); component++ {
+		beforeRank, afterRank := measure.At(before, component), measure.At(after, component)
+		switch {
+		case afterRank < beforeRank:
+			return true
+		case afterRank > beforeRank:
+			return false
+		}
+	}
+	return false
+}
+
 func reducerChainSpec(key, dependency axis.Key[int], trace *[]string) axis.Spec[int] {
 	spec := axis.Spec[int]{
-		Key:       key,
-		Bottom:    func() int { return 0 },
-		Top:       func() int { return 2 },
-		Equal:     func(a, b int) bool { return a == b },
-		LessOrEq:  func(a, b int) bool { return a <= b },
-		Join:      func(a, b int) int { return max(a, b) },
-		Meet:      func(a, b int) int { return min(a, b) },
-		Widen:     func(a, b int) int { return max(a, b) },
+		Key:      key,
+		Bottom:   func() int { return 0 },
+		Top:      func() int { return 2 },
+		Equal:    func(a, b int) bool { return a == b },
+		LessOrEq: func(a, b int) bool { return a <= b },
+		Join:     func(a, b int) int { return max(a, b) },
+		Meet:     func(a, b int) int { return min(a, b) },
+		Widen:    func(a, b int) int { return max(a, b) },
+		WidenRank: axis.Rank[int]{
+			Width: 1,
+			At: func(value int, _ int) uint64 {
+				return uint64(2 - value)
+			},
+		},
+		ReductionRank: axis.Rank[int]{
+			Width: 1,
+			At: func(value int, _ int) uint64 {
+				return uint64(value)
+			},
+		},
 		Hash:      func(v int) uint64 { return uint64(v) + 1 },
 		Boundary:  axis.PortableIdentity,
 		Retention: axis.ImmutableRetention[int](),
@@ -798,6 +977,16 @@ func TestReducerGenericPresenceAccessPanics(t *testing.T) {
 			_ = Set(reg, Top(), syntheticKey, syntheticLow)
 		})
 	})
+}
+
+func freezeTestRegistry(reg *axis.Registry) {
+	runtime := buildRegistryRuntime(reg)
+	if runtime.err != nil {
+		panic(runtime.err)
+	}
+	if err := reg.FreezeWithCompiledProduct(runtime); err != nil {
+		panic(err)
+	}
 }
 
 func mustRegistry(t *testing.T, specs ...axis.ErasedSpec) *axis.Registry {
@@ -898,6 +1087,18 @@ func syntheticSpec() axis.Spec[synthetic] {
 			}
 			return next
 		},
+		WidenRank: axis.Rank[synthetic]{
+			Width: 1,
+			At: func(value synthetic, _ int) uint64 {
+				return uint64(syntheticTop - value)
+			},
+		},
+		ReductionRank: axis.Rank[synthetic]{
+			Width: 1,
+			At: func(value synthetic, _ int) uint64 {
+				return uint64(value)
+			},
+		},
 		Hash: func(v synthetic) uint64 {
 			return uint64(v) + 1
 		},
@@ -976,7 +1177,7 @@ func presenceGenericGetReducerSpec() axis.Spec[synthetic] {
 		_, _ = axis.Get(w, presence.Key)
 		return false
 	}
-	spec.ReducerReads = []string{presence.Key.ID()}
+	spec.ReducerReads = []string{presence.Key.ID(), syntheticKey.ID()}
 	return spec
 }
 

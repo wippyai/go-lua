@@ -1,8 +1,6 @@
 package typ
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -90,24 +88,7 @@ func (g *Generic) SetBody(body Type) {
 
 func (g *Generic) Kind() kind.Kind { return kind.Generic }
 func (g *Generic) String() string {
-	return g.strCache.get(func() string {
-		var sb strings.Builder
-
-		sb.WriteString(g.Name)
-		sb.WriteString("<")
-
-		for i, p := range g.TypeParams {
-			if i > 0 {
-				sb.WriteString(", ")
-			}
-
-			sb.WriteString(p.String())
-		}
-
-		sb.WriteString(">")
-
-		return sb.String()
-	})
+	return g.strCache.get(func() string { return renderTypeString(g) })
 }
 func (g *Generic) Hash() uint64 { return g.hash }
 func (g *Generic) Equals(other Type) bool {

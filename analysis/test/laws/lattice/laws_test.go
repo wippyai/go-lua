@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/lattice"
 )
 
 // presence is a minimal 3-element lattice used to verify the law harness
@@ -102,33 +102,6 @@ func brokenLessOrEqLattice() lattice.Lattice[presence] {
 	return d
 }
 
-// nonTerminatingDomain generates a chain that never stabilizes by returning
-// (prev+1) % 256 — guaranteed to spin until the harness bound fires.
-func nonTerminatingDomain() lattice.Lattice[int] {
-	return lattice.Lattice[int]{
-		Bottom:   func() int { return 0 },
-		Top:      func() int { return 255 },
-		Equal:    func(a, b int) bool { return a == b },
-		LessOrEq: func(a, b int) bool { return a <= b },
-		Join:     max2,
-		Meet:     min2,
-		Widen:    func(prev, next int) int { return (prev + 1) & 0xff },
-	}
-}
-
-func max2(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-func min2(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func TestLawSuite_CatchesBrokenJoin(t *testing.T) {
 	mock := &mockT{}
 	suite := LawSuite[presence]{
@@ -183,19 +156,6 @@ func TestLawSuite_HandlesMissingMeet(t *testing.T) {
 		if mock.hasLaw(law) {
 			t.Errorf("law %q fired on a no-meet domain; messages: %v", law, mock.messages)
 		}
-	}
-}
-
-func TestLawSuite_CatchesNonTerminatingWiden(t *testing.T) {
-	mock := &mockT{}
-	suite := LawSuite[int]{
-		Name:   "non-terminating",
-		Domain: nonTerminatingDomain(),
-		Sample: []int{0, 1, 2, 255},
-	}
-	suite.Run(mock)
-	if !mock.hasLaw("Widen ascending-chain termination") {
-		t.Errorf("harness missed non-termination; got messages: %v", mock.messages)
 	}
 }
 

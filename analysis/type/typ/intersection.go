@@ -72,7 +72,7 @@ func newCanonicalIntersection(members []Type, memberHashes []uint64) Type {
 func (i *Intersection) Kind() kind.Kind { return kind.Intersection }
 
 func (i *Intersection) String() string {
-	return i.strCache.get(func() string { return joinMemberStrings(i.Members, " & ", "unknown") })
+	return i.strCache.get(func() string { return renderTypeString(i) })
 }
 
 func (i *Intersection) Hash() uint64 { return i.hash }

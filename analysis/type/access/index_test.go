@@ -376,6 +376,37 @@ func TestRuntimeIndexUnionMissingSlot(t *testing.T) {
 	assertType(t, got, typeexpr.Optional(typ.String))
 }
 
+func TestIndexDeepCompositeProjectionUsesExplicitWorkStack(t *testing.T) {
+	const depth = 4097
+	leaf := typetable.NewRecord().Field("value", typ.String).Build()
+	var value typ.Type = leaf
+	for index := 0; index < depth; index++ {
+		value = &typ.Union{Members: []typ.Type{value, leaf}}
+	}
+	got, ok := Index(value, typ.LiteralString("value"))
+	if !ok {
+		t.Fatal("deep composite index projection failed")
+	}
+	assertType(t, got, typ.String)
+}
+
+func TestIndexRecursiveCompositeCycleUsesExactCoinductiveIdentity(t *testing.T) {
+	leaf := typetable.NewRecord().Field("value", typ.String).Build()
+	loop := typ.NewRecursivePlaceholder("Loop")
+	loop.SetBody(&typ.Union{Members: []typ.Type{loop, leaf}})
+	got, ok := Index(loop, typ.LiteralString("value"))
+	if !ok {
+		t.Fatal("productive recursive index projection failed")
+	}
+	assertType(t, got, typ.String)
+
+	bad := typ.NewRecursivePlaceholder("Bad")
+	bad.SetBody(bad)
+	if got, ok := Index(bad, typ.LiteralString("value")); ok || got != nil {
+		t.Fatalf("invalid recursive index projection = (%v, %v)", got, ok)
+	}
+}
+
 func TestIndexOptionalAliasInstantiatedContainer(t *testing.T) {
 	t.Run("optional", func(t *testing.T) {
 		rec := typetable.NewRecord().Field("value", typ.String).Build()

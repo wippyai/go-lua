@@ -254,3 +254,17 @@ func TestInstantiatedEquality(t *testing.T) {
 		t.Error("List<number> should not equal List<string>")
 	}
 }
+
+func TestContainsTypeParamTreatsInstantiatedFormalsAsBound(t *testing.T) {
+	param := NewTypeParam("T", String)
+	generic := NewGeneric("Box", []*TypeParam{param}, NewArray(param))
+	if ContainsTypeParam(Instantiate(generic, String)) {
+		t.Fatal("fully substituted generic application retained its declaration formal")
+	}
+	if !ContainsTypeParam(Instantiate(generic, param)) {
+		t.Fatal("generic application with an open argument was treated as closed")
+	}
+	if ContainsTypeParam(NewArray(Instantiate(generic, String))) {
+		t.Fatal("closed generic application became open through a containing array")
+	}
+}

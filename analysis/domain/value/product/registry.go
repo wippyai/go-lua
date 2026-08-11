@@ -20,7 +20,17 @@ func RegistryWithAxes(specs ...axis.ErasedSpec) (*axis.Registry, error) {
 	if err := reg.SealCanonicalInventory(); err != nil {
 		return nil, fmt.Errorf("product: seal canonical inventory: %w", err)
 	}
-	return reg.Freeze(), nil
+	// Compile the frozen reducer/rank schema at registration time. Deferring
+	// this until a first Value operation would make an invalid cyclic product
+	// look admitted even though one of its reducers has no descent proof.
+	runtime := buildRegistryRuntime(reg)
+	if runtime.err != nil {
+		return nil, runtime.err
+	}
+	if err := reg.FreezeWithCompiledProduct(runtime); err != nil {
+		return nil, fmt.Errorf("product: freeze compiled runtime: %w", err)
+	}
+	return reg, nil
 }
 
 func registerProductSparseAxis(reg *axis.Registry, spec axis.ErasedSpec) error {

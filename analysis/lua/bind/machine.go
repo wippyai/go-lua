@@ -1,8 +1,6 @@
 package bind
 
 import (
-	"reflect"
-
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -21,6 +19,7 @@ const (
 	stepStmt
 	stepExprList
 	stepExpr
+	stepDirectGlobalCall
 	stepTypeList
 	stepType
 	stepLValue
@@ -30,16 +29,15 @@ const (
 	stepLocalValues
 	stepLocalFinish
 	stepWhileBody
+	stepLeaveLoop
 	stepIfThen
 	stepIfElse
 	stepNumberForBody
 	stepGenericForBody
 	stepFuncDefFunction
 	stepTableFields
-	stepCallRecord
 	stepFunctionAfterConstraints
 	stepFunctionLeave
-	stepFunctionSignatureAfterConstraints
 	stepTypeScopeLeave
 	stepTypeDefAfterConstraints
 	stepFunctionTypeAfterConstraints
@@ -61,7 +59,6 @@ const (
 	phaseUnion
 	phaseIntersection
 	phaseGenericArgs
-	phaseTuple
 	phaseFunctionTypeReturns
 	phaseCallTypes
 	phaseLocalTypes
@@ -102,49 +99,49 @@ func (b *binder) execute(step bindStep) {
 	case stepStmtList:
 		b.visitStmtList(step)
 	case stepStmt:
-		b.visitStmt(step.node.(ast.Stmt))
+		b.visitStmt(step)
 	case stepExprList:
 		b.visitExprList(step)
 	case stepExpr:
 		b.visitExpr(step.node.(ast.Expr), step.mode)
+	case stepDirectGlobalCall:
+		b.recordDirectGlobalCall(step.node.(*ast.FuncCallExpr))
 	case stepTypeList:
 		b.visitTypeList(step)
 	case stepType:
 		b.visitType(step.node.(ast.TypeExpr))
 	case stepLValue:
-		b.visitLValue(step.node.(ast.Expr))
+		b.visitLValue(step.node.(ast.Expr), step.mode)
 	case stepLeaveScope:
 		b.popScope()
 	case stepAssignTargets:
 		b.visitAssignTargets(step)
 	case stepLocalAfterTypes:
-		b.beginLocal(step.node.(*ast.LocalAssignStmt))
+		b.beginLocal(step.node.(*ast.LocalAssignStmt), step.mode)
 	case stepLocalValues:
 		b.visitLocalValues(step)
 	case stepLocalFinish:
 		b.finishLocal(step.node.(*ast.LocalAssignStmt), step.mark)
 	case stepWhileBody:
-		b.enterBody(step.node)
+		b.enterLoopBody(step.node, step.mode)
+	case stepLeaveLoop:
+		b.control.leaveLoop()
 	case stepIfThen:
-		b.enterIfThen(step.node.(*ast.IfStmt))
+		b.enterIfThen(step.node.(*ast.IfStmt), step.mode)
 	case stepIfElse:
-		b.enterIfElse(step.node.(*ast.IfStmt))
+		b.enterIfElse(step.node.(*ast.IfStmt), step.mode)
 	case stepNumberForBody:
-		b.enterNumberFor(step.node.(*ast.NumberForStmt))
+		b.enterNumberFor(step.node.(*ast.NumberForStmt), step.mode)
 	case stepGenericForBody:
-		b.enterGenericFor(step.node.(*ast.GenericForStmt))
+		b.enterGenericFor(step.node.(*ast.GenericForStmt), step.mode)
 	case stepFuncDefFunction:
-		b.enterFuncDef(step.node.(*ast.FuncDefStmt))
+		b.enterFuncDef(step.node.(*ast.FuncDefStmt), step.mode)
 	case stepTableFields:
 		b.visitTableFields(step)
-	case stepCallRecord:
-		b.recordCall(step.node.(*ast.FuncCallExpr), step.mode)
 	case stepFunctionAfterConstraints:
-		b.finishFunctionEntry(step.node.(*ast.FunctionExpr), step.method)
+		b.finishFunctionEntry(step.node.(*ast.FunctionExpr), step.method, step.mode)
 	case stepFunctionLeave:
 		b.leaveFunction()
-	case stepFunctionSignatureAfterConstraints:
-		b.finishFunctionSignature(step.node.(*ast.FunctionExpr))
 	case stepTypeScopeLeave:
 		b.popTypeScope()
 	case stepTypeDefAfterConstraints:
@@ -162,20 +159,12 @@ func (b *binder) execute(step bindStep) {
 	}
 }
 
-func (b *binder) scheduleStmtList(node ast.PositionHolder, phase stepPhase) {
-	if node != nil && !nodePresent(node) {
-		b.invalidateRuntimeUseScan()
-		return
-	}
-	b.push(bindStep{kind: stepStmtList, node: node, phase: phase, index: -1})
+func (b *binder) scheduleStmtList(node ast.PositionHolder, phase stepPhase, mode exprBindMode) {
+	b.push(bindStep{kind: stepStmtList, node: node, phase: phase, mode: mode, index: -1})
 }
 
 func (b *binder) scheduleExpr(expr ast.Expr, mode exprBindMode) {
 	if expr == nil {
-		return
-	}
-	if !nodePresent(expr) {
-		b.invalidateRuntimeUseScan()
 		return
 	}
 	b.push(bindStep{kind: stepExpr, node: expr, mode: mode})
@@ -185,28 +174,23 @@ func (b *binder) scheduleType(expr ast.TypeExpr) {
 	if expr == nil {
 		return
 	}
-	if !nodePresent(expr) {
-		b.invalidateRuntimeUseScan()
-		return
-	}
 	b.push(bindStep{kind: stepType, node: expr})
 }
 
-func (b *binder) scheduleLValue(expr ast.Expr) {
+func (b *binder) scheduleLValue(expr ast.Expr, mode exprBindMode) {
 	if expr == nil {
 		return
 	}
-	if !nodePresent(expr) {
-		b.invalidateRuntimeUseScan()
-		return
-	}
-	b.push(bindStep{kind: stepLValue, node: expr})
+	b.push(bindStep{kind: stepLValue, node: expr, mode: mode})
 }
 
 func (b *binder) visitStmtList(step bindStep) {
 	stmts := b.statementList(step.node, step.phase)
 	if step.index < 0 {
 		b.hoistTypeDecls(stmts)
+		if step.node == nil && step.phase == phaseChunk {
+			b.recordChunkRuntimeTypeNames(stmts)
+		}
 		_, repeatBody := step.node.(*ast.RepeatStmt)
 		b.control.indexLabels(stmts, !repeatBody)
 		step.index = 0
@@ -217,11 +201,7 @@ func (b *binder) visitStmtList(step bindStep) {
 	stmt := stmts[step.index]
 	step.index++
 	b.push(step)
-	if !nodePresent(stmt) {
-		b.invalidateRuntimeUseScan()
-		return
-	}
-	b.push(bindStep{kind: stepStmt, node: stmt})
+	b.push(bindStep{kind: stepStmt, node: stmt, mode: step.mode})
 }
 
 func (b *binder) hoistTypeDecls(stmts []ast.Stmt) {
@@ -262,48 +242,54 @@ func (b *binder) statementList(node ast.PositionHolder, phase stepPhase) []ast.S
 	}
 }
 
-func (b *binder) visitStmt(stmt ast.Stmt) {
+func (b *binder) visitStmt(step bindStep) {
+	stmt := step.node.(ast.Stmt)
+	mode := step.mode
 	switch s := stmt.(type) {
 	case *ast.AssignStmt:
-		b.push(bindStep{kind: stepAssignTargets, node: s})
-		b.push(bindStep{kind: stepExprList, node: s, mode: exprBindRuntime})
+		b.result.beginGlobalOrderSegment()
+		b.push(bindStep{kind: stepAssignTargets, node: s, mode: mode})
+		b.push(bindStep{kind: stepExprList, node: s, mode: mode})
 	case *ast.LocalAssignStmt:
-		b.push(bindStep{kind: stepLocalAfterTypes, node: s})
+		b.push(bindStep{kind: stepLocalAfterTypes, node: s, mode: mode})
 		b.push(bindStep{kind: stepTypeList, node: s, phase: phaseLocalTypes})
 	case *ast.FuncCallStmt:
-		b.scheduleExpr(s.Expr, exprBindRuntime)
+		b.scheduleExpr(s.Expr, mode)
 	case *ast.DoBlockStmt:
 		b.pushScope()
 		b.push(bindStep{kind: stepLeaveScope})
-		b.scheduleStmtList(s, phaseBody)
+		b.scheduleStmtList(s, phaseBody, mode)
 	case *ast.WhileStmt:
-		b.push(bindStep{kind: stepWhileBody, node: s})
-		b.scheduleExpr(s.Condition, exprBindRuntime)
+		b.push(bindStep{kind: stepWhileBody, node: s, mode: mode})
+		b.scheduleExpr(s.Condition, mode)
 	case *ast.RepeatStmt:
+		b.control.enterLoop()
+		b.push(bindStep{kind: stepLeaveLoop})
 		b.pushScope()
 		b.push(bindStep{kind: stepLeaveScope})
-		b.scheduleExpr(s.Condition, exprBindRuntime)
-		b.scheduleStmtList(s, phaseBody)
+		b.scheduleExpr(s.Condition, mode)
+		b.scheduleStmtList(s, phaseBody, mode)
 	case *ast.IfStmt:
-		b.push(bindStep{kind: stepIfThen, node: s})
-		b.scheduleExpr(s.Condition, exprBindRuntime)
+		b.push(bindStep{kind: stepIfThen, node: s, mode: mode})
+		b.scheduleExpr(s.Condition, mode)
 	case *ast.NumberForStmt:
-		b.push(bindStep{kind: stepNumberForBody, node: s})
-		b.scheduleExpr(s.Step, exprBindRuntime)
-		b.scheduleExpr(s.Limit, exprBindRuntime)
-		b.scheduleExpr(s.Init, exprBindRuntime)
+		b.push(bindStep{kind: stepNumberForBody, node: s, mode: mode})
+		b.scheduleExpr(s.Step, mode)
+		b.scheduleExpr(s.Limit, mode)
+		b.scheduleExpr(s.Init, mode)
 	case *ast.GenericForStmt:
-		b.push(bindStep{kind: stepGenericForBody, node: s})
-		b.push(bindStep{kind: stepExprList, node: s, mode: exprBindRuntime})
+		b.push(bindStep{kind: stepGenericForBody, node: s, mode: mode})
+		b.push(bindStep{kind: stepExprList, node: s, mode: mode})
 	case *ast.FuncDefStmt:
-		b.push(bindStep{kind: stepFuncDefFunction, node: s})
+		b.push(bindStep{kind: stepFuncDefFunction, node: s, mode: mode})
 		if s.Name != nil {
-			b.scheduleExpr(s.Name.Receiver, exprBindRuntime)
-			b.scheduleLValue(s.Name.Func)
+			b.scheduleExpr(s.Name.Receiver, mode)
+			b.scheduleLValue(s.Name.Func, mode)
 		}
 	case *ast.ReturnStmt:
-		b.push(bindStep{kind: stepExprList, node: s, mode: exprBindRuntime})
+		b.push(bindStep{kind: stepExprList, node: s, mode: mode})
 	case *ast.BreakStmt:
+		b.control.visitBreak(s)
 	case *ast.LabelStmt:
 		b.control.visitLabel(s)
 	case *ast.GotoStmt:
@@ -312,29 +298,31 @@ func (b *binder) visitStmt(stmt ast.Stmt) {
 		b.beginTypeDef(s)
 	case *ast.InterfaceDefStmt:
 		b.beginInterface(s)
-	default:
-		b.invalidateRuntimeUseScan()
 	}
 }
 
 func (b *binder) visitAssignTargets(step bindStep) {
 	stmt := step.node.(*ast.AssignStmt)
+	if step.index == 0 {
+		b.result.beginGlobalOrderTargets()
+	}
 	if step.index >= len(stmt.Lhs) {
-		b.recordQualifiedTypeAliases(stmt)
+		b.recordStaticTypePublications(stmt)
+		b.result.endGlobalOrderSegment()
 		return
 	}
 	target := stmt.Lhs[step.index]
 	step.index++
 	b.push(step)
-	b.scheduleLValue(target)
+	b.scheduleLValue(target, step.mode)
 }
 
-func (b *binder) beginLocal(stmt *ast.LocalAssignStmt) {
+func (b *binder) beginLocal(stmt *ast.LocalAssignStmt, mode exprBindMode) {
 	ids := make([]symbol.ID, len(stmt.Names))
 	pending := make(map[string]symbol.ID, len(stmt.Names))
 	for i, name := range stmt.Names {
 		id := b.newSymbol(name, symbol.Local)
-		b.result.setDeclaration(id, declarationForPosition(namePosition(stmt.NamePositions, i), name, false))
+		b.result.setSymbolTypeAnnotation(id, typeAt(stmt.Types, i))
 		ids[i] = id
 		if name != "" {
 			pending[name] = id
@@ -342,11 +330,16 @@ func (b *binder) beginLocal(stmt *ast.LocalAssignStmt) {
 	}
 	b.result.localSymbols[stmt] = ids
 	mark := len(b.pending)
-	if stmt.LocalFunction {
-		mark = b.pushPending(pending)
+	// Only the Lua declaration form `local function f` installs f for its own
+	// Function body. An ordinary local initializer is evaluated before its new
+	// local enters scope, even when that initializer is a Function literal.
+	if stmt.LocalFunction && len(stmt.Names) == 1 && len(stmt.Exprs) == 1 {
+		if fn, ok := stmt.Exprs[0].(*ast.FunctionExpr); ok && fn != nil {
+			mark = b.pushPending(pending)
+		}
 	}
-	b.push(bindStep{kind: stepLocalFinish, node: stmt, mark: mark})
-	b.push(bindStep{kind: stepLocalValues, node: stmt})
+	b.push(bindStep{kind: stepLocalFinish, node: stmt, mark: mark, mode: mode})
+	b.push(bindStep{kind: stepLocalValues, node: stmt, mode: mode})
 }
 
 func (b *binder) visitLocalValues(step bindStep) {
@@ -364,13 +357,11 @@ func (b *binder) visitLocalValues(step bindStep) {
 			details.kind = FunctionOriginLocalAssignment
 			details.stmt = stmt
 			details.localIndex = slot
-			details.targetSymbol = b.result.localSymbols[stmt][slot]
-			details.hasTargetSymbol = details.targetSymbol != 0
 		}
-		b.enterFunction(fn, false, details)
+		b.enterFunction(fn, false, details, step.mode)
 		return
 	}
-	b.scheduleExpr(expr, exprBindRuntime)
+	b.scheduleExpr(expr, step.mode)
 }
 
 func (b *binder) finishLocal(stmt *ast.LocalAssignStmt, mark int) {
@@ -383,53 +374,61 @@ func (b *binder) finishLocal(stmt *ast.LocalAssignStmt, mark int) {
 	}
 }
 
-func (b *binder) enterBody(node ast.PositionHolder) {
+func (b *binder) enterBody(node ast.PositionHolder, mode exprBindMode) {
 	b.pushScope()
 	b.push(bindStep{kind: stepLeaveScope})
-	b.scheduleStmtList(node, phaseBody)
+	b.scheduleStmtList(node, phaseBody, mode)
 }
 
-func (b *binder) enterIfThen(stmt *ast.IfStmt) {
-	b.push(bindStep{kind: stepIfElse, node: stmt})
+func (b *binder) enterLoopBody(node ast.PositionHolder, mode exprBindMode) {
+	b.control.enterLoop()
+	b.push(bindStep{kind: stepLeaveLoop})
+	b.enterBody(node, mode)
+}
+
+func (b *binder) enterIfThen(stmt *ast.IfStmt, mode exprBindMode) {
+	b.push(bindStep{kind: stepIfElse, node: stmt, mode: mode})
 	b.pushScope()
 	b.push(bindStep{kind: stepLeaveScope})
-	b.scheduleStmtList(stmt, phaseThen)
+	b.scheduleStmtList(stmt, phaseThen, mode)
 }
 
-func (b *binder) enterIfElse(stmt *ast.IfStmt) {
+func (b *binder) enterIfElse(stmt *ast.IfStmt, mode exprBindMode) {
 	if len(stmt.Else) == 0 {
 		return
 	}
 	b.pushScope()
 	b.push(bindStep{kind: stepLeaveScope})
-	b.scheduleStmtList(stmt, phaseElse)
+	b.scheduleStmtList(stmt, phaseElse, mode)
 }
 
-func (b *binder) enterNumberFor(stmt *ast.NumberForStmt) {
+func (b *binder) enterNumberFor(stmt *ast.NumberForStmt, mode exprBindMode) {
 	id := b.newSymbol(stmt.Name, symbol.Local)
-	b.result.setDeclaration(id, declarationForPosition(stmt.NamePosition, stmt.Name, false))
 	b.result.numForSymbols[stmt] = id
+	b.control.enterLoop()
+	b.push(bindStep{kind: stepLeaveLoop})
 	b.pushScope()
 	b.define(stmt.Name, id)
 	b.push(bindStep{kind: stepLeaveScope})
-	b.scheduleStmtList(stmt, phaseBody)
+	b.scheduleStmtList(stmt, phaseBody, mode)
 }
 
-func (b *binder) enterGenericFor(stmt *ast.GenericForStmt) {
+func (b *binder) enterGenericFor(stmt *ast.GenericForStmt, mode exprBindMode) {
 	ids := make([]symbol.ID, len(stmt.Names))
+	b.control.enterLoop()
+	b.push(bindStep{kind: stepLeaveLoop})
 	b.pushScope()
 	for i, name := range stmt.Names {
 		id := b.newSymbol(name, symbol.Local)
-		b.result.setDeclaration(id, declarationForPosition(namePosition(stmt.NamePositions, i), name, false))
 		ids[i] = id
 		b.define(name, id)
 	}
 	b.result.genericForSymbols[stmt] = ids
 	b.push(bindStep{kind: stepLeaveScope})
-	b.scheduleStmtList(stmt, phaseBody)
+	b.scheduleStmtList(stmt, phaseBody, mode)
 }
 
-func (b *binder) enterFuncDef(stmt *ast.FuncDefStmt) {
+func (b *binder) enterFuncDef(stmt *ast.FuncDefStmt, mode exprBindMode) {
 	details := functionOriginDetails{
 		kind:       FunctionOriginDeclaration,
 		stmt:       stmt,
@@ -445,11 +444,8 @@ func (b *binder) enterFuncDef(stmt *ast.FuncDefStmt) {
 				details.hasReceiverType = true
 			}
 		}
-	} else if id, ok := b.result.FuncDefTargetSymbol(stmt); ok {
-		details.targetSymbol = id
-		details.hasTargetSymbol = true
 	}
-	b.enterFunction(stmt.Func, method, details)
+	b.enterFunction(stmt.Func, method, details, mode)
 }
 
 func (b *binder) visitExprList(step bindStep) {
@@ -478,18 +474,22 @@ func expressionList(node ast.PositionHolder) []ast.Expr {
 	}
 }
 
-func (b *binder) visitLValue(expr ast.Expr) {
+func (b *binder) visitLValue(expr ast.Expr, mode exprBindMode) {
 	switch e := expr.(type) {
 	case nil:
 	case *ast.IdentExpr:
-		b.bindWriteIdent(e)
+		if mode == exprBindTypeQuery {
+			b.bindTypeQueryWriteIdent(e)
+		} else {
+			b.bindWriteIdent(e)
+		}
 	case *ast.AttrGetExpr:
 		if e.KeySyntax != ast.AttrKeyDot {
-			b.scheduleExpr(e.Key, exprBindRuntime)
+			b.scheduleExpr(e.Key, mode)
 		}
-		b.scheduleExpr(e.Object, exprBindRuntime)
+		b.scheduleExpr(e.Object, mode)
 	default:
-		b.scheduleExpr(expr, exprBindRuntime)
+		b.scheduleExpr(expr, mode)
 	}
 }
 
@@ -515,10 +515,20 @@ func (b *binder) visitExpr(expr ast.Expr, mode exprBindMode) {
 	case *ast.TableExpr:
 		b.push(bindStep{kind: stepTableFields, node: e, mode: mode})
 	case *ast.FuncCallExpr:
+		if value, ok := b.runtimeTypeCallBase(e); ok {
+			b.bindRuntimeTypeValue(value)
+			// The marked base is the only call component omitted from ordinary
+			// binding. Arguments and explicit type arguments retain the current
+			// traversal mode, so static queries keep authority without creating
+			// executable read evidence.
+			b.push(bindStep{kind: stepTypeList, node: e, phase: phaseCallTypes})
+			b.push(bindStep{kind: stepExprList, node: e, mode: mode})
+			return
+		}
 		b.push(bindStep{kind: stepTypeList, node: e, phase: phaseCallTypes})
 		b.push(bindStep{kind: stepExprList, node: e, mode: mode})
 		b.scheduleExpr(e.Receiver, mode)
-		b.push(bindStep{kind: stepCallRecord, node: e, mode: mode})
+		b.push(bindStep{kind: stepDirectGlobalCall, node: e})
 		b.scheduleExpr(e.Func, mode)
 	case *ast.LogicalOpExpr:
 		b.scheduleExpr(e.Rhs, mode)
@@ -541,24 +551,88 @@ func (b *binder) visitExpr(expr ast.Expr, mode exprBindMode) {
 	case *ast.UnaryBNotOpExpr:
 		b.scheduleExpr(e.Expr, mode)
 	case *ast.FunctionExpr:
-		if mode == exprBindRuntime {
-			b.enterFunction(e, false, functionOriginDetails{
-				kind:       FunctionOriginLiteral,
-				localIndex: -1,
-			})
-		} else {
-			b.enterFunctionSignature(e)
-		}
+		b.enterFunction(e, false, functionOriginDetails{
+			kind:       FunctionOriginLiteral,
+			localIndex: -1,
+		}, mode)
 	case *ast.CastExpr:
 		b.scheduleType(e.Type)
 		b.scheduleExpr(e.Expr, mode)
 	case *ast.NonNilAssertExpr:
 		b.scheduleExpr(e.Expr, mode)
-	default:
-		if mode == exprBindRuntime {
-			b.invalidateRuntimeUseScan()
-		}
 	}
+}
+
+// recordDirectGlobalCall runs immediately after a normal call's function
+// expression has been bound and before its receiver/arguments. It records
+// generic syntactic/binding evidence for both runtime and static-query calls;
+// containment later decides whether a literal direct require is executable.
+func (b *binder) recordDirectGlobalCall(call *ast.FuncCallExpr) {
+	if b == nil || b.result == nil || call == nil || call.Method != "" || call.Receiver != nil {
+		return
+	}
+	ident, ok := call.Func.(*ast.IdentExpr)
+	if !ok || ident == nil {
+		return
+	}
+	identity, ok := b.result.GlobalIdentity(ident)
+	if !ok {
+		return
+	}
+	b.result.directGlobalCalls = append(b.result.directGlobalCalls, DirectGlobalCall{
+		Call: call, Global: identity,
+	})
+}
+
+func runtimeTypeMethodName(name string) bool {
+	switch name {
+	case "is", "kind", "name", "elem", "key", "val", "inner", "ret",
+		"fields", "variants", "params", "tparams":
+		return true
+	default:
+		return false
+	}
+}
+
+// runtimeTypeCallBase recognizes the exact call shapes whose base compiles to
+// OP_LOADTYPE. It intentionally does not classify a plain value, a dynamic
+// member key, or an unrecognized method spelling.
+func (b *binder) runtimeTypeCallBase(call *ast.FuncCallExpr) (RuntimeTypeValue, bool) {
+	if b == nil || b.result == nil || call == nil {
+		return RuntimeTypeValue{}, false
+	}
+	var base *ast.IdentExpr
+	switch {
+	case call.Method == "" && call.Receiver == nil:
+		if ident, ok := call.Func.(*ast.IdentExpr); ok {
+			base = ident
+		} else if member, ok := call.Func.(*ast.AttrGetExpr); ok {
+			key, keyOK := member.Key.(*ast.StringExpr)
+			ident, identOK := member.Object.(*ast.IdentExpr)
+			if !keyOK || !identOK ||
+				(member.KeySyntax != ast.AttrKeyDot && member.KeySyntax != ast.AttrKeyIndex) {
+				return RuntimeTypeValue{}, false
+			}
+			if !runtimeTypeMethodName(key.Value) {
+				return RuntimeTypeValue{}, false
+			}
+			base = ident
+		} else {
+			return RuntimeTypeValue{}, false
+		}
+	case call.Func == nil:
+		if !runtimeTypeMethodName(call.Method) {
+			return RuntimeTypeValue{}, false
+		}
+		ident, ok := call.Receiver.(*ast.IdentExpr)
+		if !ok {
+			return RuntimeTypeValue{}, false
+		}
+		base = ident
+	default:
+		return RuntimeTypeValue{}, false
+	}
+	return b.runtimeTypeValueAuthority(base)
 }
 
 func (b *binder) visitTableFields(step bindStep) {
@@ -576,24 +650,6 @@ func (b *binder) visitTableFields(step bindStep) {
 	if field.KeySyntax != ast.AttrKeyDot {
 		b.scheduleExpr(field.Key, step.mode)
 	}
-}
-
-func (b *binder) recordCall(call *ast.FuncCallExpr, mode exprBindMode) {
-	if mode != exprBindRuntime || call.Method != "" || call.Receiver != nil {
-		return
-	}
-	ident, ok := call.Func.(*ast.IdentExpr)
-	if !ok {
-		return
-	}
-	id, ok := b.result.SymbolOf(ident)
-	if !ok || id == 0 {
-		return
-	}
-	if b.result.directCalls == nil {
-		b.result.directCalls = make(map[symbol.ID][]*ast.FuncCallExpr)
-	}
-	b.result.directCalls[id] = append(b.result.directCalls[id], call)
 }
 
 func (b *binder) visitTypeList(step bindStep) {
@@ -624,8 +680,6 @@ func typeList(node ast.PositionHolder, phase stepPhase) []ast.TypeExpr {
 		return n.Types
 	case *ast.GenericTypeExpr:
 		return n.Args
-	case *ast.TupleTypeExpr:
-		return n.Elements
 	case *ast.FunctionTypeExpr:
 		return n.Returns
 	default:
@@ -636,10 +690,12 @@ func typeList(node ast.PositionHolder, phase stepPhase) []ast.TypeExpr {
 func (b *binder) visitType(expr ast.TypeExpr) {
 	switch e := expr.(type) {
 	case nil:
-	case *ast.PrimitiveTypeExpr:
+	case *ast.AnnotatedTypeExpr:
 		b.scheduleAnnotationArgs(e.Annotations)
+		b.scheduleType(e.Inner)
+	case *ast.PrimitiveTypeExpr:
 		b.bindPrimitiveTypeRef(e)
-	case *ast.SelfTypeExpr, *ast.LiteralTypeExpr:
+	case *ast.LiteralTypeExpr:
 	case *ast.OptionalTypeExpr:
 		b.scheduleType(e.Inner)
 	case *ast.UnionTypeExpr:
@@ -647,7 +703,6 @@ func (b *binder) visitType(expr ast.TypeExpr) {
 	case *ast.IntersectionTypeExpr:
 		b.push(bindStep{kind: stepTypeList, node: e, phase: phaseIntersection})
 	case *ast.ArrayTypeExpr:
-		b.scheduleAnnotationArgs(e.ArrayAnnotations)
 		b.scheduleType(e.Element)
 	case *ast.MapTypeExpr:
 		b.scheduleType(e.Value)
@@ -655,6 +710,11 @@ func (b *binder) visitType(expr ast.TypeExpr) {
 	case *ast.RecordTypeExpr:
 		b.push(bindStep{kind: stepRecordFields, node: e})
 	case *ast.FunctionTypeExpr:
+		b.pushTypeScope()
+		fnTypeParams := b.defineTypeParams(e.TypeParams)
+		if len(fnTypeParams) > 0 {
+			b.result.functionTypeParams[e] = fnTypeParams
+		}
 		b.push(bindStep{kind: stepFunctionTypeAfterConstraints, node: e})
 		b.push(bindStep{kind: stepTypeParamConstraints, node: e})
 	case *ast.AssertsTypeExpr:
@@ -664,10 +724,6 @@ func (b *binder) visitType(expr ast.TypeExpr) {
 	case *ast.GenericTypeExpr:
 		b.push(bindStep{kind: stepTypeList, node: e, phase: phaseGenericArgs})
 		b.bindTypeRef(e.Base)
-	case *ast.MetaTypeExpr:
-		b.scheduleType(e.Inner)
-	case *ast.TupleTypeExpr:
-		b.push(bindStep{kind: stepTypeList, node: e, phase: phaseTuple})
 	case *ast.TypeOfExpr:
 		b.scheduleExpr(e.Expr, exprBindTypeQuery)
 	case *ast.KeyOfExpr:
@@ -691,7 +747,6 @@ func (b *binder) visitRecordFields(step bindStep) {
 	field := record.Fields[step.index]
 	step.index++
 	b.push(step)
-	b.scheduleAnnotationArgs(field.Annotations)
 	b.scheduleType(field.Type)
 }
 
@@ -728,10 +783,11 @@ func (b *binder) visitTypeParamConstraints(step bindStep) {
 	b.scheduleType(param.Constraint)
 }
 
-func (b *binder) enterFunction(fn *ast.FunctionExpr, method bool, origin functionOriginDetails) {
+func (b *binder) enterFunction(fn *ast.FunctionExpr, method bool, origin functionOriginDetails, mode exprBindMode) {
 	if fn == nil {
 		return
 	}
+	origin.static = mode == exprBindTypeQuery
 	parent := b.currentFunction()
 	b.result.registerFunction(fn, parent, origin)
 	oldVisible := b.visiblePending
@@ -739,19 +795,18 @@ func (b *binder) enterFunction(fn *ast.FunctionExpr, method bool, origin functio
 	b.visiblePending = len(b.pending)
 	b.control.enterFunction()
 	b.pushScope()
-	if origin.hasReceiverType {
-		b.result.methodReceiverTypes[fn] = origin.receiverType
-	}
-	b.push(bindStep{kind: stepFunctionAfterConstraints, node: fn, method: method})
-	b.push(bindStep{kind: stepTypeParamConstraints, node: fn})
-}
-
-func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool) {
 	fnTypeParams := b.defineTypeParams(fn.TypeParams)
 	if len(fnTypeParams) > 0 {
 		b.result.functionTypeParams[fn] = fnTypeParams
 	}
+	if origin.hasReceiverType {
+		b.result.methodReceiverTypes[fn] = origin.receiverType
+	}
+	b.push(bindStep{kind: stepFunctionAfterConstraints, node: fn, method: method, mode: mode})
+	b.push(bindStep{kind: stepTypeParamConstraints, node: fn})
+}
 
+func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool, mode exprBindMode) {
 	params := make([]symbol.ID, 0)
 	slots := make([]ParamSlot, 0)
 	var names []string
@@ -766,7 +821,6 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool) {
 	}
 	if method && (len(names) == 0 || names[0] != "self") {
 		id := b.newSymbol("self", symbol.Param)
-		b.result.setDeclaration(id, Declaration{Synthetic: true})
 		params = append(params, id)
 		b.define("self", id)
 		slots = append(slots, ParamSlot{
@@ -776,21 +830,21 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool) {
 	for i, name := range names {
 		id := b.newSymbol(name, symbol.Param)
 		position := positionAt(fn.ParList, i)
-		b.result.setDeclaration(id, declarationForPosition(position, name, false))
+		annotation := typeAt(types, i)
+		b.result.setSymbolTypeAnnotation(id, annotation)
 		params = append(params, id)
 		b.define(name, id)
 		slots = append(slots, ParamSlot{
-			Symbol: id, Name: name, Position: position, Type: typeAt(types, i), SourceIndex: i,
+			Symbol: id, Name: name, Position: position, Type: annotation, SourceIndex: i,
 		})
 	}
-	b.result.paramSymbols[fn] = params
 	if hasVargs {
 		id := b.newSymbol("...", symbol.Param)
 		var position ast.Position
 		if fn.ParList != nil {
 			position = fn.ParList.VarargPosition
 		}
-		b.result.setDeclaration(id, declarationForPosition(position, "...", true))
+		b.result.setSymbolTypeAnnotation(id, varargType)
 		b.result.varargSymbols[fn] = id
 		slots = append(slots, ParamSlot{
 			Symbol: id, Name: "...", Position: position, Type: varargType,
@@ -800,8 +854,8 @@ func (b *binder) finishFunctionEntry(fn *ast.FunctionExpr, method bool) {
 	b.result.paramSlots[fn] = slots
 	b.recordFunctionAssertedParams(fn, slots)
 
-	b.push(bindStep{kind: stepFunctionLeave, node: fn})
-	b.scheduleStmtList(fn, phaseBody)
+	b.push(bindStep{kind: stepFunctionLeave, node: fn, mode: mode})
+	b.scheduleStmtList(fn, phaseBody, mode)
 	b.push(bindStep{kind: stepTypeList, node: fn, phase: phaseFunctionReturns})
 	b.scheduleType(varargType)
 	b.push(bindStep{kind: stepTypeList, node: fn, phase: phaseFunctionParams})
@@ -818,87 +872,21 @@ func (b *binder) leaveFunction() {
 	b.visiblePending = frame.visiblePending
 }
 
-func (b *binder) enterFunctionSignature(fn *ast.FunctionExpr) {
-	if fn == nil {
-		return
-	}
-	b.push(bindStep{kind: stepFunctionSignatureAfterConstraints, node: fn})
-	b.push(bindStep{kind: stepTypeParamConstraints, node: fn})
-}
-
-func (b *binder) finishFunctionSignature(fn *ast.FunctionExpr) {
-	// A function literal appearing in a type query has a source-only
-	// signature.  Its body is intentionally never entered, but the signature
-	// still has the same formal-name visibility as an executable function once
-	// its type-parameter constraints have been checked.  Keep this scope out of
-	// b.functions: that table is runtime function-origin evidence.
-	b.pushScope()
-	fnTypeParams := b.defineTypeParams(fn.TypeParams)
-	if len(fnTypeParams) > 0 {
-		b.result.functionTypeParams[fn] = fnTypeParams
-	}
-
-	params := make([]symbol.ID, 0)
-	slots := make([]ParamSlot, 0)
-	if fn.ParList != nil {
-		for i, name := range fn.ParList.Names {
-			// Do not use b.newSymbol here: static-signature declarations must
-			// not be attributed to any enclosing runtime function.
-			id := b.result.newSymbol(name, symbol.Param)
-			position := positionAt(fn.ParList, i)
-			annotation := typeAt(fn.ParList.Types, i)
-			b.result.setDeclaration(id, declarationForPosition(position, name, false))
-			if annotation != nil {
-				b.result.symbolAnnotations[id] = annotation
-			}
-			params = append(params, id)
-			b.define(name, id)
-			slots = append(slots, ParamSlot{
-				Symbol: id, Name: name, Position: position,
-				Type: annotation, SourceIndex: i,
-			})
-		}
-		if fn.ParList.HasVargs {
-			id := b.result.newSymbol("...", symbol.Param)
-			b.result.setDeclaration(id, declarationForPosition(fn.ParList.VarargPosition, "...", true))
-			if fn.ParList.VarargType != nil {
-				b.result.symbolAnnotations[id] = fn.ParList.VarargType
-			}
-			b.result.varargSymbols[fn] = id
-			b.define("...", id)
-			slots = append(slots, ParamSlot{
-				Symbol: id, Name: "...", Position: fn.ParList.VarargPosition,
-				Type: fn.ParList.VarargType, SourceIndex: len(fn.ParList.Names), Vararg: true,
-			})
-		}
-	}
-	b.result.paramSymbols[fn] = params
-	b.result.paramSlots[fn] = slots
-	b.recordFunctionAssertedParams(fn, slots)
-
-	b.push(bindStep{kind: stepLeaveScope})
-	b.push(bindStep{kind: stepTypeList, node: fn, phase: phaseFunctionReturns})
-	if fn.ParList != nil {
-		b.scheduleType(fn.ParList.VarargType)
-	}
-	b.push(bindStep{kind: stepTypeList, node: fn, phase: phaseFunctionParams})
-}
-
 func (b *binder) beginTypeDef(stmt *ast.TypeDefStmt) {
 	if stmt == nil {
 		return
 	}
 	b.declareTypeDef(stmt)
-	b.push(bindStep{kind: stepTypeDefAfterConstraints, node: stmt})
-	b.push(bindStep{kind: stepTypeParamConstraints, node: stmt})
-}
-
-func (b *binder) finishTypeDef(stmt *ast.TypeDefStmt) {
 	b.pushTypeScope()
 	params := b.defineTypeParams(stmt.TypeParams)
 	if len(params) > 0 {
 		b.result.typeDefParams[stmt] = params
 	}
+	b.push(bindStep{kind: stepTypeDefAfterConstraints, node: stmt})
+	b.push(bindStep{kind: stepTypeParamConstraints, node: stmt})
+}
+
+func (b *binder) finishTypeDef(stmt *ast.TypeDefStmt) {
 	b.push(bindStep{kind: stepTypeScopeLeave})
 	b.scheduleType(stmt.Type)
 }
@@ -916,32 +904,21 @@ func (b *binder) beginInterface(stmt *ast.InterfaceDefStmt) {
 
 func (b *binder) visitInterfaceMembers(step bindStep) {
 	stmt := step.node.(*ast.InterfaceDefStmt)
-	if step.phase == 0 {
-		if step.index < len(stmt.Fields) {
-			field := stmt.Fields[step.index]
-			step.index++
-			b.push(step)
-			b.scheduleType(field.Type)
-			return
-		}
-		step.phase = 1
-		step.index = 0
-	}
-	if step.index >= len(stmt.Methods) {
+	if step.index >= len(stmt.Members) {
 		return
 	}
-	method := stmt.Methods[step.index]
+	member := stmt.Members[step.index]
 	step.index++
 	b.push(step)
-	b.scheduleType(method.Type)
+	switch member.Kind {
+	case ast.InterfaceFieldMember:
+		b.scheduleType(member.Type)
+	case ast.InterfaceMethodMember:
+		b.scheduleType(member.Type)
+	}
 }
 
 func (b *binder) finishFunctionType(expr *ast.FunctionTypeExpr) {
-	b.pushTypeScope()
-	fnTypeParams := b.defineTypeParams(expr.TypeParams)
-	if len(fnTypeParams) > 0 {
-		b.result.functionTypeParams[expr] = fnTypeParams
-	}
 	b.recordFunctionTypeAssertedParams(expr)
 	b.push(bindStep{kind: stepTypeScopeLeave})
 	b.push(bindStep{kind: stepTypeList, node: expr, phase: phaseFunctionTypeReturns})
@@ -1016,18 +993,4 @@ func receiverTypeName(receiver ast.Expr) string {
 		}
 	}
 	return ""
-}
-
-func nodePresent(node ast.PositionHolder) bool {
-	if node == nil {
-		return false
-	}
-	value := reflect.ValueOf(node)
-	return value.Kind() != reflect.Pointer || !value.IsNil()
-}
-
-func (b *binder) invalidateRuntimeUseScan() {
-	if b != nil && b.result != nil {
-		b.result.runtimeUseScanComplete = false
-	}
 }

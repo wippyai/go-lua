@@ -1,8 +1,6 @@
 package typ
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -51,28 +49,7 @@ func NewInterface(name string, methods []Method) *Interface {
 func (i *Interface) Kind() kind.Kind { return kind.Interface }
 
 func (i *Interface) String() string {
-	return i.strCache.get(func() string {
-		if i.Name != "" {
-			return i.Name
-		}
-
-		var sb strings.Builder
-		sb.WriteString("interface { ")
-
-		for j, m := range i.Methods {
-			if j > 0 {
-				sb.WriteString("; ")
-			}
-
-			sb.WriteString(m.Name)
-			sb.WriteString(": ")
-			sb.WriteString(m.Type.String())
-		}
-
-		sb.WriteString(" }")
-
-		return sb.String()
-	})
+	return i.strCache.get(func() string { return renderTypeString(i) })
 }
 
 func (i *Interface) Hash() uint64 { return i.hash }

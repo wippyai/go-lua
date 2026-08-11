@@ -1,6 +1,7 @@
 package runtimekind
 
 import (
+	"math/bits"
 	"strconv"
 	"strings"
 
@@ -12,19 +13,35 @@ var Key = axis.NewKey[Value]("runtimekind")
 
 func Spec() axis.Spec[Value] {
 	return axis.Spec[Value]{
-		Key:       Key,
-		Bottom:    Bottom,
-		Top:       Top,
-		Equal:     Equal,
-		LessOrEq:  LessOrEq,
-		Join:      Join,
-		Meet:      Meet,
-		Widen:     Widen,
+		Key:      Key,
+		Bottom:   Bottom,
+		Top:      Top,
+		Equal:    Equal,
+		LessOrEq: LessOrEq,
+		Join:     Join,
+		Meet:     Meet,
+		Widen:    Widen,
+		WidenRank: axis.Rank[Value]{
+			Width: 1,
+			At:    widenRank,
+		},
+		ReductionRank: axis.Rank[Value]{
+			Width: 1,
+			At:    reductionRank,
+		},
 		Hash:      Value.Hash,
 		Retention: axis.ImmutableRetention[Value](),
 		Canonical: canonicalDescriptor(),
 		Boundary:  axis.PortableIdentity,
 	}
+}
+
+func widenRank(value Value, _ int) uint64 {
+	return uint64(int(tagCount) - bits.OnesCount16(value.mask&allKnownMask))
+}
+
+func reductionRank(value Value, _ int) uint64 {
+	return uint64(bits.OnesCount16(value.mask & allKnownMask))
 }
 
 // Tag is one Lua runtime type() tag.

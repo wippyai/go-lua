@@ -1,7 +1,6 @@
 package typ
 
 import (
-	"strings"
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -196,77 +195,7 @@ func CloneFunction(fn *Function) *Function {
 func (f *Function) Kind() kind.Kind { return kind.Function }
 
 func (f *Function) String() string {
-	return f.strCache.get(func() string {
-		var sb strings.Builder
-
-		sb.WriteString("fun")
-
-		if len(f.TypeParams) > 0 {
-			sb.WriteString("<")
-
-			for i, tp := range f.TypeParams {
-				if i > 0 {
-					sb.WriteString(", ")
-				}
-
-				sb.WriteString(tp.String())
-			}
-
-			sb.WriteString(">")
-		}
-
-		sb.WriteString("(")
-
-		for i, p := range f.Params {
-			if i > 0 {
-				sb.WriteString(", ")
-			}
-
-			if p.Name != "" {
-				sb.WriteString(p.Name)
-				sb.WriteString(": ")
-			}
-
-			sb.WriteString(p.Type.String())
-
-			if p.Optional {
-				sb.WriteString("?")
-			}
-		}
-
-		if f.Variadic != nil {
-			if len(f.Params) > 0 {
-				sb.WriteString(", ")
-			}
-
-			sb.WriteString("...")
-			sb.WriteString(f.Variadic.String())
-		}
-
-		sb.WriteString(")")
-
-		if len(f.Returns) > 0 {
-			sb.WriteString(" -> ")
-
-			if len(f.Returns) == 1 {
-				sb.WriteString(f.Returns[0].String())
-			} else {
-				sb.WriteString("(")
-
-				for i, r := range f.Returns {
-					if i > 0 {
-						sb.WriteString(", ")
-					}
-
-					sb.WriteString(r.String())
-				}
-
-				sb.WriteString(")")
-			}
-		}
-
-		return sb.String()
-	})
+	return f.strCache.get(func() string { return renderTypeString(f) })
 }
 
 func (f *Function) Hash() uint64 { return f.hash }

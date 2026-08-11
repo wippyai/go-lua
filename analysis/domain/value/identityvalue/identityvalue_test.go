@@ -3,11 +3,9 @@ package identityvalue
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/domain/value/registry"
 )
 
 func TestExactIDReadsOnlySingletonIdentity(t *testing.T) {
@@ -29,7 +27,10 @@ func TestExactIDReadsOnlySingletonIdentity(t *testing.T) {
 	if got, ok := ExactID(nil, value); ok || got != (identity.ID{}) {
 		t.Fatalf("ExactID(nil registry) = %v/%v, want zero/false", got, ok)
 	}
-	withoutIdentity := axis.NewRegistry().Freeze()
+	withoutIdentity, err := product.RegistryWithAxes()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got, ok := ExactID(withoutIdentity, product.Bottom(withoutIdentity)); ok || got != (identity.ID{}) {
 		t.Fatalf("ExactID(registry without identity) = %v/%v, want zero/false", got, ok)
 	}

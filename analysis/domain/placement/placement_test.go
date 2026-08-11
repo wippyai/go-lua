@@ -8,17 +8,17 @@ import (
 )
 
 func TestPlacementLatticeLaws(t *testing.T) {
-	suite := latticelaws.LawSuite[Value]{
+	suite := latticelaws.LawSuite[Placement]{
 		Name:   "placement",
 		Domain: Lattice(),
-		Sample: []Value{
+		Sample: []Placement{
 			Bottom,
 			Stack,
 			OwnedHeap,
 			SharedHeap,
 			Unknown,
 		},
-		Format: func(v Value) string {
+		Format: func(v Placement) string {
 			return fmt.Sprintf("%v", v)
 		},
 	}
@@ -36,9 +36,9 @@ func TestPlacementOrderJoinMeetAndWiden(t *testing.T) {
 	}
 
 	cases := []struct {
-		left, right Value
-		join        Value
-		meet        Value
+		left, right Placement
+		join        Placement
+		meet        Placement
 	}{
 		{Bottom, Stack, Stack, Bottom},
 		{Stack, OwnedHeap, OwnedHeap, Stack},

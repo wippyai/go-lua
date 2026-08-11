@@ -1,10 +1,6 @@
 package typ
 
-import (
-	"strings"
-
-	"github.com/wippyai/go-lua/analysis/type/kind"
-)
+import "github.com/wippyai/go-lua/analysis/type/kind"
 
 // Union represents a type that can be any of its member types: T1 | T2 | ...
 //
@@ -25,21 +21,7 @@ type Union struct {
 func (u *Union) Kind() kind.Kind { return kind.Union }
 
 func (u *Union) String() string {
-	return u.strCache.get(func() string { return joinMemberStrings(u.Members, " | ", "nil") })
-}
-
-// joinMemberStrings renders members joined by sep, substituting nilLabel for nil
-// members. Shared by the Union and Intersection string forms.
-func joinMemberStrings(members []Type, sep, nilLabel string) string {
-	parts := make([]string, len(members))
-	for i, m := range members {
-		if m == nil {
-			parts[i] = nilLabel
-		} else {
-			parts[i] = m.String()
-		}
-	}
-	return strings.Join(parts, sep)
+	return u.strCache.get(func() string { return renderTypeString(u) })
 }
 
 func (u *Union) Hash() uint64 { return u.hash }

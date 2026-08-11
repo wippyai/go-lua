@@ -1,0 +1,371 @@
+package source
+
+import (
+	"testing"
+
+	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/program/link"
+	linkproject "github.com/wippyai/go-lua/program/link/project"
+	programlower "github.com/wippyai/go-lua/program/lower"
+	"github.com/wippyai/go-lua/program/target"
+)
+
+func TestRootClassifiesCompleteSourceConstructorForms(t *testing.T) {
+	heap, values, _ := sourceFixture(t, `
+local zero = {}
+local closure = function() end
+local fixed = { answer = 42 }
+local f = function() return 1 end
+local finalopen = { f() }
+return zero, closure, fixed, finalopen
+`)
+	seen := map[Form]int{}
+	for _, allocation := range allocationKeys(heap) {
+		root, rootOK := New(heap, allocation)
+		if !rootOK || !root.Revalidate(heap) {
+			t.Fatal("source root classification")
+		}
+		seen[root.Form()]++
+		if root.Form() == FormClosed {
+			closed, closedOK := NewClosed(heap, values, allocation)
+			if !closedOK || !closed.Revalidate() || closed.Count() != 1 || closed.CoordinateCount() != 1 {
+				t.Fatal("closed descriptor")
+			}
+			field, fieldOK := closed.At(0)
+			if !fieldOK || field.Ordinal() != 1 || field.ValueOrdinal() != 0 {
+				t.Fatal("closed field ordinal")
+			}
+			if _, selectorOK := field.ExactSelector(); !selectorOK {
+				t.Fatal("static field omitted exact selector")
+			}
+		}
+	}
+	if seen[FormEmpty] < 2 || seen[FormClosed] != 1 || seen[FormFinalOpen] != 1 {
+		t.Fatalf("forms=%v", seen)
+	}
+}
+
+func TestClosedDenseCoordinatesFenceDynamicAndFinalOpenSources(t *testing.T) {
+	heap, values, _ := sourceFixture(t, `
+local x = {}
+local y = function() end
+local repeated = { [x] = x, [x] = x }
+local sparse = { [y] = x }
+local open = { x, y() }
+return repeated, sparse, open
+`)
+	var repeated, sparse heapdomain.Key
+	for _, allocation := range allocationKeys(heap) {
+		root, rootOK := New(heap, allocation)
+		if !rootOK {
+			t.Fatal("source root")
+		}
+		switch {
+		case root.Form() == FormClosed && heap.FieldCount(allocation) == 2:
+			repeated = allocation
+		case root.Form() == FormClosed && heap.FieldCount(allocation) == 1:
+			sparse = allocation
+		case root.Form() == FormFinalOpen:
+			if _, ok := NewClosed(heap, values, allocation); ok {
+				t.Fatal("final-open table entered scalar closed descriptor")
+			}
+		}
+	}
+	repeatedClosed, repeatedOK := NewClosed(heap, values, repeated)
+	sparseClosed, sparseOK := NewClosed(heap, values, sparse)
+	if !repeatedOK || !sparseOK || repeatedClosed.Count() != 2 || repeatedClosed.CoordinateCount() != 2 || sparseClosed.CoordinateCount() != 2 {
+		t.Fatalf("closed coordinate denominator repeated=%t/%d/%d sparse=%t/%d/%d", repeatedOK, repeatedClosed.Count(), repeatedClosed.CoordinateCount(), sparseOK, sparseClosed.Count(), sparseClosed.CoordinateCount())
+	}
+	first, firstOK := repeatedClosed.At(0)
+	second, secondOK := repeatedClosed.At(1)
+	if !firstOK || !secondOK || first.Ordinal() != 1 || second.Ordinal() != 2 || first.KeyKind() != KeyDynamic || second.KeyKind() != KeyDynamic || first.ValueOrdinal() >= uint32(repeatedClosed.CoordinateCount()) || second.ValueOrdinal() >= uint32(repeatedClosed.CoordinateCount()) {
+		t.Fatal("repeated dynamic source order")
+	}
+	firstKey, firstKeyOK := first.DynamicKeyOrdinal()
+	secondKey, secondKeyOK := second.DynamicKeyOrdinal()
+	if !firstKeyOK || !secondKeyOK || firstKey != first.ValueOrdinal() || secondKey != second.ValueOrdinal() || firstKey >= uint32(repeatedClosed.CoordinateCount()) || secondKey >= uint32(repeatedClosed.CoordinateCount()) {
+		t.Fatal("dynamic key use escaped dense coordinate vector")
+	}
+	firstKeyCoordinate, firstKeyCoordinateOK := first.DynamicKey()
+	secondKeyCoordinate, secondKeyCoordinateOK := second.DynamicKey()
+	if !firstKeyCoordinateOK || !secondKeyCoordinateOK || first.Value() != firstKeyCoordinate || second.Value() != secondKeyCoordinate || first.Value() == second.Value() {
+		t.Fatal("direct same-cell fields did not retain one local occurrence each")
+	}
+	left, leftOK := sparseClosed.At(0)
+	if !leftOK || left.ValueOrdinal() > 1 {
+		t.Fatal("sparse source did not use a dense value ordinal")
+	}
+	key, keyOK := left.DynamicKeyOrdinal()
+	if !keyOK || key > 1 || key == left.ValueOrdinal() {
+		t.Fatal("two source coordinates did not retain two dense local ordinals")
+	}
+	foreignHeap, foreignValues, _ := sourceFixture(t, `return {}`)
+	if foreignHeap.ContentID() == heap.ContentID() || foreignValues == values {
+		t.Fatal("foreign fixture")
+	}
+	if _, ok := NewClosed(foreignHeap, values, repeated); ok {
+		t.Fatal("foreign Heap admitted source descriptor")
+	}
+	if _, ok := NewClosed(heap, foreignValues, repeated); ok {
+		t.Fatal("foreign Value schema admitted source descriptor")
+	}
+}
+
+func TestClosedRevalidateForFencesExactSchemaInstances(t *testing.T) {
+	heap, values, linked := sourceFixture(t, `local x = {}; return { [x] = x }`)
+	var allocation heapdomain.Key
+	for _, candidate := range allocationKeys(heap) {
+		if heap.FieldCount(candidate) == 1 {
+			allocation = candidate
+			break
+		}
+	}
+	closed, closedOK := NewClosed(heap, values, allocation)
+	root, rootOK := New(heap, allocation)
+	if !closedOK || !rootOK || !root.FencedTo(heap) || !closed.RevalidateFor(heap, values) {
+		t.Fatal("exact source schemas did not revalidate")
+	}
+	otherHeap, otherHeapOK := heapdomain.Seal(linked)
+	otherValues, otherValuesOK := valuedomain.Seal(linked, otherHeap)
+	var otherAllocation heapdomain.Key
+	for index := 0; index < otherHeap.KeyCount(); index++ {
+		candidate, candidateOK := otherHeap.KeyAt(index)
+		candidateID, candidateIDOK := otherHeap.KeyID(candidate)
+		allocationID, allocationIDOK := heap.KeyID(allocation)
+		if candidateOK && candidateIDOK && allocationIDOK && candidateID == allocationID {
+			otherAllocation = candidate
+			break
+		}
+	}
+	localReplay, localReplayOK := NewClosed(otherHeap, otherValues, otherAllocation)
+	if !otherHeapOK || !otherValuesOK || !otherAllocation.Valid() || !localReplayOK || !localReplay.Revalidate() || root.FencedTo(otherHeap) || closed.RevalidateFor(otherHeap, values) || closed.RevalidateFor(heap, otherValues) || closed.RevalidateFor(otherHeap, otherValues) {
+		t.Fatal("independently sealed same-Link schemas crossed source fence")
+	}
+	if _, mixedHeapOK := NewClosed(otherHeap, values, otherAllocation); mixedHeapOK {
+		t.Fatal("same-content foreign Value schema crossed Heap owner fence")
+	}
+	if _, mixedValueOK := NewClosed(heap, otherValues, allocation); mixedValueOK {
+		t.Fatal("same-content foreign Heap schema crossed Value owner fence")
+	}
+}
+
+func TestClosedEffectBetweenSameCellUsesDoesNotShareCoordinates(t *testing.T) {
+	heap, values, _ := sourceFixture(t, `
+local x = {}
+local function mutate()
+  x = {}
+  return x
+end
+local direct = { [x] = x }
+local changed = { [x] = mutate() }
+return direct, changed
+`)
+	var direct, changed Closed
+	for _, allocation := range allocationKeys(heap) {
+		if heap.FieldCount(allocation) != 1 {
+			continue
+		}
+		closed, closedOK := NewClosed(heap, values, allocation)
+		if !closedOK {
+			t.Fatal("closed one-field allocation")
+		}
+		if closed.CoordinateCount() == 1 {
+			direct = closed
+		} else if closed.CoordinateCount() == 2 {
+			changed = closed
+		}
+	}
+	if direct.Count() != 1 || changed.Count() != 1 || direct.CoordinateCount() != 1 || changed.CoordinateCount() != 2 {
+		t.Fatal("effectful field did not retain separate coordinates")
+	}
+	directField, directOK := direct.At(0)
+	changedField, changedOK := changed.At(0)
+	directKey, directKeyOK := directField.DynamicKeyOrdinal()
+	changedKey, changedKeyOK := changedField.DynamicKeyOrdinal()
+	if !directOK || !changedOK || !directKeyOK || !changedKeyOK || directField.ValueOrdinal() != directKey || changedField.ValueOrdinal() == changedKey {
+		t.Fatal("same-cell mutation crossed direct-read coordinate proof")
+	}
+}
+
+func TestClosedAllocationSourceKindsUseAuthoredFieldGeometry(t *testing.T) {
+	tests := []struct {
+		name       string
+		text       string
+		literal    keyspace.LiteralValue
+		fieldKind  KeyKind
+		wantString bool
+	}{
+		{
+			name:       "name",
+			text:       `local child = {}; return { answer = child }`,
+			literal:    keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "answer"},
+			fieldKind:  KeyExact,
+			wantString: true,
+		},
+		{
+			name:      "list",
+			text:      `local child = {}; return { child }`,
+			literal:   keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 1},
+			fieldKind: KeyExact,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			field, linked := oneClosedField(t, test.text)
+			if field.KeyKind() != test.fieldKind {
+				t.Fatalf("field key kind = %v, want %v", field.KeyKind(), test.fieldKind)
+			}
+			exact, exactOK := field.ExactKey()
+			literal, literalOK := linked.Project().Keys().Exact(exact)
+			if !exactOK || !literalOK || literal != test.literal {
+				t.Fatalf("field exact key = %v/%v, Link literal = %#v/%v, want %#v", exact, exactOK, literal, literalOK, test.literal)
+			}
+			if test.wantString && literal.Kind != keyspace.LiteralString {
+				t.Fatal("name field did not retain a string exact key")
+			}
+		})
+	}
+}
+
+func TestClosedAllocationIntegralFloatAndIntegerKeysShareCanonicalLinkKey(t *testing.T) {
+	fields, linked := closedFieldsFixture(t, `local child = {}; return { [1] = child, [1.0] = child }`)
+	if len(fields) != 2 {
+		t.Fatalf("closed fields = %d, want two exact fields", len(fields))
+	}
+	left, leftOK := fields[0].ExactKey()
+	right, rightOK := fields[1].ExactKey()
+	if !leftOK || !rightOK || left != right {
+		t.Fatalf("canonical exact keys = %v/%v and %v/%v, want one Link key", left, leftOK, right, rightOK)
+	}
+	literal, literalOK := linked.Project().Keys().Exact(left)
+	if !literalOK || literal != (keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 1}) {
+		t.Fatalf("canonical Link literal = %#v/%v, want integer 1", literal, literalOK)
+	}
+}
+
+func TestClosedAllocationFieldKeyRemainsDynamicAndUsesSameCellOptimization(t *testing.T) {
+	// Lowering mints separate Read occurrences for the key and value; the
+	// source Cell proof, rather than occurrence-term equality, permits one
+	// coordinate here.
+	field, _ := oneClosedField(t, `local key = {}; return { [key] = key }`)
+	if field.KeyKind() != KeyDynamic {
+		t.Fatalf("field key kind = %v, want dynamic", field.KeyKind())
+	}
+	if _, exact := field.ExactKey(); exact {
+		t.Fatal("dynamic FieldKey retained an exact key")
+	}
+	keyOrdinal, dynamicOK := field.DynamicKeyOrdinal()
+	if !dynamicOK || keyOrdinal != field.ValueOrdinal() {
+		t.Fatalf("same-cell dynamic ordinals = %v/%v, value ordinal = %v", keyOrdinal, dynamicOK, field.ValueOrdinal())
+	}
+}
+
+func TestClosedDynamicKeyDoesNotCoalesceIndependentOrLensReads(t *testing.T) {
+	heap, values, _ := sourceFixture(t, `
+local key = {}
+local value = {}
+local base = {}
+local direct = { [key] = key }
+local independent = { [key] = value }
+local lens = { [base.name] = base.name }
+return direct, independent, lens
+`)
+	counts := map[int]int{}
+	closedCount := 0
+	for _, allocation := range allocationKeys(heap) {
+		if heap.FieldCount(allocation) != 1 {
+			continue
+		}
+		closed, closedOK := NewClosed(heap, values, allocation)
+		if !closedOK {
+			t.Fatal("closed dynamic-read allocation")
+		}
+		closedCount++
+		counts[closed.CoordinateCount()]++
+	}
+	if closedCount != 3 || counts[1] != 1 || counts[2] != 2 {
+		t.Fatalf("direct/independent/lens coordinate counts = %v across %d tables, want one 1 and two 2", counts, closedCount)
+	}
+}
+
+// allocationKeys is the test-side admission boundary for Program allocations.
+// It deliberately enumerates Heap's issued coordinates rather than rebuilding
+// Link's retired allocation relation.
+func allocationKeys(schema heapdomain.Schema) []heapdomain.Key {
+	keys := make([]heapdomain.Key, 0, schema.KeyCount())
+	for index := 0; index < schema.KeyCount(); index++ {
+		key, ok := schema.KeyAt(index)
+		if ok && key.Kind() == heapdomain.RootAllocation {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func oneClosedField(t testing.TB, text string) (Field, *link.Link) {
+	t.Helper()
+	fields, linked := closedFieldsFixture(t, text)
+	if len(fields) != 1 {
+		t.Fatalf("closed fields = %d, want one", len(fields))
+	}
+	return fields[0], linked
+}
+
+func closedFieldsFixture(t testing.TB, text string) ([]Field, *link.Link) {
+	t.Helper()
+	heap, values, linked := sourceFixture(t, text)
+	fields := make([]Field, 0, 2)
+	for _, allocation := range allocationKeys(heap) {
+		closed, closedOK := NewClosed(heap, values, allocation)
+		if !closedOK {
+			continue
+		}
+		for index := 0; index < closed.Count(); index++ {
+			field, fieldOK := closed.At(index)
+			if !fieldOK {
+				t.Fatalf("closed field[%d] is unavailable", index)
+			}
+			fields = append(fields, field)
+		}
+	}
+	return fields, linked
+}
+
+func TestCoordinateOrdinalDeduplicatesRepeatedUses(t *testing.T) {
+	_, values, linked := sourceFixture(t, `local x = {}; return x`)
+	value, valueOK := linked.Boundary().Values().At(0)
+	coordinate, coordinateOK := values.CoordinateFor(value)
+	if !valueOK || !coordinateOK {
+		t.Fatal("coordinate")
+	}
+	if ordinal, ok := coordinateOrdinal([]valuedomain.Coordinate{coordinate}, coordinate); !ok || ordinal != 0 {
+		t.Fatal("repeated coordinate did not map to one dense ordinal")
+	}
+}
+
+func sourceFixture(t testing.TB, text string) (heapdomain.Schema, *valuedomain.Schema, *link.Link) {
+	t.Helper()
+	p, err := programlower.Lower(programlower.Source{Name: "allocation_source.lua", Text: []byte(text)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := target.Seal(&target.Spec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "allocation_source", Program: p}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	heap, heapOK := heapdomain.Seal(linked)
+	values, valuesOK := valuedomain.Seal(linked, heap)
+	if !heapOK {
+		t.Fatal("Heap schema")
+	}
+	if !valuesOK {
+		t.Fatal("Value schema")
+	}
+	return heap, values, linked
+}

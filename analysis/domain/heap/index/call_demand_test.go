@@ -1,0 +1,415 @@
+package index
+
+import (
+	"reflect"
+	"testing"
+
+	calldomain "github.com/wippyai/go-lua/analysis/domain/call"
+	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	"github.com/wippyai/go-lua/analysis/domain/materialization"
+	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	flowkind "github.com/wippyai/go-lua/program/flow/kind"
+	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/program/link"
+	linkproject "github.com/wippyai/go-lua/program/link/project"
+	"github.com/wippyai/go-lua/program/lower"
+	"github.com/wippyai/go-lua/program/target"
+)
+
+func TestTopologyReceiverCallDemandFencesExactStaticBottomAndForeign(t *testing.T) {
+	heap, values, calls, _, fresh := freshTopologyFixture(t)
+	topology, sealed := Seal(heap, values, calls)
+	application, _, _, _, _, _, source := fresh.FreshResult()
+	wantKey, keyed := calls.KeyForApplication(application)
+	atom, atomOK := values.Allocation(fresh, materialization.Recent)
+	receiver, receiverOK := values.Singleton(atom)
+	if !sealed || !source || !keyed || !atomOK || !receiverOK {
+		t.Fatalf("fresh demand fixture sealed=%t source=%t key=%t atom=%t receiver=%t", sealed, source, keyed, atomOK, receiverOK)
+	}
+
+	var exact []struct {
+		key calldomain.Key
+		tag uint64
+	}
+	if !topology.VisitReceiverCallDemand(receiver, func(key calldomain.Key, tag uint64) bool {
+		exact = append(exact, struct {
+			key calldomain.Key
+			tag uint64
+		}{key: key, tag: tag})
+		return true
+	}) || len(exact) != 1 || exact[0].key != wantKey || exact[0].tag == 0 {
+		t.Fatalf("exact fresh receiver demand=%#v, want one nonzero tag for its Call key", exact)
+	}
+	unsupported, unsupportedAtom := values.Allocation(fresh, materialization.Exact)
+	unsupportedReceiver, unsupportedValue := values.Singleton(unsupported)
+	unsupportedCalls := 0
+	if !unsupportedAtom || !unsupportedValue || !topology.VisitReceiverCallDemand(unsupportedReceiver, func(calldomain.Key, uint64) bool {
+		unsupportedCalls++
+		return true
+	}) || unsupportedCalls != 0 {
+		t.Fatal("unsupported fresh materialization demanded Call state")
+	}
+
+	bottomCalls := 0
+	if !topology.VisitReceiverCallDemand(values.Bottom(), func(calldomain.Key, uint64) bool {
+		bottomCalls++
+		return true
+	}) || bottomCalls != 0 {
+		t.Fatal("Value.Bottom was not a valid empty demand")
+	}
+
+	staticHeap, staticValues, staticCalls, _, staticRoot, _ := staticTopologyFixture(t)
+	staticTopology, staticSealed := Seal(staticHeap, staticValues, staticCalls)
+	staticAtom, staticAtomOK := staticValues.Allocation(staticRoot, materialization.Recent)
+	staticReceiver, staticReceiverOK := staticValues.Singleton(staticAtom)
+	staticCallsObserved := 0
+	if !staticSealed || !staticAtomOK || !staticReceiverOK || !staticTopology.VisitReceiverCallDemand(staticReceiver, func(calldomain.Key, uint64) bool {
+		staticCallsObserved++
+		return true
+	}) || staticCallsObserved != 0 {
+		t.Fatal("static table receiver demanded guarded Call state")
+	}
+
+	foreignCalls := 0
+	foreignValues := topologyForeignValues(t)
+	if topology.VisitReceiverCallDemand(foreignValues.Top(), func(calldomain.Key, uint64) bool {
+		foreignCalls++
+		return true
+	}) || foreignCalls != 0 {
+		t.Fatal("foreign Value crossed the demand owner fence")
+	}
+}
+
+func TestTopologyReceiverCallDemandDeduplicatesFreshApplicationAndWarms(t *testing.T) {
+	heap, values, calls, _ := callDemandTopologyFixture(t, "heap_index_two_fresh_results.lua", `
+local first, second = fresh()
+return first, second
+`, []target.FreshResultSpec{
+		{Result: 0, Kind: target.FreshTable},
+		{Result: 1, Kind: target.FreshTable},
+	})
+	topology, sealed := Seal(heap, values, calls)
+	if !sealed {
+		t.Fatal("two-result fresh topology did not seal")
+	}
+	var application linkproject.Application
+	for index := 0; index < heap.KeyCount(); index++ {
+		root, _ := heap.KeyAt(index)
+		candidate, _, _, _, _, _, fresh := root.FreshResult()
+		if fresh {
+			application = candidate
+			break
+		}
+	}
+	if application == (linkproject.Application{}) {
+		t.Fatal("two-result fixture has no fresh application")
+	}
+	roots := freshRootsForApplication(t, heap, application)
+	if len(roots) != 2 {
+		t.Fatalf("fresh roots for one application=%d, want two", len(roots))
+	}
+	wantKey, keyed := calls.KeyForApplication(application)
+	firstRecent, firstOK := values.Allocation(roots[0], materialization.Recent)
+	firstSummary, summaryOK := values.Allocation(roots[0], materialization.Summary)
+	secondExact, secondOK := values.Allocation(roots[1], materialization.Exact)
+	receiver, receiverOK := values.Alternatives(firstRecent, firstSummary, secondExact)
+	if !keyed || !firstOK || !summaryOK || !secondOK || !receiverOK {
+		t.Fatalf("same-application atoms key=%t first=%t summary=%t second=%t receiver=%t", keyed, firstOK, summaryOK, secondOK, receiverOK)
+	}
+
+	callsObserved, tag := 0, uint64(0)
+	if !topology.VisitReceiverCallDemand(receiver, func(key calldomain.Key, gotTag uint64) bool {
+		if key != wantKey || gotTag == 0 {
+			t.Fatalf("demand key/tag=%v/%d, want exact application/nonzero", key, gotTag)
+		}
+		callsObserved++
+		tag = gotTag
+		return true
+	}) || callsObserved != 1 || tag == 0 {
+		t.Fatalf("same fresh application demanded %d times, tag=%d", callsObserved, tag)
+	}
+
+	if !topology.VisitReceiverCallDemand(receiver, func(calldomain.Key, uint64) bool { return true }) {
+		t.Fatal("warm demand traversal")
+	}
+	if allocations := testing.AllocsPerRun(100, func() {
+		if !topology.VisitReceiverCallDemand(receiver, func(calldomain.Key, uint64) bool { return true }) {
+			panic("warm demand traversal")
+		}
+	}); allocations != 0 {
+		t.Fatalf("warm exact demand allocated %v times", allocations)
+	}
+}
+
+func TestTopologyReceiverCallDemandTopScopesOnlyFreshApplicationsAndTagsAreStable(t *testing.T) {
+	heap, values, calls, _ := callDemandTopologyFixture(t, "heap_index_fresh_groups.lua", `
+local function localOnly()
+  return 1
+end
+local first = fresh()
+local second = fresh()
+local ignored = localOnly()
+return first, second, ignored
+`, []target.FreshResultSpec{{Result: 0, Kind: target.FreshTable}})
+	topology, sealed := Seal(heap, values, calls)
+	if !sealed {
+		t.Fatal("fresh-group topology did not seal")
+	}
+	want := freshCallIDs(t, heap, calls)
+	all := allCallIDs(t, calls)
+	// Link conservatively admits every executable Call application to a
+	// non-require Target operation. Consequently this fixture's localOnly call
+	// receives the same nominal FreshResult relation as the two fresh() calls;
+	// the semantic exclusion law is therefore exact equality with Call's own
+	// universe, not an invented source-level callee filter.
+	if len(want) != len(all) {
+		t.Fatalf("fresh Call universe=%d, all Call keys=%d", len(want), len(all))
+	}
+	for id := range want {
+		if _, ok := all[id]; !ok {
+			t.Fatalf("fresh Call universe contains non-Call key %v", id)
+		}
+	}
+	for id := range all {
+		if _, ok := want[id]; !ok {
+			t.Fatalf("Call key %v lacks the conservative FreshResult relation", id)
+		}
+	}
+	got := callDemandTags(t, topology, values.Top())
+	if !sameDemandUniverse(got, want) {
+		t.Fatalf("Value.Top Call demand=%#v, want only fresh Call groups %#v", got, want)
+	}
+	stateTags := make(map[keyspace.ContentID]uint64)
+	if !topology.VisitReceiver(values.Top(), func(key calldomain.Key, tag uint64) (calldomain.Value, bool) {
+		id, ok := key.ContentID()
+		if !ok || got[id] != tag {
+			t.Fatalf("Value.Top CallState key/tag=%v/%d did not match demand %#v", key, tag, got)
+		}
+		stateTags[id] = tag
+		return calls.Bottom(), true
+	}, func(Route) bool { return true }) || !reflect.DeepEqual(stateTags, got) {
+		t.Fatalf("Value.Top route observation changed Call demand selection: state=%#v demand=%#v", stateTags, got)
+	}
+
+	heap2, values2, calls2, _ := callDemandTopologyFixture(t, "heap_index_fresh_groups.lua", `
+local function localOnly()
+  return 1
+end
+local first = fresh()
+local second = fresh()
+local ignored = localOnly()
+return first, second, ignored
+`, []target.FreshResultSpec{{Result: 0, Kind: target.FreshTable}})
+	topology2, sealed2 := Seal(heap2, values2, calls2)
+	if !sealed2 {
+		t.Fatal("equivalent fresh-group topology did not seal")
+	}
+	if want2 := freshCallIDs(t, heap2, calls2); !reflect.DeepEqual(want2, want) {
+		t.Fatalf("equivalent Link changed fresh Call identity: %#v != %#v", want2, want)
+	}
+	if got2 := callDemandTags(t, topology2, values2.Top()); !reflect.DeepEqual(got2, got) {
+		t.Fatalf("equivalent topology changed transient Call demand tags: %#v != %#v", got2, got)
+	}
+}
+
+func TestTopologyCallStateUsesDemandTagAndSeparatesBottomFromUnavailable(t *testing.T) {
+	heap, values, calls, _, fresh := freshTopologyFixture(t)
+	topology, sealed := Seal(heap, values, calls)
+	atom, atomOK := values.Allocation(fresh, materialization.Recent)
+	receiver, receiverOK := values.Singleton(atom)
+	if !sealed || !atomOK || !receiverOK {
+		t.Fatal("Call-state fixture")
+	}
+	var demandedKey calldomain.Key
+	var demandedTag uint64
+	if !topology.VisitReceiverCallDemand(receiver, func(key calldomain.Key, tag uint64) bool {
+		demandedKey, demandedTag = key, tag
+		return true
+	}) || !demandedKey.Valid() || demandedTag == 0 {
+		t.Fatal("receiver did not expose exact Call demand before route observation")
+	}
+
+	var bottomRoutes []Route
+	if !topology.VisitReceiver(receiver, func(key calldomain.Key, tag uint64) (calldomain.Value, bool) {
+		if key != demandedKey || tag != demandedTag {
+			t.Fatalf("CallState observed %v/%d, want demand %v/%d", key, tag, demandedKey, demandedTag)
+		}
+		return calls.Bottom(), true
+	}, func(route Route) bool {
+		bottomRoutes = append(bottomRoutes, route)
+		return true
+	}) || len(bottomRoutes) != 0 {
+		t.Fatalf("available Call.Bottom produced routes: %#v", bottomRoutes)
+	}
+
+	assertUnknown := func(name string, state CallState) {
+		t.Helper()
+		var routes []Route
+		if !topology.VisitReceiver(receiver, state, func(route Route) bool {
+			routes = append(routes, route)
+			return true
+		}) || len(routes) != 1 || routes[0].Kind() != RouteUnknown {
+			t.Fatalf("%s routes=%#v, want one unknown", name, routes)
+		}
+	}
+	assertUnknown("unavailable", func(key calldomain.Key, tag uint64) (calldomain.Value, bool) {
+		if key != demandedKey || tag != demandedTag {
+			t.Fatal("unavailable CallState did not retain demand selection")
+		}
+		return calls.Bottom(), false
+	})
+	assertUnknown("malformed", func(calldomain.Key, uint64) (calldomain.Value, bool) {
+		return calldomain.Value{}, true
+	})
+	_, _, foreignCalls, _, _ := freshTopologyFixture(t)
+	assertUnknown("foreign", func(calldomain.Key, uint64) (calldomain.Value, bool) {
+		return foreignCalls.Top(), true
+	})
+}
+
+func callDemandTags(t testing.TB, topology *Topology, receiver valuedomain.Value) map[keyspace.ContentID]uint64 {
+	t.Helper()
+	result := make(map[keyspace.ContentID]uint64)
+	seenTags := make(map[uint64]keyspace.ContentID)
+	if !topology.VisitReceiverCallDemand(receiver, func(key calldomain.Key, tag uint64) bool {
+		id, ok := key.ContentID()
+		if !ok || tag == 0 {
+			t.Fatalf("invalid Call demand key/tag %v/%d", key, tag)
+		}
+		if previous, duplicate := result[id]; duplicate {
+			t.Fatalf("duplicate demand id/tag %v/%d (previous tag=%d)", id, tag, previous)
+		}
+		if previous, duplicate := seenTags[tag]; duplicate {
+			t.Fatalf("duplicate transient demand tag %d for %v and %v", tag, previous, id)
+		}
+		result[id] = tag
+		seenTags[tag] = id
+		return true
+	}) {
+		t.Fatal("Call demand traversal failed")
+	}
+	return result
+}
+
+func sameDemandUniverse(got, want map[keyspace.ContentID]uint64) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for id := range want {
+		if _, ok := got[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func freshCallIDs(t testing.TB, heap heapdomain.Schema, calls *calldomain.Algebra) map[keyspace.ContentID]uint64 {
+	t.Helper()
+	result := make(map[keyspace.ContentID]uint64)
+	for index := 0; index < heap.KeyCount(); index++ {
+		root, ok := heap.KeyAt(index)
+		if !ok {
+			continue
+		}
+		application, _, _, _, _, _, fresh := root.FreshResult()
+		if !fresh {
+			continue
+		}
+		key, ok := calls.KeyForApplication(application)
+		id, idOK := key.ContentID()
+		if !ok || !idOK {
+			t.Fatal("fresh root lacks Call key")
+		}
+		result[id] = 0
+	}
+	return result
+}
+
+func allCallIDs(t testing.TB, calls *calldomain.Algebra) map[keyspace.ContentID]struct{} {
+	t.Helper()
+	result := make(map[keyspace.ContentID]struct{})
+	for index := 0; index < calls.KeyCount(); index++ {
+		key, ok := calls.KeyAt(index)
+		if ok && !key.IsApplication() {
+			continue
+		}
+		id, idOK := key.ContentID()
+		if !ok || !idOK {
+			t.Fatal("Call key")
+		}
+		result[id] = struct{}{}
+	}
+	return result
+}
+
+func freshRootsForApplication(t testing.TB, heap heapdomain.Schema, application linkproject.Application) []heapdomain.Key {
+	t.Helper()
+	var roots []heapdomain.Key
+	for index := 0; index < heap.KeyCount(); index++ {
+		root, ok := heap.KeyAt(index)
+		if !ok {
+			continue
+		}
+		candidate, _, _, _, _, _, fresh := root.FreshResult()
+		if fresh && candidate == application {
+			roots = append(roots, root)
+		}
+	}
+	return roots
+}
+
+func callDemandTopologyFixture(t testing.TB, name, text string, freshResults []target.FreshResultSpec) (heapdomain.Schema, *valuedomain.Schema, *calldomain.Algebra, *link.Link) {
+	t.Helper()
+	p, err := lower.Lower(lower.Source{Name: name, Text: []byte(text)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultCount := 1
+	for _, fresh := range freshResults {
+		if int(fresh.Result)+1 > resultCount {
+			resultCount = int(fresh.Result) + 1
+		}
+	}
+	outputs := make([]typ.Type, resultCount)
+	for index := range outputs {
+		outputs[index] = typ.Any
+	}
+	binding := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"fresh"}}
+	contract, err := target.Seal(&target.Spec{
+		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
+		Operations: []target.OperationSpec{{
+			Bindings: []target.BindingSpec{binding},
+			Input:    target.ValuesSpec{Tail: target.ValuesClosed},
+			Outcomes: []target.OutcomeSpec{{
+				Kind:         flowkind.OutcomeNormal,
+				Values:       target.ValuesSpec{Fixed: outputs, Tail: target.ValuesClosed},
+				FreshResults: freshResults,
+			}},
+			Effects: target.RowSpec{Tail: target.RowClosed},
+		}},
+		InitialEntries: []target.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}, Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: binding}, Mutability: target.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+		},
+		InitialBindings: []target.InitialBindingSpec{
+			{Name: "_G", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}},
+			{Name: "fresh", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "fresh"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: p}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	heap, heapOK := heapdomain.Seal(linked)
+	values, valuesOK := valuedomain.Seal(linked, heap)
+	calls, callsOK := calldomain.New(linked)
+	if !heapOK || !valuesOK || !callsOK {
+		t.Fatal("schemas")
+	}
+	return heap, values, calls, linked
+}

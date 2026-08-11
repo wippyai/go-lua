@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/domain/value/variant/internal/discriminant"
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -92,9 +92,6 @@ func closedRecordUnionFamily(u *typ.Union, detector *discriminant.Detector) (ori
 		signature: "closed-record-union",
 		cases:     cases,
 	}
-	if !storeOriginFamily(family) {
-		return originFamily{}, false
-	}
 	return family, true
 }
 
@@ -136,9 +133,6 @@ func taggedRecordFamily(r *typ.Record, detector *discriminant.Detector) (originF
 			index: caseIndex,
 			typ:   r,
 		}},
-	}
-	if !storeOriginFamily(family) {
-		return originFamily{}, false
 	}
 	return family, true
 }

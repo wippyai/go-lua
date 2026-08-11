@@ -1,20 +1,18 @@
 package product
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/internal/registrycache"
+	"github.com/wippyai/go-lua/analysis/lattice"
 )
 
-var domainCache registrycache.Cache[lattice.Lattice[Value]]
-
 func Domain(reg *axis.Registry) lattice.Lattice[Value] {
-	return domainCache.GetFor(mustRuntime(reg).reg, productDomainForRegistry)
+	rt := mustRuntime(reg)
+	rt.domainOnce.Do(func() { rt.domain = productDomainForRuntime(rt) })
+	return rt.domain
 }
 
-func productDomainForRegistry(reg *axis.Registry) lattice.Lattice[Value] {
-	rt := mustRuntime(reg)
+func productDomainForRuntime(rt *registryRuntime) lattice.Lattice[Value] {
 	return lattice.Lattice[Value]{
 		Bottom: rt.bottomValue,
 		Top:    Top,
@@ -131,22 +129,19 @@ func Join(reg *axis.Registry, a, b Value) Value {
 }
 
 func joinRuntime(rt *registryRuntime, a, b Value) Value {
-	return mergeRuntime(rt, a, b, axisRuntimeAxis.joinAxis, shapeJoin, presence.Join)
+	return mergeRuntime(rt, a, b, axisRuntimeAxis.joinAxis, shapeJoin, presence.Join, "Join")
 }
 
 func (spec axisRuntimeAxis) joinAxis(va, vb any) any  { return spec.spec.JoinAny(va, vb) }
 func (spec axisRuntimeAxis) widenAxis(va, vb any) any { return spec.spec.WidenAny(va, vb) }
 
-// mergeRuntime is the shared product join/widen: it merges every canonical axis
-// with axisMerge, the shape with shapeMerge, and presence with presenceMerge,
-// dropping axes that merge to top. Missing operands (nil carrier) make the
-// result top.
 func mergeRuntime(
 	rt *registryRuntime,
 	a, b Value,
 	axisMerge func(axisRuntimeAxis, any, any) any,
 	shapeMerge func(Shape, Shape) Shape,
 	presenceMerge func(presence.Value, presence.Value) presence.Value,
+	operation string,
 ) Value {
 	rt.validateValue(a)
 	rt.validateValue(b)
@@ -156,31 +151,62 @@ func mergeRuntime(
 	if a.n == nil || b.n == nil {
 		return Top()
 	}
+	mergedShape := shapeMerge(ShapeOf(a), ShapeOf(b))
+	if !shapeLessOrEq(ShapeOf(a), mergedShape) || !shapeLessOrEq(ShapeOf(b), mergedShape) {
+		panic("product: pointwise " + operation + " is not an upper bound of shape operands")
+	}
+	mergedPresence := presenceMerge(PresenceOf(a), PresenceOf(b))
+	presenceSpec := presence.Spec()
+	if !presenceSpec.LessOrEq(PresenceOf(a), mergedPresence) || !presenceSpec.LessOrEq(PresenceOf(b), mergedPresence) {
+		panic("product: pointwise " + operation + " is not an upper bound of presence operands")
+	}
 	var small [8]slot
 	slots := small[:0]
 	aSlots, bSlots := a.slotsView(), b.slotsView()
-	for ai, bi := 0, 0; ai < len(aSlots) && bi < len(bSlots); {
+	ai, bi := 0, 0
+	for ai < len(aSlots) && bi < len(bSlots) {
 		if aSlots[ai].ordinal < bSlots[bi].ordinal {
+			spec := rt.axisOrdinal(aSlots[ai].ordinal)
+			if !spec.spec.LessOrEqAny(aSlots[ai].value, spec.topAny) {
+				panic("product: pointwise " + operation + " is not an upper bound of sparse axis " + spec.id)
+			}
 			ai++ // value merge Top is Top
 			continue
 		}
 		if bSlots[bi].ordinal < aSlots[ai].ordinal {
+			spec := rt.axisOrdinal(bSlots[bi].ordinal)
+			if !spec.spec.LessOrEqAny(bSlots[bi].value, spec.topAny) {
+				panic("product: pointwise " + operation + " is not an upper bound of sparse axis " + spec.id)
+			}
 			bi++ // Top merge value is Top
 			continue
 		}
 		spec := rt.axisOrdinal(aSlots[ai].ordinal)
 		value := axisMerge(spec, aSlots[ai].value, bSlots[bi].value)
+		if !spec.spec.LessOrEqAny(aSlots[ai].value, value) || !spec.spec.LessOrEqAny(bSlots[bi].value, value) {
+			panic("product: pointwise " + operation + " is not an upper bound of sparse axis " + spec.id)
+		}
 		if !spec.spec.IsTopAny(value) {
 			slots = append(slots, slot{ordinal: spec.ordinal, value: value})
 		}
 		ai++
 		bi++
 	}
-	return internConstructedRuntime(rt,
-		shapeMerge(ShapeOf(a), ShapeOf(b)),
-		presenceMerge(PresenceOf(a), PresenceOf(b)),
-		slots,
-	)
+	for ; ai < len(aSlots); ai++ {
+		spec := rt.axisOrdinal(aSlots[ai].ordinal)
+		if !spec.spec.LessOrEqAny(aSlots[ai].value, spec.topAny) {
+			panic("product: pointwise " + operation + " is not an upper bound of sparse axis " + spec.id)
+		}
+	}
+	for ; bi < len(bSlots); bi++ {
+		spec := rt.axisOrdinal(bSlots[bi].ordinal)
+		if !spec.spec.LessOrEqAny(bSlots[bi].value, spec.topAny) {
+			panic("product: pointwise " + operation + " is not an upper bound of sparse axis " + spec.id)
+		}
+	}
+	merged := internConstructedRuntime(rt, mergedShape, mergedPresence, slots)
+	validateReducedMerge(rt, a, b, merged, operation)
+	return merged
 }
 
 func Meet(reg *axis.Registry, a, b Value) Value {
@@ -232,5 +258,45 @@ func Widen(reg *axis.Registry, prev, next Value) Value {
 }
 
 func widenRuntime(rt *registryRuntime, prev, next Value) Value {
-	return mergeRuntime(rt, prev, next, axisRuntimeAxis.widenAxis, shapeWiden, presence.Widen)
+	return mergeRuntime(rt, prev, next, axisRuntimeAxis.widenAxis, shapeWiden, presence.Widen, "Widen")
+}
+
+// validateReducedMerge checks only the coordinates that reducer closure may
+// change after the pointwise proof. Reducers cannot mutate undeclared axes;
+// shape can change only as the deterministic consequence of a declared
+// presence reduction. This avoids two full sparse-product scans on every
+// Join/Widen while preserving the exact upper-bound obligation.
+func validateReducedMerge(rt *registryRuntime, left, right, result Value, operation string) {
+	for _, ordinal := range rt.reducerWrittenOrdinals {
+		spec := rt.axisOrdinal(ordinal)
+		validateReducedAxisMerge(rt, spec, left, right, result, operation)
+	}
+	if !rt.presenceReducerWritten {
+		return
+	}
+	if !presence.Spec().LessOrEq(PresenceOf(left), PresenceOf(result)) ||
+		!presence.Spec().LessOrEq(PresenceOf(right), PresenceOf(result)) {
+		panic("product: reduced " + operation + " is not an upper bound of presence operands")
+	}
+	if !shapeLessOrEq(ShapeOf(left), ShapeOf(result)) || !shapeLessOrEq(ShapeOf(right), ShapeOf(result)) {
+		panic("product: reduced " + operation + " is not an upper bound of shape operands")
+	}
+}
+
+func validateReducedAxisMerge(rt *registryRuntime, spec axisRuntimeAxis, left, right, result Value, operation string) {
+	leftValue, ok := lookupSlot(left, spec.ordinal)
+	if !ok {
+		leftValue = spec.topAny
+	}
+	rightValue, ok := lookupSlot(right, spec.ordinal)
+	if !ok {
+		rightValue = spec.topAny
+	}
+	resultValue, ok := lookupSlot(result, spec.ordinal)
+	if !ok {
+		resultValue = spec.topAny
+	}
+	if !spec.spec.LessOrEqAny(leftValue, resultValue) || !spec.spec.LessOrEqAny(rightValue, resultValue) {
+		panic("product: reduced " + operation + " is not an upper bound of sparse axis " + spec.id)
+	}
 }

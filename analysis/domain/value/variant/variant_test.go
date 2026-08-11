@@ -1,6 +1,7 @@
 package variant
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
@@ -15,24 +16,24 @@ func caseView(values []int) caseset.View {
 	return caseset.New(values).View()
 }
 
-func typeFromOriginInts(family uint64, cases []int) (typ.Type, bool) {
-	return TypeFromOrigin(family, caseView(cases))
+func typeFromOriginInts(cache *Cache, family uint64, cases []int) (typ.Type, bool) {
+	return cache.TypeFromOrigin(family, caseView(cases))
 }
 
 func narrowByOriginInts(t typ.Type, family uint64, cases []int) (typ.Type, bool) {
 	return NarrowByOrigin(t, family, caseView(cases))
 }
 
-func projectOriginInts(family uint64, cases []int, suffix []segment.Segment) (uint64, []int, bool) {
-	return ProjectOrigin(family, caseView(cases), suffix)
+func projectOriginInts(cache *Cache, family uint64, cases []int, suffix []segment.Segment) (uint64, []int, bool) {
+	return cache.ProjectOrigin(family, caseView(cases), suffix)
 }
 
-func narrowOriginByPathInts(parentFamily uint64, parentCases []int, suffix []segment.Segment, constraintFamily uint64, constraintCases []int, equal bool) ([]int, bool) {
-	return NarrowOriginByPath(parentFamily, caseView(parentCases), suffix, constraintFamily, caseView(constraintCases), equal)
+func narrowOriginByPathInts(cache *Cache, parentFamily uint64, parentCases []int, suffix []segment.Segment, constraintFamily uint64, constraintCases []int, equal bool) ([]int, bool) {
+	return cache.NarrowOriginByPath(parentFamily, caseView(parentCases), suffix, constraintFamily, caseView(constraintCases), equal)
 }
 
-func narrowOriginByPathTypeInts(parentFamily uint64, parentCases []int, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
-	return NarrowOriginByPathType(parentFamily, caseView(parentCases), suffix, constraint, equal)
+func narrowOriginByPathTypeInts(cache *Cache, parentFamily uint64, parentCases []int, suffix []segment.Segment, constraint typ.Type, equal bool) ([]int, bool) {
+	return cache.NarrowOriginByPathType(parentFamily, caseView(parentCases), suffix, constraint, equal)
 }
 
 func TestNarrowByPathLiteralKeepsMatchingVariant(t *testing.T) {
@@ -238,7 +239,9 @@ func TestOriginCasesExposeReadOnlyFiniteFamilyCases(t *testing.T) {
 	if !typ.TypeEquals(cases[0].Type, left) || !typ.TypeEquals(cases[1].Type, right) {
 		t.Fatalf("case types = %s / %s, want %s / %s", cases[0].Type, cases[1].Type, left, right)
 	}
-	loaded, ok := OriginCases(family)
+	cache := NewCache()
+	cache.OriginOfType(union)
+	loaded, ok := cache.OriginCases(family)
 	if !ok {
 		t.Fatal("OriginCases returned !ok")
 	}
@@ -342,7 +345,8 @@ func TestOriginOfTypeDropsNilAndReconstructsRecordUnion(t *testing.T) {
 		Build()
 	union := typeexpr.Union(typ.Nil, dog, cat)
 
-	family, cases, ok := OriginOfType(union)
+	cache := NewCache()
+	family, cases, ok := cache.OriginOfType(union)
 	if !ok {
 		t.Fatal("expected nil-bearing union origin")
 	}
@@ -352,7 +356,7 @@ func TestOriginOfTypeDropsNilAndReconstructsRecordUnion(t *testing.T) {
 	if len(cases) != 2 {
 		t.Fatalf("origin cases = %v, want two non-nil record cases", cases)
 	}
-	got, ok := typeFromOriginInts(family, cases)
+	got, ok := typeFromOriginInts(cache, family, cases)
 	if !ok {
 		t.Fatal("origin reconstruction failed")
 	}
@@ -373,7 +377,8 @@ func TestOriginCasesTreatDuplicateUnsortedCasesAsSet(t *testing.T) {
 		Build()
 	union := typeexpr.Union(dog, cat)
 
-	family, cases, ok := OriginOfType(union)
+	cache := NewCache()
+	family, cases, ok := cache.OriginOfType(union)
 	if !ok {
 		t.Fatal("expected closed union origin")
 	}
@@ -382,14 +387,14 @@ func TestOriginCasesTreatDuplicateUnsortedCasesAsSet(t *testing.T) {
 	}
 	duplicateUnsortedCases := []int{cases[1], cases[0], cases[1]}
 
-	got, ok := typeFromOriginInts(family, duplicateUnsortedCases)
+	got, ok := typeFromOriginInts(cache, family, duplicateUnsortedCases)
 	if !ok {
 		t.Fatal("origin reconstruction failed")
 	}
 	if !typ.TypeEquals(got, union) {
 		t.Fatalf("reconstructed type = %s, want %s", got, union)
 	}
-	if got, ok := typeFromOriginInts(family, []int{cases[0], 9999}); ok {
+	if got, ok := typeFromOriginInts(cache, family, []int{cases[0], 9999}); ok {
 		t.Fatalf("origin reconstruction accepted invalid active case: %s", got)
 	}
 	got, changed := narrowByOriginInts(union, family, duplicateUnsortedCases)
@@ -403,7 +408,7 @@ func TestOriginCasesTreatDuplicateUnsortedCasesAsSet(t *testing.T) {
 
 func TestOriginCatalogPoisonsIncompatibleClosedFamilyCollision(t *testing.T) {
 	const familyID uint64 = 0x1c0111510c011151
-	resetOriginFamilyForTest(t, familyID)
+	cache := NewCache()
 	left := typetable.NewRecord().
 		Field("kind", typ.LiteralString("left")).
 		Field("value", typ.Number).
@@ -417,7 +422,7 @@ func TestOriginCatalogPoisonsIncompatibleClosedFamilyCollision(t *testing.T) {
 		Field("value", typ.Boolean).
 		Build()
 
-	if !storeOriginFamily(originFamily{
+	if !cache.storeOriginFamily(originFamily{
 		id:        familyID,
 		kind:      originFamilyKindClosedRecordUnion,
 		signature: "closed-record-union",
@@ -428,11 +433,11 @@ func TestOriginCatalogPoisonsIncompatibleClosedFamilyCollision(t *testing.T) {
 	}) {
 		t.Fatal("initial synthetic family store failed")
 	}
-	if got, ok := typeFromOriginInts(familyID, []int{0}); !ok || !typ.TypeEquals(got, left) {
+	if got, ok := typeFromOriginInts(cache, familyID, []int{0}); !ok || !typ.TypeEquals(got, left) {
 		t.Fatalf("initial synthetic origin type = %v/%v, want %s", got, ok, left)
 	}
 
-	if storeOriginFamily(originFamily{
+	if cache.storeOriginFamily(originFamily{
 		id:        familyID,
 		kind:      originFamilyKindClosedRecordUnion,
 		signature: "closed-record-union",
@@ -443,13 +448,13 @@ func TestOriginCatalogPoisonsIncompatibleClosedFamilyCollision(t *testing.T) {
 	}) {
 		t.Fatal("incompatible same-id closed family should poison, not merge")
 	}
-	if got, ok := typeFromOriginInts(familyID, []int{0}); ok {
+	if got, ok := typeFromOriginInts(cache, familyID, []int{0}); ok {
 		t.Fatalf("poisoned origin reconstructed %s, want fail-closed", got)
 	}
-	if got, ok := FullFamilyType(familyID); ok {
+	if got, ok := cache.FullFamilyType(familyID); ok {
 		t.Fatalf("poisoned full family reconstructed %s, want fail-closed", got)
 	}
-	if projectedFamily, projectedCases, ok := projectOriginInts(familyID, []int{0}, []segment.Segment{
+	if projectedFamily, projectedCases, ok := projectOriginInts(cache, familyID, []int{0}, []segment.Segment{
 		{Kind: segment.SegmentField, Name: "kind"},
 	}); ok {
 		t.Fatalf("poisoned origin projected to %d/%v, want fail-closed", projectedFamily, projectedCases)
@@ -459,7 +464,7 @@ func TestOriginCatalogPoisonsIncompatibleClosedFamilyCollision(t *testing.T) {
 func TestOriginCatalogPoisonsTaggedSignatureCollision(t *testing.T) {
 	const familyID uint64 = 0x51c6a7551deca11
 	const caseIndex = 1201
-	resetOriginFamilyForTest(t, familyID)
+	cache := NewCache()
 	kindTagged := typetable.NewRecord().
 		Field("kind", typ.LiteralString("same")).
 		Field("value", typ.Number).
@@ -469,7 +474,7 @@ func TestOriginCatalogPoisonsTaggedSignatureCollision(t *testing.T) {
 		Field("value", typ.Number).
 		Build()
 
-	if !storeOriginFamily(originFamily{
+	if !cache.storeOriginFamily(originFamily{
 		id:        familyID,
 		kind:      originFamilyKindTaggedRecord,
 		signature: "tagged-record:4:kind;",
@@ -477,11 +482,11 @@ func TestOriginCatalogPoisonsTaggedSignatureCollision(t *testing.T) {
 	}) {
 		t.Fatal("initial tagged family store failed")
 	}
-	if got, ok := typeFromOriginInts(familyID, []int{caseIndex}); !ok || !typ.TypeEquals(got, kindTagged) {
+	if got, ok := typeFromOriginInts(cache, familyID, []int{caseIndex}); !ok || !typ.TypeEquals(got, kindTagged) {
 		t.Fatalf("initial tagged origin type = %v/%v, want %s", got, ok, kindTagged)
 	}
 
-	if storeOriginFamily(originFamily{
+	if cache.storeOriginFamily(originFamily{
 		id:        familyID,
 		kind:      originFamilyKindTaggedRecord,
 		signature: "tagged-record:6:status;",
@@ -489,14 +494,14 @@ func TestOriginCatalogPoisonsTaggedSignatureCollision(t *testing.T) {
 	}) {
 		t.Fatal("same-id tagged family with different tag-path signature should poison")
 	}
-	if got, ok := typeFromOriginInts(familyID, []int{caseIndex}); ok {
+	if got, ok := typeFromOriginInts(cache, familyID, []int{caseIndex}); ok {
 		t.Fatalf("signature-poisoned tagged origin reconstructed %s, want fail-closed", got)
 	}
 }
 
 func TestOriginCatalogKeepsDuplicateTaggedWritesIdempotent(t *testing.T) {
 	const familyID uint64 = 0x1ded51deca5e
-	resetOriginFamilyForTest(t, familyID)
+	cache := NewCache()
 	left := typetable.NewRecord().
 		Field("kind", typ.LiteralString("same")).
 		Field("value", typ.Number).
@@ -512,17 +517,17 @@ func TestOriginCatalogKeepsDuplicateTaggedWritesIdempotent(t *testing.T) {
 		cases:     []originCase{{index: 3101, typ: left}},
 	}
 
-	if !storeOriginFamily(leftFamily) {
+	if !cache.storeOriginFamily(leftFamily) {
 		t.Fatal("initial tagged family store failed")
 	}
-	rev1, ok := originFamilyRevision(familyID)
+	rev1, ok := cache.originFamilyRevision(familyID)
 	if !ok {
 		t.Fatal("initial family revision missing")
 	}
-	if !storeOriginFamily(leftFamily) {
+	if !cache.storeOriginFamily(leftFamily) {
 		t.Fatal("duplicate tagged family store failed")
 	}
-	rev2, ok := originFamilyRevision(familyID)
+	rev2, ok := cache.originFamilyRevision(familyID)
 	if !ok {
 		t.Fatal("duplicate family revision missing")
 	}
@@ -530,7 +535,7 @@ func TestOriginCatalogKeepsDuplicateTaggedWritesIdempotent(t *testing.T) {
 		t.Fatalf("duplicate tagged write changed revision: got %d want %d", rev2, rev1)
 	}
 
-	if !storeOriginFamily(originFamily{
+	if !cache.storeOriginFamily(originFamily{
 		id:        familyID,
 		kind:      originFamilyKindTaggedRecord,
 		signature: "tagged-record:4:kind;",
@@ -538,17 +543,17 @@ func TestOriginCatalogKeepsDuplicateTaggedWritesIdempotent(t *testing.T) {
 	}) {
 		t.Fatal("new tagged case store failed")
 	}
-	rev3, ok := originFamilyRevision(familyID)
+	rev3, ok := cache.originFamilyRevision(familyID)
 	if !ok {
 		t.Fatal("extended family revision missing")
 	}
 	if rev3 == rev2 {
 		t.Fatalf("new tagged case did not change revision: got %d", rev3)
 	}
-	if !storeOriginFamily(leftFamily) {
+	if !cache.storeOriginFamily(leftFamily) {
 		t.Fatal("covered tagged case rewrite failed")
 	}
-	rev4, ok := originFamilyRevision(familyID)
+	rev4, ok := cache.originFamilyRevision(familyID)
 	if !ok {
 		t.Fatal("covered family revision missing")
 	}
@@ -558,6 +563,7 @@ func TestOriginCatalogKeepsDuplicateTaggedWritesIdempotent(t *testing.T) {
 }
 
 func TestTaggedOriginDistinguishesSameTagDifferentPayload(t *testing.T) {
+	cache := NewCache()
 	left := typetable.NewRecord().
 		Field("kind", typ.LiteralString("same")).
 		Field("value", typ.Number).
@@ -567,12 +573,11 @@ func TestTaggedOriginDistinguishesSameTagDifferentPayload(t *testing.T) {
 		Field("value", typ.String).
 		Build()
 
-	leftFamily, leftCases, ok := OriginOfType(left)
+	leftFamily, leftCases, ok := cache.OriginOfType(left)
 	if !ok || len(leftCases) != 1 {
 		t.Fatalf("left tagged origin = %d/%v/%v, want one case", leftFamily, leftCases, ok)
 	}
-	t.Cleanup(func() { clearOriginFamilyForTest(leftFamily) })
-	rightFamily, rightCases, ok := OriginOfType(right)
+	rightFamily, rightCases, ok := cache.OriginOfType(right)
 	if !ok || len(rightCases) != 1 {
 		t.Fatalf("right tagged origin = %d/%v/%v, want one case", rightFamily, rightCases, ok)
 	}
@@ -582,15 +587,15 @@ func TestTaggedOriginDistinguishesSameTagDifferentPayload(t *testing.T) {
 	if rightCases[0] == leftCases[0] {
 		t.Fatalf("same tag with different payload reused case %d", leftCases[0])
 	}
-	if got, ok := typeFromOriginInts(leftFamily, leftCases); !ok || !typ.TypeEquals(got, left) {
+	if got, ok := typeFromOriginInts(cache, leftFamily, leftCases); !ok || !typ.TypeEquals(got, left) {
 		t.Fatalf("left origin reconstructed %v/%v, want %s", got, ok, left)
 	}
-	if got, ok := typeFromOriginInts(rightFamily, rightCases); !ok || !typ.TypeEquals(got, right) {
+	if got, ok := typeFromOriginInts(cache, rightFamily, rightCases); !ok || !typ.TypeEquals(got, right) {
 		t.Fatalf("right origin reconstructed %v/%v, want %s", got, ok, right)
 	}
 	wantBoth := typeexpr.Union(left, right)
 	bothCases := append(append([]int(nil), leftCases...), rightCases...)
-	if got, ok := typeFromOriginInts(leftFamily, bothCases); !ok || !typ.TypeEquals(got, wantBoth) {
+	if got, ok := typeFromOriginInts(cache, leftFamily, bothCases); !ok || !typ.TypeEquals(got, wantBoth) {
 		t.Fatalf("combined same-tag origin reconstructed %v/%v, want %s", got, ok, wantBoth)
 	}
 	joined := variantorigin.Join(variantorigin.Of(leftFamily, leftCases), variantorigin.Of(rightFamily, rightCases))
@@ -598,22 +603,22 @@ func TestTaggedOriginDistinguishesSameTagDifferentPayload(t *testing.T) {
 		t.Fatalf("joined same-tag origins = %v, want concrete family %d cases %v", joined, leftFamily, bothCases)
 	}
 
-	clearOriginFamilyForTest(leftFamily)
-	reverseRightFamily, reverseRightCases, ok := OriginOfType(right)
+	cache = NewCache()
+	reverseRightFamily, reverseRightCases, ok := cache.OriginOfType(right)
 	if !ok || reverseRightFamily != leftFamily || len(reverseRightCases) != 1 {
 		t.Fatalf("reverse right tagged origin = %d/%v/%v, want family %d one case", reverseRightFamily, reverseRightCases, ok, leftFamily)
 	}
-	reverseLeftFamily, reverseLeftCases, ok := OriginOfType(left)
+	reverseLeftFamily, reverseLeftCases, ok := cache.OriginOfType(left)
 	if !ok || reverseLeftFamily != leftFamily || len(reverseLeftCases) != 1 {
 		t.Fatalf("reverse left tagged origin = %d/%v/%v, want family %d one case", reverseLeftFamily, reverseLeftCases, ok, leftFamily)
 	}
 	if reverseLeftCases[0] != leftCases[0] || reverseRightCases[0] != rightCases[0] {
 		t.Fatalf("reverse registration cases = left %v right %v, want left %v right %v", reverseLeftCases, reverseRightCases, leftCases, rightCases)
 	}
-	if got, ok := typeFromOriginInts(leftFamily, leftCases); !ok || !typ.TypeEquals(got, left) {
+	if got, ok := typeFromOriginInts(cache, leftFamily, leftCases); !ok || !typ.TypeEquals(got, left) {
 		t.Fatalf("reverse left origin reconstructed %v/%v, want %s", got, ok, left)
 	}
-	if got, ok := typeFromOriginInts(leftFamily, rightCases); !ok || !typ.TypeEquals(got, right) {
+	if got, ok := typeFromOriginInts(cache, leftFamily, rightCases); !ok || !typ.TypeEquals(got, right) {
 		t.Fatalf("reverse right origin reconstructed %v/%v, want %s", got, ok, right)
 	}
 }
@@ -621,7 +626,7 @@ func TestTaggedOriginDistinguishesSameTagDifferentPayload(t *testing.T) {
 func TestOriginCatalogPoisonsTaggedSameCaseHashCollision(t *testing.T) {
 	const familyID uint64 = 0x71c6ed5aceca5e
 	const caseIndex = 1701
-	resetOriginFamilyForTest(t, familyID)
+	cache := NewCache()
 	kindTagged := typetable.NewRecord().
 		Field("kind", typ.LiteralString("same")).
 		Field("value", typ.Number).
@@ -631,7 +636,7 @@ func TestOriginCatalogPoisonsTaggedSameCaseHashCollision(t *testing.T) {
 		Field("value", typ.Boolean).
 		Build()
 
-	if !storeOriginFamily(originFamily{
+	if !cache.storeOriginFamily(originFamily{
 		id:        familyID,
 		kind:      originFamilyKindTaggedRecord,
 		signature: "tagged-record:4:kind;",
@@ -639,11 +644,11 @@ func TestOriginCatalogPoisonsTaggedSameCaseHashCollision(t *testing.T) {
 	}) {
 		t.Fatal("initial tagged family store failed")
 	}
-	if got, ok := typeFromOriginInts(familyID, []int{caseIndex}); !ok || !typ.TypeEquals(got, kindTagged) {
+	if got, ok := typeFromOriginInts(cache, familyID, []int{caseIndex}); !ok || !typ.TypeEquals(got, kindTagged) {
 		t.Fatalf("initial tagged origin type = %v/%v, want %s", got, ok, kindTagged)
 	}
 
-	if storeOriginFamily(originFamily{
+	if cache.storeOriginFamily(originFamily{
 		id:        familyID,
 		kind:      originFamilyKindTaggedRecord,
 		signature: "tagged-record:4:kind;",
@@ -651,14 +656,14 @@ func TestOriginCatalogPoisonsTaggedSameCaseHashCollision(t *testing.T) {
 	}) {
 		t.Fatal("same-index tagged family collision should poison")
 	}
-	if got, ok := typeFromOriginInts(familyID, []int{caseIndex}); ok {
+	if got, ok := typeFromOriginInts(cache, familyID, []int{caseIndex}); ok {
 		t.Fatalf("same-index-poisoned tagged origin reconstructed %s, want fail-closed", got)
 	}
 }
 
 func TestOriginCatalogCopiesCasesOnStoreAndLoad(t *testing.T) {
 	const familyID uint64 = 0x5afe1ceca5ec0de
-	resetOriginFamilyForTest(t, familyID)
+	cache := NewCache()
 	left := typetable.NewRecord().
 		Field("kind", typ.LiteralString("left")).
 		Field("value", typ.Number).
@@ -676,7 +681,7 @@ func TestOriginCatalogCopiesCasesOnStoreAndLoad(t *testing.T) {
 		{index: 0, typ: left},
 		{index: 1, typ: right},
 	}
-	if !storeOriginFamily(originFamily{
+	if !cache.storeOriginFamily(originFamily{
 		id:        familyID,
 		kind:      originFamilyKindClosedRecordUnion,
 		signature: "closed-record-union",
@@ -685,27 +690,27 @@ func TestOriginCatalogCopiesCasesOnStoreAndLoad(t *testing.T) {
 		t.Fatal("initial synthetic family store failed")
 	}
 	cases[0].typ = collidingLeft
-	if got, ok := typeFromOriginInts(familyID, []int{0}); !ok || !typ.TypeEquals(got, left) {
+	if got, ok := typeFromOriginInts(cache, familyID, []int{0}); !ok || !typ.TypeEquals(got, left) {
 		t.Fatalf("stored family reflected caller case mutation: %v/%v, want %s", got, ok, left)
 	}
 
-	loaded, ok := loadOriginFamily(familyID)
+	loaded, ok := cache.loadOriginFamily(familyID)
 	if !ok || len(loaded.cases) != 2 {
 		t.Fatalf("loadOriginFamily = %v/%v, want two cases", loaded, ok)
 	}
 	loaded.cases[0].typ = collidingLeft
 	loaded.cases = append(loaded.cases[:1], loaded.cases[2:]...)
-	if got, ok := typeFromOriginInts(familyID, []int{0}); !ok || !typ.TypeEquals(got, left) {
+	if got, ok := typeFromOriginInts(cache, familyID, []int{0}); !ok || !typ.TypeEquals(got, left) {
 		t.Fatalf("stored family reflected loaded case mutation: %v/%v, want %s", got, ok, left)
 	}
-	if got, ok := FullFamilyType(familyID); !ok || !typ.TypeEquals(got, typeexpr.Union(left, right)) {
+	if got, ok := cache.FullFamilyType(familyID); !ok || !typ.TypeEquals(got, typeexpr.Union(left, right)) {
 		t.Fatalf("full family after loaded mutation = %v/%v, want original union", got, ok)
 	}
 }
 
 func TestCacheRejectsPoisonedOriginFamily(t *testing.T) {
 	const familyID uint64 = 0x5ca1ecac4e5afe11
-	resetOriginFamilyForTest(t, familyID)
+	cache := NewCache()
 	left := typetable.NewRecord().
 		Field("kind", typ.LiteralString("left")).
 		Field("value", typ.Number).
@@ -719,7 +724,7 @@ func TestCacheRejectsPoisonedOriginFamily(t *testing.T) {
 		Field("value", typ.Boolean).
 		Build()
 
-	if !storeOriginFamily(originFamily{
+	if !cache.storeOriginFamily(originFamily{
 		id:        familyID,
 		kind:      originFamilyKindClosedRecordUnion,
 		signature: "closed-record-union",
@@ -730,12 +735,11 @@ func TestCacheRejectsPoisonedOriginFamily(t *testing.T) {
 	}) {
 		t.Fatal("initial synthetic family store failed")
 	}
-	cache := NewCache()
 	if got, ok := cache.TypeFromOrigin(familyID, caseView([]int{0})); !ok || !typ.TypeEquals(got, left) {
 		t.Fatalf("cached origin before poison = %v/%v, want %s", got, ok, left)
 	}
 
-	if storeOriginFamily(originFamily{
+	if cache.storeOriginFamily(originFamily{
 		id:        familyID,
 		kind:      originFamilyKindClosedRecordUnion,
 		signature: "closed-record-union",
@@ -768,7 +772,6 @@ func TestCacheRejectsCachedOriginEvidenceAfterPoison(t *testing.T) {
 	if !ok || len(cases) != 2 {
 		t.Fatalf("cached origin = %d/%v/%v, want two cases", family, cases, ok)
 	}
-	t.Cleanup(func() { clearOriginFamilyForTest(family) })
 	pathFamily, pathCases, ok := cache.OriginByPathLiteral(union, kindPath, typ.LiteralString("dog"))
 	if !ok || pathFamily != family || len(pathCases) != 1 {
 		t.Fatalf("cached path origin = %d/%v/%v, want one dog case in family %d", pathFamily, pathCases, ok, family)
@@ -782,7 +785,7 @@ func TestCacheRejectsCachedOriginEvidenceAfterPoison(t *testing.T) {
 		Field("kind", typ.LiteralString("dog")).
 		Field("bark", typ.Number).
 		Build()
-	if storeOriginFamily(originFamily{
+	if cache.storeOriginFamily(originFamily{
 		id:        family,
 		kind:      originFamilyKindClosedRecordUnion,
 		signature: "closed-record-union",
@@ -815,11 +818,11 @@ func TestCacheMatchesOriginNarrowAndReconstruct(t *testing.T) {
 		Build()
 	union := typeexpr.Union(dog, cat)
 
-	family, cases, ok := OriginOfType(union)
+	cache := NewCache()
+	family, cases, ok := cache.OriginOfType(union)
 	if !ok {
 		t.Fatal("expected closed union origin")
 	}
-	cache := NewCache()
 	cachedFamily, cachedCases, ok := cache.OriginOfType(union)
 	if !ok {
 		t.Fatal("cached origin failed")
@@ -839,18 +842,46 @@ func TestCacheMatchesOriginNarrowAndReconstruct(t *testing.T) {
 	}
 }
 
-func resetOriginFamilyForTest(t *testing.T, id uint64) {
-	t.Helper()
-	clearOriginFamilyForTest(id)
-	t.Cleanup(func() { clearOriginFamilyForTest(id) })
-}
+func TestCacheOwnsConcurrentOriginQueriesAndRejectsForeignPayload(t *testing.T) {
+	dog := typetable.NewRecord().
+		Field("kind", typ.LiteralString("dog")).
+		Field("bark", typ.Func().Returns().Build()).
+		Build()
+	cat := typetable.NewRecord().
+		Field("kind", typ.LiteralString("cat")).
+		Field("meow", typ.Func().Returns().Build()).
+		Build()
+	union := typeexpr.Union(dog, cat)
+	cache := NewCache()
+	family, cases, ok := cache.OriginOfType(union)
+	if !ok {
+		t.Fatal("expected closed union origin")
+	}
 
-func clearOriginFamilyForTest(id uint64) {
-	originCatalogMu.Lock()
-	defer originCatalogMu.Unlock()
-	delete(originCatalog, id)
-	delete(originCatalogRevision, id)
-	delete(originCatalogPoisoned, id)
+	const workers = 8
+	var group sync.WaitGroup
+	group.Add(workers)
+	for worker := 0; worker < workers; worker++ {
+		go func() {
+			defer group.Done()
+			for pass := 0; pass < 100; pass++ {
+				if gotFamily, gotCases, ok := cache.OriginOfType(union); !ok || gotFamily != family || !sameIntSet(gotCases, cases) {
+					t.Errorf("concurrent origin = %d/%v/%v, want %d/%v", gotFamily, gotCases, ok, family, cases)
+					return
+				}
+				if got, ok := cache.TypeFromOrigin(family, caseView(cases)); !ok || !typ.TypeEquals(got, union) {
+					t.Errorf("concurrent reconstruction = %v/%v, want %s", got, ok, union)
+					return
+				}
+			}
+		}()
+	}
+	group.Wait()
+
+	foreign := NewCache()
+	if got, ok := foreign.TypeFromOrigin(family, caseView(cases)); ok || got != nil {
+		t.Fatalf("foreign cache reconstructed owner-local family = %v/%v, want nil/false", got, ok)
+	}
 }
 
 func otherOriginCase(cases []int, exclude int) int {
@@ -980,12 +1011,14 @@ func TestNarrowByPathLiteralExpandsInstantiatedResult(t *testing.T) {
 
 func TestOriginOfTypeExpandsInstantiatedResult(t *testing.T) {
 	resultProfile, valueCase, errorCase := resultProfileDiscriminantFixture()
+	cache := NewCache()
 
 	family, cases, ok := OriginOfType(resultProfile)
 	if !ok {
 		t.Fatal("missing origin for instantiated Result<Profile>")
 	}
-	got, ok := typeFromOriginInts(family, cases)
+	cache.OriginOfType(resultProfile)
+	got, ok := typeFromOriginInts(cache, family, cases)
 	if !ok {
 		t.Fatal("missing reconstructed origin type for instantiated Result<Profile>")
 	}
@@ -1091,20 +1124,23 @@ func TestProjectOriginFailsClosedWhenAnySelectedParentCaseDoesNotProject(t *test
 		Field("kind", typ.LiteralString("without-payload")).
 		Build()
 	union := typeexpr.Union(withPayload, withoutPayload)
+	cache := NewCache()
 	rootFamily, rootCases, ok := OriginOfType(union)
 	if !ok {
 		t.Fatal("closed record union origin missing")
 	}
+	cache.OriginOfType(union)
+	cache.OriginOfType(childUnion)
 	payloadPath := []segment.Segment{{Kind: segment.SegmentField, Name: "payload"}}
 
-	if projectedFamily, projectedCases, ok := projectOriginInts(rootFamily, rootCases, payloadPath); ok {
+	if projectedFamily, projectedCases, ok := projectOriginInts(cache, rootFamily, rootCases, payloadPath); ok {
 		t.Fatalf("partial parent projection produced child origin %d/%v, want fail-closed", projectedFamily, projectedCases)
 	}
 	withFamily, withCases, ok := OriginByPathLiteral(union, []segment.Segment{{Kind: segment.SegmentField, Name: "kind"}}, typ.LiteralString("with-payload"))
 	if !ok || withFamily != rootFamily || len(withCases) != 1 {
 		t.Fatalf("with-payload origin cases = %d/%v/%v, want one case in family %d", withFamily, withCases, ok, rootFamily)
 	}
-	childFamily, childCases, ok := projectOriginInts(rootFamily, withCases, payloadPath)
+	childFamily, childCases, ok := projectOriginInts(cache, rootFamily, withCases, payloadPath)
 	if !ok {
 		t.Fatal("single parent case with payload did not project")
 	}
@@ -1133,18 +1169,20 @@ func TestOriginProjectsAndNarrowsClosedRecordUnion(t *testing.T) {
 		Field("value", typ.String).
 		Build()
 	union := typeexpr.Union(intCase, strCase)
+	cache := NewCache()
 
 	rootFamily, rootCases, ok := OriginOfType(union)
 	if !ok {
 		t.Fatal("closed record union origin missing")
 	}
-	channelFamily, channelCases, ok := projectOriginInts(rootFamily, rootCases, []segment.Segment{
+	cache.OriginOfType(union)
+	channelFamily, channelCases, ok := projectOriginInts(cache, rootFamily, rootCases, []segment.Segment{
 		{Kind: segment.SegmentField, Name: "channel"},
 	})
 	if !ok {
 		t.Fatal("channel origin projection missing")
 	}
-	intFamily, intCases, ok := OriginOfType(chanInt)
+	intFamily, intCases, ok := cache.OriginOfType(chanInt)
 	if !ok {
 		t.Fatal("chanInt origin missing")
 	}
@@ -1152,7 +1190,7 @@ func TestOriginProjectsAndNarrowsClosedRecordUnion(t *testing.T) {
 		t.Fatalf("projected channel origin = family %d cases %v, want family %d with two cases", channelFamily, channelCases, intFamily)
 	}
 
-	narrowCases, ok := narrowOriginByPathInts(rootFamily, rootCases, []segment.Segment{
+	narrowCases, ok := narrowOriginByPathInts(cache, rootFamily, rootCases, []segment.Segment{
 		{Kind: segment.SegmentField, Name: "channel"},
 	}, intFamily, intCases, true)
 	if !ok {
@@ -1163,7 +1201,7 @@ func TestOriginProjectsAndNarrowsClosedRecordUnion(t *testing.T) {
 		t.Fatalf("positive narrowed type = %s/%v, want int case", got, ok)
 	}
 
-	remainingCases, ok := narrowOriginByPathInts(rootFamily, rootCases, []segment.Segment{
+	remainingCases, ok := narrowOriginByPathInts(cache, rootFamily, rootCases, []segment.Segment{
 		{Kind: segment.SegmentField, Name: "channel"},
 	}, intFamily, intCases, false)
 	if !ok {
@@ -1187,17 +1225,19 @@ func TestNarrowOriginByPathTreatsMissingFieldAsNil(t *testing.T) {
 		Field("kind", typ.LiteralString("without-channel")).
 		Build()
 	union := typeexpr.Union(withChannel, withoutChannel)
+	cache := NewCache()
 	rootFamily, rootCases, ok := OriginOfType(union)
 	if !ok {
 		t.Fatal("closed record union origin missing")
 	}
-	channelFamily, channelCases, ok := OriginOfType(chanInt)
+	cache.OriginOfType(union)
+	channelFamily, channelCases, ok := cache.OriginOfType(chanInt)
 	if !ok {
 		t.Fatal("channel origin missing")
 	}
 	channelPath := []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}
 
-	equalCases, ok := narrowOriginByPathInts(rootFamily, rootCases, channelPath, channelFamily, channelCases, true)
+	equalCases, ok := narrowOriginByPathInts(cache, rootFamily, rootCases, channelPath, channelFamily, channelCases, true)
 	if !ok {
 		t.Fatal("positive origin narrowing did not drop missing-field case")
 	}
@@ -1206,7 +1246,7 @@ func TestNarrowOriginByPathTreatsMissingFieldAsNil(t *testing.T) {
 		t.Fatalf("positive narrowed type = %s/%v, want with-channel case", got, ok)
 	}
 
-	notEqualCases, ok := narrowOriginByPathInts(rootFamily, rootCases, channelPath, channelFamily, channelCases, false)
+	notEqualCases, ok := narrowOriginByPathInts(cache, rootFamily, rootCases, channelPath, channelFamily, channelCases, false)
 	if !ok {
 		t.Fatal("negative origin narrowing did not keep missing-field case")
 	}
@@ -1232,13 +1272,15 @@ func TestNarrowOriginByPathTypeKeepsFieldCompatibleCases(t *testing.T) {
 		Field("value", typ.String).
 		Build()
 	union := typeexpr.Union(intCase, strCase)
+	cache := NewCache()
 	rootFamily, rootCases, ok := OriginOfType(union)
 	if !ok {
 		t.Fatal("closed record union origin missing")
 	}
+	cache.OriginOfType(union)
 	channelPath := []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}
 
-	equalCases, ok := narrowOriginByPathTypeInts(rootFamily, rootCases, channelPath, chanInt, true)
+	equalCases, ok := narrowOriginByPathTypeInts(cache, rootFamily, rootCases, channelPath, chanInt, true)
 	if !ok {
 		t.Fatal("positive type narrowing did not keep channel-compatible case")
 	}
@@ -1247,7 +1289,7 @@ func TestNarrowOriginByPathTypeKeepsFieldCompatibleCases(t *testing.T) {
 		t.Fatalf("positive narrowed type = %s/%v, want int case", got, ok)
 	}
 
-	notEqualCases, ok := narrowOriginByPathTypeInts(rootFamily, rootCases, channelPath, chanInt, false)
+	notEqualCases, ok := narrowOriginByPathTypeInts(cache, rootFamily, rootCases, channelPath, chanInt, false)
 	if !ok {
 		t.Fatal("negative type narrowing did not keep incompatible case")
 	}
@@ -1274,13 +1316,15 @@ func TestNarrowOriginByPathTypeTreatsAliasAndExpandedTargetAsCompatible(t *testi
 		Field("value", typ.String).
 		Build()
 	union := typeexpr.Union(intCase, strCase)
+	cache := NewCache()
 	rootFamily, rootCases, ok := OriginOfType(union)
 	if !ok {
 		t.Fatal("closed record union origin missing")
 	}
+	cache.OriginOfType(union)
 	channelPath := []segment.Segment{{Kind: segment.SegmentField, Name: "channel"}}
 
-	equalCases, ok := narrowOriginByPathTypeInts(rootFamily, rootCases, channelPath, chanIntTarget, true)
+	equalCases, ok := narrowOriginByPathTypeInts(cache, rootFamily, rootCases, channelPath, chanIntTarget, true)
 	if !ok {
 		t.Fatal("positive type narrowing treated alias and expanded target as incompatible")
 	}
@@ -1300,18 +1344,20 @@ func TestOriginNarrowByPathIncompatibleConstraintIsNoop(t *testing.T) {
 		Field("value", typ.String).
 		Build()
 	union := typeexpr.Union(dog, cat)
+	cache := NewCache()
 
 	rootFamily, rootCases, ok := OriginOfType(union)
 	if !ok {
 		t.Fatal("closed record union origin missing")
 	}
-	otherFamily, otherCases, ok := OriginOfType(typetable.NewRecord().
+	cache.OriginOfType(union)
+	otherFamily, otherCases, ok := cache.OriginOfType(typetable.NewRecord().
 		Field("__tag", typ.LiteralString("other")).
 		Build())
 	if !ok {
 		t.Fatal("other origin missing")
 	}
-	if _, ok := narrowOriginByPathInts(rootFamily, rootCases, []segment.Segment{
+	if _, ok := narrowOriginByPathInts(cache, rootFamily, rootCases, []segment.Segment{
 		{Kind: segment.SegmentField, Name: "kind"},
 	}, otherFamily, otherCases, false); ok {
 		t.Fatal("incompatible constraint narrowed root cases")

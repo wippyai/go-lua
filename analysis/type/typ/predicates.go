@@ -32,103 +32,12 @@ func AbsentOrTopLike(t Type) bool {
 
 // AdmitsFalse reports whether t's value set can contain the literal false.
 func AdmitsFalse(t Type) bool {
-	return admitsFalse(t, &typePath{})
-}
-
-func admitsFalse(t Type, active *typePath) bool {
-	switch tt := t.(type) {
-	case nil:
-		return false
-	case *Literal:
-		return tt.Base == kind.Boolean && tt.Value == false
-	case *Annotated:
-		if tt == nil || tt.Inner == nil || tt.Inner == t {
-			return false
-		}
-		if !active.enter(t) {
-			return false
-		}
-		defer active.leave(t)
-		return admitsFalse(tt.Inner, active)
-	case *Alias:
-		if tt == nil {
-			return false
-		}
-		next := tt.UnaliasedTarget()
-		if next == nil || next == t {
-			return false
-		}
-		if !active.enter(t) {
-			return false
-		}
-		defer active.leave(t)
-		return admitsFalse(next, active)
-	case *Optional:
-		return tt != nil && admitsFalse(tt.Inner, active)
-	case *Union:
-		for _, member := range tt.Members {
-			if admitsFalse(member, active) {
-				return true
-			}
-		}
-		return false
-	case *Intersection:
-		if len(tt.Members) == 0 {
-			return false
-		}
-		for _, member := range tt.Members {
-			if !admitsFalse(member, active) {
-				return false
-			}
-		}
-		return true
-	default:
-		return TypeEquals(tt, Boolean)
-	}
+	return evaluatePredicate(t, predicateAdmitsFalse)
 }
 
 // IsBooleanType reports whether t is definitely contained in boolean.
 func IsBooleanType(t Type) bool {
-	return isBooleanType(t, &typePath{})
-}
-
-func isBooleanType(t Type, active *typePath) bool {
-	t = NormalizeNil(t)
-	if t == nil {
-		return false
-	}
-	t = stripIndexTransparentWrappers(t)
-	if t == nil || !active.enter(t) {
-		return false
-	}
-	defer active.leave(t)
-	switch tt := t.(type) {
-	case nil:
-		return false
-	case *Literal:
-		return tt.Base == kind.Boolean
-	case *Optional:
-		return false
-	case *Union:
-		if len(tt.Members) == 0 {
-			return false
-		}
-		for _, member := range tt.Members {
-			if !isBooleanType(member, active) {
-				return false
-			}
-		}
-		return true
-	case *Intersection:
-		for _, member := range tt.Members {
-			if isBooleanType(member, active) {
-				return true
-			}
-		}
-		return false
-	default:
-		return TypeEquals(tt, Boolean)
-	}
+	return evaluatePredicate(t, predicateBoolean)
 }
 
 // IsIntegerIndexType reports whether t is definitely usable as an integer
@@ -136,71 +45,239 @@ func isBooleanType(t Type, active *typePath) bool {
 // dynamic key ranges over integer slots, such as ipairs-style generic-for
 // transfer.
 func IsIntegerIndexType(t Type) bool {
-	return isIntegerIndexType(t, &typePath{})
+	return evaluatePredicate(t, predicateIntegerIndex)
 }
 
-func isIntegerIndexType(t Type, active *typePath) bool {
+// predicateKind selects one of the small monotone Boolean equations evaluated
+// by predicateWork. Keeping the equations together avoids three subtly
+// different recursive walkers and gives every public predicate the same finite
+// graph and cycle semantics.
+type predicateKind uint8
+
+const (
+	predicateAdmitsFalse predicateKind = iota
+	predicateBoolean
+	predicateIntegerIndex
+)
+
+type predicateOperation uint8
+
+const (
+	predicateFalse predicateOperation = iota
+	predicateTrue
+	predicateAny
+	predicateAll
+)
+
+// predicateNode is one memoized Type node. A node starts false and can become
+// true once. This is the least fixed point of the predicate equations, so an
+// ungrounded cycle fails closed while a cycle with a sufficient witness still
+// succeeds. parents includes duplicate edges deliberately: an all-node with a
+// repeated member still needs one proof per member.
+type predicateNode struct {
+	t       Type
+	parents []*predicateNode
+	pending int
+	op      predicateOperation
+	value   bool
+}
+
+// predicateWork owns the whole finite work machine for one public query. It
+// never calls a predicate recursively: discovery expands each Type identity at
+// most once, then a backward work list propagates true witnesses to a fixed
+// point. The map is intentionally created only for non-leaf queries; common
+// primitive and literal calls remain allocation-free.
+type predicateWork struct {
+	kind  predicateKind
+	nodes map[Type]*predicateNode
+	stack []*predicateNode
+	ready []*predicateNode
+}
+
+func evaluatePredicate(t Type, which predicateKind) bool {
+	t = NormalizeNil(t)
+	if value, known := predicateLeaf(t, which); known {
+		return value
+	}
+
+	work := predicateWork{
+		kind:  which,
+		nodes: make(map[Type]*predicateNode),
+	}
+	root := work.intern(t)
+	work.expandAll()
+	work.propagate()
+	return root.value
+}
+
+// predicateLeaf handles all terminal cases and the malformed wrapper forms
+// that cannot provide a child. It is deliberately separate from expansion so
+// direct primitive calls do not allocate a graph work machine.
+func predicateLeaf(t Type, which predicateKind) (bool, bool) {
+	if t == nil {
+		return false, true
+	}
+	switch tt := t.(type) {
+	case *Literal:
+		if tt == nil {
+			return false, true
+		}
+		switch which {
+		case predicateAdmitsFalse:
+			return tt.Base == kind.Boolean && tt.Value == false, true
+		case predicateBoolean:
+			return tt.Base == kind.Boolean, true
+		case predicateIntegerIndex:
+			return tt.Base == kind.Integer, true
+		}
+	case *Annotated:
+		if tt == nil || tt.Inner == nil || tt.Inner == t {
+			return false, true
+		}
+		return false, false
+	case *Alias:
+		if tt == nil {
+			return false, true
+		}
+		next := tt.UnaliasedTarget()
+		if next == nil || next == t {
+			return false, true
+		}
+		return false, false
+	case *Optional:
+		if tt == nil {
+			return false, true
+		}
+		if which != predicateAdmitsFalse {
+			return false, true
+		}
+		if tt.Inner == nil {
+			return false, true
+		}
+		return false, false
+	case *Union:
+		return tt == nil, tt == nil
+	case *Intersection:
+		return tt == nil, tt == nil
+	}
+
+	switch which {
+	case predicateAdmitsFalse, predicateBoolean:
+		return TypeEquals(t, Boolean), true
+	case predicateIntegerIndex:
+		return TypeEquals(t, Integer), true
+	default:
+		return false, true
+	}
+}
+
+func (w *predicateWork) intern(t Type) *predicateNode {
 	t = NormalizeNil(t)
 	if t == nil {
-		return false
+		return nil
 	}
-	t = stripIndexTransparentWrappers(t)
-	if t == nil || !active.enter(t) {
-		return false
+	if node := w.nodes[t]; node != nil {
+		return node
 	}
-	defer active.leave(t)
-	switch tt := t.(type) {
-	case nil:
-		return false
-	case *Literal:
-		return tt.Base == kind.Integer
-	case *Optional:
-		return false
-	case *Union:
-		if len(tt.Members) == 0 {
-			return false
-		}
-		for _, member := range tt.Members {
-			if !isIntegerIndexType(member, active) {
-				return false
-			}
-		}
-		return true
-	case *Intersection:
-		for _, member := range tt.Members {
-			if isIntegerIndexType(member, active) {
-				return true
-			}
-		}
-		return false
-	default:
-		return TypeEquals(tt, Integer)
+	node := &predicateNode{t: t}
+	w.nodes[t] = node
+	w.stack = append(w.stack, node)
+	return node
+}
+
+func (w *predicateWork) expandAll() {
+	for len(w.stack) != 0 {
+		last := len(w.stack) - 1
+		node := w.stack[last]
+		w.stack[last] = nil
+		w.stack = w.stack[:last]
+		w.expand(node)
 	}
 }
 
-func stripIndexTransparentWrappers(t Type) Type {
-	var seen typePath
-	for {
-		if !seen.enter(t) {
-			return nil
+func (w *predicateWork) expand(node *predicateNode) {
+	if value, known := predicateLeaf(node.t, w.kind); known {
+		if value {
+			node.op = predicateTrue
+			w.ready = append(w.ready, node)
+		} else {
+			node.op = predicateFalse
 		}
-		switch tt := t.(type) {
-		case *Annotated:
-			if tt == nil || tt.Inner == nil || tt.Inner == t {
-				return t
+		return
+	}
+
+	switch tt := node.t.(type) {
+	case *Annotated:
+		node.op = predicateAll
+		w.link(node, tt.Inner)
+	case *Alias:
+		node.op = predicateAll
+		w.link(node, tt.UnaliasedTarget())
+	case *Optional:
+		node.op = predicateAll
+		w.link(node, tt.Inner)
+	case *Union:
+		if len(tt.Members) == 0 {
+			node.op = predicateFalse
+			return
+		}
+		if w.kind == predicateAdmitsFalse {
+			node.op = predicateAny
+		} else {
+			node.op = predicateAll
+		}
+		for _, member := range tt.Members {
+			w.link(node, member)
+		}
+	case *Intersection:
+		if len(tt.Members) == 0 {
+			node.op = predicateFalse
+			return
+		}
+		if w.kind == predicateAdmitsFalse {
+			node.op = predicateAll
+		} else {
+			node.op = predicateAny
+		}
+		for _, member := range tt.Members {
+			w.link(node, member)
+		}
+	default:
+		// predicateLeaf classifies every non-wrapper and non-composite Type.
+		node.op = predicateFalse
+	}
+}
+
+func (w *predicateWork) link(parent *predicateNode, child Type) {
+	if parent.op == predicateAll {
+		parent.pending++
+	}
+	childNode := w.intern(child)
+	if childNode != nil {
+		childNode.parents = append(childNode.parents, parent)
+	}
+}
+
+func (w *predicateWork) propagate() {
+	for len(w.ready) != 0 {
+		last := len(w.ready) - 1
+		node := w.ready[last]
+		w.ready[last] = nil
+		w.ready = w.ready[:last]
+		if node.value {
+			continue
+		}
+		node.value = true
+		for _, parent := range node.parents {
+			switch parent.op {
+			case predicateAny:
+				w.ready = append(w.ready, parent)
+			case predicateAll:
+				parent.pending--
+				if parent.pending == 0 {
+					w.ready = append(w.ready, parent)
+				}
 			}
-			t = tt.Inner
-		case *Alias:
-			if tt == nil {
-				return nil
-			}
-			next := tt.UnaliasedTarget()
-			if next == nil || next == t {
-				return next
-			}
-			t = next
-		default:
-			return t
 		}
 	}
 }

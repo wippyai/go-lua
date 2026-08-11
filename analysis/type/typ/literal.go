@@ -2,8 +2,8 @@ package typ
 
 import (
 	"fmt"
+	"math"
 	"strconv"
-	"sync"
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -54,30 +54,21 @@ func LiteralInt(v int64) *Literal {
 // LiteralNumber creates a number literal type.
 func LiteralNumber(v float64) *Literal {
 	h := hash.MixHash(uint64(kind.Literal), uint64(kind.Number))
-	h = hash.MixHash(h, uint64(v))
+	// A numeric literal is a type-level singleton, so its equality must be
+	// reflexive even when its represented runtime value is NaN. IEEE bits are
+	// the only total identity for float64: they retain NaN payloads and signed
+	// zero without borrowing Go's non-reflexive floating equality.
+	h = hash.MixHash(h, math.Float64bits(v))
 
 	return &Literal{Base: kind.Number, Value: v, hash: h, str: strconv.FormatFloat(v, 'g', -1, 64)}
 }
 
-// stringLiteralCache interns string literal nodes by their value. The value
-// fully determines every field (Base, Value, hash, str), so a cached node is
-// indistinguishable from a freshly constructed one. Nodes are immutable after
-// construction, making sharing safe across concurrent checker runs.
-var stringLiteralCache sync.Map // string -> *Literal
-
-// LiteralString returns the canonical string literal type for v.
+// LiteralString creates a string literal type for v.
 func LiteralString(v string) *Literal {
-	if cached, ok := stringLiteralCache.Load(v); ok {
-		return cached.(*Literal)
-	}
-
 	h := hash.MixHash(uint64(kind.Literal), uint64(kind.String))
 	h = hash.MixHash(h, hash.FnvString(v))
 
-	lit := &Literal{Base: kind.String, Value: v, hash: h, str: strconv.Quote(v)}
-	actual, _ := stringLiteralCache.LoadOrStore(v, lit)
-
-	return actual.(*Literal)
+	return &Literal{Base: kind.String, Value: v, hash: h, str: strconv.Quote(v)}
 }
 
 func (l *Literal) Kind() kind.Kind { return kind.Literal }
@@ -112,6 +103,13 @@ func (l *Literal) Equals(other Type) bool {
 	}
 
 	ol := other.(*Literal)
-
-	return l.Base == ol.Base && l.Value == ol.Value
+	if l.Base != ol.Base {
+		return false
+	}
+	if l.Base == kind.Number {
+		left, leftOK := l.Value.(float64)
+		right, rightOK := ol.Value.(float64)
+		return leftOK && rightOK && math.Float64bits(left) == math.Float64bits(right)
+	}
+	return l.Value == ol.Value
 }

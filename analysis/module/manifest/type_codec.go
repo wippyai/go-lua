@@ -20,6 +20,11 @@ type typeEncoder struct {
 }
 
 func encodeType(t typ.Type) (*typeWire, error) {
+	if t != nil {
+		if err := typ.ValidateStaticGenericRecurrence(t); err != nil {
+			return nil, fmt.Errorf("manifest: invalid static generic recurrence: %w", err)
+		}
+	}
 	return (&typeEncoder{
 		activeGenerics:   make(map[*typ.Generic]bool),
 		recursiveBinders: make(map[*typ.Recursive]uint64),
@@ -30,6 +35,11 @@ func encodeType(t typ.Type) (*typeWire, error) {
 // function node while preserving the receiver convention observed by
 // typ.TypeEquals. It is for semantic content identity, not manifest display.
 func encodeSemanticType(t typ.Type) (*typeWire, error) {
+	if t != nil {
+		if err := typ.ValidateStaticGenericRecurrence(t); err != nil {
+			return nil, fmt.Errorf("manifest: invalid static generic recurrence: %w", err)
+		}
+	}
 	return (&typeEncoder{
 		activeGenerics:    make(map[*typ.Generic]bool),
 		recursiveBinders:  make(map[*typ.Recursive]uint64),
@@ -247,7 +257,14 @@ func (e *typeDecodeEnv) withGeneric(generic *typ.Generic) *typeDecodeEnv {
 }
 
 func decodeType(w *typeWire) (typ.Type, error) {
-	return decodeTypeInEnv(w, &typeDecodeEnv{recursives: make(map[uint64]*typ.Recursive)})
+	decoded, err := decodeTypeInEnv(w, &typeDecodeEnv{recursives: make(map[uint64]*typ.Recursive)})
+	if err != nil || decoded == nil {
+		return decoded, err
+	}
+	if err := typ.ValidateStaticGenericRecurrence(decoded); err != nil {
+		return nil, fmt.Errorf("invalid static generic recurrence: %w", err)
+	}
+	return decoded, nil
 }
 
 func decodeTypeInEnv(w *typeWire, env *typeDecodeEnv) (typ.Type, error) {

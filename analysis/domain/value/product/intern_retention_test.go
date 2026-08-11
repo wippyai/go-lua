@@ -7,10 +7,6 @@ import (
 )
 
 func TestInternerEvictionKeepsDurableValuesValid(t *testing.T) {
-	previous := globalInterner
-	globalInterner = newInterner()
-	t.Cleanup(func() { globalInterner = previous })
-
 	key := axis.NewKey[int]("test.interner.retention")
 	reg := mustRegistry(t, axis.Spec[int]{
 		Key:    key,
@@ -43,9 +39,10 @@ func TestInternerEvictionKeepsDurableValuesValid(t *testing.T) {
 		_ = Set(reg, Top(), key, value)
 	}
 
+	interner := mustRuntime(reg).interner
 	count := 0
-	for index := range globalInterner.shards {
-		shard := &globalInterner.shards[index]
+	for index := range interner.shards {
+		shard := &interner.shards[index]
 		shard.mu.Lock()
 		count += len(shard.fifo)
 		shard.mu.Unlock()
@@ -64,11 +61,6 @@ func TestInternerEvictionKeepsDurableValuesValid(t *testing.T) {
 }
 
 func TestInternerShardsOneRegistryByCandidateHash(t *testing.T) {
-	i := newInterner()
-	previous := globalInterner
-	globalInterner = i
-	t.Cleanup(func() { globalInterner = previous })
-
 	key := axis.NewKey[int]("test.interner.same-candidate-hash")
 	reg := mustRegistry(t, axis.Spec[int]{
 		Key:      key,
@@ -93,6 +85,7 @@ func TestInternerShardsOneRegistryByCandidateHash(t *testing.T) {
 		Retention: axis.ImmutableRetention[int](),
 		Canonical: axis.PendingCanonical[int]("test-only axis"),
 	}.Erase())
+	i := mustRuntime(reg).interner
 
 	first := Set(reg, Top(), key, 0)
 	second := Set(reg, Top(), key, 1)
@@ -103,9 +96,9 @@ func TestInternerShardsOneRegistryByCandidateHash(t *testing.T) {
 		t.Fatalf("candidate hashes = %x and %x, want collision", first.n.hash, second.n.hash)
 	}
 
-	shard := i.shardFor(reg, first.n.hash)
+	shard := i.shardFor(first.n.hash)
 	shard.mu.Lock()
-	bucket := shard.nodes[reg][first.n.hash]
+	bucket := shard.nodes[first.n.hash]
 	shard.mu.Unlock()
 	if len(bucket) != 2 || bucket[0] != first.n || bucket[1] != second.n {
 		t.Fatalf("same-hash bucket = %#v, want [first second]", bucket)
@@ -116,7 +109,7 @@ func TestInternerShardsOneRegistryByCandidateHash(t *testing.T) {
 			continue
 		}
 		candidate.mu.Lock()
-		_, found := candidate.nodes[reg]
+		_, found := candidate.nodes[first.n.hash]
 		candidate.mu.Unlock()
 		if found {
 			t.Fatalf("registry's same-hash candidates also appeared in shard %d", index)

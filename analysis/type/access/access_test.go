@@ -398,6 +398,20 @@ func TestFieldRecursiveUnionUsesExactMustFixedPoint(t *testing.T) {
 	}
 }
 
+func TestFieldDeepCompositeProjectionUsesExplicitWorkStack(t *testing.T) {
+	const depth = 4097
+	leaf := typetable.NewRecord().Field("value", typ.String).Build()
+	var value typ.Type = leaf
+	for index := 0; index < depth; index++ {
+		value = &typ.Union{Members: []typ.Type{value, leaf}}
+	}
+	got, ok := Field(value, "value")
+	if !ok {
+		t.Fatal("deep composite field projection failed")
+	}
+	assertType(t, got, typ.String)
+}
+
 func TestShallowAccessTraversalDoesNotAllocate(t *testing.T) {
 	record := typetable.NewRecord().Field("value", typ.String).Build()
 	array := typ.NewArray(typ.String)

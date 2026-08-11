@@ -361,26 +361,13 @@ var registry = map[string]signature.Function{
 			Returns(typ.Any).
 			Build(),
 	),
-	"table.create": func() signature.Function {
-		tableType := typetable.NewRecord().Build()
-		return signature.Function{
-			Type: typ.Func().
-				Param("narray", typ.Integer).
-				OptParam("nhash", typ.Integer).
-				Returns(tableType).
-				Build(),
-			OperationalEffects: &signature.OperationalEffects{
-				ReturnAllocationTemplates: []signature.ReturnAllocationTemplate{{
-					ReturnIndex: 0,
-					Root:        "stdlib.table.create:return:0",
-					Objects: []signature.AllocationObjectTemplate{{
-						ID:   "stdlib.table.create:return:0",
-						Type: tableType,
-					}},
-				}},
-			},
-		}
-	}(),
+	"table.create": sig(
+		typ.Func().
+			Param("narray", typ.Integer).
+			OptParam("nhash", typ.Integer).
+			Returns(typetable.NewRecord().Build()).
+			Build(),
+	),
 
 	// json module.
 	"json.encode": sig(
@@ -482,7 +469,7 @@ var registry = map[string]signature.Function{
 		OptParam("co", typ.Any).
 		Returns(typ.Boolean).
 		Build()),
-	"coroutine.resume": suspendingSig(typ.Func().
+	"coroutine.resume": sig(typ.Func().
 		Param("co", typ.Any).
 		Variadic(typ.Any).
 		Returns(typ.Boolean, typ.Any).
@@ -495,12 +482,12 @@ var registry = map[string]signature.Function{
 		Param("co", typ.Any).
 		Returns(typ.String).
 		Build()),
-	"coroutine.wrap": suspendingSig(typ.Func().
+	"coroutine.wrap": sig(typ.Func().
 		Param("f", typ.Any).
 		Returns(typ.Any).
 		Build(),
 		ownership.Send{FromParam: 0}),
-	"coroutine.yield": suspendingSig(typ.Func().
+	"coroutine.yield": sig(typ.Func().
 		Variadic(typ.Any).
 		Returns(typ.Any).
 		Build(),
@@ -769,12 +756,6 @@ func sig(fn *typ.Function, labels ...effect.Label) signature.Function {
 		Type:   fn,
 		Effect: effect.Row{Labels: labels},
 	}
-}
-
-func suspendingSig(fn *typ.Function, labels ...effect.Label) signature.Function {
-	out := sig(fn, labels...)
-	out.OperationalEffects = &signature.OperationalEffects{SuspensionKnown: true, MaySuspend: true}
-	return out
 }
 
 func mustAllowStdlibEffectLabel(label effect.Label) {

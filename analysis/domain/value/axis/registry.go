@@ -1,6 +1,15 @@
 package axis
 
-import "fmt"
+import (
+	"fmt"
+)
+
+// CompiledProduct is the product projection sealed together with a registry.
+// It is only accepted by FreezeWithCompiledProduct while the caller still
+// owns the mutable builder; no published frozen registry exposes a setter.
+type CompiledProduct interface {
+	Owner() *Registry
+}
 
 // Registry owns the ordered set of axes in one value product.
 type Registry struct {
@@ -14,6 +23,7 @@ type Registry struct {
 	reducerReads             [][]string
 	reducerWrites            [][]string
 	frozen                   bool
+	compiledProduct          CompiledProduct
 }
 
 // SpecsView is a read-only, allocation-free view of a registry's ordered specs.
@@ -73,8 +83,36 @@ func (r *Registry) Freeze() *Registry {
 	return r
 }
 
+// FreezeWithCompiledProduct atomically publishes a frozen registry and its
+// exact product projection. Binding is construction-time ownership: a second
+// caller cannot claim a registry after it has become visible.
+func (r *Registry) FreezeWithCompiledProduct(projection CompiledProduct) error {
+	if r == nil {
+		return fmt.Errorf("axis: nil registry")
+	}
+	if r.frozen {
+		return fmt.Errorf("axis: registry is already frozen")
+	}
+	if projection == nil {
+		return fmt.Errorf("axis: nil compiled product")
+	}
+	if projection.Owner() != r {
+		return fmt.Errorf("axis: compiled product belongs to a different registry")
+	}
+	r.compiledProduct = projection
+	r.frozen = true
+	return nil
+}
+
 func (r *Registry) Frozen() bool {
 	return r != nil && r.frozen
+}
+
+func (r *Registry) CompiledProduct() CompiledProduct {
+	if r == nil {
+		return nil
+	}
+	return r.compiledProduct
 }
 
 // Register adds a typed axis spec to the registry.

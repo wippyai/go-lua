@@ -17,15 +17,24 @@ func (t *TypeExprBase) typeExprMarker() {}
 
 // AnnotationExpr represents a type annotation like @min(0) or @pattern("^.+$")
 type AnnotationExpr struct {
+	Node
 	Name string // "min", "max", "pattern", etc.
-	Args []Expr // literal argument values
+	Args []Expr // static argument expressions, in authored order
+}
+
+// AnnotatedTypeExpr decorates one authored type expression with runtime
+// validation annotations. Its Inner remains the semantic type constructor;
+// lowering emits annotation relations against that same inner Program term.
+type AnnotatedTypeExpr struct {
+	TypeExprBase
+	Inner       TypeExpr
+	Annotations []AnnotationExpr
 }
 
 // PrimitiveTypeExpr represents primitive types: number, string, boolean, nil, any, unknown, never, integer
 type PrimitiveTypeExpr struct {
 	TypeExprBase
-	Name        string           // "number", "string", "boolean", "nil", "any", "unknown", "never", "integer"
-	Annotations []AnnotationExpr // runtime validation annotations
+	Name string // "number", "string", "boolean", "nil", "any", "unknown", "never", "integer"
 }
 
 // OptionalTypeExpr represents an optional type: T?
@@ -49,10 +58,8 @@ type IntersectionTypeExpr struct {
 // ArrayTypeExpr represents an array type: {T}
 type ArrayTypeExpr struct {
 	TypeExprBase
-	Element            TypeExpr
-	Readonly           bool
-	ElementAnnotations []AnnotationExpr // annotations on element type (before [])
-	ArrayAnnotations   []AnnotationExpr // annotations on array itself (after [])
+	Element  TypeExpr
+	Readonly bool
 }
 
 // MapTypeExpr represents a map type: {K: V}
@@ -69,7 +76,6 @@ type RecordFieldExpr struct {
 	NamePosition Position // Exact parser-owned field-name token position.
 	Type         TypeExpr
 	Optional     bool
-	Annotations  []AnnotationExpr // runtime validation annotations on field
 }
 
 // RecordTypeExpr represents a record/table type: {name: string, age: number}
@@ -88,30 +94,35 @@ type TypeParamExpr struct {
 
 // FunctionParamExpr represents a function parameter with optional name and type.
 type FunctionParamExpr struct {
-	Name string   // parameter name (may be empty for anonymous)
-	Type TypeExpr // parameter type
+	Name         string   // parameter name (may be empty for anonymous)
+	NamePosition Position // Exact parser-owned name token; zero for anonymous parameters.
+	Type         TypeExpr // parameter type
 }
 
 // FunctionTypeExpr represents a function type: (A, B) -> (C, D)
 type FunctionTypeExpr struct {
 	TypeExprBase
-	TypeParams []TypeParamExpr
-	Params     []FunctionParamExpr
-	Variadic   TypeExpr // nil if not variadic
-	Returns    []TypeExpr
+	TypeParams       []TypeParamExpr
+	Params           []FunctionParamExpr // fixed parameters only, in authored order
+	Variadic         TypeExpr            // nil if the signature has no variadic tail
+	VariadicPosition Position            // exact `...` token; zero when Variadic is nil
+	Returns          []TypeExpr
 }
 
-// AssertsTypeExpr represents a type assertion in return position: asserts x is T
+// AssertsTypeExpr represents an assertion type expression: asserts x is T.
+// Contextual validity is decided after parsing.
 type AssertsTypeExpr struct {
 	TypeExprBase
-	ParamName string   // the parameter being asserted
-	NarrowTo  TypeExpr // the type to narrow to (nil means truthy/non-nil)
+	ParamName     string   // the parameter being asserted
+	ParamPosition Position // Exact parser-owned asserted-parameter token.
+	NarrowTo      TypeExpr // the type to narrow to (nil means truthy/non-nil)
 }
 
 // TypeRefExpr represents a type reference: User, http.Request
 type TypeRefExpr struct {
 	TypeExprBase
-	Path []string // ["User"] or ["http", "Request"]
+	Path         []string // ["User"] or ["http", "Request"]
+	RootPosition Position // Exact parser-owned first path token; zero for manually assembled AST.
 }
 
 // GenericTypeExpr represents an instantiated generic type: Array<T>, Map<K, V>
@@ -125,23 +136,6 @@ type GenericTypeExpr struct {
 type LiteralTypeExpr struct {
 	TypeExprBase
 	Value interface{} // string, float64, bool
-}
-
-// MetaTypeExpr represents a metatype: type<User>
-type MetaTypeExpr struct {
-	TypeExprBase
-	Inner TypeExpr
-}
-
-// SelfTypeExpr represents the self type in method declarations.
-type SelfTypeExpr struct {
-	TypeExprBase
-}
-
-// TupleTypeExpr represents a tuple type: (A, B, C)
-type TupleTypeExpr struct {
-	TypeExprBase
-	Elements []TypeExpr
 }
 
 // TypeOfExpr represents typeof(expr) - captures the inferred type of an expression.
@@ -198,24 +192,40 @@ type ConditionalTypeExpr struct {
 // TypeDefStmt represents a type alias declaration: type User = {name: string}
 type TypeDefStmt struct {
 	StmtBase
-	Name       string
-	TypeParams []TypeParamExpr
-	Type       TypeExpr
+	Name         string
+	NamePosition Position // Exact parser-owned declaration-name token.
+	TypeParams   []TypeParamExpr
+	Type         TypeExpr
 }
 
-// InterfaceMethodExpr represents a method signature in an interface.
-type InterfaceMethodExpr struct {
-	Name string
-	Type *FunctionTypeExpr
+// InterfaceMemberKind is the closed source vocabulary inside an interface
+// declaration.  The ordered Members sequence is the sole member order
+// authority; fields and methods are not held in parallel projections.
+type InterfaceMemberKind uint8
+
+const (
+	InterfaceFieldMember InterfaceMemberKind = iota + 1
+	InterfaceMethodMember
+)
+
+// InterfaceMember is one authored member of an interface declaration.
+// Type is any parser-valid TypeExpr for a field and is exactly a
+// *FunctionTypeExpr for a method. Optional is field-only.
+type InterfaceMember struct {
+	Kind         InterfaceMemberKind
+	Name         string
+	NamePosition Position // Exact parser-owned member-name token position.
+	Type         TypeExpr
+	Optional     bool
 }
 
 // InterfaceDefStmt represents an interface declaration: interface Serializable ... end
 type InterfaceDefStmt struct {
 	StmtBase
-	Name    string
-	Extends []*TypeRefExpr
-	Fields  []RecordFieldExpr
-	Methods []InterfaceMethodExpr
+	Name         string
+	NamePosition Position // Exact parser-owned declaration-name token.
+	Extends      []*TypeRefExpr
+	Members      []InterfaceMember
 }
 
 type CastSyntax uint8
@@ -241,9 +251,4 @@ type CastExpr struct {
 type NonNilAssertExpr struct {
 	ExprBase
 	Expr Expr
-}
-
-// TypeAnnotation holds optional type information for variables/parameters.
-type TypeAnnotation struct {
-	Type TypeExpr
 }

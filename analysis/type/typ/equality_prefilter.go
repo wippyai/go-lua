@@ -4,7 +4,17 @@ func typeEqualsCanUseHashPrefilter(a, b Type) bool {
 	return !knownContainsRecursive(a) &&
 		!knownContainsRecursive(b) &&
 		!mayContainOpenRecursive(a) &&
-		!mayContainOpenRecursive(b)
+		!mayContainOpenRecursive(b) &&
+		// EqualityHash must refresh every graph containing an Instantiated
+		// or Generic declaration because SetBody can change its structural
+		// meaning. Applying that refresh at every nested pair turns a deep
+		// generic product into repeated suffix traversals. Structural equality
+		// below remains the collision-resolving proof, so these mutable graphs
+		// simply skip the optional hash prefilter.
+		!knownContainsInstantiated(a) &&
+		!knownContainsInstantiated(b) &&
+		!knownContainsGeneric(a) &&
+		!knownContainsGeneric(b)
 }
 
 // mayContainOpenRecursive is deliberately cache-only. Equality's hash

@@ -9,9 +9,9 @@ import (
 
 func needsCycleCheck(k kind.Kind) bool {
 	switch k {
-	case kind.Union, kind.Intersection, kind.Record, kind.Function,
-		kind.Generic, kind.Instantiated, kind.Interface, kind.Recursive,
-		kind.TypeParam:
+	case kind.Optional, kind.Union, kind.Intersection, kind.Tuple, kind.Array,
+		kind.Map, kind.ReadonlyMap, kind.Record, kind.Function, kind.Generic,
+		kind.Instantiated, kind.Interface, kind.Recursive, kind.TypeParam, kind.Meta:
 		return true
 	}
 
@@ -32,8 +32,8 @@ const (
 	typePairLoadDenominator = 4
 )
 
-// typePairSet tracks pairs already visited by recursive structural equality.
-// Most type comparisons are shallow and acyclic, so their pairs remain inline.
+// typePairSet tracks structural-node pairs already visited by equality.
+// Most comparisons are shallow and acyclic, so their pairs remain inline.
 // Deeper comparisons promote the complete set into an exact open-addressed
 // table; after promotion the inline prefix is never scanned again.
 type typePairSet struct {

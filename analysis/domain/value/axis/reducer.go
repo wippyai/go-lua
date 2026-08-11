@@ -16,9 +16,12 @@ type Writer interface {
 // Reducer is an optional registry hook for reduced products. Its Spec declares
 // (or derives) every axis it reads and writes. Writes must be reductive: each
 // exact change is less than or equal to the previous value. Reducers must be
-// monotone over their declared inputs. On finite-height axes, fair dependency
-// scheduling therefore reaches the unique greatest common fixed point beneath
-// the input product without a pass cap.
+// monotone over their declared inputs. Every declared output axis must also
+// supply a ReductionRank; Product verifies every strict write descends it.
+// Fair dependency scheduling therefore reaches the unique greatest common
+// fixed point beneath the input product without a pass cap. Product also
+// rejects a reduced Join or Widen that is not an upper bound, so an unproven
+// non-monotone reducer cannot publish an unsound lattice result.
 //
 // The bool result is retained for source compatibility. Scheduling is derived
 // exclusively from exact product changes, so a stale return value cannot cause

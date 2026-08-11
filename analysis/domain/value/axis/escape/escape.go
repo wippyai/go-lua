@@ -9,18 +9,52 @@ var Key = axis.NewKey[Value]("escape")
 
 func Spec() axis.Spec[Value] {
 	return axis.Spec[Value]{
-		Key:       Key,
-		Bottom:    Bottom,
-		Top:       Top,
-		Equal:     Equal,
-		LessOrEq:  func(a, b Value) bool { return b.Covers(a) },
-		Join:      Join,
-		Meet:      Meet,
-		Widen:     Widen,
+		Key:      Key,
+		Bottom:   Bottom,
+		Top:      Top,
+		Equal:    Equal,
+		LessOrEq: func(a, b Value) bool { return b.Covers(a) },
+		Join:     Join,
+		Meet:     Meet,
+		Widen:    Widen,
+		WidenRank: axis.Rank[Value]{
+			Width: 1,
+			At:    widenRank,
+		},
+		ReductionRank: axis.Rank[Value]{
+			Width: 1,
+			At:    reductionRank,
+		},
 		Hash:      Value.Hash,
 		Retention: axis.ImmutableRetention[Value](),
 		Canonical: canonicalDescriptor(),
 		Boundary:  axis.PortableIdentity,
+	}
+}
+
+func widenRank(value Value, _ int) uint64 {
+	switch value {
+	case bottom:
+		return 2
+	case fresh:
+		return 1
+	case escaped:
+		return 0
+	default:
+		panic("escape: invalid rank value")
+	}
+}
+
+func reductionRank(value Value, _ int) uint64 {
+	switch value {
+	case bottom:
+		return 0
+	case fresh:
+		return 1
+	case escaped:
+		return 2
+	default:
+		panic("escape: invalid rank value")
 	}
 }
 

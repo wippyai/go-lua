@@ -206,3 +206,112 @@ func TestIsBooleanType(t *testing.T) {
 		})
 	}
 }
+
+const predicateTraversalLawDepth = 12_288
+
+func TestPredicatesDeepAcyclicLaws(t *testing.T) {
+	tests := []struct {
+		name      string
+		predicate func(Type) bool
+		positive  Type
+		negative  Type
+	}{
+		{
+			name:      "admits false",
+			predicate: AdmitsFalse,
+			positive:  False,
+			negative:  True,
+		},
+		{
+			name:      "boolean",
+			predicate: IsBooleanType,
+			positive:  Boolean,
+			negative:  String,
+		},
+		{
+			name:      "integer index",
+			predicate: IsIntegerIndexType,
+			positive:  Integer,
+			negative:  Number,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !tt.predicate(deepPredicateAnnotations(tt.positive)) {
+				t.Fatal("deep positive graph was rejected")
+			}
+			if tt.predicate(deepPredicateAnnotations(tt.negative)) {
+				t.Fatal("deep negative graph was accepted")
+			}
+		})
+	}
+}
+
+func TestPredicatesDeepCyclicLaws(t *testing.T) {
+	admitsPositive := &Union{Members: make([]Type, 2)}
+	admitsPositive.Members[0] = admitsPositive
+	admitsPositive.Members[1] = False
+	admitsNegative := &Intersection{Members: make([]Type, 2)}
+	admitsNegative.Members[0] = admitsNegative
+	admitsNegative.Members[1] = Boolean
+
+	booleanPositive := &Intersection{Members: make([]Type, 2)}
+	booleanPositive.Members[0] = booleanPositive
+	booleanPositive.Members[1] = Boolean
+	booleanNegative := &Union{Members: make([]Type, 2)}
+	booleanNegative.Members[0] = booleanNegative
+	booleanNegative.Members[1] = Boolean
+
+	integerPositive := &Intersection{Members: make([]Type, 2)}
+	integerPositive.Members[0] = integerPositive
+	integerPositive.Members[1] = Integer
+	integerNegative := &Union{Members: make([]Type, 2)}
+	integerNegative.Members[0] = integerNegative
+	integerNegative.Members[1] = Integer
+
+	tests := []struct {
+		name      string
+		predicate func(Type) bool
+		positive  Type
+		negative  Type
+	}{
+		{
+			name:      "admits false",
+			predicate: AdmitsFalse,
+			positive:  admitsPositive,
+			negative:  admitsNegative,
+		},
+		{
+			name:      "boolean",
+			predicate: IsBooleanType,
+			positive:  booleanPositive,
+			negative:  booleanNegative,
+		},
+		{
+			name:      "integer index",
+			predicate: IsIntegerIndexType,
+			positive:  integerPositive,
+			negative:  integerNegative,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !tt.predicate(deepPredicateAnnotations(tt.positive)) {
+				t.Fatal("deep cyclic positive graph was rejected")
+			}
+			if tt.predicate(deepPredicateAnnotations(tt.negative)) {
+				t.Fatal("deep cyclic negative graph was accepted")
+			}
+		})
+	}
+}
+
+func deepPredicateAnnotations(base Type) Type {
+	var current Type = base
+	for range predicateTraversalLawDepth {
+		current = &Annotated{Inner: current}
+	}
+	return current
+}

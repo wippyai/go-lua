@@ -1,8 +1,6 @@
 package typ
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -32,12 +30,7 @@ func NewArray(elem Type) *Array {
 
 func (a *Array) Kind() kind.Kind { return kind.Array }
 func (a *Array) String() string {
-	return a.strCache.get(func() string {
-		if a.Element == nil {
-			return "unknown[]"
-		}
-		return a.Element.String() + "[]"
-	})
+	return a.strCache.get(func() string { return renderTypeString(a) })
 }
 func (a *Array) Hash() uint64 { return a.hash }
 func (a *Array) Equals(o Type) bool {
@@ -75,22 +68,7 @@ func RebuildMap(key, value Type) *Map {
 
 func (m *Map) Kind() kind.Kind { return kind.Map }
 func (m *Map) String() string {
-	return mapString(&m.strCache, m.Key, m.Value, "")
-}
-
-// mapString renders a map/readonly-map type and caches the result; prefix
-// carries the readonly spelling.
-func mapString(cache *stringCache, key, value Type, prefix string) string {
-	return cache.get(func() string {
-		ks, vs := "unknown", "unknown"
-		if key != nil {
-			ks = key.String()
-		}
-		if value != nil {
-			vs = value.String()
-		}
-		return prefix + "{[" + ks + "]: " + vs + "}"
-	})
+	return m.strCache.get(func() string { return renderTypeString(m) })
 }
 func (m *Map) Hash() uint64 { return m.hash }
 func (m *Map) Equals(o Type) bool {
@@ -142,7 +120,7 @@ func canonicalMapParts(k kind.Kind, key, value Type) (Type, Type, uint64, typePr
 
 func (m *ReadonlyMap) Kind() kind.Kind { return kind.ReadonlyMap }
 func (m *ReadonlyMap) String() string {
-	return mapString(&m.strCache, m.Key, m.Value, "readonly ")
+	return m.strCache.get(func() string { return renderTypeString(m) })
 }
 func (m *ReadonlyMap) Hash() uint64 { return m.hash }
 func (m *ReadonlyMap) Equals(o Type) bool {
@@ -185,17 +163,7 @@ func NewTuple(elems ...Type) *Tuple {
 func (t *Tuple) Kind() kind.Kind { return kind.Tuple }
 
 func (t *Tuple) String() string {
-	return t.strCache.get(func() string {
-		parts := make([]string, len(t.Elements))
-		for i, e := range t.Elements {
-			if e == nil {
-				parts[i] = "unknown"
-			} else {
-				parts[i] = e.String()
-			}
-		}
-		return "(" + strings.Join(parts, ", ") + ")"
-	})
+	return t.strCache.get(func() string { return renderTypeString(t) })
 }
 
 func (t *Tuple) Hash() uint64 { return t.hash }

@@ -39,12 +39,12 @@ func containsSubstitutableSelf(t typ.Type) bool {
 	if typ.ContainsRecursive(t) && !containsSurfaceSelf(t) {
 		return false
 	}
-	scan := newSelfContainsScan(t)
+	scan := newSelfContainsScan()
 	return scan.contains(t, selfScanSubstitutable)
 }
 
 func containsSurfaceSelf(t typ.Type) bool {
-	var scan selfContainsScan
+	scan := newSelfContainsScan()
 	return scan.contains(t, selfScanSurface)
 }
 
@@ -52,10 +52,7 @@ type selfContainsScan struct {
 	scanner *inspect.Scanner
 }
 
-func newSelfContainsScan(t typ.Type) selfContainsScan {
-	if !typ.ContainsRecursive(t) {
-		return selfContainsScan{}
-	}
+func newSelfContainsScan() selfContainsScan {
 	return selfContainsScan{
 		scanner: inspect.NewScanner(inspect.ScanOptions{
 			Seen: inspect.NewIdentitySeen(nil),
@@ -64,96 +61,76 @@ func newSelfContainsScan(t typ.Type) selfContainsScan {
 }
 
 func (s *selfContainsScan) contains(t typ.Type, mode selfScanMode) bool {
-	if t == nil {
-		return false
-	}
-	t = unwrap.Annotated(t)
-	if t == nil {
-		return false
-	}
-	if t.Kind() == kind.Self {
-		return true
-	}
-	if _, ok := t.(*typ.Interface); ok {
-		return false
-	}
-	if _, ok := t.(*typ.Recursive); ok {
-		return false
-	}
-	if mode == selfScanSubstitutable && typ.ContainsRecursive(t) && !containsSurfaceSelf(t) {
-		return false
-	}
-	if s.scanner != nil && !s.scanner.Enter(t) {
-		return false
-	}
-	switch v := t.(type) {
-	case *typ.Optional:
-		return s.contains(v.Inner, mode)
-	case *typ.Union:
-		for _, member := range v.Members {
-			if s.contains(member, mode) {
-				return true
-			}
+	stack := []typ.Type{t}
+	for len(stack) != 0 {
+		i := len(stack) - 1
+		current := unwrap.Annotated(stack[i])
+		stack = stack[:i]
+		if current == nil {
+			continue
 		}
-	case *typ.Intersection:
-		for _, member := range v.Members {
-			if s.contains(member, mode) {
-				return true
-			}
-		}
-	case *typ.Array:
-		return s.contains(v.Element, mode)
-	case *typ.Map:
-		return s.contains(v.Key, mode) ||
-			s.contains(v.Value, mode)
-	case *typ.ReadonlyMap:
-		return s.contains(v.Key, mode) ||
-			s.contains(v.Value, mode)
-	case *typ.Tuple:
-		for _, elem := range v.Elements {
-			if s.contains(elem, mode) {
-				return true
-			}
-		}
-	case *typ.Function:
-		for _, param := range v.Params {
-			if s.contains(param.Type, mode) {
-				return true
-			}
-		}
-		if s.contains(v.Variadic, mode) {
+		if current.Kind() == kind.Self {
 			return true
 		}
-		for _, ret := range v.Returns {
-			if s.contains(ret, mode) {
-				return true
+		if _, ok := current.(*typ.Interface); ok {
+			continue
+		}
+		if _, ok := current.(*typ.Recursive); ok {
+			continue
+		}
+		if mode == selfScanSubstitutable && typ.ContainsRecursive(current) && !containsSurfaceSelf(current) {
+			continue
+		}
+		if s.scanner != nil && !s.scanner.Enter(current) {
+			continue
+		}
+		switch v := current.(type) {
+		case *typ.Optional:
+			stack = append(stack, v.Inner)
+		case *typ.Union:
+			stack = append(stack, v.Members...)
+		case *typ.Intersection:
+			stack = append(stack, v.Members...)
+		case *typ.Array:
+			stack = append(stack, v.Element)
+		case *typ.Map:
+			stack = append(stack, v.Key, v.Value)
+		case *typ.ReadonlyMap:
+			stack = append(stack, v.Key, v.Value)
+		case *typ.Tuple:
+			stack = append(stack, v.Elements...)
+		case *typ.Function:
+			for _, param := range v.Params {
+				stack = append(stack, param.Type)
 			}
-		}
-	case *typ.Record:
-		for _, field := range v.Fields {
-			if s.contains(field.Type, mode) {
-				return true
+			stack = append(stack, v.Variadic)
+			stack = append(stack, v.Returns...)
+		case *typ.Record:
+			for _, field := range v.Fields {
+				stack = append(stack, field.Type)
 			}
-		}
-		for _, member := range v.StaticMembers {
-			if s.contains(member.Type, mode) {
-				return true
+			for _, member := range v.StaticMembers {
+				stack = append(stack, member.Type)
 			}
-		}
-		if s.contains(v.Metatable, mode) {
-			return true
-		}
-		if v.HasMapComponent() {
-			return s.contains(v.MapKey, mode) ||
-				s.contains(v.MapValue, mode)
-		}
-	case *typ.Alias:
-		return s.contains(v.Target, mode)
-	case *typ.Instantiated:
-		for _, arg := range v.TypeArgs {
-			if s.contains(arg, mode) {
-				return true
+			stack = append(stack, v.Metatable)
+			if v.HasMapComponent() {
+				stack = append(stack, v.MapKey, v.MapValue)
 			}
+		case *typ.Meta:
+			stack = append(stack, v.Of)
+		case *typ.TypeParam:
+			stack = append(stack, v.Constraint)
+		case *typ.Generic:
+			for _, parameter := range v.TypeParams {
+				if parameter != nil {
+					stack = append(stack, parameter.Constraint)
+				}
+			}
+			stack = append(stack, v.Body)
+		case *typ.Alias:
+			stack = append(stack, v.Target)
+		case *typ.Instantiated:
+			stack = append(stack, v.TypeArgs...)
 		}
 	}
 	return false

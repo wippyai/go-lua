@@ -213,6 +213,39 @@ func TestTypeEqualsDeepProductsExactly(t *testing.T) {
 	}
 }
 
+func TestTypeEqualsIterativeDeepAndCyclicLaws(t *testing.T) {
+	const depth = 10_000
+
+	var equalLeft Type = Number
+	var equalRight Type = Number
+	var different Type = String
+	for i := 0; i < depth; i++ {
+		equalLeft = NewArray(equalLeft)
+		equalRight = NewArray(equalRight)
+		different = NewArray(different)
+	}
+	if !TypeEquals(equalLeft, equalRight) {
+		t.Fatalf("equivalent %d-level products compared unequal", depth)
+	}
+	if TypeEquals(equalLeft, different) || TypeEquals(different, equalLeft) {
+		t.Fatal("deep products with distinct leaves must compare unequal in both directions")
+	}
+
+	left := &Optional{}
+	left.Inner = left
+	right := &Optional{}
+	rightTail := &Optional{Inner: right}
+	right.Inner = rightTail
+	if !TypeEquals(left, right) || !TypeEquals(right, left) {
+		t.Fatal("bisimilar cyclic products must compare equal in both directions")
+	}
+
+	differentCycle := &Optional{Inner: String}
+	if TypeEquals(left, differentCycle) || TypeEquals(differentCycle, left) {
+		t.Fatal("cyclic and non-bisimilar products must compare unequal in both directions")
+	}
+}
+
 func TestTypeEqualsDeepAliasDifference(t *testing.T) {
 	var left Type = Number
 	var right Type = String

@@ -9,14 +9,22 @@ var Key = axis.NewKey[Value]("evidence")
 
 func Spec() axis.Spec[Value] {
 	return axis.Spec[Value]{
-		Key:       Key,
-		Bottom:    Bottom,
-		Top:       Top,
-		Equal:     Equal,
-		LessOrEq:  func(a, b Value) bool { return b.Covers(a) },
-		Join:      Join,
-		Meet:      Meet,
-		Widen:     Widen,
+		Key:      Key,
+		Bottom:   Bottom,
+		Top:      Top,
+		Equal:    Equal,
+		LessOrEq: func(a, b Value) bool { return b.Covers(a) },
+		Join:     Join,
+		Meet:     Meet,
+		Widen:    Widen,
+		WidenRank: axis.Rank[Value]{
+			Width: 1,
+			At:    widenRank,
+		},
+		ReductionRank: axis.Rank[Value]{
+			Width: 1,
+			At:    reductionRank,
+		},
 		Hash:      Value.Hash,
 		Retention: axis.ImmutableRetention[Value](),
 		Canonical: canonicalDescriptor(),
@@ -24,6 +32,32 @@ func Spec() axis.Spec[Value] {
 		BoundaryProject: func(Value) Value {
 			return Top()
 		},
+	}
+}
+
+func widenRank(value Value, _ int) uint64 {
+	switch value.kind {
+	case bottom:
+		return 2
+	case gradualTop, explicitTop:
+		return 1
+	case top:
+		return 0
+	default:
+		panic("evidence: invalid rank value")
+	}
+}
+
+func reductionRank(value Value, _ int) uint64 {
+	switch value.kind {
+	case bottom:
+		return 0
+	case gradualTop, explicitTop:
+		return 1
+	case top:
+		return 2
+	default:
+		panic("evidence: invalid rank value")
 	}
 }
 

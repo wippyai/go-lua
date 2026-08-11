@@ -11,7 +11,10 @@ func cachedContainsFlags(t Type) (containsAny, containsNever, containsTypeParam,
 		flags := n.containsFlags()
 		return flags.containsAny, flags.containsNever, flags.containsTypeParam, flags.containsInstantiated
 	case *Instantiated:
-		return n.containsAny, n.containsNever, n.containsTypeParam, true
+		// A Generic's declaration-owned formals are bound by an
+		// Instantiated node.  They are not free formals of the application;
+		// only an argument that itself remains open keeps the application open.
+		return n.containsAny, n.containsNever, instantiatedContainsTypeParam(n), true
 	case *TypeParam:
 		return n.containsAny, n.containsNever, true, n.containsInstantiated
 	case *Optional:
@@ -74,8 +77,28 @@ func knownContainsTypeParam(t Type) bool {
 	if t == nil {
 		return false
 	}
+	if instantiated, ok := t.(*Instantiated); ok {
+		return instantiatedContainsTypeParam(instantiated)
+	}
 	_, _, containsTypeParam, _ := cachedContainsFlags(t)
 	return containsTypeParam
+}
+
+// instantiatedContainsTypeParam reports free formal containment for one
+// application. The application's Generic is a binder: its declaration
+// formals are substituted by TypeArgs and therefore do not, by themselves,
+// make a concrete application open. ValidateStaticGenericRecurrence remains
+// the owner-side law for malformed foreign formals in the generic body.
+func instantiatedContainsTypeParam(value *Instantiated) bool {
+	if value == nil {
+		return false
+	}
+	for _, argument := range value.TypeArgs {
+		if ContainsTypeParam(argument) {
+			return true
+		}
+	}
+	return false
 }
 
 func knownContainsInstantiated(t Type) bool {

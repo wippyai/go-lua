@@ -112,6 +112,12 @@ func (sc *Scanner) scanDot(tok *ast.Token, buf *bytes.Buffer) error {
 func (sc *Scanner) scanColon(tok *ast.Token) {
 	if sc.Peek() == ':' {
 		sc.Next()
+		if sc.Peek() == '<' {
+			sc.Next()
+			tok.Type = TTypeArgsOpen
+			tok.Str = "::<"
+			return
+		}
 		if name, ok := sc.tryLabelLookahead(); ok {
 			tok.Type = TLabel
 			tok.Str = name
@@ -630,11 +636,11 @@ var friendlyTokenNames = map[string]string{
 	"TNil": "'nil'", "TNot": "'not'", "TOr": "'or'", "TReturn": "'return'",
 	"TRepeat": "'repeat'", "TThen": "'then'", "TTrue": "'true'", "TUntil": "'until'",
 	"TWhile": "'while'", "TGoto": "'goto'",
-	"TType": "'type'", "TInterface": "'interface'", "TReadonly": "'readonly'", "TAs": "'as'",
+	"TInterface": "'interface'", "TReadonly": "'readonly'", "TAs": "'as'",
 	"TAsserts": "'asserts'", "TIs": "'is'", "TTypeof": "'typeof'", "TKeyof": "'keyof'", "TExtends": "'extends'",
 	"TFun":  "'fun'",
 	"TEqeq": "'=='", "TNeq": "'~='", "TLte": "'<='", "TGte": "'>='",
-	"T2Comma": "'..'", "T3Comma": "'...'", "T2Colon": "'::'", "TLabel": "label",
+	"T2Comma": "'..'", "T3Comma": "'...'", "T2Colon": "'::'", "TTypeArgsOpen": "'::<'", "TLabel": "label",
 	"TShl": "'<<'", "TShr": "'>>'", "TIdiv": "'//'",
 	"TArrow": "'->'", "TQuestion": "'?'", "TBang": "'!'", "TQuestionColon": "'?:'",
 	"TIdent": "identifier", "TNumber": "number", "TString": "string",
@@ -787,7 +793,11 @@ func Parse(reader io.Reader, name string) (chunk []ast.Stmt, err error) {
 	lexer := &Lexer{NewScanner(reader, name), nil, false, ast.Token{Str: ""}, TNil, nil}
 	defer func() {
 		if e := recover(); e != nil {
-			err, _ = e.(error)
+			parseErr, ok := e.(error)
+			if !ok {
+				panic(e)
+			}
+			err = parseErr
 		}
 	}()
 	yyParse(lexer)
@@ -804,9 +814,13 @@ func ParseString(source, name string) (chunk []ast.Stmt, err error) {
 			if parseErr, ok := e.(*Error); ok {
 				parseErr.Source = source
 				err = parseErr
-			} else {
-				err, _ = e.(error)
+				return
 			}
+			parseErr, ok := e.(error)
+			if !ok {
+				panic(e)
+			}
+			err = parseErr
 		}
 	}()
 	yyParse(lexer)

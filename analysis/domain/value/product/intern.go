@@ -1,7 +1,6 @@
 package product
 
 import (
-	"reflect"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -9,22 +8,15 @@ import (
 	internal "github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
-// The interner is a cache, rather than an owner of every product value ever
-// constructed.  Values and summaries own their immutable nodes directly, and
-// product equality is structural, so evicting a canonical node can only lose a
-// pointer-identity fast path.  In particular, a long-lived checker registry
-// must not turn this cache into process-lifetime ownership of every temporary
-// transfer value from every unit it checks.
-//
-// Keeping the cache sharded also avoids serializing independent solver workers
-// on one process-global mutex.  FIFO eviction is sufficient here: this is a
-// bounded interning hint, not a semantic table.
+// The interner is a bounded owner-local hint, rather than an owner of every
+// product value ever constructed. Values and summaries own their immutable
+// nodes directly, and product equality is structural, so evicting a canonical
+// node can only lose a pointer-identity fast path. Each frozen product runtime
+// owns its interner; no process-global table retains registries or values.
 const (
 	internerShards       = 64
 	internerShardMaxNode = 256
 )
-
-var globalInterner = newInterner()
 
 type interner struct {
 	shards [internerShards]internerShard
@@ -32,12 +24,11 @@ type interner struct {
 
 type internerShard struct {
 	mu    sync.Mutex
-	nodes map[*axis.Registry]map[uint64][]*node
+	nodes map[uint64][]*node
 	fifo  []internerEntry
 }
 
 type internerEntry struct {
-	reg  *axis.Registry
 	hash uint64
 	node *node
 }
@@ -46,13 +37,8 @@ func newInterner() *interner {
 	return &interner{}
 }
 
-func (i *interner) shardFor(reg *axis.Registry, hash uint64) *internerShard {
-	// A lint worker shares one registry with its peers, so registry identity
-	// alone would collapse all of its product construction onto one mutex.
-	// Mix the stable candidate hash into the selection while retaining the
-	// registry-keyed buckets inside each shard.
-	address := uint64(reflect.ValueOf(reg).Pointer())
-	return &i.shards[((address>>3)^hash)&(internerShards-1)]
+func (i *interner) shardFor(hash uint64) *internerShard {
+	return &i.shards[hash&(internerShards-1)]
 }
 
 func (s *internerShard) evictOldest() {
@@ -63,8 +49,7 @@ func (s *internerShard) evictOldest() {
 	copy(s.fifo, s.fifo[1:])
 	s.fifo[len(s.fifo)-1] = internerEntry{}
 	s.fifo = s.fifo[:len(s.fifo)-1]
-	bucket := s.nodes[evicted.reg]
-	entries := bucket[evicted.hash]
+	entries := s.nodes[evicted.hash]
 	for index, existing := range entries {
 		if existing != evicted.node {
 			continue
@@ -73,14 +58,11 @@ func (s *internerShard) evictOldest() {
 		entries[len(entries)-1] = nil
 		entries = entries[:len(entries)-1]
 		if len(entries) == 0 {
-			delete(bucket, evicted.hash)
+			delete(s.nodes, evicted.hash)
 		} else {
-			bucket[evicted.hash] = entries
+			s.nodes[evicted.hash] = entries
 		}
 		break
-	}
-	if len(bucket) == 0 {
-		delete(s.nodes, evicted.reg)
 	}
 }
 
@@ -128,19 +110,15 @@ func internCanonicalNoBottom(rt *registryRuntime, shape Shape, p presence.Value,
 	}
 
 	h := rt.stableHash(shape, p, slots)
-	shard := globalInterner.shardFor(rt.reg, h)
+	shard := rt.interner.shardFor(h)
 	shard.mu.Lock()
 
-	bucket := shard.nodes[rt.reg]
-	if bucket == nil {
-		bucket = make(map[uint64][]*node)
-		if shard.nodes == nil {
-			shard.nodes = make(map[*axis.Registry]map[uint64][]*node)
-		}
-		shard.nodes[rt.reg] = bucket
+	bucket := shard.nodes[h]
+	if shard.nodes == nil {
+		shard.nodes = make(map[uint64][]*node)
 	}
 
-	for _, existing := range bucket[h] {
+	for _, existing := range bucket {
 		if rt.sameNode(existing, shape, p, slots) {
 			shard.mu.Unlock()
 			return Value{n: existing}
@@ -150,8 +128,9 @@ func internCanonicalNoBottom(rt *registryRuntime, shape Shape, p presence.Value,
 	stored := make([]slot, len(slots))
 	copy(stored, slots)
 	n := &node{reg: rt.reg, shape: shape, presence: p, slots: stored, hash: h}
-	bucket[h] = append(bucket[h], n)
-	shard.fifo = append(shard.fifo, internerEntry{reg: rt.reg, hash: h, node: n})
+	bucket = append(bucket, n)
+	shard.nodes[h] = bucket
+	shard.fifo = append(shard.fifo, internerEntry{hash: h, node: n})
 	if len(shard.fifo) > internerShardMaxNode {
 		shard.evictOldest()
 	}

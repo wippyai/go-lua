@@ -9,8 +9,7 @@ import (
 )
 
 // SubstituteEffectTypes returns a copy of row whose embedded type payloads have
-// been substituted with the provided generic bindings. It mirrors
-// SubstituteOperationalTypes for the handwritten effect-row vocabulary.
+// been substituted with the provided generic bindings.
 func SubstituteEffectTypes(row effect.Row, params []*typ.TypeParam, args []typ.Type) effect.Row {
 	if len(params) == 0 || len(params) != len(args) {
 		return row.Clone()

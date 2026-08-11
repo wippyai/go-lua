@@ -128,7 +128,7 @@ func RelativeStaticMemberSuffixSegments(key SuffixKey) ([]segment.Segment, bool)
 	if !ok || path.Symbol != 0 || path.Root != "" || len(path.Segments) == 0 {
 		return nil, false
 	}
-	return cloneSegments(path.Segments), true
+	return path.Segments, true
 }
 
 func cloneSegments(segments []segment.Segment) []segment.Segment {

@@ -12,19 +12,19 @@ const (
 	ControlIssueDuplicateLabel ControlIssueKind = iota + 1
 	ControlIssueUndefinedLabel
 	ControlIssueGotoEntersLocal
-	ControlIssueInvalidLabel
-	ControlIssueInvalidGoto
+	ControlIssueBreakOutsideLoop
 )
 
 // ControlIssue is binder-owned evidence that authored control cannot be
-// resolved soundly. Goto or Label identifies the offending statement; a
-// scope-entering Goto also carries its resolved Label. Previous identifies the
-// already-visible declaration for a duplicate Label. Local identifies the
+// resolved soundly. Goto, Label, or Break identifies the offending statement;
+// a scope-entering Goto also carries its resolved Label. Previous identifies
+// the already-visible declaration for a duplicate Label. Local identifies the
 // first local scope entered by an invalid Goto.
 type ControlIssue struct {
 	Kind     ControlIssueKind
 	Goto     *ast.GotoStmt
 	Label    *ast.LabelStmt
+	Break    *ast.BreakStmt
 	Previous *ast.LabelStmt
 	Local    symbol.ID
 }
@@ -86,12 +86,29 @@ type controlDeclaredUndo struct {
 type controlFunction struct {
 	locals []symbol.ID
 	blocks []int
+	loops  int
 
 	targets    map[string]int
 	targetUndo []controlTargetUndo
 
 	declared     map[string]int
 	declaredUndo []controlDeclaredUndo
+}
+
+func (c *controlBinder) enterLoop() {
+	fn := c.function()
+	if fn == nil {
+		return
+	}
+	fn.loops++
+}
+
+func (c *controlBinder) leaveLoop() {
+	fn := c.function()
+	if fn == nil || fn.loops == 0 {
+		return
+	}
+	fn.loops--
 }
 
 type controlBinder struct {
@@ -253,9 +270,6 @@ func (c *controlBinder) visitLabel(stmt *ast.LabelStmt) {
 	order := c.issueSlot()
 	labelIndex, known := c.labelAt[stmt]
 	if !known || labelIndex < 0 || labelIndex >= len(c.labels) {
-		c.addIssue(order, ControlIssue{
-			Kind: ControlIssueInvalidLabel, Label: stmt,
-		})
 		return
 	}
 	label := &c.labels[labelIndex]
@@ -291,12 +305,6 @@ func (c *controlBinder) visitGoto(stmt *ast.GotoStmt) {
 		return
 	}
 	order := c.issueSlot()
-	if stmt.Label == "" {
-		c.addIssue(order, ControlIssue{
-			Kind: ControlIssueInvalidGoto, Goto: stmt,
-		})
-		return
-	}
 	labelIndex, found := fn.targets[stmt.Label]
 	if !found {
 		c.addIssue(order, ControlIssue{
@@ -318,6 +326,15 @@ func (c *controlBinder) visitGoto(stmt *ast.GotoStmt) {
 		c.pending = make(map[int][]controlGoto)
 	}
 	c.pending[labelIndex] = append(c.pending[labelIndex], pending)
+}
+
+func (c *controlBinder) visitBreak(stmt *ast.BreakStmt) {
+	fn := c.function()
+	if fn == nil || stmt == nil || fn.loops != 0 {
+		return
+	}
+	order := c.issueSlot()
+	c.addIssue(order, ControlIssue{Kind: ControlIssueBreakOutsideLoop, Break: stmt})
 }
 
 func (c *controlBinder) resolveGoto(fn *controlFunction, pending controlGoto, labelIndex int) {

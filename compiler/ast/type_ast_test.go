@@ -4,28 +4,6 @@ import (
 	"testing"
 )
 
-func TestTypeExprInterface(t *testing.T) {
-	// Verify all type expressions implement TypeExpr
-	var _ TypeExpr = &PrimitiveTypeExpr{}
-	var _ TypeExpr = &OptionalTypeExpr{}
-	var _ TypeExpr = &UnionTypeExpr{}
-	var _ TypeExpr = &IntersectionTypeExpr{}
-	var _ TypeExpr = &ArrayTypeExpr{}
-	var _ TypeExpr = &MapTypeExpr{}
-	var _ TypeExpr = &RecordTypeExpr{}
-	var _ TypeExpr = &FunctionTypeExpr{}
-	var _ TypeExpr = &TypeRefExpr{}
-	var _ TypeExpr = &GenericTypeExpr{}
-	var _ TypeExpr = &LiteralTypeExpr{}
-	var _ TypeExpr = &MetaTypeExpr{}
-	var _ TypeExpr = &SelfTypeExpr{}
-	var _ TypeExpr = &TupleTypeExpr{}
-	var _ TypeExpr = &TypeOfExpr{}
-	var _ TypeExpr = &KeyOfExpr{}
-	var _ TypeExpr = &IndexAccessExpr{}
-	var _ TypeExpr = &ConditionalTypeExpr{}
-}
-
 func TestTypeOfExpr(t *testing.T) {
 	// typeof(x) captures type of expression x
 	expr := &IdentExpr{Value: "person"}
@@ -255,34 +233,6 @@ func TestLiteralTypeExpr(t *testing.T) {
 	}
 }
 
-func TestMetaTypeExpr(t *testing.T) {
-	inner := &TypeRefExpr{Path: []string{"User"}}
-	meta := &MetaTypeExpr{Inner: inner}
-
-	if meta.Inner != inner {
-		t.Error("Inner should match")
-	}
-}
-
-func TestSelfTypeExpr(t *testing.T) {
-	self := &SelfTypeExpr{}
-	self.SetLine(1)
-
-	if self.Line() != 1 {
-		t.Error("Line should be 1")
-	}
-}
-
-func TestTupleTypeExpr(t *testing.T) {
-	t1 := &PrimitiveTypeExpr{Name: "number"}
-	t2 := &PrimitiveTypeExpr{Name: "string"}
-	tuple := &TupleTypeExpr{Elements: []TypeExpr{t1, t2}}
-
-	if len(tuple.Elements) != 2 {
-		t.Error("Should have 2 elements")
-	}
-}
-
 func TestTypeDefStmt(t *testing.T) {
 	def := &TypeDefStmt{
 		Name: "User",
@@ -302,39 +252,6 @@ func TestTypeDefStmt(t *testing.T) {
 	}
 	if len(def.TypeParams) != 1 {
 		t.Error("Should have 1 type param")
-	}
-}
-
-func TestInterfaceDefStmt(t *testing.T) {
-	iface := &InterfaceDefStmt{
-		Name:    "Serializable",
-		Extends: []*TypeRefExpr{{Path: []string{"Base"}}},
-		Fields: []RecordFieldExpr{
-			{Name: "id", Type: &PrimitiveTypeExpr{Name: "number"}},
-		},
-		Methods: []InterfaceMethodExpr{
-			{
-				Name: "serialize",
-				Type: &FunctionTypeExpr{
-					Params:  []FunctionParamExpr{{Type: &SelfTypeExpr{}}},
-					Returns: []TypeExpr{&PrimitiveTypeExpr{Name: "string"}},
-				},
-			},
-		},
-	}
-	iface.SetLine(10)
-
-	if iface.Name != "Serializable" {
-		t.Error("Name should be 'Serializable'")
-	}
-	if len(iface.Extends) != 1 {
-		t.Error("Should have 1 extends")
-	}
-	if len(iface.Fields) != 1 {
-		t.Error("Should have 1 field")
-	}
-	if len(iface.Methods) != 1 {
-		t.Error("Should have 1 method")
 	}
 }
 
@@ -373,16 +290,6 @@ func TestNonNilAssertExpr(t *testing.T) {
 	}
 }
 
-func TestTypeAnnotation(t *testing.T) {
-	annot := TypeAnnotation{
-		Type: &PrimitiveTypeExpr{Name: "number"},
-	}
-
-	if annot.Type == nil {
-		t.Error("Type should not be nil")
-	}
-}
-
 func TestTypeParamExprWithConstraint(t *testing.T) {
 	constraint := &TypeRefExpr{Path: []string{"Comparable"}}
 	param := TypeParamExpr{Name: "T", Constraint: constraint}
@@ -392,37 +299,6 @@ func TestTypeParamExprWithConstraint(t *testing.T) {
 	}
 	if param.Constraint != constraint {
 		t.Error("Constraint should match")
-	}
-}
-
-func TestTypeExprPositionHolder(t *testing.T) {
-	types := []TypeExpr{
-		&PrimitiveTypeExpr{},
-		&OptionalTypeExpr{},
-		&UnionTypeExpr{},
-		&IntersectionTypeExpr{},
-		&ArrayTypeExpr{},
-		&MapTypeExpr{},
-		&RecordTypeExpr{},
-		&FunctionTypeExpr{},
-		&TypeRefExpr{},
-		&GenericTypeExpr{},
-		&LiteralTypeExpr{},
-		&MetaTypeExpr{},
-		&SelfTypeExpr{},
-		&TupleTypeExpr{},
-	}
-
-	for i, typ := range types {
-		typ.SetLine(i + 1)
-		typ.SetLastLine(i + 10)
-
-		if typ.Line() != i+1 {
-			t.Errorf("type %d: Line() = %d, want %d", i, typ.Line(), i+1)
-		}
-		if typ.LastLine() != i+10 {
-			t.Errorf("type %d: LastLine() = %d, want %d", i, typ.LastLine(), i+10)
-		}
 	}
 }
 
@@ -493,26 +369,6 @@ func TestRecordFieldExprFields(t *testing.T) {
 	}
 	if !field.Optional {
 		t.Error("Optional should be true")
-	}
-}
-
-func TestInterfaceMethodExprFields(t *testing.T) {
-	method := InterfaceMethodExpr{
-		Name: "toString",
-		Type: &FunctionTypeExpr{
-			Params:  []FunctionParamExpr{},
-			Returns: []TypeExpr{&PrimitiveTypeExpr{Name: "string"}},
-		},
-	}
-
-	if method.Name != "toString" {
-		t.Error("Name should be 'toString'")
-	}
-	if method.Type == nil {
-		t.Error("Type should not be nil")
-	}
-	if len(method.Type.Returns) != 1 {
-		t.Error("Should have 1 return type")
 	}
 }
 

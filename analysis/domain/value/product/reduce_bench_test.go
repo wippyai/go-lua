@@ -13,7 +13,7 @@ func benchReg() *axis.Registry {
 	reg := axis.NewRegistry()
 	axis.Register(reg, runtimekind.Spec())
 	axis.Register(reg, typewitness.Spec())
-	reg.Freeze()
+	freezeTestRegistry(reg)
 	return reg
 }
 

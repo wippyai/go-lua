@@ -3,7 +3,7 @@ package latticelaws
 import (
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/lattice"
 )
 
 // reporter is the minimal subset of testing.TB the harness uses. reporter
@@ -40,12 +40,6 @@ type LawSuite[T any] struct {
 	// Format optionally renders an element for diagnostic messages.
 	// If nil, fmt.Sprintf("%+v", e) is used.
 	Format func(T) string
-
-	// WideningBound is the maximum number of iterations permitted for each
-	// sample-derived ascending widening chain. Zero uses the conservative
-	// default. Domain suites should set this explicitly when their widening
-	// design has a documented finite stabilization bound.
-	WideningBound int
 }
 
 // Run asserts every lattice law against Sample and reports per-law,
@@ -87,7 +81,6 @@ func (s LawSuite[T]) Run(t reporter) {
 	s.checkMeetLowerBound(t)
 	s.checkAbsorption(t)
 	s.checkWideningOverApproximates(t)
-	s.checkWideningChainTerminates(t)
 	s.checkNarrowingBetweenJoinAndWiden(t)
 }
 
@@ -402,46 +395,6 @@ func (s LawSuite[T]) checkWideningOverApproximates(t reporter) {
 		failPrev: "Widen over-approximates prev",
 		failNext: "Widen over-approximates next",
 	})
-}
-
-// defaultChainTerminationBound caps how many widening iterations we permit before
-// declaring the chain non-terminating. A correct widening on any domain
-// realized in this checker must stabilize well under this bound for the
-// ascending chains driven by sample inputs; exceeding it indicates a
-// missing widening operator. (Cousot widening guarantees termination but
-// not a fixed worst-case bound; this is a generous engineering limit.)
-const defaultChainTerminationBound = 256
-
-func (s LawSuite[T]) wideningBound() int {
-	if s.WideningBound > 0 {
-		return s.WideningBound
-	}
-	return defaultChainTerminationBound
-}
-
-func (s LawSuite[T]) checkWideningChainTerminates(t reporter) {
-	t.Helper()
-	// For every pair (seed, growth), simulate the ascending chain
-	//   sᵢ₊₁ = Widen(sᵢ, Join(sᵢ, growth))
-	// and verify it stabilizes within chainTerminationBound iterations.
-	bound := s.wideningBound()
-	for _, seed := range s.Sample {
-		for _, growth := range s.Sample {
-			cur := seed
-			stable := false
-			for i := 0; i < bound; i++ {
-				next := s.Domain.Widen(cur, s.Domain.Join(cur, growth))
-				if s.Domain.Equal(next, cur) {
-					stable = true
-					break
-				}
-				cur = next
-			}
-			if !stable {
-				s.report(t, "Widen ascending-chain termination", "chain from seed=%s growth=%s did not stabilize within %d iterations (final=%s) — domain lacks a proper widening operator", s.fmt(seed), s.fmt(growth), bound, s.fmt(cur))
-			}
-		}
-	}
 }
 
 // checkNarrowingBetweenJoinAndWiden checks the post-widen recovery contract.

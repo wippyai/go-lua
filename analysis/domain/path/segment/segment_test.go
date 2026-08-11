@@ -121,6 +121,68 @@ func TestParseFormattedSegmentsReturnsDefensiveCopy(t *testing.T) {
 	first[0].Name = "mutated"
 	second, ok := ParseFormattedSegments(".field")
 	if !ok || len(second) != 1 || second[0].Name != "field" {
-		t.Fatalf("cached formatted segments were mutated: %#v/%v", second, ok)
+		t.Fatalf("repeated parse shared mutable storage: %#v/%v", second, ok)
+	}
+}
+
+func TestParseFormattedSegmentsDoesNotShareStorage(t *testing.T) {
+	first, ok := ParseFormattedSegments(`.field["key"]`)
+	if !ok || len(first) != 2 {
+		t.Fatalf("ParseFormattedSegments = %#v/%v", first, ok)
+	}
+	first[0].Name = "mutated"
+
+	second, ok := ParseFormattedSegments(`.field["key"]`)
+	if !ok || len(second) != 2 || second[0].Name != "field" || second[1].Name != "key" {
+		t.Fatalf("repeated parse shared mutable storage: %#v/%v", second, ok)
+	}
+}
+
+func TestParseFormattedSegmentsAllocatesOnlyOwnedResult(t *testing.T) {
+	var got []Segment
+	allocs := testing.AllocsPerRun(1000, func() {
+		got, _ = ParseFormattedSegments(".field")
+	})
+	if len(got) != 1 || got[0] != (Segment{Kind: SegmentField, Name: "field"}) {
+		t.Fatalf("ParseFormattedSegments = %#v", got)
+	}
+	if allocs > 1 {
+		t.Fatalf("ParseFormattedSegments allocations/run = %.1f, want one owned segment slice", allocs)
+	}
+}
+
+func TestValidFormattedSegmentsDoesNotAllocate(t *testing.T) {
+	const suffix = `.field["a\\b"][42]`
+	if !ValidFormattedSegments(suffix) {
+		t.Fatalf("ValidFormattedSegments(%q) rejected canonical suffix", suffix)
+	}
+	if ValidFormattedSegments(`[999999999999999999999999999999999999]`) {
+		t.Fatal("ValidFormattedSegments accepted an overflowing integer index")
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		if !ValidFormattedSegments(suffix) {
+			t.Fatal("ValidFormattedSegments rejected canonical suffix during allocation check")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("ValidFormattedSegments allocations/run = %.1f, want zero", allocs)
+	}
+}
+
+func TestValidFormattedSegmentsMatchesParser(t *testing.T) {
+	for _, suffix := range []string{
+		"",
+		`.field["key"][1]`,
+		`.field["a\\b"][-2]`,
+		".",
+		`["unterminated]`,
+		`["bad\q"]`,
+		"[1x]",
+		"[999999999999999999999999999999999999]",
+	} {
+		_, parsed := ParseFormattedSegments(suffix)
+		if got := ValidFormattedSegments(suffix); got != parsed {
+			t.Fatalf("ValidFormattedSegments(%q) = %v, ParseFormattedSegments = %v", suffix, got, parsed)
+		}
 	}
 }

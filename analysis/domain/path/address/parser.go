@@ -29,7 +29,6 @@ func LocalPathFromKey(key pathdom.PathKey) (pathdom.Path, bool) {
 	if !ok || path.Symbol == 0 || path.Version <= 0 {
 		return pathdom.Path{}, false
 	}
-	path.Segments = cloneSegments(path.Segments)
 	return path, true
 }
 
@@ -121,6 +120,6 @@ func PlaceholderPathFromKey(key pathdom.PathKey) (pathdom.Path, bool) {
 	if base.Root != path.Root {
 		return pathdom.Path{}, false
 	}
-	base.Segments = cloneSegments(path.Segments)
+	base.Segments = path.Segments
 	return base, true
 }

@@ -32,7 +32,7 @@ func TestCanonicalKeyGrammarRoundTripsEveryRootForm(t *testing.T) {
 			got.Segments = append(got.Segments, segment.Segment{Kind: segment.SegmentField, Name: "mutated"})
 			again, _ := ParseKey(tc.key)
 			if !reflect.DeepEqual(again, tc.path) {
-				t.Fatalf("ParseKey(%q) exposed interned segment storage: %#v", tc.key, again)
+				t.Fatalf("ParseKey(%q) exposed shared segment storage: %#v", tc.key, again)
 			}
 		})
 	}

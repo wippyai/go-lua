@@ -1,6 +1,7 @@
 package assertion
 
 import (
+	"math/bits"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -11,18 +12,52 @@ var Key = axis.NewKey[Value]("assertion")
 
 func Spec() axis.Spec[Value] {
 	return axis.Spec[Value]{
-		Key:       Key,
-		Bottom:    Bottom,
-		Top:       Top,
-		Equal:     Equal,
-		LessOrEq:  func(a, b Value) bool { return b.Covers(a) },
-		Join:      Join,
-		Meet:      Meet,
-		Widen:     Widen,
+		Key:      Key,
+		Bottom:   Bottom,
+		Top:      Top,
+		Equal:    Equal,
+		LessOrEq: func(a, b Value) bool { return b.Covers(a) },
+		Join:     Join,
+		Meet:     Meet,
+		Widen:    Widen,
+		WidenRank: axis.Rank[Value]{
+			Width: 1,
+			At:    widenRank,
+		},
+		ReductionRank: axis.Rank[Value]{
+			Width: 1,
+			At:    reductionRank,
+		},
 		Hash:      Value.Hash,
 		Retention: axis.ImmutableRetention[Value](),
 		Canonical: canonicalDescriptor(),
 		Boundary:  axis.PortableIdentity,
+	}
+}
+
+func widenRank(value Value, _ int) uint64 {
+	switch value.state {
+	case bottom:
+		return uint64(len(flagOrder) + 2)
+	case concrete:
+		return uint64(1 + bits.OnesCount8(uint8(normalizedFlags(value))))
+	case top:
+		return 0
+	default:
+		panic("assertion: invalid rank value")
+	}
+}
+
+func reductionRank(value Value, _ int) uint64 {
+	switch value.state {
+	case bottom:
+		return 0
+	case concrete:
+		return uint64(len(flagOrder) + 1 - bits.OnesCount8(uint8(normalizedFlags(value))))
+	case top:
+		return uint64(len(flagOrder) + 1)
+	default:
+		panic("assertion: invalid rank value")
 	}
 }
 

@@ -1,0 +1,461 @@
+package index
+
+import (
+	heapdomain "github.com/wippyai/go-lua/analysis/domain/heap"
+	"github.com/wippyai/go-lua/analysis/domain/heap/keymatch"
+	"github.com/wippyai/go-lua/analysis/domain/pack"
+	"github.com/wippyai/go-lua/analysis/domain/runtimekind"
+	valuedomain "github.com/wippyai/go-lua/analysis/domain/value"
+	"github.com/wippyai/go-lua/analysis/engine"
+)
+
+// rawSetView is the authenticated finite observation used by both transfer
+// and evidence. Pack/Value facts remain owner-issued selections; the view
+// carries no new coordinates or mutation authority.
+type rawSetView struct {
+	key         rawSelected[valuedomain.Value]
+	keyCount    int
+	heapCount   int
+	packCount   int
+	pack        func(heapdomain.RawPayloadTag) rawSelected[pack.Value]
+	sourceCount int
+	source      func(rawSourceTag) rawSelected[valuedomain.Value]
+}
+
+func (rule *RawSetRule) transfer(access engine.Access[heapdomain.Value, Access]) bool {
+	operand, ok := engine.Operand(access)
+	if !ok || !rule.owns(operand) {
+		return false
+	}
+	return engine.Product(access, func(row engine.Row) bool {
+		receiverCells, receiverOK := engine.ReadValue(access, row, rule.receiver)
+		keys, keyOK := engine.ReadValue(access, row, rule.key)
+		heaps, heapOK := engine.ReadValue(access, row, rule.heapRead)
+		packs, packOK := engine.ReadValue(access, row, rule.packRead)
+		sources, sourceOK := engine.ReadValue(access, row, rule.source)
+		if !receiverOK || !keyOK || !heapOK || !packOK || !sourceOK || receiverCells.Count() != 1 {
+			return false
+		}
+		_, receiverPresent, receiverAvailable := receiverCells.At(0)
+		if !receiverAvailable {
+			return false
+		}
+		descriptor, descriptorOK := rule.payloadForWrite(operand)
+		if !descriptorOK {
+			return false
+		}
+		scratch := rule.takeSetScratch()
+		defer rule.putSetScratch(scratch)
+		view, viewOK := transferRawSetView(access, row, operand, keys, heaps, packs, sources, scratch)
+		if !viewOK || !rawSetSelectionShape(operand, descriptor.descriptor, view) {
+			return false
+		}
+		// An empty Heap route is the explicit no-candidate disposition. This
+		// covers absent receivers and definitely invalid dynamic nil/NaN keys;
+		// Pack/Value selectors must be empty downstream of that route.
+		if view.heapCount == 0 {
+			if _, dynamic := operand.DynamicKey(); dynamic {
+				if receiverPresent && view.keyCount != 1 || !receiverPresent && view.keyCount != 0 {
+					return false
+				}
+				// A live receiver's dynamic-key route is always downstream
+				// of one authenticated, present key observation.  An absent
+				// key cell is not the explicit invalid-key case; accepting it
+				// would let a missing premise masquerade as NoSelection.
+				if receiverPresent && (!view.key.valid || !view.key.found || !view.key.present) {
+					return false
+				}
+			}
+			return engine.NoSelection(access, row, heaps)
+		}
+		if !receiverPresent {
+			return false
+		}
+		return engine.StageSelection(access, row, heaps, func(tag heapdomain.RawRouteTag, cells engine.OrderedCells[heapdomain.Value]) (heapdomain.Value, bool) {
+			if cells.Count() != 1 {
+				return heapdomain.Value{}, false
+			}
+			fact, present, available := cells.At(0)
+			if !available {
+				return heapdomain.Value{}, false
+			}
+			if !present {
+				return rule.heap.Schema().Bottom(), true
+			}
+			return rule.mutateRoute(operand, tag, fact, view)
+		})
+	})
+}
+
+func transferRawSetView(
+	access engine.Access[heapdomain.Value, Access], row engine.Row, operand Access,
+	keys engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]],
+	heaps engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
+	packs engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]],
+	sources engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]],
+	scratch *rawSetScratch,
+) (rawSetView, bool) {
+	if scratch == nil {
+		return rawSetView{}, false
+	}
+	view := rawSetView{}
+	var ok bool
+	view.keyCount, ok = engine.SelectionCount(access, row, keys)
+	if !ok {
+		return rawSetView{}, false
+	}
+	view.heapCount, ok = engine.SelectionCount(access, row, heaps)
+	if !ok {
+		return rawSetView{}, false
+	}
+	view.packCount, ok = engine.SelectionCount(access, row, packs)
+	if !ok {
+		return rawSetView{}, false
+	}
+	view.sourceCount, ok = engine.SelectionCount(access, row, sources)
+	if !ok {
+		return rawSetView{}, false
+	}
+	if !buildTransferIndex(access, row, packs, view.packCount, &scratch.pack) ||
+		!buildTransferIndex(access, row, sources, view.sourceCount, &scratch.source) {
+		return rawSetView{}, false
+	}
+	if _, dynamic := operand.DynamicKey(); dynamic {
+		if view.keyCount > 1 {
+			return rawSetView{}, false
+		}
+		if view.keyCount == 1 {
+			view.key = transferSelectionValue(access, row, keys, nil, uint64(1))
+			if !view.key.valid || !view.key.found {
+				return rawSetView{}, false
+			}
+		}
+	} else if view.keyCount != 0 {
+		return rawSetView{}, false
+	}
+	view.pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
+		return transferSelectionValue(access, row, packs, &scratch.pack, tag)
+	}
+	view.source = func(tag rawSourceTag) rawSelected[valuedomain.Value] {
+		return transferSelectionValue(access, row, sources, &scratch.source, tag)
+	}
+	return view, true
+}
+
+func rawSetSelectionShape(access Access, descriptor rawPayload, view rawSetView) bool {
+	if view.keyCount < 0 || view.heapCount < 0 || view.packCount < 0 || view.sourceCount < 0 {
+		return false
+	}
+	if descriptor.kind != rawPayloadFixed && descriptor.kind != rawPayloadTail && descriptor.kind != rawPayloadNil {
+		return false
+	}
+	if _, dynamic := access.DynamicKey(); dynamic {
+		if view.keyCount > 1 || view.heapCount > 0 && view.keyCount != 1 {
+			return false
+		}
+		if view.keyCount == 1 && (!view.key.valid || !view.key.found) {
+			return false
+		}
+		if view.heapCount == 0 && view.keyCount == 1 && !view.key.present {
+			return false
+		}
+		// A routed write must be downstream of the one present dynamic-key
+		// observation. A selected-but-absent key can lawfully settle the
+		// explicit no-route branch, but it cannot carry a Heap route.
+		if view.heapCount > 0 && (!view.key.valid || !view.key.found || !view.key.present) {
+			return false
+		}
+	} else if view.keyCount != 0 {
+		return false
+	}
+	if view.heapCount == 0 {
+		return view.packCount == 0 && view.sourceCount == 0
+	}
+	wantPack := 0
+	switch descriptor.kind {
+	case rawPayloadFixed, rawPayloadNil:
+		// These payloads have no Pack frontier.
+	case rawPayloadTail:
+		wantPack = 1
+	default:
+		return false
+	}
+	return view.packCount == wantPack && view.sourceCount == len(descriptor.sources)
+}
+
+// mutateRoute is the common Heap-owned reducer used by transfer and
+// evidence. It consumes one selected predecessor route, one exact sealed RHS
+// descriptor, and existing Pack/Value observations, then joins only the
+// branches returned by RawStore/RawDelete. Frozen/error outcomes widen to
+// Heap.Top and are never converted into ordinary writes.
+func (rule *RawSetRule) mutateRoute(access Access, route heapdomain.RawRouteTag, fact heapdomain.Value, view rawSetView) (heapdomain.Value, bool) {
+	if !rule.owns(access) || !fact.Valid() {
+		return heapdomain.Value{}, false
+	}
+	descriptor, descriptorOK := rule.payloadForWrite(access)
+	if !descriptorOK {
+		return heapdomain.Value{}, false
+	}
+	if (descriptor.descriptor.kind == rawPayloadTail && view.pack == nil) ||
+		(descriptor.descriptor.kind == rawPayloadFixed && view.source == nil) {
+		return heapdomain.Value{}, false
+	}
+	indexAccess, indexOK := access.IndexAccess()
+	slot, slotOK := rule.heap.Schema().SlotForIndexAccess(indexAccess)
+	payload, payloadOK := rule.heap.Schema().PayloadForIndexAccess(indexAccess)
+	if !indexOK || !slotOK || !payloadOK {
+		return heapdomain.Value{}, false
+	}
+	values := rule.values.Schema()
+	if _, dynamic := access.DynamicKey(); dynamic && view.key.found && !values.Equal(view.key.value, view.key.value) {
+		return heapdomain.Value{}, false
+	}
+	schema := rule.heap.Schema()
+	result := schema.Bottom()
+	var frozen, changed, preserved bool
+	apply := func(selector heapdomain.KeySelector, keyChild heapdomain.Containment) bool {
+		if !selector.Valid() || !keyChild.Valid() {
+			return false
+		}
+		return schema.VisitRawAccessRoute(route, fact, selector, func(raw heapdomain.RawAccess) bool {
+			if !raw.Valid() {
+				return false
+			}
+			return rule.applyPayload(raw, descriptor.descriptor, descriptor.tag, view, access, slot, payload, keyChild, &result, &frozen, &changed, &preserved)
+		})
+	}
+	if _, dynamic := access.DynamicKey(); dynamic {
+		if !view.key.valid || !view.key.found || !view.key.present || view.key.value.IsBottom() {
+			return fact, true
+		}
+		if view.key.value.IsTop() {
+			unknown, unknownOK := schema.ContainmentUnknown()
+			if !unknownOK || !rule.selectors.Visit(view.key.value, func(selector heapdomain.KeySelector) bool { return apply(selector, unknown) }) {
+				return heapdomain.Value{}, false
+			}
+		} else {
+			selectors := 0
+			if !values.VisitAtoms(view.key.value, func(atom valuedomain.Atom) bool {
+				alternative, projected := keymatch.Project(schema, values, atom)
+				if !projected {
+					return true
+				}
+				selectors++
+				return apply(alternative.Selector(), alternative.Containment())
+			}) {
+				return heapdomain.Value{}, false
+			}
+			if selectors == 0 {
+				preserved = true
+			}
+		}
+	} else {
+		selector, keyChild, selectorOK := staticSetSelector(rule, access)
+		if !selectorOK || !apply(selector, keyChild) {
+			return heapdomain.Value{}, false
+		}
+	}
+	if frozen {
+		return schema.Top(), true
+	}
+	if preserved {
+		joined, joinedOK := heapdomain.Join(result, fact)
+		if !joinedOK {
+			return heapdomain.Value{}, false
+		}
+		result = joined
+	}
+	if !changed && !preserved {
+		return fact, true
+	}
+	return result, true
+}
+
+func (rule *RawSetRule) applyPayload(
+	raw heapdomain.RawAccess, descriptor rawPayload, payloadTag heapdomain.RawPayloadTag,
+	view rawSetView, access Access, slot heapdomain.Slot, payload heapdomain.Payload,
+	keyChild heapdomain.Containment, result *heapdomain.Value, frozen, changed, preserved *bool,
+) bool {
+	if result == nil || frozen == nil || changed == nil || preserved == nil {
+		return false
+	}
+	schema := rule.heap.Schema()
+	switch descriptor.kind {
+	case rawPayloadNil:
+		return rule.applyDelete(schema, raw, result, frozen, changed)
+	case rawPayloadFixed:
+		tag, found := descriptor.byValue[descriptor.fixed]
+		if !found {
+			return false
+		}
+		return rule.applySourceTag(schema, raw, tag, view, access, slot, payload, keyChild, result, frozen, changed, preserved)
+	case rawPayloadTail:
+		selected := view.pack(payloadTag)
+		if !selected.valid || !selected.found {
+			return false
+		}
+		if !selected.present || selected.value.IsBottom() {
+			*preserved = true
+			return true
+		}
+		root, rootOK := descriptor.payload.Root()
+		values, valuesOK := descriptor.payload.Selection()
+		if !rootOK || !valuesOK {
+			return false
+		}
+		observation, observed := rule.packs.Schema().ObserveScalar(root, selected.value, descriptor.values, values)
+		if !observed {
+			return false
+		}
+		if observation.IsBottom() {
+			*preserved = true
+			return true
+		}
+		if observation.IsTop() {
+			return rule.applyTop(schema, raw, access, slot, payload, keyChild, result, frozen, changed)
+		}
+		for index := 0; index < observation.Count(); index++ {
+			scalar, scalarOK := observation.At(index)
+			if !scalarOK || !rule.applyScalar(raw, descriptor, scalar, view, access, slot, payload, keyChild, result, frozen, changed, preserved) {
+				return false
+			}
+		}
+		return true
+	case rawPayloadInitial:
+		return false
+	default:
+		return false
+	}
+}
+
+func (rule *RawSetRule) applyScalar(
+	raw heapdomain.RawAccess, descriptor rawPayload, scalar pack.Scalar, view rawSetView,
+	access Access, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
+	result *heapdomain.Value, frozen, changed, preserved *bool,
+) bool {
+	if scalar.Kind() == pack.ScalarEndpoint {
+		value, valueOK := rule.packs.Schema().ScalarSource(scalar)
+		tag, tagOK := descriptor.byValue[value]
+		return valueOK && tagOK && rule.applySourceTag(rule.heap.Schema(), raw, tag, view, access, slot, payload, keyChild, result, frozen, changed, preserved)
+	}
+	kinds, kindsOK := descriptor.payload.ScalarMayRuntimeKinds(scalar)
+	value, valueOK := rule.values.Schema().ForRuntimeKinds(kinds)
+	return kindsOK && valueOK && rule.applySourceValue(rule.heap.Schema(), raw, value, access, slot, payload, keyChild, result, frozen, changed, preserved)
+}
+
+func (rule *RawSetRule) applySourceTag(
+	schema heapdomain.Schema, raw heapdomain.RawAccess, tag rawSourceTag, view rawSetView,
+	access Access, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
+	result *heapdomain.Value, frozen, changed, preserved *bool,
+) bool {
+	selected := view.source(tag)
+	if !selected.valid || !selected.found {
+		return false
+	}
+	if !selected.present || selected.value.IsBottom() {
+		*preserved = true
+		return true
+	}
+	return rule.applySourceValue(schema, raw, selected.value, access, slot, payload, keyChild, result, frozen, changed, preserved)
+}
+
+func (rule *RawSetRule) applySourceValue(
+	schema heapdomain.Schema, raw heapdomain.RawAccess, source valuedomain.Value,
+	access Access, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
+	result *heapdomain.Value, frozen, changed, preserved *bool,
+) bool {
+	values := rule.values.Schema()
+	if !values.Equal(source, source) {
+		return false
+	}
+	if source.IsBottom() {
+		*preserved = true
+		return true
+	}
+	if source.IsTop() {
+		return rule.applyTop(schema, raw, access, slot, payload, keyChild, result, frozen, changed)
+	}
+	atoms := 0
+	if !values.VisitAtoms(source, func(atom valuedomain.Atom) bool {
+		atoms++
+		if atom.RuntimeKinds().Contains(runtimekind.Nil) {
+			return rule.applyDelete(schema, raw, result, frozen, changed)
+		}
+		valueChild, valueChildOK := keymatch.Containment(schema, values, atom)
+		cell, cellOK := schema.CellPresent(slot, payload, valueChild, keyChild)
+		return valueChildOK && cellOK && rule.applyStore(schema, raw, cell, result, frozen, changed)
+	}) {
+		return false
+	}
+	if atoms == 0 {
+		*preserved = true
+	}
+	return true
+}
+
+func (rule *RawSetRule) applyTop(
+	schema heapdomain.Schema, raw heapdomain.RawAccess, access Access, slot heapdomain.Slot,
+	payload heapdomain.Payload, keyChild heapdomain.Containment, result *heapdomain.Value, frozen, changed *bool,
+) bool {
+	if !rule.applyDelete(schema, raw, result, frozen, changed) {
+		return false
+	}
+	unknown, unknownOK := schema.ContainmentUnknown()
+	if !unknownOK {
+		return false
+	}
+	cell, cellOK := schema.CellPresent(slot, payload, unknown, keyChild)
+	return cellOK && rule.applyStore(schema, raw, cell, result, frozen, changed)
+}
+
+func (rule *RawSetRule) applyStore(schema heapdomain.Schema, raw heapdomain.RawAccess, cell heapdomain.CellState, result *heapdomain.Value, frozen, changed *bool) bool {
+	branches, ok := schema.RawStore(raw, cell, heapdomain.MutationLicence{})
+	if !ok {
+		return false
+	}
+	if branches.FrozenError() {
+		*frozen = true
+	}
+	if next, nextOK := branches.Normal(); nextOK {
+		joined, joinedOK := heapdomain.Join(*result, next)
+		if !joinedOK {
+			return false
+		}
+		*result = joined
+		*changed = true
+	}
+	return true
+}
+
+func (rule *RawSetRule) applyDelete(schema heapdomain.Schema, raw heapdomain.RawAccess, result *heapdomain.Value, frozen, changed *bool) bool {
+	branches, ok := schema.RawDelete(raw, heapdomain.MutationLicence{})
+	if !ok {
+		return false
+	}
+	if branches.FrozenError() {
+		*frozen = true
+	}
+	if next, nextOK := branches.Normal(); nextOK {
+		joined, joinedOK := heapdomain.Join(*result, next)
+		if !joinedOK {
+			return false
+		}
+		*result = joined
+		*changed = true
+	}
+	return true
+}
+
+func (rule *RawSetRule) takeSetScratch() *rawSetScratch {
+	value, ok := rule.scratch.Get().(*rawSetScratch)
+	if !ok || value == nil {
+		return &rawSetScratch{}
+	}
+	return value
+}
+
+func (rule *RawSetRule) putSetScratch(value *rawSetScratch) {
+	if value != nil {
+		rule.scratch.Put(value)
+	}
+}

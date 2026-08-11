@@ -264,8 +264,10 @@ func TestParseRuntimeFunctionReturnClausePresence(t *testing.T) {
 function omitted()
 function void(): ()
 end`).(*ast.InterfaceDefStmt)
-	if iface.Methods[0].Type.Returns != nil || iface.Methods[1].Type.Returns == nil || len(iface.Methods[1].Type.Returns) != 0 {
-		t.Fatalf("interface returns = %#v / %#v, want nil / explicit empty", iface.Methods[0].Type.Returns, iface.Methods[1].Type.Returns)
+	first, firstOK := iface.Members[0].Type.(*ast.FunctionTypeExpr)
+	second, secondOK := iface.Members[1].Type.(*ast.FunctionTypeExpr)
+	if len(iface.Members) != 2 || !firstOK || !secondOK || first.Returns != nil || second.Returns == nil || len(second.Returns) != 0 {
+		t.Fatalf("interface members = %#v, want omitted and explicit-empty returns", iface.Members)
 	}
 }
 
@@ -700,6 +702,71 @@ func TestParseNonNilAssert(t *testing.T) {
 	}
 }
 
+func TestParseClaimExpressionSpans(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		lastColumn  int
+		assertShape func(*testing.T, ast.Expr)
+	}{
+		{
+			name:       "postfix bang includes authored token",
+			input:      "local x = false!",
+			lastColumn: 16,
+			assertShape: func(t *testing.T, expr ast.Expr) {
+				t.Helper()
+				if _, ok := expr.(*ast.NonNilAssertExpr); !ok {
+					t.Fatalf("expr = %T, want *ast.NonNilAssertExpr", expr)
+				}
+			},
+		},
+		{
+			name:       "as ends at target",
+			input:      "local x = false as boolean",
+			lastColumn: 26,
+			assertShape: func(t *testing.T, expr ast.Expr) {
+				t.Helper()
+				cast, ok := expr.(*ast.CastExpr)
+				if !ok || cast.Syntax != ast.CastSyntaxAs {
+					t.Fatalf("expr = %T/%v, want as CastExpr", expr, cast.Syntax)
+				}
+			},
+		},
+		{
+			name:       "colon colon ends at target",
+			input:      "local x = false :: boolean",
+			lastColumn: 26,
+			assertShape: func(t *testing.T, expr ast.Expr) {
+				t.Helper()
+				cast, ok := expr.(*ast.CastExpr)
+				if !ok || cast.Syntax != ast.CastSyntaxColonColon {
+					t.Fatalf("expr = %T/%v, want colon-colon CastExpr", expr, cast.Syntax)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stmts, err := Parse(strings.NewReader(test.input), "claim-span")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(stmts) != 1 {
+				t.Fatalf("statement count = %d, want 1", len(stmts))
+			}
+			local, ok := stmts[0].(*ast.LocalAssignStmt)
+			if !ok || len(local.Exprs) != 1 {
+				t.Fatalf("statement = %T with %d expressions, want one local expression", stmts[0], len(local.Exprs))
+			}
+			expr := local.Exprs[0]
+			test.assertShape(t, expr)
+			if expr.Line() != 1 || expr.Column() != 11 || expr.LastLine() != 1 || expr.LastColumn() != test.lastColumn {
+				t.Fatalf("span = %d:%d-%d:%d, want 1:11-1:%d", expr.Line(), expr.Column(), expr.LastLine(), expr.LastColumn(), test.lastColumn)
+			}
+		})
+	}
+}
+
 func TestParseInterfaceDecl(t *testing.T) {
 	input := `interface Serializable
 		function serialize(self: any): string
@@ -718,11 +785,11 @@ func TestParseInterfaceDecl(t *testing.T) {
 	if iface.Name != "Serializable" {
 		t.Errorf("name = %q, want 'Serializable'", iface.Name)
 	}
-	if len(iface.Methods) != 1 {
-		t.Errorf("got %d methods, want 1", len(iface.Methods))
+	if len(iface.Members) != 1 {
+		t.Errorf("got %d members, want 1", len(iface.Members))
 	}
-	if iface.Methods[0].Name != "serialize" {
-		t.Errorf("method name = %q, want 'serialize'", iface.Methods[0].Name)
+	if len(iface.Members) == 1 && (iface.Members[0].Kind != ast.InterfaceMethodMember || iface.Members[0].Name != "serialize") {
+		t.Errorf("member = %#v, want method serialize", iface.Members[0])
 	}
 }
 
@@ -753,8 +820,8 @@ func TestParseEmptyInterface(t *testing.T) {
 	if iface.Name != "Empty" {
 		t.Errorf("name = %q, want 'Empty'", iface.Name)
 	}
-	if len(iface.Methods) != 0 {
-		t.Errorf("got %d methods, want 0", len(iface.Methods))
+	if len(iface.Members) != 0 {
+		t.Errorf("got %d members, want 0", len(iface.Members))
 	}
 }
 
@@ -1316,6 +1383,22 @@ func TestParseUnionWithLiterals(t *testing.T) {
 
 // Annotation parsing tests
 
+// annotatedPrimitive separates the semantic type from its sparse authored
+// validation decoration. An annotation never changes the primitive term that
+// the Program lowerer constructs.
+func annotatedPrimitive(t testing.TB, typ ast.TypeExpr) (*ast.PrimitiveTypeExpr, []ast.AnnotationExpr) {
+	t.Helper()
+	annotated, ok := typ.(*ast.AnnotatedTypeExpr)
+	if !ok {
+		t.Fatalf("type = %T, want *ast.AnnotatedTypeExpr", typ)
+	}
+	primitive, ok := annotated.Inner.(*ast.PrimitiveTypeExpr)
+	if !ok {
+		t.Fatalf("annotated inner = %T, want *ast.PrimitiveTypeExpr", annotated.Inner)
+	}
+	return primitive, annotated.Annotations
+}
+
 func TestParseAnnotationSimple(t *testing.T) {
 	input := `local x: number @min(0) = 1`
 	stmts, err := Parse(strings.NewReader(input), "test")
@@ -1323,21 +1406,18 @@ func TestParseAnnotationSimple(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 	local := stmts[0].(*ast.LocalAssignStmt)
-	prim, ok := local.Types[0].(*ast.PrimitiveTypeExpr)
-	if !ok {
-		t.Fatalf("type = %T, want *ast.PrimitiveTypeExpr", local.Types[0])
-	}
+	prim, annotations := annotatedPrimitive(t, local.Types[0])
 	if prim.Name != testTypeNumber {
 		t.Errorf("type name = %q, want '%s'", prim.Name, testTypeNumber)
 	}
-	if len(prim.Annotations) != 1 {
-		t.Fatalf("got %d annotations, want 1", len(prim.Annotations))
+	if len(annotations) != 1 {
+		t.Fatalf("got %d annotations, want 1", len(annotations))
 	}
-	if prim.Annotations[0].Name != "min" {
-		t.Errorf("annotation name = %q, want 'min'", prim.Annotations[0].Name)
+	if annotations[0].Name != "min" {
+		t.Errorf("annotation name = %q, want 'min'", annotations[0].Name)
 	}
-	if len(prim.Annotations[0].Args) != 1 {
-		t.Fatalf("got %d args, want 1", len(prim.Annotations[0].Args))
+	if len(annotations[0].Args) != 1 {
+		t.Fatalf("got %d args, want 1", len(annotations[0].Args))
 	}
 }
 
@@ -1348,18 +1428,15 @@ func TestParseAnnotationMultiple(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 	local := stmts[0].(*ast.LocalAssignStmt)
-	prim, ok := local.Types[0].(*ast.PrimitiveTypeExpr)
-	if !ok {
-		t.Fatalf("type = %T, want *ast.PrimitiveTypeExpr", local.Types[0])
+	_, annotations := annotatedPrimitive(t, local.Types[0])
+	if len(annotations) != 2 {
+		t.Fatalf("got %d annotations, want 2", len(annotations))
 	}
-	if len(prim.Annotations) != 2 {
-		t.Fatalf("got %d annotations, want 2", len(prim.Annotations))
+	if annotations[0].Name != "min" {
+		t.Errorf("annotation 0 name = %q, want 'min'", annotations[0].Name)
 	}
-	if prim.Annotations[0].Name != "min" {
-		t.Errorf("annotation 0 name = %q, want 'min'", prim.Annotations[0].Name)
-	}
-	if prim.Annotations[1].Name != "max" {
-		t.Errorf("annotation 1 name = %q, want 'max'", prim.Annotations[1].Name)
+	if annotations[1].Name != "max" {
+		t.Errorf("annotation 1 name = %q, want 'max'", annotations[1].Name)
 	}
 }
 
@@ -1370,15 +1447,12 @@ func TestParseAnnotationString(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 	local := stmts[0].(*ast.LocalAssignStmt)
-	prim, ok := local.Types[0].(*ast.PrimitiveTypeExpr)
-	if !ok {
-		t.Fatalf("type = %T, want *ast.PrimitiveTypeExpr", local.Types[0])
+	_, annotations := annotatedPrimitive(t, local.Types[0])
+	if len(annotations) != 1 {
+		t.Fatalf("got %d annotations, want 1", len(annotations))
 	}
-	if len(prim.Annotations) != 1 {
-		t.Fatalf("got %d annotations, want 1", len(prim.Annotations))
-	}
-	if prim.Annotations[0].Name != "pattern" {
-		t.Errorf("annotation name = %q, want 'pattern'", prim.Annotations[0].Name)
+	if annotations[0].Name != "pattern" {
+		t.Errorf("annotation name = %q, want 'pattern'", annotations[0].Name)
 	}
 }
 
@@ -1389,18 +1463,85 @@ func TestParseAnnotationNoArgs(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 	local := stmts[0].(*ast.LocalAssignStmt)
-	prim, ok := local.Types[0].(*ast.PrimitiveTypeExpr)
+	_, annotations := annotatedPrimitive(t, local.Types[0])
+	if len(annotations) != 1 {
+		t.Fatalf("got %d annotations, want 1", len(annotations))
+	}
+	if annotations[0].Name != "integer" {
+		t.Errorf("annotation name = %q, want 'integer'", annotations[0].Name)
+	}
+	if len(annotations[0].Args) != 0 {
+		t.Errorf("got %d args, want 0", len(annotations[0].Args))
+	}
+}
+
+func TestParseAnnotationPreservesAuthoredSpanOrderAndArgs(t *testing.T) {
+	stmts, err := ParseString(`local x: number @flag @empty() @range(1, 2) = 0`, "annotations.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := stmts[0].(*ast.LocalAssignStmt)
+	_, annotations := annotatedPrimitive(t, local.Types[0])
+	if len(annotations) != 3 {
+		t.Fatalf("annotations = %#v", annotations)
+	}
+	want := []struct {
+		name              string
+		line, column      int
+		lastLine, lastCol int
+		args              int
+	}{
+		{name: "flag", line: 1, column: 17, lastLine: 1, lastCol: 21},
+		{name: "empty", line: 1, column: 23, lastLine: 1, lastCol: 30},
+		{name: "range", line: 1, column: 32, lastLine: 1, lastCol: 43, args: 2},
+	}
+	for index, expectation := range want {
+		annotation := annotations[index]
+		if annotation.Name != expectation.name || annotation.Line() != expectation.line || annotation.Column() != expectation.column || annotation.LastLine() != expectation.lastLine || annotation.LastColumn() != expectation.lastCol || len(annotation.Args) != expectation.args {
+			t.Fatalf("annotation[%d] = %#v at %d:%d-%d:%d with %d args, want %q at %d:%d-%d:%d with %d args", index, annotation, annotation.Line(), annotation.Column(), annotation.LastLine(), annotation.LastColumn(), len(annotation.Args), expectation.name, expectation.line, expectation.column, expectation.lastLine, expectation.lastCol, expectation.args)
+		}
+	}
+}
+
+func TestParseCompactArrayAnnotationWrappers(t *testing.T) {
+	stmts, err := ParseString(`local xs: number @element[] @array = {}`, "element_annotations.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := stmts[0].(*ast.LocalAssignStmt)
+	annotated, ok := local.Types[0].(*ast.AnnotatedTypeExpr)
 	if !ok {
-		t.Fatalf("type = %T, want *ast.PrimitiveTypeExpr", local.Types[0])
+		t.Fatalf("type = %T, want *ast.AnnotatedTypeExpr", local.Types[0])
 	}
-	if len(prim.Annotations) != 1 {
-		t.Fatalf("got %d annotations, want 1", len(prim.Annotations))
+	array, ok := annotated.Inner.(*ast.ArrayTypeExpr)
+	if !ok {
+		t.Fatalf("annotated inner = %T, want *ast.ArrayTypeExpr", annotated.Inner)
 	}
-	if prim.Annotations[0].Name != "integer" {
-		t.Errorf("annotation name = %q, want 'integer'", prim.Annotations[0].Name)
+	element, ok := array.Element.(*ast.AnnotatedTypeExpr)
+	if !ok || len(element.Annotations) != 1 || element.Annotations[0].Name != "element" {
+		t.Fatalf("element annotation wrapper = %#v", array.Element)
 	}
-	if len(prim.Annotations[0].Args) != 0 {
-		t.Errorf("got %d args, want 0", len(prim.Annotations[0].Args))
+	if len(annotated.Annotations) != 1 || annotated.Annotations[0].Name != "array" {
+		t.Fatalf("array annotation wrapper = %#v", annotated)
+	}
+}
+
+func TestParseRejectsUnsupportedTypeAnnotationOwner(t *testing.T) {
+	for _, source := range []string{
+		`type Bad = { value: number } @closed`,
+		`type Bad = typeof(value) @closed`,
+		`type Bad = keyof(User) @closed`,
+		`type Bad = User["field"] @closed`,
+		`type Bad = (T extends U ? Then : Else) @closed`,
+	} {
+		_, err := ParseString(source, "unsupported_annotation.lua")
+		if err == nil {
+			t.Fatalf("ParseString(%q) succeeded", source)
+		}
+		parseErr, ok := err.(*Error)
+		if !ok || parseErr.Pos.File != "unsupported_annotation.lua" {
+			t.Fatalf("ParseString(%q) error = %#v, want source filename", source, err)
+		}
 	}
 }
 
@@ -1426,24 +1567,18 @@ func TestParseRecordFieldAnnotation(t *testing.T) {
 	if record.Fields[0].Name != "age" {
 		t.Errorf("field 0 name = %q, want 'age'", record.Fields[0].Name)
 	}
-	prim0, ok := record.Fields[0].Type.(*ast.PrimitiveTypeExpr)
-	if !ok {
-		t.Fatalf("field 0 type = %T, want *ast.PrimitiveTypeExpr", record.Fields[0].Type)
-	}
-	if len(prim0.Annotations) != 2 {
-		t.Errorf("field 0 type got %d annotations, want 2", len(prim0.Annotations))
+	_, annotations0 := annotatedPrimitive(t, record.Fields[0].Type)
+	if len(annotations0) != 2 {
+		t.Errorf("field 0 type got %d annotations, want 2", len(annotations0))
 	}
 
 	// Check name field - annotations are on the type
 	if record.Fields[1].Name != "name" {
 		t.Errorf("field 1 name = %q, want 'name'", record.Fields[1].Name)
 	}
-	prim1, ok := record.Fields[1].Type.(*ast.PrimitiveTypeExpr)
-	if !ok {
-		t.Fatalf("field 1 type = %T, want *ast.PrimitiveTypeExpr", record.Fields[1].Type)
-	}
-	if len(prim1.Annotations) != 2 {
-		t.Errorf("field 1 type got %d annotations, want 2", len(prim1.Annotations))
+	_, annotations1 := annotatedPrimitive(t, record.Fields[1].Type)
+	if len(annotations1) != 2 {
+		t.Errorf("field 1 type got %d annotations, want 2", len(annotations1))
 	}
 }
 
@@ -1458,13 +1593,9 @@ func TestParseArrayWithAnnotations(t *testing.T) {
 	if !ok {
 		t.Fatalf("type = %T, want *ast.ArrayTypeExpr", local.Types[0])
 	}
-	// Annotations are stored on the element type itself
-	elem, ok := arr.Element.(*ast.PrimitiveTypeExpr)
-	if !ok {
-		t.Fatalf("element = %T, want *ast.PrimitiveTypeExpr", arr.Element)
-	}
-	if len(elem.Annotations) != 2 {
-		t.Errorf("got %d annotations on element, want 2", len(elem.Annotations))
+	_, annotations := annotatedPrimitive(t, arr.Element)
+	if len(annotations) != 2 {
+		t.Errorf("got %d annotations on element, want 2", len(annotations))
 	}
 }
 
@@ -1484,21 +1615,15 @@ func TestParseUnionWithAnnotations(t *testing.T) {
 	}
 
 	// Check first member has annotation
-	prim1, ok := union.Types[0].(*ast.PrimitiveTypeExpr)
-	if !ok {
-		t.Fatalf("union member 0 = %T, want *ast.PrimitiveTypeExpr", union.Types[0])
-	}
-	if len(prim1.Annotations) != 1 {
-		t.Errorf("union member 0 got %d annotations, want 1", len(prim1.Annotations))
+	_, annotations1 := annotatedPrimitive(t, union.Types[0])
+	if len(annotations1) != 1 {
+		t.Errorf("union member 0 got %d annotations, want 1", len(annotations1))
 	}
 
 	// Check second member has annotation
-	prim2, ok := union.Types[1].(*ast.PrimitiveTypeExpr)
-	if !ok {
-		t.Fatalf("union member 1 = %T, want *ast.PrimitiveTypeExpr", union.Types[1])
-	}
-	if len(prim2.Annotations) != 1 {
-		t.Errorf("union member 1 got %d annotations, want 1", len(prim2.Annotations))
+	_, annotations2 := annotatedPrimitive(t, union.Types[1])
+	if len(annotations2) != 1 {
+		t.Errorf("union member 1 got %d annotations, want 1", len(annotations2))
 	}
 }
 

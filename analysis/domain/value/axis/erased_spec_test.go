@@ -22,6 +22,10 @@ func (forgedErasedSpec) JoinAny(any, any) any                            { retur
 func (forgedErasedSpec) HasMeet() bool                                   { return true }
 func (forgedErasedSpec) MeetAny(any, any) any                            { return []int(nil) }
 func (forgedErasedSpec) WidenAny(any, any) any                           { return []int(nil) }
+func (forgedErasedSpec) WidenRankWidth() int                             { return 0 }
+func (forgedErasedSpec) WidenRankAtAny(any, int) uint64                  { return 0 }
+func (forgedErasedSpec) ReductionRankWidth() int                         { return 0 }
+func (forgedErasedSpec) ReductionRankAtAny(any, int) uint64              { return 0 }
 func (forgedErasedSpec) HashAny(any) uint64                              { return 0 }
 func (forgedErasedSpec) RetentionMode() RetentionMode                    { return RetentionImmutable }
 func (forgedErasedSpec) RetentionSafeAny(any) bool                       { return true }

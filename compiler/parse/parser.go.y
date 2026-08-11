@@ -12,30 +12,169 @@ import (
 // written. Without an arrow the parentheses group exactly one type, so a
 // parameter name, a variadic marker, or a second entry is a parameter list with
 // no function type to belong to.
-func parenthesizedType(yylex yyLexer, params []ast.FunctionParamExpr, open ast.Token) ast.TypeExpr {
-  if len(params) == 1 && params[0].Name == "" && params[0].Type != nil {
-    return params[0].Type
+func parenthesizedType(yylex yyLexer, params functionTypeParams, open, close ast.Token) ast.TypeExpr {
+  if params.Variadic == nil && len(params.Params) == 1 && params.Params[0].Name == "" && params.Params[0].Type != nil {
+    typ := params.Params[0].Type
+    typ.SetPosFromToken(open.Pos)
+    typ.SetLastPosFromToken(close.Pos)
+    return typ
   }
   yylex.(*Lexer).TokenError(open, "parameter list is not a type: expected -> after )")
   return &ast.PrimitiveTypeExpr{Name: "unknown"}
 }
 
-func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast.PositionHolder) {
-  if node == nil {
-    return
+// functionTypeParams is parser-only assembly for a function-type parameter
+// list. The AST retains fixed parameters and the optional variadic tail in
+// their distinct semantic fields; no parameter-name sentinel represents `...`.
+type functionTypeParams struct {
+  Params            []ast.FunctionParamExpr
+  Variadic          ast.TypeExpr
+  VariadicPosition  ast.Position
+}
+
+func functionType(params functionTypeParams, returns []ast.TypeExpr) *ast.FunctionTypeExpr {
+  return &ast.FunctionTypeExpr{
+    Params:            params.Params,
+    Variadic:          params.Variadic,
+    VariadicPosition:  params.VariadicPosition,
+    Returns:           returns,
   }
-  if len(exprs) > 0 {
-    node.CopyLastPos(exprs[len(exprs)-1])
-    return
+}
+
+func appendFunctionTypeParam(yylex yyLexer, params functionTypeParams, param ast.FunctionParamExpr) functionTypeParams {
+  if params.Variadic != nil {
+    yylex.(*Lexer).TokenError(ast.Token{Str: "...", Pos: params.VariadicPosition}, "variadic function type parameter must be terminal")
   }
-  if fallback != nil {
-    node.CopyLastPos(fallback)
+  params.Params = append(params.Params, param)
+  return params
+}
+
+func setFunctionTypeVariadic(yylex yyLexer, params functionTypeParams, marker ast.Token, typ ast.TypeExpr) functionTypeParams {
+  if params.Variadic != nil {
+    yylex.(*Lexer).TokenError(marker, "function type has more than one variadic parameter")
   }
+  params.Variadic = typ
+  params.VariadicPosition = marker.Pos
+  return params
+}
+
+func callExpr(callee, receiver ast.Expr, method ast.Token, typeArgs []ast.TypeExpr, args callArguments) ast.Expr {
+  call := &ast.FuncCallExpr{
+    Func: callee, Receiver: receiver,
+    Method: method.Str, MethodPosition: method.Pos,
+    TypeArgs: typeArgs, Args: args.values,
+  }
+  if receiver != nil {
+    call.CopyPos(receiver)
+  } else {
+    call.CopyPos(callee)
+  }
+  call.SetLastPosFromToken(args.end)
+  return call
+}
+
+func positionAtEnd(node ast.PositionHolder) ast.Position {
+  return ast.Position{Line: node.LastLine(), Column: node.LastColumn()}
+}
+
+func typeReference(name ast.Token) *ast.TypeRefExpr {
+  ref := &ast.TypeRefExpr{Path: []string{name.Str}, RootPosition: name.Pos}
+  ref.SetPosFromToken(name.Pos)
+  ref.SetLastPosFromToken(name.Pos)
+  return ref
+}
+
+func qualifyTypeReference(ref *ast.TypeRefExpr, name ast.Token) *ast.TypeRefExpr {
+  ref.Path = append(ref.Path, name.Str)
+  ref.SetLastPosFromToken(name.Pos)
+  return ref
+}
+
+func genericTypeReference(base *ast.TypeRefExpr, args []ast.TypeExpr, close ast.Token) *ast.GenericTypeExpr {
+  generic := &ast.GenericTypeExpr{Base: base, Args: args}
+  generic.CopyPos(base)
+  generic.SetLastPosFromToken(close.Pos)
+  return generic
+}
+
+// annotationExpr keeps the authored annotation range intact.  Its span begins
+// at @ and ends at either the name or the closing parenthesis, rather than at
+// an argument expression.
+func annotationExpr(at, name, end ast.Token, args []ast.Expr) ast.AnnotationExpr {
+  annotation := ast.AnnotationExpr{Name: name.Str, Args: args}
+  annotation.SetPosFromToken(at.Pos)
+  annotation.SetLastPosFromToken(end.Pos)
+  return annotation
+}
+
+func annotationToken(annotation ast.AnnotationExpr, file string) ast.Token {
+  return ast.Token{
+    Str: "@" + annotation.Name,
+    Pos: ast.Position{
+      File:      file,
+      Line:      annotation.Line(),
+      Column:    annotation.Column(),
+      EndLine:   annotation.LastLine(),
+      EndColumn: annotation.LastColumn(),
+    },
+  }
+}
+
+func annotatedType(typ ast.TypeExpr, annotations []ast.AnnotationExpr) ast.TypeExpr {
+  if len(annotations) == 0 {
+    return typ
+  }
+  result := &ast.AnnotatedTypeExpr{Inner: typ, Annotations: annotations}
+  result.CopyPos(typ)
+  result.CopyLastPos(&annotations[len(annotations)-1])
+  return result
+}
+
+func annotationError(yylex yyLexer, annotation ast.AnnotationExpr) {
+  lexer := yylex.(*Lexer)
+  lexer.TokenError(annotationToken(annotation, lexer.scanner.Pos.File), "annotations are only supported on primitive types and arrays")
+}
+
+// annotateDirectType owns ordinary postfix annotation policy. The narrow
+// accepted set is intentional: unsupported source remains rejected rather
+// than silently extending the language with a new annotation surface.
+func annotateDirectType(yylex yyLexer, typ ast.TypeExpr, annotations []ast.AnnotationExpr) ast.TypeExpr {
+  switch typ.(type) {
+  case *ast.PrimitiveTypeExpr, *ast.ArrayTypeExpr:
+    return annotatedType(typ, annotations)
+  default:
+    if len(annotations) != 0 {
+      annotationError(yylex, annotations[0])
+    }
+    return typ
+  }
+}
+
+// annotateFieldType keeps the pre-existing optional-tail surface while making
+// the type expression itself, rather than its containing field, the owner.
+func annotateFieldType(yylex yyLexer, typ ast.TypeExpr, annotations []ast.AnnotationExpr) ast.TypeExpr {
+  if _, ok := typ.(*ast.OptionalTypeExpr); ok {
+    return annotatedType(typ, annotations)
+  }
+  if len(annotations) != 0 {
+    annotationError(yylex, annotations[0])
+  }
+  return typ
 }
 
 type returnTypeAnnotation struct {
   types []ast.TypeExpr
   known bool
+  end ast.Position
+}
+
+type callArguments struct {
+  values []ast.Expr
+  end ast.Position
+}
+
+type interfaceBody struct {
+  members []ast.InterfaceMember
 }
 %}
 %type<stmts> chunk
@@ -55,7 +194,7 @@ type returnTypeAnnotation struct {
 %type<expr> prefixexp
 %type<expr> functioncall
 %type<expr> afunctioncall
-%type<exprlist> args
+%type<callargs> args
 %type<expr> function
 %type<funcexpr> funcbody
 %type<parlist> parlist
@@ -63,27 +202,34 @@ type returnTypeAnnotation struct {
 %type<fieldlist> fieldlist
 %type<field> field
 %type<fieldsep> fieldsep
-%type<fieldname> fieldname
-%type<token> typefieldname
+%type<token> fieldname
+%type<token> staticfieldname
+%type<token> methodname
 
 %type<typeexpr> typeexpr
 %type<typeexpr> simpletypeexpr
 %type<typeexpr> primarytypeexpr
 %type<typeexprlist> typeexprlist
 %type<typeexprlist> typeexprlist2
+%type<typeexprlist> calltypeargs
+%type<token> closegt
 %type<returntype> returntypeannot
 %type<typeparams> typeparams
+%type<typeparams> optionaltypeparams
 %type<typeparams> typeparamlist
 %type<typeparam> typeparam
 %type<recordfields> typefieldlist
 %type<recordfield> typefield
+%type<typeexpr> typefieldtype
 %type<typednames> typednamelist
 %type<typedname> typedname
-%type<ifacemethods> interfacebody
-%type<ifacemethod> interfacemethod
+%type<interfacebody> interfacebody
+%type<ifacemember> interfacemethod
 %type<typereflist> interfaceextends
+%type<typeref> interfaceref
+%type<typeref> qualifiedtyperef
 %type<funcparam> funcparam
-%type<funcparams> funcparamlist
+%type<functionparams> funcparamlist
 %type<annotation> annotation
 %type<annotations> annotations
 
@@ -102,13 +248,13 @@ type returnTypeAnnotation struct {
   fieldlist []*ast.Field
   field     *ast.Field
   fieldsep  string
-  fieldname string
 
   namelist []nameWithPos
   parlist  *ast.ParList
 
   typeexpr     ast.TypeExpr
   typeexprlist []ast.TypeExpr
+  callargs     callArguments
   returntype   returnTypeAnnotation
   typeparam    ast.TypeParamExpr
   typeparams   []ast.TypeParamExpr
@@ -116,23 +262,25 @@ type returnTypeAnnotation struct {
   recordfields []ast.RecordFieldExpr
   typedname    typedNameEntry
   typednames   []typedNameEntry
-  ifacemethod  ast.InterfaceMethodExpr
-  ifacemethods []ast.InterfaceMethodExpr
+  ifacemember  ast.InterfaceMember
+  interfacebody interfaceBody
   typereflist  []*ast.TypeRefExpr
+  typeref      *ast.TypeRefExpr
   funcparam    ast.FunctionParamExpr
-  funcparams   []ast.FunctionParamExpr
+  functionparams functionTypeParams
   annotation   ast.AnnotationExpr
   annotations  []ast.AnnotationExpr
 }
 
 /* Reserved words */
 %token<token> TAnd TBreak TDo TElse TElseIf TEnd TFalse TFor TFunction TIf TIn TLocal TNil TNot TOr TReturn TRepeat TThen TTrue TUntil TWhile TGoto
+%token TAssertsRefinement
 
 /* Type system keywords */
-%token<token> TType TInterface TReadonly TAs TAsserts TIs TTypeof TKeyof TExtends TFun
+%token<token> TInterface TReadonly TAs TAsserts TIs TTypeof TKeyof TExtends TFun
 
 /* Literals */
-%token<token> TEqeq TNeq TLte TGte T2Comma T3Comma T2Colon TLabel TIdent TNumber TString '{' '}' '(' ')'
+%token<token> TEqeq TNeq TLte TGte T2Comma T3Comma T2Colon TTypeArgsOpen TLabel TIdent TNumber TString '@' '{' '}' '(' ')' '>'
 
 /* Lua 5.3 operators */
 %token<token> TShl TShr TIdiv
@@ -159,14 +307,18 @@ type returnTypeAnnotation struct {
 %right '^'
 %nonassoc T2Colon /* :: cast - nonassoc to prefer reduce over shift for labels */
 %left TAs TBang /* type cast (as) and non-nil assertion */
+/* These resolve the two deliberate suffix continuations without expanding the
+   inherited conflict budget: T @a[] continues as an element annotation, and
+   asserts x is T continues as the refining assertion.  The refining rule uses
+   an unprioritized synthetic marker so ordinary type-operator conflicts keep
+   their inherited shift behavior. */
+%nonassoc TAnnotationTail
+%nonassoc '['
+%nonassoc TAssertsBare
+%nonassoc TIs
 
-/* Known shift/reduce conflicts (14 total, all resolved correctly by shift):
-   - 3 Lua inherent: prefixexp '(' ambiguity (call vs grouping) - cannot be eliminated
-   - 5 type optional: simpletypeexpr TQuestion binds tighter than union/intersection
-   - 2 function return: (params) -> typeexpr followed by |/& binds to return type
-   - 2 type decl: type Name pattern - shift to continue parsing type name
-   - 2 generic: TIdent '<' in type context - shift for generic args
-*/
+/* goyacc reports 29 inherited shift/reduce conflicts. The generated parser
+   resolves them by shift; this grammar adds none. */
 
 %%
 
@@ -305,18 +457,20 @@ stat:
             if $1.Str != "type" {
                 yylex.(*Lexer).Error("unexpected identifier")
             }
-            $$ = &ast.TypeDefStmt{Name: $2.Str, Type: $4}
+            $$ = &ast.TypeDefStmt{Name: $2.Str, NamePosition: $2.Pos, Type: $4}
             $$.SetPosFromToken($1.Pos)
+            $$.CopyLastPos($4)
         } |
         TIdent TIdent typeparams '=' typeexpr {
             if $1.Str != "type" {
                 yylex.(*Lexer).Error("unexpected identifier")
             }
-            $$ = &ast.TypeDefStmt{Name: $2.Str, TypeParams: $3, Type: $5}
+            $$ = &ast.TypeDefStmt{Name: $2.Str, NamePosition: $2.Pos, TypeParams: $3, Type: $5}
             $$.SetPosFromToken($1.Pos)
+            $$.CopyLastPos($5)
         } |
         TInterface TIdent interfaceextends interfacebody TEnd {
-            $$ = &ast.InterfaceDefStmt{Name: $2.Str, Extends: $3, Methods: $4}
+            $$ = &ast.InterfaceDefStmt{Name: $2.Str, NamePosition: $2.Pos, Extends: $3, Members: $4.members}
             $$.SetPosFromToken($1.Pos)
             $$.SetLastPosFromToken($5.Pos)
         }
@@ -348,26 +502,8 @@ funcname:
         funcname1 {
             $$ = $1
         } |
-        funcname1 ':' TIdent {
+        funcname1 ':' methodname {
             $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: $3.Str, MethodPosition: $3.Pos}
-        } |
-        funcname1 ':' TType {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "type", MethodPosition: $3.Pos}
-        } |
-        funcname1 ':' TInterface {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "interface", MethodPosition: $3.Pos}
-        } |
-        funcname1 ':' TReadonly {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "readonly", MethodPosition: $3.Pos}
-        } |
-        funcname1 ':' TAs {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "as", MethodPosition: $3.Pos}
-        } |
-        funcname1 ':' TAsserts {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "asserts", MethodPosition: $3.Pos}
-        } |
-        funcname1 ':' TIs {
-            $$ = &ast.FuncName{Func:nil, Receiver:$1.Func, Method: "is", MethodPosition: $3.Pos}
         }
 
 funcname1:
@@ -406,14 +542,6 @@ var:
         } | 
         prefixexp '.' TIdent {
             key := &ast.StringExpr{Value:$3.Str}
-            key.SetPosFromToken($3.Pos)
-            key.SetLastPosFromToken($3.Pos)
-            $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
-            $$.CopyPos($1)
-            $$.SetLastPosFromToken($3.Pos)
-        } |
-        prefixexp '.' TType {
-            key := &ast.StringExpr{Value:"type"}
             key.SetPosFromToken($3.Pos)
             key.SetLastPosFromToken($3.Pos)
             $$ = &ast.AttrGetExpr{Object: $1, Key: key, KeySyntax: ast.AttrKeyDot}
@@ -648,7 +776,7 @@ expr:
         expr TBang {
             $$ = &ast.NonNilAssertExpr{Expr: $1}
             $$.CopyPos($1)
-            $$.CopyLastPos($1)
+            $$.SetLastPosFromToken($2.Pos)
         }
 
 string: 
@@ -678,50 +806,32 @@ prefixexp:
 
 afunctioncall:
         '(' functioncall ')' {
-            $2.(*ast.FuncCallExpr).AdjustRet = true
-            $$ = $2
+            call := $2.(*ast.FuncCallExpr)
+            call.AdjustRet = true
+            call.SetPosFromToken($1.Pos)
+            call.SetLastPosFromToken($3.Pos)
+            $$ = call
         }
 
 functioncall:
         prefixexp args {
-            $$ = &ast.FuncCallExpr{Func: $1, Args: $2}
-            $$.CopyPos($1)
-            setLastPosFromExprs($$, $2, $1)
+            $$ = callExpr($1, nil, ast.Token{}, nil, $2)
         } |
-        prefixexp ':' TIdent args {
-            $$ = &ast.FuncCallExpr{Method: $3.Str, MethodPosition: $3.Pos, Receiver: $1, Args: $4}
-            $$.CopyPos($1)
-            setLastPosFromExprs($$, $4, $1)
+        /* Explicit generic calls use the unambiguous turbofish ::<...>:
+           f::<T>(), obj.method::<T>(), and obj:method::<T>(). */
+        prefixexp calltypeargs args {
+            $$ = callExpr($1, nil, ast.Token{}, $2, $3)
         } |
-        prefixexp ':' TType args {
-            $$ = &ast.FuncCallExpr{Method: "type", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
-            $$.CopyPos($1)
-            setLastPosFromExprs($$, $4, $1)
+        prefixexp ':' methodname args {
+            $$ = callExpr(nil, $1, $3, nil, $4)
         } |
-        prefixexp ':' TInterface args {
-            $$ = &ast.FuncCallExpr{Method: "interface", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
-            $$.CopyPos($1)
-            setLastPosFromExprs($$, $4, $1)
-        } |
-        prefixexp ':' TReadonly args {
-            $$ = &ast.FuncCallExpr{Method: "readonly", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
-            $$.CopyPos($1)
-            setLastPosFromExprs($$, $4, $1)
-        } |
-        prefixexp ':' TAs args {
-            $$ = &ast.FuncCallExpr{Method: "as", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
-            $$.CopyPos($1)
-            setLastPosFromExprs($$, $4, $1)
-        } |
-        prefixexp ':' TAsserts args {
-            $$ = &ast.FuncCallExpr{Method: "asserts", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
-            $$.CopyPos($1)
-            setLastPosFromExprs($$, $4, $1)
-        } |
-        prefixexp ':' TIs args {
-            $$ = &ast.FuncCallExpr{Method: "is", MethodPosition: $3.Pos, Receiver: $1, Args: $4}
-            $$.CopyPos($1)
-            setLastPosFromExprs($$, $4, $1)
+        prefixexp ':' methodname calltypeargs args {
+            $$ = callExpr(nil, $1, $3, $4, $5)
+        }
+
+calltypeargs:
+        TTypeArgsOpen typeexprlist closegt {
+            $$ = $2
         }
 
 args:
@@ -729,19 +839,19 @@ args:
             if yylex.(*Lexer).PNewLine {
                yylex.(*Lexer).TokenError($1, "ambiguous syntax (function call x new statement)")
             }
-            $$ = []ast.Expr{}
+            $$ = callArguments{values: []ast.Expr{}, end: $2.Pos}
         } |
         '(' exprlist ')' {
             if yylex.(*Lexer).PNewLine {
                yylex.(*Lexer).TokenError($1, "ambiguous syntax (function call x new statement)")
             }
-            $$ = $2
+            $$ = callArguments{values: $2, end: $3.Pos}
         } |
         tableconstructor {
-            $$ = []ast.Expr{$1}
+            $$ = callArguments{values: []ast.Expr{$1}, end: positionAtEnd($1)}
         } | 
         string {
-            $$ = []ast.Expr{$1}
+            $$ = callArguments{values: []ast.Expr{$1}, end: positionAtEnd($1)}
         }
 
 function:
@@ -820,47 +930,53 @@ fieldlist:
 
 field:
         fieldname '=' expr {
-            $$ = &ast.Field{Key: &ast.StringExpr{Value:$1}, KeySyntax: ast.AttrKeyDot, Value: $3}
+            key := &ast.StringExpr{Value: $1.Str}
+            key.SetPosFromToken($1.Pos)
+            $$ = &ast.Field{Key: key, KeySyntax: ast.AttrKeyDot, Value: $3}
+            $$.SetPosFromToken($1.Pos)
+            $$.CopyLastPos($3)
         } |
         '[' expr ']' '=' expr {
             $$ = &ast.Field{Key: $2, KeySyntax: ast.AttrKeyIndex, Value: $5}
+            $$.SetPosFromToken($1.Pos)
+            $$.CopyLastPos($5)
         } |
         expr {
             $$ = &ast.Field{Value: $1}
+            $$.CopyPos($1)
+            $$.CopyLastPos($1)
         }
 
 /* fieldname allows identifiers and contextual keywords as table field names */
 fieldname:
         TIdent {
-            $$ = $1.Str
-        } |
-        TType {
-            $$ = "type"
+            $$ = $1
         } |
         TInterface {
-            $$ = "interface"
+            $$ = $1
         } |
         TReadonly {
-            $$ = "readonly"
+            $$ = $1
         } |
         TAs {
-            $$ = "as"
+            $$ = $1
         } |
         TAsserts {
-            $$ = "asserts"
+            $$ = $1
         } |
         TIs {
-            $$ = "is"
+            $$ = $1
         } |
         TKeyof {
-            $$ = "keyof"
+            $$ = $1
         } |
         TExtends {
-            $$ = "extends"
+            $$ = $1
         }
 
-typefieldname:
-        TType {
+/* Static record and interface fields use the same name vocabulary. */
+staticfieldname:
+        TIdent {
             $$ = $1
         } |
         TInterface {
@@ -888,6 +1004,28 @@ typefieldname:
             $$ = $1
         }
 
+/* Runtime method definitions/calls and interface methods share this narrower
+   vocabulary.  Keep type-only contextual tokens out of runtime methods. */
+methodname:
+        TIdent {
+            $$ = $1
+        } |
+        TInterface {
+            $$ = $1
+        } |
+        TReadonly {
+            $$ = $1
+        } |
+        TAs {
+            $$ = $1
+        } |
+        TAsserts {
+            $$ = $1
+        } |
+        TIs {
+            $$ = $1
+        }
+
 fieldsep:
         ',' {
             $$ = ","
@@ -903,13 +1041,21 @@ returntypeannot:
             $$ = returnTypeAnnotation{}
         } |
         ':' typeexprlist {
-            $$ = returnTypeAnnotation{types: $2, known: true}
+            last := $2[len($2)-1]
+            $$ = returnTypeAnnotation{
+                types: $2,
+                known: true,
+                end: ast.Position{
+                    Line: last.LastLine(), Column: last.LastColumn(),
+                    EndLine: last.LastLine(), EndColumn: last.LastColumn(),
+                },
+            }
         } |
         ':' '(' ')' {
-            $$ = returnTypeAnnotation{known: true}
+            $$ = returnTypeAnnotation{known: true, end: $3.Pos}
         } |
         ':' '(' typeexpr ',' typeexprlist ')' {
-            $$ = returnTypeAnnotation{types: append([]ast.TypeExpr{$3}, $5...), known: true}
+            $$ = returnTypeAnnotation{types: append([]ast.TypeExpr{$3}, $5...), known: true, end: $6.Pos}
         }
 
 typeexpr:
@@ -939,22 +1085,15 @@ typeexpr:
         simpletypeexpr TExtends simpletypeexpr TQuestion typeexpr ':' typeexpr {
             $$ = &ast.ConditionalTypeExpr{Check: $1, Extends: $3, Then: $5, Else: $7}
             $$.CopyPos($1)
+            $$.CopyLastPos($7)
         }
 
 simpletypeexpr:
         primarytypeexpr {
             $$ = $1
         } |
-        primarytypeexpr annotations {
-            if prim, ok := $1.(*ast.PrimitiveTypeExpr); ok {
-                prim.Annotations = $2
-                $$ = prim
-            } else if arr, ok := $1.(*ast.ArrayTypeExpr); ok {
-                arr.ArrayAnnotations = $2
-                $$ = arr
-            } else {
-                $$ = $1
-            }
+        primarytypeexpr annotations %prec TAnnotationTail {
+            $$ = annotateDirectType(yylex, $1, $2)
         } |
         simpletypeexpr TQuestion {
             $$ = &ast.OptionalTypeExpr{Inner: $1}
@@ -993,137 +1132,180 @@ primarytypeexpr:
             $$ = &ast.PrimitiveTypeExpr{Name: $1.Str}
             $$.SetPosFromToken($1.Pos)
         } |
-        TIdent '.' TIdent {
-            $$ = &ast.TypeRefExpr{Path: []string{$1.Str, $3.Str}}
-            $$.SetPosFromToken($1.Pos)
+        qualifiedtyperef %prec TAnd {
+            $$ = $1
         } |
         TIdent '<' typeexprlist closegt {
-            $$ = &ast.GenericTypeExpr{
-                Base: &ast.TypeRefExpr{Path: []string{$1.Str}},
-                Args: $3,
-            }
-            $$.SetPosFromToken($1.Pos)
+            $$ = genericTypeReference(typeReference($1), $3, $4)
+        } |
+        qualifiedtyperef '<' typeexprlist closegt {
+            $$ = genericTypeReference($1, $3, $4)
         } |
         '{' typeexpr '}' {
             $$ = &ast.ArrayTypeExpr{Element: $2}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($3.Pos)
         } |
         '{' '[' typeexpr ']' ':' typeexpr '}' {
             $$ = &ast.MapTypeExpr{Key: $3, Value: $6}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($7.Pos)
         } |
         '{' typefieldlist '}' {
             $$ = &ast.RecordTypeExpr{Fields: $2}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($3.Pos)
         } |
         '(' funcparamlist ')' TArrow '(' typeexprlist2 ')' {
-            $$ = &ast.FunctionTypeExpr{Params: $2, Returns: $6}
+            $$ = functionType($2, $6)
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($7.Pos)
         } |
         '(' funcparamlist ')' TArrow '(' ')' {
-            $$ = &ast.FunctionTypeExpr{Params: $2, Returns: []ast.TypeExpr{}}
+            $$ = functionType($2, []ast.TypeExpr{})
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($6.Pos)
         } |
         '(' funcparamlist ')' TArrow typeexpr {
-            $$ = &ast.FunctionTypeExpr{Params: $2, Returns: []ast.TypeExpr{$5}}
+            $$ = functionType($2, []ast.TypeExpr{$5})
             $$.SetPosFromToken($1.Pos)
+            $$.CopyLastPos($5)
         } |
         '(' ')' TArrow '(' typeexprlist2 ')' {
             $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: $5}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($6.Pos)
         } |
         '(' ')' TArrow typeexpr {
             $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: []ast.TypeExpr{$4}}
             $$.SetPosFromToken($1.Pos)
+            $$.CopyLastPos($4)
         } |
         '(' ')' TArrow '(' ')' {
             $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: []ast.TypeExpr{}}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($5.Pos)
         } |
         '(' funcparamlist ')' {
-            $$ = parenthesizedType(yylex, $2, $1)
+            $$ = parenthesizedType(yylex, $2, $1, $3)
         } |
         TFun '(' funcparamlist ')' ':' typeexpr {
-            $$ = &ast.FunctionTypeExpr{Params: $3, Returns: []ast.TypeExpr{$6}}
+            $$ = functionType($3, []ast.TypeExpr{$6})
             $$.SetPosFromToken($1.Pos)
+            $$.CopyLastPos($6)
         } |
         TFun '(' funcparamlist ')' ':' '(' typeexprlist2 ')' {
-            $$ = &ast.FunctionTypeExpr{Params: $3, Returns: $7}
+            $$ = functionType($3, $7)
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($8.Pos)
         } |
         TFun '(' ')' ':' typeexpr {
             $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: []ast.TypeExpr{$5}}
             $$.SetPosFromToken($1.Pos)
+            $$.CopyLastPos($5)
         } |
         TFun '(' ')' ':' '(' typeexprlist2 ')' {
             $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: $6}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($7.Pos)
         } |
         TFun '(' funcparamlist ')' ':' '(' ')' {
-            $$ = &ast.FunctionTypeExpr{Params: $3, Returns: []ast.TypeExpr{}}
+            $$ = functionType($3, []ast.TypeExpr{})
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($7.Pos)
         } |
         TFun '(' ')' ':' '(' ')' {
             $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: []ast.TypeExpr{}}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($6.Pos)
         } |
         TFun '(' funcparamlist ')' {
-            $$ = &ast.FunctionTypeExpr{Params: $3, Returns: nil}
+            $$ = functionType($3, nil)
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($4.Pos)
         } |
         TFun '(' ')' {
             $$ = &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: nil}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($3.Pos)
         } |
         TInterface '{' typefieldlist '}' {
             $$ = &ast.RecordTypeExpr{Fields: $3}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($4.Pos)
         } |
         TInterface '{' '}' {
             $$ = &ast.RecordTypeExpr{Fields: nil}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($3.Pos)
         } |
         primarytypeexpr '[' ']' {
             $$ = &ast.ArrayTypeExpr{Element: $1}
             $$.CopyPos($1)
+            $$.SetLastPosFromToken($3.Pos)
+        } |
+        /* T @annotation[] is the compact array spelling whose annotations
+           belong to T.  The annotation occurs before the array brackets, so
+           it cannot be confused with annotations on the array itself. */
+        primarytypeexpr annotations '[' ']' {
+            $$ = &ast.ArrayTypeExpr{Element: annotatedType($1, $2)}
+            $$.CopyPos($1)
+            $$.SetLastPosFromToken($4.Pos)
         } |
         TReadonly '{' typeexpr '}' {
             arr := &ast.ArrayTypeExpr{Element: $3, Readonly: true}
             arr.SetPosFromToken($1.Pos)
+            arr.SetLastPosFromToken($4.Pos)
             $$ = arr
         } |
         TReadonly '{' '[' typeexpr ']' ':' typeexpr '}' {
             m := &ast.MapTypeExpr{Key: $4, Value: $7, Readonly: true}
             m.SetPosFromToken($1.Pos)
+            m.SetLastPosFromToken($8.Pos)
             $$ = m
         } |
         TReadonly '{' typefieldlist '}' {
             $$ = &ast.RecordTypeExpr{Fields: $3, Readonly: true}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($4.Pos)
         } |
         '{' '}' {
             $$ = &ast.RecordTypeExpr{Fields: nil}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($2.Pos)
         } |
-        TAsserts TIdent {
-            $$ = &ast.AssertsTypeExpr{ParamName: $2.Str, NarrowTo: nil}
+        TAsserts TIdent %prec TAssertsBare {
+            $$ = &ast.AssertsTypeExpr{ParamName: $2.Str, ParamPosition: $2.Pos, NarrowTo: nil}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($2.Pos)
         } |
-        TAsserts TIdent TIs typeexpr {
-            $$ = &ast.AssertsTypeExpr{ParamName: $2.Str, NarrowTo: $4}
+        TAsserts TIdent TIs typeexpr %prec TAssertsRefinement {
+            $$ = &ast.AssertsTypeExpr{ParamName: $2.Str, ParamPosition: $2.Pos, NarrowTo: $4}
             $$.SetPosFromToken($1.Pos)
+            $$.CopyLastPos($4)
         } |
         TTypeof '(' expr ')' {
             $$ = &ast.TypeOfExpr{Expr: $3}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($4.Pos)
         } |
         TKeyof '(' typeexpr ')' {
             $$ = &ast.KeyOfExpr{Inner: $3}
             $$.SetPosFromToken($1.Pos)
+            $$.SetLastPosFromToken($4.Pos)
         } |
         primarytypeexpr '[' typeexpr ']' {
             $$ = &ast.IndexAccessExpr{Object: $1, Index: $3}
             $$.CopyPos($1)
+            $$.SetLastPosFromToken($4.Pos)
+        }
+
+qualifiedtyperef:
+        TIdent '.' TIdent {
+            $$ = qualifyTypeReference(typeReference($1), $3)
+        } |
+        qualifiedtyperef '.' TIdent {
+            $$ = qualifyTypeReference($1, $3)
         }
 
 typeexprlist:
@@ -1144,8 +1326,14 @@ typeexprlist2:
 
 closegt:
         '>' {
+            $$ = $1
         } |
         TShr {
+            $$ = ast.Token{
+                Type: '>',
+                Str:  ">",
+                Pos:  ast.Position{File: $1.Pos.File, Line: $1.Pos.Line, Column: $1.Pos.Column},
+            }
             yylex.(*Lexer).PendingGT = &ast.Token{
                 Type: '>',
                 Str:  ">",
@@ -1155,7 +1343,7 @@ closegt:
 
 funcparam:
         TIdent ':' typeexpr {
-            $$ = ast.FunctionParamExpr{Name: $1.Str, Type: $3}
+            $$ = ast.FunctionParamExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3}
         } |
         typeexpr {
             $$ = ast.FunctionParamExpr{Name: "", Type: $1}
@@ -1163,16 +1351,16 @@ funcparam:
 
 funcparamlist:
         funcparam {
-            $$ = []ast.FunctionParamExpr{$1}
+            $$ = functionTypeParams{Params: []ast.FunctionParamExpr{$1}}
         } |
         funcparamlist ',' funcparam {
-            $$ = append($1, $3)
+            $$ = appendFunctionTypeParam(yylex, $1, $3)
         } |
         T3Comma typeexpr {
-            $$ = []ast.FunctionParamExpr{{Name: "...", Type: $2}}
+            $$ = setFunctionTypeVariadic(yylex, functionTypeParams{}, $1, $2)
         } |
         funcparamlist ',' T3Comma typeexpr {
-            $$ = append($1, ast.FunctionParamExpr{Name: "...", Type: $4})
+            $$ = setFunctionTypeVariadic(yylex, $1, $3, $4)
         }
 
 typefieldlist:
@@ -1187,29 +1375,19 @@ typefieldlist:
         }
 
 typefield:
-        TIdent ':' typeexpr {
+        staticfieldname ':' typefieldtype {
             $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: false}
         } |
-        TIdent ':' typeexpr annotations {
-            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: false, Annotations: $4}
-        } |
-        TIdent TQuestionColon typeexpr {
+        staticfieldname TQuestionColon typefieldtype {
             $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: true}
+        }
+
+typefieldtype:
+        typeexpr {
+            $$ = $1
         } |
-        TIdent TQuestionColon typeexpr annotations {
-            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: true, Annotations: $4}
-        } |
-        typefieldname ':' typeexpr {
-            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: false}
-        } |
-        typefieldname ':' typeexpr annotations {
-            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: false, Annotations: $4}
-        } |
-        typefieldname TQuestionColon typeexpr {
-            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: true}
-        } |
-        typefieldname TQuestionColon typeexpr annotations {
-            $$ = ast.RecordFieldExpr{Name: $1.Str, NamePosition: $1.Pos, Type: $3, Optional: true, Annotations: $4}
+        typeexpr annotations {
+            $$ = annotateFieldType(yylex, $1, $2)
         }
 
 annotations:
@@ -1222,18 +1400,26 @@ annotations:
 
 annotation:
         '@' TIdent {
-            $$ = ast.AnnotationExpr{Name: $2.Str, Args: nil}
+            $$ = annotationExpr($1, $2, $2, nil)
         } |
         '@' TIdent '(' ')' {
-            $$ = ast.AnnotationExpr{Name: $2.Str, Args: nil}
+            $$ = annotationExpr($1, $2, $4, nil)
         } |
         '@' TIdent '(' exprlist ')' {
-            $$ = ast.AnnotationExpr{Name: $2.Str, Args: $4}
+            $$ = annotationExpr($1, $2, $5, $4)
         }
 
 typeparams:
         '<' typeparamlist '>' {
             $$ = $2
+        }
+
+optionaltypeparams:
+        /* empty */ {
+            $$ = nil
+        } |
+        typeparams {
+            $$ = $1
         }
 
 typeparamlist:
@@ -1272,40 +1458,71 @@ interfaceextends:
         /* empty */ {
             $$ = nil
         } |
-        ':' TIdent {
-            $$ = []*ast.TypeRefExpr{{Path: []string{$2.Str}}}
+        ':' interfaceref {
+            $$ = []*ast.TypeRefExpr{$2}
         } |
-        interfaceextends ',' TIdent {
-            $$ = append($1, &ast.TypeRefExpr{Path: []string{$3.Str}})
+        interfaceextends ',' interfaceref {
+            $$ = append($1, $3)
+        }
+
+interfaceref:
+        TIdent {
+            $$ = typeReference($1)
+        } |
+        qualifiedtyperef {
+            $$ = $1
         }
 
 interfacebody:
         /* empty */ {
-            $$ = nil
+            $$ = interfaceBody{}
+        } |
+        interfacebody typefield {
+            $$ = $1
+            $$.members = append($$.members, ast.InterfaceMember{
+                Kind: ast.InterfaceFieldMember,
+                Name: $2.Name, NamePosition: $2.NamePosition, Type: $2.Type,
+                Optional: $2.Optional,
+            })
         } |
         interfacebody interfacemethod {
-            $$ = append($1, $2)
+            $$ = $1
+            $$.members = append($$.members, $2)
         }
 
 interfacemethod:
-        TFunction TIdent '(' ')' returntypeannot {
-            returns := $5.types
-            if $5.known && returns == nil {
-                returns = []ast.TypeExpr{}
-            }
-            $$ = ast.InterfaceMethodExpr{
-                Name: $2.Str,
-                Type: &ast.FunctionTypeExpr{Params: []ast.FunctionParamExpr{}, Returns: returns},
-            }
-        } |
-        TFunction TIdent '(' typednamelist ')' returntypeannot {
+        TFunction methodname optionaltypeparams '(' ')' returntypeannot {
             returns := $6.types
             if $6.known && returns == nil {
                 returns = []ast.TypeExpr{}
             }
-            $$ = ast.InterfaceMethodExpr{
-                Name: $2.Str,
-                Type: &ast.FunctionTypeExpr{Params: toFuncParams($4), Returns: returns},
+            typ := &ast.FunctionTypeExpr{TypeParams: $3, Params: []ast.FunctionParamExpr{}, Returns: returns}
+            typ.SetPosFromToken($1.Pos)
+            if $6.end.Line != 0 {
+                typ.SetLastPosFromToken($6.end)
+            } else {
+                typ.SetLastPosFromToken($5.Pos)
+            }
+            $$ = ast.InterfaceMember{
+                Kind: ast.InterfaceMethodMember,
+                Name: $2.Str, NamePosition: $2.Pos, Type: typ,
+            }
+        } |
+        TFunction methodname optionaltypeparams '(' typednamelist ')' returntypeannot {
+            returns := $7.types
+            if $7.known && returns == nil {
+                returns = []ast.TypeExpr{}
+            }
+            typ := &ast.FunctionTypeExpr{TypeParams: $3, Params: toFuncParams($5), Returns: returns}
+            typ.SetPosFromToken($1.Pos)
+            if $7.end.Line != 0 {
+                typ.SetLastPosFromToken($7.end)
+            } else {
+                typ.SetLastPosFromToken($6.Pos)
+            }
+            $$ = ast.InterfaceMember{
+                Kind: ast.InterfaceMethodMember,
+                Name: $2.Str, NamePosition: $2.Pos, Type: typ,
             }
         }
 
@@ -1361,7 +1578,7 @@ func splitTypedNames(entries []typedNameEntry) ([]string, []ast.Position, []ast.
 func toFuncParams(entries []typedNameEntry) []ast.FunctionParamExpr {
 	params := make([]ast.FunctionParamExpr, len(entries))
 	for i, e := range entries {
-		params[i] = ast.FunctionParamExpr{Name: e.Name, Type: e.Type}
+		params[i] = ast.FunctionParamExpr{Name: e.Name, NamePosition: e.Pos, Type: e.Type}
 	}
 	return params
 }

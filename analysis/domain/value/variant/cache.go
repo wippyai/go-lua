@@ -2,25 +2,33 @@ package variant
 
 import (
 	"strconv"
+	"sync"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant/internal/discriminant"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Cache memoizes pure variant-origin queries for one analysis database.
 //
-// It is intentionally caller-owned: package-level origin catalogs preserve
-// reconstructed family payloads by family id, while this cache avoids repeating
-// the expensive "does this type form a variant family?" proof for the same
-// immutable type node inside a check run.
+// It is intentionally caller-owned: family payloads indexed by portable
+// family ID live here for exactly this check run. The cache is the semantic
+// owner of reconstructed family types; no package-global catalog may retain
+// type graphs beyond the caller's lifetime.
 type Cache struct {
+	// mu protects every mutable table in this owner. The cache may be shared by
+	// analysis workers, but its state never escapes this exact analysis owner.
+	mu           sync.Mutex
 	detector     *discriminant.Detector
 	origins      map[typ.Type]originCacheEntry
 	pathLiterals map[pathLiteralCacheKey]originEvidenceCacheEntry
 	narrows      map[narrowCacheKey]typeCacheEntry
 	types        map[originTypeCacheKey]typeCacheEntry
+
+	originFamilies  map[uint64]originFamily
+	originRevisions map[uint64]uint64
+	originPoisoned  map[uint64]struct{}
 }
 
 type originCacheEntry struct {
@@ -78,6 +86,12 @@ func (c *Cache) OriginOfType(t typ.Type) (uint64, []int, bool) {
 	if c == nil {
 		return OriginOfType(t)
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.originOfTypeLocked(t)
+}
+
+func (c *Cache) originOfTypeLocked(t typ.Type) (uint64, []int, bool) {
 	family, ok := c.originFamilyOf(t)
 	if !ok {
 		return 0, nil, false
@@ -91,14 +105,14 @@ func (c *Cache) originFamilyOf(t typ.Type) (originFamily, bool) {
 	}
 	if c.origins != nil {
 		if cached, ok := c.origins[t]; ok {
-			if cached.ok && !originFamilyActive(cached.family.id) {
+			if cached.ok && !c.originFamilyActiveLocked(cached.family.id) {
 				return originFamily{}, false
 			}
 			return cached.family, cached.ok
 		}
 	}
 	family, ok := originFamilyOfWithDetector(t, c.discriminantDetector())
-	if !ok {
+	if !ok || !c.storeOriginFamilyLocked(family) {
 		return originFamily{}, false
 	}
 	if c.origins == nil {
@@ -119,6 +133,8 @@ func (c *Cache) OriginByPathLiteral(t typ.Type, suffix []segment.Segment, lit ty
 	if c == nil {
 		return OriginByPathLiteral(t, suffix, lit)
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.originByPathLiteral(t, suffix, lit, false)
 }
 
@@ -126,6 +142,8 @@ func (c *Cache) OriginByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit
 	if c == nil {
 		return OriginByPathLiteralNot(t, suffix, lit)
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.originByPathLiteral(t, suffix, lit, true)
 }
 
@@ -138,7 +156,7 @@ func (c *Cache) originByPathLiteral(t typ.Type, suffix []segment.Segment, lit ty
 	}
 	if c.pathLiterals != nil {
 		if cached, ok := c.pathLiterals[key]; ok {
-			if cached.ok && !originFamilyActive(cached.family) {
+			if cached.ok && !c.originFamilyActiveLocked(cached.family) {
 				return 0, nil, false
 			}
 			return cached.family, append([]int(nil), cached.cases...), cached.ok
@@ -172,6 +190,8 @@ func (c *Cache) NarrowByOrigin(t typ.Type, familyID uint64, cases caseset.View) 
 	if c == nil {
 		return NarrowByOrigin(t, familyID, cases)
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.narrowByOrigin(t, familyID, cases, originCaseKey(cases))
 }
 
@@ -182,7 +202,7 @@ func (c *Cache) narrowByOrigin(t typ.Type, familyID uint64, cases caseset.View, 
 	key := narrowCacheKey{t: t, family: familyID, cases: caseKey}
 	if c.narrows != nil {
 		if cached, ok := c.narrows[key]; ok {
-			revision, active := originFamilyRevision(familyID)
+			revision, active := c.originFamilyRevisionLocked(familyID)
 			if !active {
 				return t, false
 			}
@@ -196,11 +216,11 @@ func (c *Cache) narrowByOrigin(t typ.Type, familyID uint64, cases caseset.View, 
 		if c.narrows == nil {
 			c.narrows = make(map[narrowCacheKey]typeCacheEntry)
 		}
-		revision, _ := originFamilyRevision(familyID)
+		revision, _ := c.originFamilyRevisionLocked(familyID)
 		c.narrows[key] = typeCacheEntry{t: t, revision: revision, ok: false}
 		return t, false
 	}
-	revision, active := originFamilyRevision(familyID)
+	revision, active := c.originFamilyRevisionLocked(familyID)
 	if !active {
 		return t, false
 	}
@@ -214,8 +234,10 @@ func (c *Cache) narrowByOrigin(t typ.Type, familyID uint64, cases caseset.View, 
 
 func (c *Cache) TypeFromOrigin(familyID uint64, cases caseset.View) (typ.Type, bool) {
 	if c == nil {
-		return TypeFromOrigin(familyID, cases)
+		return nil, false
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.typeFromOrigin(familyID, cases, originCaseKey(cases))
 }
 
@@ -226,7 +248,7 @@ func (c *Cache) typeFromOrigin(familyID uint64, cases caseset.View, caseKey orig
 	key := originTypeCacheKey{family: familyID, cases: caseKey}
 	if c.types != nil {
 		if cached, ok := c.types[key]; ok {
-			revision, active := originFamilyRevision(familyID)
+			revision, active := c.originFamilyRevisionLocked(familyID)
 			if !active {
 				return nil, false
 			}
@@ -235,7 +257,7 @@ func (c *Cache) typeFromOrigin(familyID uint64, cases caseset.View, caseKey orig
 			}
 		}
 	}
-	family, ok := loadOriginFamily(familyID)
+	family, ok := c.loadOriginFamilyLocked(familyID)
 	if !ok {
 		if c.types == nil {
 			c.types = make(map[originTypeCacheKey]typeCacheEntry)
@@ -243,7 +265,7 @@ func (c *Cache) typeFromOrigin(familyID uint64, cases caseset.View, caseKey orig
 		c.types[key] = typeCacheEntry{ok: false}
 		return nil, false
 	}
-	revision, active := originFamilyRevision(familyID)
+	revision, active := c.originFamilyRevisionLocked(familyID)
 	if !active {
 		return nil, false
 	}
@@ -255,8 +277,8 @@ func (c *Cache) typeFromOrigin(familyID uint64, cases caseset.View, caseKey orig
 	return t, ok
 }
 
-func originFamilyActive(id uint64) bool {
-	_, ok := originFamilyRevision(id)
+func (c *Cache) originFamilyActiveLocked(id uint64) bool {
+	_, ok := c.originFamilyRevisionLocked(id)
 	return ok
 }
 

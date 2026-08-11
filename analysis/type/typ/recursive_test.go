@@ -2,8 +2,10 @@ package typ
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
@@ -194,6 +196,107 @@ func TestRecursiveStringNoPanic(t *testing.T) {
 		t.Fatalf("String() = %q, want %q", got, want)
 	}
 	assertRecursiveRecord(t, rec, "Node", []Field{{Name: "next", Type: rec, Optional: true}})
+}
+
+// TestRecursiveStringGoldenParity pins the public spelling and traversal order
+// of every recursive renderer shape that previously used recursive descent.
+func TestRecursiveStringGoldenParity(t *testing.T) {
+	t.Run("record", func(t *testing.T) {
+		rec := NewRecursivePlaceholder("Node")
+		rec.SetBody(&Record{
+			Fields: []Field{{Name: "next", Type: &Optional{Inner: rec}, Optional: true, Readonly: true}},
+			StaticMembers: []StaticMember{{
+				Kind: StaticMemberStringIndex, Name: `x"y`, Type: &Tuple{Elements: []Type{rec, nil, Nil}}, Optional: true, Readonly: true,
+			}},
+			MapKey: String, MapValue: &Array{Element: rec}, Open: true,
+		})
+		if got, want := rec.String(), "μNode. {readonly next?: Node?, readonly [\"x\\\"y\"]?: (Node, unknown, nil), [string]: Node[], ...}"; got != want {
+			t.Fatalf("String() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("function", func(t *testing.T) {
+		rec := NewRecursivePlaceholder("Fn")
+		rec.SetBody(&Function{
+			TypeParams: []*TypeParam{{Name: "T", Constraint: String}},
+			Params:     []Param{{Name: "node", Type: rec, Optional: true}},
+			Variadic:   rec,
+			Returns:    []Type{rec, &Map{Key: rec, Value: rec}},
+		})
+		if got, want := rec.String(), "μFn. fun<T : string>(node: Fn?, ...Fn) -> (Fn, {[Fn]: Fn})"; got != want {
+			t.Fatalf("String() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("interface_meta_and_instantiation", func(t *testing.T) {
+		iface := NewRecursivePlaceholder("Iface")
+		iface.SetBody(&Interface{Methods: []Method{{Name: "next", Type: &Function{Returns: []Type{iface}}}}})
+		if got, want := iface.String(), "μIface. interface { next: fun() -> Iface }"; got != want {
+			t.Fatalf("interface String() = %q, want %q", got, want)
+		}
+
+		meta := NewRecursivePlaceholder("Meta")
+		meta.SetBody(&Meta{Of: meta})
+		if got, want := meta.String(), "μMeta. typeof(Meta)"; got != want {
+			t.Fatalf("meta String() = %q, want %q", got, want)
+		}
+
+		generic := &Generic{Name: "Box"}
+		instantiated := NewRecursivePlaceholder("Inst")
+		instantiated.SetBody(&Instantiated{Generic: generic, TypeArgs: []Type{instantiated}})
+		if got, want := instantiated.String(), "μInst. Box<Inst>"; got != want {
+			t.Fatalf("instantiation String() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("joins_annotations_and_generics", func(t *testing.T) {
+		join := NewRecursivePlaceholder("Join")
+		join.SetBody(&Union{Members: []Type{
+			&Intersection{Members: []Type{join, &ReadonlyMap{Key: String, Value: join}}},
+			&Optional{Inner: join},
+		}})
+		if got, want := join.String(), "μJoin. Join & readonly {[string]: Join} | Join?"; got != want {
+			t.Fatalf("join String() = %q, want %q", got, want)
+		}
+
+		annotated := NewRecursivePlaceholder("Annotated")
+		annotated.SetBody(&Tuple{Elements: []Type{
+			NewAnnotated(String, []annotation.Annotation{{Name: "min", Arg: annotation.Int64Arg(7)}}),
+			&Generic{Name: "Box", TypeParams: []*TypeParam{{Name: "T", Constraint: String}}},
+		}})
+		if got, want := annotated.String(), "μAnnotated. (string @min(7), Box<T : string>)"; got != want {
+			t.Fatalf("annotation/generic String() = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestRecursiveStringIterativeTwelveThousandDeepMutualCycle(t *testing.T) {
+	const depth = 12_000
+	left := NewRecursivePlaceholder("Left")
+	right := NewRecursivePlaceholder("Right")
+	left.SetBody(deepRecursiveStringArrays(right, depth))
+	right.SetBody(deepRecursiveStringArrays(left, depth))
+
+	want := "μLeft. μRight. Left" + strings.Repeat("[]", depth*2)
+	if got := left.String(); got != want {
+		t.Fatalf("deep mutual cycle String() differs: got length %d, want length %d", len(got), len(want))
+	}
+
+	if allocs := testing.AllocsPerRun(10, func() {
+		if got := left.String(); got != want {
+			t.Fatal("deep mutual cycle rendering lost deterministic output")
+		}
+	}); allocs > 64 {
+		t.Fatalf("deep iterative rendering allocated %.1f times/run, want bounded linear-buffer growth", allocs)
+	}
+}
+
+func deepRecursiveStringArrays(leaf Type, depth int) Type {
+	var out Type = leaf
+	for range depth {
+		out = &Array{Element: out}
+	}
+	return out
 }
 
 // TestRecursiveMutualRecursion tests two mutually recursive types.
@@ -1112,6 +1215,32 @@ func TestRecursiveHashDepsHandlesDeepAcyclicProducts(t *testing.T) {
 	second := rec.Hash()
 	if first != second {
 		t.Fatalf("recursive hash not stable after dependency caching: %d vs %d", first, second)
+	}
+}
+
+func TestRecursiveHashClosureAndContainmentTraverseTwelveThousandNodeGraph(t *testing.T) {
+	const depth = 12_000
+
+	node := NewRecursivePlaceholder("Deep")
+	var backedge Type = node
+	for range depth {
+		backedge = NewArray(backedge)
+	}
+	node.SetBody(NewTuple(Any, backedge))
+
+	if knownContainsOpenRecursive(node) {
+		t.Fatal("closed deep recursive graph reported open")
+	}
+	deps, ok := recursiveHashDeps(node)
+	if !ok || len(deps) != 1 || deps[0].rec != node {
+		t.Fatalf("deep recursive graph dependencies = %#v, ok=%v", deps, ok)
+	}
+	if !ContainsAny(node) {
+		t.Fatal("deep recursive graph lost reachable any containment")
+	}
+	first, second := node.Hash(), node.Hash()
+	if first != second {
+		t.Fatalf("deep recursive graph hash changed across cached reads: %d vs %d", first, second)
 	}
 }
 

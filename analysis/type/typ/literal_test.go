@@ -1,6 +1,7 @@
 package typ
 
 import (
+	"math"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
@@ -97,6 +98,45 @@ func TestLiteralNumber(t *testing.T) {
 	}
 }
 
+func TestLiteralNumberUsesRawIEEEBitsAsReflexiveIdentity(t *testing.T) {
+	values := []struct {
+		name string
+		bits uint64
+	}{
+		{name: "positive-zero", bits: 0x0000000000000000},
+		{name: "negative-zero", bits: 0x8000000000000000},
+		{name: "positive-infinity", bits: 0x7ff0000000000000},
+		{name: "negative-infinity", bits: 0xfff0000000000000},
+		{name: "quiet-nan-payload-one", bits: 0x7ff8000000000001},
+		{name: "quiet-nan-payload-two", bits: 0x7ff8000000000002},
+		{name: "signaling-nan", bits: 0x7ff0000000000001},
+	}
+	seen := make(map[uint64]*Literal, len(values))
+	for _, test := range values {
+		t.Run(test.name, func(t *testing.T) {
+			value := math.Float64frombits(test.bits)
+			left, right := LiteralNumber(value), LiteralNumber(value)
+			if got := math.Float64bits(left.Value.(float64)); got != test.bits {
+				t.Fatalf("public float payload bits=%#x, want %#x", got, test.bits)
+			}
+			if !left.Equals(right) || !TypeEquals(left, right) || left.Hash() != right.Hash() {
+				t.Fatalf("equal raw-bit literals are not reflexive: left=%#x right=%#x", left.Hash(), right.Hash())
+			}
+			seen[test.bits] = left
+		})
+	}
+	for leftBits, left := range seen {
+		for rightBits, right := range seen {
+			if leftBits == rightBits {
+				continue
+			}
+			if left.Equals(right) || TypeEquals(left, right) {
+				t.Fatalf("distinct IEEE payloads collapsed: %#x and %#x", leftBits, rightBits)
+			}
+		}
+	}
+}
+
 func TestLiteralString(t *testing.T) {
 	lit := LiteralString("hello")
 
@@ -128,6 +168,28 @@ func TestLiteralString(t *testing.T) {
 	empty := LiteralString("")
 	if empty.String() != `""` {
 		t.Errorf("String: got %q, want %q", empty.String(), `""`)
+	}
+}
+
+func TestLiteralStringReturnsFreshStructurallyEqualNodes(t *testing.T) {
+	first := LiteralString("same")
+	second := LiteralString("same")
+	if first == second {
+		t.Fatal("equal string literals unexpectedly share pointer identity")
+	}
+	if !first.Equals(second) || !TypeEquals(first, second) {
+		t.Fatal("fresh equal string literals are not structurally equal")
+	}
+	if first.Hash() != second.Hash() || first.String() != `"same"` || second.String() != `"same"` {
+		t.Fatalf("fresh string literals changed value/hash/render semantics: first=%q/%d second=%q/%d", first.String(), first.Hash(), second.String(), second.Hash())
+	}
+
+	// Literal fields are intentionally exposed for the existing type model. A
+	// caller mutating one malformed node must not poison the next construction.
+	first.Value = "mutated"
+	first.str = `"mutated"`
+	if second.Value != "same" || second.String() != `"same"` {
+		t.Fatalf("fresh string literal storage was aliased: %#v/%q", second.Value, second.String())
 	}
 }
 

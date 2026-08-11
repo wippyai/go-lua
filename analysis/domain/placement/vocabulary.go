@@ -65,7 +65,7 @@ func (e Escape) Placement() (Placement, bool) {
 
 // Placement is the canonical, name-frozen allocation/runtime placement.
 //
-// Bottom through Unknown retain placement.Value's historical numeric layout so
+// Bottom through Unknown retain Placement's historical numeric layout so
 // lattice hashes remain stable.  Compiled artifacts never serialize these
 // numbers directly; equation owns an explicit frozen ordinal codec.
 type Placement uint8

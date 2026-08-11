@@ -14,50 +14,23 @@ import (
 // signature content identity. It is intentionally independent of the manifest
 // document schema: changing either projection requires an explicit version
 // decision instead of silently re-keying caches.
-const SignatureContentSchema = "go-lua.signature.content/v1"
+const SignatureContentSchema = "go-lua.signature.content/v2"
 
 type signatureContentWire struct {
-	Schema                string                  `json:"schema"`
-	HasType               bool                    `json:"hasType"`
-	Type                  *typeWire               `json:"type,omitempty"`
-	Effect                *effectRowWire          `json:"effect,omitempty"`
-	HasOperationalEffects bool                    `json:"hasOperationalEffects"`
-	OperationalEffects    *operationalEffectsWire `json:"operationalEffects,omitempty"`
-}
-
-type semanticOperationalTypeContextKey struct{}
-
-func semanticOperationalTypeContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, semanticOperationalTypeContextKey{}, true)
-}
-
-func encodeOperationalEffectType(ctx context.Context, value typ.Type) (*typeWire, error) {
-	if ctx == nil {
-		return encodeType(value)
-	}
-	semantic, _ := ctx.Value(semanticOperationalTypeContextKey{}).(bool)
-	if !semantic {
-		return encodeType(value)
-	}
-	if err := validateCanonicalSignatureTypeGraph(ctx, value); err != nil {
-		return nil, err
-	}
-	return encodeSemanticType(value)
+	Schema  string         `json:"schema"`
+	HasType bool           `json:"hasType"`
+	Type    *typeWire      `json:"type,omitempty"`
+	Effect  *effectRowWire `json:"effect,omitempty"`
 }
 
 // CanonicalFunctionSignatureBytesContext returns the canonical, collision-safe
-// semantic projection of sig. The presence bits are significant because
-// Function.Equals distinguishes nil from a present empty operational row.
-// Embedded operational types use equality identity so recursive in-memory
-// graphs do not leak allocation identity into the result.
+// semantic projection of sig. Embedded types use equality identity so
+// recursive in-memory graphs do not leak allocation identity into the result.
 func CanonicalFunctionSignatureBytesContext(ctx context.Context, sig signature.Function) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := operationalEffectsContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	var encodedType *typeWire
@@ -71,24 +44,18 @@ func CanonicalFunctionSignatureBytesContext(ctx context.Context, sig signature.F
 			return nil, err
 		}
 	}
-	if err := operationalEffectsContextErr(ctx); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	encodedEffect, err := encodeEffectRow(sig.Effect)
 	if err != nil {
 		return nil, err
 	}
-	encodedOperational, err := encodeSignatureContentOperationalEffects(semanticOperationalTypeContext(ctx), sig.OperationalEffects)
-	if err != nil {
-		return nil, err
-	}
 	return json.Marshal(signatureContentWire{
-		Schema:                SignatureContentSchema,
-		HasType:               sig.Type != nil,
-		Type:                  encodedType,
-		Effect:                encodedEffect,
-		HasOperationalEffects: sig.OperationalEffects != nil,
-		OperationalEffects:    encodedOperational,
+		Schema:  SignatureContentSchema,
+		HasType: sig.Type != nil,
+		Type:    encodedType,
+		Effect:  encodedEffect,
 	})
 }
 
@@ -141,40 +108,6 @@ func validateCanonicalSignatureTypeGraph(ctx context.Context, root typ.Type) err
 		return nil
 	}
 	return visit(root)
-}
-
-// encodeSignatureContentOperationalEffects deliberately does not apply
-// OperationalEffects.IsEmpty. The manifest document may omit a certification
-// rider that has no accompanying fact, but content identity must preserve it:
-// OperationalEffects.Equals observes every registered lane.
-func encodeSignatureContentOperationalEffects(ctx context.Context, effects *signature.OperationalEffects) (*operationalEffectsWire, error) {
-	if effects == nil {
-		return nil, nil
-	}
-	out := &operationalEffectsWire{}
-	for _, lane := range operationalEffectsWireLanes {
-		if err := operationalEffectsContextErr(ctx); err != nil {
-			return nil, err
-		}
-		if err := lane.encode(ctx, effects, out); err != nil {
-			return nil, err
-		}
-	}
-	if err := canonicalizeOperationalEffectsWireContext(ctx, out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// CanonicalAllocationTemplatesBytesContext returns the canonical projection of
-// the separately composable allocation-template lane.
-func CanonicalAllocationTemplatesBytesContext(ctx context.Context, templates []signature.ReturnAllocationTemplate) ([]byte, error) {
-	effects := &signature.OperationalEffects{ReturnAllocationTemplates: templates}
-	wire, err := encodeSignatureContentOperationalEffects(semanticOperationalTypeContext(ctx), effects)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(wire.ReturnAllocationTemplates)
 }
 
 // CanonicalFunctionSignatureBytes is the non-cancelable convenience form.

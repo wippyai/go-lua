@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/identityvalue"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/typevalue"
-	"github.com/wippyai/go-lua/analysis/domain/value/variant"
 	"github.com/wippyai/go-lua/analysis/internal/typegraph"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
@@ -97,7 +96,7 @@ func (r Reader) VariantOriginType(value product.Value) (typ.Type, bool) {
 // variant-origin family, independent of any narrowing recorded on this value.
 // It yields the broad declared shape the discriminated value originated from.
 func (r Reader) FullVariantOriginType(value product.Value) (typ.Type, bool) {
-	if r.reg == nil {
+	if r.reg == nil || r.typeCache == nil {
 		return nil, false
 	}
 	if product.Equal(r.reg, value, product.Bottom(r.reg)) {
@@ -107,7 +106,7 @@ func (r Reader) FullVariantOriginType(value product.Value) (typ.Type, bool) {
 	if origin.IsBottom() || origin.IsTop() {
 		return nil, false
 	}
-	return variant.FullFamilyType(origin.Family())
+	return r.typeCache.Variants().FullFamilyType(origin.Family())
 }
 
 func (r Reader) ValueHasUntrustedTopOrigin(value product.Value) bool {

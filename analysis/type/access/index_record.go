@@ -2,82 +2,9 @@ package access
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/normalize"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
-
-func (q *query) indexInRecord(r *typ.Record, key typ.Type, depth int, mode indexMode) fieldResult {
-	if r == nil {
-		return fieldResult{}
-	}
-	return q.indexByKeyVariants(key, depth, mode, true, fieldResult{}, func(key typ.Type) fieldResult {
-		if name, ok := literalStringKey(key); ok {
-			return stringKeyInRecord(r, name)
-		}
-		if index, ok := literalIntKey(key); ok {
-			return indexIntInRecord(r, index)
-		}
-		if res := q.indexDynamicIntMembersInRecord(r, key, depth+1, mode); res.ok {
-			if mapRes := indexRecordMapComponent(r, key, depth+1, mode); mapRes.ok {
-				return unionFieldResults(res, mapRes)
-			}
-			return res
-		}
-		if mapRes := indexRecordMapComponent(r, key, depth+1, mode); mapRes.ok {
-			return mapRes
-		}
-		if r.Open {
-			return fieldResult{t: typ.Unknown, ok: true}
-		}
-		return fieldResult{}
-	})
-}
-
-func (q *query) indexDynamicIntMembersInRecord(r *typ.Record, key typ.Type, depth int, mode indexMode) fieldResult {
-	if r == nil || len(r.StaticMembers) == 0 {
-		return fieldResult{}
-	}
-	switch mode {
-	case indexRuntime:
-		if !q.arrayRuntimeKeyMayBeInteger(key, depth+1) {
-			return fieldResult{}
-		}
-	default:
-		if !subtype.IsSubtype(key, typ.Integer) {
-			return fieldResult{}
-		}
-	}
-	out := make([]typ.Type, 0, len(r.StaticMembers))
-	for _, member := range r.StaticMembers {
-		if member.Kind != typ.StaticMemberIntIndex {
-			continue
-		}
-		if member.Type == nil {
-			out = append(out, typ.Unknown)
-			continue
-		}
-		out = append(out, member.Type)
-	}
-	if len(out) == 0 {
-		return fieldResult{}
-	}
-	return fieldResult{t: normalize.UnionForEvidence(out...), ok: true, nilable: true}
-}
-
-func indexRecordMapComponent(r *typ.Record, key typ.Type, depth int, mode indexMode) fieldResult {
-	if r == nil || !r.HasMapComponent() {
-		return fieldResult{}
-	}
-	ok := typetable.MapComponentKeyAdmitsType(r.MapKey, key)
-	if !ok && mode == indexRuntime {
-		ok = typetable.MapComponentKeyMayOverlapType(r.MapKey, key)
-	}
-	if !ok {
-		return fieldResult{}
-	}
-	return fieldResult{t: r.MapValue, ok: true, nilable: mode != indexWrite}
-}
 
 func unionFieldResults(a fieldResult, b fieldResult) fieldResult {
 	if !a.ok {
@@ -103,8 +30,8 @@ func stringKeyInRecord(r *typ.Record, name string) fieldResult {
 	if r == nil {
 		return fieldResult{}
 	}
-	if f := r.GetField(name); f != nil {
-		return fieldResult{t: f.Type, ok: true, nilable: f.Optional}
+	if field := r.GetField(name); field != nil {
+		return fieldResult{t: field.Type, ok: true, nilable: field.Optional}
 	}
 	if member := r.GetStaticStringIndex(name); member != nil {
 		return fieldResult{t: member.Type, ok: true, nilable: member.Optional}
@@ -119,6 +46,9 @@ func stringKeyInRecord(r *typ.Record, name string) fieldResult {
 }
 
 func indexIntInRecord(r *typ.Record, index int64) fieldResult {
+	if r == nil {
+		return fieldResult{}
+	}
 	if member := r.GetStaticIntIndex(index); member != nil {
 		return fieldResult{t: member.Type, ok: true, nilable: member.Optional}
 	}

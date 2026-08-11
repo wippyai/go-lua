@@ -27,7 +27,13 @@ func VariantOriginOfValue(reg *axis.Registry, cache *Cache, value product.Value)
 		}
 		return witnessOrigin, true
 	}
-	t, ok := cache.TypeOf(reg, value)
+	var t typ.Type
+	var ok bool
+	if cache != nil {
+		t, ok = cache.TypeOf(reg, value)
+	} else {
+		t, ok = TypeOf(reg, value)
+	}
 	if !ok {
 		if !origin.IsBottom() && !origin.IsTop() {
 			return origin, true
@@ -76,8 +82,14 @@ func witnessVariantOrigin(reg *axis.Registry, cache *Cache, value product.Value)
 	if !ok {
 		return variantorigin.Value{}, false
 	}
-	if valueType, ok := cache.TypeOf(reg, value); ok {
-		if selected, ok := variant.OriginCasesForType(family, caseset.New(cases).View(), valueType); ok {
+	var valueType typ.Type
+	if cache != nil {
+		valueType, ok = cache.TypeOf(reg, value)
+	} else {
+		valueType, ok = TypeOf(reg, value)
+	}
+	if ok && cache != nil {
+		if selected, ok := cache.Variants().OriginCasesForType(family, caseset.New(cases).View(), valueType); ok {
 			return variantorigin.Of(family, selected), true
 		}
 	}

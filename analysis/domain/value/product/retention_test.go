@@ -38,7 +38,8 @@ func TestRetentionSafeIsAxisOwnedAndRegistryFenced(t *testing.T) {
 			Retention: axis.ValidatedRetention(func(value retentionTestValue) bool { return value.safe }),
 			Canonical: axis.PendingCanonical[retentionTestValue]("test-only axis"),
 		})
-		return reg.Freeze()
+		freezeTestRegistry(reg)
+		return reg
 	}
 	reg := newRegistry()
 	foreign := newRegistry()
@@ -113,7 +114,7 @@ func TestRetentionSafeUsesCanonicalSlotOrdinals(t *testing.T) {
 		Retention: axis.ValidatedRetention(func(v string) bool { return v != "unsafe" }),
 		Canonical: axis.PendingCanonical[string]("test-only axis"),
 	})
-	reg.Freeze()
+	freezeTestRegistry(reg)
 
 	if !RetentionSafe(reg, Bottom(reg)) {
 		t.Fatal("safe bottom payloads across every canonical slot were rejected")

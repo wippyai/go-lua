@@ -92,6 +92,33 @@ func TestScanTypeAsIdent(t *testing.T) {
 	}
 }
 
+func TestScanTurbofishTokenRequiresAdjacentAngle(t *testing.T) {
+	lexer := &Lexer{scanner: NewScanner(strings.NewReader("::<"), "test"), Token: ast.Token{}, PrevTokenType: TNil}
+	tok, err := lexer.scanner.Scan(lexer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tok.Type != TTypeArgsOpen || tok.Str != "::<" {
+		t.Fatalf("adjacent turbofish token = %#v, want TTypeArgsOpen ::<", tok)
+	}
+
+	lexer = &Lexer{scanner: NewScanner(strings.NewReader(":: <"), "test"), Token: ast.Token{}, PrevTokenType: TNil}
+	tok, err = lexer.scanner.Scan(lexer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tok.Type != T2Colon || tok.Str != "::" {
+		t.Fatalf("spaced cast token = %#v, want T2Colon ::", tok)
+	}
+	tok, err = lexer.scanner.Scan(lexer)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tok.Type != '<' || tok.Str != "<" {
+		t.Fatalf("spaced angle token = %#v, want <", tok)
+	}
+}
+
 func TestScanMinusNotArrow(t *testing.T) {
 	// Just '-' should be scanned as minus, not arrow
 	lexer := &Lexer{NewScanner(strings.NewReader("- 1"), "test"), nil, false, ast.Token{}, TNil, nil}
@@ -687,6 +714,32 @@ func TestParseStringError(t *testing.T) {
 	if !strings.Contains(rendered, "local x = @") {
 		t.Error("rendered error should show source line")
 	}
+}
+
+type panicReader struct{ value any }
+
+func (r panicReader) Read([]byte) (int, error) { panic(r.value) }
+
+func TestParseConvertsErrorPanicsToErrors(t *testing.T) {
+	want := errors.New("reader failure")
+	chunk, err := Parse(panicReader{value: want}, "panic.lua")
+	if chunk != nil {
+		t.Fatalf("Parse returned statements after reader error: %#v", chunk)
+	}
+	if !errors.Is(err, want) {
+		t.Fatalf("Parse error = %v, want %v", err, want)
+	}
+}
+
+func TestParsePropagatesUnexpectedPanics(t *testing.T) {
+	want := "reader invariant failure"
+	defer func() {
+		if got := recover(); got != want {
+			t.Fatalf("Parse panic = %#v, want %#v", got, want)
+		}
+	}()
+	_, _ = Parse(panicReader{value: want}, "panic.lua")
+	t.Fatal("Parse returned successfully after an unexpected panic")
 }
 
 func TestScanHexNumbers(t *testing.T) {

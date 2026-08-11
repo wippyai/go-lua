@@ -1,8 +1,9 @@
 package proof
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"strconv"
+
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 )
 
 func testTableIdentity(scope, site uint64) identity.ID {

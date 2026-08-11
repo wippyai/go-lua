@@ -173,9 +173,7 @@ func NewMeta(of Type) *Meta {
 
 func (m *Meta) Kind() kind.Kind { return kind.Meta }
 func (m *Meta) String() string {
-	return m.strCache.get(func() string {
-		return "typeof(" + m.Of.String() + ")"
-	})
+	return m.strCache.get(func() string { return renderTypeString(m) })
 }
 func (m *Meta) Hash() uint64 { return m.hash }
 func (m *Meta) Equals(other Type) bool {

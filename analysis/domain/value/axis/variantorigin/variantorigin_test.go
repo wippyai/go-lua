@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/domain/value/variant/caseset"
 )
@@ -85,9 +84,10 @@ func TestValueOwnsSourceAndReturnedCases(t *testing.T) {
 }
 
 func TestImmutableCasesPreserveInternedProductIdentity(t *testing.T) {
-	reg := axis.NewRegistry()
-	axis.Register(reg, Spec())
-	reg.Freeze()
+	reg, err := product.RegistryWithAxes(Spec().Erase())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	source := []int{4, 2, 4, 1}
 	origin := Of(19, source)

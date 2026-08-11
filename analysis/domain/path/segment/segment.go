@@ -4,10 +4,7 @@ package segment
 import (
 	"strconv"
 	"strings"
-	"sync"
 )
-
-var formattedSegmentsCache sync.Map
 
 // SegmentKind describes how a path accesses a nested value.
 type SegmentKind uint8
@@ -88,41 +85,59 @@ func WriteFormattedSegments(b *strings.Builder, segs []Segment) {
 	}
 }
 
-// InternFormattedSegments parses the canonical suffix emitted by FormatSegments.
-// The returned slice is interned and immutable; callers that expose or mutate
-// segment slices must use ParseFormattedSegments instead.
-func InternFormattedSegments(suffix string) ([]Segment, bool) {
-	if suffix == "" {
-		return nil, true
-	}
-	if cached, ok := formattedSegmentsCache.Load(suffix); ok {
-		return cached.([]Segment), true
-	}
-	segs, ok := parseFormattedSegmentsSlow(suffix)
-	if !ok {
-		return nil, false
-	}
-	if cached, loaded := formattedSegmentsCache.LoadOrStore(suffix, segs); loaded {
-		return cached.([]Segment), true
-	}
-	return segs, true
-}
-
-// ParseFormattedSegments parses the canonical suffix emitted by FormatSegments
-// and returns a defensive copy for public consumers.
+// ParseFormattedSegments parses the canonical suffix emitted by FormatSegments.
+// The returned slice is fresh and owned by the caller, so it is safe for public
+// consumers to mutate without affecting another parse.
 func ParseFormattedSegments(suffix string) ([]Segment, bool) {
-	segs, ok := InternFormattedSegments(suffix)
-	if !ok {
-		return nil, false
-	}
-	return cloneFormattedSegments(segs), true
+	return parseFormattedSegmentsSlow(suffix)
 }
 
 // ValidFormattedSegments reports whether suffix is a canonical FormatSegments
 // suffix without projecting segment values.
 func ValidFormattedSegments(suffix string) bool {
-	_, ok := InternFormattedSegments(suffix)
-	return ok
+	for len(suffix) > 0 {
+		switch suffix[0] {
+		case '.':
+			end := 1
+			for end < len(suffix) && suffix[end] != '.' && suffix[end] != '[' {
+				end++
+			}
+			if end == 1 {
+				return false
+			}
+			suffix = suffix[end:]
+		case '[':
+			if len(suffix) < 3 {
+				return false
+			}
+			if suffix[1] == '"' {
+				end, ok := formattedQuotedSegmentEnd(suffix)
+				if !ok || end+1 >= len(suffix) || suffix[end+1] != ']' {
+					return false
+				}
+				suffix = suffix[end+2:]
+				continue
+			}
+			end := 1
+			if suffix[end] == '-' {
+				end++
+			}
+			digitStart := end
+			for end < len(suffix) && suffix[end] >= '0' && suffix[end] <= '9' {
+				end++
+			}
+			if end == digitStart || end >= len(suffix) || suffix[end] != ']' {
+				return false
+			}
+			if _, err := strconv.Atoi(suffix[1:end]); err != nil {
+				return false
+			}
+			suffix = suffix[end+1:]
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func parseFormattedSegmentsSlow(suffix string) ([]Segment, bool) {
@@ -213,13 +228,6 @@ func unquoteFormattedSegment(s string) (string, bool) {
 		b.WriteByte(s[i])
 	}
 	return b.String(), true
-}
-
-func cloneFormattedSegments(segs []Segment) []Segment {
-	if len(segs) == 0 {
-		return nil
-	}
-	return append([]Segment(nil), segs...)
 }
 
 func writeQuotedPathIndex(b *strings.Builder, key string) {

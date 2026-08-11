@@ -1,8 +1,6 @@
 package typ
 
 import (
-	"strings"
-
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -47,24 +45,7 @@ func Instantiate(g *Generic, args ...Type) *Instantiated {
 
 func (i *Instantiated) Kind() kind.Kind { return kind.Instantiated }
 func (i *Instantiated) String() string {
-	return i.strCache.get(func() string {
-		var sb strings.Builder
-
-		sb.WriteString(i.Generic.Name)
-		sb.WriteString("<")
-
-		for j, a := range i.TypeArgs {
-			if j > 0 {
-				sb.WriteString(", ")
-			}
-
-			sb.WriteString(a.String())
-		}
-
-		sb.WriteString(">")
-
-		return sb.String()
-	})
+	return i.strCache.get(func() string { return renderTypeString(i) })
 }
 func (i *Instantiated) Hash() uint64 { return i.hash }
 func (i *Instantiated) Equals(other Type) bool {

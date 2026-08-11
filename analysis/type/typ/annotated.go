@@ -2,7 +2,6 @@ package typ
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
@@ -51,38 +50,7 @@ func (a *Annotated) Kind() kind.Kind {
 }
 
 func (a *Annotated) String() string {
-	return a.strCache.get(func() string {
-		var sb strings.Builder
-		if a.Inner != nil {
-			sb.WriteString(a.Inner.String())
-		} else {
-			sb.WriteString("unknown")
-		}
-		for _, ann := range a.Annotations {
-			sb.WriteString(" @")
-			sb.WriteString(ann.Name)
-			if !ann.Arg.IsNone() {
-				sb.WriteString("(")
-				if v, ok := ann.Arg.AsString(); ok {
-					sb.WriteString("\"")
-					sb.WriteString(v)
-					sb.WriteString("\"")
-				} else if v, ok := ann.Arg.AsFloat64(); ok {
-					sb.WriteString(formatFloat(v))
-				} else if v, ok := ann.Arg.AsInt64(); ok {
-					sb.WriteString(strconv.FormatInt(v, 10))
-				} else if v, ok := ann.Arg.AsInt(); ok {
-					sb.WriteString(strconv.FormatInt(int64(v), 10))
-				} else if v, ok := ann.Arg.AsBool(); ok {
-					sb.WriteString(strconv.FormatBool(v))
-				} else {
-					sb.WriteString("...")
-				}
-				sb.WriteString(")")
-			}
-		}
-		return sb.String()
-	})
+	return a.strCache.get(func() string { return renderTypeString(a) })
 }
 
 func (a *Annotated) Hash() uint64 {

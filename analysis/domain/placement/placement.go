@@ -1,13 +1,13 @@
 package placement
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/lattice"
+	"github.com/wippyai/go-lua/analysis/lattice"
 )
 
-func Lattice() lattice.Lattice[Value] {
-	return lattice.Lattice[Value]{
-		Bottom:   func() Value { return Bottom },
-		Top:      func() Value { return Unknown },
+func Lattice() lattice.Lattice[Placement] {
+	return lattice.Lattice[Placement]{
+		Bottom:   func() Placement { return Bottom },
+		Top:      func() Placement { return Unknown },
 		Equal:    Equal,
 		LessOrEq: LessOrEq,
 		Join:     Join,
@@ -16,24 +16,19 @@ func Lattice() lattice.Lattice[Value] {
 	}
 }
 
-// Value is a compatibility alias for the canonical allocation-placement
-// vocabulary. New in-memory code should name Placement directly.
-//
 // The chain is:
 //
 //	bottom < stack < owned-heap < shared-heap < unknown
 //
 // Higher points are less precise and more conservative. Joining any path that
 // requires a more shared placement moves the result upward; Unknown is Top.
-type Value = Placement
-
 // LessOrEq reports whether b conservatively covers a.
-func LessOrEq(a, b Value) bool {
+func LessOrEq(a, b Placement) bool {
 	return placementRank(a) <= placementRank(b)
 }
 
 // Join is the least upper bound of the placement chain.
-func Join(a, b Value) Value {
+func Join(a, b Placement) Placement {
 	if placementRank(a) > placementRank(b) {
 		return a
 	}
@@ -41,7 +36,7 @@ func Join(a, b Value) Value {
 }
 
 // Meet is the greatest lower bound of the placement chain.
-func Meet(a, b Value) Value {
+func Meet(a, b Placement) Placement {
 	if placementRank(a) < placementRank(b) {
 		return a
 	}
@@ -49,16 +44,16 @@ func Meet(a, b Value) Value {
 }
 
 // Widen equals Join because the placement lattice has finite height.
-func Widen(prev, next Value) Value {
+func Widen(prev, next Placement) Placement {
 	return Join(prev, next)
 }
 
 // Equal is lattice equivalence.
-func Equal(a, b Value) bool {
+func Equal(a, b Placement) bool {
 	return a == b
 }
 
-func placementRank(v Value) int {
+func placementRank(v Placement) int {
 	switch v {
 	case Bottom:
 		return 0

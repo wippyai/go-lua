@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // OriginCase describes one finite case in a variant-origin family.
@@ -43,34 +44,38 @@ func OriginCasesOfType(t typ.Type) (uint64, []OriginCase, bool) {
 	return family.id, publicOriginCases(family.cases), true
 }
 
-// OriginCases returns the full finite case set for a registered family.
-func OriginCases(familyID uint64) ([]OriginCase, bool) {
-	if familyID == 0 {
+// OriginCases returns the complete cases retained by this caller-owned cache.
+func (c *Cache) OriginCases(familyID uint64) ([]OriginCase, bool) {
+	if c == nil || familyID == 0 {
 		return nil, false
 	}
-	family, ok := loadOriginFamily(familyID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	family, ok := c.loadOriginFamilyLocked(familyID)
 	if !ok || len(family.cases) == 0 {
 		return nil, false
 	}
 	return publicOriginCases(family.cases), true
 }
 
-// OriginCasesForType selects allowed family cases compatible with valueType.
-func OriginCasesForType(familyID uint64, allowed caseset.View, valueType typ.Type) ([]int, bool) {
-	if familyID == 0 || allowed.Len() == 0 || valueType == nil || typ.IsAny(valueType) || typ.IsUnknown(valueType) || typ.IsNever(valueType) {
+// OriginCasesForType selects cases using this cache's family payload.
+func (c *Cache) OriginCasesForType(familyID uint64, allowed caseset.View, valueType typ.Type) ([]int, bool) {
+	if c == nil || familyID == 0 || allowed.Len() == 0 || valueType == nil || typ.IsAny(valueType) || typ.IsUnknown(valueType) || typ.IsNever(valueType) {
 		return nil, false
 	}
-	cases, ok := OriginCases(familyID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	family, ok := c.loadOriginFamilyLocked(familyID)
 	if !ok {
 		return nil, false
 	}
-	selected := make([]int, 0, len(cases))
-	for _, c := range cases {
-		if !containsCase(allowed, c.Index) {
+	selected := make([]int, 0, len(family.cases))
+	for _, item := range family.cases {
+		if !containsCase(allowed, item.index) {
 			continue
 		}
-		if subtype.IsSubtype(valueType, c.Type) || subtype.IsSubtype(c.Type, valueType) {
-			selected = append(selected, c.Index)
+		if subtype.IsSubtype(valueType, item.typ) || subtype.IsSubtype(item.typ, valueType) {
+			selected = append(selected, item.index)
 		}
 	}
 	return selected, len(selected) != 0
@@ -123,10 +128,42 @@ func NarrowByOrigin(t typ.Type, familyID uint64, cases caseset.View) (typ.Type, 
 		return t, false
 	}
 	family, ok := originFamilyOf(t)
-	if !ok || family.id != familyID {
+	if ok && family.id == familyID {
+		return narrowByOriginFamily(t, family, cases)
+	}
+	// A witness may be a broad union while the origin token describes one
+	// concrete tagged member (for example a declared Msg|Timer value carrying
+	// Msg evidence). Search only the witness's own finite union; this derives
+	// the payload from the caller's type graph and does not require an ID->type
+	// process catalog.
+	return narrowContainedOrigin(t, familyID, cases)
+}
+
+func narrowContainedOrigin(t typ.Type, familyID uint64, cases caseset.View) (typ.Type, bool) {
+	switch value := unwrap.Annotated(t).(type) {
+	case *typ.Alias:
+		return narrowContainedOrigin(value.UnaliasedTarget(), familyID, cases)
+	case *typ.Optional:
+		return narrowContainedOrigin(value.Inner, familyID, cases)
+	case *typ.Union:
+		var members []typ.Type
+		for _, member := range value.Members {
+			family, ok := originFamilyOf(member)
+			if !ok || family.id != familyID {
+				continue
+			}
+			narrowed, _ := narrowByOriginFamily(member, family, cases)
+			if narrowed != nil && !typ.IsNever(narrowed) {
+				members = append(members, narrowed)
+			}
+		}
+		if len(members) == 0 {
+			return t, false
+		}
+		return normalize.UnionForEvidence(members...), true
+	default:
 		return t, false
 	}
-	return narrowByOriginFamily(t, family, cases)
 }
 
 func narrowByOriginFamily(t typ.Type, family originFamily, cases caseset.View) (typ.Type, bool) {
@@ -161,15 +198,15 @@ func OriginByPathLiteralNot(t typ.Type, suffix []segment.Segment, lit typ.Type) 
 	return originByPathLiteral(t, suffix, lit, true)
 }
 
-// FullFamilyType reconstructs the complete structural union of every case
-// registered for a variant-origin family, independent of any narrowing recorded
-// on a specific value. It yields the broad declared shape a discriminated value
-// originated from.
-func FullFamilyType(familyID uint64) (typ.Type, bool) {
-	if familyID == 0 {
+// FullFamilyType reconstructs a complete family from this cache's owner-local
+// payload.
+func (c *Cache) FullFamilyType(familyID uint64) (typ.Type, bool) {
+	if c == nil || familyID == 0 {
 		return nil, false
 	}
-	family, ok := loadOriginFamily(familyID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	family, ok := c.loadOriginFamilyLocked(familyID)
 	if !ok || len(family.cases) == 0 {
 		return nil, false
 	}
@@ -178,18 +215,6 @@ func FullFamilyType(familyID uint64) (typ.Type, bool) {
 		out = append(out, c.typ)
 	}
 	return normalize.UnionForEvidence(out...), true
-}
-
-// TypeFromOrigin reconstructs a type from an immutable canonical case view.
-func TypeFromOrigin(familyID uint64, cases caseset.View) (typ.Type, bool) {
-	if familyID == 0 || cases.Len() == 0 {
-		return nil, false
-	}
-	family, ok := loadOriginFamily(familyID)
-	if !ok {
-		return nil, false
-	}
-	return typeFromOriginFamily(family, cases)
 }
 
 func typeFromOriginFamily(family originFamily, cases caseset.View) (typ.Type, bool) {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/internal/canonical"
+	"github.com/wippyai/go-lua/analysis/lattice"
 )
 
 // BoundaryPolicy declares how one sparse value axis crosses a function-summary
@@ -35,7 +35,16 @@ type Spec[T any] struct {
 	Join     func(a, b T) T
 	Meet     func(a, b T) T
 	Widen    func(prev, next T) T
-	Hash     func(T) uint64
+	// WidenRank proves strict Widen transitions descend. It is required before
+	// Product can expose this axis through a cyclic Factor; an unranked axis is
+	// still valid for acyclic use.
+	WidenRank Rank[T]
+	// ReductionRank proves strict downward writes performed by a product
+	// Reducer descend. A reducer may not target an axis without this witness.
+	// It is deliberately distinct from WidenRank because closure moves in the
+	// opposite lattice direction.
+	ReductionRank Rank[T]
+	Hash          func(T) uint64
 	// Retention is mandatory for every registered sparse axis. It proves whether
 	// values may cross an immutable artifact boundary.
 	Retention RetentionPolicy[T]
@@ -49,10 +58,13 @@ type Spec[T any] struct {
 	Boundary        BoundaryPolicy
 	BoundaryProject func(T) T
 	Reducer         Reducer
-	// ReducerReads lists every axis the Reducer inspects. Product reduction uses
-	// this declaration both to gate reducers whose sparse inputs are Top and to
-	// schedule only reducers affected by an exact axis change. Nil derives the
-	// reducer's own axis; a non-nil empty slice declares no sparse inputs.
+	// ReducerReads lists every axis the Reducer inspects. Product registration
+	// requires at least one declared sparse read: raw registry-neutral Product
+	// Top must already be closed, so presence may be an additional input but
+	// cannot be the sole reducer input. Product uses the sparse declarations to
+	// gate reducers whose inputs are Top and to schedule only reducers affected
+	// by an exact axis change. Nil derives the reducer's own sparse axis; a
+	// non-nil empty slice is rejected when Reducer is present.
 	ReducerReads []string
 	// ReducerWrites lists every axis the Reducer may restrict. Nil derives the
 	// reducer's own axis. A reducer may only move a declared output downward in
@@ -126,6 +138,17 @@ func validate[T any](s Spec[T]) error {
 	if s.Widen == nil {
 		return fmt.Errorf("axis %q: Widen is nil", s.Key.ID())
 	}
+	for _, rank := range []struct {
+		name  string
+		value Rank[T]
+	}{
+		{name: "WidenRank", value: s.WidenRank},
+		{name: "ReductionRank", value: s.ReductionRank},
+	} {
+		if !rank.value.valid() && !rank.value.absent() {
+			return fmt.Errorf("axis %q: %s is partially populated", s.Key.ID(), rank.name)
+		}
+	}
 	if s.Hash == nil {
 		return fmt.Errorf("axis %q: Hash is nil", s.Key.ID())
 	}
@@ -186,6 +209,10 @@ type ErasedSpec interface {
 	HasMeet() bool
 	MeetAny(a, b any) any
 	WidenAny(prev, next any) any
+	WidenRankWidth() int
+	WidenRankAtAny(any, int) uint64
+	ReductionRankWidth() int
+	ReductionRankAtAny(any, int) uint64
 	HashAny(any) uint64
 	RetentionMode() RetentionMode
 	RetentionSafeAny(any) bool
@@ -254,6 +281,24 @@ func (e erasedSpec[T]) MeetAny(a, b any) any {
 
 func (e erasedSpec[T]) WidenAny(prev, next any) any {
 	return e.spec.Widen(e.cast(prev), e.cast(next))
+}
+
+func (e erasedSpec[T]) WidenRankWidth() int { return e.spec.WidenRank.Width }
+
+func (e erasedSpec[T]) WidenRankAtAny(value any, component int) uint64 {
+	if !e.spec.WidenRank.valid() || component < 0 || component >= e.spec.WidenRank.Width {
+		panic(fmt.Sprintf("axis %q: WidenRank component %d is unavailable", e.ID(), component))
+	}
+	return e.spec.WidenRank.At(e.cast(value), component)
+}
+
+func (e erasedSpec[T]) ReductionRankWidth() int { return e.spec.ReductionRank.Width }
+
+func (e erasedSpec[T]) ReductionRankAtAny(value any, component int) uint64 {
+	if !e.spec.ReductionRank.valid() || component < 0 || component >= e.spec.ReductionRank.Width {
+		panic(fmt.Sprintf("axis %q: ReductionRank component %d is unavailable", e.ID(), component))
+	}
+	return e.spec.ReductionRank.At(e.cast(value), component)
 }
 
 func (e erasedSpec[T]) HashAny(v any) uint64 {

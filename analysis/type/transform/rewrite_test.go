@@ -1116,6 +1116,42 @@ func TestRewrite_MutualRecursiveGraphPreservesBackedges(t *testing.T) {
 	}
 }
 
+func TestRewritePreservesTwelveThousandDeepRecursiveBackedge(t *testing.T) {
+	const depth = 12000
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		var body typ.Type = typeexpr.Union(typ.Number, self)
+		for range depth {
+			body = typ.NewArray(body)
+		}
+		return body
+	})
+
+	got, ok := Rewrite(node, replaceNumber(typ.String)).(*typ.Recursive)
+	if !ok || got == node {
+		t.Fatalf("rewritten recursive root = %T", got)
+	}
+	current := got.Body
+	for i := 0; i < depth; i++ {
+		array, ok := current.(*typ.Array)
+		if !ok {
+			t.Fatalf("recursive depth %d = %T, want array", i, current)
+		}
+		current = array.Element
+	}
+	union, ok := current.(*typ.Union)
+	if !ok || len(union.Members) != 2 {
+		t.Fatalf("recursive leaf = %T %v, want string | μNode", current, current)
+	}
+	seenString, seenBackedge := false, false
+	for _, member := range union.Members {
+		seenString = seenString || member == typ.String
+		seenBackedge = seenBackedge || member == got
+	}
+	if !seenString || !seenBackedge {
+		t.Fatalf("recursive leaf = %v, want rewritten value and μ backedge", union)
+	}
+}
+
 func TestRewritePreservesFunctionPresentationAndSemanticView(t *testing.T) {
 	fn := typ.RebuildFunction(typ.FunctionParts{Params: []typ.Param{{Name: "ctx", Type: typ.String, Receiver: true}}})
 	got, ok := Rewrite(fn, func(t typ.Type) (typ.Type, bool) {

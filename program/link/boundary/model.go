@@ -1,0 +1,171 @@
+// Package boundary owns the factorized, Link-local Program/Target topology.
+//
+// Boundary deliberately stores no Application x Operation product.  The
+// application and Target operation remain the canonical constituents; the
+// membership predicate and the cold cardinality are derived directly from
+// those two sealed authorities.
+package boundary
+
+import (
+	"github.com/wippyai/go-lua/program/keyspace"
+	"github.com/wippyai/go-lua/program/link/internal/radix"
+	linkproject "github.com/wippyai/go-lua/program/link/project"
+	"github.com/wippyai/go-lua/program/target"
+)
+
+// Input is the complete construction boundary for the topology component.
+// Project and Target must be the exact authorities from which the component
+// is built; equivalent reseals are intentionally not interchangeable.
+type Input struct {
+	Project          *linkproject.Component
+	Target           *target.Contract
+	EndpointRequests []EndpointRequest
+}
+
+// EndpointRequest is one named direct provider ingress.  It deliberately
+// contains only Target vocabulary: Host and its selector geometry are later
+// consumers of this Boundary-owned admission relation.
+type EndpointRequest struct {
+	Identity string
+	Binding  target.BindingSpec
+}
+
+// Draft is the linear construction capability for a Boundary component.
+// Copies share the same lifecycle fence and cannot finalize twice.
+type Draft struct{ state *draftState }
+
+// Component is the immutable owner-fenced Boundary topology.
+type Component struct{ authority *authority }
+
+// Value is an opaque Boundary-issued identity for one existing Program value
+// occurrence.  The dense ordinal is meaningful only to the exact Boundary
+// component that issued it; a same-ordinal value from another component is
+// rejected by every Values query.
+type Value struct {
+	component *Component
+	ordinal   uint32
+}
+
+// Values is Boundary's complete canonical Program-value universe.  It is a
+// typed view rather than a root Link forwarding surface: Project Shards are
+// reissued only after validation against the retained exact Project owner.
+type Values struct{ component *Component }
+
+// Calls is Boundary's exact ordinary-Call view.  Applications remain owned by
+// Project; Boundary owns the value-bearing call operand relation.
+type Calls struct{ component *Component }
+
+// Seed is an opaque Boundary-issued external value identity.  Its ordinal is
+// meaningful only to the exact component that issued it.
+type Seed struct {
+	component *Component
+	ordinal   uint32
+}
+
+// Seeds is the complete finite Boundary external-value universe.
+type Seeds struct{ component *Component }
+
+// Endpoint is the nominal identity of one requested provider endpoint. Two
+// endpoint identities selecting the same operation remain distinct.
+type Endpoint struct {
+	component *Component
+	ordinal   uint32
+}
+
+// Endpoints is Boundary's canonical provider-endpoint admission view.
+type Endpoints struct{ component *Component }
+
+// EndpointRequests is the canonical cold replay projection of the authored
+// endpoint contract. It is intentionally separate from Endpoints: identities
+// and bindings replay the input, while Endpoints issue nominal runtime handles.
+type EndpointRequests struct{ component *Component }
+
+// CallableDisposition is structural provenance only.  It never asserts an
+// outcome, effect, or mutable value fact.
+type CallableDisposition uint8
+
+const (
+	CallableInvalid CallableDisposition = iota
+	CallableAdmittedOperation
+	CallableDeniedTarget
+)
+
+type authority struct {
+	component       *Component
+	project         *linkproject.Component
+	target          *target.Contract
+	require         target.Operation
+	valueTable      *valueTable
+	seedTable       *seedTable
+	moduleRelation  keyspace.ContentID
+	content         keyspace.ContentID
+	semanticReceipt SemanticSourceReceipt
+}
+
+type valueTable struct {
+	rows      []valueRow
+	ids       []valueIDRow
+	index     radix.Store
+	relations []keyspace.ContentID
+	content   keyspace.ContentID
+}
+
+type valueRow struct {
+	shard uint32
+	term  keyspace.Term
+}
+
+type valueIDRow struct {
+	id      keyspace.ContentID
+	ordinal uint32
+}
+
+type seedKind uint8
+
+const (
+	seedOperation seedKind = iota + 1
+	seedLoader
+	seedDeniedBootstrap
+	seedEndpoint
+)
+
+type seedTable struct {
+	rows             []seedRow
+	operation        []uint32 // zero means scoped require has no global seed
+	loaderByMount    []uint32 // zero iff no scoped require
+	endpoints        []endpointRow
+	requests         []endpointRequestRow
+	endpointIDs      []endpointIDRow
+	deniedStart      uint32
+	deniedCount      uint32
+	relation         keyspace.ContentID
+	endpointRelation keyspace.ContentID
+}
+
+type seedRow struct {
+	kind     seedKind
+	op       target.Operation
+	mount    uint32
+	denied   target.InitialValue
+	endpoint uint32 // one-based endpoint row only for seedEndpoint
+}
+
+type endpointRow struct {
+	seed uint32 // seed row ordinal
+	op   target.Operation
+}
+
+type endpointRequestRow struct {
+	identity string
+	binding  target.BindingSpec
+}
+
+type endpointIDRow struct {
+	id      keyspace.ContentID
+	ordinal uint32
+}
+
+type draftState struct {
+	authority *authority
+	consumed  bool
+}

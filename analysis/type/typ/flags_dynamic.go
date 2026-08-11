@@ -34,52 +34,61 @@ func containsDynamicFlag(
 	if t == nil || flag == 0 {
 		return false
 	}
-	t = unwrapAnnotated(t)
-	if t == nil {
-		return false
-	}
-	// Traverse nested recursive declarations in the current graph walk instead
-	// of starting another cached derivation with a fresh cycle guard. This is
-	// both complete for mutually recursive graphs and safe while the root memo
-	// is absent.
-	if recursive, ok := t.(*Recursive); ok {
-		if seen == nil {
-			seen = make(map[Type]bool)
-		}
-		if seen[t] {
-			return false
-		}
-		seen[t] = true
-		return containsDynamicFlag(recursive.Body, seen, flag)
-	}
-	// A node can intrinsically satisfy the query while also containing a
-	// recursive back-edge. Preserve that local truth before bypassing stale
-	// transitive construction flags. For example, an Instantiated<Generic>
-	// remains both instantiated and generic even when Generic.Body reaches the
-	// enclosing Recursive.
-	if flag.direct(t) {
-		return true
-	}
-	// Construction-time product flags may include an earlier revision of a
-	// recursive child. For a recursive-containing product, walk its children so
-	// freshness is governed by the recursive generation fence rather than by a
-	// stale conservative positive. Non-recursive products keep the O(1) cache.
-	if !knownContainsRecursive(t) {
-		return flag.known(t)
-	}
 	if seen == nil {
 		seen = make(map[Type]bool)
 	}
-	if seen[t] {
-		return false
+	work := []Type{t}
+	for len(work) != 0 {
+		last := len(work) - 1
+		current := unwrapAnnotated(work[last])
+		work = work[:last]
+		if current == nil {
+			continue
+		}
+		if recursive, ok := current.(*Recursive); ok {
+			if seen[current] {
+				continue
+			}
+			seen[current] = true
+			work = append(work, recursive.Body)
+			continue
+		}
+		// A node can intrinsically satisfy the query while also containing a
+		// recursive back-edge. Preserve that local truth before bypassing stale
+		// transitive construction flags.
+		if flag.direct(current) {
+			return true
+		}
+		// Instantiated's Generic is a binder, not a free-formal child.  For
+		// type-parameter containment only its arguments are visible in the
+		// application scope; walking the Generic would reintroduce the
+		// declaration's already-substituted formals.
+		if flag == containmentTypeParam {
+			if instantiated, ok := current.(*Instantiated); ok {
+				if seen[current] {
+					continue
+				}
+				seen[current] = true
+				work = append(work, instantiated.TypeArgs...)
+				continue
+			}
+		}
+		if !knownContainsRecursive(current) {
+			if flag.known(current) {
+				return true
+			}
+			continue
+		}
+		if seen[current] {
+			continue
+		}
+		seen[current] = true
+		WalkChildren(current, func(child Type) bool {
+			work = append(work, child)
+			return false
+		})
 	}
-	seen[t] = true
-
-	next := func(child Type) bool {
-		return containsDynamicFlag(child, seen, flag)
-	}
-
-	return WalkChildren(t, next)
+	return false
 }
 
 func (f containmentFlag) direct(t Type) bool {

@@ -203,6 +203,31 @@ func TestFreshMethodReceiverCanWidenToBaseReceiver(t *testing.T) {
 	}
 }
 
+func TestFunctionReceiverPositionIsSemanticForSubtypeAndFreshWidening(t *testing.T) {
+	receiverBroad := typ.RebuildFunction(typ.FunctionParts{
+		Params:  []typ.Param{{Name: "self", Type: typ.Number, Receiver: true}},
+		Returns: []typ.Type{typ.Integer},
+	})
+	receiverNarrow := typ.RebuildFunction(typ.FunctionParts{
+		Params:  []typ.Param{{Name: "self", Type: typ.Integer, Receiver: true}},
+		Returns: []typ.Type{typ.Number},
+	})
+	ordinaryBroad := typ.Func().Param("value", typ.Number).Returns(typ.Integer).Build()
+
+	if !IsSubtype(receiverBroad, receiverNarrow) {
+		t.Fatal("explicit receiver should use positional contravariant function variance")
+	}
+	if IsSubtype(receiverBroad, ordinaryBroad) || IsSubtype(ordinaryBroad, receiverBroad) {
+		t.Fatal("receiver and ordinary positional functions should not be interchangeable")
+	}
+	if IsFreshAssignable(receiverBroad, ordinaryBroad) || IsFreshAssignable(ordinaryBroad, receiverBroad) {
+		t.Fatal("fresh widening must preserve receiver calling convention")
+	}
+	if !IsFreshAssignable(receiverBroad, receiverNarrow) {
+		t.Fatal("fresh assignment preserves ordinary contravariant receiver variance")
+	}
+}
+
 func TestFreshRecursiveRecordMethodReceiversCanWidenAcrossEquivalentAliases(t *testing.T) {
 	buildLogger := func() *typ.Recursive {
 		return typ.NewRecursive("Logger", func(self typ.Type) typ.Type {

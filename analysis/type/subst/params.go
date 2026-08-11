@@ -48,93 +48,11 @@ type paramSubstitution struct {
 }
 
 func substituteParams(t typ.Type, subs []paramSubstitution) typ.Type {
-	if t == nil || len(subs) == 0 {
-		return t
-	}
-	if fn, ok := t.(*typ.Function); ok {
-		return substituteFunctionParams(fn, subs)
-	}
-	return transform.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
-		if tp, ok := n.(*typ.TypeParam); ok {
-			if arg, found := lookupParamSubstitution(tp, subs); found {
-				return arg, true
-			}
-			return nil, false
-		}
-		if fn, ok := n.(*typ.Function); ok {
-			return substituteFunctionParams(fn, subs), true
-		}
-		return nil, false
-	})
+	return substituteParamsIterative(t, subs)
 }
 
 func substituteFunctionParams(fn *typ.Function, subs []paramSubstitution) typ.Type {
-	if fn == nil || len(subs) == 0 {
-		return fn
-	}
-
-	owned := functionOwnsSubstitutions(fn, subs)
-	bodySubs := subs
-	keptTypeParams := make([]*typ.TypeParam, 0, len(fn.TypeParams))
-	for _, tp := range fn.TypeParams {
-		if tp == nil {
-			continue
-		}
-		if owned[tp] {
-			continue
-		}
-		bodySubs = removeShadowedSubstitutions(bodySubs, tp)
-		keptTypeParams = append(keptTypeParams, tp)
-	}
-
-	params := make([]typ.Param, len(fn.Params))
-	paramsChanged := false
-	for i, p := range fn.Params {
-		pt := substituteParams(p.Type, bodySubs)
-		if pt != p.Type {
-			paramsChanged = true
-		}
-		params[i] = typ.Param{Name: p.Name, Type: pt, Optional: p.Optional, Receiver: p.Receiver}
-	}
-
-	variadic := fn.Variadic
-	if variadic != nil {
-		variadic = substituteParams(variadic, bodySubs)
-	}
-
-	returns := make([]typ.Type, len(fn.Returns))
-	returnsChanged := false
-	for i, ret := range fn.Returns {
-		rt := substituteParams(ret, bodySubs)
-		if rt != ret {
-			returnsChanged = true
-		}
-		returns[i] = rt
-	}
-
-	typeParamsChanged := len(keptTypeParams) != len(fn.TypeParams)
-	if !typeParamsChanged && !paramsChanged && variadic == fn.Variadic && !returnsChanged {
-		return fn
-	}
-
-	builder := typ.Func()
-	for _, tp := range keptTypeParams {
-		builder.TypeParamRef(tp)
-	}
-	for _, p := range params {
-		if p.Optional {
-			builder.OptParam(p.Name, p.Type)
-		} else {
-			builder.Param(p.Name, p.Type)
-		}
-	}
-	if variadic != nil {
-		builder.Variadic(variadic)
-	}
-	if len(returns) > 0 {
-		builder.Returns(returns...)
-	}
-	return builder.Build()
+	return substituteParamsIterative(fn, subs)
 }
 
 func functionOwnsSubstitutions(fn *typ.Function, subs []paramSubstitution) map[*typ.TypeParam]bool {

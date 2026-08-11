@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"sort"
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/domain/placement"
 	"github.com/wippyai/go-lua/analysis/domain/typestate"
 	"github.com/wippyai/go-lua/analysis/module/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -196,9 +196,6 @@ func (m *Manifest) TypestateProtocol(protocol typestate.Protocol) (typestate.Def
 // Validate checks manifest-level cross references that cannot be validated by
 // individual type/effect codecs alone.
 func (m *Manifest) Validate() error {
-	if err := validateManifestFunctionSignatures(m); err != nil {
-		return err
-	}
 	return validateManifestTypestateUsage(m)
 }
 
@@ -357,7 +354,15 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 	}
 
 	var wm manifestWire
-	if err := json.Unmarshal(data, &wm); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wm); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return nil, errors.New("manifest: decode multiple JSON values")
+		}
 		return nil, err
 	}
 
@@ -451,10 +456,9 @@ type callbackPhaseInvocationWire struct {
 }
 
 type functionSignatureWire struct {
-	Name               string                  `json:"name"`
-	Type               *typeWire               `json:"type,omitempty"`
-	Effect             *effectRowWire          `json:"effect,omitempty"`
-	OperationalEffects *operationalEffectsWire `json:"operationalEffects,omitempty"`
+	Name   string         `json:"name"`
+	Type   *typeWire      `json:"type,omitempty"`
+	Effect *effectRowWire `json:"effect,omitempty"`
 }
 
 func encodeCallbackPhaseRegistrations(in []CallbackPhaseRegistration) []callbackPhaseRegistrationWire {
@@ -528,17 +532,12 @@ func encodeFunctionSignature(sig signature.Function) (functionSignatureWire, err
 	if err != nil {
 		return functionSignatureWire{}, err
 	}
-	encodedOperational, err := encodeOperationalEffects(sig.OperationalEffects)
-	if err != nil {
-		return functionSignatureWire{}, err
-	}
-	if encodedType == nil && encodedEffect == nil && encodedOperational == nil {
+	if encodedType == nil && encodedEffect == nil {
 		return functionSignatureWire{}, errors.New("missing function type or effects")
 	}
 	return functionSignatureWire{
-		Type:               encodedType,
-		Effect:             encodedEffect,
-		OperationalEffects: encodedOperational,
+		Type:   encodedType,
+		Effect: encodedEffect,
 	}, nil
 }
 
@@ -559,106 +558,8 @@ func decodeFunctionSignature(w functionSignatureWire) (signature.Function, error
 	if err != nil {
 		return signature.Function{}, err
 	}
-	operational, err := decodeOperationalEffects(w.OperationalEffects)
-	if err != nil {
-		return signature.Function{}, err
-	}
-	if err := validateFunctionOperationalEffects(fn, operational); err != nil {
-		return signature.Function{}, err
-	}
-	var operationalPtr *signature.OperationalEffects
-	if w.OperationalEffects != nil && !operational.IsEmpty() {
-		operationalPtr = &operational
-	}
-	if fn == nil && row.Pure() && operationalPtr == nil {
+	if fn == nil && row.Pure() {
 		return signature.Function{}, errors.New("missing function type or effects")
 	}
-	return signature.Function{Type: fn, Effect: row, OperationalEffects: operationalPtr}, nil
-}
-
-func validateFunctionOperationalEffects(fn *typ.Function, effects signature.OperationalEffects) error {
-	if err := validateParamRelations(fn, effects.ParamRelations); err != nil {
-		return err
-	}
-	if fn == nil {
-		if len(effects.ReturnPresenceRelations) != 0 {
-			return errors.New("return presence relations require function type")
-		}
-		if len(effects.ReturnAllocationTemplates) != 0 {
-			return errors.New("return allocation templates require function type")
-		}
-		return nil
-	}
-	seenReturnAllocations := make(map[int]struct{}, len(effects.ReturnAllocationTemplates))
-	for _, template := range effects.ReturnAllocationTemplates {
-		if template.ReturnIndex < 0 || template.ReturnIndex >= len(fn.Returns) {
-			return fmt.Errorf("return allocation template index %d out of bounds for %d returns", template.ReturnIndex, len(fn.Returns))
-		}
-		if _, ok := seenReturnAllocations[template.ReturnIndex]; ok {
-			return fmt.Errorf("duplicate return allocation template for return index %d", template.ReturnIndex)
-		}
-		seenReturnAllocations[template.ReturnIndex] = struct{}{}
-		if err := validateReturnAllocationTemplate(template); err != nil {
-			return fmt.Errorf("return allocation template: %w", err)
-		}
-	}
-	return nil
-}
-
-func validateParamRelations(fn *typ.Function, relations []signature.ParamRelation) error {
-	if len(relations) == 0 {
-		return nil
-	}
-	seen := make(map[int]struct{}, len(relations))
-	for _, relation := range relations {
-		if relation.Param < 0 {
-			return fmt.Errorf("param relation index %d out of bounds", relation.Param)
-		}
-		if fn != nil && relation.Param >= len(fn.Params) {
-			return fmt.Errorf("param relation index %d out of bounds for %d params", relation.Param, len(fn.Params))
-		}
-		if _, ok := seen[relation.Param]; ok {
-			return fmt.Errorf("duplicate param relation for param index %d", relation.Param)
-		}
-		seen[relation.Param] = struct{}{}
-		if !validEscapeKind(relation.EscapeClass) {
-			return fmt.Errorf("param relation %d has invalid escape class %d", relation.Param, relation.EscapeClass)
-		}
-		if !validPlacementConsequence(relation.PlacementConsequence) {
-			return fmt.Errorf("param relation %d has invalid placement consequence %q", relation.Param, relation.PlacementConsequence)
-		}
-		if relation.HasStoredInto {
-			if relation.StoredInto < 0 {
-				return fmt.Errorf("param relation %d storedInto %d out of bounds", relation.Param, relation.StoredInto)
-			}
-			if fn != nil && relation.StoredInto >= len(fn.Params) {
-				return fmt.Errorf("param relation %d storedInto %d out of bounds for %d params", relation.Param, relation.StoredInto, len(fn.Params))
-			}
-		}
-	}
-	return nil
-}
-
-func validEscapeKind(kind placement.Escape) bool {
-	return kind.ValidManifest()
-}
-
-func validPlacementConsequence(consequence placement.Consequence) bool {
-	return consequence.Valid()
-}
-
-func validateManifestFunctionSignatures(m *Manifest) error {
-	if m == nil {
-		return nil
-	}
-	for name, sig := range m.FunctionSignatures {
-		var effects signature.OperationalEffects
-		if sig.OperationalEffects != nil {
-			effects = *sig.OperationalEffects
-		}
-		if err := validateFunctionOperationalEffects(sig.Type, effects); err != nil {
-			return fmt.Errorf("function signature %q: %w", name, err)
-		}
-	}
-	return nil
+	return signature.Function{Type: fn, Effect: row}, nil
 }

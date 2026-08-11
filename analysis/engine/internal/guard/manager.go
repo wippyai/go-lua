@@ -38,6 +38,7 @@ var (
 type Manager struct {
 	atoms map[Atom]uint64
 	order []Atom
+	all   Scope
 }
 
 // pageNodeCapacity is physical storage granularity, not an analysis bound.
@@ -77,6 +78,11 @@ func New(order []Atom) (*Manager, error) {
 		}
 		manager.atoms[atom] = uint64(rank)
 	}
+	all := make([]uint64, len(manager.order))
+	for index := range all {
+		all[index] = uint64(index)
+	}
+	manager.all = Scope{value: &scope{manager: manager, ranks: all, sealed: true}}
 	return manager, nil
 }
 
@@ -88,19 +94,7 @@ func (m *Manager) True() Guard  { return Guard{manager: m, slot: trueSlot} }
 // single-writer; its sealed Guards support concurrent lock-free reads through
 // Manager methods after ordinary caller publication synchronization.
 func (m *Manager) NewWork() *Work {
-	return &Work{
-		manager:     m,
-		owned:       make(map[*page]struct{}),
-		unique:      make(map[nodeFingerprint][]Guard),
-		not:         make(map[Guard]Guard),
-		applyCache:  make(map[applyKey]Guard),
-		ite:         make(map[iteKey]Guard),
-		restrict:    make(map[restrictKey]Guard),
-		exists:      make(map[existsKey]Guard),
-		hashes:      make(map[Guard]uint64),
-		compareSeen: make(map[comparePair]uint64),
-		satSeen:     make(map[satisfiablePair]uint64),
-	}
+	return &Work{manager: m}
 }
 
 func (m *Manager) validSealed(g Guard) bool {
@@ -116,6 +110,17 @@ func (m *Manager) validSealed(g Guard) bool {
 // Valid reports whether g is a sealed, readable guard owned by m.
 func (m *Manager) Valid(g Guard) bool { return m.validSealed(g) }
 
+// Rank returns atom's fixed position in this Manager's sealed order.  It is
+// the only order authority exposed to neighbouring symbolic storage: callers
+// must not infer a decision order from an Atom's numeric spelling.
+func (m *Manager) Rank(atom Atom) (uint64, bool) {
+	if m == nil {
+		return 0, false
+	}
+	rank, ok := m.atoms[atom]
+	return rank, ok
+}
+
 func isTerminal(g Guard) bool { return g.page == nil }
 
 func terminalValue(g Guard) bool { return g.slot == trueSlot }
@@ -128,3 +133,120 @@ func (m *Manager) rank(g Guard) uint64 {
 }
 
 func (m *Manager) atom(rank uint64) Atom { return m.order[rank] }
+
+// AtomAt returns the canonical atom at a known sealed order rank. It is used
+// only by symbolic storage rebuilding an already-admitted decision; callers
+// cannot change Manager order through this read-only lookup.
+func (m *Manager) AtomAt(rank uint64) (Atom, bool) {
+	if m == nil || rank >= uint64(len(m.order)) {
+		return 0, false
+	}
+	return m.order[rank], true
+}
+
+// Scope is an immutable finite coordinate namespace owned by one Manager.
+// It is intentionally a capability rather than an atom slice: hot carrier
+// operations may compare or validate scopes but cannot enumerate or alter
+// their coordinates.
+type Scope struct{ value *scope }
+
+type scope struct {
+	manager *Manager
+	sealed  bool
+	// ranks is the immutable, strictly ascending Manager-rank set owned by
+	// this scope. It is deliberately compact: a scope remains valid when its
+	// Manager later gains an appended atom, while the new rank is absent until
+	// a new scope explicitly includes it.
+	ranks []uint64
+}
+
+// AllScope returns the Manager's complete presealed coordinate universe.
+func (m *Manager) AllScope() Scope {
+	if m == nil {
+		return Scope{}
+	}
+	return m.all
+}
+
+// SealScope creates one exact finite coordinate namespace. Atom spelling is
+// admitted only at this cold sealing boundary; execution receives Scope.
+func (m *Manager) SealScope(atoms []Atom) (Scope, bool) {
+	if m == nil {
+		return Scope{}, false
+	}
+	ranks := make([]uint64, len(atoms))
+	for index, atom := range atoms {
+		rank, exists := m.atoms[atom]
+		if !exists || index > 0 && atoms[index-1] >= atom {
+			return Scope{}, false
+		}
+		ranks[index] = rank
+	}
+	return Scope{value: &scope{manager: m, ranks: ranks, sealed: true}}, true
+}
+
+// Valid reports whether this is a Manager-issued immutable scope.
+func (s Scope) Valid() bool {
+	return s.value != nil && s.value.manager != nil && s.value.sealed
+}
+
+// Manager returns the one guard universe for this scope.
+func (s Scope) Manager() *Manager {
+	if !s.Valid() {
+		return nil
+	}
+	return s.value.manager
+}
+
+// Same proves exact coordinate-scope identity. Equal-looking scopes remain
+// distinct interfaces unless they were issued as the same sealed scope.
+func (s Scope) Same(other Scope) bool { return s.Valid() && s.value == other.value }
+
+func (s Scope) containsRank(rank uint64) bool {
+	if !s.Valid() {
+		return false
+	}
+	return hasRank(s.value.ranks, rank)
+}
+
+func (s Scope) contains(atom Atom) bool {
+	if !s.Valid() {
+		return false
+	}
+	rank, exists := s.value.manager.atoms[atom]
+	return exists && hasRank(s.value.ranks, rank)
+}
+
+// rankSearch returns the first index whose rank is at least want. It is kept
+// local to the guard package so hot scope membership checks do not allocate a
+// closure through sort.Search.
+func rankSearch(ranks []uint64, want uint64) int {
+	low, high := 0, len(ranks)
+	for low < high {
+		middle := low + (high-low)/2
+		if ranks[middle] < want {
+			low = middle + 1
+		} else {
+			high = middle
+		}
+	}
+	return low
+}
+
+func hasRank(ranks []uint64, want uint64) bool {
+	index := rankSearch(ranks, want)
+	return index < len(ranks) && ranks[index] == want
+}
+
+// Contains reports whether a sealed Guard mentions only this scope's
+// coordinates. It is a cold boundary validation used when a State enters a
+// scoped carrier; hot execution relies on the sealed plan proof instead.
+func (s Scope) Contains(root Guard) bool {
+	if !s.Valid() || !s.value.manager.Valid(root) {
+		return false
+	}
+	completed, valid := s.value.manager.Fold(root, func(_ Guard, view Decomposition) bool {
+		return view.Terminal || s.contains(view.Atom)
+	})
+	return completed && valid
+}

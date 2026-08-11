@@ -33,7 +33,7 @@ func deriveManifestSignature(m *manifest.Manifest, name string) (signature.Funct
 	if !ok || fn == nil {
 		return signature.Function{}, false
 	}
-	row := derive.Apply(fn, effect.Empty, derive.Context{ErrorType: m.ErrorType}, derive.Default...)
+	row := derive.ApplyDefault(fn, effect.Empty, derive.Context{ErrorType: m.ErrorType})
 	return signature.Function{Type: fn, Effect: row}, true
 }
 

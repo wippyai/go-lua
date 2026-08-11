@@ -253,7 +253,13 @@ func TestCanonicalProductRejectsMismatchedAndForgedRegistry(t *testing.T) {
 	if err := forged.SealCanonicalInventory(); err != nil {
 		t.Fatal(err)
 	}
-	forged.Freeze()
+	runtime := buildRegistryRuntime(forged)
+	if runtime.err != nil {
+		t.Fatal(runtime.err)
+	}
+	if err := forged.FreezeWithCompiledProduct(runtime); err != nil {
+		t.Fatal(err)
+	}
 	encoded, schema, err = EncodeCanonical(context.Background(), forged, Top())
 	if err == nil || encoded != nil || schema != (axis.SchemaIdentity{}) || !strings.Contains(err.Error(), "presence inventory") {
 		t.Fatalf("forged core registry = %x, %x, %v", encoded, schema, err)

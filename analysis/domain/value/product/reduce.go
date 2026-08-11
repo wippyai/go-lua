@@ -90,16 +90,27 @@ func (rt *registryRuntime) buildReducers(view axis.ReducersView) error {
 			entry.readAllowed[info.ordinal] = true
 			entry.reads = append(entry.reads, info.ordinal)
 		}
+		if len(entry.reads) == 0 {
+			return fmt.Errorf("product: reducer %q requires at least one declared sparse read", entry.owner)
+		}
 		for _, id := range view.WritesAt(sourceIndex) {
 			if id == presence.Key.ID() {
+				if presence.Spec().ReductionRank.Width <= 0 {
+					return fmt.Errorf("product: reducer %q writes core presence without a ReductionRank", entry.owner)
+				}
 				entry.writesPresence = true
+				rt.presenceReducerWritten = true
 				continue
 			}
 			info, ok := rt.axis(id)
 			if !ok {
 				return fmt.Errorf("product: reducer %q writes unregistered axis %q", entry.owner, id)
 			}
+			if info.spec.ReductionRankWidth() <= 0 {
+				return fmt.Errorf("product: reducer %q writes axis %q without a ReductionRank", entry.owner, id)
+			}
 			entry.writeAllowed[info.ordinal] = true
+			rt.axes[rt.canonicalAxes[info.ordinal]].reducerWritten = true
 		}
 		sort.Slice(entry.reads, func(i, j int) bool { return entry.reads[i] < entry.reads[j] })
 		reducerIndex := len(rt.reducers)
@@ -109,6 +120,15 @@ func (rt *registryRuntime) buildReducers(view axis.ReducersView) error {
 		}
 		if entry.readsPresence {
 			rt.presenceDeps = append(rt.presenceDeps, reducerIndex)
+		}
+	}
+	// Freeze this canonical sparse subset once. Reduced merge validation is on
+	// the cyclic hot path and must not filter every registered axis to find the
+	// few coordinates a reducer is permitted to change.
+	rt.reducerWrittenOrdinals = rt.reducerWrittenOrdinals[:0]
+	for ordinal := range rt.canonicalAxes {
+		if rt.axisOrdinal(uint16(ordinal)).reducerWritten {
+			rt.reducerWrittenOrdinals = append(rt.reducerWrittenOrdinals, uint16(ordinal))
 		}
 	}
 	return nil
@@ -292,6 +312,9 @@ func (e *reduceEditor) SetAny(key string, value any) {
 	if !info.spec.LessOrEqAny(value, current) {
 		panic(fmt.Sprintf("product: reducer %q made non-reductive write to axis %q", e.active.owner, key))
 	}
+	if !info.spec.EqualAny(value, current) && !reductionRankDescends(info, current, value) {
+		panic(fmt.Sprintf("product: reducer %q made a ReductionRank-non-descending write to axis %q", e.active.owner, key))
+	}
 	if info.spec.IsTopAny(value) {
 		if currentIndex >= 0 {
 			e.values = append(e.values[:currentIndex], e.values[currentIndex+1:]...)
@@ -331,8 +354,40 @@ func (e *reduceEditor) SetPresence(p presence.Value) {
 	if !e.presence.Covers(next) {
 		panic(fmt.Sprintf("product: reducer %q made non-reductive write to axis %q", e.active.owner, presence.Key.ID()))
 	}
+	if !presence.Equal(e.presence, next) && !presenceReductionRankDescends(e.presence, next) {
+		panic(fmt.Sprintf("product: reducer %q made a ReductionRank-non-descending write to axis %q", e.active.owner, presence.Key.ID()))
+	}
 	e.presence = next
 	e.recordPresenceChanged()
+}
+
+func reductionRankDescends(info axisRuntimeAxis, before, after any) bool {
+	for component := 0; component < info.spec.ReductionRankWidth(); component++ {
+		beforeRank := info.spec.ReductionRankAtAny(before, component)
+		afterRank := info.spec.ReductionRankAtAny(after, component)
+		switch {
+		case afterRank < beforeRank:
+			return true
+		case afterRank > beforeRank:
+			return false
+		}
+	}
+	return false
+}
+
+func presenceReductionRankDescends(before, after presence.Value) bool {
+	rank := presence.Spec().ReductionRank
+	for component := 0; component < rank.Width; component++ {
+		beforeRank := rank.At(before, component)
+		afterRank := rank.At(after, component)
+		switch {
+		case afterRank < beforeRank:
+			return true
+		case afterRank > beforeRank:
+			return false
+		}
+	}
+	return false
 }
 
 func (e *reduceEditor) recordChanged(ordinal uint16) {
