@@ -209,11 +209,16 @@ type Work struct {
 	supportWork *support.Work
 	epoch       *RootEpoch
 	authority   *stateAuthority
-	checkpoint  Checkpoint
-	publishing  bool
-	previewing  bool
-	replacing   bool
-	reindexing  bool
+	// checkpointProbe is the one Work-owned liveness callback shared by all
+	// support transactions.  It is installed once when Work is opened; hot
+	// support operations only select it or nil and never manufacture a
+	// closure capturing Work.
+	checkpointProbe Checkpoint
+	checkpoint      Checkpoint
+	publishing      bool
+	previewing      bool
+	replacing       bool
+	reindexing      bool
 }
 
 // RetainedWork is the sole internal ownership unit for a validated completed
@@ -445,6 +450,7 @@ func (composition *Composition) NewWork() (*Work, bool) {
 		return nil, false
 	}
 	work := &Work{composition: composition, slots: make([]SlotWork, len(composition.operations)), supportWork: supportWork, epoch: epoch, authority: &stateAuthority{composition: composition, epoch: epoch}}
+	work.checkpointProbe = func() bool { return work.live() }
 	work.contributionSeal = &contributionSeal{work: work, composition: composition}
 	work.neutralSeal = &contributionSeal{work: work, composition: composition}
 	for index, operation := range composition.operations {
@@ -483,6 +489,7 @@ func (work *Work) Close() bool {
 	work.contributionSeal = nil
 	work.neutralSeal = nil
 	work.authority = nil
+	work.checkpointProbe = nil
 	work.checkpoint = nil
 	work.epoch = nil
 	return true
@@ -510,6 +517,7 @@ func (work *Work) Retain() (*RetainedWork, bool) {
 	work.neutralSeal = nil
 	work.slots = nil
 	work.authority = nil
+	work.checkpointProbe = nil
 	work.checkpoint = nil
 	work.epoch = nil
 	return retained, true
@@ -576,7 +584,7 @@ func (work *Work) checkpointFunc() func() bool {
 	if work == nil || work.checkpoint == nil {
 		return nil
 	}
-	return func() bool { return work.live() }
+	return work.checkpointProbe
 }
 
 func (work *Work) newSupportWork() *support.Work {
@@ -586,7 +594,7 @@ func (work *Work) newSupportWork() *support.Work {
 	if work.supportWork == nil {
 		work.supportWork = support.New(work.composition.guards)
 	}
-	if work.supportWork == nil || !work.supportWork.BeginTransaction(func() bool { return work.live() }) {
+	if work.supportWork == nil || !work.supportWork.BeginTransaction(work.checkpointProbe) {
 		return nil
 	}
 	return work.supportWork

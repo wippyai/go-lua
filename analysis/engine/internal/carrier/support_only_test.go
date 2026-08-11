@@ -155,6 +155,52 @@ func TestWorkOwnershipBindsExactViewPredecessor(t *testing.T) {
 
 }
 
+func TestWorkCheckpointProbeIsReusedAndRevoked(t *testing.T) {
+	manager, err := guard.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	composition, ok := attachTestComposition(t, []FactorOperation{&carryOnlyOperation{guards: manager}})
+	if !ok {
+		t.Fatal("composition")
+	}
+	work, ok := composition.NewWork()
+	if !ok {
+		t.Fatal("work")
+	}
+	defer work.Close()
+	if work.checkpointProbe == nil || work.checkpointFunc() != nil {
+		t.Fatal("checkpoint probe was exposed without an installed evaluator checkpoint")
+	}
+	if allocations := testing.AllocsPerRun(1000, func() {
+		if work.checkpointFunc() != nil {
+			t.Fatal("unexpected checkpoint without evaluator probe")
+		}
+	}); allocations != 0 {
+		t.Fatalf("checkpoint selection allocated without evaluator probe: %v", allocations)
+	}
+	if !work.SetCheckpoint(func() bool { return true }) {
+		t.Fatal("install checkpoint")
+	}
+	probe := work.checkpointFunc()
+	if probe == nil || !probe() {
+		t.Fatal("checkpoint probe is not live")
+	}
+	if allocations := testing.AllocsPerRun(1000, func() {
+		if current := work.checkpointFunc(); current == nil || !current() {
+			t.Fatal("reused checkpoint probe is not live")
+		}
+	}); allocations != 0 {
+		t.Fatalf("checkpoint selection allocated on hot path: %v", allocations)
+	}
+	if !work.Close() {
+		t.Fatal("close work")
+	}
+	if work.checkpointProbe != nil || work.checkpointFunc() != nil || probe() {
+		t.Fatal("closed work retained a live checkpoint probe")
+	}
+}
+
 func TestSupportOnlyMergePreservesRootsAndJoinsSupport(t *testing.T) {
 	manager, err := guard.New([]guard.Atom{1})
 	if err != nil {
