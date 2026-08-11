@@ -45,6 +45,19 @@ type producerEpoch struct {
 	reads                     []demand.Observation
 }
 
+// regionPostfixProof is the disposable relation certificate for one exact
+// recurrence episode.  It contains no carrier state: exact revision/input
+// evidence and head publication version are the immutable evidence that the
+// already checked exact<=current relation still describes this head.
+type regionPostfixProof struct {
+	valid         bool
+	episode       uint64
+	phase         solvePhase
+	exactInputs   uint64
+	exactRevision uint64
+	headVersion   uint64
+}
+
 // contributionPatch keeps carrier admission order separate from Rule callback
 // order. Members execute in canonical graph order; only their already
 // accepted patches are reordered into the carrier's physical slot order at
@@ -61,8 +74,12 @@ type regionEpoch struct {
 	// restart independently: a child re-ascent must not turn an enclosing
 	// narrowed episode into an ascent episode with its narrowed head retained.
 	phase                  solvePhase
+	episode                uint64
 	exact                  carrier.Contribution
 	hasExact               bool
+	exactInputsVersion     uint64
+	exactRevision          uint64
+	postfix                regionPostfixProof
 	invalid                bool
 	interfaces             []uint64
 	ingress                []uint64
@@ -261,6 +278,7 @@ func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember,
 			return nil, false
 		}
 		epoch.regions[index].phase = phaseAscent
+		epoch.regions[index].episode = 1
 		epoch.regions[index].interfaces = make([]uint64, len(region.faces))
 		epoch.regions[index].ingress = make([]uint64, len(region.external))
 		epoch.regions[index].backIngress = make([]uint64, len(region.back))
@@ -640,6 +658,54 @@ func (epoch *executorEpoch) settlePostfix(point int) bool {
 		return false
 	}
 	return !epoch.postfixDirty[point] || epoch.provePostfix(point)
+}
+
+func (episode *regionEpoch) nextExactRevision() bool {
+	if episode == nil {
+		return false
+	}
+	if episode.exactRevision == ^uint64(0) {
+		episode.postfix = regionPostfixProof{}
+		return false
+	}
+	episode.postfix = regionPostfixProof{}
+	episode.exactRevision++
+	return true
+}
+
+// invalidateRegionPostfix drops only the relation certificate.  The exact
+// episode, its input evidence, and the live Point values remain epoch-owned;
+// callers still decide whether the corresponding head must be queued.
+func (epoch *executorEpoch) invalidateRegionPostfix(region int) bool {
+	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
+		return false
+	}
+	epoch.regions[region].postfix = regionPostfixProof{}
+	return true
+}
+
+func (epoch *executorEpoch) regionPostfixProved(region int) bool {
+	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
+		return false
+	}
+	bound, episode := epoch.runtime.regions[region], &epoch.regions[region]
+	if !episode.hasExact || episode.episode == 0 || episode.exactInputsVersion == 0 || episode.exactRevision == 0 || bound.head < 0 || bound.head >= len(epoch.versions) {
+		return false
+	}
+	proof := episode.postfix
+	return proof.valid && proof.episode == episode.episode && proof.phase == episode.phase && proof.exactInputs == episode.exactInputsVersion && proof.exactRevision == episode.exactRevision && proof.headVersion == epoch.versions[bound.head]
+}
+
+func (epoch *executorEpoch) rememberRegionPostfix(region int) bool {
+	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
+		return false
+	}
+	bound, episode := epoch.runtime.regions[region], &epoch.regions[region]
+	if !episode.hasExact || episode.episode == 0 || episode.exactInputsVersion == 0 || episode.exactRevision == 0 || bound.head < 0 || bound.head >= len(epoch.versions) {
+		return false
+	}
+	episode.postfix = regionPostfixProof{valid: true, episode: episode.episode, phase: episode.phase, exactInputs: episode.exactInputsVersion, exactRevision: episode.exactRevision, headVersion: epoch.versions[bound.head]}
+	return true
 }
 
 func (epoch *executorEpoch) markDirty(group int) bool {
@@ -1152,25 +1218,30 @@ func (epoch *executorEpoch) regionInterfacesChanged(region int) bool {
 		return false
 	}
 	if len(bound.faces) != len(state.interfaces) || len(bound.external) != len(state.ingress) || len(bound.environmentExternal) != len(state.environmentIngress) || len(bound.factorExternal) != len(state.factorIngress) {
+		_ = epoch.invalidateRegionPostfix(region)
 		return true
 	}
 	for index, point := range bound.faces {
 		if point < 0 || point >= len(epoch.versions) || state.interfaces[index] != epoch.versions[point] {
+			_ = epoch.invalidateRegionPostfix(region)
 			return true
 		}
 	}
 	for index, group := range bound.external {
 		if group < 0 || group >= len(epoch.producers) || state.ingress[index] != epoch.producers[group].version {
+			_ = epoch.invalidateRegionPostfix(region)
 			return true
 		}
 	}
 	for index, edge := range bound.environmentExternal {
 		if edge < 0 || edge >= len(epoch.runtime.environments) || state.environmentIngress[index] != epoch.environmentVersion(edge) {
+			_ = epoch.invalidateRegionPostfix(region)
 			return true
 		}
 	}
 	for index, edge := range bound.factorExternal {
 		if edge < 0 || edge >= len(epoch.runtime.factorEdges) || state.factorIngress[index] != epoch.factorEdgeVersion(edge) {
+			_ = epoch.invalidateRegionPostfix(region)
 			return true
 		}
 	}
@@ -1193,20 +1264,24 @@ func (epoch *executorEpoch) regionExactInputsChanged(region int) bool {
 	}
 	bound := epoch.runtime.regions[region]
 	if len(bound.back) != len(state.backIngress) || len(bound.environmentBack) != len(state.environmentBackIngress) || len(bound.factorBack) != len(state.factorBackIngress) {
+		_ = epoch.invalidateRegionPostfix(region)
 		return true
 	}
 	for index, group := range bound.back {
 		if group < 0 || group >= len(epoch.producers) || state.backIngress[index] != epoch.producers[group].version {
+			_ = epoch.invalidateRegionPostfix(region)
 			return true
 		}
 	}
 	for index, edge := range bound.environmentBack {
 		if edge < 0 || edge >= len(epoch.runtime.environments) || state.environmentBackIngress[index] != epoch.environmentVersion(edge) {
+			_ = epoch.invalidateRegionPostfix(region)
 			return true
 		}
 	}
 	for index, edge := range bound.factorBack {
 		if edge < 0 || edge >= len(epoch.runtime.factorEdges) || state.factorBackIngress[index] != epoch.factorEdgeVersion(edge) {
+			_ = epoch.invalidateRegionPostfix(region)
 			return true
 		}
 	}
@@ -1313,7 +1388,7 @@ func (epoch *executorEpoch) invalidatePostfixAncestors(point int) bool {
 		return false
 	}
 	for region := epoch.runtime.pointRegion[point]; region != schedule.NoRegion; region = epoch.runtime.regions[region].parent {
-		if !epoch.activeRegion(region) || !epoch.markPostfixDirty(epoch.runtime.regions[region].head) {
+		if !epoch.activeRegion(region) || !epoch.invalidateRegionPostfix(region) || !epoch.markPostfixDirty(epoch.runtime.regions[region].head) {
 			return false
 		}
 	}
@@ -1334,12 +1409,21 @@ func (epoch *executorEpoch) restartRegion(region int) bool {
 		return false
 	}
 	for _, index := range subtree {
+		if epoch.regions[index].episode == ^uint64(0) {
+			return false
+		}
+	}
+	for _, index := range subtree {
 		// Every restarted descendant belongs to the new ascent episode. This
 		// establishes parent-Ascent => descendant-Ascent before any local Point
 		// or candidate can be queued.
 		epoch.regions[index].phase = phaseAscent
+		epoch.regions[index].episode++
 		epoch.regions[index].exact = carrier.Contribution{}
 		epoch.regions[index].hasExact = false
+		epoch.regions[index].exactInputsVersion = 0
+		epoch.regions[index].exactRevision = 0
+		epoch.regions[index].postfix = regionPostfixProof{}
 		epoch.regions[index].invalid = true
 		clear(epoch.regions[index].interfaces)
 		clear(epoch.regions[index].ingress)
@@ -1622,6 +1706,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		}
 		return false, true
 	}
+	exactInputsChanged := episode.hasExact && epoch.regionExactInputsChanged(regionIndex)
 	if episode.invalid {
 		if !epoch.regionCandidatesSettled(regionIndex) {
 			return epoch.enqueuePoint(pointIndex), true
@@ -1683,6 +1768,15 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	}
 	if !publishedOK || epoch.canceled() {
 		return false, false
+	}
+	if !episode.nextExactRevision() {
+		return false, false
+	}
+	if !episode.hasExact || exactInputsChanged {
+		episode.exactInputsVersion++
+		if episode.exactInputsVersion == 0 {
+			return false, false
+		}
 	}
 	episode.exact, episode.hasExact = exact, true
 	if epoch.canceled() || !epoch.rememberRegionInterfaces(regionIndex) {
@@ -1747,27 +1841,36 @@ func (epoch *executorEpoch) regionPostfixed(regionIndex int) (bool, bool) {
 		return false, false
 	}
 	if episode.invalid || !epoch.regionCandidatesSettled(regionIndex) {
+		_ = epoch.invalidateRegionPostfix(regionIndex)
 		return false, epoch.enqueuePoint(region.head)
 	}
 	if !episode.hasExact || epoch.regionExactInputsChanged(regionIndex) {
+		_ = epoch.invalidateRegionPostfix(regionIndex)
 		return false, epoch.enqueuePoint(region.head)
 	}
 	_, headOK := epoch.runtime.graph.PointAt(schedule.Node(region.head))
+	if region.head < 0 || region.head >= len(epoch.points) || region.head >= len(epoch.versions) {
+		return false, false
+	}
 	current := epoch.points[region.head]
 	if !headOK || !epoch.work.OwnsAdmittedContribution(current) || !epoch.work.OwnsAdmittedContribution(episode.exact) {
 		return false, false
 	}
+	if epoch.regionPostfixProved(regionIndex) {
+		return true, epoch.settlePostfix(region.head)
+	}
 	exact := episode.exact
-	if phase == phaseNarrow {
-		if !epoch.work.LessOrEqUnder(exact.State(), current.State()) {
+	if !epoch.work.LessOrEqUnder(exact.State(), current.State()) {
+		if phase == phaseNarrow {
 			if !epoch.restartRegion(regionIndex) {
 				return false, false
 			}
 			return false, true
 		}
-	}
-	if !epoch.work.LessOrEqUnder(exact.State(), current.State()) {
 		return false, epoch.enqueuePoint(region.head)
+	}
+	if !epoch.rememberRegionPostfix(regionIndex) {
+		return false, false
 	}
 	return true, epoch.settlePostfix(region.head)
 }
@@ -1867,6 +1970,7 @@ func (epoch *executorEpoch) advanceNarrow() (advanced, ok bool) {
 				return false, false
 			}
 			episode.phase = phaseNarrow
+			episode.postfix = regionPostfixProof{}
 			if !epoch.markPostfixDirty(region.head) || !epoch.enqueuePoint(region.head) {
 				return false, false
 			}
