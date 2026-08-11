@@ -43,5 +43,5 @@ func (work *Work) ProjectContribution(input Contribution, slot shape.Slot) (Cont
 		coverage.slots = make([]slotCoverage, work.composition.Count())
 		coverage.slots[position] = selected
 	}
-	return work.admitContribution(state, coverage)
+	return work.admitDerivedContribution(input, state, coverage)
 }

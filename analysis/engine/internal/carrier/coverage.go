@@ -26,7 +26,10 @@ type Contribution struct {
 
 // contributionSeal is one evaluator-local admission capability. Contributions
 // retain the same immutable token as they move through a Work's fold; the
-// token is not a second state or coverage representation.
+// token is not a second state or coverage representation. A Work also owns a
+// distinct neutral seal. That seal is issued only after the exact initial-root
+// and false-support proof, so the fast merge identity cannot be forged by a
+// caller with an ordinary empty-coverage Contribution.
 type contributionSeal struct {
 	work        *Work
 	composition *Composition
@@ -90,7 +93,9 @@ func (contribution Contribution) Valid() bool {
 // proves ownership and the immutable outer shape in O(1), without walking
 // authored rows.
 func (work *Work) admittedContribution(contribution Contribution) bool {
-	if work == nil || !work.live() || work.contributionSeal == nil || contribution.seal != work.contributionSeal || contribution.seal.work != work || contribution.seal.composition != work.composition {
+	if work == nil || !work.live() || work.contributionSeal == nil || contribution.seal == nil ||
+		(contribution.seal != work.contributionSeal && contribution.seal != work.neutralSeal) ||
+		contribution.seal.work != work || contribution.seal.composition != work.composition {
 		return false
 	}
 	state := contribution.state
@@ -123,14 +128,64 @@ func (work *Work) admitContribution(state State, coverage contributionCoverage) 
 	return result, work.admittedContribution(result)
 }
 
+// exactNeutralState is the carrier's issuance-time semantic identity proof.
+// It checks that roots remain the immutable Composition initial vector and
+// support is the exact empty Boolean region. This deep proof is deliberately
+// paid only while EmptyContribution issues the private seal; the hot
+// neutralContribution check uses that seal (plus ordinary ownership and empty
+// coverage admission) without revisiting the root vector. Scope is deliberately
+// not folded into this proof: MergeContribution's ordinary Work/scope fence
+// checks both operands before the identity is used.
+func (work *Work) exactNeutralState(state State) bool {
+	return work != nil && work.live() && work.OwnsState(state) &&
+		support.Empty(state.support) && sameRootVector(state.roots, work.composition.initial)
+}
+
+func (work *Work) admitNeutralContribution(state State, coverage contributionCoverage) (Contribution, bool) {
+	result := Contribution{state: state, coverage: coverage}
+	if work == nil || work.neutralSeal == nil || !work.exactNeutralState(state) || len(coverage.slots) != 0 || coverage.composition != work.composition || !result.Valid() {
+		return Contribution{}, false
+	}
+	result.seal = work.neutralSeal
+	result.authority = state.authority
+	return result, work.admittedContribution(result)
+}
+
+// neutralContribution reports the private proof carried by a Contribution.
+// The deep initial-root/false-support proof runs only when EmptyContribution
+// issues the seal. The hot merge check is only token/ownership admission plus
+// the empty authored-coverage shape; it never walks the slot vector.
+func (work *Work) neutralContribution(contribution Contribution) bool {
+	return work != nil && contribution.seal == work.neutralSeal && work.admittedContribution(contribution) && len(contribution.coverage.slots) == 0
+}
+
 // EmptyContribution pairs an ordinary immutable State with empty authorship.
-// It is the unique base/Init construction route; no convenience path infers
-// coverage from sparse roots.
+// It is the unique base/Init construction route; the exact initial-root,
+// false-support case additionally receives the Work-private neutral seal.
+// No convenience path infers coverage from sparse roots.
 func (work *Work) EmptyContribution(state State) (Contribution, bool) {
 	if !work.live() || !work.OwnsState(state) || state.previewMarked() || state.contributionMarked() {
 		return Contribution{}, false
 	}
-	return work.admitContribution(state, contributionCoverage{composition: work.composition})
+	coverage := contributionCoverage{composition: work.composition}
+	if work.exactNeutralState(state) {
+		return work.admitNeutralContribution(state, coverage)
+	}
+	return work.admitContribution(state, coverage)
+}
+
+// admitDerivedContribution preserves the neutral seal only when an operation
+// started from an already-proved neutral input and the derived State remains
+// the exact initial-root/false-support, empty-coverage identity. Ordinary
+// empty Contributions never gain the proof merely by passing through a
+// transport or projection.
+func (work *Work) admitDerivedContribution(input Contribution, state State, coverage contributionCoverage) (Contribution, bool) {
+	if work.neutralContribution(input) {
+		if result, ok := work.admitNeutralContribution(state, coverage); ok {
+			return result, true
+		}
+	}
+	return work.admitContribution(state, coverage)
 }
 
 func (coverage contributionCoverage) validFor(state State) bool {
@@ -422,7 +477,7 @@ func (work *Work) TransportContribution(input Contribution, pre support.Mask, om
 		return Contribution{}, false
 	}
 	if omega.identity() && pre.IsTrue() && post.IsTrue() {
-		return work.admitContribution(state, input.coverage)
+		return work.admitDerivedContribution(input, state, input.coverage)
 	}
 	coverage := contributionCoverage{composition: work.composition, slots: make([]slotCoverage, work.composition.Count())}
 	nonempty := false
@@ -459,7 +514,7 @@ func (work *Work) TransportContribution(input Contribution, pre support.Mask, om
 	if !nonempty {
 		coverage.slots = nil
 	}
-	return work.admitContribution(state, coverage)
+	return work.admitDerivedContribution(input, state, coverage)
 }
 
 // CoverageRegion is one slot-local authorship change. It is structural wake

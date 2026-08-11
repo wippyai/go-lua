@@ -196,11 +196,12 @@ func (authority *stateAuthority) live() bool {
 type Work struct {
 	composition *Composition
 	slots       []SlotWork
-	// contributionSeal is the one private admission token shared by immutable
-	// Contributions published through this evaluator Work. It fences the O(1)
-	// internal check to this exact Work without adding a registry or a second
-	// State/coverage store.
+	// contributionSeal and neutralSeal are private admission tokens shared by
+	// immutable Contributions published through this evaluator Work. The latter
+	// is issued only for the exact initial-root/false-support identity; neither
+	// token is a registry or a second State/coverage store.
 	contributionSeal *contributionSeal
+	neutralSeal      *contributionSeal
 	// supportWork is the carrier-owned Boolean scratch shell. It is reused
 	// only across terminal support transactions; an open delta remains in this
 	// shell while typed SlotWork runs, so nested typed support work owns its
@@ -445,6 +446,7 @@ func (composition *Composition) NewWork() (*Work, bool) {
 	}
 	work := &Work{composition: composition, slots: make([]SlotWork, len(composition.operations)), supportWork: supportWork, epoch: epoch, authority: &stateAuthority{composition: composition, epoch: epoch}}
 	work.contributionSeal = &contributionSeal{work: work, composition: composition}
+	work.neutralSeal = &contributionSeal{work: work, composition: composition}
 	for index, operation := range composition.operations {
 		slot, ok := operation.NewWork()
 		if !ok || slot == nil {
@@ -479,6 +481,7 @@ func (work *Work) Close() bool {
 	work.slots = nil
 	work.composition = nil
 	work.contributionSeal = nil
+	work.neutralSeal = nil
 	work.authority = nil
 	work.checkpoint = nil
 	work.epoch = nil
@@ -504,6 +507,7 @@ func (work *Work) Retain() (*RetainedWork, bool) {
 	retained := &RetainedWork{composition: work.composition, slots: work.slots, epoch: work.epoch}
 	work.composition = nil
 	work.contributionSeal = nil
+	work.neutralSeal = nil
 	work.slots = nil
 	work.authority = nil
 	work.checkpoint = nil
@@ -985,6 +989,18 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 	if !work.live() || !work.admittedContribution(left) || !work.admittedContribution(right) || !work.liveFor(left.state, right.state) || left.state.previewMarked() || right.state.previewMarked() || left.state.contributionMarked() || right.state.contributionMarked() {
 		return Contribution{}, ChangeSet{}, false
 	}
+	// A carrier-issued neutral contribution is the exact empty Point identity:
+	// no authored coverage and no non-initial root exists anywhere in its
+	// semantic State. Work/scope admission above is intentionally first, so a
+	// neutral from another evaluator or scope can never bypass ownership.
+	if work.neutralContribution(left) {
+		empty, ok := emptyChangeSet(work.composition)
+		return right, empty, ok
+	}
+	if work.neutralContribution(right) {
+		empty, ok := emptyChangeSet(work.composition)
+		return left, empty, ok
+	}
 	if sameState(left.state, right.state) && sameContributionCoverage(left.coverage, right.coverage) {
 		empty, ok := emptyChangeSet(work.composition)
 		return left, empty, ok
@@ -997,11 +1013,35 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 	if !ok {
 		return Contribution{}, ChangeSet{}, false
 	}
+	// A contribution slot can be an exact carrier-level identity even when its
+	// enclosing States differ.  Coverage is the authored-presence authority:
+	// an uncovered right slot is fold identity, while equal immutable roots are
+	// stable under Join.  The coverage union is still retained above for
+	// coverage-only wake semantics, and the support union remains visible in the
+	// carrier ChangeSet below.
+	fastSlots := 0
+	for position := range work.slots {
+		if work.contributionSlotIdentity(position, left, right) {
+			fastSlots++
+		}
+	}
+	if fastSlots == len(work.slots) {
+		empty := emptyMask(work.composition.guards)
+		if !empty.Valid() {
+			return Contribution{}, ChangeSet{}, false
+		}
+		next, changes, committed := work.commit(left.state, nil, split.Union(), split.RightOnly(), empty, nil)
+		if !committed {
+			return Contribution{}, ChangeSet{}, false
+		}
+		result, valid := work.admitContribution(next, nextCoverage)
+		return result, changes, valid
+	}
 	delta := work.newSupportWork()
 	if delta == nil {
 		return Contribution{}, ChangeSet{}, false
 	}
-	patches := make([]Patch, 0, len(work.slots))
+	patches := make([]Patch, 0, len(work.slots)-fastSlots)
 	for position, slot := range work.slots {
 		if !work.live() || slot == nil {
 			delta.Discard()
@@ -1010,6 +1050,9 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 		}
 		physical := shape.Slot(position)
 		leftSlot, rightSlot := left.coverage.slot(physical), right.coverage.slot(physical)
+		if work.contributionSlotIdentity(position, left, right) {
+			continue
+		}
 		change, okay := slot.MergeContributionUnder(left.state.roots[position], right.state.roots[position], left.state.support, right.state.support, coverageRows(leftSlot), coverageRows(rightSlot), delta)
 		if !okay {
 			delta.Discard()
@@ -1027,6 +1070,25 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 	}
 	result, valid := work.admitContribution(next, nextCoverage)
 	return result, changes, valid
+}
+
+// contributionSlotIdentity is the sparse-slot theorem used by
+// MergeContribution.  It deliberately proves only root reuse, never a root
+// replacement: a left-empty/right-authored slot still needs typed traversal
+// unless the roots are already identical.  The right authored relation is the
+// only presence authority, so an uncovered right slot is fold identity even
+// when its enclosing support grows.
+func (work *Work) contributionSlotIdentity(position int, left, right Contribution) bool {
+	if work == nil || work.composition == nil || position < 0 || position >= len(work.slots) || work.slots[position] == nil || position >= len(work.composition.initial) || position >= len(left.state.roots) || position >= len(right.state.roots) {
+		return false
+	}
+	leftRoot, rightRoot := left.state.roots[position], right.state.roots[position]
+	physical := shape.Slot(position)
+	rightSlot := right.coverage.slot(physical)
+	if len(rightSlot.targets) == 0 {
+		return true
+	}
+	return sameRoot(leftRoot, rightRoot)
 }
 
 func (work *Work) merge3Under(kind MergeKind, left, right State, members []bool, scopes []uint64) (State, ChangeSet, bool) {
