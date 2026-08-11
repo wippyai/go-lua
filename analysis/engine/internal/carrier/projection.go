@@ -13,7 +13,7 @@ import "github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 // other slot is uncovered.  No typed key, lattice value, or callback crosses
 // this cut.
 func (work *Work) ProjectContribution(input Contribution, slot shape.Slot) (Contribution, bool) {
-	if work == nil || !work.live() || !input.Valid() || !work.OwnsState(input.state) || !work.composition.shape.ValidSlot(slot) {
+	if work == nil || !work.live() || !work.admittedContribution(input) || !work.OwnsState(input.state) || !work.composition.shape.ValidSlot(slot) {
 		return Contribution{}, false
 	}
 	position := int(slot)
@@ -43,6 +43,5 @@ func (work *Work) ProjectContribution(input Contribution, slot shape.Slot) (Cont
 		coverage.slots = make([]slotCoverage, work.composition.Count())
 		coverage.slots[position] = selected
 	}
-	result := Contribution{state: state, coverage: coverage}
-	return result, result.Valid()
+	return work.admitContribution(state, coverage)
 }

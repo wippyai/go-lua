@@ -245,3 +245,48 @@ func TestIdenticalMaskOperationsAreExactAndAllocationFree(t *testing.T) {
 		t.Fatalf("identical Union allocated %f times", allocations)
 	}
 }
+
+func TestReusableSupportShellKeepsIdentityAndRecoversAfterDiscard(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{3, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := New(manager)
+	left, ok := build.Conjoin(build.True(), 3, true)
+	if !ok {
+		t.Fatal("left support construction failed")
+	}
+	right, ok := build.Conjoin(build.True(), 7, true)
+	if !ok || !build.Seal() {
+		t.Fatal("right support construction failed")
+	}
+
+	shell := New(manager)
+	first, ok := ThreeWithWork(shell, nil, left, right)
+	if !ok || !first.Valid(manager) {
+		t.Fatal("first reusable split failed")
+	}
+	priorOverlap, priorOK := first.Overlap().Guard()
+	if !priorOK {
+		t.Fatal("first overlap lost its Guard handle")
+	}
+	second, ok := ThreeWithWork(shell, nil, left, right)
+	if !ok {
+		t.Fatal("repeated reusable split failed")
+	}
+	repeatedOverlap, repeatedOK := second.Overlap().Guard()
+	if !repeatedOK || repeatedOverlap != priorOverlap {
+		t.Fatal("successful Seal did not reuse the exact prior Guard identity")
+	}
+
+	if _, ok := ThreeWithWork(shell, func() bool { return false }, left, right); ok {
+		t.Fatal("cancelled reusable split succeeded")
+	}
+	third, ok := ThreeWithWork(shell, nil, left, right)
+	if !ok {
+		t.Fatal("shell did not recover after failed transaction")
+	}
+	if !third.Overlap().Equal(first.Overlap()) {
+		t.Fatal("failed transaction poisoned later Boolean result")
+	}
+}

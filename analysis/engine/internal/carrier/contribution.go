@@ -114,7 +114,7 @@ func (work *Work) BeginContribution(plan ContributionPlan, target Scope, inputs 
 	}
 	within := premise
 	for index, input := range inputs {
-		if !input.Valid() || !work.OwnsState(input.state) || input.state.previewMarked() || input.state.contributionMarked() {
+		if !work.admittedContribution(input) || !work.OwnsState(input.state) || input.state.previewMarked() || input.state.contributionMarked() {
 			return ContributionBase{}, false
 		}
 		if index == 0 {
@@ -128,13 +128,13 @@ func (work *Work) BeginContribution(plan ContributionPlan, target Scope, inputs 
 			return ContributionBase{}, false
 		}
 		var ok bool
-		within, ok = support.IntersectWithCheckpoint(work.checkpointFunc(), within, input.state.Support())
+		within, ok = work.intersectSupport(within, input.state.Support())
 		if !ok {
 			return ContributionBase{}, false
 		}
 	}
 	if len(inputs) != 0 {
-		within, ok = support.IntersectWithCheckpoint(work.checkpointFunc(), within, premise)
+		within, ok = work.intersectSupport(within, premise)
 		if !ok {
 			return ContributionBase{}, false
 		}
@@ -142,11 +142,11 @@ func (work *Work) BeginContribution(plan ContributionPlan, target Scope, inputs 
 	var environmentValue Contribution
 	if len(environment) == 1 {
 		environmentValue = environment[0]
-		if !environmentValue.Valid() || !work.OwnsState(environmentValue.state) || environmentValue.state.previewMarked() || environmentValue.state.contributionMarked() || !environmentValue.state.scope.same(target) {
+		if !work.admittedContribution(environmentValue) || !work.OwnsState(environmentValue.state) || environmentValue.state.previewMarked() || environmentValue.state.contributionMarked() || !environmentValue.state.scope.same(target) {
 			return ContributionBase{}, false
 		}
 		var intersectOK bool
-		within, intersectOK = support.IntersectWithCheckpoint(work.checkpointFunc(), within, environmentValue.state.Support())
+		within, intersectOK = work.intersectSupport(within, environmentValue.state.Support())
 		if !intersectOK {
 			return ContributionBase{}, false
 		}
@@ -201,7 +201,7 @@ func (work *Work) OwnsContribution(base ContributionBase, inputs []Contribution)
 		return false
 	}
 	for index := range inputs {
-		if !sameState(inputs[index].state, base.value.inputs[index].state) || !sameContributionCoverage(inputs[index].coverage, base.value.inputs[index].coverage) {
+		if !work.admittedContribution(inputs[index]) || !sameState(inputs[index].state, base.value.inputs[index].state) || !sameContributionCoverage(inputs[index].coverage, base.value.inputs[index].coverage) {
 			return false
 		}
 	}
@@ -315,7 +315,7 @@ func (work *Work) finishContribution(base ContributionBase, patches []Patch, ret
 	}
 	work.publishing = true
 	defer func() { work.publishing = false }()
-	split, splitOK := support.ThreeWithCheckpoint(work.checkpointFunc(), owner.state.support, retained)
+	split, splitOK := work.threeSupport(owner.state.support, retained)
 	empty := emptyMask(composition.guards)
 	if !splitOK || !empty.Valid() {
 		dropPatches(patches)
@@ -364,8 +364,7 @@ func (work *Work) finishContribution(base ContributionBase, patches []Patch, ret
 	}
 	dropPatches(patches)
 	state := State{authority: work.authority, scope: owner.state.scope, support: retained, roots: next}
-	result := Contribution{state: state, coverage: coverage}
-	return result, result.Valid()
+	return work.admitContribution(state, coverage)
 }
 
 // AbortContribution consumes every ready but unpublished Patch and invalidates

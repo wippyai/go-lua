@@ -121,7 +121,7 @@ func (preview *Preview) Transfer(restricted View, patches []Patch) (State, Chang
 		dropPatches(patches)
 		return State{}, ChangeSet{}, false
 	}
-	split, ok := support.ThreeWithCheckpoint(preview.work.checkpointFunc(), preview.state.support, restricted.support)
+	split, ok := preview.work.threeSupport(preview.state.support, restricted.support)
 	if !ok {
 		dropPatches(patches)
 		preview.Abort()

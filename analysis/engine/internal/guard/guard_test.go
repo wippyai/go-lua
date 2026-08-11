@@ -82,6 +82,102 @@ func TestWorkExactOperationsAndSeal(t *testing.T) {
 	}
 }
 
+func TestWorkReuseAfterSealPreservesPublishedGuards(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	prior := literal(t, work, testA)
+	work.Seal()
+	if !manager.Valid(prior) || work.Open() {
+		t.Fatal("first sealed transaction did not publish a stable guard")
+	}
+	if !work.Begin() || work.Reset() || !work.Open() {
+		t.Fatal("reusable Work did not obey its terminal-only linear cut")
+	}
+	if !work.Valid(prior) {
+		t.Fatal("reused Work rejected a Guard published by its prior transaction")
+	}
+	next := literal(t, work, testB)
+	work.Seal()
+	if !manager.Valid(prior) || !manager.Valid(next) {
+		t.Fatal("reusing Work invalidated an already-published Guard")
+	}
+}
+
+func TestWorkReuseAfterDiscardClearsFailedCandidate(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	if !work.SetCheckpoint(func() bool { return false }) {
+		t.Fatal("checkpoint install failed")
+	}
+	if _, ok := work.Literal(testA); ok {
+		t.Fatal("cancelled candidate admitted a Guard")
+	}
+	work.Discard()
+	if !work.Begin() || !work.Open() {
+		t.Fatal("discarded Work did not reopen")
+	}
+	if got := literal(t, work, testC); !work.Valid(got) {
+		t.Fatal("reopened Work rejected its new candidate")
+	}
+}
+
+func TestWorkSealReuseReturnsExactPriorGuardIdentity(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	a := literal(t, work, testA)
+	b := literal(t, work, testB)
+	prior := work.And(a, work.Not(b))
+	work.Seal()
+	if !manager.Valid(prior) {
+		t.Fatal("prior formula was not published")
+	}
+	if !work.Begin() {
+		t.Fatal("published Work did not reopen")
+	}
+	repeatedA := literal(t, work, testA)
+	repeatedB := literal(t, work, testB)
+	repeated := work.And(repeatedA, work.Not(repeatedB))
+	if repeatedA != a || repeatedB != b || repeated != prior {
+		t.Fatal("successful Seal did not retain exact immutable BDD identity")
+	}
+	work.Seal()
+}
+
+func TestWorkDiscardDoesNotPoisonLaterInterner(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	failed := literal(t, work, testA)
+	work.Discard()
+	if manager.Valid(failed) {
+		t.Fatal("discarded candidate page became Manager-readable")
+	}
+	if !work.Begin() {
+		t.Fatal("discarded Work did not reopen")
+	}
+	fresh := literal(t, work, testA)
+	if fresh == failed {
+		t.Fatal("discarded candidate poisoned the reusable interner")
+	}
+	work.Seal()
+}
+
+func TestWorkCloseDropsRetainedEpochReferences(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	_ = literal(t, work, testA)
+	work.Seal()
+	if work.unique == nil {
+		t.Fatal("successful Seal did not retain its owner-local interner")
+	}
+	work.Close()
+	if work.Open() || work.manager != nil || work.unique != nil || work.hashes != nil {
+		t.Fatal("Close retained reusable Work state")
+	}
+	if work.Begin() {
+		t.Fatal("closed Work reopened")
+	}
+}
+
 func TestWorkLifecycleSeparatesPublishFromDiscard(t *testing.T) {
 	var zero Work
 	if zero.Open() || zero.Published() {

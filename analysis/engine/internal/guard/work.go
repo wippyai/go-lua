@@ -1,16 +1,25 @@
 package guard
 
-// Work owns all mutable candidate-local BDD construction state. Its pages are
-// never reused or remapped: Seal publishes them once, while Discard drops every
-// Work-held reference without leaving a Manager-side history.
+// Work owns one single-writer BDD construction shell. Pages are never reused
+// or remapped. A successful Seal publishes the transaction's pages and keeps
+// immutable interning/memo entries in this owner-local epoch so a later
+// transaction can return the exact prior Guard handles. Discard clears that
+// epoch cache as well as the failed candidate; Close drops the shell's last
+// references. Manager remains history-free.
 type Work struct {
 	manager    *Manager
 	checkpoint func() bool
-	pages      []*page
-	owned      map[*page]struct{}
-	current    *page
-	state      workState
+	// Transaction-local page ownership. These references are cleared at every
+	// terminal transaction; published pages remain reachable through sealed
+	// Guard handles and the successful epoch tables below.
+	pages   []*page
+	owned   map[*page]struct{}
+	current *page
+	state   workState
 
+	// Epoch-lived immutable interner and operation memos. They may retain only
+	// sealed pages after Seal and are cleared on Discard/Close. Keeping them
+	// owner-local preserves exact page identity without a Manager cache.
 	unique     map[nodeFingerprint][]Guard
 	not        map[Guard]Guard
 	applyCache map[applyKey]Guard
@@ -19,6 +28,7 @@ type Work struct {
 	exists     map[existsKey]Guard
 	hashes     map[Guard]uint64
 
+	// Per-transaction traversal scratch. It never survives Seal or Discard.
 	compareStack []comparePair
 	compareSeen  map[comparePair]uint64
 	satStack     []satisfiablePair
@@ -122,6 +132,32 @@ func (w *Work) True() Guard {
 // Open reports whether w is the live, single-writer construction transaction.
 func (w *Work) Open() bool { return w != nil && w.manager != nil && w.state == workOpen }
 
+// Begin reopens this single-owner scratch transaction after its previous
+// transaction reached a terminal outcome.  A Work must never be reopened
+// while it is still open: doing so would let an in-flight candidate lose its
+// page ownership and make nested users observe a partially reset BDD.
+//
+// The Manager remains the immutable owner across generations.  Begin drops
+// only this Work's candidate-local references; pages already published by a
+// prior Seal remain readable through the Guard handles that retain them.
+func (w *Work) Begin() bool {
+	if w == nil || w.manager == nil || w.state == workOpen {
+		return false
+	}
+	w.resetTransaction()
+	w.state = workOpen
+	return true
+}
+
+// Reset is the explicit reopen spelling for callers that treat Work as a
+// reusable scratch slot.  It has the same linearity fence as Begin and is
+// intentionally unavailable to an open transaction.
+func (w *Work) Reset() bool { return w.Begin() }
+
+// Reopen is retained as a descriptive alias for Begin at ownership-heavy
+// call sites.  All three entry points share the same lawful state transition.
+func (w *Work) Reopen() bool { return w.Begin() }
+
 // Published reports whether w successfully sealed its pages for Manager reads.
 // Discarded work is terminal but never published.
 func (w *Work) Published() bool {
@@ -173,6 +209,51 @@ func (w *Work) newPage() *page {
 	return p
 }
 
+// resetTransaction clears references private to the current candidate.
+// Published pages are deliberately not mutated or recycled: immutable Guard
+// handles may still point at them. Epoch interner/memo maps remain intact
+// after Seal so exact prior handles can be reused by the next transaction.
+func (w *Work) resetTransaction() {
+	if w == nil {
+		return
+	}
+	w.checkpoint = nil
+	clear(w.compareSeen)
+	clear(w.satSeen)
+	clear(w.compareStack)
+	clear(w.satStack)
+	clear(w.hashStack)
+	w.compareStack = w.compareStack[:0]
+	w.satStack = w.satStack[:0]
+	w.hashStack = w.hashStack[:0]
+	w.pages = nil
+	w.current = nil
+	w.owned = nil
+	w.readEpoch = 0
+}
+
+// clearEpoch drops immutable interner/memo entries. Failed candidates must
+// never leave their pages or memo results available to a later transaction.
+func (w *Work) clearEpoch() {
+	if w == nil {
+		return
+	}
+	clear(w.unique)
+	clear(w.not)
+	clear(w.applyCache)
+	clear(w.ite)
+	clear(w.restrict)
+	clear(w.exists)
+	clear(w.hashes)
+	w.unique = nil
+	w.not = nil
+	w.applyCache = nil
+	w.ite = nil
+	w.restrict = nil
+	w.exists = nil
+	w.hashes = nil
+}
+
 func (w *Work) makeNode(rank uint64, low, high Guard) Guard {
 	if w.Equivalent(low, high) {
 		return low
@@ -215,9 +296,10 @@ func (w *Work) Literal(atom Atom) (Guard, bool) {
 	return w.makeNode(rank, w.manager.False(), w.manager.True()), true
 }
 
-// Seal freezes every candidate page, then drops all mutable tables and page
-// inventory. Published roots retain precisely the pages reachable through
-// their node edges; Manager retains none.
+// Seal freezes every candidate page, then drops transaction-local page
+// inventory while retaining this owner's immutable interner/memo tables.
+// Published roots retain precisely the pages reachable through their node
+// edges; Manager retains none.
 func (w *Work) Seal() {
 	w.requireOpen()
 	if !w.Live() {
@@ -227,21 +309,7 @@ func (w *Work) Seal() {
 		p.sealed.Store(true)
 	}
 	w.state = workPublished
-	w.pages = nil
-	w.current = nil
-	w.owned = nil
-	w.unique = nil
-	w.not = nil
-	w.applyCache = nil
-	w.ite = nil
-	w.restrict = nil
-	w.exists = nil
-	w.hashes = nil
-	w.hashStack = nil
-	w.compareStack = nil
-	w.compareSeen = nil
-	w.satStack = nil
-	w.satSeen = nil
+	w.resetTransaction()
 }
 
 // Discard drops all candidate-local construction state. Its unsealed pages
@@ -252,21 +320,24 @@ func (w *Work) Discard() {
 		return
 	}
 	w.state = workDiscarded
-	w.pages = nil
-	w.current = nil
-	w.owned = nil
-	w.unique = nil
-	w.not = nil
-	w.applyCache = nil
-	w.ite = nil
-	w.restrict = nil
-	w.exists = nil
-	w.hashes = nil
-	w.hashStack = nil
-	w.compareStack = nil
-	w.compareSeen = nil
-	w.satStack = nil
-	w.satSeen = nil
+	w.resetTransaction()
+	w.clearEpoch()
+}
+
+// Close permanently evicts this reusable shell. Published Guard handles keep
+// their immutable pages alive independently, but the owner retains no page,
+// memo, or checkpoint reference and cannot be reopened.
+func (w *Work) Close() {
+	if w == nil {
+		return
+	}
+	if w.Open() {
+		w.state = workDiscarded
+	}
+	w.resetTransaction()
+	w.clearEpoch()
+	w.manager = nil
+	w.state = workDiscarded
 }
 
 // fingerprint is a Work-local structural cache. Its bucket is never trusted as

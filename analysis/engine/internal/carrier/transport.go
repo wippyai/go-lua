@@ -51,10 +51,14 @@ func (work *Work) filter(state State, within support.Mask) (State, bool) {
 	if within.SameHandle(state.support) {
 		return state, true
 	}
-	view, ok := state.Restrict(within)
+	if !withinScope(state, within) {
+		return State{}, false
+	}
+	restricted, ok := work.intersectSupport(state.support, within)
 	if !ok {
 		return State{}, false
 	}
+	view := View{state: state, support: restricted}
 	next, _, ok := work.Transfer(state, view, nil)
 	return next, ok
 }

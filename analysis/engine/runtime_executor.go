@@ -60,15 +60,18 @@ type regionEpoch struct {
 	// phase belongs to this exact recurrence episode.  Nested regions may
 	// restart independently: a child re-ascent must not turn an enclosing
 	// narrowed episode into an ascent episode with its narrowed head retained.
-	phase              solvePhase
-	exact              carrier.Contribution
-	hasExact           bool
-	invalid            bool
-	interfaces         []uint64
-	ingress            []uint64
-	environmentIngress []uint64
-	factorIngress      []uint64
-	snapshot           []uint64
+	phase                  solvePhase
+	exact                  carrier.Contribution
+	hasExact               bool
+	invalid                bool
+	interfaces             []uint64
+	ingress                []uint64
+	backIngress            []uint64
+	environmentIngress     []uint64
+	environmentBackIngress []uint64
+	factorIngress          []uint64
+	factorBackIngress      []uint64
+	snapshot               []uint64
 }
 
 type solvePhase uint8
@@ -260,8 +263,11 @@ func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember,
 		epoch.regions[index].phase = phaseAscent
 		epoch.regions[index].interfaces = make([]uint64, len(region.faces))
 		epoch.regions[index].ingress = make([]uint64, len(region.external))
+		epoch.regions[index].backIngress = make([]uint64, len(region.back))
 		epoch.regions[index].environmentIngress = make([]uint64, len(region.environmentExternal))
+		epoch.regions[index].environmentBackIngress = make([]uint64, len(region.environmentBack))
 		epoch.regions[index].factorIngress = make([]uint64, len(region.factorExternal))
+		epoch.regions[index].factorBackIngress = make([]uint64, len(region.factorBack))
 		epoch.regions[index].snapshot = make([]uint64, len(region.points))
 	}
 	for index := 0; index < runtime.points.PointCount(); index++ {
@@ -709,12 +715,12 @@ func (epoch *executorEpoch) inputs(producer runtimeProducer, values []carrier.Co
 			return nil, false
 		}
 		current := epoch.points[pointIndex]
-		if !current.Valid() || !epoch.work.OwnsState(current.State()) {
+		if !epoch.work.OwnsAdmittedContribution(current) {
 			return nil, false
 		}
 		transport := producer.inputs[index]
 		reindexed, ok := epoch.work.TransportContribution(current, transport.pre, transport.plan, transport.post)
-		if !transport.valid() || !ok || !reindexed.Valid() || !epoch.work.OwnsState(reindexed.State()) || !reindexed.State().Scope().Same(producer.outputScope) {
+		if !transport.valid() || !ok || !epoch.work.OwnsAdmittedContribution(reindexed) || !reindexed.State().Scope().Same(producer.outputScope) {
 			return nil, false
 		}
 		values[index] = reindexed
@@ -732,11 +738,11 @@ func (epoch *executorEpoch) environment(producer runtimeProducer) (carrier.Contr
 		return carrier.Contribution{}, false
 	}
 	current := epoch.points[pointIndex]
-	if !current.Valid() || !epoch.work.OwnsState(current.State()) {
+	if !epoch.work.OwnsAdmittedContribution(current) {
 		return carrier.Contribution{}, false
 	}
 	transported, ok := epoch.work.TransportContribution(current, producer.environment.pre, producer.environment.plan, producer.environment.post)
-	if !ok || !transported.Valid() || !epoch.work.OwnsState(transported.State()) || !transported.State().Scope().Same(producer.outputScope) {
+	if !ok || !epoch.work.OwnsAdmittedContribution(transported) || !transported.State().Scope().Same(producer.outputScope) {
 		return carrier.Contribution{}, false
 	}
 	return transported, true
@@ -954,7 +960,7 @@ func (epoch *executorEpoch) pointBottom(pointIndex int) (carrier.Contribution, b
 }
 
 func (epoch *executorEpoch) foldGroups(base carrier.Contribution, groups []int) (carrier.Contribution, bool) {
-	if epoch == nil || epoch.work == nil || !base.Valid() || !epoch.work.OwnsState(base.State()) {
+	if epoch == nil || epoch.work == nil || !epoch.work.OwnsAdmittedContribution(base) {
 		return carrier.Contribution{}, false
 	}
 	result := base
@@ -975,7 +981,7 @@ func (epoch *executorEpoch) foldGroups(base carrier.Contribution, groups []int) 
 }
 
 func (epoch *executorEpoch) foldEnvironmentEdges(base carrier.Contribution, edges []int) (carrier.Contribution, bool) {
-	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !base.Valid() || !epoch.work.OwnsState(base.State()) {
+	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !epoch.work.OwnsAdmittedContribution(base) {
 		return carrier.Contribution{}, false
 	}
 	result := base
@@ -990,7 +996,7 @@ func (epoch *executorEpoch) foldEnvironmentEdges(base carrier.Contribution, edge
 }
 
 func (epoch *executorEpoch) foldEnvironmentEdge(base carrier.Contribution, edgeIndex int) (carrier.Contribution, bool) {
-	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !base.Valid() || !epoch.work.OwnsState(base.State()) || edgeIndex < 0 || edgeIndex >= len(epoch.runtime.environments) {
+	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !epoch.work.OwnsAdmittedContribution(base) || edgeIndex < 0 || edgeIndex >= len(epoch.runtime.environments) {
 		return carrier.Contribution{}, false
 	}
 	edge := epoch.runtime.environments[edgeIndex]
@@ -998,7 +1004,7 @@ func (epoch *executorEpoch) foldEnvironmentEdge(base carrier.Contribution, edgeI
 		return carrier.Contribution{}, false
 	}
 	transported, ok := epoch.work.TransportContribution(epoch.points[edge.source], edge.input.pre, edge.input.plan, edge.input.post)
-	if !ok || !transported.Valid() || !epoch.work.OwnsState(transported.State()) || !transported.State().Scope().Same(base.State().Scope()) {
+	if !ok || !epoch.work.OwnsAdmittedContribution(transported) || !transported.State().Scope().Same(base.State().Scope()) {
 		return carrier.Contribution{}, false
 	}
 	result, _, ok := epoch.work.MergeContribution(base, transported)
@@ -1009,7 +1015,7 @@ func (epoch *executorEpoch) foldEnvironmentEdge(base carrier.Contribution, edgeI
 }
 
 func (epoch *executorEpoch) foldFactorEdges(base carrier.Contribution, edges []int) (carrier.Contribution, bool) {
-	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !base.Valid() || !epoch.work.OwnsState(base.State()) {
+	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !epoch.work.OwnsAdmittedContribution(base) {
 		return carrier.Contribution{}, false
 	}
 	result := base
@@ -1024,7 +1030,7 @@ func (epoch *executorEpoch) foldFactorEdges(base carrier.Contribution, edges []i
 }
 
 func (epoch *executorEpoch) foldFactorEdge(base carrier.Contribution, edgeIndex int) (carrier.Contribution, bool) {
-	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !base.Valid() || !epoch.work.OwnsState(base.State()) || edgeIndex < 0 || edgeIndex >= len(epoch.runtime.factorEdges) {
+	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !epoch.work.OwnsAdmittedContribution(base) || edgeIndex < 0 || edgeIndex >= len(epoch.runtime.factorEdges) {
 		return carrier.Contribution{}, false
 	}
 	edge := epoch.runtime.factorEdges[edgeIndex]
@@ -1032,11 +1038,11 @@ func (epoch *executorEpoch) foldFactorEdge(base carrier.Contribution, edgeIndex 
 		return carrier.Contribution{}, false
 	}
 	transported, ok := epoch.work.TransportContribution(epoch.points[edge.source], edge.input.pre, edge.input.plan, edge.input.post)
-	if !ok || !transported.Valid() || !epoch.work.OwnsState(transported.State()) || !transported.State().Scope().Same(base.State().Scope()) {
+	if !ok || !epoch.work.OwnsAdmittedContribution(transported) || !transported.State().Scope().Same(base.State().Scope()) {
 		return carrier.Contribution{}, false
 	}
 	projected, ok := epoch.work.ProjectContribution(transported, edge.slot)
-	if !ok || !projected.Valid() || !epoch.work.OwnsState(projected.State()) || !projected.State().Scope().Same(base.State().Scope()) {
+	if !ok || !epoch.work.OwnsAdmittedContribution(projected) || !projected.State().Scope().Same(base.State().Scope()) {
 		return carrier.Contribution{}, false
 	}
 	result, _, ok := epoch.work.MergeContribution(base, projected)
@@ -1047,7 +1053,7 @@ func (epoch *executorEpoch) foldFactorEdge(base carrier.Contribution, edgeIndex 
 }
 
 func (epoch *executorEpoch) foldPoint(base carrier.Contribution, point equation.Point) (carrier.Contribution, bool) {
-	if epoch == nil || epoch.runtime == nil || !point.Available() || !base.Valid() || !epoch.work.OwnsState(base.State()) {
+	if epoch == nil || epoch.runtime == nil || !point.Available() || !epoch.work.OwnsAdmittedContribution(base) {
 		return carrier.Contribution{}, false
 	}
 	result := base
@@ -1091,7 +1097,7 @@ func (epoch *executorEpoch) foldPoint(base carrier.Contribution, point equation.
 // transition publishes the head. E includes Init and external producers; B
 // starts at bottom and contains every back producer, including mixed Groups.
 func (epoch *executorEpoch) regionRHS(point equation.Point, pointIndex int, region runtimeRegion, current carrier.Contribution) (ingress, exact, selected carrier.Contribution, ok bool) {
-	if epoch == nil || !region.active || !current.Valid() || !epoch.work.OwnsState(current.State()) {
+	if epoch == nil || !region.active || !epoch.work.OwnsAdmittedContribution(current) {
 		return carrier.Contribution{}, carrier.Contribution{}, carrier.Contribution{}, false
 	}
 	base, ok := epoch.pointBase(point, pointIndex)
@@ -1171,12 +1177,48 @@ func (epoch *executorEpoch) regionInterfacesChanged(region int) bool {
 	return false
 }
 
+// regionExactInputsChanged checks the disposable proof recorded with the
+// episode.exact head RHS.  The ordered producer and source-point versions are
+// the complete semantic input list for E⊔B: queue readiness alone is not
+// evidence that the stored exact carrier still describes the live recurrence.
+// Faces and external ingress remain part of the interface proof because a
+// changed enclosing point must restart the local episode before narrowing.
+func (epoch *executorEpoch) regionExactInputsChanged(region int) bool {
+	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
+		return true
+	}
+	state := epoch.regions[region]
+	if !state.hasExact || epoch.regionInterfacesChanged(region) {
+		return true
+	}
+	bound := epoch.runtime.regions[region]
+	if len(bound.back) != len(state.backIngress) || len(bound.environmentBack) != len(state.environmentBackIngress) || len(bound.factorBack) != len(state.factorBackIngress) {
+		return true
+	}
+	for index, group := range bound.back {
+		if group < 0 || group >= len(epoch.producers) || state.backIngress[index] != epoch.producers[group].version {
+			return true
+		}
+	}
+	for index, edge := range bound.environmentBack {
+		if edge < 0 || edge >= len(epoch.runtime.environments) || state.environmentBackIngress[index] != epoch.environmentVersion(edge) {
+			return true
+		}
+	}
+	for index, edge := range bound.factorBack {
+		if edge < 0 || edge >= len(epoch.runtime.factorEdges) || state.factorBackIngress[index] != epoch.factorEdgeVersion(edge) {
+			return true
+		}
+	}
+	return false
+}
+
 func (epoch *executorEpoch) rememberRegionInterfaces(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return false
 	}
 	bound, state := epoch.runtime.regions[region], &epoch.regions[region]
-	if len(bound.faces) != len(state.interfaces) || len(bound.external) != len(state.ingress) || len(bound.environmentExternal) != len(state.environmentIngress) || len(bound.factorExternal) != len(state.factorIngress) {
+	if len(bound.faces) != len(state.interfaces) || len(bound.external) != len(state.ingress) || len(bound.back) != len(state.backIngress) || len(bound.environmentExternal) != len(state.environmentIngress) || len(bound.environmentBack) != len(state.environmentBackIngress) || len(bound.factorExternal) != len(state.factorIngress) || len(bound.factorBack) != len(state.factorBackIngress) {
 		return false
 	}
 	for index, point := range bound.faces {
@@ -1191,17 +1233,35 @@ func (epoch *executorEpoch) rememberRegionInterfaces(region int) bool {
 		}
 		state.ingress[index] = epoch.producers[group].version
 	}
+	for index, group := range bound.back {
+		if group < 0 || group >= len(epoch.producers) {
+			return false
+		}
+		state.backIngress[index] = epoch.producers[group].version
+	}
 	for index, edge := range bound.environmentExternal {
 		if edge < 0 || edge >= len(epoch.runtime.environments) {
 			return false
 		}
 		state.environmentIngress[index] = epoch.environmentVersion(edge)
 	}
+	for index, edge := range bound.environmentBack {
+		if edge < 0 || edge >= len(epoch.runtime.environments) {
+			return false
+		}
+		state.environmentBackIngress[index] = epoch.environmentVersion(edge)
+	}
 	for index, edge := range bound.factorExternal {
 		if edge < 0 || edge >= len(epoch.runtime.factorEdges) {
 			return false
 		}
 		state.factorIngress[index] = epoch.factorEdgeVersion(edge)
+	}
+	for index, edge := range bound.factorBack {
+		if edge < 0 || edge >= len(epoch.runtime.factorEdges) {
+			return false
+		}
+		state.factorBackIngress[index] = epoch.factorEdgeVersion(edge)
 	}
 	return true
 }
@@ -1283,8 +1343,11 @@ func (epoch *executorEpoch) restartRegion(region int) bool {
 		epoch.regions[index].invalid = true
 		clear(epoch.regions[index].interfaces)
 		clear(epoch.regions[index].ingress)
+		clear(epoch.regions[index].backIngress)
 		clear(epoch.regions[index].environmentIngress)
+		clear(epoch.regions[index].environmentBackIngress)
 		clear(epoch.regions[index].factorIngress)
+		clear(epoch.regions[index].factorBackIngress)
 		clear(epoch.regions[index].snapshot)
 	}
 	// A fresh episode may not use an old local Point as a seed.  The Region's
@@ -1294,7 +1357,7 @@ func (epoch *executorEpoch) restartRegion(region int) bool {
 	// than a later base-to-recomputed delta (or no delta when it stays at base).
 	bound := epoch.runtime.regions[region]
 	for _, pointIndex := range bound.points {
-		if pointIndex < 0 || pointIndex >= len(epoch.points) || !epoch.points[pointIndex].Valid() || !epoch.work.OwnsState(epoch.points[pointIndex].State()) {
+		if pointIndex < 0 || pointIndex >= len(epoch.points) || !epoch.work.OwnsAdmittedContribution(epoch.points[pointIndex]) {
 			return false
 		}
 		point, pointOK := epoch.runtime.graph.PointAt(schedule.Node(pointIndex))
@@ -1382,7 +1445,7 @@ func (epoch *executorEpoch) regionCandidatesSettled(region int) bool {
 }
 
 func (epoch *executorEpoch) publish(point int, current, next carrier.Contribution, changes carrier.ChangeSet) (bool, bool) {
-	if epoch == nil || epoch.canceled() || point < 0 || point >= len(epoch.points) || !current.Valid() || !next.Valid() || !epoch.work.OwnsState(current.State()) || !epoch.work.OwnsState(next.State()) || !epoch.runtime.carrier.OwnsChangeSet(changes) {
+	if epoch == nil || epoch.canceled() || point < 0 || point >= len(epoch.points) || !epoch.work.OwnsAdmittedContribution(current) || !epoch.work.OwnsAdmittedContribution(next) || !epoch.runtime.carrier.OwnsChangeSet(changes) {
 		return false, false
 	}
 	coverageChanges, coverageOK := epoch.work.CoverageChanges(current, next)
@@ -1523,7 +1586,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	}
 	if regionIndex == schedule.NoRegion {
 		current := epoch.points[pointIndex]
-		if !current.Valid() || !epoch.work.OwnsState(current.State()) {
+		if !epoch.work.OwnsAdmittedContribution(current) {
 			return false, false
 		}
 		base, ok := epoch.pointBase(point, pointIndex)
@@ -1566,7 +1629,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		episode.invalid = false
 	}
 	current := epoch.points[pointIndex]
-	if !current.Valid() || !epoch.work.OwnsState(current.State()) {
+	if !epoch.work.OwnsAdmittedContribution(current) {
 		return false, false
 	}
 	region := epoch.runtime.regions[regionIndex]
@@ -1670,8 +1733,10 @@ func (epoch *executorEpoch) regionSnapshotChanged(region int) bool {
 }
 
 // regionPostfixed validates one already-drained region before EventExit. It
-// never trusts an empty queue: every local candidate, interface version, and
-// complete head RHS must still agree with the current phase.
+// never trusts an empty queue: every local candidate and exact-input version
+// must still agree with the current phase. Once those disposable versions
+// match, episode.exact is the already-computed E⊔B carrier; do not rebuild
+// ingress, back edges, or factor joins merely to prove the same postfix.
 func (epoch *executorEpoch) regionPostfixed(regionIndex int) (bool, bool) {
 	if epoch == nil || epoch.canceled() || !epoch.activeRegion(regionIndex) {
 		return false, false
@@ -1684,37 +1749,16 @@ func (epoch *executorEpoch) regionPostfixed(regionIndex int) (bool, bool) {
 	if episode.invalid || !epoch.regionCandidatesSettled(regionIndex) {
 		return false, epoch.enqueuePoint(region.head)
 	}
-	if epoch.regionInterfacesChanged(regionIndex) {
-		if !epoch.restartRegion(regionIndex) {
-			return false, false
-		}
-		return false, true
+	if !episode.hasExact || epoch.regionExactInputsChanged(regionIndex) {
+		return false, epoch.enqueuePoint(region.head)
 	}
-	head, headOK := epoch.runtime.graph.PointAt(schedule.Node(region.head))
+	_, headOK := epoch.runtime.graph.PointAt(schedule.Node(region.head))
 	current := epoch.points[region.head]
-	if !headOK || !current.Valid() || !epoch.work.OwnsState(current.State()) {
+	if !headOK || !epoch.work.OwnsAdmittedContribution(current) || !epoch.work.OwnsAdmittedContribution(episode.exact) {
 		return false, false
 	}
-	ingress, exact, _, exactOK := epoch.regionRHS(head, region.head, region, current)
-	if !exactOK || epoch.canceled() {
-		return false, false
-	}
-	if phase == phaseAscent && episode.hasExact && !epoch.work.LessOrEqUnder(ingress.State(), current.State()) {
-		if !epoch.restartRegion(regionIndex) {
-			return false, false
-		}
-		return false, true
-	}
+	exact := episode.exact
 	if phase == phaseNarrow {
-		if !episode.hasExact {
-			return false, false
-		}
-		if !epoch.work.EqualContribution(episode.exact, exact) && !epoch.work.LessOrEqUnder(exact.State(), episode.exact.State()) {
-			if !epoch.restartRegion(regionIndex) {
-				return false, false
-			}
-			return false, true
-		}
 		if !epoch.work.LessOrEqUnder(exact.State(), current.State()) {
 			if !epoch.restartRegion(regionIndex) {
 				return false, false
@@ -1722,7 +1766,7 @@ func (epoch *executorEpoch) regionPostfixed(regionIndex int) (bool, bool) {
 			return false, true
 		}
 	}
-	if !episode.hasExact || !epoch.work.EqualContribution(episode.exact, exact) || !epoch.work.LessOrEqUnder(exact.State(), current.State()) {
+	if !epoch.work.LessOrEqUnder(exact.State(), current.State()) {
 		return false, epoch.enqueuePoint(region.head)
 	}
 	return true, epoch.settlePostfix(region.head)
@@ -1776,7 +1820,7 @@ func (epoch *executorEpoch) demandedPostfix() (bool, bool) {
 		current := epoch.points[pointIndex]
 		base, baseOK := epoch.pointBase(point, pointIndex)
 		rhs, rhsOK := epoch.foldPoint(base, point)
-		if !baseOK || !rhsOK || !current.Valid() || !epoch.work.OwnsState(current.State()) {
+		if !baseOK || !rhsOK || !epoch.work.OwnsAdmittedContribution(current) {
 			return false, false
 		}
 		if !epoch.work.EqualContribution(rhs, current) {

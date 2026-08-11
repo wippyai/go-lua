@@ -308,7 +308,11 @@ func (binding *Binding[K, V]) NewWork() (carrier.SlotWork, bool) {
 	if roots == nil {
 		return nil, false
 	}
-	return &bindingWork[K, V]{binding: binding, roots: roots, observations: observations}, true
+	supportWork := support.New(binding.plane.domain.Guards())
+	if supportWork == nil {
+		return nil, false
+	}
+	return &bindingWork[K, V]{binding: binding, roots: roots, supportWork: supportWork, observations: observations}, true
 }
 
 // bindingWork is private typed evaluator state for exactly one Binding.
@@ -316,6 +320,10 @@ func (binding *Binding[K, V]) NewWork() (carrier.SlotWork, bool) {
 // operations. The enclosing carrier.Work owns this object exclusively.
 type bindingWork[K scalar.Key, V any] struct {
 	binding *Binding[K, V]
+	// supportWork is this Binding's reusable Boolean shell. It is distinct
+	// from carrier.Work's open delta candidate so nested coverage/support
+	// merges never reset a concurrently constructed typed delta.
+	supportWork *support.Work
 	// roots and epoch are paired exactly once by carrier.Work opening.  The
 	// former retains this Work's dynamic typed planes; the latter is the only
 	// opaque handle provenance accepted for those planes.
@@ -392,6 +400,10 @@ func (work *bindingWork[K, V]) CloseRootEpoch() {
 	work.coverageLeft = nil
 	clear(work.coverageRight)
 	work.coverageRight = nil
+	if work.supportWork != nil {
+		work.supportWork.Close()
+		work.supportWork = nil
+	}
 	work.clearObservationScratch()
 	work.binding = nil
 }
@@ -421,15 +433,27 @@ func (work *bindingWork[K, V]) newSupportWork() *support.Work {
 	if !work.live() || work.binding == nil || work.binding.plane == nil {
 		return nil
 	}
-	result := support.New(work.binding.plane.domain.Guards())
-	if result == nil {
+	if work.supportWork == nil {
+		work.supportWork = support.New(work.binding.plane.domain.Guards())
+	}
+	if work.supportWork == nil || !work.supportWork.BeginTransaction(work.poll) {
 		return nil
 	}
-	if work.poll != nil && !result.SetCheckpoint(work.poll) {
-		result.Discard()
-		return nil
+	return work.supportWork
+}
+
+func (work *bindingWork[K, V]) threeSupport(left, right support.Mask) (support.Split, bool) {
+	if !work.live() || work.supportWork == nil {
+		return support.Split{}, false
 	}
-	return result
+	return support.ThreeWithWork(work.supportWork, work.poll, left, right)
+}
+
+func (work *bindingWork[K, V]) unionSupport(left, right support.Mask) (support.Mask, bool) {
+	if !work.live() || work.supportWork == nil {
+		return support.Mask{}, false
+	}
+	return support.UnionWithWork(work.supportWork, work.poll, left, right)
 }
 
 // resolve is the sole typed root boundary for this evaluator.  Initial roots
@@ -689,7 +713,7 @@ func (work *bindingWork[K, V]) contributionCoverage(coverage carrier.SlotCoverag
 		for _, key := range descriptor.keys {
 			region := row.Region()
 			if previous, present := result[key]; present {
-				region, ok = support.UnionWithCheckpoint(work.poll, previous, region)
+				region, ok = work.unionSupport(previous, region)
 				if !ok {
 					return nil, false
 				}
@@ -752,11 +776,11 @@ func (work *bindingWork[K, V]) MergeContributionUnder(left, right carrier.RootHa
 		if !leftCovered {
 			leftRegion = empty
 		}
-		split, valid := support.ThreeWithCheckpoint(work.poll, leftSupport, rightRegion)
+		split, valid := work.threeSupport(leftSupport, rightRegion)
 		if !valid {
 			return support.Mask{}, support.Mask{}, support.Mask{}, false
 		}
-		effective, valid := support.UnionWithCheckpoint(work.poll, split.LeftOnly(), leftRegion)
+		effective, valid := work.unionSupport(split.LeftOnly(), leftRegion)
 		if !valid {
 			return support.Mask{}, support.Mask{}, support.Mask{}, false
 		}
@@ -765,7 +789,7 @@ func (work *bindingWork[K, V]) MergeContributionUnder(left, right carrier.RootHa
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
-	nextSupport, ok := support.UnionWithCheckpoint(work.poll, leftSupport, rightSupport)
+	nextSupport, ok := work.unionSupport(leftSupport, rightSupport)
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
@@ -1384,7 +1408,7 @@ func (work *bindingWork[K, V]) MergeSelectedUnder(kind carrier.MergeKind, scope 
 		if !valid {
 			return carrier.ChangeHandle{}, false
 		}
-		mixedSplit, valid := support.ThreeWithCheckpoint(work.poll, selectedSplit.Right(), exactSplit.Right())
+		mixedSplit, valid := work.threeSupport(selectedSplit.Right(), exactSplit.Right())
 		if !valid {
 			return carrier.ChangeHandle{}, false
 		}
@@ -1404,7 +1428,7 @@ func (work *bindingWork[K, V]) MergeSelectedUnder(kind carrier.MergeKind, scope 
 		if !valid {
 			return carrier.ChangeHandle{}, false
 		}
-		mixedSplit, valid := support.ThreeWithCheckpoint(work.poll, selectedSplit.Right(), exactSplit.Right())
+		mixedSplit, valid := work.threeSupport(selectedSplit.Right(), exactSplit.Right())
 		if !valid {
 			return carrier.ChangeHandle{}, false
 		}

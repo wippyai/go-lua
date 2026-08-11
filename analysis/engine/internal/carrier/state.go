@@ -196,6 +196,16 @@ func (authority *stateAuthority) live() bool {
 type Work struct {
 	composition *Composition
 	slots       []SlotWork
+	// contributionSeal is the one private admission token shared by immutable
+	// Contributions published through this evaluator Work. It fences the O(1)
+	// internal check to this exact Work without adding a registry or a second
+	// State/coverage store.
+	contributionSeal *contributionSeal
+	// supportWork is the carrier-owned Boolean scratch shell. It is reused
+	// only across terminal support transactions; an open delta remains in this
+	// shell while typed SlotWork runs, so nested typed support work owns its
+	// separate Binding-local shell.
+	supportWork *support.Work
 	epoch       *RootEpoch
 	authority   *stateAuthority
 	checkpoint  Checkpoint
@@ -428,7 +438,13 @@ func (composition *Composition) NewWork() (*Work, bool) {
 	if epoch == nil {
 		return nil, false
 	}
-	work := &Work{composition: composition, slots: make([]SlotWork, len(composition.operations)), epoch: epoch, authority: &stateAuthority{composition: composition, epoch: epoch}}
+	supportWork := support.New(composition.guards)
+	if supportWork == nil {
+		epoch.close()
+		return nil, false
+	}
+	work := &Work{composition: composition, slots: make([]SlotWork, len(composition.operations)), supportWork: supportWork, epoch: epoch, authority: &stateAuthority{composition: composition, epoch: epoch}}
+	work.contributionSeal = &contributionSeal{work: work, composition: composition}
 	for index, operation := range composition.operations {
 		slot, ok := operation.NewWork()
 		if !ok || slot == nil {
@@ -454,10 +470,15 @@ func (work *Work) Close() bool {
 	if !work.epoch.close() {
 		return false
 	}
+	if work.supportWork != nil {
+		work.supportWork.Close()
+		work.supportWork = nil
+	}
 	closeEpochSlotWorks(work.slots)
 	clear(work.slots)
 	work.slots = nil
 	work.composition = nil
+	work.contributionSeal = nil
 	work.authority = nil
 	work.checkpoint = nil
 	work.epoch = nil
@@ -476,8 +497,13 @@ func (work *Work) Retain() (*RetainedWork, bool) {
 	if !work.epoch.retain() {
 		return nil, false
 	}
+	if work.supportWork != nil {
+		work.supportWork.Close()
+		work.supportWork = nil
+	}
 	retained := &RetainedWork{composition: work.composition, slots: work.slots, epoch: work.epoch}
 	work.composition = nil
+	work.contributionSeal = nil
 	work.slots = nil
 	work.authority = nil
 	work.checkpoint = nil
@@ -553,17 +579,41 @@ func (work *Work) newSupportWork() *support.Work {
 	if !work.live() || work.composition == nil {
 		return nil
 	}
-	result := support.New(work.composition.guards)
-	if result == nil {
+	if work.supportWork == nil {
+		work.supportWork = support.New(work.composition.guards)
+	}
+	if work.supportWork == nil || !work.supportWork.BeginTransaction(func() bool { return work.live() }) {
 		return nil
 	}
-	if work.checkpoint != nil && !result.SetCheckpoint(func() bool { return work.live() }) {
-		if result != nil {
-			result.Discard()
-		}
-		return nil
+	return work.supportWork
+}
+
+func (work *Work) threeSupport(left, right support.Mask) (support.Split, bool) {
+	if !work.live() || work.supportWork == nil {
+		return support.Split{}, false
 	}
-	return result
+	return support.ThreeWithWork(work.supportWork, work.checkpointFunc(), left, right)
+}
+
+func (work *Work) intersectSupport(left, right support.Mask) (support.Mask, bool) {
+	if !work.live() || work.supportWork == nil {
+		return support.Mask{}, false
+	}
+	return support.IntersectWithWork(work.supportWork, work.checkpointFunc(), left, right)
+}
+
+func (work *Work) unionSupport(left, right support.Mask) (support.Mask, bool) {
+	if !work.live() || work.supportWork == nil {
+		return support.Mask{}, false
+	}
+	return support.UnionWithWork(work.supportWork, work.checkpointFunc(), left, right)
+}
+
+func (work *Work) reindexSupport(mask support.Mask, plan guard.Reindex) (support.Mask, bool) {
+	if !work.live() || work.supportWork == nil {
+		return support.Mask{}, false
+	}
+	return support.ReindexWithWork(work.supportWork, mask, plan)
 }
 
 // SlotWork returns the exact attached typed evaluator for one physical slot.
@@ -932,14 +982,14 @@ func (work *Work) Merge3Under(kind MergeKind, left, right State, selected MergeS
 // Factor's explicit typed Default. The returned coverage union is published
 // atomically with the semantic State; ChangeSet remains semantic-only.
 func (work *Work) MergeContribution(left, right Contribution) (Contribution, ChangeSet, bool) {
-	if !work.live() || !left.Valid() || !right.Valid() || !work.liveFor(left.state, right.state) || left.state.previewMarked() || right.state.previewMarked() || left.state.contributionMarked() || right.state.contributionMarked() {
+	if !work.live() || !work.admittedContribution(left) || !work.admittedContribution(right) || !work.liveFor(left.state, right.state) || left.state.previewMarked() || right.state.previewMarked() || left.state.contributionMarked() || right.state.contributionMarked() {
 		return Contribution{}, ChangeSet{}, false
 	}
 	if sameState(left.state, right.state) && sameContributionCoverage(left.coverage, right.coverage) {
 		empty, ok := emptyChangeSet(work.composition)
 		return left, empty, ok
 	}
-	split, ok := support.ThreeWithCheckpoint(work.checkpointFunc(), left.state.support, right.state.support)
+	split, ok := work.threeSupport(left.state.support, right.state.support)
 	if !ok {
 		return Contribution{}, ChangeSet{}, false
 	}
@@ -975,8 +1025,8 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 	if !ok {
 		return Contribution{}, ChangeSet{}, false
 	}
-	result := Contribution{state: next, coverage: nextCoverage}
-	return result, changes, result.Valid()
+	result, valid := work.admitContribution(next, nextCoverage)
+	return result, changes, valid
 }
 
 func (work *Work) merge3Under(kind MergeKind, left, right State, members []bool, scopes []uint64) (State, ChangeSet, bool) {
@@ -998,7 +1048,7 @@ func (work *Work) merge3Under(kind MergeKind, left, right State, members []bool,
 		empty, ok := emptyChangeSet(left.authority.composition)
 		return left, empty, ok
 	}
-	split, ok := support.ThreeWithCheckpoint(work.checkpointFunc(), left.support, right.support)
+	split, ok := work.threeSupport(left.support, right.support)
 	if !ok {
 		return State{}, ChangeSet{}, false
 	}
@@ -1090,11 +1140,11 @@ func (work *Work) MergeSelectedUnder(kind MergeKind, current, selectedRight, exa
 	if kind == Narrow && !work.LessOrEqUnder(exactRight, current) {
 		return State{}, ChangeSet{}, false
 	}
-	selectedSplit, ok := support.ThreeWithCheckpoint(work.checkpointFunc(), current.support, selectedRight.support)
+	selectedSplit, ok := work.threeSupport(current.support, selectedRight.support)
 	if !ok {
 		return State{}, ChangeSet{}, false
 	}
-	exactSplit, ok := support.ThreeWithCheckpoint(work.checkpointFunc(), current.support, exactRight.support)
+	exactSplit, ok := work.threeSupport(current.support, exactRight.support)
 	if !ok {
 		return State{}, ChangeSet{}, false
 	}
@@ -1150,7 +1200,7 @@ func (work *Work) Reindex(state State, plan ReindexPlan) (State, bool) {
 	if plan.identity() {
 		return state, true
 	}
-	targetSupport, ok := support.Reindex(state.support, plan.relation)
+	targetSupport, ok := work.reindexSupport(state.support, plan.relation)
 	if !ok {
 		return State{}, false
 	}
@@ -1459,7 +1509,7 @@ func (work *Work) Transfer(predecessor State, restricted View, patches []Patch) 
 		dropPatches(patches)
 		return State{}, ChangeSet{}, false
 	}
-	split, ok := support.ThreeWithCheckpoint(work.checkpointFunc(), predecessor.support, restricted.support)
+	split, ok := work.threeSupport(predecessor.support, restricted.support)
 	if !ok {
 		dropPatches(patches)
 		return State{}, ChangeSet{}, false
@@ -1493,7 +1543,7 @@ func (work *Work) Replace(old, recomputed State) (State, ChangeSet, bool) {
 		empty, ok := emptyChangeSet(old.authority.composition)
 		return old, empty, ok
 	}
-	split, ok := support.ThreeWithCheckpoint(work.checkpointFunc(), old.support, recomputed.support)
+	split, ok := work.threeSupport(old.support, recomputed.support)
 	if !ok {
 		return State{}, ChangeSet{}, false
 	}

@@ -63,6 +63,11 @@ type Work struct {
 	manager    *guard.Manager
 	work       *guard.Work
 	checkpoint func() bool
+	// active is the single-owner reservation for helper transactions such as
+	// Three/Union. It prevents a nested helper from borrowing the shell while
+	// its caller is still constructing a candidate (notably while carrier's
+	// delta candidate remains open).
+	active bool
 }
 
 // FromGuard rewraps one already-sealed Guard as this package's sole support
@@ -84,6 +89,50 @@ func New(manager *guard.Manager) *Work {
 	return &Work{manager: manager, work: manager.NewWork()}
 }
 
+// Begin reopens this support shell after Seal or Discard. The first
+// transaction starts already open from New; callers that own a long-lived
+// shell call Begin between terminal transactions. Reopening an open shell is
+// rejected so a nested symbolic operation cannot reset its owner's candidate.
+func (work *Work) Begin() bool {
+	if work == nil || work.work == nil || work.Open() || work.active || !work.work.Begin() {
+		return false
+	}
+	work.checkpoint = nil
+	work.active = false
+	return true
+}
+
+// Reset and Reopen are explicit aliases for the same linear reopen cut.
+func (work *Work) Reset() bool  { return work.Begin() }
+func (work *Work) Reopen() bool { return work.Begin() }
+
+// BeginTransaction reserves this shell for one helper transaction. It is
+// intentionally separate from Begin: a freshly-created support shell is
+// already open, while a reused shell must first reopen its guard Work.
+func (work *Work) BeginTransaction(checkpoint func() bool) bool {
+	if work == nil || work.work == nil || work.active {
+		return false
+	}
+	if !work.Open() && !work.Begin() {
+		return false
+	}
+	work.active = true
+	if checkpoint != nil && !work.SetCheckpoint(checkpoint) {
+		work.active = false
+		work.Discard()
+		return false
+	}
+	return true
+}
+
+func (work *Work) markActive() bool {
+	if work == nil || !work.Open() {
+		return false
+	}
+	work.active = true
+	return true
+}
+
 // SetCheckpoint forwards one evaluator-owned opaque liveness probe into this
 // candidate BDD transaction. It affects only whether the unsealed candidate
 // completes; it never changes the Boolean algebra or the identity of a
@@ -92,6 +141,7 @@ func (work *Work) SetCheckpoint(checkpoint func() bool) bool {
 	if !work.Open() {
 		return false
 	}
+	work.active = true
 	work.checkpoint = checkpoint
 	return work.work.SetCheckpoint(checkpoint)
 }
@@ -117,7 +167,7 @@ func True(manager *guard.Manager) (Mask, bool) {
 
 // True returns the unconstrained candidate region.
 func (work *Work) True() Mask {
-	if !work.live() {
+	if !work.live() || !work.markActive() {
 		return Mask{}
 	}
 	return Mask{manager: work.manager, root: work.work.True()}
@@ -125,7 +175,7 @@ func (work *Work) True() Mask {
 
 // False returns the empty candidate region.
 func (work *Work) False() Mask {
-	if !work.live() {
+	if !work.live() || !work.markActive() {
 		return Mask{}
 	}
 	return Mask{manager: work.manager, root: work.work.False()}
@@ -133,7 +183,7 @@ func (work *Work) False() Mask {
 
 // Literal returns atom or its exact complement.
 func (work *Work) Literal(atom guard.Atom, value bool) (Mask, bool) {
-	if !work.live() {
+	if !work.live() || !work.markActive() {
 		return Mask{}, false
 	}
 	root, valid := work.work.Literal(atom)
@@ -166,7 +216,7 @@ func (work *Work) Conjoin(mask Mask, atom guard.Atom, value bool) (Mask, bool) {
 
 // And intersects two exact regions.
 func (work *Work) And(left, right Mask) (Mask, bool) {
-	if !work.live() || !work.Valid(left) || !work.Valid(right) {
+	if !work.live() || !work.markActive() || !work.Valid(left) || !work.Valid(right) {
 		return Mask{}, false
 	}
 	root := work.work.And(left.root, right.root)
@@ -175,7 +225,7 @@ func (work *Work) And(left, right Mask) (Mask, bool) {
 
 // Or unions two exact regions.
 func (work *Work) Or(left, right Mask) (Mask, bool) {
-	if !work.live() || !work.Valid(left) || !work.Valid(right) {
+	if !work.live() || !work.markActive() || !work.Valid(left) || !work.Valid(right) {
 		return Mask{}, false
 	}
 	root := work.work.Or(left.root, right.root)
@@ -186,7 +236,7 @@ func (work *Work) Or(left, right Mask) (Mask, bool) {
 // synchronized fact operations which compute an exact Guard result alongside
 // an FDD result without materializing path valuations.
 func (work *Work) Decision(atom guard.Atom, low, high Mask) (Mask, bool) {
-	if !work.live() || !work.Valid(low) || !work.Valid(high) {
+	if !work.live() || !work.markActive() || !work.Valid(low) || !work.Valid(high) {
 		return Mask{}, false
 	}
 	if low.root == high.root {
@@ -210,7 +260,7 @@ func (work *Work) Decision(atom guard.Atom, low, high Mask) (Mask, bool) {
 
 // Not complements one exact region.
 func (work *Work) Not(mask Mask) (Mask, bool) {
-	if !work.live() || !work.Valid(mask) {
+	if !work.live() || !work.markActive() || !work.Valid(mask) {
 		return Mask{}, false
 	}
 	root := work.work.Not(mask.root)
@@ -221,7 +271,7 @@ func (work *Work) Not(mask Mask) (Mask, bool) {
 // boundary (for example Mu); the typed fact carrier performs the matching
 // terminal join separately, so Boolean support never gains a payload role.
 func (work *Work) Exists(mask Mask, atom guard.Atom) (Mask, bool) {
-	if !work.live() || !work.Valid(mask) {
+	if !work.live() || !work.markActive() || !work.Valid(mask) {
 		return Mask{}, false
 	}
 	if _, admitted := work.manager.Rank(atom); !admitted {
@@ -235,14 +285,24 @@ func (work *Work) Exists(mask Mask, atom guard.Atom) (Mask, bool) {
 // relation. The caller supplies no raw atoms or replacement map on this hot
 // path. A complete identity relation retains the exact immutable mask root.
 func Reindex(mask Mask, plan guard.Reindex) (Mask, bool) {
+	return ReindexWithWork(nil, mask, plan)
+}
+
+// ReindexWithWork transports a support region using a caller-owned shell.
+// The shell is reserved for the duration of this one candidate and is
+// released by Seal or Discard, so a concurrent delta candidate cannot be
+// accidentally reset by a nested transport.
+func ReindexWithWork(work *Work, mask Mask, plan guard.Reindex) (Mask, bool) {
 	if !mask.Valid() || !plan.Valid() || mask.Manager() != plan.Source().Manager() || !plan.Source().Contains(mask.root) {
 		return Mask{}, false
 	}
 	if plan.Identity() {
 		return mask, true
 	}
-	work := New(mask.manager)
 	if work == nil {
+		work = New(mask.manager)
+	}
+	if work == nil || work.manager != mask.manager || !work.BeginTransaction(nil) {
 		return Mask{}, false
 	}
 	root, ok := work.work.Reindex(mask.root, plan)
@@ -305,14 +365,37 @@ func (work *Work) Seal() bool {
 		return false
 	}
 	work.work.Seal()
-	return work.work.Published()
+	if !work.work.Published() {
+		return false
+	}
+	work.active = false
+	work.checkpoint = nil
+	return true
 }
 
 // Discard invalidates all candidate masks and releases local BDD caches.
 func (work *Work) Discard() {
 	if work != nil && work.work != nil {
 		work.work.Discard()
+		work.active = false
+		work.checkpoint = nil
 	}
+}
+
+// Close permanently evicts this owner-local shell and all retained immutable
+// interner/memo references. Published Masks remain valid through their Guard
+// page handles, but this Work cannot be reopened after Close.
+func (work *Work) Close() {
+	if work == nil {
+		return
+	}
+	if work.work != nil {
+		work.work.Close()
+	}
+	work.manager = nil
+	work.work = nil
+	work.active = false
+	work.checkpoint = nil
 }
 
 // Valid reports whether mask is a sealed, readable exact BDD region.
@@ -446,6 +529,13 @@ func Three(left, right Mask) (Split, bool) {
 // disposable BDD transaction completes; a successful split is byte-for-byte
 // the normal exact split.
 func ThreeWithCheckpoint(checkpoint func() bool, left, right Mask) (Split, bool) {
+	return ThreeWithWork(nil, checkpoint, left, right)
+}
+
+// ThreeWithWork computes one exact decomposition using a caller-owned
+// reusable shell. A shell that is already active is rejected, preserving the
+// single-owner rule for nested symbolic operations.
+func ThreeWithWork(work *Work, checkpoint func() bool, left, right Mask) (Split, bool) {
 	if !left.Valid() || !right.Valid() || left.manager != right.manager {
 		return Split{}, false
 	}
@@ -456,12 +546,10 @@ func ThreeWithCheckpoint(checkpoint func() bool, left, right Mask) (Split, bool)
 			overlap: left, union: left, sealed: true,
 		}, true
 	}
-	work := New(left.manager)
 	if work == nil {
-		return Split{}, false
+		work = New(left.manager)
 	}
-	if checkpoint != nil && !work.SetCheckpoint(checkpoint) {
-		work.Discard()
+	if work == nil || work.manager != left.manager || !work.BeginTransaction(checkpoint) {
 		return Split{}, false
 	}
 	notLeft, ok := work.Not(left)
@@ -507,18 +595,21 @@ func Intersect(left, right Mask) (Mask, bool) {
 // optional evaluator-owned liveness probe. Cancellation abandons only the
 // disposable candidate transaction; it never substitutes an approximation.
 func IntersectWithCheckpoint(checkpoint func() bool, left, right Mask) (Mask, bool) {
+	return IntersectWithWork(nil, checkpoint, left, right)
+}
+
+// IntersectWithWork is Intersect over one caller-owned reusable shell.
+func IntersectWithWork(work *Work, checkpoint func() bool, left, right Mask) (Mask, bool) {
 	if !left.Valid() || !right.Valid() || left.manager != right.manager {
 		return Mask{}, false
 	}
 	if left == right {
 		return left, true
 	}
-	work := New(left.manager)
 	if work == nil {
-		return Mask{}, false
+		work = New(left.manager)
 	}
-	if checkpoint != nil && !work.SetCheckpoint(checkpoint) {
-		work.Discard()
+	if work == nil || work.manager != left.manager || !work.BeginTransaction(checkpoint) {
 		return Mask{}, false
 	}
 	result, ok := work.And(left, right)
@@ -538,18 +629,21 @@ func Union(left, right Mask) (Mask, bool) {
 // evaluator-owned liveness probe. A false probe discards the candidate rather
 // than returning an approximate region.
 func UnionWithCheckpoint(checkpoint func() bool, left, right Mask) (Mask, bool) {
+	return UnionWithWork(nil, checkpoint, left, right)
+}
+
+// UnionWithWork is Union over one caller-owned reusable shell.
+func UnionWithWork(work *Work, checkpoint func() bool, left, right Mask) (Mask, bool) {
 	if !left.Valid() || !right.Valid() || left.manager != right.manager {
 		return Mask{}, false
 	}
 	if left == right {
 		return left, true
 	}
-	work := New(left.manager)
 	if work == nil {
-		return Mask{}, false
+		work = New(left.manager)
 	}
-	if checkpoint != nil && !work.SetCheckpoint(checkpoint) {
-		work.Discard()
+	if work == nil || work.manager != left.manager || !work.BeginTransaction(checkpoint) {
 		return Mask{}, false
 	}
 	result, ok := work.Or(left, right)
