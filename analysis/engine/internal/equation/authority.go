@@ -265,7 +265,7 @@ func deriveVariantBindingKey(schema, trigger, application, plan composition.Key,
 		roles = append(roles, role)
 	}
 	sort.Slice(roles, func(left, right int) bool { return lessKey(roles[left], roles[right]) })
-	return identityKey("analysis/engine/equation/activation-variant-binding", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/activation-variant-binding", func(writer *canonical.DigestWriter) bool {
 		if !writeKey(writer, schema) || !writeKey(writer, trigger) || !writeKey(writer, application) || !writeKey(writer, plan) || !writeScope(writer, ambient) || writer.Count(uint64(len(roles))) != nil {
 			return false
 		}
@@ -364,7 +364,7 @@ func (topology *Topology) deriveKey(base composition.Key) (composition.Key, bool
 	if topology == nil || !base.Available() {
 		return composition.Key{}, false
 	}
-	return identityKey("analysis/engine/equation/topology", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/topology", func(writer *canonical.DigestWriter) bool {
 		if !writeKey(writer, base) || writer.Count(uint64(len(topology.bindings))) != nil {
 			return false
 		}
@@ -394,7 +394,7 @@ func (topology *Topology) Revision(accepted []AcceptedMember) (composition.Key, 
 	if topology == nil || !topology.key.Available() || !topology.validAccepted(accepted) {
 		return composition.Key{}, false
 	}
-	return identityKey("analysis/engine/equation/topology-revision", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/topology-revision", func(writer *canonical.DigestWriter) bool {
 		if !writeKey(writer, topology.key) || writer.Count(uint64(len(accepted))) != nil {
 			return false
 		}
@@ -446,7 +446,7 @@ func (topology *Topology) acceptedEvidenceKey(member Member, premise Expr) (comp
 	if !bound || !binding.triggerRule.Available() || !binding.triggerAdmission.Available() || !binding.trigger.Available() {
 		return composition.Key{}, false
 	}
-	return identityKey("analysis/engine/equation/activation-evidence", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/activation-evidence", func(writer *canonical.DigestWriter) bool {
 		return writeMemberTuple(writer, member) && writeKey(writer, binding.triggerRule) && writeKey(writer, binding.triggerAdmission) && writeKey(writer, binding.trigger) && writeExpr(writer, premise)
 	})
 }
@@ -536,7 +536,7 @@ func graphSemanticKey(graph *Graph) (composition.Key, bool) {
 		}
 		return lessKey(reverses[left].trigger, reverses[right].trigger)
 	})
-	return identityKey("analysis/engine/equation/graph", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/graph", func(writer *canonical.DigestWriter) bool {
 		if writer.Count(uint64(len(graph.points))) != nil {
 			return false
 		}

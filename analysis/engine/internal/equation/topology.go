@@ -283,7 +283,7 @@ func buildActivationReverseIndex(rows []derivedActivationReverse, instances []ca
 		if !found {
 			return nil, false
 		}
-		key, keyOK := identityKey("analysis/engine/equation/activation-reverse", func(writer *canonical.Writer) bool {
+		key, keyOK := identityKey("analysis/engine/equation/activation-reverse", func(writer *canonical.DigestWriter) bool {
 			return writeKey(writer, row.binding) && writeKey(writer, target.key) && writeKey(writer, instance.key)
 		})
 		if !keyOK {
@@ -454,7 +454,7 @@ func buildEnvironmentEdges(rows []EnvironmentEdge, declared map[PointRef]Point, 
 		}
 		input := row.Input
 		input.point = source
-		key, keyOK := identityKey("analysis/engine/equation/environment-edge", func(writer *canonical.Writer) bool {
+		key, keyOK := identityKey("analysis/engine/equation/environment-edge", func(writer *canonical.DigestWriter) bool {
 			return writeKey(writer, input.Key()) && writePoint(writer, target)
 		})
 		if !keyOK || !key.Available() {
@@ -497,7 +497,7 @@ func buildFactorEdges(source *composition.Composition, rows []FactorEdge, declar
 		}
 		input := row.Input
 		input.point = sourcePoint
-		key, keyOK := identityKey("analysis/engine/equation/factor-edge", func(writer *canonical.Writer) bool {
+		key, keyOK := identityKey("analysis/engine/equation/factor-edge", func(writer *canonical.DigestWriter) bool {
 			return writeKey(writer, input.Key()) && writePoint(writer, target) && writeKey(writer, row.Factor)
 		})
 		if !keyOK || !key.Available() {

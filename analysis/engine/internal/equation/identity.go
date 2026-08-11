@@ -5,8 +5,6 @@
 package equation
 
 import (
-	"context"
-	"crypto/sha256"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
@@ -76,7 +74,7 @@ func NewScope(decisions ...Decision) (Scope, bool) {
 			return Scope{}, false
 		}
 	}
-	key, ok := identityKey("analysis/engine/equation/scope", func(writer *canonical.Writer) bool {
+	key, ok := identityKey("analysis/engine/equation/scope", func(writer *canonical.DigestWriter) bool {
 		if writer.Count(uint64(len(normalized))) != nil {
 			return false
 		}
@@ -229,7 +227,7 @@ func NewReindex(source, target Scope, maps []DecisionMap) (Reindex, bool) {
 			return Reindex{}, false
 		}
 	}
-	key, ok := identityKey("analysis/engine/equation/reindex", func(writer *canonical.Writer) bool {
+	key, ok := identityKey("analysis/engine/equation/reindex", func(writer *canonical.DigestWriter) bool {
 		return writeScope(writer, source) && writeScope(writer, target) && writeDecisionMaps(writer, normalized)
 	})
 	if !ok {
@@ -604,7 +602,7 @@ type canonicalInstance struct {
 type groupCore struct{ key composition.Key }
 
 func deriveInstanceKey(row RuleInstance, catalog topologyCatalog) (composition.Key, bool) {
-	return identityKey("analysis/engine/equation/rule-instance", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/rule-instance", func(writer *canonical.DigestWriter) bool {
 		return writeKey(writer, row.Schema) && writeKey(writer, row.OperandFamily) && writeOccurrence(writer, row.Occurrence) && writeOperand(writer, row.Operand) &&
 			writeReads(writer, row.Reads) && writeCarries(writer, row.Carries) &&
 			writeWrites(writer, row.Writes) && writeRuleCatalog(writer, row, catalog) &&
@@ -613,7 +611,7 @@ func deriveInstanceKey(row RuleInstance, catalog topologyCatalog) (composition.K
 }
 
 func deriveGroupCore(members []canonicalInstance) (groupCore, bool) {
-	key, ok := identityKey("analysis/engine/equation/group-members", func(writer *canonical.Writer) bool {
+	key, ok := identityKey("analysis/engine/equation/group-members", func(writer *canonical.DigestWriter) bool {
 		if writer.Count(uint64(len(members))) != nil {
 			return false
 		}
@@ -628,7 +626,7 @@ func deriveGroupCore(members []canonicalInstance) (groupCore, bool) {
 }
 
 func deriveInputKey(input Input) (composition.Key, bool) {
-	return identityKey("analysis/engine/equation/input-boundary", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/input-boundary", func(writer *canonical.DigestWriter) bool {
 		return input.source.Available() && input.target.Available() && input.provenance.Available() && input.pre.Available() && input.omega.Available() && input.post.Available() &&
 			writeSite(writer, input.source) && writeSite(writer, input.target) && writeKey(writer, input.provenance) && writeExpr(writer, input.pre) && writeReindex(writer, input.omega) && writeExpr(writer, input.post)
 	})
@@ -645,7 +643,7 @@ func deriveGroupKey(core groupCore, output Point, inputs []Input) (composition.K
 // accepted dynamic Groups. Builder-authored groups receive True; only
 // Topology expansion may supply a retained accepted premise.
 func derivePremisedGroupKey(core groupCore, output Point, inputs []Input, premise Expr) (composition.Key, bool) {
-	return identityKey("analysis/engine/equation/group", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/group", func(writer *canonical.DigestWriter) bool {
 		if !premise.Available() || !writeKey(writer, core.key) || !writePoint(writer, output) || !writeExpr(writer, premise) || writer.Count(uint64(len(inputs))) != nil {
 			return false
 		}
@@ -659,7 +657,7 @@ func derivePremisedGroupKey(core groupCore, output Point, inputs []Input, premis
 }
 
 func derivePremisedGroupKeyWithEnvironment(core groupCore, output Point, inputs []Input, premise Expr, environmentInput Input) (composition.Key, bool) {
-	return identityKey("analysis/engine/equation/group", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/group", func(writer *canonical.DigestWriter) bool {
 		if !premise.Available() || !environmentInput.Available() || !writeKey(writer, core.key) || !writePoint(writer, output) || !writeExpr(writer, premise) || !writeKey(writer, environmentInput.key) || writer.Count(uint64(len(inputs))) != nil {
 			return false
 		}
@@ -675,14 +673,14 @@ func derivePremisedGroupKeyWithEnvironment(core groupCore, output Point, inputs 
 // derivePoint is the sole issued-point identity authority.  Its Site already
 // pins source identity, issued scope, initialization formula, and disposition.
 func derivePoint(site Site) (Point, bool) {
-	key, ok := identityKey("analysis/engine/equation/point", func(writer *canonical.Writer) bool {
+	key, ok := identityKey("analysis/engine/equation/point", func(writer *canonical.DigestWriter) bool {
 		return writeSite(writer, site)
 	})
 	return Point{key: key, site: site}, ok
 }
 
 func deriveQueryKey(row QueryInstance, point Point, catalog topologyCatalog) (composition.Key, bool) {
-	return identityKey("analysis/engine/equation/query", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/query", func(writer *canonical.DigestWriter) bool {
 		if !writeKey(writer, row.Family) || !writeKey(writer, point.key) || !writeScope(writer, point.Scope()) || writer.Count(uint64(len(row.Surfaces))) != nil {
 			return false
 		}
@@ -695,40 +693,36 @@ func deriveQueryKey(row QueryInstance, point Point, catalog topologyCatalog) (co
 	})
 }
 
-func identityKey(domain string, encode func(*canonical.Writer) bool) (composition.Key, bool) {
-	hash := sha256.New()
-	var writer canonical.Writer
-	if writer.Reset(context.Background(), hash, domain, identityVersion) != nil || !encode(&writer) || writer.Finish() != nil {
+func identityKey(domain string, encode func(*canonical.DigestWriter) bool) (composition.Key, bool) {
+	var writer canonical.DigestWriter
+	if writer.Reset(domain, identityVersion) != nil || !encode(&writer) || writer.Finish() != nil {
 		return composition.Key{}, false
 	}
-	digest := hash.Sum(nil)
-	if len(digest) != len(composition.ID{}) {
-		return composition.Key{}, false
-	}
+	digest := writer.Sum()
 	var id composition.ID
-	copy(id[:], digest)
+	copy(id[:], digest[:])
 	key := composition.Key{ID: id, Version: identityVersion}
 	return key, key.Available()
 }
 
-func writeKey(writer *canonical.Writer, key composition.Key) bool {
+func writeKey(writer *canonical.DigestWriter, key composition.Key) bool {
 	return writer.Bytes(key.ID[:]) == nil && writer.Uint(key.Version) == nil
 }
 
-func writeSite(writer *canonical.Writer, site Site) bool {
+func writeSite(writer *canonical.DigestWriter, site Site) bool {
 	return site.Available() && writeKey(writer, site.Key())
 }
 
-func writeOccurrence(writer *canonical.Writer, occurrence Occurrence) bool {
+func writeOccurrence(writer *canonical.DigestWriter, occurrence Occurrence) bool {
 	return occurrence.Available() && writeKey(writer, occurrence.Key()) && writeSite(writer, occurrence.Site()) &&
 		writeKey(writer, occurrence.Entity()) && writer.Uint(uint64(occurrence.Kind())) == nil
 }
 
-func writeOperand(writer *canonical.Writer, operand Operand) bool {
+func writeOperand(writer *canonical.DigestWriter, operand Operand) bool {
 	return operand.Available() && writeKey(writer, operand.Key()) && writeOccurrence(writer, operand.Occurrence()) && writeKey(writer, operand.Entity())
 }
 
-func writeScope(writer *canonical.Writer, scope Scope) bool {
+func writeScope(writer *canonical.DigestWriter, scope Scope) bool {
 	if !scope.Available() {
 		return false
 	}
@@ -743,11 +737,11 @@ func writeScope(writer *canonical.Writer, scope Scope) bool {
 	return true
 }
 
-func writePoint(writer *canonical.Writer, point Point) bool {
+func writePoint(writer *canonical.DigestWriter, point Point) bool {
 	return point.Available() && writeKey(writer, point.key) && writeSite(writer, point.site)
 }
 
-func writeExpr(writer *canonical.Writer, expr Expr) bool {
+func writeExpr(writer *canonical.DigestWriter, expr Expr) bool {
 	if !expr.Available() || writer.Uint(uint64(expr.root)) != nil || writer.Count(uint64(len(expr.nodes))) != nil {
 		return false
 	}
@@ -759,7 +753,7 @@ func writeExpr(writer *canonical.Writer, expr Expr) bool {
 	return true
 }
 
-func writeDecisionMaps(writer *canonical.Writer, maps []DecisionMap) bool {
+func writeDecisionMaps(writer *canonical.DigestWriter, maps []DecisionMap) bool {
 	if writer.Count(uint64(len(maps))) != nil {
 		return false
 	}
@@ -784,20 +778,20 @@ func writeDecisionMaps(writer *canonical.Writer, maps []DecisionMap) bool {
 	return true
 }
 
-func writeReindex(writer *canonical.Writer, reindex Reindex) bool {
+func writeReindex(writer *canonical.DigestWriter, reindex Reindex) bool {
 	return reindex.Available() && writeScope(writer, reindex.source) && writeScope(writer, reindex.target) && writeDecisionMaps(writer, reindex.maps)
 }
 
-func writeSurface(writer *canonical.Writer, surface Surface) bool {
+func writeSurface(writer *canonical.DigestWriter, surface Surface) bool {
 	return writer.Uint(uint64(surface.Form)) == nil && writeKey(writer, surface.Factor) && writer.Uint(surface.Local) == nil &&
 		writeKey(writer, surface.Semantic) && writeKey(writer, surface.Normalizer) && writer.Uint(uint64(surface.Mode)) == nil
 }
 
-func writeStructuralSurface(writer *canonical.Writer, surface StructuralSurface) bool {
+func writeStructuralSurface(writer *canonical.DigestWriter, surface StructuralSurface) bool {
 	return writer.Uint(surface.Local) == nil && writeKey(writer, surface.Semantic)
 }
 
-func writeReads(writer *canonical.Writer, rows []ResolvedRead) bool {
+func writeReads(writer *canonical.DigestWriter, rows []ResolvedRead) bool {
 	if writer.Count(uint64(len(rows))) != nil {
 		return false
 	}
@@ -809,7 +803,7 @@ func writeReads(writer *canonical.Writer, rows []ResolvedRead) bool {
 	return true
 }
 
-func writeCarries(writer *canonical.Writer, rows []ResolvedCarry) bool {
+func writeCarries(writer *canonical.DigestWriter, rows []ResolvedCarry) bool {
 	if writer.Count(uint64(len(rows))) != nil {
 		return false
 	}
@@ -821,7 +815,7 @@ func writeCarries(writer *canonical.Writer, rows []ResolvedCarry) bool {
 	return true
 }
 
-func writeWrites(writer *canonical.Writer, rows []ResolvedWrite) bool {
+func writeWrites(writer *canonical.DigestWriter, rows []ResolvedWrite) bool {
 	if writer.Count(uint64(len(rows))) != nil {
 		return false
 	}
@@ -833,7 +827,7 @@ func writeWrites(writer *canonical.Writer, rows []ResolvedWrite) bool {
 	return true
 }
 
-func writeSurfaces(writer *canonical.Writer, values []Surface) bool {
+func writeSurfaces(writer *canonical.DigestWriter, values []Surface) bool {
 	if writer.Count(uint64(len(values))) != nil {
 		return false
 	}
@@ -845,7 +839,7 @@ func writeSurfaces(writer *canonical.Writer, values []Surface) bool {
 	return true
 }
 
-func writeOrdinals(writer *canonical.Writer, values []uint64) bool {
+func writeOrdinals(writer *canonical.DigestWriter, values []uint64) bool {
 	if writer.Count(uint64(len(values))) != nil {
 		return false
 	}
@@ -857,7 +851,7 @@ func writeOrdinals(writer *canonical.Writer, values []uint64) bool {
 	return true
 }
 
-func writeCandidateRelations(writer *canonical.Writer, values []CandidateRelation) bool {
+func writeCandidateRelations(writer *canonical.DigestWriter, values []CandidateRelation) bool {
 	if writer.Count(uint64(len(values))) != nil {
 		return false
 	}
@@ -874,7 +868,7 @@ func writeCandidateRelations(writer *canonical.Writer, values []CandidateRelatio
 	return true
 }
 
-func writeSupports(writer *canonical.Writer, rows []ResolvedSupport) bool {
+func writeSupports(writer *canonical.DigestWriter, rows []ResolvedSupport) bool {
 	if writer.Count(uint64(len(rows))) != nil {
 		return false
 	}
@@ -886,7 +880,7 @@ func writeSupports(writer *canonical.Writer, rows []ResolvedSupport) bool {
 	return true
 }
 
-func writePrunes(writer *canonical.Writer, rows []ResolvedPrune) bool {
+func writePrunes(writer *canonical.DigestWriter, rows []ResolvedPrune) bool {
 	if writer.Count(uint64(len(rows))) != nil {
 		return false
 	}

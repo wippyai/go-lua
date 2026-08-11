@@ -825,7 +825,7 @@ func boundSite(base Site, scope Scope, init Expr, disposition InitDisposition, b
 		return Site{}, false
 	}
 	row := base.Key()
-	key, ok := identityKey("analysis/engine/equation/dynamic-site", func(writer *canonical.Writer) bool {
+	key, ok := identityKey("analysis/engine/equation/dynamic-site", func(writer *canonical.DigestWriter) bool {
 		return writeSite(writer, base) && writeScope(writer, scope) && writeExpr(writer, init) && writer.Uint(uint64(disposition)) == nil && writeKey(writer, binding) && writeKey(writer, member) && writeKey(writer, row)
 	})
 	if !ok {
@@ -835,19 +835,19 @@ func boundSite(base Site, scope Scope, init Expr, disposition InitDisposition, b
 }
 
 func deriveSiteKey(row siteRow) (composition.Key, bool) {
-	return identityKey("analysis/engine/equation/site", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/site", func(writer *canonical.DigestWriter) bool {
 		return writeKey(writer, row.source) && writeScope(writer, row.scope) && writeExpr(writer, row.init) && writer.Uint(uint64(row.disposition)) == nil
 	})
 }
 
 func deriveOccurrenceKey(kind OccurrenceKind, site, entity composition.Key) (composition.Key, bool) {
-	return identityKey("analysis/engine/equation/occurrence", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/occurrence", func(writer *canonical.DigestWriter) bool {
 		return validOccurrenceKind(kind) && writeKey(writer, site) && writeKey(writer, entity) && writer.Uint(uint64(kind)) == nil
 	})
 }
 
 func deriveOperandKey(occurrence, entity composition.Key) (composition.Key, bool) {
-	return identityKey("analysis/engine/equation/operand", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/operand", func(writer *canonical.DigestWriter) bool {
 		return writeKey(writer, occurrence) && writeKey(writer, entity)
 	})
 }
@@ -876,7 +876,7 @@ func deriveBatchKey(batch *Batch) (composition.Key, bool) {
 			}
 		}
 	}
-	return identityKey("analysis/engine/equation/source-batch", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/source-batch", func(writer *canonical.DigestWriter) bool {
 		for _, values := range [][]composition.Key{sites, occurrences, operands} {
 			if writer.Count(uint64(len(values))) != nil {
 				return false

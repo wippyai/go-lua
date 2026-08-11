@@ -324,7 +324,7 @@ func compareSurface(left, right Surface) int {
 
 func lessSurface(left, right Surface) bool { return compareSurface(left, right) < 0 }
 
-func writeRuleCatalog(writer *canonical.Writer, row RuleInstance, catalog topologyCatalog) bool {
+func writeRuleCatalog(writer *canonical.DigestWriter, row RuleInstance, catalog topologyCatalog) bool {
 	if writer.Count(uint64(len(row.Reads))) != nil {
 		return false
 	}
@@ -351,7 +351,7 @@ func writeRuleCatalog(writer *canonical.Writer, row RuleInstance, catalog topolo
 
 // writeSurfaceCatalog emits only the mapping content; the caller has already
 // emitted the Surface itself in the enclosing Rule/Query identity.
-func writeSurfaceCatalog(writer *canonical.Writer, surface Surface, catalog topologyCatalog) bool {
+func writeSurfaceCatalog(writer *canonical.DigestWriter, surface Surface, catalog topologyCatalog) bool {
 	switch {
 	case surface.Form == SurfaceReadSummary:
 		mapping, ok := catalog.summary(surface)
@@ -372,7 +372,7 @@ func writeSurfaceCatalog(writer *canonical.Writer, surface Surface, catalog topo
 	}
 }
 
-func writeRawKeySet(writer *canonical.Writer, keys []uint64) bool {
+func writeRawKeySet(writer *canonical.DigestWriter, keys []uint64) bool {
 	if writer.Count(uint64(len(keys))) != nil {
 		return false
 	}

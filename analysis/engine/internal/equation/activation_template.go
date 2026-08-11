@@ -313,7 +313,7 @@ func (plan VariantPlan) PrototypeRows(target, endpoint composition.Key) []Protot
 	}
 	rows := make([]PrototypeRow, len(variant.template.instances))
 	for index, instance := range variant.template.instances {
-		key, ok := identityKey("analysis/engine/equation/activation-prototype-row", func(writer *canonical.Writer) bool {
+		key, ok := identityKey("analysis/engine/equation/activation-prototype-row", func(writer *canonical.DigestWriter) bool {
 			return writeKey(writer, plan.data.key) && writeKey(writer, variant.target) && writeKey(writer, variant.endpoint) && writeKey(writer, instance.key)
 		})
 		if !ok {
@@ -412,7 +412,7 @@ func NewVariantPlan(source *composition.Composition, family composition.Key, val
 			return VariantPlan{}, false
 		}
 	}
-	key, ok := identityKey("analysis/engine/equation/activation-variant-plan", func(writer *canonical.Writer) bool {
+	key, ok := identityKey("analysis/engine/equation/activation-variant-plan", func(writer *canonical.DigestWriter) bool {
 		if !writeKey(writer, family) || writer.Count(uint64(len(variants))) != nil {
 			return false
 		}
@@ -511,7 +511,7 @@ func samePortReadSlots(left, right []PortRead) bool {
 	return true
 }
 
-func writePortReads(writer *canonical.Writer, reads []PortRead) bool {
+func writePortReads(writer *canonical.DigestWriter, reads []PortRead) bool {
 	if writer.Count(uint64(len(reads))) != nil {
 		return false
 	}
@@ -1038,7 +1038,7 @@ func prototypeTemplateKey(value Template, instances []canonicalInstance, points 
 	if !edgesOK {
 		return composition.Key{}, false
 	}
-	return identityKey("analysis/engine/equation/activation-template-prototype", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/activation-template-prototype", func(writer *canonical.DigestWriter) bool {
 		if writer.Count(uint64(len(instances))) != nil {
 			return false
 		}
@@ -1121,7 +1121,7 @@ func prototypeFactorEdgeKeys(values []FragmentFactorEdge, points map[PointRef]Po
 		if !sourceOK || !targetOK || !edge.Factor.Available() || !edge.Provenance.Available() || !edge.Pre.Available() || !edge.Reindex.Available() || !edge.Post.Available() {
 			return nil, false
 		}
-		key, ok := identityKey("analysis/engine/equation/activation-template-factor-edge", func(writer *canonical.Writer) bool {
+		key, ok := identityKey("analysis/engine/equation/activation-template-factor-edge", func(writer *canonical.DigestWriter) bool {
 			return writeKey(writer, source) && writeKey(writer, target) && writeKey(writer, edge.Factor) && writeKey(writer, edge.Provenance) &&
 				writeExpr(writer, edge.Pre) && writeReindex(writer, edge.Reindex) && writeExpr(writer, edge.Post)
 		})
@@ -1155,7 +1155,7 @@ func prototypeGroupKeys(groups []FragmentGroup, instances []canonicalInstance, p
 			members[index] = instances[memberIndex].key
 		}
 		sort.Slice(members, func(left, right int) bool { return lessKey(members[left], members[right]) })
-		key, ok := identityKey("analysis/engine/equation/activation-template-prototype-group", func(writer *canonical.Writer) bool {
+		key, ok := identityKey("analysis/engine/equation/activation-template-prototype-group", func(writer *canonical.DigestWriter) bool {
 			if !writeKey(writer, output) || writer.Count(uint64(len(members))) != nil {
 				return false
 			}
@@ -1302,7 +1302,7 @@ func (value templatePrototype) bindPrototype(ports map[composition.Key]sealedPor
 	if !substitutionsOK {
 		return sealedTemplate{}, false
 	}
-	key, ok := identityKey("analysis/engine/equation/activation-template-binding", func(writer *canonical.Writer) bool {
+	key, ok := identityKey("analysis/engine/equation/activation-template-binding", func(writer *canonical.DigestWriter) bool {
 		if !writeKey(writer, value.key) || !writeScope(writer, ambient) || writer.Count(uint64(len(selected))) != nil {
 			return false
 		}
@@ -1439,7 +1439,7 @@ func boundProvenance(base, binding, member, row composition.Key) (composition.Ke
 	if !base.Available() || !binding.Available() || !member.Available() || !row.Available() {
 		return composition.Key{}, false
 	}
-	return identityKey("analysis/engine/equation/dynamic-boundary-provenance", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/dynamic-boundary-provenance", func(writer *canonical.DigestWriter) bool {
 		return writeKey(writer, base) && writeKey(writer, binding) && writeKey(writer, member) && writeKey(writer, row)
 	})
 }
@@ -1451,7 +1451,7 @@ func memberNamespace(member Member) (composition.Key, bool) {
 	if !member.Available() {
 		return composition.Key{}, false
 	}
-	return identityKey("analysis/engine/equation/accepted-activation-namespace", func(writer *canonical.Writer) bool {
+	return identityKey("analysis/engine/equation/accepted-activation-namespace", func(writer *canonical.DigestWriter) bool {
 		return writeMemberTuple(writer, member)
 	})
 }
@@ -1476,7 +1476,7 @@ func (template sealedTemplate) decisionAlpha(binding, member composition.Key) (d
 			if _, found := result[decision.key]; found {
 				continue
 			}
-			key, ok := identityKey("analysis/engine/equation/template-decision", func(writer *canonical.Writer) bool {
+			key, ok := identityKey("analysis/engine/equation/template-decision", func(writer *canonical.DigestWriter) bool {
 				return writeKey(writer, decision.key) && writeKey(writer, binding) && writeKey(writer, member)
 			})
 			if !ok {
@@ -1765,7 +1765,7 @@ func (table *memberSiteTable) bindOccurrence(base Occurrence, row composition.Ke
 	if !ok || !site.base.Same(base.Site()) || !site.site.Available() {
 		return memberBoundOccurrence{}, false
 	}
-	key, ok := identityKey("analysis/engine/equation/dynamic-occurrence", func(writer *canonical.Writer) bool {
+	key, ok := identityKey("analysis/engine/equation/dynamic-occurrence", func(writer *canonical.DigestWriter) bool {
 		return writeOccurrence(writer, base) && writeSite(writer, site.site) && writeKey(writer, table.binding) && writeKey(writer, table.member) && writeKey(writer, row)
 	})
 	if !ok {
@@ -1790,7 +1790,7 @@ func (table *memberSiteTable) bindOperand(base Operand, occurrence memberBoundOc
 	if dynamic.binding != table.binding || dynamic.member != table.member || dynamic.row != occurrence.row || !dynamic.site.Same(occurrence.site.site) {
 		return Operand{}, false
 	}
-	key, ok := identityKey("analysis/engine/equation/dynamic-operand", func(writer *canonical.Writer) bool {
+	key, ok := identityKey("analysis/engine/equation/dynamic-operand", func(writer *canonical.DigestWriter) bool {
 		return writeOperand(writer, base) && writeOccurrence(writer, occurrence.occurrence) && writeKey(writer, table.binding) && writeKey(writer, table.member) && writeKey(writer, occurrence.row)
 	})
 	if !ok {

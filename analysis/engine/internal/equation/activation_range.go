@@ -41,7 +41,7 @@ func memberToken(member Member) memberTuple {
 	return memberTuple{binding: member.binding, application: member.locator.Application, target: member.locator.Target, endpoint: member.locator.Endpoint}
 }
 
-func writeMemberTuple(writer *canonical.Writer, member Member) bool {
+func writeMemberTuple(writer *canonical.DigestWriter, member Member) bool {
 	tuple := memberToken(member)
 	return tuple.binding.Available() && writeKey(writer, tuple.binding) && writeKey(writer, tuple.application) && writeKey(writer, tuple.target) && writeKey(writer, tuple.endpoint)
 }
