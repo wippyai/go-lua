@@ -249,6 +249,28 @@ func (work *Work) canonicalCoverage(rows []TargetRegion, within support.Mask) (s
 	if len(rows) == 0 || support.Empty(within) {
 		return slotCoverage{}, true
 	}
+	// Most producer rows are already sorted, unique, and clipped by the
+	// preceding exact carrier boundary.  Validate that shape before copying;
+	// rows are immutable after this function returns and every caller either
+	// supplies an immutable admitted slice or a fresh finish-local slice.  The
+	// fallback below remains the sole canonicalizer for arbitrary row order,
+	// duplicate targets, or rows that cross the retained support boundary.
+	orderedRows := true
+	for index, row := range rows {
+		slot, ok := row.target.Slot()
+		if !ok || !work.composition.OwnsTarget(slot, row.target) || !row.region.Valid() || row.region.Manager() != work.composition.guards || support.Empty(row.region) {
+			return slotCoverage{}, false
+		}
+		if index != 0 && !rows[index-1].target.Less(row.target) {
+			orderedRows = false
+		}
+		if !row.region.Entails(within) {
+			orderedRows = false
+		}
+	}
+	if orderedRows {
+		return slotCoverage{targets: rows}, true
+	}
 	ordered := append([]TargetRegion(nil), rows...)
 	sort.Slice(ordered, func(left, right int) bool { return ordered[left].target.Less(ordered[right].target) })
 	result := make([]TargetRegion, 0, len(ordered))
@@ -342,6 +364,17 @@ func (work *Work) mergeSlotCoverage(left, right slotCoverage, within support.Mas
 	if len(right.targets) == 0 {
 		return left, true
 	}
+	// The union of two canonical relations is one operand whenever the first
+	// relation covers every target/region of the second.  Prove that before
+	// allocating the merged row vector; this is exact authored coverage
+	// inclusion, not a semantic-root shortcut, so coverage-only wake/version
+	// evidence remains unchanged by the caller's outer publication.
+	if sameSlotCoverage(left, right) || slotCoverageContains(left, right) {
+		return left, true
+	}
+	if slotCoverageContains(right, left) {
+		return right, true
+	}
 	rows := make([]TargetRegion, 0, len(left.targets)+len(right.targets))
 	leftIndex, rightIndex := 0, 0
 	for leftIndex < len(left.targets) || rightIndex < len(right.targets) {
@@ -370,6 +403,37 @@ func (work *Work) mergeSlotCoverage(left, right slotCoverage, within support.Mas
 		return right, true
 	}
 	return result, true
+}
+
+// slotCoverageContains proves relation inclusion for canonical, sorted slot
+// rows.  `super` contains `sub` exactly when every target in sub is present in
+// super and its authored region is included by super's region.  The merge
+// union is therefore super.  This helper is intentionally local to the one
+// carrier fold and retains no index/cache authority.
+func slotCoverageContains(super, sub slotCoverage) bool {
+	if len(sub.targets) == 0 {
+		return true
+	}
+	if len(super.targets) < len(sub.targets) {
+		return false
+	}
+	superIndex, subIndex := 0, 0
+	for superIndex < len(super.targets) && subIndex < len(sub.targets) {
+		superRow, subRow := super.targets[superIndex], sub.targets[subIndex]
+		switch {
+		case superRow.target.Less(subRow.target):
+			superIndex++
+		case subRow.target.Less(superRow.target):
+			return false
+		default:
+			if !subRow.region.SameHandle(superRow.region) && !subRow.region.Entails(superRow.region) {
+				return false
+			}
+			superIndex++
+			subIndex++
+		}
+	}
+	return subIndex == len(sub.targets)
 }
 
 func (work *Work) mergeCoverage(left, right contributionCoverage, within support.Mask) (contributionCoverage, bool) {
@@ -553,15 +617,34 @@ func (work *Work) CoverageChanges(left, right Contribution) (CoverageChangeSet, 
 		if sameSlotCoverage(leftSlot, rightSlot) {
 			continue
 		}
-		regions := make([]support.Mask, 0, len(leftSlot.targets)+len(rightSlot.targets))
+		var region support.Mask
+		hasRegion := false
 		leftIndex, rightIndex := 0, 0
 		for leftIndex < len(leftSlot.targets) || rightIndex < len(rightSlot.targets) {
 			switch {
 			case rightIndex == len(rightSlot.targets) || leftIndex < len(leftSlot.targets) && leftSlot.targets[leftIndex].target.Less(rightSlot.targets[rightIndex].target):
-				regions = append(regions, leftSlot.targets[leftIndex].region)
+				next := leftSlot.targets[leftIndex].region
+				if !support.Empty(next) && !hasRegion {
+					region, hasRegion = next, true
+				} else if !support.Empty(next) {
+					var ok bool
+					region, ok = work.unionSupport(region, next)
+					if !ok {
+						return CoverageChangeSet{}, false
+					}
+				}
 				leftIndex++
 			case leftIndex == len(leftSlot.targets) || rightSlot.targets[rightIndex].target.Less(leftSlot.targets[leftIndex].target):
-				regions = append(regions, rightSlot.targets[rightIndex].region)
+				next := rightSlot.targets[rightIndex].region
+				if !support.Empty(next) && !hasRegion {
+					region, hasRegion = next, true
+				} else if !support.Empty(next) {
+					var ok bool
+					region, ok = work.unionSupport(region, next)
+					if !ok {
+						return CoverageChangeSet{}, false
+					}
+				}
 				rightIndex++
 			default:
 				split, ok := work.threeSupport(leftSlot.targets[leftIndex].region, rightSlot.targets[rightIndex].region)
@@ -573,22 +656,21 @@ func (work *Work) CoverageChanges(left, right Contribution) (CoverageChangeSet, 
 					return CoverageChangeSet{}, false
 				}
 				if !support.Empty(changed) {
-					regions = append(regions, changed)
+					if !hasRegion {
+						region, hasRegion = changed, true
+					} else {
+						region, ok = work.unionSupport(region, changed)
+						if !ok {
+							return CoverageChangeSet{}, false
+						}
+					}
 				}
 				leftIndex++
 				rightIndex++
 			}
 		}
-		if len(regions) == 0 {
+		if !hasRegion {
 			continue
-		}
-		region := regions[0]
-		for _, next := range regions[1:] {
-			var ok bool
-			region, ok = work.unionSupport(region, next)
-			if !ok {
-				return CoverageChangeSet{}, false
-			}
 		}
 		if !support.Empty(region) {
 			result.rows = append(result.rows, CoverageRegion{slot: shape.Slot(position), region: region})
