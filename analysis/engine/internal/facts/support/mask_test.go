@@ -126,6 +126,38 @@ func TestMaskSameHandleIsPhysicalNotSemanticEquality(t *testing.T) {
 	}
 }
 
+func TestCoordinateIdentityReindexRetainsExactMaskHandleAcrossIssuedScopes(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{3, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, ok := manager.SealScope([]guard.Atom{3, 7})
+	if !ok {
+		t.Fatal("source scope")
+	}
+	target, ok := manager.SealScope([]guard.Atom{3, 7})
+	if !ok || source.Same(target) {
+		t.Fatal("distinct target scope")
+	}
+	builder, ok := manager.NewReindex(source, target)
+	if !ok || !builder.Identity(3) || !builder.Identity(7) {
+		t.Fatal("coordinate identity construction")
+	}
+	plan, ok := builder.Seal()
+	if !ok || plan.Identity() || !plan.CoordinateIdentity() {
+		t.Fatal("coordinate identity proof")
+	}
+	work := New(manager)
+	mask, ok := work.Literal(3, true)
+	if !ok || !work.Seal() {
+		t.Fatal("mask setup")
+	}
+	reindexed, ok := ReindexWithWork(New(manager), mask, plan)
+	if !ok || !reindexed.SameHandle(mask) {
+		t.Fatal("coordinate identity rebuilt an unchanged Boolean support")
+	}
+}
+
 func mustTrue(t testing.TB, manager *guard.Manager) Mask {
 	t.Helper()
 	value, ok := True(manager)

@@ -603,6 +603,14 @@ func (work *Work) TransportPointState(input PointState, pre support.Mask, omega 
 	if omega.identity() && pre.IsTrue() && post.IsTrue() {
 		return input, true
 	}
+	if omega.coordinateIdentity() && pre.IsTrue() && post.IsTrue() {
+		state := input.state
+		state.scope = omega.target()
+		point := input
+		point.state = state
+		point.authority = state.authority
+		return point, work.admittedPointState(point)
+	}
 	if omega.coordinateIdentity() {
 		source, ok := work.intersectSupport(input.state.support, pre)
 		if !ok {

@@ -283,7 +283,10 @@ func (work *Work) Exists(mask Mask, atom guard.Atom) (Mask, bool) {
 
 // Reindex transports one support region through a sealed source-to-target
 // relation. The caller supplies no raw atoms or replacement map on this hot
-// path. A complete identity relation retains the exact immutable mask root.
+// path. A coordinate-identity relation retains the exact immutable mask root:
+// Mask carries a Manager-owned Boolean root, not an issued Scope identity, so
+// separately issued source and target scopes do not require rebuilding the
+// same Boolean function.
 func Reindex(mask Mask, plan guard.Reindex) (Mask, bool) {
 	return ReindexWithWork(nil, mask, plan)
 }
@@ -296,7 +299,7 @@ func ReindexWithWork(work *Work, mask Mask, plan guard.Reindex) (Mask, bool) {
 	if !mask.Valid() || !plan.Valid() || mask.Manager() != plan.Source().Manager() || !plan.Source().Contains(mask.root) {
 		return Mask{}, false
 	}
-	if plan.Identity() {
+	if plan.CoordinateIdentity() {
 		return mask, true
 	}
 	if work == nil {

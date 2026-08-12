@@ -1415,146 +1415,6 @@ func (epoch *executorEpoch) foldFactorEdge(base carrier.PointRHS, edgeIndex int)
 	return result, true
 }
 
-func (epoch *executorEpoch) structuralInputChanged(source int, stamp structuralInputEpoch) (changed, needsExact, ok bool) {
-	if epoch == nil || source < 0 || source >= len(epoch.versions) || source >= len(epoch.structural.pointDescents) {
-		return false, false, false
-	}
-	version, descents := epoch.versions[source], epoch.structural.pointDescents[source]
-	if !stamp.seeded {
-		// The target does not yet contain any version of this structural leaf.
-		// Rebuild its cold RHS in canonical edge-before-producer order so an
-		// identity environment can adopt the predecessor root before sparse
-		// local patches are folded. Later sampled ascending versions may append.
-		return true, true, true
-	}
-	if version < stamp.version || descents < stamp.descents || version == stamp.version && descents != stamp.descents {
-		return false, false, false
-	}
-	if version == stamp.version {
-		return false, false, true
-	}
-	return true, descents != stamp.descents, true
-}
-
-// structuralNeedsExact checks only immutable edge/source stamps. It never
-// transports a carrier root. A changed source with the same descent counter
-// is an ascending chain since this target's last publication and can be
-// appended; any observed descent requires the canonical full RHS fold.
-func (epoch *executorEpoch) structuralNeedsExact(pointIndex int) (bool, bool) {
-	if epoch == nil || epoch.runtime == nil || pointIndex < 0 || pointIndex >= len(epoch.runtime.environmentIncoming) || pointIndex >= len(epoch.runtime.factorIncoming) {
-		return false, false
-	}
-	for _, edgeIndex := range epoch.runtime.environmentIncoming[pointIndex] {
-		if edgeIndex < 0 || edgeIndex >= len(epoch.runtime.environments) || edgeIndex >= len(epoch.structural.environments) {
-			return false, false
-		}
-		edge := epoch.runtime.environments[edgeIndex]
-		if edge.target != pointIndex {
-			return false, false
-		}
-		_, exact, ok := epoch.structuralInputChanged(edge.source, epoch.structural.environments[edgeIndex])
-		if !ok {
-			return false, false
-		}
-		if exact {
-			return true, true
-		}
-	}
-	for _, edgeIndex := range epoch.runtime.factorIncoming[pointIndex] {
-		if edgeIndex < 0 || edgeIndex >= len(epoch.runtime.factorEdges) || edgeIndex >= len(epoch.structural.factors) {
-			return false, false
-		}
-		edge := epoch.runtime.factorEdges[edgeIndex]
-		if edge.target != pointIndex {
-			return false, false
-		}
-		_, exact, ok := epoch.structuralInputChanged(edge.source, epoch.structural.factors[edgeIndex])
-		if !ok {
-			return false, false
-		}
-		if exact {
-			return true, true
-		}
-	}
-	return false, true
-}
-
-func (epoch *executorEpoch) appendChangedStructural(base carrier.PointRHS, pointIndex int) (carrier.PointRHS, bool) {
-	if epoch == nil || pointIndex < 0 || pointIndex >= len(epoch.runtime.environmentIncoming) || pointIndex >= len(epoch.runtime.factorIncoming) || !epoch.work.OwnsPointRHS(base) {
-		return carrier.PointRHS{}, false
-	}
-	result := base
-	for _, edgeIndex := range epoch.runtime.environmentIncoming[pointIndex] {
-		if edgeIndex < 0 || edgeIndex >= len(epoch.runtime.environments) || edgeIndex >= len(epoch.structural.environments) {
-			return carrier.PointRHS{}, false
-		}
-		edge := epoch.runtime.environments[edgeIndex]
-		stamp := epoch.structural.environments[edgeIndex]
-		changed, exact, ok := epoch.structuralInputChanged(edge.source, stamp)
-		if !ok || exact {
-			return carrier.PointRHS{}, false
-		}
-		if !changed {
-			continue
-		}
-		version := epoch.versions[edge.source]
-		semantic, ascending := epoch.structuralPublicationWindow(edge.source, stamp.version, version)
-		if stamp.seeded && stamp.version != ^uint64(0) && ascending && edge.input.plan.CoordinateIdentity() && epoch.work.OwnsPointState(stamp.source) {
-			before := result
-			authored, changedOK := epoch.work.CoverageChangesPointStates(stamp.source, epoch.points[edge.source])
-			if !changedOK {
-				return carrier.PointRHS{}, false
-			}
-			result, ok = epoch.work.MergeChangedCoordinatePointRHS(result, stamp.source, epoch.points[edge.source], semantic, authored, edge.input.pre, edge.input.plan, edge.input.post)
-			if !ok {
-				result, ok = epoch.foldEnvironmentEdge(before, edgeIndex)
-			}
-		} else {
-			result, ok = epoch.foldEnvironmentEdge(result, edgeIndex)
-		}
-		if !ok {
-			return carrier.PointRHS{}, false
-		}
-	}
-	for _, edgeIndex := range epoch.runtime.factorIncoming[pointIndex] {
-		if edgeIndex < 0 || edgeIndex >= len(epoch.runtime.factorEdges) || edgeIndex >= len(epoch.structural.factors) {
-			return carrier.PointRHS{}, false
-		}
-		edge := epoch.runtime.factorEdges[edgeIndex]
-		changed, exact, ok := epoch.structuralInputChanged(edge.source, epoch.structural.factors[edgeIndex])
-		if !ok || exact {
-			return carrier.PointRHS{}, false
-		}
-		if !changed {
-			continue
-		}
-		result, ok = epoch.foldFactorEdge(result, edgeIndex)
-		if !ok {
-			return carrier.PointRHS{}, false
-		}
-	}
-	return result, true
-}
-
-// structuralPublicationWindow returns the exact immutable source transitions
-// consumed since one edge last sampled that source. Every transition must be
-// ascending: a single descent invalidates seminaive append and leaves the
-// caller on the complete canonical fold. The history stores only owner-issued
-// deltas/order proofs; Point publications remain the sole state authority.
-func (epoch *executorEpoch) structuralPublicationWindow(point int, from, to uint64) ([]carrier.ChangeSet, bool) {
-	if epoch == nil || point < 0 || point >= len(epoch.changes) || point >= len(epoch.publications) || from >= to ||
-		to > uint64(len(epoch.changes[point])) || to > uint64(len(epoch.publications[point])) {
-		return nil, false
-	}
-	semantic := epoch.changes[point][int(from):int(to)]
-	for _, publication := range epoch.publications[point][int(from):int(to)] {
-		if publication != publicationAscending {
-			return nil, false
-		}
-	}
-	return semantic, true
-}
-
 func (epoch *executorEpoch) rememberStructuralInputs(pointIndex int, selfVersion, selfDescents uint64, selfSource carrier.PointState) bool {
 	if epoch == nil || pointIndex < 0 || pointIndex >= len(epoch.runtime.environmentIncoming) || pointIndex >= len(epoch.runtime.factorIncoming) {
 		return false
@@ -2268,28 +2128,16 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		rhs := appended
 		order := publicationAscending
 		if structuralChanged {
-			needsExact, valid := epoch.structuralNeedsExact(pointIndex)
-			if !valid {
+			base, ok := epoch.pointBase(point, pointIndex)
+			if !ok {
 				return false, false
 			}
-			if needsExact {
-				base, ok := epoch.pointBase(point, pointIndex)
-				if !ok {
-					return false, false
-				}
-				rhs, ok = epoch.foldPoint(base, point)
-				if !ok {
-					return false, false
-				}
-				if !epoch.work.LessOrEqPointStateRHS(current, rhs) {
-					order = publicationMayDescend
-				}
-			} else {
-				var ok bool
-				rhs, ok = epoch.appendChangedStructural(rhs, pointIndex)
-				if !ok {
-					return false, false
-				}
+			rhs, ok = epoch.foldPoint(base, point)
+			if !ok {
+				return false, false
+			}
+			if !epoch.work.LessOrEqPointStateRHS(current, rhs) {
+				order = publicationMayDescend
 			}
 		}
 		published, changes, publishedOK := epoch.work.ReplacePointWithRHS(current, rhs)

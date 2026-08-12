@@ -160,6 +160,42 @@ func TestPointStateTransportSharesLatentRootButLiftClosesIt(t *testing.T) {
 	}
 }
 
+func TestPointStateWholeCoordinateTransportOnlyRescopesHeader(t *testing.T) {
+	manager := testTransportManager(t, []guard.Atom{1})
+	whole := transportWhole(t, manager)
+	_, initial, slot, composition, _ := bindingState(t, manager, transportConfig(0), whole)
+	sourceScope := composition.Scope()
+	targetScope, ok := composition.SealScope([]guard.Atom{1})
+	if !ok || sourceScope.Same(targetScope) {
+		t.Fatal("distinct target scope")
+	}
+	builder, ok := composition.NewReindex(sourceScope, targetScope)
+	if !ok || !builder.Identity(1) {
+		t.Fatal("coordinate identity construction")
+	}
+	identity, ok := builder.Seal()
+	if !ok || identity.CoordinateIdentity() == false {
+		t.Fatal("coordinate identity plan")
+	}
+	work := newWork(t, composition)
+	point, ok := work.EmptyPointState(initial)
+	if !ok {
+		t.Fatal("initial point")
+	}
+	root, ok := point.HandleAt(slot)
+	if !ok {
+		t.Fatal("initial root")
+	}
+	transported, ok := work.TransportPointState(point, whole, identity, whole)
+	if !ok {
+		t.Fatal("coordinate point transport result")
+	}
+	transportedRoot, ok := transported.HandleAt(slot)
+	if !ok || transportedRoot != root || !transported.Scope().Same(targetScope) || !transported.Support().SameHandle(whole) {
+		t.Fatal("whole coordinate transport changed immutable point payload")
+	}
+}
+
 // TestPointRHSAbsentBaseDoesNotInjectDefault is the hostile Default=Top
 // witness. A C-empty point base has a raw sparse terminal whose total semantic
 // default is 7, but that terminal is not a lifted RHS operand. A newly
