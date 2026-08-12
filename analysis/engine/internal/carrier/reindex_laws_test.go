@@ -82,6 +82,55 @@ func TestReindexRejectsPlanWhoseSourceScopeDoesNotMatchState(t *testing.T) {
 	}
 }
 
+func TestRuntimeReindexSealsOnlyOverExistingScopesAfterWorkOpens(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	composition, ok := attachTestComposition(t, []FactorOperation{&carryOnlyOperation{guards: manager}})
+	if !ok {
+		t.Fatal("composition")
+	}
+	empty, ok := composition.SealScope(nil)
+	if !ok {
+		t.Fatal("empty scope")
+	}
+	work, ok := composition.NewWork()
+	if !ok {
+		t.Fatal("work")
+	}
+	defer work.Close()
+
+	if _, ok := composition.NewReindex(composition.Scope(), empty); ok {
+		t.Fatal("ordinary cold reindex reopened after work")
+	}
+	if _, ok := composition.SealScope([]guard.Atom{1}); ok {
+		t.Fatal("runtime reindex path reopened scope sealing")
+	}
+	builder, ok := composition.NewRuntimeReindex(composition.Scope(), empty)
+	if !ok {
+		t.Fatal("runtime reindex over issued scopes")
+	}
+	if builder.Identity(1) {
+		t.Fatal("runtime reindex admitted identity outside target scope")
+	}
+	if !builder.Forget(1) {
+		t.Fatal("runtime reindex forgot existing source atom")
+	}
+	plan, ok := builder.Seal()
+	if !ok || !plan.Valid() || plan.CoordinateIdentity() {
+		t.Fatal("runtime reindex did not seal immutable forget relation")
+	}
+
+	foreign, ok := attachTestComposition(t, []FactorOperation{&carryOnlyOperation{guards: manager}})
+	if !ok {
+		t.Fatal("foreign composition")
+	}
+	if _, ok := composition.NewRuntimeReindex(foreign.Scope(), empty); ok {
+		t.Fatal("runtime reindex admitted foreign issued scope")
+	}
+}
+
 func TestScopedStatesRejectMixedEqualityOrderMergeReplaceAndContribution(t *testing.T) {
 	manager, err := guard.New([]guard.Atom{1})
 	if err != nil {

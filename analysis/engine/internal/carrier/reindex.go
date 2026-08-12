@@ -140,12 +140,31 @@ func (composition *Composition) SealScope(atoms []guard.Atom) (Scope, bool) {
 // NewReindex starts a cold total relation between two scopes issued by this
 // Composition. Its complete plan must be sealed before evaluator work opens.
 func (composition *Composition) NewReindex(source, target Scope) (*ReindexBuilder, bool) {
+	return composition.newReindex(source, target, false)
+}
+
+// NewRuntimeReindex seals one additional immutable relation after evaluator
+// work has opened.  It is intentionally narrower than the ordinary cold
+// declaration surface: source and target must already be exact Scopes issued
+// by this Composition, and the builder can name only atoms already owned by
+// its fixed guard Manager.  It neither issues a Scope nor changes the carrier
+// shape, operation catalog, or guard universe.
+//
+// Runtime topology overlays use this only to lower a selected equation
+// boundary whose endpoints were already present in the sealed base graph.
+// Callers still receive an ordinary immutable ReindexPlan; Work does not gain
+// an authoring API.
+func (composition *Composition) NewRuntimeReindex(source, target Scope) (*ReindexBuilder, bool) {
+	return composition.newReindex(source, target, true)
+}
+
+func (composition *Composition) newReindex(source, target Scope, runtime bool) (*ReindexBuilder, bool) {
 	if composition == nil || !source.validFor(composition) || !target.validFor(composition) {
 		return nil, false
 	}
 	composition.scopeMu.Lock()
 	defer composition.scopeMu.Unlock()
-	if composition.workOpened {
+	if composition.workOpened && !runtime {
 		return nil, false
 	}
 	builder, ok := composition.guards.NewReindex(source.guard, target.guard)
