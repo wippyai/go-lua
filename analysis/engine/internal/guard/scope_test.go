@@ -66,6 +66,29 @@ func TestCompactReindexRowsRemainTotalAndFenceSource(t *testing.T) {
 	}
 }
 
+func TestCoordinateIdentityDistinguishesPayloadFromIssuedScope(t *testing.T) {
+	manager := newTestManager(t)
+	source := manager.SealScopeMust([]Atom{testA, testC})
+	target := manager.SealScopeMust([]Atom{testA, testC})
+	if source.Same(target) {
+		t.Fatal("separately issued scopes aliased")
+	}
+	builder, ok := manager.NewReindex(source, target)
+	if !ok || !builder.Identity(testA) || !builder.Identity(testC) {
+		t.Fatal("coordinate identity construction")
+	}
+	plan, ok := builder.Seal()
+	if !ok || !plan.Valid() {
+		t.Fatal("coordinate identity seal")
+	}
+	if plan.Identity() {
+		t.Fatal("coordinate identity claimed exact issued-scope identity")
+	}
+	if !plan.CoordinateIdentity() {
+		t.Fatal("identity coordinate function was not recognized")
+	}
+}
+
 func TestScopeAndReindexHotReadsDoNotAllocate(t *testing.T) {
 	manager := newTestManager(t)
 	scope := manager.SealScopeMust([]Atom{testA})

@@ -30,6 +30,7 @@ type SoleScratch[K scalar.Key, V any] struct {
 	mergeFrames []soleMergeFrame[V]
 	merge       map[soleMergeTriple[V]]soleMergeResult[V]
 	output      []soleOutput[K, V]
+	patches     []soleOutput[K, V]
 	treeFrames  []soleTreeFrame[K, V]
 
 	trackedFrames []trackedFrame[V]
@@ -76,6 +77,8 @@ func (scratch *SoleScratch[K, V]) Clear() {
 	clear(scratch.merge)
 	clear(scratch.output)
 	scratch.output = scratch.output[:0]
+	clear(scratch.patches)
+	scratch.patches = scratch.patches[:0]
 	clear(scratch.treeFrames)
 	scratch.treeFrames = scratch.treeFrames[:0]
 	clear(scratch.trackedFrames)

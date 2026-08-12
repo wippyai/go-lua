@@ -37,11 +37,29 @@ type contributionPlan struct {
 // its sole route to a normal immutable Contribution.
 type ContributionBase struct{ value *contributionBase }
 
+// RuleContributionBase is the nominal rule-evaluation predecessor. It has the
+// same one-shot transaction ownership as ContributionBase, but its inputs are
+// PointStates rather than already-closed RuleContributions. That distinction
+// lets a coordinate-filtered point retain its raw root through a declared
+// carry without opening a raw-State construction route. FinishRuleContribution
+// is the only route from this base to a closed RuleContribution.
+type RuleContributionBase struct{ value *contributionBase }
+
+// contributionInput is private paired semantic state plus compact authored
+// coverage. It is the one internal source representation used by both legacy
+// closed Contribution inputs and nominal PointState inputs. The former is
+// already physically closed; the latter may retain latent roots, which the
+// shared Finish closure removes at the RuleContribution boundary.
+type contributionInput struct {
+	state    State
+	coverage contributionCoverage
+}
+
 type contributionBase struct {
 	work           *Work
 	plan           *contributionPlan
-	inputs         []Contribution
-	environment    Contribution
+	inputs         []contributionInput
+	environment    contributionInput
 	hasEnvironment bool
 	state          State
 	rootsOwned     bool
@@ -91,64 +109,150 @@ func (composition *Composition) SealContribution(inputCount int, writes []shape.
 	return ContributionPlan{value: &contributionPlan{composition: composition, inputs: inputCount, writes: orderedWrites, carries: orderedCarries, supportPrune: supportPrune, environment: hasEnvironment}}, true
 }
 
-// BeginContribution constructs the one common patch predecessor for a Rule
-// group. Ordinary roots start at the Composition initial vector, then only
-// sealed carry slots are replaced from their named input States. A support
-// prune restricts support only: it never copies input zero's roots or
-// authorship as an implicit carry. Every group names its output Scope
-// explicitly.
-// premise is the sealed structural activation condition, not a caller-proved
-// predecessor support: this boundary computes input-intersection ∩ premise
-// itself. A zero-input group therefore publishes exactly premise. The later
-// supportPrune path alone may further restrict that computed predecessor.
+// BeginContribution is the compatibility entry for an already closed
+// Contribution input vector. It delegates to the same private transaction as
+// BeginRuleContribution; there is no second Finish or carry implementation.
 func (work *Work) BeginContribution(plan ContributionPlan, target Scope, inputs []Contribution, premise support.Mask, environment ...Contribution) (ContributionBase, bool) {
-	if !work.live() || work.composition == nil || plan.value == nil || plan.value.composition != work.composition || !target.validFor(work.composition) || len(inputs) != plan.value.inputs || !premise.Valid() || premise.Manager() != work.composition.guards {
+	prepared, ok := work.contributionInputsFromContributions(inputs)
+	if !ok {
 		return ContributionBase{}, false
 	}
-	if len(environment) > 1 || plan.value.environment != (len(environment) == 1) {
+	var preparedEnvironment []contributionInput
+	if len(environment) == 1 {
+		environmentInput, valid := work.contributionInputFromContribution(environment[0])
+		if !valid {
+			return ContributionBase{}, false
+		}
+		preparedEnvironment = []contributionInput{environmentInput}
+	} else if len(environment) != 0 {
 		return ContributionBase{}, false
+	}
+	owner, ok := work.beginContribution(plan, target, prepared, premise, preparedEnvironment)
+	if !ok {
+		return ContributionBase{}, false
+	}
+	return ContributionBase{value: owner}, true
+}
+
+// BeginRuleContribution opens the one common patch predecessor for a rule
+// evaluation over published PointStates. Point inputs retain their raw roots
+// and compact C through declared carries/environment slots; callbacks still
+// receive only the resulting []State through RuleContributionBase.State and
+// OwnsRuleContributionStates. No raw State may enter this API.
+func (work *Work) BeginRuleContribution(plan ContributionPlan, target Scope, inputs []PointState, premise support.Mask, environment ...PointState) (RuleContributionBase, bool) {
+	prepared, ok := work.contributionInputsFromPoints(inputs)
+	if !ok {
+		return RuleContributionBase{}, false
+	}
+	var preparedEnvironment []contributionInput
+	if len(environment) == 1 {
+		environmentInput, valid := work.contributionInputFromPoint(environment[0])
+		if !valid {
+			return RuleContributionBase{}, false
+		}
+		preparedEnvironment = []contributionInput{environmentInput}
+	} else if len(environment) != 0 {
+		return RuleContributionBase{}, false
+	}
+	owner, ok := work.beginContribution(plan, target, prepared, premise, preparedEnvironment)
+	if !ok {
+		return RuleContributionBase{}, false
+	}
+	return RuleContributionBase{value: owner}, true
+}
+
+func (work *Work) contributionInputFromContribution(input Contribution) (contributionInput, bool) {
+	if work == nil || !work.admittedContribution(input) || !work.OwnsState(input.state) || input.state.previewMarked() || input.state.contributionMarked() {
+		return contributionInput{}, false
+	}
+	return contributionInput{state: input.state, coverage: input.coverage}, true
+}
+
+func (work *Work) contributionInputFromPoint(input PointState) (contributionInput, bool) {
+	if work == nil || !work.admittedPointState(input) || input.state.previewMarked() || input.state.contributionMarked() {
+		return contributionInput{}, false
+	}
+	return contributionInput{state: input.state, coverage: input.coverage}, true
+}
+
+func (work *Work) contributionInputsFromContributions(inputs []Contribution) ([]contributionInput, bool) {
+	if work == nil {
+		return nil, false
+	}
+	if len(inputs) == 0 {
+		return nil, true
+	}
+	prepared := make([]contributionInput, len(inputs))
+	for index := range inputs {
+		input, ok := work.contributionInputFromContribution(inputs[index])
+		if !ok {
+			return nil, false
+		}
+		prepared[index] = input
+	}
+	return prepared, true
+}
+
+func (work *Work) contributionInputsFromPoints(inputs []PointState) ([]contributionInput, bool) {
+	if work == nil {
+		return nil, false
+	}
+	if len(inputs) == 0 {
+		return nil, true
+	}
+	prepared := make([]contributionInput, len(inputs))
+	for index := range inputs {
+		input, ok := work.contributionInputFromPoint(inputs[index])
+		if !ok {
+			return nil, false
+		}
+		prepared[index] = input
+	}
+	return prepared, true
+}
+
+// beginContribution constructs the one common patch predecessor for either
+// nominal input role. Ordinary roots start at Composition initial, then only
+// sealed carry slots are replaced from named input roots. A support prune
+// restricts support only: it never creates an implicit carry. The paired C
+// surfaces stay private on owner until the one Finish closure publishes them.
+func (work *Work) beginContribution(plan ContributionPlan, target Scope, inputs []contributionInput, premise support.Mask, environment []contributionInput) (*contributionBase, bool) {
+	if !work.live() || work.composition == nil || plan.value == nil || plan.value.composition != work.composition || !target.validFor(work.composition) || len(inputs) != plan.value.inputs || !premise.Valid() || premise.Manager() != work.composition.guards || len(environment) > 1 || plan.value.environment != (len(environment) == 1) {
+		return nil, false
 	}
 	root, ok := premise.Guard()
 	if !ok || !target.guard.Contains(root) {
-		return ContributionBase{}, false
+		return nil, false
 	}
 	within := premise
 	for index, input := range inputs {
-		if !work.admittedContribution(input) || !work.OwnsState(input.state) || input.state.previewMarked() || input.state.contributionMarked() {
-			return ContributionBase{}, false
+		if !work.validContributionInput(input) || !input.state.scope.same(target) {
+			return nil, false
 		}
 		if index == 0 {
-			if !input.state.scope.same(target) {
-				return ContributionBase{}, false
-			}
 			within = input.state.Support()
 			continue
 		}
-		if !input.state.scope.same(target) {
-			return ContributionBase{}, false
-		}
-		var ok bool
 		within, ok = work.intersectSupport(within, input.state.Support())
 		if !ok {
-			return ContributionBase{}, false
+			return nil, false
 		}
 	}
 	if len(inputs) != 0 {
 		within, ok = work.intersectSupport(within, premise)
 		if !ok {
-			return ContributionBase{}, false
+			return nil, false
 		}
 	}
-	var environmentValue Contribution
+	var environmentValue contributionInput
 	if len(environment) == 1 {
 		environmentValue = environment[0]
-		if !work.admittedContribution(environmentValue) || !work.OwnsState(environmentValue.state) || environmentValue.state.previewMarked() || environmentValue.state.contributionMarked() || !environmentValue.state.scope.same(target) {
-			return ContributionBase{}, false
+		if !work.validContributionInput(environmentValue) || !environmentValue.state.scope.same(target) {
+			return nil, false
 		}
-		var intersectOK bool
-		within, intersectOK = work.intersectSupport(within, environmentValue.state.Support())
-		if !intersectOK {
-			return ContributionBase{}, false
+		within, ok = work.intersectSupport(within, environmentValue.state.Support())
+		if !ok {
+			return nil, false
 		}
 	}
 	roots := work.composition.initial
@@ -174,17 +278,22 @@ func (work *Work) BeginContribution(plan ContributionPlan, target Scope, inputs 
 			roots[int(carry.Slot)] = inputs[carry.Input].state.roots[int(carry.Slot)]
 		}
 	}
-	owner := &contributionBase{work: work, plan: plan.value, inputs: append([]Contribution(nil), inputs...), environment: environmentValue, hasEnvironment: plan.value.environment, rootsOwned: rootsOwned, live: true}
+	owner := &contributionBase{work: work, plan: plan.value, inputs: append([]contributionInput(nil), inputs...), environment: environmentValue, hasEnvironment: plan.value.environment, rootsOwned: rootsOwned, live: true}
 	owner.state = State{authority: &stateAuthority{composition: work.composition, epoch: work.epoch, contribution: owner}, scope: target, support: within, roots: roots}
 	if !owner.state.live() {
 		owner.live = false
-		return ContributionBase{}, false
+		return nil, false
 	}
-	return ContributionBase{value: owner}, true
+	return owner, true
 }
 
-// State returns the exact shared predecessor used by every Rule patch in this
-// group. It is valid only until FinishContribution or AbortContribution.
+func (work *Work) validContributionInput(input contributionInput) bool {
+	return work != nil && work.OwnsState(input.state) && !input.state.previewMarked() && !input.state.contributionMarked() && input.coverage.composition == work.composition && (len(input.coverage.slots) == 0 || len(input.coverage.slots) == work.composition.Count())
+}
+
+// State returns the exact shared predecessor used by every compatibility Rule
+// patch in this group. It is valid only until FinishContribution or
+// AbortContribution.
 func (base ContributionBase) State() State {
 	if base.value == nil || !base.value.live || !base.value.state.live() {
 		return State{}
@@ -192,16 +301,66 @@ func (base ContributionBase) State() State {
 	return base.value.state
 }
 
+// State returns the exact shared predecessor used by every nominal
+// RuleContribution patch. The callback surface deliberately remains State;
+// PointState coverage stays carrier-private until FinishRuleContribution.
+func (base RuleContributionBase) State() State {
+	if base.value == nil || !base.value.live || !base.value.state.live() {
+		return State{}
+	}
+	return base.value.state
+}
+
+func (work *Work) ownsContributionBase(owner *contributionBase) bool {
+	return work != nil && owner != nil && owner.live && owner.work == work && owner.plan != nil && owner.plan.composition == work.composition && owner.state.live() && owner.state.contributionOwner() == owner
+}
+
+func sameContributionInput(left, right contributionInput) bool {
+	return sameState(left.state, right.state) && sameContributionCoverage(left.coverage, right.coverage)
+}
+
 // OwnsContribution proves this Work owns the exact still-live group base and
-// that every caller-supplied source State is the one used to construct it.
-// It prevents a sibling Rule from reusing a group predecessor after any input
-// Point has changed or from substituting an equal-looking State.
+// that every legacy closed source is the one used to construct it.
 func (work *Work) OwnsContribution(base ContributionBase, inputs []Contribution) bool {
-	if work == nil || base.value == nil || !base.value.live || base.value.work != work || base.value.plan == nil || base.value.plan.composition != work.composition || len(inputs) != len(base.value.inputs) || !base.value.state.live() || base.value.state.contributionOwner() != base.value {
+	if !work.ownsContributionBase(base.value) || len(inputs) != len(base.value.inputs) {
 		return false
 	}
 	for index := range inputs {
-		if !work.admittedContribution(inputs[index]) || !sameState(inputs[index].state, base.value.inputs[index].state) || !sameContributionCoverage(inputs[index].coverage, base.value.inputs[index].coverage) {
+		input, ok := work.contributionInputFromContribution(inputs[index])
+		if !ok || !sameContributionInput(input, base.value.inputs[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// OwnsRuleContributionBase proves this Work owns a nominal PointState-input
+// base and the exact paired PointState headers which opened it. It prevents a
+// sibling Rule from substituting an equal-looking raw State or dropping C.
+//
+// It is deliberately named after the ephemeral base rather than the published
+// RuleContribution role. The latter has its own ownership predicate below;
+// conflating the two would let an API which needs a sealed published operand
+// accidentally accept a still-open authoring transaction.
+func (work *Work) OwnsRuleContributionBase(base RuleContributionBase, inputs []PointState) bool {
+	if !work.ownsContributionBase(base.value) || len(inputs) != len(base.value.inputs) {
+		return false
+	}
+	for index := range inputs {
+		input, ok := work.contributionInputFromPoint(inputs[index])
+		if !ok || !sameContributionInput(input, base.value.inputs[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (work *Work) ownsContributionStates(owner *contributionBase, inputs []State) bool {
+	if !work.ownsContributionBase(owner) || len(inputs) != len(owner.inputs) {
+		return false
+	}
+	for index := range inputs {
+		if !sameState(inputs[index], owner.inputs[index].state) {
 			return false
 		}
 	}
@@ -213,15 +372,13 @@ func (work *Work) OwnsContribution(base ContributionBase, inputs []Contribution)
 // crosses the typed callback surface, but it remains retained by base for the
 // sole Finish carry publication.
 func (work *Work) OwnsContributionStates(base ContributionBase, inputs []State) bool {
-	if work == nil || base.value == nil || !base.value.live || base.value.work != work || len(inputs) != len(base.value.inputs) {
-		return false
-	}
-	for index := range inputs {
-		if !sameState(inputs[index], base.value.inputs[index].state) {
-			return false
-		}
-	}
-	return true
+	return work.ownsContributionStates(base.value, inputs)
+}
+
+// OwnsRuleContributionStates is the nominal PointState-input counterpart of
+// OwnsContributionStates. Rule callbacks retain the same []State surface.
+func (work *Work) OwnsRuleContributionStates(base RuleContributionBase, inputs []State) bool {
+	return work.ownsContributionStates(base.value, inputs)
 }
 
 // FinishContribution admits the group’s already accepted patches at the sole
@@ -230,7 +387,7 @@ func (work *Work) OwnsContributionStates(base ContributionBase, inputs []State) 
 // normal Composition authority; the temporary base is invalidated regardless
 // of success, so it cannot become a second publication route.
 func (work *Work) FinishContribution(base ContributionBase, patches []Patch) (Contribution, bool) {
-	return work.finishContribution(base, patches, support.Mask{}, false)
+	return work.finishContribution(base.value, patches, support.Mask{}, false)
 }
 
 // FinishContributionWithSupport closes the same one-shot contribution with a
@@ -240,16 +397,38 @@ func (work *Work) FinishContribution(base ContributionBase, patches []Patch) (Co
 // admission. Only a plan declared with supportPrune may retain a strict
 // subset; ordinary groups retain their exact input-intersection ∩ premise.
 func (work *Work) FinishContributionWithSupport(base ContributionBase, patches []Patch, retained support.Mask) (Contribution, bool) {
-	return work.finishContribution(base, patches, retained, true)
+	return work.finishContribution(base.value, patches, retained, true)
 }
 
-func (work *Work) finishContribution(base ContributionBase, patches []Patch, retained support.Mask, withSupport bool) (Contribution, bool) {
+// FinishRuleContribution closes a PointState-input rule base at the same one
+// atomic publication cut as legacy FinishContribution, then applies only the
+// nominal role seal. In particular, carried latent PointState branches cannot
+// escape into the returned RuleContribution.
+func (work *Work) FinishRuleContribution(base RuleContributionBase, patches []Patch) (RuleContribution, bool) {
+	value, ok := work.finishContribution(base.value, patches, support.Mask{}, false)
+	if !ok {
+		return RuleContribution{}, false
+	}
+	return work.AsRuleContribution(value)
+}
+
+// FinishRuleContributionWithSupport is the structural-prune form of
+// FinishRuleContribution. It shares the same final coverage assembly and
+// whole-root closure transaction as every other Finish path.
+func (work *Work) FinishRuleContributionWithSupport(base RuleContributionBase, patches []Patch, retained support.Mask) (RuleContribution, bool) {
+	value, ok := work.finishContribution(base.value, patches, retained, true)
+	if !ok {
+		return RuleContribution{}, false
+	}
+	return work.AsRuleContribution(value)
+}
+
+func (work *Work) finishContribution(owner *contributionBase, patches []Patch, retained support.Mask, withSupport bool) (Contribution, bool) {
 	// Establish exact base ownership before touching any caller-supplied
 	// Patch. A foreign Work/base pair retains both resources for its owner.
-	if work == nil || base.value == nil || !work.OwnsContribution(base, base.value.inputs) {
+	if !work.ownsContributionBase(owner) {
 		return Contribution{}, false
 	}
-	owner := base.value
 	defer owner.invalidate()
 	// Once the base belongs here, a failed batch still consumes that one-shot
 	// base. Foreign Patch handles remain caller-owned and completely untouched.
@@ -307,63 +486,120 @@ func (work *Work) finishContribution(base ContributionBase, patches []Patch, ret
 	if !nonempty {
 		coverage.slots = nil
 	}
-	composition.layout.publish.Lock()
-	defer composition.layout.publish.Unlock()
-	if !work.live() || work.publishing || !owner.live || !owner.state.live() {
-		dropPatches(patches)
-		return Contribution{}, false
-	}
-	work.publishing = true
-	defer func() { work.publishing = false }()
 	split, splitOK := work.threeSupport(owner.state.support, retained)
-	empty := emptyMask(composition.guards)
-	if !splitOK || !empty.Valid() {
+	if !splitOK {
 		dropPatches(patches)
 		return Contribution{}, false
 	}
-	prepared, ok := work.prepareCommit(owner.state, patches, retained, split.RightOnly(), split.LeftOnly(), nil)
-	if !ok {
+	// A plain rule with no carried/environment roots starts from the immutable
+	// Composition initial vector. Its accepted Patches are already closed under
+	// their exact authored Target rows and ordinary Finish retains the complete
+	// predecessor support. Therefore the final C assembled above is a direct
+	// construction proof: re-closing and comparing every typed root would only
+	// rebuild the same sparse planes. Carry, environment, and support-prune
+	// paths deliberately stay on the general close below.
+	if !withSupport && !owner.plan.environment && len(owner.plan.carries) == 0 {
+		state, _, committed := work.commit(owner.state, patches, retained, split.RightOnly(), split.LeftOnly(), nil)
+		if !committed {
+			return Contribution{}, false
+		}
+		state.authority = work.authority
+		return work.admitConstructedContribution(state, coverage)
+	}
+	// Every slot, including an untouched carry/environment slot, is closed
+	// against the final C and final support before any publisher reserves. A
+	// staged patch is first exposed only as a transaction-local preview; its
+	// original publisher is dropped only after the closed replacement patch has
+	// crossed ordinary acceptance. This preserves the one atomic root cut and
+	// prevents a narrowed Finish from retaining a hidden carried fiber.
+	delta := work.newSupportWork()
+	if delta == nil {
 		dropPatches(patches)
 		return Contribution{}, false
 	}
-	next := owner.state.roots
-	if prepared.rootsChanged && !owner.rootsOwned {
-		next = append([]RootHandle(nil), owner.state.roots...)
-	}
-	for _, patch := range patches {
-		if !work.live() {
+	closed := make([]Patch, 0, composition.Count())
+	patchIndex := 0
+	for position, slot := range work.slots {
+		if !work.live() || slot == nil {
+			delta.Discard()
+			dropPatches(closed)
 			dropPatches(patches)
 			return Contribution{}, false
 		}
-		if publisher := patch.change.record.publisher; publisher != nil && !publisher.Reserve() {
-			dropPatches(patches)
-			return Contribution{}, false
-		}
-		if !work.live() {
-			dropPatches(patches)
-			return Contribution{}, false
-		}
-	}
-	if !work.live() {
-		dropPatches(patches)
-		return Contribution{}, false
-	}
-	// Publish is the final non-interruptible cut: polling after the first
-	// publisher would allow a visible partial vector.
-	for _, patch := range patches {
-		record := patch.change.record
-		if publisher := record.publisher; publisher != nil {
-			root := publisher.Publish()
-			if !composition.operations[int(patch.slot)].ValidRoot(root) {
-				panic("contribution root publication violated carrier invariant")
+		physical := shape.Slot(position)
+		candidate := owner.state.roots[position]
+		var authored []TargetRegion
+		var original *Patch
+		if patchIndex < len(patches) && patches[patchIndex].slot == physical {
+			original = &patches[patchIndex]
+			record := original.change.record
+			if record == nil {
+				delta.Discard()
+				dropPatches(closed)
+				dropPatches(patches)
+				return Contribution{}, false
 			}
-			next[int(patch.slot)] = root
-		} else if prepared.rootsChanged {
-			next[int(patch.slot)] = record.after
+			if publisher := record.publisher; publisher != nil {
+				preview, previewOK := publisher.(PreviewRootPublisher)
+				if !previewOK {
+					delta.Discard()
+					dropPatches(closed)
+					dropPatches(patches)
+					return Contribution{}, false
+				}
+				var candidateOK bool
+				candidate, candidateOK = preview.PreviewRoot()
+				if !candidateOK || !preview.OwnsPreviewRoot(candidate) {
+					delta.Discard()
+					dropPatches(closed)
+					dropPatches(patches)
+					return Contribution{}, false
+				}
+			} else {
+				candidate = record.after
+			}
+			authored = original.authored
+		}
+		change, valid := slot.CloseContributionUnder(owner.state.roots[position], candidate, retained, coverageRows(coverage.slot(physical)), delta)
+		if !valid {
+			delta.Discard()
+			dropPatches(closed)
+			dropPatches(patches)
+			return Contribution{}, false
+		}
+		if !work.acceptInto(&closed, owner.state, change, delta) {
+			delta.Discard()
+			dropPatches(patches)
+			return Contribution{}, false
+		}
+		if original != nil {
+			closed[len(closed)-1].authored = authored
+			if !work.Discard(*original) {
+				delta.Discard()
+				dropPatches(closed)
+				dropPatches(patches)
+				return Contribution{}, false
+			}
+			patchIndex++
 		}
 	}
-	dropPatches(patches)
-	state := State{authority: work.authority, scope: owner.state.scope, support: retained, roots: next}
+	if patchIndex != len(patches) {
+		delta.Discard()
+		dropPatches(closed)
+		dropPatches(patches)
+		return Contribution{}, false
+	}
+	state, _, committed := work.commit(owner.state, closed, retained, split.RightOnly(), split.LeftOnly(), delta)
+	if !committed {
+		return Contribution{}, false
+	}
+	// commit preserves its predecessor verbatim on a physical no-op.  A
+	// ContributionBase is deliberately marked unpublishable, however, so the
+	// successful Finish cut must normalize that otherwise identical immutable
+	// State to this Work's ordinary authority before admitting it.  Roots,
+	// scope, and support already crossed the sole publication/closure cut
+	// above; this is only the nominal base-to-normal authority transition.
+	state.authority = work.authority
 	return work.admitConstructedContribution(state, coverage)
 }
 
@@ -371,10 +607,20 @@ func (work *Work) finishContribution(base ContributionBase, patches []Patch, ret
 // the base. Epoch cancellation and callback failure must use this operation;
 // it is the only cleanup path for a partially staged group.
 func (work *Work) AbortContribution(base ContributionBase, patches []Patch) bool {
-	if work == nil || base.value == nil || !work.OwnsContribution(base, base.value.inputs) {
+	return work.abortContribution(base.value, patches)
+}
+
+// AbortRuleContribution is the nominal PointState-input cleanup cut. It
+// consumes only patches prepared from this exact one-shot base, exactly like
+// the compatibility API; PointState inputs themselves remain immutable.
+func (work *Work) AbortRuleContribution(base RuleContributionBase, patches []Patch) bool {
+	return work.abortContribution(base.value, patches)
+}
+
+func (work *Work) abortContribution(owner *contributionBase, patches []Patch) bool {
+	if !work.ownsContributionBase(owner) {
 		return false
 	}
-	owner := base.value
 	defer owner.invalidate()
 	if !contributionPatchesOwned(work, owner, patches) {
 		return false
@@ -393,7 +639,7 @@ func (owner *contributionBase) invalidate() {
 	owner.work = nil
 	owner.plan = nil
 	owner.state = State{}
-	owner.environment = Contribution{}
+	owner.environment = contributionInput{}
 	owner.hasEnvironment = false
 	owner.rootsOwned = false
 }

@@ -103,6 +103,43 @@ func TestUnderMasksBranchesOutsideSharedSupport(t *testing.T) {
 	}
 }
 
+func TestContributionOrderUsesLeftAuthoredRegion(t *testing.T) {
+	fixture, domain := newUnderDomain(t)
+	scratch := diagram.NewSoleScratch[semanticKey, uint8]()
+	left := underPlane(t, domain, fixture.root(t,
+		struct {
+			when  support.Mask
+			value uint8
+		}{when: fixture.notAtom, value: 10},
+		struct {
+			when  support.Mask
+			value uint8
+		}{when: fixture.atom, value: 20},
+	))
+	right := underPlane(t, domain, fixture.root(t, struct {
+		when  support.Mask
+		value uint8
+	}{when: fixture.all, value: 10}))
+	regions := func(key semanticKey) (support.Mask, bool) {
+		if key != 7 {
+			return support.Mask{}, false
+		}
+		return fixture.notAtom, true
+	}
+	if !domain.LessOrEqContribution(left, right, regions, scratch) {
+		t.Fatal("difference outside the left-authored region affected lifted order")
+	}
+	regions = func(key semanticKey) (support.Mask, bool) {
+		if key != 7 {
+			return support.Mask{}, false
+		}
+		return fixture.all, true
+	}
+	if domain.LessOrEqContribution(left, right, regions, scratch) {
+		t.Fatal("authored greater branch ordered below the right plane")
+	}
+}
+
 func underWideRoot(t testing.TB, fixture semanticFixture, width int, first uint8) diagram.Root[semanticFactor, semanticKey, uint8] {
 	t.Helper()
 	builder := fixture.diagram.Begin()

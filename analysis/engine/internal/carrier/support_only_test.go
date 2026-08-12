@@ -99,11 +99,43 @@ func (work carryOnlyWork) MergeContributionUnder(left, _ RootHandle, _, _ suppor
 	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
 }
 
-func (work carryOnlyWork) MergeTransportedUnder(left, _ RootHandle, _, _, _, _ support.Mask, _ guard.Reindex, _, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+func (work carryOnlyWork) OverlayPointRHSUnder(left, _ RootHandle, _, _ support.Mask, _, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
 	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
 }
 
+func (work carryOnlyWork) LessOrEqContributionUnder(_, _ RootHandle, _, _ support.Mask, _, _ SlotCoverage) (bool, bool) {
+	return true, true
+}
+
+func (work carryOnlyWork) ContributionClosedUnder(RootHandle, support.Mask, SlotCoverage) bool {
+	return true
+}
+
+func (work carryOnlyWork) ContributionPresenceIncludedUnder(support.Mask, support.Mask, SlotCoverage, SlotCoverage) bool {
+	return true
+}
+
+func (work carryOnlyWork) MergeTransportedPointUnder(left, _ RootHandle, _, _, _, _ support.Mask, _ guard.Reindex, _, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
+}
+
+func (work carryOnlyWork) ReindexContributionUnder(left RootHandle, _, _ support.Mask, _ guard.Reindex, _, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
+}
+
+func (work carryOnlyWork) ReindexPointContributionUnder(left RootHandle, _, _ support.Mask, _ guard.Reindex, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
+}
+
+func (work carryOnlyWork) CloseContributionUnder(left, input RootHandle, _ support.Mask, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+	return work.issuer.IssueChange(left, input, nil, support.Mask{}, nil, nil, delta)
+}
+
 func (work carryOnlyWork) MergeSelectedUnder(_ MergeKind, _ uint64, left, _, right RootHandle, _, _ support.Split, delta *support.Work) (ChangeHandle, bool) {
+	return work.issuer.IssueChange(left, right, nil, support.Mask{}, nil, nil, delta)
+}
+
+func (work carryOnlyWork) MergeSelectedContributionUnder(_ MergeKind, _ uint64, left, _, right RootHandle, _, _ support.Split, _, _, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
 	return work.issuer.IssueChange(left, right, nil, support.Mask{}, nil, nil, delta)
 }
 

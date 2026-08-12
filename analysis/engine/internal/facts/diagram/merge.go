@@ -103,6 +103,45 @@ func (builder *Builder[F, K, V]) MergeSoleFactorRegions(left, right Root[F, K, V
 	return builder.mergeSoleFactorRegions(left, right, scratch, regions, combine, equal, report, covers)
 }
 
+// MergeSoleFactorKey applies the same closed contribution algebra to one
+// known changed key and persistently patches the left root. It is the sparse
+// incremental counterpart of MergeSoleFactorRegions: callers must derive the
+// key and exact right region from an owner-issued change proof, while Diagram
+// retains sole ownership of FDD traversal and immutable AVL publication.
+func (builder *Builder[F, K, V]) MergeSoleFactorKey(left, right Root[F, K, V], key K, leftSupport, rightSupport, referenceSupport support.Mask, scratch *SoleScratch[K, V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V]) (Root[F, K, V], support.Mask, bool) {
+	if builder == nil || !builder.open || builder.diagram == nil || !builder.Valid(left) || !builder.Valid(right) ||
+		!leftSupport.Valid() || !rightSupport.Valid() || !referenceSupport.Valid() ||
+		leftSupport.Manager() != builder.diagram.guards || rightSupport.Manager() != builder.diagram.guards || referenceSupport.Manager() != builder.diagram.guards ||
+		scratch == nil || regions == nil || !regions.Open() || combine == nil || equal == nil {
+		return Root[F, K, V]{}, support.Mask{}, false
+	}
+	factor, ok := builder.diagram.SoleFactor()
+	if !ok {
+		return Root[F, K, V]{}, support.Mask{}, false
+	}
+	rank, ok := builder.diagram.ranks[factor]
+	if !ok {
+		return Root[F, K, V]{}, support.Mask{}, false
+	}
+	leftFactor, rightFactor := findFactor(left.root, rank), findFactor(right.root, rank)
+	var leftValue, rightValue *node[V]
+	if leftFactor != nil {
+		leftValue = columnValue(leftFactor.keys, key)
+	}
+	if rightFactor != nil {
+		rightValue = columnValue(rightFactor.keys, key)
+	}
+	value, changed, ok := builder.mergeSoleColumn(key, leftValue, rightValue, leftSupport, rightSupport, referenceSupport, scratch, regions, combine, equal)
+	if !ok {
+		return Root[F, K, V]{}, support.Mask{}, false
+	}
+	root, ok := builder.Put(left, factor, key, Value[V]{owner: builder.diagram.owner, node: value})
+	if !ok {
+		return Root[F, K, V]{}, support.Mask{}, false
+	}
+	return root, changed, true
+}
+
 func (builder *Builder[F, K, V]) mergeSoleFactorRegions(left, right Root[F, K, V], scratch *SoleScratch[K, V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V], report SoleChange[K], covers SoleRegions[K]) (Root[F, K, V], bool) {
 	factor, ok := builder.diagram.SoleFactor()
 	if !ok {
@@ -143,6 +182,7 @@ func (builder *Builder[F, K, V]) mergeSoleFactorRegions(left, right Root[F, K, V
 		}
 		if !sameSparseNode(pair.left, value) {
 			sameLeft = false
+			scratch.patches = append(scratch.patches, soleOutput[K, V]{key: pair.key, value: value})
 		}
 		if !sameSparseNode(pair.right, value) {
 			sameRight = false
@@ -159,6 +199,31 @@ func (builder *Builder[F, K, V]) mergeSoleFactorRegions(left, right Root[F, K, V
 	}
 	if len(scratch.output) == 0 {
 		return Root[F, K, V]{diagram: builder.diagram, lease: builder.lease}, true
+	}
+	// A changed sparse point normally touches only a few persistent columns.
+	// Preserve the immutable AVL subtrees of the left predecessor in that case
+	// instead of rebuilding every key node. The bulk builder remains cheaper
+	// when a substantial fraction changed. This changes representation only;
+	// the synchronized fold above already constructed the exact final columns.
+	if len(scratch.patches) != 0 && len(scratch.patches)*16 < len(scratch.output) {
+		keys := factorKeys(findFactor(left.root, rank))
+		for _, patch := range scratch.patches {
+			if undefinedNode(patch.value) {
+				var removed bool
+				keys, removed = deleteKey(keys, patch.key)
+				if !removed {
+					return Root[F, K, V]{}, false
+				}
+				continue
+			}
+			keys, _ = setKey(keys, patch.key, patch.value)
+		}
+		return Root[F, K, V]{
+			diagram: builder.diagram,
+			root:    makeFactor(factor, rank, keys, nil, nil),
+			count:   len(scratch.output),
+			lease:   builder.lease,
+		}, true
 	}
 	keys := buildSoleKeys(scratch)
 	return Root[F, K, V]{

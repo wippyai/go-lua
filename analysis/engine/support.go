@@ -168,8 +168,8 @@ func (compiled *compiledSupportRule) dynamicReads() []demand.DynamicRead {
 // typed Product and RuleAdmission proof as a Factor Rule, but returns only a
 // retained support result. The caller must place that result in the Group's
 // already-open contribution; it cannot publish independently.
-func (compiled *compiledSupportRule) execute(work *carrier.Work, base carrier.ContributionBase, inputs []carrier.State, within support.Mask) (retained support.Mask, reads []demand.Observation, accepted bool) {
-	if !compiled.executableInstance() || work == nil || !work.OwnsContributionStates(base, inputs) || len(compiled.reads) != len(compiled.rule.reads) {
+func (compiled *compiledSupportRule) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (retained support.Mask, reads []demand.Observation, accepted bool) {
+	if !compiled.executableInstance() || work == nil || !work.OwnsRuleContributionStates(base, inputs) || len(compiled.reads) != len(compiled.rule.reads) {
 		return support.Mask{}, nil, false
 	}
 	epoch := compiled.nextEpoch.Add(1)

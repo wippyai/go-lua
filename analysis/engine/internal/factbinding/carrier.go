@@ -359,8 +359,11 @@ type bindingWork[K scalar.Key, V any] struct {
 	// Coverage maps are evaluator scratch only. They resolve opaque authored
 	// Targets beside this typed Binding for one fold and are cleared before
 	// the fold returns; no coverage or fact authority is retained here.
-	coverageLeft  map[K]support.Mask
-	coverageRight map[K]support.Mask
+	coverageLeft   map[K]support.Mask
+	coverageRight  map[K]support.Mask
+	coverageOutput map[K]support.Mask
+	changed        map[K]support.Mask
+	changeRows     []semantic.ContributionChange[K]
 }
 
 // BindRootEpoch is carrier's one evaluator-open lifecycle cut.  It registers
@@ -400,6 +403,12 @@ func (work *bindingWork[K, V]) CloseRootEpoch() {
 	work.coverageLeft = nil
 	clear(work.coverageRight)
 	work.coverageRight = nil
+	clear(work.coverageOutput)
+	work.coverageOutput = nil
+	clear(work.changed)
+	work.changed = nil
+	clear(work.changeRows)
+	work.changeRows = nil
 	if work.supportWork != nil {
 		work.supportWork.Close()
 		work.supportWork = nil
@@ -693,6 +702,132 @@ func (work *bindingWork[K, V]) LessOrEqUnder(left, right carrier.RootHandle, wit
 	return ok && binding.plane.domain.LessOrEqUnder(first, second, within, &work.scratch)
 }
 
+// LessOrEqContributionUnder proves the lifted partial order for one closed
+// typed slot.  Coverage is the entire presence authority; the sparse root is
+// consulted only at left-present cells, where undefined means Default.
+func (work *bindingWork[K, V]) LessOrEqContributionUnder(left, right carrier.RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage carrier.SlotCoverage) (bool, bool) {
+	if !work.live() || work.binding == nil || !leftSupport.Valid() || !rightSupport.Valid() || leftSupport.Manager() != work.binding.plane.domain.Guards() || rightSupport.Manager() != work.binding.plane.domain.Guards() || !leftSupport.Entails(rightSupport) {
+		return false, false
+	}
+	first, ok := work.resolve(left)
+	if !ok {
+		return false, false
+	}
+	second, ok := work.resolve(right)
+	if !ok {
+		return false, false
+	}
+	defer func() {
+		clear(work.coverageLeft)
+		clear(work.coverageRight)
+	}()
+	work.coverageLeft, ok = work.contributionCoverage(leftCoverage, leftSupport, work.coverageLeft)
+	if !ok {
+		return false, false
+	}
+	work.coverageRight, ok = work.contributionCoverage(rightCoverage, rightSupport, work.coverageRight)
+	if !ok || !coverageMapContains(work.coverageLeft, work.coverageRight) {
+		return false, false
+	}
+	return work.binding.plane.domain.LessOrEqContribution(first, second, func(key K) (support.Mask, bool) {
+		return contributionRegion(work.coverageLeft, key)
+	}, &work.scratch), true
+}
+
+func coverageMapContains[K scalar.Key](left, right map[K]support.Mask) bool {
+	for key, region := range left {
+		other, ok := right[key]
+		if !ok || !region.Entails(other) {
+			return false
+		}
+	}
+	return true
+}
+
+// unionContributionCoverage is evaluator scratch, not a second presence
+// representation.  It computes the extensional key x guard union of two
+// carrier-owned Target relations immediately before one typed operation.
+func unionContributionCoverage[K scalar.Key](left, right, result map[K]support.Mask) (map[K]support.Mask, bool) {
+	if result == nil {
+		result = make(map[K]support.Mask, len(left)+len(right))
+	}
+	clear(result)
+	for key, region := range left {
+		result[key] = region
+	}
+	for key, region := range right {
+		if prior, present := result[key]; present {
+			merged, ok := support.Union(prior, region)
+			if !ok {
+				return nil, false
+			}
+			result[key] = merged
+		} else {
+			result[key] = region
+		}
+	}
+	return result, true
+}
+
+func contributionRegion[K scalar.Key](coverage map[K]support.Mask, key K) (support.Mask, bool) {
+	region, present := coverage[key]
+	return region, present
+}
+
+// contributionRegionAt resolves one sparse typed key against carrier-owned
+// Target rows without expanding the complete Target×key incidence relation.
+// targetReverse is immutable cold Binding geometry; coverage remains the sole
+// dynamic authorship authority. The lookup cost is proportional to this key's
+// declared target degree, not to every key of every authored Target.
+func (work *bindingWork[K, V]) contributionRegionAt(coverage carrier.SlotCoverage, within support.Mask, key K) (support.Mask, bool, bool) {
+	if !work.live() || work.binding == nil || work.binding.plane == nil || !within.Valid() || within.Manager() != work.binding.plane.domain.Guards() {
+		return support.Mask{}, false, false
+	}
+	incidence := work.binding.targetReverse[key]
+	if coverage.Count() == 0 || len(incidence) == 0 {
+		return support.Mask{}, false, true
+	}
+	var result support.Mask
+	present := false
+	for _, target := range incidence {
+		targetDescriptor, known := work.binding.targets[target]
+		if !known {
+			return support.Mask{}, false, false
+		}
+		low, high := 0, coverage.Count()
+		for low < high {
+			middle := low + (high-low)/2
+			row, ok := coverage.At(middle)
+			rowDescriptor, known := work.binding.targets[row.Target()]
+			if !ok || !known {
+				return support.Mask{}, false, false
+			}
+			if targetOrderLess(rowDescriptor.order, targetDescriptor.order) {
+				low = middle + 1
+			} else {
+				high = middle
+			}
+		}
+		row, ok := coverage.At(low)
+		if !ok || !row.Target().Same(target) {
+			continue
+		}
+		region := row.Region()
+		if !region.Valid() || region.Manager() != work.binding.plane.domain.Guards() {
+			return support.Mask{}, false, false
+		}
+		if !present {
+			result, present = region, true
+			continue
+		}
+		result, ok = support.Union(result, region)
+		if !ok {
+			return support.Mask{}, false, false
+		}
+	}
+	return result, present, true
+}
+
 func (work *bindingWork[K, V]) contributionCoverage(coverage carrier.SlotCoverage, within support.Mask, result map[K]support.Mask) (map[K]support.Mask, bool) {
 	if !work.live() || work.binding == nil || !within.Valid() || within.Manager() != work.binding.plane.domain.Guards() {
 		return result, false
@@ -713,7 +848,7 @@ func (work *bindingWork[K, V]) contributionCoverage(coverage carrier.SlotCoverag
 		for _, key := range descriptor.keys {
 			region := row.Region()
 			if previous, present := result[key]; present {
-				region, ok = work.unionSupport(previous, region)
+				region, ok = support.Union(previous, region)
 				if !ok {
 					return nil, false
 				}
@@ -724,6 +859,107 @@ func (work *bindingWork[K, V]) contributionCoverage(coverage carrier.SlotCoverag
 	return result, true
 }
 
+// CloseContributionUnder is the typed half of every RuleContribution
+// issuance.  It proves that the candidate already agrees with its closed
+// surface under final support, then physically drops every root fiber outside
+// that surface before preparing the one final root publication.  A preview
+// candidate is intentionally never reused: its publisher owns the temporary
+// root and the closed plane receives a fresh normal pending publisher.
+func (work *bindingWork[K, V]) CloseContributionUnder(before, input carrier.RootHandle, within support.Mask, coverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
+	if !work.live() || work.binding == nil || work.binding.plane == nil || delta == nil || !delta.Open() || !within.Valid() || within.Manager() != work.binding.plane.domain.Guards() {
+		return carrier.ChangeHandle{}, false
+	}
+	prior, ok := work.resolve(before)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	candidate, ok := work.resolve(input)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	coverageValid := true
+	closed, ok := work.binding.plane.domain.CloseContribution(candidate, within, func(key K) (support.Mask, bool) {
+		region, present, valid := work.contributionRegionAt(coverage, within, key)
+		coverageValid = coverageValid && valid
+		return region, present && valid
+	})
+	if !ok || !coverageValid || !work.binding.plane.domain.EqualUnder(candidate, closed, within, &work.scratch) {
+		return carrier.ChangeHandle{}, false
+	}
+	// The close is allowed to erase only out-of-support payload (or a sparse
+	// Default encoding).  Its published delta is nevertheless derived from the
+	// actual predecessor to the closed final root, rather than inherited from a
+	// staged patch whose publisher named the unclosed preview candidate.
+	work.changes.reset()
+	defer work.changes.reset()
+	split, ok := support.Three(within, within)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	report := func(key K, region support.Mask) bool {
+		if len(work.changes.rows) != 0 && work.changes.rows[len(work.changes.rows)-1].key >= key {
+			return false
+		}
+		work.changes.rows = append(work.changes.rows, mergeChange[K]{key: key, region: region})
+		return true
+	}
+	if !work.binding.plane.domain.ReplaceUnder(prior, closed, split, &work.scratch, delta, report) {
+		return carrier.ChangeHandle{}, false
+	}
+	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	// Initial/non-carried roots often already equal the final closed plane.
+	// Reuse only a normal published root; a preview root must be converted into
+	// this transaction's own pending publisher even if its plane is unchanged.
+	_, preview := work.epoch.ResolvePreviewRoot(work.binding.issuer, input)
+	if !preview && work.binding.plane.domain.Same(candidate, closed) {
+		return work.prepareChange(before, input, closed, false, factor, units, regions, delta)
+	}
+	return work.prepareChange(before, carrier.RootHandle{}, closed, true, factor, units, regions, delta)
+}
+
+func (work *bindingWork[K, V]) ContributionClosedUnder(root carrier.RootHandle, within support.Mask, coverage carrier.SlotCoverage) bool {
+	if !work.live() || work.binding == nil || work.binding.plane == nil || !within.Valid() || within.Manager() != work.binding.plane.domain.Guards() {
+		return false
+	}
+	input, ok := work.resolve(root)
+	if !ok {
+		return false
+	}
+	defer func() { clear(work.coverageOutput) }()
+	work.coverageOutput, ok = work.contributionCoverage(coverage, within, work.coverageOutput)
+	if !ok {
+		return false
+	}
+	return work.binding.plane.domain.ContributionClosed(input, within, func(key K) (support.Mask, bool) {
+		return contributionRegion(work.coverageOutput, key)
+	})
+}
+
+// ContributionPresenceIncludedUnder compares only the lifted authored
+// presence surface. Target aliases are expanded beside the Binding, so this
+// is extensional in concrete key x guard cells rather than syntactic target
+// row inclusion. It deliberately does not inspect roots or values: Widen may
+// raise a value, but it must not turn an already Present cell into Absent.
+func (work *bindingWork[K, V]) ContributionPresenceIncludedUnder(leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage carrier.SlotCoverage) bool {
+	if !work.live() || work.binding == nil || work.binding.plane == nil || !leftSupport.Valid() || !rightSupport.Valid() || leftSupport.Manager() != work.binding.plane.domain.Guards() || rightSupport.Manager() != work.binding.plane.domain.Guards() || !leftSupport.Entails(rightSupport) {
+		return false
+	}
+	defer func() {
+		clear(work.coverageLeft)
+		clear(work.coverageRight)
+	}()
+	var ok bool
+	work.coverageLeft, ok = work.contributionCoverage(leftCoverage, leftSupport, work.coverageLeft)
+	if !ok {
+		return false
+	}
+	work.coverageRight, ok = work.contributionCoverage(rightCoverage, rightSupport, work.coverageRight)
+	return ok && coverageMapContains(work.coverageLeft, work.coverageRight)
+}
+
 // MergeContributionUnder resolves opaque target coverage only beside this
 // typed Binding. For each concrete key, the effective left support is
 // (left-state minus right authorship) union left authorship: right-only cells
@@ -731,7 +967,7 @@ func (work *bindingWork[K, V]) contributionCoverage(coverage carrier.SlotCoverag
 // right cells are fold identity. Sparse zero therefore means Default exactly
 // when coverage says the producer authored that key/Guard.
 func (work *bindingWork[K, V]) MergeContributionUnder(left, right carrier.RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
-	if !work.live() {
+	if !work.live() || work.binding == nil || work.binding.plane == nil || delta == nil || !delta.Open() || !leftSupport.Valid() || !rightSupport.Valid() || leftSupport.Manager() != work.binding.plane.domain.Guards() || rightSupport.Manager() != work.binding.plane.domain.Guards() {
 		return carrier.ChangeHandle{}, false
 	}
 	first, ok := work.resolve(left)
@@ -742,15 +978,212 @@ func (work *bindingWork[K, V]) MergeContributionUnder(left, right carrier.RootHa
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
-	return work.mergeContributionPlanes(left, right, first, second, leftSupport, rightSupport, leftCoverage, rightCoverage, delta, true)
+	if work.changed == nil {
+		work.changed = make(map[K]support.Mask)
+	}
+	clear(work.changed)
+	work.changeRows = work.changeRows[:0]
+	defer func() {
+		clear(work.changed)
+		clear(work.changeRows)
+		work.changeRows = work.changeRows[:0]
+	}()
+	for index := 0; index < rightCoverage.Count(); index++ {
+		row, valid := rightCoverage.At(index)
+		descriptor, owned := work.binding.targets[row.Target()]
+		if !valid || !owned || !row.Region().Valid() || row.Region().Manager() != work.binding.plane.domain.Guards() || support.Empty(row.Region()) || !row.Region().Entails(rightSupport) {
+			return carrier.ChangeHandle{}, false
+		}
+		for _, key := range descriptor.keys {
+			region := row.Region()
+			if prior, present := work.changed[key]; present {
+				region, ok = support.Union(prior, region)
+				if !ok {
+					return carrier.ChangeHandle{}, false
+				}
+			}
+			work.changed[key] = region
+		}
+	}
+	if len(work.changed) == 0 {
+		return work.prepareChange(left, left, first, false, support.Mask{}, nil, nil, delta)
+	}
+	if cap(work.changeRows) < len(work.changed) {
+		work.changeRows = make([]semantic.ContributionChange[K], 0, len(work.changed))
+	}
+	for key, region := range work.changed {
+		work.changeRows = append(work.changeRows, semantic.ContributionChange[K]{Key: key, Region: region})
+	}
+	sort.Slice(work.changeRows, func(left, right int) bool { return work.changeRows[left].Key < work.changeRows[right].Key })
+	work.changes.reset()
+	defer work.changes.reset()
+	report := func(key K, region support.Mask) bool {
+		if len(work.changes.rows) != 0 && work.changes.rows[len(work.changes.rows)-1].key >= key {
+			return false
+		}
+		work.changes.rows = append(work.changes.rows, mergeChange[K]{key: key, region: region})
+		return true
+	}
+	empty, ok := support.FromGuard(work.binding.plane.domain.Guards(), work.binding.plane.domain.Guards().False())
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	next, ok := work.binding.plane.domain.JoinContributionChanges(first, second, work.changeRows, &work.scratch, delta, report, func(key K) (support.Mask, support.Mask, support.Mask, bool) {
+		leftRegion, leftPresent, leftValid := work.contributionRegionAt(leftCoverage, leftSupport, key)
+		if !leftValid {
+			return support.Mask{}, support.Mask{}, support.Mask{}, false
+		}
+		if !leftPresent {
+			leftRegion = empty
+		}
+		rightRegion, rightPresent := work.changed[key]
+		if !rightPresent {
+			return support.Mask{}, support.Mask{}, support.Mask{}, false
+		}
+		return leftRegion, rightRegion, leftRegion, true
+	})
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if work.binding.plane.domain.Same(first, next) {
+		if work.changes.Count() != 0 {
+			return carrier.ChangeHandle{}, false
+		}
+		return work.prepareChange(left, left, next, false, support.Mask{}, nil, nil, delta)
+	}
+	if work.binding.plane.domain.Same(second, next) {
+		return work.prepareChange(left, right, next, false, factor, units, regions, delta)
+	}
+	return work.prepareChange(left, carrier.RootHandle{}, next, true, factor, units, regions, delta)
 }
 
-// MergeTransportedUnder is the one fused typed operation for a nonidentity
-// environment edge. The carrier has already transformed authored coverage
-// and support. This method reindexes the right plane over the full target
-// support before post, then joins it with the left plane using the visible
-// post-clipped support; no intermediate transported root is published.
-func (work *bindingWork[K, V]) MergeTransportedUnder(left, right carrier.RootHandle, leftSupport, sourceSupport, reindexedSupport, rightSupport support.Mask, relation guard.Reindex, leftCoverage, rightCoverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
+// OverlayPointRHSUnder is the directional PointRHS operation. Both operands
+// keep the lifted-partial authored law: absent left coverage is Absent, not
+// this Factor's Default. Its physical left region is nevertheless extended
+// outside leftSupport so a sparse overlay retains latent point-root fibers
+// byte-for-byte there. Inside leftSupport, only leftCoverage participates.
+// Only closed right coverage changes an authored cell.
+//
+// The carrier admits this operation only when rightSupport is contained by
+// leftSupport.  A support-growing rule must use the explicit total PointRHS
+// semantic join instead; retaining an old root over that growth would make a
+// latent out-of-support branch observable.
+func (work *bindingWork[K, V]) OverlayPointRHSUnder(left, right carrier.RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
+	if !work.live() || work.binding == nil || work.binding.plane == nil || delta == nil || !delta.Open() || !leftSupport.Valid() || !rightSupport.Valid() || leftSupport.Manager() != work.binding.plane.domain.Guards() || rightSupport.Manager() != work.binding.plane.domain.Guards() || !rightSupport.Entails(leftSupport) {
+		return carrier.ChangeHandle{}, false
+	}
+	first, ok := work.resolve(left)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	second, ok := work.resolve(right)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if work.changed == nil {
+		work.changed = make(map[K]support.Mask)
+	}
+	clear(work.changed)
+	work.changeRows = work.changeRows[:0]
+	defer func() {
+		clear(work.changed)
+		clear(work.changeRows)
+		work.changeRows = work.changeRows[:0]
+	}()
+	for index := 0; index < rightCoverage.Count(); index++ {
+		row, valid := rightCoverage.At(index)
+		descriptor, owned := work.binding.targets[row.Target()]
+		if !valid || !owned || !row.Region().Valid() || row.Region().Manager() != work.binding.plane.domain.Guards() || support.Empty(row.Region()) || !row.Region().Entails(rightSupport) {
+			return carrier.ChangeHandle{}, false
+		}
+		for _, key := range descriptor.keys {
+			region := row.Region()
+			if prior, present := work.changed[key]; present {
+				region, ok = support.Union(prior, region)
+				if !ok {
+					return carrier.ChangeHandle{}, false
+				}
+			}
+			work.changed[key] = region
+		}
+	}
+	if len(work.changed) == 0 {
+		return work.prepareChange(left, left, first, false, support.Mask{}, nil, nil, delta)
+	}
+	outside, ok := delta.Not(leftSupport)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if cap(work.changeRows) < len(work.changed) {
+		work.changeRows = make([]semantic.ContributionChange[K], 0, len(work.changed))
+	}
+	for key, region := range work.changed {
+		work.changeRows = append(work.changeRows, semantic.ContributionChange[K]{Key: key, Region: region})
+	}
+	sort.Slice(work.changeRows, func(left, right int) bool { return work.changeRows[left].Key < work.changeRows[right].Key })
+	work.changes.reset()
+	defer work.changes.reset()
+	report := func(key K, region support.Mask) bool {
+		if len(work.changes.rows) != 0 && work.changes.rows[len(work.changes.rows)-1].key >= key {
+			return false
+		}
+		work.changes.rows = append(work.changes.rows, mergeChange[K]{key: key, region: region})
+		return true
+	}
+	// The semantic left region is the compact C surface, not full point
+	// support. The physical region additionally carries every branch outside
+	// point support, where it cannot participate in lifted semantics but must
+	// remain shared until LiftRuleContribution closes it. reference remains the
+	// semantic point support so out-of-support preservation has no fake delta.
+	next, ok := work.binding.plane.domain.JoinContributionChanges(first, second, work.changeRows, &work.scratch, delta, report, func(key K) (support.Mask, support.Mask, support.Mask, bool) {
+		leftRegion, leftPresent, leftValid := work.contributionRegionAt(leftCoverage, leftSupport, key)
+		if !leftValid {
+			return support.Mask{}, support.Mask{}, support.Mask{}, false
+		}
+		if !leftPresent {
+			leftRegion, ok = support.FromGuard(work.binding.plane.domain.Guards(), work.binding.plane.domain.Guards().False())
+			if !ok {
+				return support.Mask{}, support.Mask{}, support.Mask{}, false
+			}
+		}
+		leftPhysical, merged := delta.Or(leftRegion, outside)
+		if !merged {
+			return support.Mask{}, support.Mask{}, support.Mask{}, false
+		}
+		rightRegion, present := work.changed[key]
+		if !present {
+			return support.Mask{}, support.Mask{}, support.Mask{}, false
+		}
+		return leftPhysical, rightRegion, leftSupport, true
+	})
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if work.binding.plane.domain.Same(first, next) {
+		if work.changes.Count() != 0 {
+			return carrier.ChangeHandle{}, false
+		}
+		return work.prepareChange(left, left, next, false, support.Mask{}, nil, nil, delta)
+	}
+	// Never reuse right: even when its values cover the changed cells, the
+	// PointRHS must retain left's latent out-of-support root branches.
+	return work.prepareChange(left, carrier.RootHandle{}, next, true, factor, units, regions, delta)
+}
+
+// MergeTransportedPointUnder is the fused total PointState transport path.
+// It deliberately does not consult source RHS coverage: an absent sparse
+// PointState cell denotes the Factor Default on reachable source support.
+// Target coverage is applied only when the transported semantic plane joins
+// the output RHS and the final root is closed.
+func (work *bindingWork[K, V]) MergeTransportedPointUnder(left, right carrier.RootHandle, leftSupport, sourceSupport, reindexedSupport, rightSupport support.Mask, relation guard.Reindex, leftCoverage, targetRightCoverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
 	if !work.live() || work.binding == nil || work.binding.plane == nil || delta == nil || !delta.Open() || !leftSupport.Valid() || !sourceSupport.Valid() || !reindexedSupport.Valid() || !rightSupport.Valid() || !relation.Valid() || leftSupport.Manager() != work.binding.plane.domain.Guards() || sourceSupport.Manager() != work.binding.plane.domain.Guards() || reindexedSupport.Manager() != work.binding.plane.domain.Guards() || rightSupport.Manager() != work.binding.plane.domain.Guards() {
 		return carrier.ChangeHandle{}, false
 	}
@@ -762,14 +1195,174 @@ func (work *bindingWork[K, V]) MergeTransportedUnder(left, right carrier.RootHan
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
-	if relation.Identity() {
-		return work.mergeContributionPlanes(left, right, first, second, leftSupport, rightSupport, leftCoverage, rightCoverage, delta, true)
+	// Coordinate identity changes no typed key or guard coordinate. Carrier has
+	// already transported pre/post into rightSupport and targetRightCoverage,
+	// so the complete Point edge is exactly a sparse closed contribution join
+	// over those target-authored regions. Values outside that surface are never
+	// consulted or published; a sparse missing terminal inside it still denotes
+	// the Factor Default required by total PointState transport.
+	if relation.CoordinateIdentity() {
+		return work.MergeContributionUnder(left, right, leftSupport, rightSupport, leftCoverage, targetRightCoverage, delta)
 	}
-	transported, ok := work.binding.plane.domain.Reindex(second, sourceSupport, reindexedSupport, relation)
+	transported := second
+	transported, ok = work.binding.plane.domain.Reindex(second, sourceSupport, reindexedSupport, relation)
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
-	return work.mergeContributionPlanes(left, carrier.RootHandle{}, first, transported, leftSupport, rightSupport, leftCoverage, rightCoverage, delta, false)
+	transported, ok = work.binding.plane.domain.Restrict(transported, rightSupport)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	return work.mergeContributionPlanes(left, carrier.RootHandle{}, first, transported, leftSupport, rightSupport, leftCoverage, targetRightCoverage, delta, false)
+}
+
+// MergeChangedCoordinatePointUnder applies an exact interval of ascending
+// Point transitions only at owner-issued changed key regions. The enclosing
+// carrier proves a coordinate-identity boundary and a gap-free publication
+// interval; this Binding unions those regions and reads final values directly
+// from current, so intermediate roots are neither retained nor reconstructed.
+func (work *bindingWork[K, V]) MergeChangedCoordinatePointUnder(left, current carrier.RootHandle, leftSupport, currentSupport, targetSupport, pre, post support.Mask, leftCoverage, currentCoverage carrier.SlotCoverage, semanticChanges []carrier.ChangeSet, authoredChanges carrier.CoverageChangeSet, delta *support.Work) (carrier.ChangeHandle, bool) {
+	if !work.live() || work.binding == nil || work.binding.plane == nil || delta == nil || !delta.Open() ||
+		!leftSupport.Valid() || !currentSupport.Valid() || !targetSupport.Valid() || !pre.Valid() || !post.Valid() ||
+		leftSupport.Manager() != work.binding.plane.domain.Guards() || currentSupport.Manager() != work.binding.plane.domain.Guards() || targetSupport.Manager() != work.binding.plane.domain.Guards() || pre.Manager() != work.binding.plane.domain.Guards() || post.Manager() != work.binding.plane.domain.Guards() {
+		return carrier.ChangeHandle{}, false
+	}
+	first, ok := work.resolve(left)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	second, ok := work.resolve(current)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if work.changed == nil {
+		work.changed = make(map[K]support.Mask)
+	}
+	clear(work.changed)
+	clear(work.changeRows)
+	work.changeRows = work.changeRows[:0]
+	defer func() {
+		clear(work.changed)
+		clear(work.changeRows)
+		work.changeRows = work.changeRows[:0]
+	}()
+	addRegion := func(key K, region support.Mask) bool {
+		// targetSupport already is post ∩ identity(pre ∩ currentSupport),
+		// so one intersection transports this source-local change region.
+		region, ok = support.Intersect(region, targetSupport)
+		if !ok {
+			return false
+		}
+		if support.Empty(region) {
+			return true
+		}
+		if prior, present := work.changed[key]; present {
+			region, ok = support.Union(prior, region)
+			if !ok {
+				return false
+			}
+		}
+		work.changed[key] = region
+		return true
+	}
+	for _, changes := range semanticChanges {
+		for index := 0; index < changes.Count(); index++ {
+			row, valid := changes.At(index)
+			if !valid {
+				return carrier.ChangeHandle{}, false
+			}
+			descriptor, owned := work.binding.units[row.Unit()]
+			if !owned {
+				continue
+			}
+			for _, key := range descriptor.keys {
+				if !addRegion(key, row.Region()) {
+					return carrier.ChangeHandle{}, false
+				}
+			}
+		}
+	}
+	for index := 0; index < authoredChanges.TargetCount(); index++ {
+		row, valid := authoredChanges.TargetAt(index)
+		if !valid {
+			return carrier.ChangeHandle{}, false
+		}
+		descriptor, owned := work.binding.targets[row.Target()]
+		if !owned {
+			continue
+		}
+		for _, key := range descriptor.keys {
+			if !addRegion(key, row.Region()) {
+				return carrier.ChangeHandle{}, false
+			}
+		}
+	}
+	if len(work.changed) == 0 {
+		return work.prepareChange(left, left, first, false, support.Mask{}, nil, nil, delta)
+	}
+	// This path is also the nominal PointRHS seminaive append. Its right
+	// authored region is contained by leftSupport, so left data outside that
+	// support can be retained physically without participating in the lifted
+	// join. LiftRuleContribution owns the later durable close.
+	outside, ok := delta.Not(leftSupport)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if cap(work.changeRows) < len(work.changed) {
+		work.changeRows = make([]semantic.ContributionChange[K], 0, len(work.changed))
+	}
+	for key, region := range work.changed {
+		work.changeRows = append(work.changeRows, semantic.ContributionChange[K]{Key: key, Region: region})
+	}
+	sort.Slice(work.changeRows, func(left, right int) bool { return work.changeRows[left].Key < work.changeRows[right].Key })
+	work.changes.reset()
+	defer work.changes.reset()
+	report := func(key K, region support.Mask) bool {
+		if len(work.changes.rows) != 0 && work.changes.rows[len(work.changes.rows)-1].key >= key {
+			return false
+		}
+		work.changes.rows = append(work.changes.rows, mergeChange[K]{key: key, region: region})
+		return true
+	}
+	empty, ok := support.FromGuard(work.binding.plane.domain.Guards(), work.binding.plane.domain.Guards().False())
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	next, ok := work.binding.plane.domain.JoinContributionChanges(first, second, work.changeRows, &work.scratch, delta, report, func(key K) (support.Mask, support.Mask, support.Mask, bool) {
+		leftRegion, leftPresent, leftValid := work.contributionRegionAt(leftCoverage, leftSupport, key)
+		if !leftValid {
+			return support.Mask{}, support.Mask{}, support.Mask{}, false
+		}
+		if !leftPresent {
+			leftRegion = empty
+		}
+		leftPhysical, merged := delta.Or(leftRegion, outside)
+		if !merged {
+			return support.Mask{}, support.Mask{}, support.Mask{}, false
+		}
+		rightRegion, rightPresent, rightValid := work.contributionRegionAt(currentCoverage, targetSupport, key)
+		if !rightValid {
+			return support.Mask{}, support.Mask{}, support.Mask{}, false
+		}
+		if !rightPresent {
+			rightRegion = empty
+		}
+		return leftPhysical, rightRegion, leftSupport, true
+	})
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if work.binding.plane.domain.Same(first, next) {
+		if work.changes.Count() != 0 {
+			return carrier.ChangeHandle{}, false
+		}
+		return work.prepareChange(left, left, next, false, support.Mask{}, nil, nil, delta)
+	}
+	return work.prepareChange(left, carrier.RootHandle{}, next, true, factor, units, regions, delta)
 }
 
 func (work *bindingWork[K, V]) mergeContributionPlanes(leftHandle, rightHandle carrier.RootHandle, first, second semantic.Plane[planeFactor, K, V], leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage carrier.SlotCoverage, delta *support.Work, reuseRight bool) (carrier.ChangeHandle, bool) {
@@ -778,19 +1371,6 @@ func (work *bindingWork[K, V]) mergeContributionPlanes(leftHandle, rightHandle c
 	}
 	work.changes.reset()
 	defer work.changes.reset()
-	defer func() {
-		clear(work.coverageLeft)
-		clear(work.coverageRight)
-	}()
-	var ok bool
-	work.coverageLeft, ok = work.contributionCoverage(leftCoverage, leftSupport, work.coverageLeft)
-	if !ok {
-		return carrier.ChangeHandle{}, false
-	}
-	work.coverageRight, ok = work.contributionCoverage(rightCoverage, rightSupport, work.coverageRight)
-	if !ok {
-		return carrier.ChangeHandle{}, false
-	}
 	empty, ok := support.FromGuard(work.binding.plane.domain.Guards(), work.binding.plane.domain.Guards().False())
 	if !ok {
 		return carrier.ChangeHandle{}, false
@@ -803,32 +1383,33 @@ func (work *bindingWork[K, V]) mergeContributionPlanes(leftHandle, rightHandle c
 		return true
 	}
 	next, ok := work.binding.plane.domain.JoinContributions(first, second, &work.scratch, delta, report, func(key K) (support.Mask, support.Mask, support.Mask, bool) {
-		rightRegion, rightCovered := work.coverageRight[key]
-		if !rightCovered {
-			return leftSupport, empty, leftSupport, true
+		leftRegion, leftPresent, leftValid := work.contributionRegionAt(leftCoverage, leftSupport, key)
+		if !leftValid {
+			return support.Mask{}, support.Mask{}, support.Mask{}, false
 		}
-		leftRegion, leftCovered := work.coverageLeft[key]
-		if !leftCovered {
+		if !leftPresent {
 			leftRegion = empty
 		}
-		split, valid := work.threeSupport(leftSupport, rightRegion)
-		if !valid {
+		rightRegion, rightPresent, rightValid := work.contributionRegionAt(rightCoverage, rightSupport, key)
+		if !rightValid {
 			return support.Mask{}, support.Mask{}, support.Mask{}, false
 		}
-		effective, valid := work.unionSupport(split.LeftOnly(), leftRegion)
-		if !valid {
-			return support.Mask{}, support.Mask{}, support.Mask{}, false
+		if !rightPresent {
+			rightRegion = empty
 		}
-		return effective, rightRegion, leftSupport, true
+		// A physical key outside both compact coverage surfaces is hostile
+		// residue.  Treat it as Absent on both sides so the output closes it.
+		return leftRegion, rightRegion, leftRegion, true
 	})
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
-	nextSupport, ok := work.unionSupport(leftSupport, rightSupport)
-	if !ok {
-		return carrier.ChangeHandle{}, false
-	}
-	if work.binding.plane.domain.EqualUnder(first, next, nextSupport, &work.scratch) {
+	// JoinContributions is the sealing constructor for this plane. It traverses
+	// each sparse key under the two expanded authored surfaces, treats an
+	// uncovered operand as Absent, and emits nothing outside their union.
+	// Re-closing or re-scanning the result here would repeat that traversal in
+	// every point fold without strengthening the construction proof.
+	if work.binding.plane.domain.Same(first, next) {
 		if work.changes.Count() != 0 {
 			return carrier.ChangeHandle{}, false
 		}
@@ -838,15 +1419,12 @@ func (work *bindingWork[K, V]) mergeContributionPlanes(leftHandle, rightHandle c
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
-	if work.binding.plane.domain.EqualUnder(second, next, nextSupport, &work.scratch) {
+	if work.binding.plane.domain.Same(second, next) {
 		if reuseRight {
 			return work.prepareChange(leftHandle, rightHandle, next, false, factor, units, regions, delta)
 		}
-		// A nonidentity transport cannot reuse the source RootHandle, but the
-		// transported plane is still the exact final result under the visible
-		// support. Retain that plane as the one pending final root so values
-		// outside post remain available to a later support expansion; building
-		// `next` here would mask those hidden fibers to Default.
+		// A transport never reuses the source root: even a same-looking output
+		// must carry the post-closed physical plane, not hidden source fibers.
 		return work.prepareChange(leftHandle, carrier.RootHandle{}, second, true, factor, units, regions, delta)
 	}
 	return work.prepareChange(leftHandle, carrier.RootHandle{}, next, true, factor, units, regions, delta)
@@ -1497,6 +2075,112 @@ func (work *bindingWork[K, V]) MergeSelectedUnder(kind carrier.MergeKind, scope 
 	return work.prepareChange(current, carrier.RootHandle{}, next, true, factor, units, regions, delta)
 }
 
+// MergeSelectedContributionUnder is the closed recurrence publication.  The
+// selected Widen/Narrow calculation remains key-local, but its result is
+// required to agree with, and is physically masked to, the exact RHS
+// authored surface.  Thus historical current coverage can never leak through
+// a selected root after the exact RHS has changed.
+func (work *bindingWork[K, V]) MergeSelectedContributionUnder(kind carrier.MergeKind, scope uint64, current, selectedRight, exactRight carrier.RootHandle, selectedSplit, exactSplit support.Split, _ carrier.SlotCoverage, _ carrier.SlotCoverage, exactCoverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
+	if !work.live() || delta == nil || !delta.Open() || (kind != carrier.Widen && kind != carrier.Narrow) {
+		return carrier.ChangeHandle{}, false
+	}
+	work.changes.reset()
+	defer work.changes.reset()
+	binding := work.binding
+	if binding == nil || binding.plane == nil {
+		return carrier.ChangeHandle{}, false
+	}
+	left, ok := work.resolve(current)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	selectedPlane, ok := work.resolve(selectedRight)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	exactPlane, ok := work.resolve(exactRight)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	var next semantic.Plane[planeFactor, K, V]
+	var chosen widenScope[K]
+	switch kind {
+	case carrier.Widen:
+		chosen, ok = binding.widenScope(scope)
+		if !ok {
+			return carrier.ChangeHandle{}, false
+		}
+		widened, valid := binding.plane.domain.WidenUnderKeys(left, selectedPlane, selectedSplit, &work.scratch, nil, nil, chosen.contains)
+		if !valid {
+			return carrier.ChangeHandle{}, false
+		}
+		mixed, valid := work.threeSupport(selectedSplit.Right(), exactSplit.Right())
+		if !valid {
+			return carrier.ChangeHandle{}, false
+		}
+		next, ok = binding.plane.domain.SelectUnderKeys(widened, exactPlane, mixed, &work.scratch, nil, nil, chosen.contains)
+	case carrier.Narrow:
+		chosen, ok = binding.narrowScope(scope)
+		if !ok {
+			return carrier.ChangeHandle{}, false
+		}
+		narrowed, valid := binding.plane.domain.NarrowUnderKeys(left, selectedPlane, selectedSplit, &work.scratch, nil, nil, chosen.contains)
+		if !valid {
+			return carrier.ChangeHandle{}, false
+		}
+		mixed, valid := work.threeSupport(selectedSplit.Right(), exactSplit.Right())
+		if !valid {
+			return carrier.ChangeHandle{}, false
+		}
+		next, ok = binding.plane.domain.SelectUnderKeys(narrowed, exactPlane, mixed, &work.scratch, nil, nil, chosen.contains)
+	}
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	outputSupport := exactSplit.Right()
+	defer func() { clear(work.coverageOutput) }()
+	work.coverageOutput, ok = work.contributionCoverage(exactCoverage, outputSupport, work.coverageOutput)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	closed, ok := binding.plane.domain.CloseContribution(next, outputSupport, func(key K) (support.Mask, bool) {
+		return contributionRegion(work.coverageOutput, key)
+	})
+	// Unlike Finish, a selected recurrence is allowed to derive a raw semantic
+	// value on a historical current fiber that exact RHS authorship has since
+	// removed.  That fiber is Absent in the publishable contribution, so the
+	// final closed plane (not the pre-close raw recurrence plane) is the
+	// semantic result.  ReplaceUnder below deliberately derives the published
+	// delta from that closed result.
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	report := func(key K, region support.Mask) bool {
+		if len(work.changes.rows) != 0 && work.changes.rows[len(work.changes.rows)-1].key >= key {
+			return false
+		}
+		work.changes.rows = append(work.changes.rows, mergeChange[K]{key: key, region: region})
+		return true
+	}
+	if !binding.plane.domain.ReplaceUnder(left, closed, exactSplit, &work.scratch, delta, report) {
+		return carrier.ChangeHandle{}, false
+	}
+	factor, units, regions, ok := binding.expandChanges(&work.changes, delta)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if binding.plane.domain.Same(left, closed) {
+		if work.changes.Count() != 0 {
+			return carrier.ChangeHandle{}, false
+		}
+		return work.prepareChange(current, current, closed, false, support.Mask{}, nil, nil, delta)
+	}
+	if binding.plane.domain.Same(exactPlane, closed) {
+		return work.prepareChange(current, exactRight, closed, false, factor, units, regions, delta)
+	}
+	return work.prepareChange(current, carrier.RootHandle{}, closed, true, factor, units, regions, delta)
+}
+
 // ReindexUnder applies carrier's one sealed source-to-target relation to this
 // Binding's typed plane. Source support is mandatory: Domain.Reindex totals a
 // column only on that region before joining reachable fibers, preventing an
@@ -1526,6 +2210,92 @@ func (work *bindingWork[K, V]) ReindexUnder(left carrier.RootHandle, source, tar
 		return work.prepareChange(left, left, first, false, support.Mask{}, nil, nil, delta)
 	}
 	return work.prepareChange(left, carrier.RootHandle{}, next, true, support.Mask{}, nil, nil, delta)
+}
+
+// ReindexContributionUnder is lifted-partial contribution transport.  It
+// never delegates to raw Reindex: raw State must totalize Default over outer
+// support, while this path may totalize only source-present coverage.
+func (work *bindingWork[K, V]) ReindexContributionUnder(left carrier.RootHandle, source, target support.Mask, relation guard.Reindex, sourceCoverage, targetCoverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
+	if !work.live() || delta == nil || !delta.Open() || !relation.Valid() {
+		return carrier.ChangeHandle{}, false
+	}
+	binding := work.binding
+	if binding == nil || binding.plane == nil || !source.Valid() || !target.Valid() || source.Manager() != binding.plane.domain.Guards() || target.Manager() != binding.plane.domain.Guards() {
+		return carrier.ChangeHandle{}, false
+	}
+	first, ok := work.resolve(left)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	defer func() {
+		clear(work.coverageRight)
+		clear(work.coverageOutput)
+	}()
+	work.coverageRight, ok = work.contributionCoverage(sourceCoverage, source, work.coverageRight)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	work.coverageOutput, ok = work.contributionCoverage(targetCoverage, target, work.coverageOutput)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	next, ok := binding.plane.domain.ReindexContribution(first, source, target, relation, func(key K) (support.Mask, bool) {
+		return contributionRegion(work.coverageRight, key)
+	}, func(key K) (support.Mask, bool) {
+		return contributionRegion(work.coverageOutput, key)
+	})
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if binding.plane.domain.Same(first, next) {
+		return work.prepareChange(left, left, first, false, support.Mask{}, nil, nil, delta)
+	}
+	return work.prepareChange(left, carrier.RootHandle{}, next, true, support.Mask{}, nil, nil, delta)
+}
+
+// ReindexPointContributionUnder keeps semantic PointState transport total:
+// every reachable sparse absence is Default before the sealed relation is
+// applied.  The resulting target root is then closed to the contribution's
+// transported C, making the root suitable for RHS folding without changing
+// raw State transport semantics elsewhere.
+func (work *bindingWork[K, V]) ReindexPointContributionUnder(left carrier.RootHandle, source, target support.Mask, relation guard.Reindex, targetCoverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
+	if !work.live() || delta == nil || !delta.Open() || !relation.Valid() {
+		return carrier.ChangeHandle{}, false
+	}
+	binding := work.binding
+	if binding == nil || binding.plane == nil || !source.Valid() || !target.Valid() || source.Manager() != binding.plane.domain.Guards() || target.Manager() != binding.plane.domain.Guards() {
+		return carrier.ChangeHandle{}, false
+	}
+	first, ok := work.resolve(left)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	next := first
+	if !relation.CoordinateIdentity() {
+		next, ok = binding.plane.domain.Reindex(first, source, target, relation)
+		if !ok {
+			return carrier.ChangeHandle{}, false
+		}
+		next, ok = binding.plane.domain.Restrict(next, target)
+		if !ok {
+			return carrier.ChangeHandle{}, false
+		}
+	}
+	defer func() { clear(work.coverageOutput) }()
+	work.coverageOutput, ok = work.contributionCoverage(targetCoverage, target, work.coverageOutput)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	closed, ok := binding.plane.domain.CloseContribution(next, target, func(key K) (support.Mask, bool) {
+		return contributionRegion(work.coverageOutput, key)
+	})
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if binding.plane.domain.Same(first, closed) {
+		return work.prepareChange(left, left, closed, false, support.Mask{}, nil, nil, delta)
+	}
+	return work.prepareChange(left, carrier.RootHandle{}, closed, true, support.Mask{}, nil, nil, delta)
 }
 
 func (binding *Binding[K, V]) widenScope(id uint64) (widenScope[K], bool) {

@@ -376,10 +376,34 @@ func (reindexRejectWork) Merge3Under(carrier.MergeKind, bool, uint64, carrier.Ro
 func (reindexRejectWork) MergeContributionUnder(carrier.RootHandle, carrier.RootHandle, support.Mask, support.Mask, carrier.SlotCoverage, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
 	return carrier.ChangeHandle{}, false
 }
-func (reindexRejectWork) MergeTransportedUnder(carrier.RootHandle, carrier.RootHandle, support.Mask, support.Mask, support.Mask, support.Mask, guard.Reindex, carrier.SlotCoverage, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
+func (reindexRejectWork) OverlayPointRHSUnder(carrier.RootHandle, carrier.RootHandle, support.Mask, support.Mask, carrier.SlotCoverage, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
+	return carrier.ChangeHandle{}, false
+}
+func (reindexRejectWork) LessOrEqContributionUnder(carrier.RootHandle, carrier.RootHandle, support.Mask, support.Mask, carrier.SlotCoverage, carrier.SlotCoverage) (bool, bool) {
+	return false, false
+}
+func (reindexRejectWork) ContributionClosedUnder(carrier.RootHandle, support.Mask, carrier.SlotCoverage) bool {
+	return true
+}
+func (reindexRejectWork) ContributionPresenceIncludedUnder(support.Mask, support.Mask, carrier.SlotCoverage, carrier.SlotCoverage) bool {
+	return true
+}
+func (reindexRejectWork) MergeTransportedPointUnder(carrier.RootHandle, carrier.RootHandle, support.Mask, support.Mask, support.Mask, support.Mask, guard.Reindex, carrier.SlotCoverage, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
 	return carrier.ChangeHandle{}, false
 }
 func (reindexRejectWork) MergeSelectedUnder(carrier.MergeKind, uint64, carrier.RootHandle, carrier.RootHandle, carrier.RootHandle, support.Split, support.Split, *support.Work) (carrier.ChangeHandle, bool) {
+	return carrier.ChangeHandle{}, false
+}
+func (reindexRejectWork) MergeSelectedContributionUnder(carrier.MergeKind, uint64, carrier.RootHandle, carrier.RootHandle, carrier.RootHandle, support.Split, support.Split, carrier.SlotCoverage, carrier.SlotCoverage, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
+	return carrier.ChangeHandle{}, false
+}
+func (reindexRejectWork) ReindexContributionUnder(carrier.RootHandle, support.Mask, support.Mask, guard.Reindex, carrier.SlotCoverage, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
+	return carrier.ChangeHandle{}, false
+}
+func (reindexRejectWork) ReindexPointContributionUnder(carrier.RootHandle, support.Mask, support.Mask, guard.Reindex, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
+	return carrier.ChangeHandle{}, false
+}
+func (reindexRejectWork) CloseContributionUnder(carrier.RootHandle, carrier.RootHandle, support.Mask, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
 	return carrier.ChangeHandle{}, false
 }
 func (reindexRejectWork) ReindexUnder(carrier.RootHandle, support.Mask, support.Mask, guard.Reindex, *support.Work) (carrier.ChangeHandle, bool) {

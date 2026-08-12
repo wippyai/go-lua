@@ -5,6 +5,7 @@
 package factbinding
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
@@ -194,12 +195,16 @@ type Binding[K scalar.Key, V any] struct {
 	// roots owns only the immutable composition-attached initial root.  Every
 	// dynamic candidate/published root belongs instead to one bindingWork's
 	// epoch-local store and is revoked with that Work.
-	roots               *rootStore[planeFactor, K, V]
-	initial             *rootReservation[planeFactor, K, V]
-	units               map[carrier.Unit]declaredUnit[K]
-	unitList            []carrier.Unit
-	reverse             map[K][]carrier.Unit
-	targets             map[carrier.Target]declaredTarget[K]
+	roots    *rootStore[planeFactor, K, V]
+	initial  *rootReservation[planeFactor, K, V]
+	units    map[carrier.Unit]declaredUnit[K]
+	unitList []carrier.Unit
+	reverse  map[K][]carrier.Unit
+	targets  map[carrier.Target]declaredTarget[K]
+	// targetReverse is the immutable Target-incidence read index used by hot
+	// sparse root operations. It never stores Guard regions or authorship:
+	// SlotCoverage remains the sole dynamic presence authority.
+	targetReverse       map[K][]carrier.Target
 	widenScopes         []widenScope[K]
 	narrowScopes        []widenScope[K]
 	selectors           map[carrier.Selector]declaredSelector
@@ -588,10 +593,11 @@ func nextOrdinal(current uint64) (uint64, bool) {
 // typed key points to all exact and summary Units invalidated by a semantic
 // change at that key, in canonical declaration order.
 func (binding *Binding[K, V]) sealReverse() bool {
-	if binding == nil || !binding.declaring || binding.reverse != nil {
+	if binding == nil || !binding.declaring || binding.reverse != nil || binding.targetReverse != nil {
 		return false
 	}
 	reverse := make(map[K][]carrier.Unit)
+	targetReverse := make(map[K][]carrier.Target)
 	for position, unit := range binding.unitList {
 		descriptor, ok := binding.units[unit]
 		if !ok || descriptor.position != position {
@@ -606,6 +612,7 @@ func (binding *Binding[K, V]) sealReverse() bool {
 			if len(reverse[key]) == 0 {
 				return false
 			}
+			targetReverse[key] = append(targetReverse[key], target)
 		}
 		notifications, ok := notificationUnion(reverse, descriptor.keys)
 		if !ok {
@@ -614,7 +621,19 @@ func (binding *Binding[K, V]) sealReverse() bool {
 		descriptor.notifications = notifications
 		binding.targets[target] = descriptor
 	}
+	for key, targets := range targetReverse {
+		sort.Slice(targets, func(left, right int) bool {
+			return targetOrderLess(binding.targets[targets[left]].order, binding.targets[targets[right]].order)
+		})
+		for index := 1; index < len(targets); index++ {
+			if targets[index-1].Same(targets[index]) {
+				return false
+			}
+		}
+		targetReverse[key] = targets
+	}
 	binding.reverse = reverse
+	binding.targetReverse = targetReverse
 	return true
 }
 

@@ -158,7 +158,7 @@ func TestNeutralContributionRejectsDifferentScopeAndForeignWork(t *testing.T) {
 	}
 }
 
-func TestNeutralContributionRejectsInitialPresentAndChangedRoots(t *testing.T) {
+func TestEmptyContributionAcceptsOnlyCompositionInitialRoots(t *testing.T) {
 	manager, err := guard.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -194,9 +194,8 @@ func TestNeutralContributionRejectsInitialPresentAndChangedRoots(t *testing.T) {
 		t.Fatal("InitPresent state received neutral proof")
 	}
 	changed := contributionWrite(t, work, operations[0], bottomState, shape.Slot(0), 2)
-	changedContribution, ok := work.EmptyContribution(changed)
-	if !ok || work.neutralContribution(changedContribution) {
-		t.Fatal("changed initial root received neutral proof")
+	if _, ok := work.EmptyContribution(changed); ok {
+		t.Fatal("noninitial raw State was relabelled as an empty contribution")
 	}
 }
 

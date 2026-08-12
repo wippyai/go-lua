@@ -36,32 +36,28 @@ func (work *Work) Transport(state State, pre support.Mask, omega ReindexPlan, po
 	return work.filter(reindexed, post)
 }
 
-// MergeTransportedContribution fuses one directed environment transport with
-// the subsequent contribution fold.  The carrier computes the complete
-// support/coverage relation first, then asks a typed SlotWork to reindex and
-// join only slots whose transformed authored coverage is nonempty.  An
-// uncovered right slot is therefore the fold identity even when transport
-// enlarges the enclosing support; the accumulator root is retained exactly.
+// MergeTransportedPointContribution fuses one total PointState transport with
+// the subsequent closed RHS fold.  The carrier computes output C first; the
+// typed path totalizes reachable PointState absences to Default through omega,
+// then joins only at target-present cells and physically closes the output.
 //
 // The typed boundary receives no intermediate Contribution or published
 // reindexed root.  Its final ChangeHandle enters the same ordinary commit cut
 // as MergeContribution, preserving cancellation, pending-root drop, and
 // canonical physical-slot order.
-func (work *Work) MergeTransportedContribution(left, right Contribution, pre support.Mask, omega ReindexPlan, post support.Mask) (Contribution, ChangeSet, bool) {
+func (work *Work) MergeTransportedPointContribution(left, right Contribution, pre support.Mask, omega ReindexPlan, post support.Mask) (Contribution, ChangeSet, bool) {
 	if !work.live() || work.reindexing || !work.admittedContribution(left) || !work.admittedContribution(right) || !omega.validFor(work.composition) ||
 		!left.state.scope.same(omega.target()) || !right.state.scope.same(omega.source()) ||
 		!validBoundaryMask(pre, right.state.scope) || !validBoundaryMask(post, left.state.scope) {
 		return Contribution{}, ChangeSet{}, false
 	}
-	// A neutral accumulator is the complete carrier identity, not merely an
-	// uncovered sparse slot.  The existing two-step route must own this case so
-	// TransportContribution can retain every hidden/off-coverage transported
-	// root before MergeContribution returns the right operand unchanged.
+	// A neutral accumulator is the complete carrier identity. Point transport
+	// still uses total State semantics before the final C close.
 	if work.neutralContribution(left) {
 		if omega.identity() && pre.IsTrue() && post.IsTrue() {
 			return work.MergeContribution(left, right)
 		}
-		transported, ok := work.TransportContribution(right, pre, omega, post)
+		transported, ok := work.TransportPointContribution(right, pre, omega, post)
 		if !ok {
 			return Contribution{}, ChangeSet{}, false
 		}
@@ -72,6 +68,13 @@ func (work *Work) MergeTransportedContribution(left, right Contribution, pre sup
 	// proof without introducing a second merge authority.
 	if omega.identity() && pre.IsTrue() && post.IsTrue() {
 		return work.MergeContribution(left, right)
+	}
+	if omega.coordinateIdentity() && pre.IsTrue() && post.IsTrue() {
+		transported, ok := work.rescopeContribution(right, omega.target())
+		if !ok {
+			return Contribution{}, ChangeSet{}, false
+		}
+		return work.MergeContribution(left, transported)
 	}
 	work.reindexing = true
 	defer func() { work.reindexing = false }()
@@ -99,28 +102,9 @@ func (work *Work) MergeTransportedContribution(left, right Contribution, pre sup
 	if !ok {
 		return Contribution{}, ChangeSet{}, false
 	}
-	nextCoverage, ok := work.mergeCoverage(left.coverage, transportedCoverage, split.Union())
+	nextCoverage, ok := work.unionCoverage(left.coverage, transportedCoverage)
 	if !ok {
 		return Contribution{}, ChangeSet{}, false
-	}
-
-	// No transformed authored surface means no typed transport/join.  Support
-	// and coverage still publish through the normal carrier cut, so coverage-
-	// only wake/version evidence remains visible to the runtime.
-	hasAuthored := false
-	for position := range work.slots {
-		if len(transportedCoverage.slot(shape.Slot(position)).targets) != 0 {
-			hasAuthored = true
-			break
-		}
-	}
-	if !hasAuthored {
-		next, changes, committed := work.commit(left.state, nil, split.Union(), split.RightOnly(), emptyMask(work.composition.guards), nil)
-		if !committed {
-			return Contribution{}, ChangeSet{}, false
-		}
-		result, valid := work.admitConstructedContribution(next, nextCoverage)
-		return result, changes, valid
 	}
 
 	delta := work.newSupportWork()
@@ -136,12 +120,104 @@ func (work *Work) MergeTransportedContribution(left, right Contribution, pre sup
 		}
 		physical := shape.Slot(position)
 		rightSlot := transportedCoverage.slot(physical)
-		if len(rightSlot.targets) == 0 {
-			// The right contribution is absent at this slot after transport;
-			// preserving the accumulator root is the sparse fold law.
-			continue
+		change, valid := slot.MergeTransportedPointUnder(left.state.roots[position], right.state.roots[position], left.state.support, sourceSupport, reindexedSupport, rightSupport, omega.relation, coverageRows(left.coverage.slot(physical)), coverageRows(rightSlot), delta)
+		if !valid {
+			delta.Discard()
+			dropPatches(patches)
+			return Contribution{}, ChangeSet{}, false
 		}
-		change, valid := slot.MergeTransportedUnder(left.state.roots[position], right.state.roots[position], left.state.support, sourceSupport, reindexedSupport, rightSupport, omega.relation, coverageRows(left.coverage.slot(physical)), coverageRows(rightSlot), delta)
+		if !work.acceptInto(&patches, left.state, change, delta) {
+			delta.Discard()
+			return Contribution{}, ChangeSet{}, false
+		}
+	}
+	next, changes, committed := work.commit(left.state, patches, split.Union(), split.RightOnly(), emptyMask(work.composition.guards), delta)
+	if !committed {
+		return Contribution{}, ChangeSet{}, false
+	}
+	result, valid := work.admitConstructedContribution(next, nextCoverage)
+	return result, changes, valid
+}
+
+// FoldTransportedPointRHS is the no-intermediate-delta counterpart of
+// MergeTransportedPointContribution used only while assembling one complete
+// equation RHS. Coordinate-identical whole boundaries can rescope immutable
+// roots and enter FoldRHSContribution directly; every other boundary retains
+// the existing fused transport semantics.
+func (work *Work) FoldTransportedPointRHS(left, right Contribution, pre support.Mask, omega ReindexPlan, post support.Mask) (Contribution, bool) {
+	if !work.live() || !work.admittedContribution(left) || !work.admittedContribution(right) || !omega.validFor(work.composition) ||
+		!left.state.scope.same(omega.target()) || !right.state.scope.same(omega.source()) ||
+		!validBoundaryMask(pre, right.state.scope) || !validBoundaryMask(post, left.state.scope) {
+		return Contribution{}, false
+	}
+	if omega.coordinateIdentity() && pre.IsTrue() && post.IsTrue() {
+		transported, ok := work.rescopeContribution(right, omega.target())
+		if !ok {
+			return Contribution{}, false
+		}
+		return work.FoldRHSContribution(left, transported)
+	}
+	result, _, ok := work.MergeTransportedPointContribution(left, right, pre, omega, post)
+	return result, ok
+}
+
+// MergeChangedCoordinatePointContribution is the seminaive environment-edge
+// path for an exact interval of ascending source publications. The executor
+// supplies every immutable transition since this edge's prior sample. A
+// descent, missing transition, non-coordinate relation, or non-production
+// SlotWork stays on the complete MergeTransportedPointContribution path.
+func (work *Work) MergeChangedCoordinatePointContribution(left, previous, current Contribution, semantic []ChangeSet, authored CoverageChangeSet, pre support.Mask, omega ReindexPlan, post support.Mask) (Contribution, ChangeSet, bool) {
+	if !work.live() || work.reindexing || !work.admittedContribution(left) || !work.admittedContribution(previous) || !work.admittedContribution(current) ||
+		len(semantic) == 0 || !work.composition.OwnsCoverageChangeSet(authored) || !omega.validFor(work.composition) || !omega.coordinateIdentity() ||
+		!left.state.scope.same(omega.target()) || !previous.state.scope.same(omega.source()) || !current.state.scope.same(omega.source()) ||
+		!validBoundaryMask(pre, current.state.scope) || !validBoundaryMask(post, left.state.scope) {
+		return Contribution{}, ChangeSet{}, false
+	}
+	for index := range semantic {
+		if !work.composition.OwnsChangeSet(semantic[index]) {
+			return Contribution{}, ChangeSet{}, false
+		}
+	}
+	for _, slot := range work.slots {
+		if _, ok := slot.(ChangedPointSlotWork); !ok {
+			return work.MergeTransportedPointContribution(left, current, pre, omega, post)
+		}
+	}
+	work.reindexing = true
+	defer func() { work.reindexing = false }()
+	sourceSupport, ok := work.intersectSupport(current.state.support, pre)
+	if !ok {
+		return Contribution{}, ChangeSet{}, false
+	}
+	reindexedSupport, ok := work.reindexSupport(sourceSupport, omega.relation)
+	if !ok {
+		return Contribution{}, ChangeSet{}, false
+	}
+	targetSupport, ok := work.intersectSupport(reindexedSupport, post)
+	if !ok {
+		return Contribution{}, ChangeSet{}, false
+	}
+	targetCoverage, ok := work.transportContributionCoverage(current.coverage, pre, omega, post, targetSupport)
+	if !ok {
+		return Contribution{}, ChangeSet{}, false
+	}
+	split, ok := work.threeSupport(left.state.support, targetSupport)
+	if !ok {
+		return Contribution{}, ChangeSet{}, false
+	}
+	nextCoverage, ok := work.unionCoverage(left.coverage, targetCoverage)
+	if !ok {
+		return Contribution{}, ChangeSet{}, false
+	}
+	delta := work.newSupportWork()
+	if delta == nil {
+		return Contribution{}, ChangeSet{}, false
+	}
+	patches := make([]Patch, 0, len(work.slots))
+	for position, slot := range work.slots {
+		changed := slot.(ChangedPointSlotWork)
+		physical := shape.Slot(position)
+		change, valid := changed.MergeChangedCoordinatePointUnder(left.state.roots[position], current.state.roots[position], left.state.support, sourceSupport, targetSupport, pre, post, coverageRows(left.coverage.slot(physical)), coverageRows(targetCoverage.slot(physical)), semantic, authored, delta)
 		if !valid {
 			delta.Discard()
 			dropPatches(patches)
@@ -161,7 +237,7 @@ func (work *Work) MergeTransportedContribution(left, right Contribution, pre sup
 }
 
 // transportContributionCoverage applies the same source-pre, reindex, and
-// target-post relation to authored rows that TransportContribution uses.  It
+// target-post relation to authored rows that Point/Rule transport use.  It
 // remains carrier-owned: target capabilities stay opaque and only their
 // support regions cross the transport boundary.
 func (work *Work) transportContributionCoverage(input contributionCoverage, pre support.Mask, omega ReindexPlan, post, targetSupport support.Mask) (contributionCoverage, bool) {

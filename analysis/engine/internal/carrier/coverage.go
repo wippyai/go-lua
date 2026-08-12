@@ -120,12 +120,29 @@ func (work *Work) OwnsAdmittedContribution(contribution Contribution) bool {
 // the admitted fast path.
 func (work *Work) admitContribution(state State, coverage contributionCoverage) (Contribution, bool) {
 	result := Contribution{state: state, coverage: coverage}
-	if work == nil || !work.live() || !work.OwnsState(state) || state.previewMarked() || state.contributionMarked() || !result.Valid() {
+	if work == nil || !work.live() || !work.OwnsState(state) || state.previewMarked() || state.contributionMarked() || !result.Valid() || !work.closedContributionRoots(state, coverage) {
 		return Contribution{}, false
 	}
 	result.seal = work.contributionSeal
 	result.authority = state.authority
 	return result, work.admittedContribution(result)
+}
+
+// closedContributionRoots is the cold issuance proof for a State accepted
+// through the untrusted/raw boundary.  Canonical producer paths close their
+// roots while constructing their pending patch and use
+// admitConstructedContribution below, so this traversal is never a hot
+// admitted-read check or a duplicate per-fold validation.
+func (work *Work) closedContributionRoots(state State, coverage contributionCoverage) bool {
+	if work == nil || !work.live() || !work.OwnsState(state) || coverage.composition != work.composition {
+		return false
+	}
+	for position, slot := range work.slots {
+		if slot == nil || position >= len(state.roots) || !slot.ContributionClosedUnder(state.roots[position], state.support, coverageRows(coverage.slot(shape.Slot(position)))) {
+			return false
+		}
+	}
+	return true
 }
 
 // admitConstructedContribution is the private hot cut for carrier-produced
@@ -136,9 +153,10 @@ func (work *Work) admitContribution(state State, coverage contributionCoverage) 
 // O(F) validation pass, so this helper checks only the immutable outer shape
 // and reuses the existing Work seal and State authority.
 //
-// This is deliberately separate from admitContribution: callers that accept
-// a State or coverage from an untrusted/public boundary must continue to pay
-// the deep Valid check before receiving the seal.
+// This is deliberately separate from admitContribution: every caller is a
+// canonical carrier producer which has already physically closed its roots at
+// the typed construction boundary.  Raw State/coverage admission continues
+// through admitContribution and pays the whole-root closure proof.
 func (work *Work) admitConstructedContribution(state State, coverage contributionCoverage) (Contribution, bool) {
 	if work == nil || !work.live() || !work.OwnsState(state) || state.previewMarked() || state.contributionMarked() || coverage.composition != work.composition || len(coverage.slots) != 0 && len(coverage.slots) != work.composition.Count() {
 		return Contribution{}, false
@@ -178,12 +196,14 @@ func (work *Work) neutralContribution(contribution Contribution) bool {
 	return work != nil && contribution.seal == work.neutralSeal && work.admittedContribution(contribution) && len(contribution.coverage.slots) == 0
 }
 
-// EmptyContribution pairs an ordinary immutable State with empty authorship.
-// It is the unique base/Init construction route; the exact initial-root,
-// false-support case additionally receives the Work-private neutral seal.
-// No convenience path infers coverage from sparse roots.
+// EmptyContribution is the sole Point-base construction route.  A raw State
+// cannot be relabelled as an empty RHS: only the composition's immutable
+// initial root vector is valid, under any already-issued outer support.  The
+// false-support case additionally receives the merge-neutral seal; a
+// nonempty initial support remains a normal (non-neutral) contribution so a
+// later fold cannot silently discard its structural support.
 func (work *Work) EmptyContribution(state State) (Contribution, bool) {
-	if !work.live() || !work.OwnsState(state) || state.previewMarked() || state.contributionMarked() {
+	if !work.live() || !work.OwnsState(state) || state.previewMarked() || state.contributionMarked() || !sameRootVector(state.roots, work.composition.initial) {
 		return Contribution{}, false
 	}
 	coverage := contributionCoverage{composition: work.composition}
@@ -207,6 +227,19 @@ func (work *Work) admitDerivedContribution(input Contribution, state State, cove
 		}
 	}
 	return work.admitConstructedContribution(state, coverage)
+}
+
+// rescopeContribution publishes one coordinate-identical PointState in the
+// relation's exact target Scope without touching its immutable support,
+// roots, or authored coverage. This is a new carrier wrapper, not a second
+// semantic root or transport cache.
+func (work *Work) rescopeContribution(input Contribution, target Scope) (Contribution, bool) {
+	if work == nil || !work.live() || !work.admittedContribution(input) || !target.validFor(work.composition) {
+		return Contribution{}, false
+	}
+	state := input.state
+	state.scope = target
+	return work.admitConstructedContribution(state, input.coverage)
 }
 
 func (coverage contributionCoverage) validFor(state State) bool {
@@ -235,6 +268,9 @@ func sameSlotCoverage(left, right slotCoverage) bool {
 	if len(left.targets) != len(right.targets) {
 		return false
 	}
+	if len(left.targets) != 0 && &left.targets[0] == &right.targets[0] {
+		return true
+	}
 	for index := range left.targets {
 		if !left.targets[index].target.Same(right.targets[index].target) || !left.targets[index].region.Equal(right.targets[index].region) {
 			return false
@@ -261,6 +297,65 @@ func sameContributionCoverage(left, right contributionCoverage) bool {
 		}
 	}
 	return true
+}
+
+// unionCoverage joins two already-admitted closed contribution surfaces.
+// The caller has proved that output support is the union of the operands, so
+// every row is already within the result and needs neither clipping nor a
+// repeated Target ownership scan. Cold/raw coverage still enters through the
+// validating canonicalCoverage/restrictCoverage paths.
+func (work *Work) unionCoverage(left, right contributionCoverage) (contributionCoverage, bool) {
+	if !work.live() || left.composition != work.composition || right.composition != work.composition {
+		return contributionCoverage{}, false
+	}
+	result := contributionCoverage{composition: work.composition, slots: make([]slotCoverage, work.composition.Count())}
+	nonempty := false
+	for position := range result.slots {
+		merged, ok := work.unionSlotCoverage(left.slot(shape.Slot(position)), right.slot(shape.Slot(position)))
+		if !ok {
+			return contributionCoverage{}, false
+		}
+		result.slots[position] = merged
+		nonempty = nonempty || len(merged.targets) != 0
+	}
+	if !nonempty {
+		result.slots = nil
+	}
+	return result, true
+}
+
+func (work *Work) unionSlotCoverage(left, right slotCoverage) (slotCoverage, bool) {
+	switch {
+	case len(left.targets) == 0:
+		return right, true
+	case len(right.targets) == 0:
+		return left, true
+	case sameSlotCoverage(left, right) || slotCoverageContains(left, right):
+		return left, true
+	case slotCoverageContains(right, left):
+		return right, true
+	}
+	rows := make([]TargetRegion, 0, len(left.targets)+len(right.targets))
+	leftIndex, rightIndex := 0, 0
+	for leftIndex < len(left.targets) || rightIndex < len(right.targets) {
+		switch {
+		case rightIndex == len(right.targets) || leftIndex < len(left.targets) && left.targets[leftIndex].target.Less(right.targets[rightIndex].target):
+			rows = append(rows, left.targets[leftIndex])
+			leftIndex++
+		case leftIndex == len(left.targets) || right.targets[rightIndex].target.Less(left.targets[leftIndex].target):
+			rows = append(rows, right.targets[rightIndex])
+			rightIndex++
+		default:
+			region, ok := work.unionSupport(left.targets[leftIndex].region, right.targets[rightIndex].region)
+			if !ok {
+				return slotCoverage{}, false
+			}
+			rows = append(rows, TargetRegion{target: left.targets[leftIndex].target, region: region})
+			leftIndex++
+			rightIndex++
+		}
+	}
+	return slotCoverage{targets: rows}, true
 }
 
 func (work *Work) canonicalCoverage(rows []TargetRegion, within support.Mask) (slotCoverage, bool) {
@@ -490,11 +585,48 @@ func (work *Work) restrictCoverage(input contributionCoverage, within support.Ma
 	return work.mergeCoverage(input, empty, within)
 }
 
-// EqualContribution compares both semantic state and authored coverage. A
-// coverage-only change is deliberately visible to the solver lifecycle even
-// though it remains absent from the semantic ChangeSet.
+// EqualContribution compares closed contributions in the lifted authored
+// algebra.  Target rows are deliberately compared by their typed extensional
+// presence/value semantics rather than by their private generator spelling:
+// two aliasing Target rows can therefore be equal without manufacturing a
+// key-level carrier surface. A coverage-only change remains visible whenever
+// it changes that extensional surface.
 func (work *Work) EqualContribution(left, right Contribution) bool {
-	return work != nil && work.admittedContribution(left) && work.admittedContribution(right) && work.EqualUnder(left.state, right.state) && sameContributionCoverage(left.coverage, right.coverage)
+	return work != nil && work.admittedContribution(left) && work.admittedContribution(right) && work.equalContributionSurface(left.state, left.coverage, right.state, right.coverage)
+}
+
+// validContributionSurface is the common private role fence for all lifted
+// comparisons.  A PointState and PointRHS use the same State+C storage as a
+// RuleContribution, but they may retain physical root fibers outside their
+// support.  Those fibers are intentionally not part of this surface.
+func (work *Work) validContributionSurface(state State, coverage contributionCoverage) bool {
+	return work != nil && work.live() && work.OwnsState(state) && !state.previewMarked() && !state.contributionMarked() && coverage.composition == work.composition && (len(coverage.slots) == 0 || len(coverage.slots) == work.composition.Count())
+}
+
+// lessOrEqContributionSurface proves the lifted partial order over one
+// private State+C pair.  Support inclusion is the outer feasibility proof;
+// each typed Binding expands opaque Target rows only for the keys it owns.
+// It deliberately never calls raw State order, which would inspect latent
+// physical point branches or totalize an absent authored cell to Default.
+func (work *Work) lessOrEqContributionSurface(leftState State, leftCoverage contributionCoverage, rightState State, rightCoverage contributionCoverage) bool {
+	if !work.validContributionSurface(leftState, leftCoverage) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(leftState, rightState) || !leftState.support.Entails(rightState.support) {
+		return false
+	}
+	for position, slot := range work.slots {
+		if !work.live() || slot == nil {
+			return false
+		}
+		physical := shape.Slot(position)
+		ordered, valid := slot.LessOrEqContributionUnder(leftState.roots[position], rightState.roots[position], leftState.support, rightState.support, coverageRows(leftCoverage.slot(physical)), coverageRows(rightCoverage.slot(physical)))
+		if !valid || !ordered {
+			return false
+		}
+	}
+	return true
+}
+
+func (work *Work) equalContributionSurface(leftState State, leftCoverage contributionCoverage, rightState State, rightCoverage contributionCoverage) bool {
+	return work.lessOrEqContributionSurface(leftState, leftCoverage, rightState, rightCoverage) && work.lessOrEqContributionSurface(rightState, rightCoverage, leftState, leftCoverage)
 }
 
 func coverageRows(slot slotCoverage) SlotCoverage { return SlotCoverage{value: &slot} }
@@ -511,64 +643,262 @@ func (work *Work) ReplaceContribution(old, recomputed Contribution) (Contributio
 	return result, changes, valid
 }
 
-// MergeSelectedContribution is the paired recurrence publication. Semantic
-// roots follow the existing selected Widen/Narrow law. During Widen selected
-// slots retain the union of current and selected authorship, while unselected
-// slots install exact-right authorship; Narrow installs exact-right coverage
-// everywhere so a restart/descent can delete stale authored regions.
+// MergeSelectedContribution is the paired closed recurrence publication.
+// Its output presence is always the exact RHS coverage.  The phase fences at
+// the executor establish that a selected Widen result remains within that
+// exact surface; retaining historical current coverage here would make
+// Present(Default) survive an exact RHS descent.
 func (work *Work) MergeSelectedContribution(kind MergeKind, current, selectedRight, exactRight Contribution, selected MergeScope) (Contribution, ChangeSet, bool) {
-	if !work.admittedContribution(current) || !work.admittedContribution(selectedRight) || !work.admittedContribution(exactRight) || !selected.validFor(work.composition, kind) {
+	if !work.admittedContribution(current) || !work.admittedContribution(selectedRight) || !work.admittedContribution(exactRight) {
 		return Contribution{}, ChangeSet{}, false
 	}
-	state, changes, ok := work.MergeSelectedUnder(kind, current.state, selectedRight.state, exactRight.state, selected)
+	state, changes, ok := work.mergeSelectedContributionSurface(kind, current.state, current.coverage, selectedRight.state, selectedRight.coverage, exactRight.state, exactRight.coverage, selected)
 	if !ok {
 		return Contribution{}, ChangeSet{}, false
 	}
-	coverage := exactRight.coverage
-	if kind == Widen {
-		coverage = contributionCoverage{composition: work.composition, slots: make([]slotCoverage, work.composition.Count())}
-		nonempty := false
-		for position := 0; position < work.composition.Count(); position++ {
-			physical := shape.Slot(position)
-			var row slotCoverage
-			if selected.members[position] {
-				row, ok = work.mergeSlotCoverage(current.coverage.slot(physical), selectedRight.coverage.slot(physical), state.support)
-			} else {
-				row, ok = work.canonicalCoverage(exactRight.coverage.slot(physical).targets, state.support)
-			}
-			if !ok {
-				return Contribution{}, ChangeSet{}, false
-			}
-			coverage.slots[position] = row
-			nonempty = nonempty || len(row.targets) != 0
-		}
-		if !nonempty {
-			coverage.slots = nil
-		}
-	}
-	result, valid := work.admitConstructedContribution(state, coverage)
+	result, valid := work.admitConstructedContribution(state, exactRight.coverage)
 	return result, changes, valid
 }
 
-// TransportContribution applies the exact State boundary and the same
-// pre/reindex/post relation to every authored Guard. Targets remain opaque
-// Factor capabilities; only their coordinate region moves.
-func (work *Work) TransportContribution(input Contribution, pre support.Mask, omega ReindexPlan, post support.Mask) (Contribution, bool) {
-	if !work.admittedContribution(input) || !work.OwnsState(input.state) || !omega.validFor(work.composition) {
-		return Contribution{}, false
+// mergeSelectedContributionSurface is the sole physical recurrence
+// transaction for both legacy closed Contributions and nominal PointState /
+// PointRHS values.  The inputs are private paired State+C headers, never a
+// raw State relabelled as an RHS.  Its output is physically closed to exact C
+// even when the current PointState retains a latent root outside support.
+//
+// Keeping this transaction role-neutral is important: recurrence has one
+// carrier authority and one exact-C law, regardless of whether the executor
+// is still using compatibility Contribution storage or nominal point roles.
+func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState State, currentCoverage contributionCoverage, selectedState State, selectedCoverage contributionCoverage, exactState State, exactCoverage contributionCoverage, selected MergeScope) (State, ChangeSet, bool) {
+	if !work.validContributionSurface(currentState, currentCoverage) || !work.validContributionSurface(selectedState, selectedCoverage) || !work.validContributionSurface(exactState, exactCoverage) || !selected.validFor(work.composition, kind) {
+		return State{}, ChangeSet{}, false
 	}
-	state, ok := work.Transport(input.state, pre, omega, post)
+	if kind != Widen && kind != Narrow || !work.liveFor(currentState, selectedState) || !work.liveFor(currentState, exactState) {
+		return State{}, ChangeSet{}, false
+	}
+	hasSelected := false
+	for _, member := range selected.members {
+		hasSelected = hasSelected || member
+	}
+	if kind == Widen && !selectedState.support.Equal(exactState.support) || hasSelected && kind == Widen && !currentState.support.Entails(selectedState.support) || hasSelected && kind == Narrow && (!selectedState.support.Entails(currentState.support) || !selectedState.support.Equal(exactState.support)) {
+		return State{}, ChangeSet{}, false
+	}
+	// Narrow has one exact desired RHS. Accepting an independently supplied
+	// selected operand would let a foreign authored surface or value influence
+	// selected keys before the final exact-C close.
+	if kind == Narrow && !work.equalContributionSurface(selectedState, selectedCoverage, exactState, exactCoverage) {
+		return State{}, ChangeSet{}, false
+	}
+	// This proof applies even to an empty selection, whose implementation is
+	// an all-slot exact close rather than a typed Widen. The operation still
+	// carries Widen phase meaning and therefore may not erase authored
+	// presence before that publication cut.
+	if kind == Widen {
+		if !work.lessOrEqContributionSurface(exactState, exactCoverage, selectedState, selectedCoverage) {
+			return State{}, ChangeSet{}, false
+		}
+		for position, slot := range work.slots {
+			if !work.live() || slot == nil {
+				return State{}, ChangeSet{}, false
+			}
+			physical := shape.Slot(position)
+			if !slot.ContributionPresenceIncludedUnder(currentState.support, exactState.support, coverageRows(currentCoverage.slot(physical)), coverageRows(exactCoverage.slot(physical))) ||
+				!slot.ContributionPresenceIncludedUnder(selectedState.support, exactState.support, coverageRows(selectedCoverage.slot(physical)), coverageRows(exactCoverage.slot(physical))) {
+				return State{}, ChangeSet{}, false
+			}
+		}
+	}
+	selectedSplit, ok := work.threeSupport(currentState.support, selectedState.support)
 	if !ok {
+		return State{}, ChangeSet{}, false
+	}
+	exactSplit, ok := work.threeSupport(currentState.support, exactState.support)
+	if !ok {
+		return State{}, ChangeSet{}, false
+	}
+	delta := work.newSupportWork()
+	if delta == nil {
+		return State{}, ChangeSet{}, false
+	}
+	patches := make([]Patch, 0, len(work.slots))
+	for position, slot := range work.slots {
+		if !work.live() || slot == nil {
+			delta.Discard()
+			dropPatches(patches)
+			return State{}, ChangeSet{}, false
+		}
+		physical := shape.Slot(position)
+		var change ChangeHandle
+		var valid bool
+		if hasSelected && selected.members[position] {
+			change, valid = slot.MergeSelectedContributionUnder(kind, selected.scopes[position], currentState.roots[position], selectedState.roots[position], exactState.roots[position], selectedSplit, exactSplit, coverageRows(currentCoverage.slot(physical)), coverageRows(selectedCoverage.slot(physical)), coverageRows(exactCoverage.slot(physical)), delta)
+		} else {
+			change, valid = slot.CloseContributionUnder(currentState.roots[position], exactState.roots[position], exactState.support, coverageRows(exactCoverage.slot(physical)), delta)
+		}
+		if !valid || !work.acceptInto(&patches, currentState, change, delta) {
+			delta.Discard()
+			if valid {
+				dropPatches(patches)
+			}
+			return State{}, ChangeSet{}, false
+		}
+	}
+	added, removed := emptyMask(work.composition.guards), emptyMask(work.composition.guards)
+	if !added.Valid() || !removed.Valid() {
+		delta.Discard()
+		dropPatches(patches)
+		return State{}, ChangeSet{}, false
+	}
+	if !hasSelected {
+		// Factor-free recurrence is an exact publication. Unlike a selected
+		// Narrow it may replace support in either direction, so preserve both
+		// structural sides exactly as Replace would.
+		added, removed = exactSplit.RightOnly(), exactSplit.LeftOnly()
+	} else if kind == Widen {
+		added = exactSplit.RightOnly()
+	} else {
+		removed = exactSplit.LeftOnly()
+	}
+	state, changes, ok := work.commit(currentState, patches, exactState.support, added, removed, delta)
+	if !ok {
+		return State{}, ChangeSet{}, false
+	}
+	return state, changes, true
+}
+
+// TransportPointContribution transports a semantic PointState through the
+// total-Default State relation, then closes the result to transported RHS
+// coverage.  The point source is not a lifted partial RuleContribution:
+// absent reachable source cells are the Factor Default during omega.  C
+// decides only which target cells become RHS-present afterwards.
+func (work *Work) TransportPointContribution(input Contribution, pre support.Mask, omega ReindexPlan, post support.Mask) (Contribution, bool) {
+	if !work.live() || work.reindexing || !work.admittedContribution(input) || !omega.validFor(work.composition) || !input.state.scope.same(omega.source()) || !validBoundaryMask(pre, input.state.scope) || !validBoundaryMask(post, omega.target()) {
 		return Contribution{}, false
 	}
 	if omega.identity() && pre.IsTrue() && post.IsTrue() {
-		return work.admitDerivedContribution(input, state, input.coverage)
+		return input, true
 	}
-	coverage, valid := work.transportContributionCoverage(input.coverage, pre, omega, post, state.support)
-	if !valid {
+	if omega.coordinateIdentity() && pre.IsTrue() && post.IsTrue() {
+		return work.rescopeContribution(input, omega.target())
+	}
+	work.reindexing = true
+	defer func() { work.reindexing = false }()
+	sourceSupport, ok := work.intersectSupport(input.state.support, pre)
+	if !ok {
 		return Contribution{}, false
 	}
-	return work.admitDerivedContribution(input, state, coverage)
+	reindexedSupport, ok := work.reindexSupport(sourceSupport, omega.relation)
+	if !ok {
+		return Contribution{}, false
+	}
+	targetSupport, ok := work.intersectSupport(reindexedSupport, post)
+	if !ok {
+		return Contribution{}, false
+	}
+	coverage, ok := work.transportContributionCoverage(input.coverage, pre, omega, post, targetSupport)
+	if !ok {
+		return Contribution{}, false
+	}
+	split, ok := work.threeSupport(input.state.support, targetSupport)
+	if !ok {
+		return Contribution{}, false
+	}
+	delta := work.newSupportWork()
+	if delta == nil {
+		return Contribution{}, false
+	}
+	patches := make([]Patch, 0, len(work.slots))
+	for position, slot := range work.slots {
+		if !work.live() || slot == nil {
+			delta.Discard()
+			dropPatches(patches)
+			return Contribution{}, false
+		}
+		physical := shape.Slot(position)
+		change, valid := slot.ReindexPointContributionUnder(input.state.roots[position], sourceSupport, targetSupport, omega.relation, coverageRows(coverage.slot(physical)), delta)
+		if !valid {
+			delta.Discard()
+			dropPatches(patches)
+			return Contribution{}, false
+		}
+		if !work.acceptInto(&patches, input.state, change, delta) {
+			delta.Discard()
+			return Contribution{}, false
+		}
+	}
+	next, _, committed := work.commit(input.state, patches, targetSupport, split.RightOnly(), split.LeftOnly(), delta)
+	if !committed {
+		return Contribution{}, false
+	}
+	next.scope = omega.target()
+	result, valid := work.admitDerivedContribution(input, next, coverage)
+	return result, valid
+}
+
+// TransportRuleContribution is the lifted-partial transport for an already
+// authored RuleContribution.  Only source-present C fibers participate;
+// Present(Default) remains distinct from Absent through noninjective reindex.
+// No runtime PointState path calls this operation unless it has a genuine
+// RuleContribution source role.
+func (work *Work) TransportRuleContribution(input Contribution, pre support.Mask, omega ReindexPlan, post support.Mask) (Contribution, bool) {
+	if !work.live() || work.reindexing || !work.admittedContribution(input) || !omega.validFor(work.composition) || !input.state.scope.same(omega.source()) || !validBoundaryMask(pre, input.state.scope) || !validBoundaryMask(post, omega.target()) {
+		return Contribution{}, false
+	}
+	if omega.identity() && pre.IsTrue() && post.IsTrue() {
+		return input, true
+	}
+	work.reindexing = true
+	defer func() { work.reindexing = false }()
+	sourceSupport, ok := work.intersectSupport(input.state.support, pre)
+	if !ok {
+		return Contribution{}, false
+	}
+	reindexedSupport, ok := work.reindexSupport(sourceSupport, omega.relation)
+	if !ok {
+		return Contribution{}, false
+	}
+	targetSupport, ok := work.intersectSupport(reindexedSupport, post)
+	if !ok {
+		return Contribution{}, false
+	}
+	coverage, ok := work.transportContributionCoverage(input.coverage, pre, omega, post, targetSupport)
+	if !ok {
+		return Contribution{}, false
+	}
+	split, ok := work.threeSupport(input.state.support, targetSupport)
+	if !ok {
+		return Contribution{}, false
+	}
+	delta := work.newSupportWork()
+	if delta == nil {
+		return Contribution{}, false
+	}
+	patches := make([]Patch, 0, len(work.slots))
+	for position, slot := range work.slots {
+		if !work.live() || slot == nil {
+			delta.Discard()
+			dropPatches(patches)
+			return Contribution{}, false
+		}
+		physical := shape.Slot(position)
+		change, valid := slot.ReindexContributionUnder(input.state.roots[position], sourceSupport, targetSupport, omega.relation, coverageRows(input.coverage.slot(physical)), coverageRows(coverage.slot(physical)), delta)
+		if !valid {
+			delta.Discard()
+			dropPatches(patches)
+			return Contribution{}, false
+		}
+		if !work.acceptInto(&patches, input.state, change, delta) {
+			delta.Discard()
+			return Contribution{}, false
+		}
+	}
+	next, _, committed := work.commit(input.state, patches, targetSupport, split.RightOnly(), split.LeftOnly(), delta)
+	if !committed {
+		return Contribution{}, false
+	}
+	next.scope = omega.target()
+	result, valid := work.admitDerivedContribution(input, next, coverage)
+	return result, valid
 }
 
 // CoverageRegion is one slot-local authorship change. It is structural wake
@@ -584,26 +914,74 @@ func (row CoverageRegion) Region() support.Mask { return row.region }
 type CoverageChangeSet struct {
 	composition *Composition
 	rows        []CoverageRegion
+	targets     []CoverageTargetRegion
 }
 
+// CoverageTargetRegion is the exact Target-local authorship delta retained
+// for incremental structural transport. Demand routing deliberately consumes
+// only the coarser CoverageRegion projection; typed Binding is the only layer
+// allowed to resolve this Target to concrete keys.
+type CoverageTargetRegion struct {
+	slot   shape.Slot
+	target Target
+	region support.Mask
+}
+
+func (row CoverageTargetRegion) Slot() shape.Slot     { return row.slot }
+func (row CoverageTargetRegion) Target() Target       { return row.target }
+func (row CoverageTargetRegion) Region() support.Mask { return row.region }
+
 func (set CoverageChangeSet) Count() int { return len(set.rows) }
+func (set CoverageChangeSet) TargetCount() int {
+	return len(set.targets)
+}
 func (set CoverageChangeSet) At(index int) (CoverageRegion, bool) {
 	if set.composition == nil || index < 0 || index >= len(set.rows) {
 		return CoverageRegion{}, false
 	}
 	return set.rows[index], true
 }
+func (set CoverageChangeSet) TargetAt(index int) (CoverageTargetRegion, bool) {
+	if set.composition == nil || index < 0 || index >= len(set.targets) {
+		return CoverageTargetRegion{}, false
+	}
+	return set.targets[index], true
+}
 func (composition *Composition) OwnsCoverageChangeSet(set CoverageChangeSet) bool {
 	return composition != nil && set.composition == composition
 }
 
+// CoverageWakeChanges derives only the slot/guard projection consumed by
+// Demand. It deliberately does not retain Target rows: those are needed only
+// when an environment edge later asks for an exact sparse transport delta.
+func (work *Work) CoverageWakeChanges(left, right Contribution) (CoverageChangeSet, bool) {
+	return work.coverageChanges(left, right, false)
+}
+
+// CoverageChanges derives both the slot/guard wake projection and the exact
+// Target-local delta used by sparse structural transport.
 func (work *Work) CoverageChanges(left, right Contribution) (CoverageChangeSet, bool) {
+	return work.coverageChanges(left, right, true)
+}
+
+func (work *Work) coverageChanges(left, right Contribution, retainTargets bool) (CoverageChangeSet, bool) {
 	if !work.live() || !work.admittedContribution(left) || !work.admittedContribution(right) || left.coverage.composition != work.composition || right.coverage.composition != work.composition {
+		return CoverageChangeSet{}, false
+	}
+	return work.coverageChangesSurface(left.coverage, right.coverage, retainTargets)
+}
+
+// coverageChangesSurface derives one Target-local delta from two private
+// compact coverage headers. It is shared by closed RuleContributions and
+// semantic PointStates; only the latter can retain latent payload outside
+// support, which never enters this coverage calculation.
+func (work *Work) coverageChangesSurface(left, right contributionCoverage, retainTargets bool) (CoverageChangeSet, bool) {
+	if !work.live() || left.composition != work.composition || right.composition != work.composition {
 		return CoverageChangeSet{}, false
 	}
 	result := CoverageChangeSet{composition: work.composition}
 	for position := 0; position < work.composition.Count(); position++ {
-		leftSlot, rightSlot := left.coverage.slot(shape.Slot(position)), right.coverage.slot(shape.Slot(position))
+		leftSlot, rightSlot := left.slot(shape.Slot(position)), right.slot(shape.Slot(position))
 		if sameSlotCoverage(leftSlot, rightSlot) {
 			continue
 		}
@@ -614,6 +992,9 @@ func (work *Work) CoverageChanges(left, right Contribution) (CoverageChangeSet, 
 			switch {
 			case rightIndex == len(rightSlot.targets) || leftIndex < len(leftSlot.targets) && leftSlot.targets[leftIndex].target.Less(rightSlot.targets[rightIndex].target):
 				next := leftSlot.targets[leftIndex].region
+				if retainTargets {
+					result.targets = append(result.targets, CoverageTargetRegion{slot: shape.Slot(position), target: leftSlot.targets[leftIndex].target, region: next})
+				}
 				if !support.Empty(next) && !hasRegion {
 					region, hasRegion = next, true
 				} else if !support.Empty(next) {
@@ -626,6 +1007,9 @@ func (work *Work) CoverageChanges(left, right Contribution) (CoverageChangeSet, 
 				leftIndex++
 			case leftIndex == len(leftSlot.targets) || rightSlot.targets[rightIndex].target.Less(leftSlot.targets[leftIndex].target):
 				next := rightSlot.targets[rightIndex].region
+				if retainTargets {
+					result.targets = append(result.targets, CoverageTargetRegion{slot: shape.Slot(position), target: rightSlot.targets[rightIndex].target, region: next})
+				}
 				if !support.Empty(next) && !hasRegion {
 					region, hasRegion = next, true
 				} else if !support.Empty(next) {
@@ -646,6 +1030,9 @@ func (work *Work) CoverageChanges(left, right Contribution) (CoverageChangeSet, 
 					return CoverageChangeSet{}, false
 				}
 				if !support.Empty(changed) {
+					if retainTargets {
+						result.targets = append(result.targets, CoverageTargetRegion{slot: shape.Slot(position), target: leftSlot.targets[leftIndex].target, region: changed})
+					}
 					if !hasRegion {
 						region, hasRegion = changed, true
 					} else {

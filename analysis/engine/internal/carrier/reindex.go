@@ -65,6 +65,11 @@ type ReindexPlan struct {
 // validates exact source/target ownership before transporting a State.
 func (plan ReindexPlan) Valid() bool { return plan.validFor(plan.composition) }
 
+// CoordinateIdentity reports whether this sealed relation preserves every
+// ranked Boolean coordinate even if source and target are distinct issued
+// Scope identities.
+func (plan ReindexPlan) CoordinateIdentity() bool { return plan.coordinateIdentity() }
+
 func (plan ReindexPlan) validFor(composition *Composition) bool {
 	return composition != nil && plan.composition == composition && plan.relation.Valid() && plan.relation.Source().Manager() == composition.guards && plan.relation.Target().Manager() == composition.guards
 }
@@ -85,6 +90,10 @@ func (plan ReindexPlan) target() Scope {
 
 func (plan ReindexPlan) identity() bool {
 	return plan.validFor(plan.composition) && plan.relation.Identity()
+}
+
+func (plan ReindexPlan) coordinateIdentity() bool {
+	return plan.validFor(plan.composition) && plan.relation.CoordinateIdentity()
 }
 
 // ReindexBuilder is the cold carrier wrapper over guard's relation builder.

@@ -31,7 +31,7 @@ type runtimeMember interface {
 	routeScope() runtimeFactor
 	routeNarrow() bool
 	writesOutput() bool
-	execute(*carrier.Work, carrier.ContributionBase, []carrier.State, support.Mask) memberResult
+	execute(*carrier.Work, carrier.RuleContributionBase, []carrier.State, support.Mask) memberResult
 }
 
 type memberResult struct {
@@ -112,7 +112,7 @@ func (bound *boundRuleMember[V, O]) routeNarrow() bool {
 	return bound != nil && bound.routeOwner != nil && bound.narrowEligible
 }
 func (bound *boundRuleMember[V, O]) writesOutput() bool { return bound != nil && bound.outputWrite }
-func (bound *boundRuleMember[V, O]) execute(work *carrier.Work, base carrier.ContributionBase, inputs []carrier.State, within support.Mask) memberResult {
+func (bound *boundRuleMember[V, O]) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
 	if bound == nil || bound.rule == nil {
 		return memberResult{phase: SolveFailurePhasePreflight}
 	}
@@ -192,7 +192,7 @@ func (bound *boundSupportMember) narrowTargets() []carrier.Target { return nil }
 func (bound *boundSupportMember) routeScope() runtimeFactor       { return nil }
 func (bound *boundSupportMember) routeNarrow() bool               { return false }
 func (bound *boundSupportMember) writesOutput() bool              { return false }
-func (bound *boundSupportMember) execute(work *carrier.Work, base carrier.ContributionBase, inputs []carrier.State, within support.Mask) memberResult {
+func (bound *boundSupportMember) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
 	if bound == nil || bound.rule == nil {
 		return memberResult{}
 	}
@@ -248,7 +248,7 @@ func (bound *boundActivationMember) narrowTargets() []carrier.Target { return ni
 func (bound *boundActivationMember) routeScope() runtimeFactor       { return nil }
 func (bound *boundActivationMember) routeNarrow() bool               { return false }
 func (bound *boundActivationMember) writesOutput() bool              { return false }
-func (bound *boundActivationMember) execute(work *carrier.Work, base carrier.ContributionBase, inputs []carrier.State, within support.Mask) memberResult {
+func (bound *boundActivationMember) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
 	if bound == nil || bound.rule == nil {
 		return memberResult{}
 	}

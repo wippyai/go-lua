@@ -29,6 +29,44 @@ func (diagram *Diagram[F, K, V]) CompareSoleFactorUnder(left, right Root[F, K, V
 	return diagram.compareKeyTrees(within, scratch, relation)
 }
 
+// CompareSoleFactorRegions proves one pure terminal relation under a
+// key-local region. A missing region means that the key is outside the left
+// operand's lifted presence surface and therefore has no order obligation.
+//
+// Unlike repeatedly partitioning each FDD into support cells, this zipper
+// synchronizes both immutable FDDs with the supplied BDD directly. It creates
+// no guard candidate transaction or materialized intersections; all mutable
+// traversal storage belongs to the caller's reusable SoleScratch.
+func (diagram *Diagram[F, K, V]) CompareSoleFactorRegions(left, right Root[F, K, V], scratch *SoleScratch[K, V], regions func(K) (support.Mask, bool), relation func(terminal.ID[V], terminal.ID[V]) bool) bool {
+	if diagram == nil || !diagram.Valid(left) || !diagram.Valid(right) || scratch == nil || regions == nil || relation == nil {
+		return false
+	}
+	factor, ok := diagram.SoleFactor()
+	if !ok {
+		return false
+	}
+	rank, ok := diagram.ranks[factor]
+	if !ok || !scratch.prepare(factorKeys(findFactor(left.root, rank)), factorKeys(findFactor(right.root, rank))) {
+		return false
+	}
+	for {
+		if !scratch.live() {
+			return false
+		}
+		pair, present := scratch.nextPair()
+		if !present {
+			return true
+		}
+		region, covered := regions(pair.key)
+		if !covered {
+			continue
+		}
+		if !region.Valid() || region.Manager() != diagram.guards || !diagram.compareValuesAt(pair.left, pair.right, region, scratch, relation) {
+			return false
+		}
+	}
+}
+
 // compareKeyTrees is the ordered sparse-coordinate zipper shared by direct
 // one-Factor operations. Its cursors preserve ascending keys without a
 // materialized union, and its storage lives in SoleScratch for reuse by later

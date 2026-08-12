@@ -158,6 +158,108 @@ func (domain *Domain[F, K, V]) Restrict(input Plane[F, K, V], region support.Mas
 	return Plane[F, K, V]{root: root}, true
 }
 
+// ContributionRegions is the typed view of a carrier-owned authored surface.
+// A missing key is Absent.  A present region whose sparse plane cell is
+// undefined is explicitly Present(Default).  The relation deliberately lives
+// at this boundary: carrier owns Target x Guard rows while the Binding alone
+// expands Targets to K.
+type ContributionRegions[K scalar.Key] func(K) (support.Mask, bool)
+
+// CloseContribution removes every physical non-Default cell which is not in
+// the contribution's authored surface.  It is the representation cut for a
+// RuleContribution: sparse undefined under a supplied region means
+// Present(Default), while sparse undefined outside it means Absent.  Raw
+// State operations intentionally do not use this routine.
+func (domain *Domain[F, K, V]) CloseContribution(input Plane[F, K, V], within support.Mask, regions ContributionRegions[K]) (Plane[F, K, V], bool) {
+	if !domain.validPlane(input) || !domain.validSupport(within) || regions == nil {
+		return Plane[F, K, V]{}, false
+	}
+	builder := domain.diagram.Begin()
+	if builder == nil {
+		return Plane[F, K, V]{}, false
+	}
+	root := domain.diagram.Empty()
+	valid := true
+	completed, traversed := domain.diagram.ForEach(input.root, func(fact diagram.Fact[F, K, V]) bool {
+		region, present := regions(fact.Key)
+		if !present {
+			return true
+		}
+		if !region.Valid() || region.Manager() != domain.guards() || !region.Entails(within) {
+			valid = false
+			return false
+		}
+		masked, ok := builder.Mask(fact.Value, region)
+		if !ok {
+			valid = false
+			return false
+		}
+		masked, ok = domain.eraseDefault(builder, masked)
+		if !ok {
+			valid = false
+			return false
+		}
+		root, ok = builder.Put(root, fact.Factor, fact.Key, masked)
+		if !ok {
+			valid = false
+			return false
+		}
+		return true
+	})
+	if !completed || !traversed || !valid {
+		builder.Discard()
+		return Plane[F, K, V]{}, false
+	}
+	root, ok := builder.Seal(root)
+	if !ok {
+		return Plane[F, K, V]{}, false
+	}
+	return Plane[F, K, V]{root: root}, true
+}
+
+// ContributionClosed proves the physical half of the closed contribution
+// invariant.  It deliberately inspects the whole Boolean universe rather
+// than only `within`: a hidden root outside outer support is still forbidden,
+// because a later support expansion must not be able to revive it.
+func (domain *Domain[F, K, V]) ContributionClosed(input Plane[F, K, V], within support.Mask, regions ContributionRegions[K]) bool {
+	if !domain.validPlane(input) || !domain.validSupport(within) || regions == nil {
+		return false
+	}
+	whole, ok := support.FromGuard(domain.guards(), domain.guards().True())
+	if !ok {
+		return false
+	}
+	return domain.ForEachNonDefault(input, whole, func(key K, _ V, cell support.Mask) bool {
+		region, present := regions(key)
+		return present && region.Valid() && region.Manager() == domain.guards() && region.Entails(within) && cell.Entails(region)
+	})
+}
+
+// LessOrEqContribution compares values only on the left-authored surface.
+// Outside that surface the left lifted cell is Absent, not Factor Default.
+// Diagram synchronizes the two sparse FDDs and each key-local coverage BDD in
+// one read-only traversal, avoiding the nested support partitions that this
+// hot phase proof used to allocate.
+func (domain *Domain[F, K, V]) LessOrEqContribution(left, right Plane[F, K, V], regions ContributionRegions[K], scratch *diagram.SoleScratch[K, V]) bool {
+	if !domain.validPlane(left) || !domain.validPlane(right) || regions == nil || scratch == nil {
+		return false
+	}
+	if left.root == right.root {
+		return true
+	}
+	return domain.diagram.CompareSoleFactorRegions(left.root, right.root, scratch, regions, func(first, second terminal.ID[V]) bool {
+		leftValue, leftOK := domain.ops.Default, true
+		if first != (terminal.ID[V]{}) {
+			leftValue, leftOK = domain.terminals.Value(first)
+		}
+		rightValue, rightOK := domain.ops.Default, true
+		if second != (terminal.ID[V]{}) {
+			rightValue, rightOK = domain.terminals.Value(second)
+		}
+		return leftOK && rightOK && domain.ops.LessOrEq(leftValue, rightValue)
+	})
+}
+
 // Summary joins one key over the symbolic leaves of this plane.  An undefined
 // FDD leaf is the typed Default.  Plane alone has no outer reachability
 // region, so callers that summarize a carrier State must use SummaryUnder with
@@ -239,6 +341,34 @@ func (domain *Domain[F, K, V]) PartitionKey(input Plane[F, K, V], key K, region 
 		return readable && visit(stored, true, cell)
 	})
 	return completed && partitioned
+}
+
+// ForEachNonDefault visits the effective sparse presence of one plane under
+// region.  A stored terminal equal to Default is not presence: sparse
+// absence and an explicit Default have the same semantic value for the
+// contribution boundary.  The callback receives only typed key/value data;
+// the diagram and terminal identities remain private to semantic.
+//
+// This is deliberately a stream over the plane's existing sparse columns.
+// It does not materialize a key union or a second fact representation.  The
+// caller owns any coverage map used to combine these cells with authored
+// Target rows.
+func (domain *Domain[F, K, V]) ForEachNonDefault(input Plane[F, K, V], region support.Mask, visit func(key K, value V, cell support.Mask) bool) bool {
+	if domain == nil || domain.diagram == nil || !domain.validPlane(input) || !domain.validSupport(region) || visit == nil {
+		return false
+	}
+	if support.Empty(region) {
+		return true
+	}
+	completed, traversed := domain.diagram.ForEach(input.root, func(fact diagram.Fact[F, K, V]) bool {
+		return domain.PartitionKey(input, fact.Key, region, func(value V, present bool, cell support.Mask) bool {
+			if !present || domain.ops.Equal(value, domain.ops.Default) {
+				return true
+			}
+			return visit(fact.Key, value, cell)
+		})
+	})
+	return completed && traversed
 }
 
 // Partition refines region by this plane's complete FDD tuple.  Every cell
@@ -565,6 +695,108 @@ func (domain *Domain[F, K, V]) Reindex(input Plane[F, K, V], source, target supp
 			return false
 		}
 		transported, okay = builder.Mask(transported, target)
+		if !okay {
+			valid = false
+			return false
+		}
+		output, okay := domain.eraseDefault(builder, transported)
+		if !okay {
+			valid = false
+			return false
+		}
+		root, okay = builder.Put(root, fact.Factor, fact.Key, output)
+		if !okay {
+			valid = false
+			return false
+		}
+		return true
+	})
+	if !completed || !traversed || !valid {
+		builder.Discard()
+		return Plane[F, K, V]{}, false
+	}
+	root, ok = builder.Seal(root)
+	if !ok {
+		return Plane[F, K, V]{}, false
+	}
+	return Plane[F, K, V]{root: root}, true
+}
+
+// ReindexContribution transports a closed partial contribution plane.  In
+// contrast with Reindex, it totalizes only source-present fibers: undefined
+// under a source region is Present(Default), and undefined outside that
+// region is Absent.  This distinction is essential under forget/noninjective
+// reindex, where treating an absent source fiber as Default can change a
+// lower authored value into lower Join Default.
+//
+// targetRegions is the already transported and post-clipped authored
+// surface.  The routine masks every output column to that exact surface, so
+// no pre/post-hidden root can survive this publication boundary.
+func (domain *Domain[F, K, V]) ReindexContribution(input Plane[F, K, V], source, target support.Mask, relation guard.Reindex, sourceRegions, targetRegions ContributionRegions[K]) (Plane[F, K, V], bool) {
+	if !domain.validPlane(input) || !domain.validSupport(source) || !domain.validSupport(target) || !relation.Valid() || sourceRegions == nil || targetRegions == nil || relation.Source().Manager() != domain.guards() || relation.Target().Manager() != domain.guards() {
+		return Plane[F, K, V]{}, false
+	}
+	sourceGuard, ok := source.Guard()
+	if !ok || !relation.Source().Contains(sourceGuard) {
+		return Plane[F, K, V]{}, false
+	}
+	targetGuard, ok := target.Guard()
+	if !ok || !relation.Target().Contains(targetGuard) {
+		return Plane[F, K, V]{}, false
+	}
+	values := domain.terminals.Begin()
+	builder := domain.diagram.BeginWithTerminals(values)
+	if values == nil || builder == nil {
+		return Plane[F, K, V]{}, false
+	}
+	root := domain.diagram.Empty()
+	valid := true
+	completed, traversed := domain.diagram.ForEach(input.root, func(fact diagram.Fact[F, K, V]) bool {
+		sourceRegion, sourcePresent := sourceRegions(fact.Key)
+		if !sourcePresent {
+			// A closed input has no meaningful payload here.  Ignoring it keeps
+			// Absent as identity even if a hostile caller supplied a raw root.
+			return true
+		}
+		if !sourceRegion.Valid() || sourceRegion.Manager() != domain.guards() || !sourceRegion.Entails(source) {
+			valid = false
+			return false
+		}
+		targetRegion, targetPresent := targetRegions(fact.Key)
+		if !targetPresent {
+			// The post boundary killed this authored source surface.
+			return true
+		}
+		if !targetRegion.Valid() || targetRegion.Manager() != domain.guards() || !targetRegion.Entails(target) {
+			valid = false
+			return false
+		}
+		actual, okay := builder.Mask(fact.Value, sourceRegion)
+		if !okay {
+			valid = false
+			return false
+		}
+		defaultValue, okay := builder.Constant(domain.defaultID)
+		if !okay {
+			valid = false
+			return false
+		}
+		defaults, okay := builder.Mask(defaultValue, sourceRegion)
+		if !okay {
+			valid = false
+			return false
+		}
+		total, okay := builder.Zip(actual, defaults, sparseOverlay[V])
+		if !okay {
+			valid = false
+			return false
+		}
+		transported, okay := builder.Reindex(total, relation, domain.reindexFiberJoin(values, fact.Key))
+		if !okay {
+			valid = false
+			return false
+		}
+		transported, okay = builder.Mask(transported, targetRegion)
 		if !okay {
 			valid = false
 			return false

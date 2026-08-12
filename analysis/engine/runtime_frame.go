@@ -105,7 +105,7 @@ func (session *productSession) close() {
 }
 
 func newProductSession(execution *ruleExecution, reads []readRuntime, work *carrier.Work, inputs []carrier.State, within support.Mask) (*productSession, bool) {
-	if execution == nil || work == nil || !work.Checkpoint() || !work.OwnsContributionStates(execution.base, inputs) || !within.Valid() {
+	if execution == nil || work == nil || !work.Checkpoint() || !work.OwnsRuleContributionStates(execution.base, inputs) || !within.Valid() {
 		return nil, false
 	}
 	// BeginContribution computed the exact input intersection under the sealed
@@ -1555,7 +1555,7 @@ func (bound *boundRule[V, O]) dynamicReads() []demand.DynamicRead {
 type ruleExecution struct {
 	owner   anyRule
 	work    *carrier.Work
-	base    carrier.ContributionBase
+	base    carrier.RuleContributionBase
 	inputs  []carrier.State
 	epoch   uint64
 	active  atomic.Uint64
@@ -1979,8 +1979,8 @@ func coldReadSelectorForRead(rule *ruleSchema, read int) *coldReadSelector {
 	return nil
 }
 
-func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.ContributionBase, inputs []carrier.State, within support.Mask) (carrier.Patch, []demand.Observation, bool, bool, SolveFailurePhase) {
-	if bound == nil || bound.rule == nil || bound.transfer == nil || work == nil || !work.OwnsContributionStates(base, inputs) {
+func (bound *boundRule[V, O]) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (carrier.Patch, []demand.Observation, bool, bool, SolveFailurePhase) {
+	if bound == nil || bound.rule == nil || bound.transfer == nil || work == nil || !work.OwnsRuleContributionStates(base, inputs) {
 		return carrier.Patch{}, nil, false, false, SolveFailurePhasePreflight
 	}
 	epoch := bound.nextEpoch.Add(1)

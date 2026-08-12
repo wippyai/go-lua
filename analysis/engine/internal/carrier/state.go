@@ -79,28 +79,66 @@ type SlotWork interface {
 	SetCheckpoint(Checkpoint) bool
 	EqualUnder(left, right RootHandle, within support.Mask) bool
 	LessOrEqUnder(left, right RootHandle, within support.Mask) bool
+	// LessOrEqContributionUnder is the typed order boundary for a closed
+	// RuleContribution.  Coverage is the sole presence authority: undefined
+	// under a row is Present(Default), and every cell outside it is Absent.
+	LessOrEqContributionUnder(left, right RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage SlotCoverage) (bool, bool)
+	// ContributionClosedUnder is the issuance-time proof that no physical
+	// non-Default root cell lies outside the compact authored surface or final
+	// outer support.  Carrier never calls it on hot admitted reads.
+	ContributionClosedUnder(root RootHandle, within support.Mask, coverage SlotCoverage) bool
+	// ContributionPresenceIncludedUnder proves extensional authored-presence
+	// inclusion after expanding opaque Target rows beside their typed Binding.
+	// It intentionally ignores payload order: selected Widen needs to reject
+	// Present-to-Absent descent before applying its value operation.
+	ContributionPresenceIncludedUnder(leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage SlotCoverage) bool
 	// MergeContributionUnder folds one independently authored producer slot
 	// into the accumulated Point slot. Coverage, not sparse root shape, decides
 	// whether a region is absent, installs explicit Default, or invokes Join.
 	MergeContributionUnder(left, right RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
-	// MergeTransportedUnder is the fused environment-edge half. The carrier
-	// supplies source support, the target support before the post filter, the
-	// final visible target support, and the sealed relation; the typed operation
-	// reindexes and joins locally, returning only the final ChangeHandle without
-	// publishing an intermediate transported root.
-	MergeTransportedUnder(left, right RootHandle, leftSupport, sourceSupport, reindexedSupport, rightSupport support.Mask, relation guard.Reindex, leftCoverage, rightCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
+	// OverlayPointRHSUnder applies a closed RuleContribution to a semantic
+	// PointRHS whose outer support is unchanged. Both coverage surfaces remain
+	// lifted-partial: an absent left cell is not Factor Default. Implementations
+	// preserve latent left root fibers only outside leftSupport, while using
+	// leftCoverage inside leftSupport and rightCoverage for the sparse overlay.
+	// Support growth is deliberately a separate closed lifted join.
+	OverlayPointRHSUnder(left, right RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
+	// MergeTransportedPointUnder is the fused Point-state environment edge.
+	// It applies total-Default State transport through the relation, then joins
+	// under the transported output coverage and closes the final RHS root.  It
+	// intentionally has no source coverage: PointState transport is semantic,
+	// not lifted-partial RuleContribution transport.
+	MergeTransportedPointUnder(left, right RootHandle, leftSupport, sourceSupport, reindexedSupport, rightSupport support.Mask, relation guard.Reindex, leftCoverage, rightCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
 	Merge3Under(kind MergeKind, recurrence bool, scope uint64, left, right RootHandle, split support.Split, delta *support.Work) (ChangeHandle, bool)
 	// MergeSelectedUnder is the typed half of one three-State recurrence
 	// transition. Selected target keys apply kind to current and
 	// selectedRight; every other key installs exactRight. It returns one
 	// current-to-output change proof and never publishes an intermediate root.
 	MergeSelectedUnder(kind MergeKind, scope uint64, current, selectedRight, exactRight RootHandle, selectedSplit, exactSplit support.Split, delta *support.Work) (ChangeHandle, bool)
+	// MergeSelectedContributionUnder is the closed contribution recurrence
+	// boundary.  It publishes only the exact-right authored surface, never a
+	// historical current surface retained by Widen/Narrow.
+	MergeSelectedContributionUnder(kind MergeKind, scope uint64, current, selectedRight, exactRight RootHandle, selectedSplit, exactSplit support.Split, currentCoverage, selectedCoverage, exactCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
 	// ReindexUnder transports this exact typed root through carrier's sealed
 	// source-to-target relation. source is the only support from which fibers
 	// may contribute; target is the already transformed outer support. The
 	// relation is opaque and complete, so a slot receives no caller atom list
 	// or substitution map and cannot choose a competing coordinate transport.
 	ReindexUnder(left RootHandle, source, target support.Mask, relation guard.Reindex, delta *support.Work) (ChangeHandle, bool)
+	// ReindexContributionUnder is the closed, lifted-partial contribution
+	// transport boundary.  It receives both source and target authored rows;
+	// raw State ReindexUnder remains deliberately totalizing Default.
+	ReindexContributionUnder(left RootHandle, source, target support.Mask, relation guard.Reindex, sourceCoverage, targetCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
+	// ReindexPointContributionUnder is total-Default PointState transport
+	// followed by a final RHS close to target coverage.  It is deliberately
+	// distinct from ReindexContributionUnder so source Absence cannot be
+	// mistaken for RuleContribution Absence.
+	ReindexPointContributionUnder(left RootHandle, source, target support.Mask, relation guard.Reindex, targetCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
+	// CloseContributionUnder physically masks an arbitrary staged root to the
+	// final authored surface before it can cross a contribution publication
+	// cut.  input may be a transaction-local preview root; the returned handle
+	// is always a normal pending publication rooted at before.
+	CloseContributionUnder(before, input RootHandle, within support.Mask, coverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
 	// ReplaceUnder is the structural coordinate-replacement half of one
 	// carrier Replace. It retains right exactly and reports only old-to-right
 	// semantic differences in split.Overlap(). It is not a lattice operation.
@@ -108,6 +146,15 @@ type SlotWork interface {
 	BeginObservation() bool
 	EndObservation() bool
 	ObserveUnder(root RootHandle, unit Unit, within support.Mask, visit func(ObservationRow) bool) bool
+}
+
+// ChangedPointSlotWork is the optional sparse ascent path implemented by the
+// production typed Binding. It consumes one exact published Point transition
+// and applies only its owner-issued semantic/authorship regions through a
+// coordinate-identity environment boundary. Structural test doubles may omit
+// it; carrier then uses the complete transport fold.
+type ChangedPointSlotWork interface {
+	MergeChangedCoordinatePointUnder(left, current RootHandle, leftSupport, currentSupport, targetSupport, pre, post support.Mask, leftCoverage, currentCoverage SlotCoverage, semantic []ChangeSet, authored CoverageChangeSet, delta *support.Work) (ChangeHandle, bool)
 }
 
 // EpochSlotWork is the optional lifecycle half of a typed SlotWork that
@@ -981,6 +1028,16 @@ func (work *Work) LessOrEqUnder(left, right State) bool {
 	return true
 }
 
+// LessOrEqContribution proves the lifted order of two closed contribution
+// artifacts.  State support inclusion remains the outer feasibility proof;
+// authored coverage and sparse non-Default presence are checked by the typed
+// SlotWork, where Target rows can be expanded without leaking their keys into
+// carrier.  Raw State order deliberately remains separate because it has
+// different hidden-root semantics.
+func (work *Work) LessOrEqContribution(left, right Contribution) bool {
+	return work != nil && work.admittedContribution(left) && work.admittedContribution(right) && work.lessOrEqContributionSurface(left.state, left.coverage, right.state, right.coverage)
+}
+
 // Merge3Under computes one exact three-region split and hands that same split
 // plus one shared candidate delta work item to every typed operation.
 // Join retains union support. Widen requires left support to be a subset of
@@ -1023,7 +1080,7 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 	if !ok {
 		return Contribution{}, ChangeSet{}, false
 	}
-	nextCoverage, ok := work.mergeCoverage(left.coverage, right.coverage, split.Union())
+	nextCoverage, ok := work.unionCoverage(left.coverage, right.coverage)
 	if !ok {
 		return Contribution{}, ChangeSet{}, false
 	}
@@ -1086,12 +1143,34 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 	return result, changes, valid
 }
 
-// contributionSlotIdentity is the sparse-slot theorem used by
-// MergeContribution.  It deliberately proves only root reuse, never a root
-// replacement: a left-empty/right-authored slot still needs typed traversal
-// unless the roots are already identical.  The right authored relation is the
-// only presence authority, so an uncovered right slot is fold identity even
-// when its enclosing support grows.
+// FoldRHSContribution joins one operand while an equation RHS is still being
+// assembled and no intermediate semantic delta is observable. A closed
+// support-only base has no authored cells in any Factor, so the lifted product
+// law is exactly (S0, Abs) join (S1, R) = (S0 union S1, R). In that case the
+// immutable right roots and coverage are adopted without a typed merge or root
+// publication; the final Point replacement derives the one externally visible
+// ChangeSet. Every other shape uses the ordinary exact contribution join.
+func (work *Work) FoldRHSContribution(left, right Contribution) (Contribution, bool) {
+	if !work.live() || !work.admittedContribution(left) || !work.admittedContribution(right) || !work.liveFor(left.state, right.state) {
+		return Contribution{}, false
+	}
+	if len(left.coverage.slots) == 0 && sameRootVector(left.state.roots, work.composition.initial) {
+		union, ok := work.unionSupport(left.state.support, right.state.support)
+		if !ok {
+			return Contribution{}, false
+		}
+		state := right.state
+		state.support = union
+		return work.admitConstructedContribution(state, right.coverage)
+	}
+	result, _, ok := work.MergeContribution(left, right)
+	return result, ok
+}
+
+// contributionSlotIdentity is the closed-slot theorem used by
+// MergeContribution.  Empty compact coverage is exactly Absent, never a
+// sparse-root inference; the issuance cut already removed every physical
+// payload outside coverage.
 func (work *Work) contributionSlotIdentity(position int, left, right Contribution) bool {
 	if work == nil || work.composition == nil || position < 0 || position >= len(work.slots) || work.slots[position] == nil || position >= len(work.composition.initial) || position >= len(left.state.roots) || position >= len(right.state.roots) {
 		return false
@@ -1099,10 +1178,7 @@ func (work *Work) contributionSlotIdentity(position int, left, right Contributio
 	leftRoot, rightRoot := left.state.roots[position], right.state.roots[position]
 	physical := shape.Slot(position)
 	rightSlot := right.coverage.slot(physical)
-	if len(rightSlot.targets) == 0 {
-		return true
-	}
-	return sameRoot(leftRoot, rightRoot)
+	return len(rightSlot.targets) == 0 || sameRoot(leftRoot, rightRoot)
 }
 
 func (work *Work) merge3Under(kind MergeKind, left, right State, members []bool, scopes []uint64) (State, ChangeSet, bool) {

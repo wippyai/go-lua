@@ -9,12 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 )
 
-// TestMergeTransportedContributionMatchesBaseline keeps the fused boundary
+// TestMergeTransportedPointContributionMatchesBaseline keeps the fused boundary
 // honest against the already-proved two-step route.  The cases cover the
 // complete coordinate relation surface used by environment edges: exact
 // identity, support filtering, expression substitution, noninjective forget,
 // absent authored coverage, explicit Default, and coverage-only publication.
-func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
+func TestMergeTransportedPointContributionMatchesBaseline(t *testing.T) {
 	t.Run("identity", func(t *testing.T) {
 		manager := testTransportManager(t, []guard.Atom{1})
 		whole := transportWhole(t, manager)
@@ -183,12 +183,12 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		if !work.SetCheckpoint(func() bool { return false }) {
 			t.Fatal("checkpoint")
 		}
-		if _, _, merged := work.MergeTransportedContribution(left, right, whole, plan, whole); merged {
+		if _, _, merged := work.MergeTransportedPointContribution(left, right, whole, plan, whole); merged {
 			t.Fatal("canceled fused transport committed")
 		}
 	})
 
-	t.Run("post-hidden-root-survives-later-support-expansion", func(t *testing.T) {
+	t.Run("post-hidden-root-does-not-revive-after-later-support-expansion", func(t *testing.T) {
 		manager := testTransportManager(t, []guard.Atom{1})
 		regions := support.New(manager)
 		on, ok := regions.Literal(1, true)
@@ -237,7 +237,7 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("finish support expansion")
 		}
-		transported, ok := work.TransportContribution(right, whole, plan, on)
+		transported, ok := work.TransportPointContribution(right, whole, plan, on)
 		if !ok {
 			t.Fatal("baseline transport")
 		}
@@ -245,7 +245,7 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("baseline merge")
 		}
-		got, _, ok := work.MergeTransportedContribution(left, right, whole, plan, on)
+		got, _, ok := work.MergeTransportedPointContribution(left, right, whole, plan, on)
 		if !ok {
 			t.Fatal("fused merge")
 		}
@@ -268,12 +268,12 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("expanded root")
 		}
-		if value, present, valid := observedExactValue(binding, work, root, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || value != 4 {
-			t.Fatalf("expanded hidden value = %d/%t/%t, want 4/true/true", value, present, valid)
+		if value, present, valid := observedExactValue(binding, work, root, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || present || value != 0 {
+			t.Fatalf("post-clipped payload revived after support growth = %d/%t/%t, want 0/false/true", value, present, valid)
 		}
 	})
 
-	t.Run("neutral-left-post-empty-retains-transported-root", func(t *testing.T) {
+	t.Run("neutral-left-post-empty-does-not-retain-transported-root", func(t *testing.T) {
 		manager := testTransportManager(t, []guard.Atom{1})
 		regions := support.New(manager)
 		whole := regions.True()
@@ -318,7 +318,7 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("finish support expansion")
 		}
-		wantTransported, ok := work.TransportContribution(right, whole, plan, empty)
+		wantTransported, ok := work.TransportPointContribution(right, whole, plan, empty)
 		if !ok {
 			t.Fatal("baseline transport")
 		}
@@ -326,7 +326,7 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("baseline neutral merge")
 		}
-		got, _, ok := work.MergeTransportedContribution(left, right, whole, plan, empty)
+		got, _, ok := work.MergeTransportedPointContribution(left, right, whole, plan, empty)
 		if !ok {
 			t.Fatal("fused neutral merge")
 		}
@@ -336,18 +336,18 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		}
 		gotExpanded, _, ok := work.MergeContribution(got, supportOnly)
 		if !ok || !work.EqualUnder(wantExpanded.State(), gotExpanded.State()) {
-			t.Fatal("neutral-left fallback lost hidden transport root")
+			t.Fatal("neutral-left fused/baseline closure mismatch")
 		}
 		root, ok := gotExpanded.HandleAt(slot)
 		if !ok {
 			t.Fatal("expanded root")
 		}
-		if value, present, valid := observedExactValue(binding, work, root, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || value != 4 {
-			t.Fatalf("expanded neutral-left value = %d/%t/%t, want 4/true/true", value, present, valid)
+		if value, present, valid := observedExactValue(binding, work, root, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || present || value != 0 {
+			t.Fatalf("empty-post payload revived after support growth = %d/%t/%t, want 0/false/true", value, present, valid)
 		}
 	})
 
-	t.Run("neutral-left-post-empty-retains-multiple-slots", func(t *testing.T) {
+	t.Run("neutral-left-post-empty-does-not-retain-multiple-slots", func(t *testing.T) {
 		manager := testTransportManager(t, []guard.Atom{1})
 		regions := support.New(manager)
 		whole := regions.True()
@@ -432,7 +432,7 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("finish support expansion")
 		}
-		wantTransported, ok := work.TransportContribution(right, whole, plan, empty)
+		wantTransported, ok := work.TransportPointContribution(right, whole, plan, empty)
 		if !ok {
 			t.Fatal("baseline transport")
 		}
@@ -440,7 +440,7 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("baseline neutral merge")
 		}
-		got, _, ok := work.MergeTransportedContribution(left, right, whole, plan, empty)
+		got, _, ok := work.MergeTransportedPointContribution(left, right, whole, plan, empty)
 		if !ok {
 			t.Fatal("fused neutral merge")
 		}
@@ -450,7 +450,7 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		}
 		gotExpanded, _, ok := work.MergeContribution(got, supportOnly)
 		if !ok || !work.EqualUnder(wantExpanded.State(), gotExpanded.State()) {
-			t.Fatal("multi-slot neutral-left fallback lost hidden roots")
+			t.Fatal("multi-slot neutral-left fused/baseline closure mismatch")
 		}
 		root0, ok := gotExpanded.HandleAt(shape.Slot(0))
 		if !ok {
@@ -460,13 +460,169 @@ func TestMergeTransportedContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("expanded root 1")
 		}
-		if value, present, valid := observedExactValue(binding0, work, root0, fixture0.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || value != 4 {
-			t.Fatalf("expanded neutral-left slot 0 = %d/%t/%t, want 4/true/true", value, present, valid)
+		if value, present, valid := observedExactValue(binding0, work, root0, fixture0.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || present || value != 0 {
+			t.Fatalf("empty-post slot 0 payload revived after support growth = %d/%t/%t, want 0/false/true", value, present, valid)
 		}
-		if value, present, valid := observedExactValue(binding1, work, root1, fixture1.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || value != 5 {
-			t.Fatalf("expanded neutral-left slot 1 = %d/%t/%t, want 5/true/true", value, present, valid)
+		if value, present, valid := observedExactValue(binding1, work, root1, fixture1.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || present || value != 0 {
+			t.Fatalf("empty-post slot 1 payload revived after support growth = %d/%t/%t, want 0/false/true", value, present, valid)
 		}
 	})
+}
+
+// TestChangedCoordinatePointContributionMatchesCompleteGapFold proves that a
+// consumer may batch several gap-free ascending source publications without
+// changing the complete environment-edge equation. The sparse path consumes
+// exact owner-issued semantic/authorship deltas, but reads payload only from
+// the final source publication and commits one canonical target result.
+func TestChangedCoordinatePointContributionMatchesCompleteGapFold(t *testing.T) {
+	manager := testTransportManager(t, nil)
+	whole := transportWhole(t, manager)
+	binding, initial, slot, composition, fixture := bindingState(t, manager, lawInput(false), whole)
+	plan, ok := composition.IdentityReindex(composition.Scope())
+	if !ok || !plan.CoordinateIdentity() {
+		t.Fatal("coordinate identity plan")
+	}
+	writePlan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil, false)
+	if !ok {
+		t.Fatal("write contribution plan")
+	}
+	work := newWork(t, composition)
+	base, ok := work.EmptyContribution(initial)
+	if !ok {
+		t.Fatal("empty contribution")
+	}
+	previous := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 1)
+	second := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 1, carrier.StrongTarget), whole, 2)
+	middle, firstChanges, ok := work.MergeContribution(previous, second)
+	if !ok {
+		t.Fatal("first ascending source publication")
+	}
+	third := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 3)
+	current, secondChanges, ok := work.MergeContribution(middle, third)
+	if !ok {
+		t.Fatal("second ascending source publication")
+	}
+	left, _, ok := work.MergeTransportedPointContribution(base, previous, whole, plan, whole)
+	if !ok {
+		t.Fatal("install previous source leaf")
+	}
+	want, wantChanges, ok := work.MergeTransportedPointContribution(left, current, whole, plan, whole)
+	if !ok {
+		t.Fatal("complete source fold")
+	}
+	got, gotChanges, ok := work.MergeChangedCoordinatePointContribution(
+		left,
+		previous,
+		current,
+		[]carrier.ChangeSet{firstChanges, secondChanges},
+		func() carrier.CoverageChangeSet {
+			changes, changed := work.CoverageChanges(previous, current)
+			if !changed {
+				t.Fatal("combined coverage changes")
+			}
+			return changes
+		}(),
+		whole,
+		plan,
+		whole,
+	)
+	if !ok {
+		t.Fatal("changed-coordinate source fold")
+	}
+	if !work.EqualContribution(got, want) || !work.EqualUnder(got.State(), want.State()) {
+		t.Fatal("changed-coordinate result differs from complete fold")
+	}
+	assertTransportChangeSetsEqual(t, gotChanges, wantChanges)
+}
+
+func TestTransportedPointRHSAdoptsClosedOperandOverSupportBase(t *testing.T) {
+	manager := testTransportManager(t, nil)
+	whole := transportWhole(t, manager)
+	binding, initial, slot, composition, fixture := bindingState(t, manager, lawInput(false), whole)
+	plan, ok := composition.IdentityReindex(composition.Scope())
+	if !ok {
+		t.Fatal("identity plan")
+	}
+	writePlan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil, false)
+	if !ok {
+		t.Fatal("write contribution plan")
+	}
+	work := newWork(t, composition)
+	base, ok := work.EmptyContribution(initial)
+	if !ok {
+		t.Fatal("support base")
+	}
+	right := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 7)
+	want, _, ok := work.MergeTransportedPointContribution(base, right, whole, plan, whole)
+	if !ok {
+		t.Fatal("complete transported merge")
+	}
+	got, ok := work.FoldTransportedPointRHS(base, right, whole, plan, whole)
+	if !ok || !work.EqualContribution(got, want) {
+		t.Fatal("RHS adoption differs from complete transported merge")
+	}
+	rightRoot, rightOK := right.HandleAt(slot)
+	gotRoot, gotOK := got.HandleAt(slot)
+	if !rightOK || !gotOK || rightRoot != gotRoot {
+		t.Fatal("RHS adoption rebuilt an immutable closed root")
+	}
+}
+
+func TestChangedCoordinatePointContributionFromInitialMatchesCompleteFold(t *testing.T) {
+	manager := testTransportManager(t, nil)
+	whole := transportWhole(t, manager)
+	binding, initial, slot, composition, fixture := bindingState(t, manager, lawInput(false), whole)
+	plan, ok := composition.IdentityReindex(composition.Scope())
+	if !ok {
+		t.Fatal("identity plan")
+	}
+	writePlan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil, false)
+	if !ok {
+		t.Fatal("write contribution plan")
+	}
+	work := newWork(t, composition)
+	versionZero, ok := work.EmptyContribution(initial)
+	if !ok {
+		t.Fatal("version-zero contribution")
+	}
+	local := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 2, carrier.StrongTarget), whole, 5)
+	first := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 1)
+	firstSource, firstChanges, ok := work.MergeContribution(versionZero, first)
+	if !ok {
+		t.Fatal("first source publication")
+	}
+	second := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 1, carrier.StrongTarget), whole, 2)
+	current, secondChanges, ok := work.MergeContribution(firstSource, second)
+	if !ok {
+		t.Fatal("second source publication")
+	}
+	want, wantChanges, ok := work.MergeTransportedPointContribution(local, current, whole, plan, whole)
+	if !ok {
+		t.Fatal("complete source fold")
+	}
+	got, gotChanges, ok := work.MergeChangedCoordinatePointContribution(
+		local,
+		versionZero,
+		current,
+		[]carrier.ChangeSet{firstChanges, secondChanges},
+		func() carrier.CoverageChangeSet {
+			changes, changed := work.CoverageChanges(versionZero, current)
+			if !changed {
+				t.Fatal("combined coverage changes")
+			}
+			return changes
+		}(),
+		whole,
+		plan,
+		whole,
+	)
+	if !ok {
+		t.Fatal("changed-coordinate source fold")
+	}
+	if !work.EqualContribution(got, want) || !work.EqualUnder(got.State(), want.State()) {
+		t.Fatal("version-zero changed-coordinate result differs from complete fold")
+	}
+	assertTransportChangeSetsEqual(t, gotChanges, wantChanges)
 }
 
 func transportConfig(defaultValue uint64) testAlgebraInput[uint64, uint64] {
@@ -546,7 +702,7 @@ func assertTransportedMatches(t testing.TB, composition *carrier.Composition, bi
 
 func assertTransportedContribution(t testing.TB, work *carrier.Work, composition *carrier.Composition, left, right carrier.Contribution, target carrier.Scope, plan carrier.ReindexPlan, pre, post support.Mask) {
 	t.Helper()
-	transported, ok := work.TransportContribution(right, pre, plan, post)
+	transported, ok := work.TransportPointContribution(right, pre, plan, post)
 	if !ok {
 		t.Fatal("baseline transport")
 	}
@@ -554,7 +710,7 @@ func assertTransportedContribution(t testing.TB, work *carrier.Work, composition
 	if !ok {
 		t.Fatal("baseline merge")
 	}
-	got, gotChanges, ok := work.MergeTransportedContribution(left, right, pre, plan, post)
+	got, gotChanges, ok := work.MergeTransportedPointContribution(left, right, pre, plan, post)
 	if !ok {
 		t.Fatal("fused merge")
 	}

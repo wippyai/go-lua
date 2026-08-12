@@ -156,7 +156,11 @@ func TestMergeContributionSameRootKeepsCoverageOnlyWakeWithoutTypedTraversal(t *
 	defer work.Close()
 	changedLeft := contributionWrite(t, work, operation.carryOnlyOperation, leftState, shape.Slot(0), 2)
 	changedRight := contributionWrite(t, work, operation.carryOnlyOperation, rightState, shape.Slot(0), 2)
-	left, ok := work.EmptyContribution(changedLeft)
+	leftCoverage := contributionCoverage{
+		composition: composition,
+		slots:       []slotCoverage{{targets: []TargetRegion{{target: operation.target, region: leftSupport}}}},
+	}
+	left, ok := work.admitContribution(changedLeft, leftCoverage)
 	if !ok {
 		t.Fatal("left contribution")
 	}
@@ -179,8 +183,17 @@ func TestMergeContributionSameRootKeepsCoverageOnlyWakeWithoutTypedTraversal(t *
 		t.Fatal("same-root support change was not published")
 	}
 	coverageChanges, ok := work.CoverageChanges(left, merged)
-	if !ok || coverageChanges.Count() != 1 {
+	if !ok || coverageChanges.Count() != 1 || coverageChanges.TargetCount() != 1 {
 		t.Fatal("same-root authored coverage was not retained")
+	}
+	wakeChanges, ok := work.CoverageWakeChanges(left, merged)
+	if !ok || wakeChanges.Count() != coverageChanges.Count() || wakeChanges.TargetCount() != 0 {
+		t.Fatal("coverage wake projection retained target-detail rows")
+	}
+	fullRow, fullOK := coverageChanges.At(0)
+	wakeRow, wakeOK := wakeChanges.At(0)
+	if !fullOK || !wakeOK || fullRow.Slot() != wakeRow.Slot() || !fullRow.Region().Equal(wakeRow.Region()) {
+		t.Fatal("coverage wake projection changed slot/guard meaning")
 	}
 	root, ok := merged.HandleAt(shape.Slot(0))
 	if !ok || root != changedLeft.roots[0] {

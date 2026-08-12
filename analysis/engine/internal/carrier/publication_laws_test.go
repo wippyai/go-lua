@@ -115,10 +115,34 @@ func (adversarialWork) Merge3Under(MergeKind, bool, uint64, RootHandle, RootHand
 func (adversarialWork) MergeContributionUnder(RootHandle, RootHandle, support.Mask, support.Mask, SlotCoverage, SlotCoverage, *support.Work) (ChangeHandle, bool) {
 	return ChangeHandle{}, false
 }
-func (adversarialWork) MergeTransportedUnder(RootHandle, RootHandle, support.Mask, support.Mask, support.Mask, support.Mask, guard.Reindex, SlotCoverage, SlotCoverage, *support.Work) (ChangeHandle, bool) {
+func (adversarialWork) OverlayPointRHSUnder(RootHandle, RootHandle, support.Mask, support.Mask, SlotCoverage, SlotCoverage, *support.Work) (ChangeHandle, bool) {
+	return ChangeHandle{}, false
+}
+func (adversarialWork) LessOrEqContributionUnder(RootHandle, RootHandle, support.Mask, support.Mask, SlotCoverage, SlotCoverage) (bool, bool) {
+	return false, false
+}
+func (adversarialWork) ContributionClosedUnder(RootHandle, support.Mask, SlotCoverage) bool {
+	return true
+}
+func (adversarialWork) ContributionPresenceIncludedUnder(support.Mask, support.Mask, SlotCoverage, SlotCoverage) bool {
+	return true
+}
+func (adversarialWork) MergeTransportedPointUnder(RootHandle, RootHandle, support.Mask, support.Mask, support.Mask, support.Mask, guard.Reindex, SlotCoverage, SlotCoverage, *support.Work) (ChangeHandle, bool) {
 	return ChangeHandle{}, false
 }
 func (adversarialWork) MergeSelectedUnder(MergeKind, uint64, RootHandle, RootHandle, RootHandle, support.Split, support.Split, *support.Work) (ChangeHandle, bool) {
+	return ChangeHandle{}, false
+}
+func (adversarialWork) MergeSelectedContributionUnder(MergeKind, uint64, RootHandle, RootHandle, RootHandle, support.Split, support.Split, SlotCoverage, SlotCoverage, SlotCoverage, *support.Work) (ChangeHandle, bool) {
+	return ChangeHandle{}, false
+}
+func (adversarialWork) ReindexContributionUnder(RootHandle, support.Mask, support.Mask, guard.Reindex, SlotCoverage, SlotCoverage, *support.Work) (ChangeHandle, bool) {
+	return ChangeHandle{}, false
+}
+func (adversarialWork) ReindexPointContributionUnder(RootHandle, support.Mask, support.Mask, guard.Reindex, SlotCoverage, *support.Work) (ChangeHandle, bool) {
+	return ChangeHandle{}, false
+}
+func (adversarialWork) CloseContributionUnder(RootHandle, RootHandle, support.Mask, SlotCoverage, *support.Work) (ChangeHandle, bool) {
 	return ChangeHandle{}, false
 }
 func (adversarialWork) ReindexUnder(RootHandle, support.Mask, support.Mask, guard.Reindex, *support.Work) (ChangeHandle, bool) {

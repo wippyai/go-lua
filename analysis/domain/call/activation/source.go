@@ -100,7 +100,7 @@ type Source struct {
 type Session struct {
 	source   *Source
 	assembly *engine.SourceAssembly
-	roles    []engine.SemanticKey
+	roles    []roleABI
 	prepared *engine.PreparedActivationPlan
 	plan     *engine.ActivationPlan
 }
@@ -219,11 +219,7 @@ func (source *Source) Stage(assembly *engine.SourceAssembly, entries []Entry) (*
 	if !preparedOK || prepared == nil {
 		return nil, false
 	}
-	roles := make([]engine.SemanticKey, len(canonicalABI))
-	for index, role := range canonicalABI {
-		roles[index] = role.key
-	}
-	return &Session{source: source, assembly: assembly, roles: roles, prepared: prepared}, true
+	return &Session{source: source, assembly: assembly, roles: append([]roleABI(nil), canonicalABI...), prepared: prepared}, true
 }
 
 // Finalize closes this source's static activation catalog through the exact
@@ -262,7 +258,7 @@ func (source *Source) Prepare(assembly *engine.SourceAssembly, occurrence engine
 // roles from the staged FactorEdges receive zero-read ports at this one base;
 // there is still no per-body instance. The caller supplies the Assembly-issued
 // ActivationBase when the trigger is attached to its canonical body point.
-func (session *Session) Trigger(application linkproject.Application, base engine.ActivationBase) (*engine.StructuralInstance, bool) {
+func (session *Session) Trigger(application linkproject.Application, importBase, exportBase engine.ActivationBase) (*engine.StructuralInstance, bool) {
 	if session == nil || session.source == nil || session.plan == nil {
 		return nil, false
 	}
@@ -283,7 +279,13 @@ func (session *Session) Trigger(application linkproject.Application, base engine
 	}
 	ports := make([]*engine.ActivationPort, len(session.roles))
 	for index, role := range session.roles {
-		port, portOK := engine.NewActivationPort(role, base)
+		base := importBase
+		if role.mode == roleExport {
+			base = exportBase
+		} else if role.mode != roleImport {
+			return nil, false
+		}
+		port, portOK := engine.NewActivationPort(role.key, base)
 		if !portOK {
 			return nil, false
 		}

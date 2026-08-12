@@ -8,12 +8,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 )
 
-// TestMergeTransportedContributionDropsPreparedRootOnCancellation places the
+// TestMergeTransportedPointContributionDropsPreparedRootOnCancellation places the
 // cancellation edge after the fused typed operation has returned its pending
 // publisher. The ordinary carrier commit cut must drop that publisher and
 // leave the predecessor untouched; a transport-specific publication route is
 // not allowed to leak a prepared root.
-func TestMergeTransportedContributionDropsPreparedRootOnCancellation(t *testing.T) {
+func TestMergeTransportedPointContributionDropsPreparedRootOnCancellation(t *testing.T) {
 	manager, err := guard.New([]guard.Atom{1})
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestMergeTransportedContributionDropsPreparedRootOnCancellation(t *testing.
 	if !work.SetCheckpoint(func() bool { return live }) {
 		t.Fatal("checkpoint")
 	}
-	if _, _, merged := work.MergeTransportedContribution(left, right, whole, plan, whole); merged {
+	if _, _, merged := work.MergeTransportedPointContribution(left, right, whole, plan, whole); merged {
 		t.Fatal("canceled fused merge committed")
 	}
 	if operation.publisher == nil || operation.publisher.dropped != 1 || operation.publisher.published != 0 || operation.publisher.reserved != 0 {
@@ -117,7 +117,7 @@ type transportPendingWork struct {
 	operation *transportPendingOperation
 }
 
-func (work *transportPendingWork) MergeTransportedUnder(left, _ RootHandle, _, _, _, _ support.Mask, _ guard.Reindex, _, _ SlotCoverage, candidate *support.Work) (ChangeHandle, bool) {
+func (work *transportPendingWork) MergeTransportedPointUnder(left, _ RootHandle, _, _, _, _ support.Mask, _ guard.Reindex, _, _ SlotCoverage, candidate *support.Work) (ChangeHandle, bool) {
 	if work == nil || work.operation == nil || candidate == nil || !candidate.Open() {
 		return ChangeHandle{}, false
 	}

@@ -31,7 +31,12 @@ type reindex struct {
 	target   Scope
 	entries  []reindexEntryRow
 	identity bool
-	sealed   bool
+	// coordinateIdentity is weaker than identity: every source coordinate is
+	// mapped to the identically ranked target coordinate, but source and target
+	// may be separately issued Scope identities. Boolean payloads are reusable;
+	// a State wrapper is not.
+	coordinateIdentity bool
+	sealed             bool
 }
 
 type reindexEntry struct {
@@ -81,6 +86,14 @@ func (plan Reindex) Valid() bool {
 // coordinate in the same scope. Carrier may reuse an immutable State only on
 // this proof; semantic equality of a partial plan is insufficient.
 func (plan Reindex) Identity() bool { return plan.Valid() && plan.value.identity }
+
+// CoordinateIdentity proves the relation is the identity function over the
+// Boolean payload even when its source and target are distinct issued scopes.
+// It authorizes immutable BDD/FDD reuse only; callers must still publish the
+// exact target Scope identity.
+func (plan Reindex) CoordinateIdentity() bool {
+	return plan.Valid() && plan.value.coordinateIdentity
+}
 
 // ReindexBuilder is the cold single-use authoring surface for one relation.
 // It accepts individual atoms only while sealing; no execution API exposes
@@ -178,16 +191,17 @@ func (builder *ReindexBuilder) Seal() (Reindex, bool) {
 	for index, entry := range builder.entries {
 		entries[index] = reindexEntryRow{rank: builder.source.value.ranks[index], reindexEntry: entry}
 	}
-	identity := builder.source.Same(builder.target)
-	if identity {
-		for _, entry := range entries {
-			if !entry.identity {
-				identity = false
+	coordinateIdentity := len(builder.source.value.ranks) == len(builder.target.value.ranks)
+	if coordinateIdentity {
+		for index, entry := range entries {
+			if !entry.identity || builder.source.value.ranks[index] != builder.target.value.ranks[index] {
+				coordinateIdentity = false
 				break
 			}
 		}
 	}
-	plan := Reindex{value: &reindex{manager: builder.manager, source: builder.source, target: builder.target, entries: entries, identity: identity, sealed: true}}
+	identity := coordinateIdentity && builder.source.Same(builder.target)
+	plan := Reindex{value: &reindex{manager: builder.manager, source: builder.source, target: builder.target, entries: entries, identity: identity, coordinateIdentity: coordinateIdentity, sealed: true}}
 	if !plan.Valid() {
 		return Reindex{}, false
 	}

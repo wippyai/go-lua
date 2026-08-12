@@ -51,6 +51,18 @@ type canonicalItem struct {
 	incoming []engine.SourceBoundary
 }
 
+// causalStageKind names a semantic cutpoint owned by the root compiler.  It
+// is deliberately not a solver phase: each row is an exact post-occurrence
+// point in the one Program equation graph.
+type causalStageKind uint8
+
+const (
+	causalStageLocal causalStageKind = iota + 1
+	causalStageCallDispatch
+	causalStageCallSummary
+	causalStageCallEffect
+)
+
 // canonicalInputMode is an endpoint law, not a phase classifier. It records
 // the owner-issued boundary shape for one exact occurrence. In particular,
 // writes have no Entry port and therefore consume the existing Flow causal
@@ -94,6 +106,34 @@ type causalSite struct {
 	scope     engine.SourceScope
 	decisions map[keyspace.Term]engine.SourceDecision
 	ordered   []keyspace.Term
+	base      *causalSite
+	stage     causalStageKind
+}
+
+type causalStageKey struct {
+	base *causalSite
+	kind causalStageKind
+}
+
+// causalFactorSet is the exact whole-Factor frame transported between two
+// semantic call cutpoints. A zero set denotes a complete environment edge;
+// nonzero sets are lowered only through owner-issued CarryForms.
+type causalFactorSet uint8
+
+const (
+	causalFactorValue causalFactorSet = 1 << iota
+	causalFactorCall
+	causalFactorHeap
+	causalFactorPack
+	causalFactorEffect
+)
+
+type causalStageEdge struct {
+	from     *causalSite
+	to       *causalSite
+	key      engine.SemanticKey
+	factors  causalFactorSet
+	boundary engine.SourceBoundary
 }
 
 // causalSpan is the immutable owner-issued Flow boundary for one authored
@@ -126,6 +166,10 @@ type causalTopology struct {
 	sites            []*causalSite
 	routes           []*causalRoute
 	routesByIdentity map[causalRouteIdentity]*causalRoute
+	falsity          engine.SourceExpr
+	stages           map[causalStageKey]*causalSite
+	tails            map[*causalSite]*causalSite
+	stageEdges       []*causalStageEdge
 }
 
 func (topology *causalTopology) mount(shard linkproject.Shard) *causalMount {
@@ -201,7 +245,163 @@ func (topology *causalTopology) point(shard linkproject.Shard, term keyspace.Ter
 	if mount == nil {
 		return nil
 	}
-	return mount.sites[term]
+	return topology.terminal(mount.sites[term])
+}
+
+func (kind causalStageKind) role() string {
+	switch kind {
+	case causalStageLocal:
+		return "local-result"
+	case causalStageCallDispatch:
+		return "call-dispatch"
+	case causalStageCallSummary:
+		return "call-summary"
+	case causalStageCallEffect:
+		return "call-effect"
+	default:
+		return ""
+	}
+}
+
+func (topology *causalTopology) terminal(base *causalSite) *causalSite {
+	if topology == nil || base == nil {
+		return nil
+	}
+	if base.stage != 0 {
+		base = base.base
+	}
+	if tail := topology.tails[base]; tail != nil {
+		return tail
+	}
+	return base
+
+}
+
+// appendStageEdge records one structural edge between already-issued causal
+// cutpoints. A zero factor set is the one complete environment edge; a
+// nonzero set is a lane-sliced family of whole-Factor edges.
+func (topology *causalTopology) appendStageEdge(from, to *causalSite, role string, factors causalFactorSet) bool {
+	if topology == nil || from == nil || to == nil || from == to || from.mount == nil || from.mount != to.mount || role == "" {
+		return false
+	}
+	semantic, ok := analysisSemanticKeyParts(
+		topology.linkID,
+		"canonical/causal-stage-edge/"+role,
+		topology.projectID[:],
+		from.mount.moduleID[:],
+		from.context[:],
+		to.context[:],
+	)
+	if !ok {
+		return false
+	}
+	topology.stageEdges = append(topology.stageEdges, &causalStageEdge{
+		from: from, to: to, key: semantic, factors: factors,
+	})
+	return true
+}
+
+// stage appends one exact post-occurrence cutpoint. Stages inherit the
+// owner's Flow scope. Local stages receive the complete predecessor
+// environment. Call stages instead receive the minimal formal frame declared
+// below, so summary points never materialize unrelated Factors.
+func (topology *causalTopology) stage(source *engine.SourceAssembly, base *causalSite, kind causalStageKind) (*causalSite, bool) {
+	if topology == nil || source == nil || base == nil || base.mount == nil || base.stage != 0 || kind.role() == "" || topology.stages == nil || topology.tails == nil {
+		return nil, false
+	}
+	key := causalStageKey{base: base, kind: kind}
+	if stage := topology.stages[key]; stage != nil {
+		return stage, true
+	}
+	predecessor := topology.terminal(base)
+	validOrder := predecessor == base && (kind == causalStageLocal || kind == causalStageCallDispatch) ||
+		predecessor != nil && predecessor.base == base && predecessor.stage == causalStageCallDispatch && kind == causalStageCallSummary ||
+		predecessor != nil && predecessor.base == base && predecessor.stage == causalStageCallSummary && kind == causalStageCallEffect
+	if !validOrder {
+		return nil, false
+	}
+	role := kind.role()
+	context, contextOK := analysisContentID("analysis/canonical-causal-stage.v1", topology.projectID[:], base.mount.moduleID[:], base.context[:], []byte(role))
+	stageSemantic, semanticOK := analysisSemanticKeyParts(topology.linkID, "canonical/causal-stage/"+role, topology.projectID[:], base.mount.moduleID[:], base.context[:])
+	if !contextOK || !semanticOK {
+		return nil, false
+	}
+	issued, issuedOK := source.Site(stageSemantic, base.scope, topology.falsity, false)
+	if !issuedOK {
+		return nil, false
+	}
+	stage := &causalSite{
+		mount: base.mount, term: base.term, context: context, key: stageSemantic, site: issued, scope: base.scope,
+		decisions: base.decisions, ordered: base.ordered, base: base, stage: kind,
+	}
+	topology.stages[key] = stage
+	topology.tails[base] = stage
+	topology.sites = append(topology.sites, stage)
+
+	var edgesOK bool
+	switch kind {
+	case causalStageLocal:
+		edgesOK = topology.appendStageEdge(predecessor, stage, "local/environment", 0)
+	case causalStageCallDispatch:
+		edgesOK = topology.appendStageEdge(
+			base,
+			stage,
+			"call/dispatch-frame",
+			causalFactorValue|causalFactorCall|causalFactorHeap|causalFactorPack,
+		)
+	case causalStageCallSummary:
+		edgesOK = topology.appendStageEdge(base, stage, "call/summary-effect", causalFactorEffect) &&
+			topology.appendStageEdge(predecessor, stage, "call/summary-dispatch", causalFactorCall)
+	case causalStageCallEffect:
+		dispatch := topology.stages[causalStageKey{base: base, kind: causalStageCallDispatch}]
+		edgesOK = dispatch != nil &&
+			topology.appendStageEdge(base, stage, "call/effect-environment", 0) &&
+			topology.appendStageEdge(dispatch, stage, "call/effect-dispatch", causalFactorCall)
+	}
+	if !edgesOK {
+		return nil, false
+	}
+	return stage, true
+}
+
+func (topology *causalTopology) callStages(source *engine.SourceAssembly, base *causalSite) (dispatch, summary, effect *causalSite, ok bool) {
+	dispatch, dispatchOK := topology.stage(source, base, causalStageCallDispatch)
+	summary, summaryOK := topology.stage(source, base, causalStageCallSummary)
+	effect, effectOK := topology.stage(source, base, causalStageCallEffect)
+	return dispatch, summary, effect, dispatchOK && summaryOK && effectOK
+}
+
+// assembleStageEdge lowers the root-owned causal frame without recovering a
+// Factor from semantic keys. Every lane is selected by the corresponding
+// domain owner's opaque CarryForm; a zero mask remains the exact complete
+// environment transport.
+func (declared *programAnalysis) assembleStageEdge(assembly *engine.Assembly, target engine.AssemblyPoint, edge *causalStageEdge) bool {
+	if declared == nil || assembly == nil || edge == nil || edge.to == nil {
+		return false
+	}
+	if edge.factors == 0 {
+		return assembly.EnvironmentEdge(target, edge.boundary)
+	}
+	const known = causalFactorValue | causalFactorCall | causalFactorHeap | causalFactorPack | causalFactorEffect
+	if edge.factors&^known != 0 || declared.values == nil || declared.calls == nil || declared.heap == nil || declared.packs == nil || declared.effects == nil {
+		return false
+	}
+	lanes := [...]struct {
+		flag  causalFactorSet
+		carry engine.CarryForm
+	}{
+		{flag: causalFactorValue, carry: declared.values.Carry()},
+		{flag: causalFactorCall, carry: declared.calls.Carry()},
+		{flag: causalFactorHeap, carry: declared.heap.Carry()},
+		{flag: causalFactorPack, carry: declared.packs.Carry()},
+		{flag: causalFactorEffect, carry: declared.effects.Carry()},
+	}
+	for _, lane := range lanes {
+		if edge.factors&lane.flag != 0 && !assembly.FactorEdge(target, edge.boundary, lane.carry) {
+			return false
+		}
+	}
+	return true
 }
 
 // assignmentPredecessor resolves the owner-issued reverse commit successor
@@ -355,12 +555,12 @@ func (declared *programAnalysis) solveCanonicalBodies(ctx context.Context, bodie
 		}
 		if allocationKind == heapdomain.AllocationClosure || (allocationKind == heapdomain.AllocationTable && declared.heapSchema.FieldCount(key) == 0) {
 			emptyInstance, emptyOK := declared.heapEmpty.Instance(key)
-			if !emptyOK || !appendCanonicalRule(source, topology, &items, anchor, "heap-empty", []keyspace.ContentID{keyID}, emptyInstance, declared.semantics.heapFactor) {
+			if !emptyOK || !appendCanonicalFinishRule(source, topology, &items, anchor, "heap-empty", []keyspace.ContentID{keyID}, emptyInstance, declared.semantics.heapFactor) {
 				return programObservation{}, false
 			}
 		}
 		if closed, closedOK := declared.heapClosed.Instance(key); closedOK {
-			if !appendCanonicalRule(source, topology, &items, anchor, "heap-closed", []keyspace.ContentID{keyID}, closed, declared.semantics.heapFactor) {
+			if !appendCanonicalFinishRule(source, topology, &items, anchor, "heap-closed", []keyspace.ContentID{keyID}, closed, declared.semantics.heapFactor) {
 				return programObservation{}, false
 			}
 		}
@@ -478,24 +678,30 @@ func (declared *programAnalysis) solveCanonicalBodies(ctx context.Context, bodie
 		effectRoot, effectRootOK := declared.effectAlgebra.RootForCall(application)
 		effectRootID, effectRootIDOK := declared.effectAlgebra.RootID(effectRoot)
 		opaque, opaqueOK := declared.effectOpaque.Instance(application)
+		var dispatchPoint, summaryPoint, effectPoint *causalSite
+		stagesOK := false
+		if anchor != nil {
+			dispatchPoint, summaryPoint, effectPoint, stagesOK = topology.callStages(source, anchor.finish)
+		}
 		if !applicationOK || !applicationTermOK || anchor == nil || !dispatchOK || !callKeyOK || !callIDOK || !calleeOK || !calleeIDOK || !packRootOK || !packRootIDOK || !selectedOK || !effectRootOK || !effectRootIDOK || !opaqueOK ||
-			!appendCanonicalEntryRule(source, topology, &items, anchor, "call-dispatch", dispatchIDs, dispatch, declared.semantics.valueFactor) ||
-			!appendCanonicalRule(source, topology, &items, anchor, "effect-selected", []keyspace.ContentID{callID, effectRootID}, selected, declared.semantics.callFactor) ||
-			!appendCanonicalRule(source, topology, &items, anchor, "effect-opaque", []keyspace.ContentID{callID, effectRootID}, opaque, declared.semantics.callFactor) {
+			!stagesOK ||
+			!appendCanonicalRuleAt(source, topology, &items, anchor, dispatchPoint, anchor.finish, "call-dispatch", dispatchIDs, canonicalInputFinish, dispatch, declared.semantics.valueFactor) ||
+			!appendCanonicalRuleAt(source, topology, &items, anchor, effectPoint, summaryPoint, "effect-selected", []keyspace.ContentID{callID, effectRootID}, canonicalInputFinish, selected, declared.semantics.callFactor) ||
+			!appendCanonicalRuleAt(source, topology, &items, anchor, effectPoint, summaryPoint, "effect-opaque", []keyspace.ContentID{callID, effectRootID}, canonicalInputFinish, opaque, declared.semantics.callFactor) {
 			return programObservation{}, false
 		}
 		if bodyTargets.Count() != 0 {
 			bodyCall, bodyCallOK := declared.effectBody.Instance(application)
-			if !bodyCallOK || !appendCanonicalRule(source, topology, &items, anchor, "effect-body", []keyspace.ContentID{callID, effectRootID}, bodyCall, declared.semantics.callFactor) {
+			if !bodyCallOK || !appendCanonicalRuleAt(source, topology, &items, anchor, effectPoint, summaryPoint, "effect-body", []keyspace.ContentID{callID, effectRootID}, canonicalInputFinish, bodyCall, declared.semantics.callFactor) {
 				return programObservation{}, false
 			}
-			activationIdentity, activationIdentityOK := causalOccurrenceKey(topology.linkID, topology.projectID, anchor.finish, "call-body-activation", callID)
-			activationOccurrence, activationOccurrenceOK := source.Relation(anchor.finish.site, activationIdentity)
+			activationIdentity, activationIdentityOK := causalOccurrenceKey(topology.linkID, topology.projectID, summaryPoint, "call-body-activation", callID)
+			activationOccurrence, activationOccurrenceOK := source.Relation(summaryPoint.site, activationIdentity)
 			prepared, preparedOK := declared.callActivation.Prepare(source, activationOccurrence, declared.semantics.callActivation)
 			if !activationIdentityOK || !activationOccurrenceOK || !preparedOK {
 				return programObservation{}, false
 			}
-			activations = append(activations, canonicalActivation{application: application, identity: activationIdentity, entry: anchor.entry, point: anchor.finish, prepared: prepared})
+			activations = append(activations, canonicalActivation{application: application, identity: activationIdentity, entry: dispatchPoint, point: summaryPoint, prepared: prepared})
 		}
 	}
 
@@ -531,8 +737,8 @@ func (declared *programAnalysis) solveCanonicalBodies(ctx context.Context, bodie
 		if !arityOK || arity != 1 || activation.entry == nil || activation.point == nil || !activation.identity.Available() {
 			return programObservation{}, false
 		}
-		boundaryKey, keyOK := causalFinishBoundaryKey(topology.linkID, topology.projectID, activation.point, activation.identity, 0)
-		boundary, boundaryOK := issueFinishBoundary(source, activation.point, boundaryKey, truth)
+		boundaryKey, keyOK := causalEntryBoundaryKey(topology.linkID, topology.projectID, activation.entry, activation.point, activation.identity, 0)
+		boundary, boundaryOK := issueSpanBoundary(source, activation.entry, activation.point, boundaryKey, truth)
 		if !keyOK || !boundaryOK {
 			return programObservation{}, false
 		}
@@ -572,6 +778,15 @@ func (declared *programAnalysis) solveCanonicalBodies(ctx context.Context, bodie
 				return false
 			}
 		}
+		for _, edge := range topology.stageEdges {
+			if edge == nil || edge.to == nil {
+				return false
+			}
+			point, pointOK := points[edge.to.key]
+			if !pointOK || !declared.assembleStageEdge(assembly, point, edge) {
+				return false
+			}
+		}
 		for _, item := range items {
 			if item.point == nil || len(item.incoming) != item.arity {
 				return false
@@ -592,20 +807,22 @@ func (declared *programAnalysis) solveCanonicalBodies(ctx context.Context, bodie
 			}
 		}
 		for _, activation := range activations {
-			if activation.point == nil || !activation.prepared.Available() {
+			if activation.entry == nil || activation.point == nil || !activation.prepared.Available() {
 				return false
 			}
 			point, pointOK := points[activation.point.key]
-			if !pointOK {
+			entryPoint, entryPointOK := points[activation.entry.key]
+			if !pointOK || !entryPointOK {
 				return false
 			}
-			base, baseOK := assembly.ActivationBase(point)
+			importBase, importBaseOK := assembly.ActivationBase(entryPoint)
+			exportBase, exportBaseOK := assembly.ActivationBase(point)
 			if activationSession == nil {
 				return false
 			}
-			trigger, triggerOK := activationSession.Trigger(activation.application, base)
+			trigger, triggerOK := activationSession.Trigger(activation.application, importBase, exportBase)
 			member, memberOK := assembly.ActivationMember(point, activation.prepared, trigger)
-			if !baseOK || !triggerOK || !memberOK {
+			if !importBaseOK || !exportBaseOK || !triggerOK || !memberOK {
 				return false
 			}
 			group, groupOK := assembly.Group(point, member)
@@ -743,25 +960,44 @@ func (declared *programAnalysis) solveCanonicalBodies(ctx context.Context, bodie
 }
 
 func appendCanonicalRule[V, O any](source *engine.SourceAssembly, topology *causalTopology, items *[]canonicalItem, span *causalSpan, role string, ids []keyspace.ContentID, instance *engine.RuleInstance[V, O], ports ...engine.SemanticKey) bool {
-	return appendCanonicalRuleMode(source, topology, items, span, role, ids, canonicalInputFinish, instance, ports...)
+	if span == nil || span.finish == nil {
+		return false
+	}
+	return appendCanonicalRuleAt(source, topology, items, span, span.finish, span.finish, role, ids, canonicalInputFinish, instance, ports...)
+}
+
+func appendCanonicalFinishRule[V, O any](source *engine.SourceAssembly, topology *causalTopology, items *[]canonicalItem, span *causalSpan, role string, ids []keyspace.ContentID, instance *engine.RuleInstance[V, O], ports ...engine.SemanticKey) bool {
+	if span == nil || span.finish == nil {
+		return false
+	}
+	point, pointOK := topology.stage(source, span.finish, causalStageLocal)
+	return pointOK && appendCanonicalRuleAt(source, topology, items, span, point, span.finish, role, ids, canonicalInputFinish, instance, ports...)
 }
 
 func appendCanonicalEntryRule[V, O any](source *engine.SourceAssembly, topology *causalTopology, items *[]canonicalItem, span *causalSpan, role string, ids []keyspace.ContentID, instance *engine.RuleInstance[V, O], ports ...engine.SemanticKey) bool {
-	return appendCanonicalRuleMode(source, topology, items, span, role, ids, canonicalInputEntry, instance, ports...)
+	if span == nil || span.entry == nil || span.finish == nil {
+		return false
+	}
+	point, pointOK := topology.stage(source, span.finish, causalStageLocal)
+	return pointOK && appendCanonicalRuleAt(source, topology, items, span, point, span.entry, role, ids, canonicalInputEntry, instance, ports...)
 }
 
 func appendCanonicalPredecessorRule[V, O any](source *engine.SourceAssembly, topology *causalTopology, items *[]canonicalItem, span *causalSpan, role string, ids []keyspace.ContentID, instance *engine.RuleInstance[V, O], ports ...engine.SemanticKey) bool {
-	return appendCanonicalRuleMode(source, topology, items, span, role, ids, canonicalInputPredecessor, instance, ports...)
+	if span == nil || span.finish == nil {
+		return false
+	}
+	point, pointOK := topology.stage(source, span.finish, causalStageLocal)
+	return pointOK && appendCanonicalRuleAt(source, topology, items, span, point, nil, role, ids, canonicalInputPredecessor, instance, ports...)
 }
 
-func appendCanonicalRuleMode[V, O any](source *engine.SourceAssembly, topology *causalTopology, items *[]canonicalItem, span *causalSpan, role string, ids []keyspace.ContentID, input canonicalInputMode, instance *engine.RuleInstance[V, O], ports ...engine.SemanticKey) bool {
-	if source == nil || topology == nil || items == nil || span == nil || span.finish == nil || role == "" || instance == nil {
+func appendCanonicalRuleAt[V, O any](source *engine.SourceAssembly, topology *causalTopology, items *[]canonicalItem, span *causalSpan, point, entry *causalSite, role string, ids []keyspace.ContentID, input canonicalInputMode, instance *engine.RuleInstance[V, O], ports ...engine.SemanticKey) bool {
+	if source == nil || topology == nil || items == nil || span == nil || span.finish == nil || point == nil || role == "" || instance == nil {
 		return false
 	}
 	if input != canonicalInputFinish && input != canonicalInputEntry && input != canonicalInputPredecessor {
 		return false
 	}
-	if input != canonicalInputPredecessor && span.entry == nil {
+	if input != canonicalInputPredecessor && entry == nil {
 		return false
 	}
 	for _, port := range ports {
@@ -769,16 +1005,19 @@ func appendCanonicalRuleMode[V, O any](source *engine.SourceAssembly, topology *
 			return false
 		}
 	}
-	identity, identityOK := causalOccurrenceKey(topology.linkID, topology.projectID, span.finish, role, ids...)
+	identity, identityOK := causalOccurrenceKey(topology.linkID, topology.projectID, point, role, ids...)
 	if !identityOK {
 		return false
 	}
-	occurrence, occurrenceOK := source.Relation(span.finish.site, identity)
+	occurrence, occurrenceOK := source.Relation(point.site, identity)
 	prepared, preparedOK := source.PrepareInstance(occurrence, instance)
 	if !occurrenceOK || !preparedOK {
 		return false
 	}
-	*items = append(*items, canonicalItem{instance: prepared, identity: identity, ports: append([]engine.SemanticKey(nil), ports...), arity: 0, input: input, authored: span.authored, anchor: span.finish, entry: span.entry})
+	*items = append(*items, canonicalItem{
+		instance: prepared, identity: identity, ports: append([]engine.SemanticKey(nil), ports...), arity: 0,
+		input: input, authored: span.authored, anchor: span.finish, entry: entry, point: point,
+	})
 	return true
 }
 
@@ -791,11 +1030,16 @@ func buildCausalTopology(linked *link.Link, source *engine.SourceAssembly, truth
 	if !projectID.Available() {
 		return nil, false
 	}
-	topology := &causalTopology{linkID: linked.ContentID(), projectID: projectID, routesByIdentity: make(map[causalRouteIdentity]*causalRoute)}
+	topology := &causalTopology{
+		linkID: linked.ContentID(), projectID: projectID,
+		routesByIdentity: make(map[causalRouteIdentity]*causalRoute),
+		stages:           make(map[causalStageKey]*causalSite), tails: make(map[*causalSite]*causalSite),
+	}
 	falsity, falsityOK := source.FalseExpr()
 	if !falsityOK {
 		return nil, false
 	}
+	topology.falsity = falsity
 	mounts := project.Mounts()
 	for mountIndex := 0; mountIndex < mounts.Count(); mountIndex++ {
 		shard, shardOK := mounts.At(mountIndex)
@@ -939,19 +1183,32 @@ func prepareCausalTopology(source *engine.SourceAssembly, topology *causalTopolo
 		if route == nil || route.from == nil || route.to == nil {
 			return false
 		}
-		boundary, boundaryOK := issueCausalRouteBoundary(source, route, route.from.site, route.to.site, truth)
+		from := topology.terminal(route.from)
+		if from == nil {
+			return false
+		}
+		boundary, boundaryOK := issueCausalRouteBoundary(source, route, from.site, route.to.site, truth)
 		if !boundaryOK {
 			return false
 		}
 		route.boundary = boundary
 	}
-	for index := range items {
-		item := &items[index]
-		if item.anchor == nil || item.anchor.mount == nil || (item.input != canonicalInputPredecessor && (item.entry == nil || item.entry.mount != item.anchor.mount)) {
+	for _, edge := range topology.stageEdges {
+		if edge == nil || edge.from == nil || edge.to == nil || edge.from == edge.to {
 			return false
 		}
-		finish := item.anchor
-		item.point = finish
+		boundary, boundaryOK := issueSpanBoundary(source, edge.from, edge.to, edge.key, truth)
+		if !boundaryOK {
+			return false
+		}
+		edge.boundary = boundary
+	}
+	for index := range items {
+		item := &items[index]
+		if item.anchor == nil || item.anchor.mount == nil || item.point == nil || item.point.mount != item.anchor.mount ||
+			(item.input != canonicalInputPredecessor && (item.entry == nil || item.entry.mount != item.anchor.mount)) {
+			return false
+		}
 		if item.arity == 0 {
 			continue
 		}
@@ -961,17 +1218,27 @@ func prepareCausalTopology(source *engine.SourceAssembly, topology *causalTopolo
 			var boundaryOK bool
 			switch item.input {
 			case canonicalInputEntry:
-				boundaryKey, keyOK := causalEntryBoundaryKey(topology.linkID, topology.projectID, item.entry, finish, item.identity, uint64(slot))
-				boundary, boundaryOK = issueSpanBoundary(source, item.entry, finish, boundaryKey, truth)
-				boundaryOK = keyOK && boundaryOK
+				from := item.entry
+				if item.entry != item.anchor {
+					from = topology.terminal(item.entry)
+				}
+				if from != nil {
+					boundaryKey, keyOK := causalEntryBoundaryKey(topology.linkID, topology.projectID, from, item.point, item.identity, uint64(slot))
+					boundary, boundaryOK = issueSpanBoundary(source, from, item.point, boundaryKey, truth)
+					boundaryOK = keyOK && boundaryOK
+				}
 			case canonicalInputPredecessor:
-				route, routeOK := topology.assignmentPredecessor(finish, item.authored)
+				route, routeOK := topology.assignmentPredecessor(item.anchor, item.authored)
 				if routeOK {
-					boundary, boundaryOK = route.boundary, true
+					boundaryKey, keyOK := causalRouteStageBoundaryKey(topology.linkID, topology.projectID, route, item.point, item.identity, uint64(slot))
+					stagedRoute := *route
+					stagedRoute.key = boundaryKey
+					boundary, boundaryOK = issueCausalRouteBoundary(source, &stagedRoute, route.from.site, item.point.site, truth)
+					boundaryOK = keyOK && boundaryOK
 				}
 			case canonicalInputFinish:
-				boundaryKey, keyOK := causalFinishBoundaryKey(topology.linkID, topology.projectID, item.anchor, item.identity, uint64(slot))
-				boundary, boundaryOK = issueFinishBoundary(source, finish, boundaryKey, truth)
+				boundaryKey, keyOK := causalEntryBoundaryKey(topology.linkID, topology.projectID, item.entry, item.point, item.identity, uint64(slot))
+				boundary, boundaryOK = issueSpanBoundary(source, item.entry, item.point, boundaryKey, truth)
 				boundaryOK = keyOK && boundaryOK
 			default:
 				return false
@@ -1162,10 +1429,6 @@ func issueCausalRouteBoundary(source *engine.SourceAssembly, route *causalRoute,
 	return source.Boundary(from, to, route.key, pre, reindex, post)
 }
 
-func issueFinishBoundary(source *engine.SourceAssembly, finish *causalSite, key engine.SemanticKey, truth engine.SourceExpr) (engine.SourceBoundary, bool) {
-	return issueSpanBoundary(source, finish, finish, key, truth)
-}
-
 func issueSpanBoundary(source *engine.SourceAssembly, entry, finish *causalSite, key engine.SemanticKey, truth engine.SourceExpr) (engine.SourceBoundary, bool) {
 	if source == nil || entry == nil || finish == nil || !key.Available() {
 		return engine.SourceBoundary{}, false
@@ -1195,17 +1458,6 @@ func issueSpanBoundary(source *engine.SourceAssembly, entry, finish *causalSite,
 	return source.Boundary(entry.site, finish.site, key, truth, reindex, truth)
 }
 
-func causalFinishBoundaryKey(linkID, projectID keyspace.ContentID, anchor *causalSite, instance engine.SemanticKey, slot uint64) (engine.SemanticKey, bool) {
-	if anchor == nil || !anchor.key.Available() || !instance.Available() {
-		return engine.SemanticKey{}, false
-	}
-	anchorDigest := anchor.key.Digest()
-	instanceDigest := instance.Digest()
-	var encoded [8]byte
-	binary.BigEndian.PutUint64(encoded[:], slot)
-	return analysisSemanticKeyParts(linkID, "canonical/causal-finish-self", projectID[:], anchor.mount.moduleID[:], anchor.context[:], anchorDigest[:], instanceDigest[:], encoded[:])
-}
-
 func causalEntryBoundaryKey(linkID, projectID keyspace.ContentID, entry, finish *causalSite, instance engine.SemanticKey, slot uint64) (engine.SemanticKey, bool) {
 	if entry == nil || finish == nil || entry.mount == nil || finish.mount == nil || entry.mount != finish.mount || !linkID.Available() || !projectID.Available() || !entry.context.Available() || !finish.context.Available() || !instance.Available() {
 		return engine.SemanticKey{}, false
@@ -1214,6 +1466,18 @@ func causalEntryBoundaryKey(linkID, projectID keyspace.ContentID, entry, finish 
 	var encoded [8]byte
 	binary.BigEndian.PutUint64(encoded[:], slot)
 	return analysisSemanticKeyParts(linkID, "canonical/causal-entry-finish", projectID[:], entry.mount.moduleID[:], entry.context[:], finish.context[:], instanceDigest[:], encoded[:])
+}
+
+func causalRouteStageBoundaryKey(linkID, projectID keyspace.ContentID, route *causalRoute, target *causalSite, instance engine.SemanticKey, slot uint64) (engine.SemanticKey, bool) {
+	if route == nil || route.from == nil || route.to == nil || target == nil || target.mount == nil || route.from.mount != target.mount ||
+		!linkID.Available() || !projectID.Available() || !route.key.Available() || !target.context.Available() || !instance.Available() {
+		return engine.SemanticKey{}, false
+	}
+	routeDigest := route.key.Digest()
+	instanceDigest := instance.Digest()
+	var encoded [8]byte
+	binary.BigEndian.PutUint64(encoded[:], slot)
+	return analysisSemanticKeyParts(linkID, "canonical/causal-route-stage", projectID[:], target.mount.moduleID[:], routeDigest[:], target.context[:], instanceDigest[:], encoded[:])
 }
 
 func newBodyQueryPlans(declared *programAnalysis, topology *causalTopology, bodies []mountedBody, valuePlans []bodyValuePlan) ([]bodyQueryPlan, bool) {

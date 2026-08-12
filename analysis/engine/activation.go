@@ -217,8 +217,8 @@ func (compiled *compiledActivationRule) dynamicReads() []demand.DynamicRead {
 	return result
 }
 
-func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier.ContributionBase, inputs []carrier.State, within support.Mask) (selected []equation.AcceptedMember, reads []demand.Observation, accepted bool) {
-	if !compiled.executableInstance() || work == nil || !work.OwnsContributionStates(base, inputs) || len(compiled.reads) != len(compiled.rule.reads) {
+func (compiled *compiledActivationRule) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) (selected []equation.AcceptedMember, reads []demand.Observation, accepted bool) {
+	if !compiled.executableInstance() || work == nil || !work.OwnsRuleContributionStates(base, inputs) || len(compiled.reads) != len(compiled.rule.reads) {
 		return nil, nil, false
 	}
 	epoch := compiled.nextEpoch.Add(1)
