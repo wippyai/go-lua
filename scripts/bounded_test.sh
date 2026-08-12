@@ -28,7 +28,7 @@ if (( rss_limit_mib == 0 || time_limit_seconds == 0 )); then
     exit 2
 fi
 
-for required in setsid timeout ps awk; do
+for required in setsid timeout ps awk flock sha256sum; do
     if ! command -v "$required" >/dev/null 2>&1; then
         echo "required safeguard command is unavailable: $required" >&2
         exit 2
@@ -68,6 +68,20 @@ if [[ -n ${WIPPY_BOUNDED_ACTIVE:-} ]]; then
     # The parent runner still owns the RSS and wall-clock limits for this
     # session.  Replacing this wrapper leaves the gate in that killable tree.
     exec "$@"
+fi
+
+# Serialize outer bounded runs for this repository.  The lock is keyed by the
+# canonical repository path, lives outside the worktree, and is nonblocking so
+# a second analysis run fails immediately instead of multiplying its memory
+# footprint.  Nested runs take the inherited capability path above and remain
+# inside the parent's already-bounded process tree.
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+repo_lock_key=$(printf '%s' "$repo_root" | sha256sum | awk '{print $1}')
+lock_file="/tmp/wippy-bounded-test.${repo_lock_key}.lock"
+exec {bounded_lock_fd}>"$lock_file"
+if ! flock -n "$bounded_lock_fd"; then
+    echo "bounded test aborted: another bounded test is already running for repository $repo_root" >&2
+    exit 125
 fi
 
 # Keep Go's writable build cache inside the sandbox-owned temporary area. This
