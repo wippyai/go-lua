@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/link"
 	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
+	linkmodule "github.com/wippyai/go-lua/program/link/module"
 	linkproject "github.com/wippyai/go-lua/program/link/project"
 	programlower "github.com/wippyai/go-lua/program/lower"
 	programsource "github.com/wippyai/go-lua/program/source"
@@ -289,6 +290,193 @@ func TestTargetInitialPreservesBootAndCallableIdentity(t *testing.T) {
 	if _, ok := schema.TargetInitial(boot, values[target.InitialValueAbsent]); ok {
 		t.Fatal("absent target entry manufactured a runtime Value")
 	}
+}
+
+func TestTargetInitialRebindsAliasesWithinActorAndRejectsForeignBootRoots(t *testing.T) {
+	p, err := programlower.Lower(programlower.Source{Name: "target_initial_alias.lua", Text: []byte("return 1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := target.Seal(&target.Spec{
+		InitialRoots: []target.InitialRootSpec{
+			{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}},
+			{Identity: "TableRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "TableRoot"}}},
+		},
+		InitialEntries: []target.InitialEntrySpec{{
+			Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "table"},
+			Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "TableRoot"}, Mutability: target.InitialMutable,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleSpec := linkmodule.Spec{
+		Actors: []linkmodule.ActorSpec{{Name: "actor-a"}, {Name: "actor-b"}},
+		ModuleCacheAliases: []linkmodule.ModuleCacheAliasClassSpec{
+			{Actor: "actor-a", Instances: []string{"cache-a"}, Representative: "cache-a"},
+			{Actor: "actor-b", Instances: []string{"cache-b"}, Representative: "cache-b"},
+		},
+		AnalysisRoots: []linkmodule.AnalysisRootSpec{
+			{Name: "root-a", Module: "main", Actor: "actor-a", Instance: "cache-a"},
+			{Name: "root-b", Module: "main", Actor: "actor-b", Instance: "cache-b"},
+		},
+	}
+	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: p}}, Module: moduleSpec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	heaps, heapsOK := heap.Seal(linked)
+	schema, schemaOK := Seal(linked, heaps)
+	if !heapsOK || !schemaOK {
+		t.Fatal("Value schema")
+	}
+	globalRoot, globalOK := contract.InitialRootAt(0)
+	tableRoot, tableOK := contract.InitialRootAt(1)
+	if !globalOK || !tableOK {
+		t.Fatal("initial roots")
+	}
+	_ = tableRoot
+	var tableInitial target.InitialValue
+	for index := 0; index < contract.InitialEntryCount(); index++ {
+		root, key, initial, _, entryOK := contract.InitialEntryAt(index)
+		literal, literalOK := contract.ExactKeyValue(key)
+		if entryOK && root == globalRoot && literalOK && literal.Kind == keyspace.LiteralString && literal.String == "table" {
+			tableInitial = initial
+		}
+	}
+	if tableInitial == 0 {
+		t.Fatal("table alias initial")
+	}
+	boots := linked.Host().BootRoots()
+	globalA, globalAOK := boots.At(0)
+	tableA, tableAOK := boots.At(1)
+	globalB, globalBOK := boots.At(2)
+	tableB, tableBOK := boots.At(3)
+	if !globalAOK || !tableAOK || !globalBOK || !tableBOK {
+		t.Fatal("actor-local boot roots")
+	}
+	actorA, mappedA, mappedAOK := boots.Mapping(globalA)
+	actorB, mappedB, mappedBOK := boots.Mapping(globalB)
+	_, mappedTableA, mappedTableAOK := boots.Mapping(tableA)
+	_, mappedTableB, mappedTableBOK := boots.Mapping(tableB)
+	if !mappedAOK || !mappedBOK || !mappedTableAOK || !mappedTableBOK || mappedA != globalRoot || mappedB != globalRoot || mappedTableA != tableRoot || mappedTableB != tableRoot || actorA == actorB || tableA == tableB {
+		t.Fatal("two-actor boot-root geometry")
+	}
+	projectedA, projectedAOK := schema.TargetInitial(globalA, tableInitial)
+	projectedAtoms, projectedAtomsOK := schema.Atoms(projectedA)
+	if !projectedAOK || !projectedAtomsOK || len(projectedAtoms) != 1 {
+		t.Fatal("same-actor root alias did not project")
+	}
+	refA, _, refAOK := projectedAtoms[0].Reference()
+	projectedTableA, projectedTableAOK := refA.BootRoot()
+	if !refAOK || !projectedTableAOK || projectedTableA != tableA || projectedTableA == tableB {
+		t.Fatal("root alias crossed actor-local boot identity")
+	}
+	projectedB, projectedBOK := schema.TargetInitial(globalB, tableInitial)
+	projectedBAtoms, projectedBAtomsOK := schema.Atoms(projectedB)
+	if !projectedBOK || !projectedBAtomsOK || len(projectedBAtoms) != 1 {
+		t.Fatal("second actor root alias did not project")
+	}
+	refB, _, refBOK := projectedBAtoms[0].Reference()
+	projectedTableB, projectedTableBOK := refB.BootRoot()
+	if !refBOK || !projectedTableBOK || projectedTableB != tableB || projectedTableB == tableA {
+		t.Fatal("second actor alias did not retain its child root")
+	}
+	foreign, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: p}}, Module: moduleSpec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignTable, foreignTableOK := foreign.Host().BootRoots().At(1)
+	if !foreignTableOK {
+		t.Fatal("foreign boot root")
+	}
+	if _, ok := schema.TargetInitial(foreignTable, tableInitial); ok {
+		t.Fatal("foreign Host boot root crossed Value fence")
+	}
+}
+
+func TestTargetInitialScopesRequireAsNominalLoader(t *testing.T) {
+	require := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"require"}}
+	closed := target.OperationSpec{
+		Bindings: []target.BindingSpec{require},
+		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
+		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
+		Effects:  target.RowSpec{Tail: target.RowClosed},
+	}
+	contract, err := target.Seal(&target.Spec{
+		Operations:   []target.OperationSpec{closed},
+		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
+		InitialEntries: []target.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "require"}, Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: require}, Mutability: target.InitialMutable},
+		},
+		InitialBindings: []target.InitialBindingSpec{
+			{Name: "_G", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}},
+			{Name: "__link_absent", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}},
+			{Name: "require", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "require"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := programlower.Lower(programlower.Source{Name: "target_initial_require.lua", Text: []byte("return require")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := link.Seal(&link.Spec{Target: contract, Modules: []linkproject.Module{{Name: "main", Program: p}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	heaps, heapsOK := heap.Seal(linked)
+	schema, schemaOK := Seal(linked, heaps)
+	if !heapsOK || !schemaOK {
+		t.Fatal("Value schema")
+	}
+	_, initial, _, _, initialOK := contract.InitialBinding("require")
+	boot, bootOK := linked.Host().BootRoots().At(0)
+	if !initialOK || !bootOK {
+		t.Fatal("require bootstrap geometry")
+	}
+	fact, factOK := schema.TargetInitial(boot, initial)
+	atoms, atomsOK := schema.Atoms(fact)
+	if !factOK || !atomsOK || len(atoms) != 1 || !atoms[0].RuntimeKinds().Contains(runtimekind.Function) {
+		t.Fatal("scoped require did not retain Function identity")
+	}
+	ref, _, refOK := atoms[0].Reference()
+	operation, scoped := ref.ScopedLoader()
+	if !refOK || !scoped || operation == 0 || operation != requireOperation(t, contract) {
+		t.Fatal("scoped require did not retain nominal loader identity")
+	}
+	if _, callable := ref.Callable(); callable {
+		t.Fatal("scoped require fabricated a global callable seed")
+	}
+	unknown, unknownOK := schema.FilterStoredUnknown(fact)
+	if !unknownOK || !schema.Equal(unknown, fact) {
+		t.Fatal("scoped loader marker was lost from stored unknown projection")
+	}
+	aliased, aliasedOK := schema.TargetInitial(boot, initial)
+	if !aliasedOK || !schema.Equal(aliased, fact) {
+		t.Fatal("scoped loader alias changed nominal identity")
+	}
+}
+
+func requireOperation(t testing.TB, contract *target.Contract) target.Operation {
+	t.Helper()
+	operation, ok := contract.InitialValueOperation(mustInitialBinding(t, contract, "require"))
+	if !ok {
+		t.Fatal("require operation")
+	}
+	return operation
+}
+
+func mustInitialBinding(t testing.TB, contract *target.Contract, name string) target.InitialValue {
+	t.Helper()
+	_, value, _, _, ok := contract.InitialBinding(name)
+	if !ok {
+		t.Fatalf("initial binding %q", name)
+	}
+	return value
 }
 
 func mustBootShape(t testing.TB, contract *target.Contract) target.BootShape {

@@ -2055,7 +2055,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		return false, false
 	}
 	structuralChanged := pointIndex < len(epoch.structuralDirty) && epoch.structuralDirty[pointIndex]
-	candidateChanged := false
+	anyCandidateChanged := false
 	candidateRequiresCanonicalFold := false
 	// Outside recurrence, an ascending replacement c<=c' may be installed in
 	// the existing exact point aggregate by joining the complete c'. If
@@ -2089,12 +2089,13 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		// both lifted order and raw compact-row additivity in one traversal; on
 		// failure, run the ordinary order check once solely to distinguish a
 		// lawful raw-alias replacement (canonical fold) from a broken Rule law.
+		thisCandidateChanged := !state.hasValue
 		candidateAppendable := true
 		candidateOrdered := true
 		if state.hasValue {
+			thisCandidateChanged = !epoch.work.ExactSameRuleContributionRepresentation(state.candidate, next)
 			if regionIndex == schedule.NoRegion {
-				candidateChanged = !epoch.work.ExactSameRuleContributionRepresentation(state.candidate, next)
-				if candidateChanged {
+				if thisCandidateChanged {
 					candidateAppendable = epoch.work.CanAppendAscendingRuleContribution(state.candidate, next)
 					candidateOrdered = candidateAppendable
 					if !candidateOrdered {
@@ -2153,7 +2154,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		// candidate to that old RHS would retain both aliases. The carrier owns
 		// the raw-additivity proof, and a failure selects the existing canonical
 		// fold rather than a compensating merge path.
-		changed := !state.hasValue || candidateChanged
+		changed := thisCandidateChanged
 		appendable := candidateAppendable
 		if !epoch.updateCandidatesPending(pointIndex, -1) {
 			return false, false
@@ -2188,9 +2189,9 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		if epoch.canceled() {
 			return false, false
 		}
-		candidateChanged = candidateChanged || changed
+		anyCandidateChanged = anyCandidateChanged || changed
 	}
-	if regionIndex == schedule.NoRegion && !candidateChanged && !structuralChanged {
+	if regionIndex == schedule.NoRegion && !anyCandidateChanged && !structuralChanged {
 		return false, epoch.settlePostfix(pointIndex)
 	}
 	if regionIndex == schedule.NoRegion {

@@ -74,17 +74,42 @@ func (schema *Schema) TargetInitial(root linkhost.BootRoot, initial target.Initi
 		}
 	case target.InitialValueRoot:
 		targetRoot, ok := contract.InitialValueRoot(initial)
-		if !ok || targetRoot != mappedRoot {
+		if !ok {
 			return Value{}, false
 		}
-		atom, ok = schema.Boot(root)
+		// Target entries may expose a different boot aggregate (for example,
+		// the global `table` entry points at TableRoot).  Rebind that target
+		// root through the same actor-local Host fence before projecting it;
+		// comparing Target root ordinals would reject lawful aliases and using
+		// a root from another Host/actor would cross the Value identity fence.
+		projectedRoot := root
+		if targetRoot != mappedRoot {
+			actor, _, actorOK := schema.source.Host().BootRoots().Mapping(root)
+			if !actorOK {
+				return Value{}, false
+			}
+			projectedRoot, ok = schema.source.Host().BootRoots().For(actor, targetRoot)
+			if !ok {
+				return Value{}, false
+			}
+		}
+		atom, ok = schema.Boot(projectedRoot)
 		if !ok {
 			return Value{}, false
 		}
 	case target.InitialValueOperation, target.InitialValueDeniedOperation:
 		seed, _, ok := schema.source.Boundary().Seeds().BootstrapCallable(initial)
 		if !ok {
-			return Value{}, false
+			require, hasRequire := schema.source.Boundary().RequireOperation()
+			op, opOK := contract.InitialValueOperation(initial)
+			if !hasRequire || !opOK || op != require {
+				return Value{}, false
+			}
+			atom, ok = schema.ScopedLoader(op)
+			if !ok {
+				return Value{}, false
+			}
+			break
 		}
 		atom, ok = schema.Callable(seed)
 		if !ok {

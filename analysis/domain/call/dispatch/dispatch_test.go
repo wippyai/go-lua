@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/program/keyspace"
 	"github.com/wippyai/go-lua/program/link"
 	linkboundary "github.com/wippyai/go-lua/program/link/boundary"
+	linkmodule "github.com/wippyai/go-lua/program/link/module"
 	linkproject "github.com/wippyai/go-lua/program/link/project"
 	programlower "github.com/wippyai/go-lua/program/lower"
 	"github.com/wippyai/go-lua/program/target"
@@ -267,6 +268,122 @@ func TestDispatchEndpointUsesNominalSeed(t *testing.T) {
 	if !ok || !result.IsComplete() || result.HasOpaqueAlternative() || !seedOK || !targetOK || !result.HasTarget(target) {
 		t.Fatal("endpoint selector was not preserved")
 	}
+}
+
+func TestDispatchScopedRequireUsesBoundApplicationShard(t *testing.T) {
+	require := target.BindingSpec{Namespace: target.BindingBuiltin, Member: []string{"require"}}
+	operation := target.OperationSpec{
+		Bindings: []target.BindingSpec{require},
+		Input:    target.ValuesSpec{Tail: target.ValuesClosed},
+		Outcomes: []target.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: target.ValuesSpec{Tail: target.ValuesClosed}}},
+		Effects:  target.RowSpec{Tail: target.RowClosed},
+	}
+	contract, err := target.Seal(&target.Spec{
+		Operations:   []target.OperationSpec{operation},
+		InitialRoots: []target.InitialRootSpec{{Identity: "GlobalEnvRoot", Shape: target.BootShapeSpec{Aggregate: target.BootAggregateTable, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}}}},
+		InitialEntries: []target.InitialEntrySpec{
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}, Value: target.InitialValueSpec{Kind: target.InitialValueRoot, Root: "GlobalEnvRoot"}, Mutability: target.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}, Value: target.InitialValueSpec{Kind: target.InitialValueAbsent}, Mutability: target.InitialMutable},
+			{Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "require"}, Value: target.InitialValueSpec{Kind: target.InitialValueOperation, Operation: require}, Mutability: target.InitialMutable},
+		},
+		InitialBindings: []target.InitialBindingSpec{
+			{Name: "_G", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "_G"}},
+			{Name: "__link_absent", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "__link_absent"}},
+			{Name: "require", Root: "GlobalEnvRoot", Key: keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "require"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alpha, err := programlower.Lower(programlower.Source{Name: "scoped_loader_alpha.lua", Text: []byte(`require("external-alpha")`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beta, err := programlower.Lower(programlower.Source{Name: "scoped_loader_beta.lua", Text: []byte(`require("external-beta")`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := link.Seal(&link.Spec{
+		Target:  contract,
+		Modules: []linkproject.Module{{Name: "alpha", Program: alpha}, {Name: "beta", Program: beta}},
+		Module: linkmodule.Spec{
+			Actors: []linkmodule.ActorSpec{{Name: "actor"}},
+			ModuleCacheAliases: []linkmodule.ModuleCacheAliasClassSpec{
+				{Actor: "actor", Instances: []string{"cache-alpha"}, Representative: "cache-alpha"},
+				{Actor: "actor", Instances: []string{"cache-beta"}, Representative: "cache-beta"},
+			},
+			AnalysisRoots: []linkmodule.AnalysisRootSpec{
+				{Name: "alpha-root", Module: "alpha", Actor: "actor", Instance: "cache-alpha"},
+				{Name: "beta-root", Module: "beta", Actor: "actor", Instance: "cache-beta"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	heaps, heapsOK := heapdomain.Seal(linked)
+	values, valuesOK := valuedomain.Seal(linked, heaps)
+	types, typesOK := typeauthority.Seal(linked)
+	statics, _, staticErr := staticdomain.Seal(linked, types)
+	packs, packsOK := packdomain.Seal(linked, statics)
+	algebra, algebraOK := calldomain.New(linked)
+	if !heapsOK || !valuesOK || !typesOK || staticErr != nil || !packsOK || !algebraOK {
+		t.Fatal("scoped loader schemas")
+	}
+	_, initial, _, _, initialOK := contract.InitialBinding("require")
+	boot, bootOK := linked.Host().BootRoots().At(0)
+	if !initialOK || !bootOK {
+		t.Fatal("scoped loader bootstrap")
+	}
+	fact, factOK := values.TargetInitial(boot, initial)
+	atoms, atomsOK := values.Atoms(fact)
+	if !factOK || !atomsOK || len(atoms) != 1 {
+		t.Fatal("scoped loader Value marker")
+	}
+	markerRef, _, markerOK := atoms[0].Reference()
+	markerOperation, markerScoped := markerRef.ScopedLoader()
+	if !markerOK || !markerScoped || markerOperation == 0 {
+		t.Fatal("scoped loader marker")
+	}
+	calls := linked.Project().Applications().Calls()
+	if calls.Count() < 2 {
+		t.Fatalf("call applications=%d, want two shards", calls.Count())
+	}
+	selected := make([]calldomain.Target, 2)
+	for index := 0; index < 2; index++ {
+		application, applicationOK := calls.At(index)
+		bound, boundOK := newSite(algebra, values, heaps, packs, application)
+		shard, _, callOK := linked.Project().Applications().Call(application)
+		seed, seedOK := linked.Boundary().Seeds().ScopedLoader(shard)
+		expected, expectedOK := algebra.TargetForSeed(seed)
+		result, resultOK := reduce(bound, fact)
+		if !applicationOK || !boundOK || !callOK || !seedOK || !expectedOK || !resultOK || !result.IsComplete() || result.HasOpaqueAlternative() || result.KnownTargetCount() != 1 || !result.HasTarget(expected) {
+			t.Fatalf("shard %d scoped dispatch complete=%t opaque=%t targets=%d", index, result.IsComplete(), result.HasOpaqueAlternative(), result.KnownTargetCount())
+		}
+		selected[index] = expected
+	}
+	if selected[0].Same(selected[1]) {
+		t.Fatal("distinct application shards collapsed to one scoped loader target")
+	}
+	foreignHeaps, foreignHeapsOK := heapdomain.Seal(linked)
+	foreignValues, foreignValuesOK := valuedomain.Seal(linked, foreignHeaps)
+	foreignFact, foreignFactOK := foreignValues.TargetInitial(boot, initial)
+	bound, boundOK := newSite(algebra, values, heaps, packs, mustCallApplication(t, calls, 0))
+	if !foreignHeapsOK || !foreignValuesOK || !foreignFactOK || !boundOK {
+		t.Fatal("foreign scoped loader setup")
+	}
+	if _, crossed := reduce(bound, foreignFact); crossed {
+		t.Fatal("foreign Value scoped loader marker crossed dispatch owner fence")
+	}
+}
+
+func mustCallApplication(t testing.TB, calls linkproject.Calls, index int) linkproject.Application {
+	t.Helper()
+	application, ok := calls.At(index)
+	if !ok {
+		t.Fatalf("call application %d", index)
+	}
+	return application
 }
 
 func TestDispatchDeniedCallableDoesNotBecomeOpaque(t *testing.T) {

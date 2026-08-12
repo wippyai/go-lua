@@ -89,6 +89,7 @@ const (
 	referenceSourceBoot
 	referenceSourceEndpoint
 	referenceSourceCallable
+	referenceSourceScopedLoader
 	referenceSourceRuntimeType
 )
 
@@ -273,6 +274,18 @@ func (reference Reference) Callable() (linkboundary.Seed, bool) {
 	return row.callable, row.source == referenceSourceCallable
 }
 
+// ScopedLoader returns the exact Target operation classified by Boundary as
+// the scoped require ingress. Unlike Callable, this reference carries no
+// global seed: Call resolves its shard-local loader from the bound
+// Application at dispatch time.
+func (reference Reference) ScopedLoader() (target.Operation, bool) {
+	if !reference.valid() {
+		return 0, false
+	}
+	row := reference.schema.references[reference.id-1]
+	return row.operation, row.source == referenceSourceScopedLoader
+}
+
 // TypeValueSource returns the existing Link Value used for one executable
 // Program TypeValue source. Its descriptor remains TypeValue-owned.
 func (reference Reference) TypeValueSource() (linkboundary.Value, bool) {
@@ -290,6 +303,7 @@ type referenceRow struct {
 	boot       linkhost.BootRoot
 	endpoint   linkboundary.Endpoint
 	callable   linkboundary.Seed
+	operation  target.Operation
 	value      linkboundary.Value
 }
 
@@ -343,6 +357,7 @@ type Schema struct {
 	bootRefs     map[linkhost.BootRoot]uint32
 	endpointRefs map[linkboundary.Endpoint]uint32
 	callableRefs map[linkboundary.Seed]uint32
+	scopedLoader uint32
 	typeRefs     map[linkboundary.Value]uint32
 
 	capabilities []linkhost.ProviderCapability
@@ -519,6 +534,9 @@ func (schema *Schema) sealSources() bool {
 	}) {
 		return false
 	}
+	if !schema.sealScopedLoader() {
+		return false
+	}
 	for index := 0; index < schema.source.Host().CapabilitySeeds().Count(); index++ {
 		seed, ok := schema.source.Host().CapabilitySeeds().At(index)
 		if !ok {
@@ -538,6 +556,40 @@ func (schema *Schema) sealSources() bool {
 		schema.hostMembers = append(schema.hostMembers, hostMember{capability: capability, output: output, endpoint: endpoint})
 	}
 	return true
+}
+
+// sealScopedLoader admits the one nominal Function reference for Target's
+// scoped require initial value. Boundary intentionally emits no global seed
+// for this operation; Call later chooses the loader seed from the bound
+// Application's mounted shard.
+func (schema *Schema) sealScopedLoader() bool {
+	if schema == nil || schema.source == nil {
+		return false
+	}
+	require, hasRequire := schema.source.Boundary().RequireOperation()
+	if !hasRequire {
+		return true
+	}
+	contract, contractOK := schema.source.Boundary().Target()
+	if !contractOK || contract == nil {
+		return false
+	}
+	return schema.visitTargetInitialValues(func(initial target.InitialValue) bool {
+		kind, kindOK := contract.InitialValueKind(initial)
+		if !kindOK || kind != target.InitialValueOperation {
+			return true
+		}
+		op, opOK := contract.InitialValueOperation(initial)
+		if !opOK || op != require || schema.scopedLoader != 0 {
+			return opOK
+		}
+		id := schema.addReference(referenceRow{source: referenceSourceScopedLoader, kind: ReferenceFunction, operation: op})
+		if id == 0 {
+			return false
+		}
+		schema.scopedLoader = id
+		return true
+	})
 }
 
 // sealAllocationReferences imports every Heap-owned allocation coordinate.
@@ -706,6 +758,12 @@ func (schema *Schema) addReference(row referenceRow) uint32 {
 		existing = schema.endpointRefs[row.endpoint]
 	case referenceSourceCallable:
 		existing = schema.callableRefs[row.callable]
+	case referenceSourceScopedLoader:
+		require, ok := schema.source.Boundary().RequireOperation()
+		if !ok || row.operation == 0 || row.operation != require {
+			return 0
+		}
+		existing = schema.scopedLoader
 	case referenceSourceRuntimeType:
 		existing = schema.typeRefs[row.value]
 	default:
@@ -728,6 +786,8 @@ func (schema *Schema) addReference(row referenceRow) uint32 {
 		schema.endpointRefs[row.endpoint] = id
 	case referenceSourceCallable:
 		schema.callableRefs[row.callable] = id
+	case referenceSourceScopedLoader:
+		schema.scopedLoader = id
 	case referenceSourceRuntimeType:
 		schema.typeRefs[row.value] = id
 	}
@@ -1567,6 +1627,24 @@ func (schema *Schema) Callable(seed linkboundary.Seed) (Atom, bool) {
 	}
 	reference := schema.callableRefs[seed]
 	id, ok := schema.referenceAtom(reference, materialization.Exact)
+	if !ok {
+		return Atom{}, false
+	}
+	return Atom{schema: schema, id: id}, true
+}
+
+// ScopedLoader returns the nominal Function atom for Target's exact scoped
+// require operation. The loader's shard-specific Boundary seed is deliberately
+// resolved later by Call dispatch from the bound Application.
+func (schema *Schema) ScopedLoader(operation target.Operation) (Atom, bool) {
+	if schema == nil || operation == 0 || schema.scopedLoader == 0 || int(schema.scopedLoader) > len(schema.references) {
+		return Atom{}, false
+	}
+	row := schema.references[schema.scopedLoader-1]
+	if row.source != referenceSourceScopedLoader || row.operation != operation {
+		return Atom{}, false
+	}
+	id, ok := schema.referenceAtom(schema.scopedLoader, materialization.Exact)
 	if !ok {
 		return Atom{}, false
 	}

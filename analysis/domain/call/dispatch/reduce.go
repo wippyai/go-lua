@@ -56,6 +56,24 @@ func dispatchAtom(bound site, atom valuedomain.Atom) (capability calldomain.Targ
 	if !rooted {
 		return calldomain.Target{}, false, atom.RuntimeKinds().Contains(runtimekind.Function)
 	}
+	if require, scopedLoader := reference.ScopedLoader(); scopedLoader {
+		boundaryRequire, hasRequire := bound.boundary.RequireOperation()
+		key, keyOK := bound.callKey()
+		application, applicationOK := key.Application()
+		shard, _, callOK := bound.link.Project().Applications().Call(application)
+		if !hasRequire || boundaryRequire != require || !keyOK || !applicationOK || !callOK {
+			return calldomain.Target{}, false, true
+		}
+		seed, seedOK := bound.boundary.Seeds().ScopedLoader(shard)
+		if !seedOK {
+			return calldomain.Target{}, false, true
+		}
+		capability, admitted := algebra.TargetForSeed(seed)
+		if !admitted {
+			return calldomain.Target{}, false, true
+		}
+		return capability, true, false
+	}
 
 	if key, allocation := reference.AllocationKey(); allocation {
 		if !values.OwnsHeapSchema(bound.heaps) {
