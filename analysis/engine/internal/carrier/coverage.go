@@ -128,6 +128,25 @@ func (work *Work) admitContribution(state State, coverage contributionCoverage) 
 	return result, work.admittedContribution(result)
 }
 
+// admitConstructedContribution is the private hot cut for carrier-produced
+// publications.  Its callers have already proved the complete State through
+// the commit/transport/projection operation and have canonicalized every
+// authored row through canonicalCoverage or an equivalent carrier-owned
+// relation.  Rechecking those rows here would turn every fold back into an
+// O(F) validation pass, so this helper checks only the immutable outer shape
+// and reuses the existing Work seal and State authority.
+//
+// This is deliberately separate from admitContribution: callers that accept
+// a State or coverage from an untrusted/public boundary must continue to pay
+// the deep Valid check before receiving the seal.
+func (work *Work) admitConstructedContribution(state State, coverage contributionCoverage) (Contribution, bool) {
+	if work == nil || !work.live() || !work.OwnsState(state) || state.previewMarked() || state.contributionMarked() || coverage.composition != work.composition || len(coverage.slots) != 0 && len(coverage.slots) != work.composition.Count() {
+		return Contribution{}, false
+	}
+	result := Contribution{state: state, coverage: coverage, seal: work.contributionSeal, authority: state.authority}
+	return result, work.admittedContribution(result)
+}
+
 // exactNeutralState is the carrier's issuance-time semantic identity proof.
 // It checks that roots remain the immutable Composition initial vector and
 // support is the exact empty Boolean region. This deep proof is deliberately
@@ -177,15 +196,17 @@ func (work *Work) EmptyContribution(state State) (Contribution, bool) {
 // admitDerivedContribution preserves the neutral seal only when an operation
 // started from an already-proved neutral input and the derived State remains
 // the exact initial-root/false-support, empty-coverage identity. Ordinary
-// empty Contributions never gain the proof merely by passing through a
-// transport or projection.
+// derived Contributions use the private constructed cut because Transport
+// and ProjectContribution prove their State roots and canonical coverage
+// before reaching this boundary. Ordinary empty Contributions never gain the
+// neutral proof merely by passing through a transport or projection.
 func (work *Work) admitDerivedContribution(input Contribution, state State, coverage contributionCoverage) (Contribution, bool) {
 	if work.neutralContribution(input) {
 		if result, ok := work.admitNeutralContribution(state, coverage); ok {
 			return result, true
 		}
 	}
-	return work.admitContribution(state, coverage)
+	return work.admitConstructedContribution(state, coverage)
 }
 
 func (coverage contributionCoverage) validFor(state State) bool {
@@ -486,7 +507,7 @@ func (work *Work) ReplaceContribution(old, recomputed Contribution) (Contributio
 	if !ok {
 		return Contribution{}, ChangeSet{}, false
 	}
-	result, valid := work.admitContribution(state, recomputed.coverage)
+	result, valid := work.admitConstructedContribution(state, recomputed.coverage)
 	return result, changes, valid
 }
 
@@ -525,7 +546,7 @@ func (work *Work) MergeSelectedContribution(kind MergeKind, current, selectedRig
 			coverage.slots = nil
 		}
 	}
-	result, valid := work.admitContribution(state, coverage)
+	result, valid := work.admitConstructedContribution(state, coverage)
 	return result, changes, valid
 }
 

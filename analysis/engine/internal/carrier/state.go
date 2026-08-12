@@ -1048,7 +1048,7 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 		if !committed {
 			return Contribution{}, ChangeSet{}, false
 		}
-		result, valid := work.admitContribution(next, nextCoverage)
+		result, valid := work.admitConstructedContribution(next, nextCoverage)
 		return result, changes, valid
 	}
 	delta := work.newSupportWork()
@@ -1082,7 +1082,7 @@ func (work *Work) MergeContribution(left, right Contribution) (Contribution, Cha
 	if !ok {
 		return Contribution{}, ChangeSet{}, false
 	}
-	result, valid := work.admitContribution(next, nextCoverage)
+	result, valid := work.admitConstructedContribution(next, nextCoverage)
 	return result, changes, valid
 }
 

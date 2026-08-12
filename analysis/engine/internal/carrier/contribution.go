@@ -364,7 +364,7 @@ func (work *Work) finishContribution(base ContributionBase, patches []Patch, ret
 	}
 	dropPatches(patches)
 	state := State{authority: work.authority, scope: owner.state.scope, support: retained, roots: next}
-	return work.admitContribution(state, coverage)
+	return work.admitConstructedContribution(state, coverage)
 }
 
 // AbortContribution consumes every ready but unpublished Patch and invalidates

@@ -119,7 +119,7 @@ func (work *Work) MergeTransportedContribution(left, right Contribution, pre sup
 		if !committed {
 			return Contribution{}, ChangeSet{}, false
 		}
-		result, valid := work.admitContribution(next, nextCoverage)
+		result, valid := work.admitConstructedContribution(next, nextCoverage)
 		return result, changes, valid
 	}
 
@@ -156,7 +156,7 @@ func (work *Work) MergeTransportedContribution(left, right Contribution, pre sup
 	if !committed {
 		return Contribution{}, ChangeSet{}, false
 	}
-	result, valid := work.admitContribution(next, nextCoverage)
+	result, valid := work.admitConstructedContribution(next, nextCoverage)
 	return result, changes, valid
 }
 
