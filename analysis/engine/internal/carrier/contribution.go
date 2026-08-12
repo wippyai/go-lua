@@ -560,7 +560,7 @@ func (work *Work) finishContribution(owner *contributionBase, patches []Patch, r
 			}
 			authored = original.authored
 		}
-		change, valid := slot.CloseContributionUnder(owner.state.roots[position], candidate, retained, coverageRows(coverage.slot(physical)), delta)
+		change, valid := slot.CloseContributionUnder(owner.state.roots[position], candidate, split, coverageRows(coverage.slot(physical)), delta)
 		if !valid {
 			delta.Discard()
 			dropPatches(closed)

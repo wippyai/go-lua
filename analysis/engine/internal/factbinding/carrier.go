@@ -1004,15 +1004,19 @@ func (work *bindingWork[K, V]) contributionCoverage(coverage carrier.SlotCoverag
 }
 
 // CloseContributionUnder is the typed half of every RuleContribution
-// issuance.  It proves that the candidate already agrees with its closed
-// surface under final support, then physically drops every root fiber outside
-// that surface before preparing the one final root publication.  A preview
-// candidate is intentionally never reused: its publisher owns the temporary
-// root and the closed plane receives a fresh normal pending publisher.
-func (work *bindingWork[K, V]) CloseContributionUnder(before, input carrier.RootHandle, within support.Mask, coverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
-	if !work.live() || work.binding == nil || work.binding.plane == nil || delta == nil || !delta.Open() || !within.Valid() || within.Manager() != work.binding.plane.domain.Guards() {
+// issuance. It proves that the candidate already agrees with its closed
+// surface under split.Right(), then physically drops every root fiber outside
+// that surface before preparing the one final root publication. ReplaceUnder
+// consumes the same carrier-owned split, so typed delta rows are confined to
+// its overlap and support-only growth remains carrier Added evidence. A
+// preview candidate is intentionally never reused: its publisher owns the
+// temporary root and the closed plane receives a fresh normal pending
+// publisher.
+func (work *bindingWork[K, V]) CloseContributionUnder(before, input carrier.RootHandle, split support.Split, coverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
+	if !work.live() || work.binding == nil || work.binding.plane == nil || delta == nil || !delta.Open() || !split.Valid(work.binding.plane.domain.Guards()) {
 		return carrier.ChangeHandle{}, false
 	}
+	within := split.Right()
 	prior, ok := work.resolve(before)
 	if !ok {
 		return carrier.ChangeHandle{}, false
@@ -1036,10 +1040,6 @@ func (work *bindingWork[K, V]) CloseContributionUnder(before, input carrier.Root
 	// staged patch whose publisher named the unclosed preview candidate.
 	work.changes.reset()
 	defer work.changes.reset()
-	split, ok := support.Three(within, within)
-	if !ok {
-		return carrier.ChangeHandle{}, false
-	}
 	report := func(key K, region support.Mask) bool {
 		if len(work.changes.rows) != 0 && work.changes.rows[len(work.changes.rows)-1].key >= key {
 			return false

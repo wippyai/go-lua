@@ -127,7 +127,7 @@ func (work carryOnlyWork) ReindexPointContributionUnder(left RootHandle, _, _ su
 	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
 }
 
-func (work carryOnlyWork) CloseContributionUnder(left, input RootHandle, _ support.Mask, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+func (work carryOnlyWork) CloseContributionUnder(left, input RootHandle, _ support.Split, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
 	return work.issuer.IssueChange(left, input, nil, support.Mask{}, nil, nil, delta)
 }
 

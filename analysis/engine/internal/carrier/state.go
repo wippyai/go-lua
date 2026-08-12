@@ -147,9 +147,12 @@ type SlotWork interface {
 	ReindexPointContributionUnder(left RootHandle, source, target support.Mask, relation guard.Reindex, targetCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
 	// CloseContributionUnder physically masks an arbitrary staged root to the
 	// final authored surface before it can cross a contribution publication
-	// cut.  input may be a transaction-local preview root; the returned handle
-	// is always a normal pending publication rooted at before.
-	CloseContributionUnder(before, input RootHandle, within support.Mask, coverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
+	// cut. split is carrier-owned predecessor-to-final support evidence: typed
+	// Factor rows may cover only split.Overlap(), while one-sided support is
+	// carried exclusively by the enclosing ChangeSet's Added/Removed fields.
+	// input may be a transaction-local preview root; the returned handle is
+	// always a normal pending publication rooted at before.
+	CloseContributionUnder(before, input RootHandle, split support.Split, coverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
 	// ReplaceUnder is the structural coordinate-replacement half of one
 	// carrier Replace. It retains right exactly and reports only old-to-right
 	// semantic differences in split.Overlap(). It is not a lattice operation.

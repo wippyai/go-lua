@@ -142,7 +142,7 @@ func (adversarialWork) ReindexContributionUnder(RootHandle, support.Mask, suppor
 func (adversarialWork) ReindexPointContributionUnder(RootHandle, support.Mask, support.Mask, guard.Reindex, SlotCoverage, *support.Work) (ChangeHandle, bool) {
 	return ChangeHandle{}, false
 }
-func (adversarialWork) CloseContributionUnder(RootHandle, RootHandle, support.Mask, SlotCoverage, *support.Work) (ChangeHandle, bool) {
+func (adversarialWork) CloseContributionUnder(RootHandle, RootHandle, support.Split, SlotCoverage, *support.Work) (ChangeHandle, bool) {
 	return ChangeHandle{}, false
 }
 func (adversarialWork) ReindexUnder(RootHandle, support.Mask, support.Mask, guard.Reindex, *support.Work) (ChangeHandle, bool) {

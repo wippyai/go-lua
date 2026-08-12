@@ -274,7 +274,7 @@ func (work waveCDeltaWork) ReindexContributionUnder(left RootHandle, _, _ suppor
 func (work waveCDeltaWork) ReindexPointContributionUnder(left RootHandle, _, _ support.Mask, _ guard.Reindex, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
 	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
 }
-func (work waveCDeltaWork) CloseContributionUnder(left, _ RootHandle, _ support.Mask, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+func (work waveCDeltaWork) CloseContributionUnder(left, _ RootHandle, _ support.Split, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
 	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
 }
 func (work waveCDeltaWork) MergeSelectedUnder(_ MergeKind, _ uint64, left, _, right RootHandle, _, _ support.Split, delta *support.Work) (ChangeHandle, bool) {

@@ -403,7 +403,7 @@ func (reindexRejectWork) ReindexContributionUnder(carrier.RootHandle, support.Ma
 func (reindexRejectWork) ReindexPointContributionUnder(carrier.RootHandle, support.Mask, support.Mask, guard.Reindex, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
 	return carrier.ChangeHandle{}, false
 }
-func (reindexRejectWork) CloseContributionUnder(carrier.RootHandle, carrier.RootHandle, support.Mask, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
+func (reindexRejectWork) CloseContributionUnder(carrier.RootHandle, carrier.RootHandle, support.Split, carrier.SlotCoverage, *support.Work) (carrier.ChangeHandle, bool) {
 	return carrier.ChangeHandle{}, false
 }
 func (reindexRejectWork) ReindexUnder(carrier.RootHandle, support.Mask, support.Mask, guard.Reindex, *support.Work) (carrier.ChangeHandle, bool) {

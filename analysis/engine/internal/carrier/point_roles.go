@@ -646,6 +646,10 @@ func (work *Work) LiftRuleContribution(point PointState) (RuleContribution, bool
 	if !empty.Valid() {
 		return RuleContribution{}, false
 	}
+	split, splitOK := work.threeSupport(point.state.support, point.state.support)
+	if !splitOK {
+		return RuleContribution{}, false
+	}
 	delta := work.newSupportWork()
 	if delta == nil {
 		return RuleContribution{}, false
@@ -658,7 +662,7 @@ func (work *Work) LiftRuleContribution(point PointState) (RuleContribution, bool
 			return RuleContribution{}, false
 		}
 		physical := shape.Slot(position)
-		change, ok := slot.CloseContributionUnder(point.state.roots[position], point.state.roots[position], point.state.support, coverageRows(point.coverage.slot(physical)), delta)
+		change, ok := slot.CloseContributionUnder(point.state.roots[position], point.state.roots[position], split, coverageRows(point.coverage.slot(physical)), delta)
 		if !ok || !work.acceptInto(&patches, point.state, change, delta) {
 			delta.Discard()
 			if ok {

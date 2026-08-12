@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
+	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 )
@@ -284,6 +285,135 @@ func TestSelectedContributionWidenPreservesPresenceAndClosesRootToExactCoverage(
 	}
 	if got, present, valid := observedExactValue(binding, work, root, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || present || got != 0 {
 		t.Fatalf("selected recurrence retained out-of-exact payload = %d/%t/%t, want 0/false/true", got, present, valid)
+	}
+}
+
+func TestSelectedContributionWidenClosesUnselectedFactorToPredecessorSupport(t *testing.T) {
+	manager := testTransportManager(t, []guard.Atom{1})
+	regions := support.New(manager)
+	on, ok := regions.Literal(1, true)
+	if !ok {
+		t.Fatal("on")
+	}
+	off, ok := regions.Literal(1, false)
+	if !ok {
+		t.Fatal("off")
+	}
+	whole := regions.True()
+	if !regions.Seal() {
+		t.Fatal("regions")
+	}
+
+	selectedBinding, selectedFixture := newLawBinding(t, manager, true)
+	unselectedBinding, unselectedFixture := newLawBinding(t, manager, false)
+	composition, ok := attachTestComposition(t, []carrier.FactorOperation{selectedBinding, unselectedBinding})
+	if !ok {
+		t.Fatal("composition")
+	}
+	selectedTarget := selectedFixture.target(t, 0, carrier.StrongTarget)
+	selectedSlot, ok := selectedTarget.Slot()
+	if !ok {
+		t.Fatal("selected slot")
+	}
+	unselectedTarget := unselectedFixture.target(t, 0, carrier.StrongTarget)
+	unselectedSlot, ok := unselectedTarget.Slot()
+	if !ok || selectedSlot == unselectedSlot {
+		t.Fatal("unselected slot")
+	}
+	plan, ok := composition.SealContribution(0, []shape.Slot{selectedSlot, unselectedSlot}, nil, false)
+	if !ok {
+		t.Fatal("two-factor contribution plan")
+	}
+	selected, ok := composition.SealWidening([]carrier.Target{selectedTarget})
+	if !ok {
+		t.Fatal("widen selection")
+	}
+	work := newWork(t, composition)
+
+	// Both factors are authored in one contribution.  The selected factor A
+	// is widened, while unselected factor B must be closed from its predecessor
+	// support `on` onto the final support `whole`.  B's right-only `off` region
+	// belongs to Added, never to its typed FactorRegion.
+	finish := func(premise, authored support.Mask, selectedValue, unselectedValue uint64) carrier.Contribution {
+		t.Helper()
+		base, began := work.BeginContribution(plan, composition.Scope(), nil, premise)
+		if !began {
+			t.Fatal("begin two-factor contribution")
+		}
+		selectedPatch := selectedBinding.Begin(work, base.State())
+		if selectedPatch == nil || !selectedPatch.Write(selectedTarget, authored, selectedValue) {
+			t.Fatal("write selected factor")
+		}
+		selectedAccepted, accepted := selectedPatch.Accept(work)
+		if !accepted {
+			t.Fatal("accept selected factor")
+		}
+		unselectedPatch := unselectedBinding.Begin(work, base.State())
+		if unselectedPatch == nil || !unselectedPatch.Write(unselectedTarget, authored, unselectedValue) {
+			t.Fatal("write unselected factor")
+		}
+		unselectedAccepted, accepted := unselectedPatch.Accept(work)
+		if !accepted {
+			t.Fatal("accept unselected factor")
+		}
+		patches := []carrier.Patch{selectedAccepted, unselectedAccepted}
+		if selectedSlot > unselectedSlot {
+			patches[0], patches[1] = patches[1], patches[0]
+		}
+		result, finished := work.FinishContribution(base, patches)
+		if !finished || !result.Valid() {
+			t.Fatal("finish two-factor contribution")
+		}
+		return result
+	}
+
+	current := finish(on, on, 5, 7)
+	selectedRight := finish(whole, whole, 9, 8)
+	exact := finish(whole, whole, 4, 8)
+	result, changes, ok := work.MergeSelectedContribution(carrier.Widen, current, selectedRight, exact, selected)
+	if !ok || !result.Support().Equal(whole) || !changes.Added().Equal(off) || !support.Empty(changes.Removed()) || changes.FactorCount() != 2 || changes.Count() != 2 {
+		t.Fatalf("unselected closure: ok=%t support=%t added=%t removed-empty=%t factors=%d units=%d", ok, result.Support().Equal(whole), changes.Added().Equal(off), support.Empty(changes.Removed()), changes.FactorCount(), changes.Count())
+	}
+	factorFor := func(slot shape.Slot) (carrier.FactorRegion, bool) {
+		for index := 0; index < changes.FactorCount(); index++ {
+			factor, present := changes.FactorAt(index)
+			if present && factor.Slot() == slot {
+				return factor, true
+			}
+		}
+		return carrier.FactorRegion{}, false
+	}
+	selectedFactor, selectedPresent := factorFor(selectedSlot)
+	if !selectedPresent || !selectedFactor.Region().Equal(on) {
+		t.Fatalf("selected FactorRegion: present=%t region-on=%t", selectedPresent, selectedPresent && selectedFactor.Region().Equal(on))
+	}
+	unselectedFactor, unselectedPresent := factorFor(unselectedSlot)
+	if !unselectedPresent || !unselectedFactor.Region().Equal(on) {
+		t.Fatalf("unselected FactorRegion: present=%t region-on=%t", unselectedPresent, unselectedPresent && unselectedFactor.Region().Equal(on))
+	}
+	regionFor := func(unit carrier.Unit) (support.Mask, bool) {
+		for index := 0; index < changes.Count(); index++ {
+			row, present := changes.At(index)
+			if present && row.Unit().Same(unit) {
+				return row.Region(), true
+			}
+		}
+		return support.Mask{}, false
+	}
+	selectedUnit, selectedUnitPresent := regionFor(selectedFixture.unit(t, 0))
+	if !selectedUnitPresent || !selectedUnit.Equal(on) {
+		t.Fatalf("selected UnitRegion: present=%t region-on=%t", selectedUnitPresent, selectedUnitPresent && selectedUnit.Equal(on))
+	}
+	unselectedUnit, unselectedUnitPresent := regionFor(unselectedFixture.unit(t, 0))
+	if !unselectedUnitPresent || !unselectedUnit.Equal(on) {
+		t.Fatalf("unselected UnitRegion: present=%t region-on=%t", unselectedUnitPresent, unselectedUnitPresent && unselectedUnit.Equal(on))
+	}
+	unselectedRoot, rootOK := result.HandleAt(unselectedSlot)
+	if !rootOK {
+		t.Fatal("unselected result root")
+	}
+	if got, present, valid := observedExactValue(unselectedBinding, work, unselectedRoot, unselectedFixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || got != 8 {
+		t.Fatalf("unselected right-only payload = %d/%t/%t, want 8/true/true", got, present, valid)
 	}
 }
 

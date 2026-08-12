@@ -739,7 +739,7 @@ func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState 
 		if hasSelected && selected.members[position] {
 			change, valid = slot.MergeSelectedContributionUnder(kind, selected.scopes[position], currentState.roots[position], selectedState.roots[position], exactState.roots[position], selectedSplit, exactSplit, coverageRows(currentCoverage.slot(physical)), coverageRows(selectedCoverage.slot(physical)), coverageRows(exactCoverage.slot(physical)), delta)
 		} else {
-			change, valid = slot.CloseContributionUnder(currentState.roots[position], exactState.roots[position], exactState.support, coverageRows(exactCoverage.slot(physical)), delta)
+			change, valid = slot.CloseContributionUnder(currentState.roots[position], exactState.roots[position], exactSplit, coverageRows(exactCoverage.slot(physical)), delta)
 		}
 		if !valid || !work.acceptInto(&patches, currentState, change, delta) {
 			delta.Discard()
