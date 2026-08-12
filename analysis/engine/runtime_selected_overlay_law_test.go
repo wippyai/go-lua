@@ -14,15 +14,20 @@ import (
 // that Factor to target. Both Points carry a Query so the restricted overlay
 // path's total-demand premise is real rather than a test-only bypass.
 type selectedOverlayFixture struct {
-	solver *Solver
-	narrow equation.AcceptedMember
-	broad  equation.AcceptedMember
-	source equation.Site
-	target equation.Site
-	idle   equation.Site
+	solver        *Solver
+	narrow        equation.AcceptedMember
+	broad         equation.AcceptedMember
+	targetReceipt QueryReceipt[uint64]
+	source        equation.Site
+	target        equation.Site
+	idle          equation.Site
 }
 
 func newSelectedOverlayFixture(t *testing.T, staticForward, dynamicReverse bool) selectedOverlayFixture {
+	return newSelectedOverlayActivationFixture(t, staticForward, dynamicReverse, false)
+}
+
+func newSelectedOverlayActivationFixture(t *testing.T, staticForward, dynamicReverse, selectTarget bool) selectedOverlayFixture {
 	t.Helper()
 	composition := NewComposition()
 	factor := coldFactor(composition, coldKey(984_001))
@@ -45,7 +50,9 @@ func newSelectedOverlayFixture(t *testing.T, staticForward, dynamicReverse bool)
 	trigger, triggerOK := DeclareActivationRule(composition, ActivationRuleSpec{
 		Semantic: triggerKey, Family: family, Inputs: 0,
 		Admission: AdmitActivationByTrustedTheorem(coldKey(984_006)),
-		Run:       func(Activation) bool { return true },
+		Run: func(value Activation) bool {
+			return !selectTarget || Activate(value, coldKey(984_019), coldKey(984_015), coldKey(984_016))
+		},
 	})
 	var queryRead QueryRead[OrderedCells[uint64]]
 	query, queryOK := DeclareQuery(composition, QuerySpec[uint64]{
@@ -124,6 +131,7 @@ func newSelectedOverlayFixture(t *testing.T, staticForward, dynamicReverse bool)
 		t.Fatal("selected overlay source staging")
 	}
 
+	var targetQuery *QueryInstance[uint64]
 	solver, assembled := build.Assemble(func(assembly *Assembly) bool {
 		source := admitPoint(assembly, sourceSite.value)
 		target := admitPoint(assembly, targetSite.value)
@@ -150,7 +158,8 @@ func newSelectedOverlayFixture(t *testing.T, staticForward, dynamicReverse bool)
 		sourceQuery, sourceQueryOK := NewQueryInstance(query, func(binding *QueryBinding[uint64]) bool {
 			return InstanceQueryRead(binding, queryRead, ref)
 		})
-		targetQuery, targetQueryOK := NewQueryInstance(query, func(binding *QueryBinding[uint64]) bool {
+		var targetQueryOK bool
+		targetQuery, targetQueryOK = NewQueryInstance(query, func(binding *QueryBinding[uint64]) bool {
 			return InstanceQueryRead(binding, queryRead, ref)
 		})
 		idleQuery, idleQueryOK := NewQueryInstance(query, func(binding *QueryBinding[uint64]) bool {
@@ -159,7 +168,8 @@ func newSelectedOverlayFixture(t *testing.T, staticForward, dynamicReverse bool)
 		return baseOK && portOK && triggerCreated && seedMember != nil && triggerMember != nil && group != nil &&
 			sourceQueryOK && targetQueryOK && idleQueryOK && admitQueryAt(assembly, source, sourceQuery) != nil && admitQueryAt(assembly, target, targetQuery) != nil && admitQueryAt(assembly, idle, idleQuery) != nil
 	})
-	if !assembled || solver == nil || solver.runtime == nil || solver.runtime.graph == nil {
+	targetReceipt, targetReceiptOK := targetQuery.Receipt()
+	if !assembled || solver == nil || solver.runtime == nil || solver.runtime.graph == nil || !targetReceiptOK {
 		t.Fatal("selected overlay assembly")
 	}
 	triggerMember, found := selectedOverlayTriggerMember(solver.runtime.graph, triggerKey.compositionKey())
@@ -171,7 +181,7 @@ func newSelectedOverlayFixture(t *testing.T, staticForward, dynamicReverse bool)
 	if !found || !selected || !narrowAcceptedOK || !broadAcceptedOK || !narrowAccepted.Available() || !broadAccepted.Available() {
 		t.Fatal("selected overlay acceptance")
 	}
-	return selectedOverlayFixture{solver: solver, narrow: narrowAccepted, broad: broadAccepted, source: sourceSite.value, target: targetSite.value, idle: idleSite.value}
+	return selectedOverlayFixture{solver: solver, narrow: narrowAccepted, broad: broadAccepted, targetReceipt: targetReceipt, source: sourceSite.value, target: targetSite.value, idle: idleSite.value}
 }
 
 func selectedOverlayTriggerMember(graph *equation.Graph, rule composition.Key) (equation.RuleMember, bool) {
@@ -344,5 +354,32 @@ func TestSelectedFactorOverlayPremiseWideningMatchesColdCanonicalLaw(t *testing.
 	coldValue, coldReadable := selectedOverlayTargetValue(coldEpoch, coldTarget)
 	if !coldReadable || coldValue != live {
 		t.Fatalf("selected widening cold=%d/%t live=%d", coldValue, coldReadable, live)
+	}
+}
+
+func TestSolverResumesSettledEpochWithSelectedFactorOverlayLaw(t *testing.T) {
+	fixture := newSelectedOverlayActivationFixture(t, false, false, true)
+	initialRuntime := fixture.solver.runtime
+	initialEdges := len(initialRuntime.factorEdges)
+	state, status, report := fixture.solver.SolveWithReport(context.Background())
+	value, readable := QueryResult(fixture.targetReceipt, state)
+	if status != SolveComplete || state == nil || report.Available() || !readable || value != 17 {
+		t.Fatalf("selected live solve status=%v state=%t report=%t value=%d/%t", status, state != nil, report.Available(), value, readable)
+	}
+	if fixture.solver.runtime != initialRuntime || fixture.solver.revision != 1 || len(fixture.solver.accepted) != 1 || initialRuntime.overlay.generation != 2 || len(initialRuntime.factorEdges) != initialEdges+1 {
+		t.Fatalf("selected live ownership same=%t revision=%d accepted=%d generation=%d edges=%d/%d", fixture.solver.runtime == initialRuntime, fixture.solver.revision, len(fixture.solver.accepted), initialRuntime.overlay.generation, len(initialRuntime.factorEdges), initialEdges)
+	}
+}
+
+func TestSolverFallsBackToColdRevisionWhenSelectedEdgeClosesCycleLaw(t *testing.T) {
+	fixture := newSelectedOverlayActivationFixture(t, true, true, true)
+	initialRuntime := fixture.solver.runtime
+	state, status, report := fixture.solver.SolveWithReport(context.Background())
+	value, readable := QueryResult(fixture.targetReceipt, state)
+	if status != SolveComplete || state == nil || report.Available() || !readable || value != 17 {
+		t.Fatalf("selected cycle fallback status=%v state=%t report=%t value=%d/%t", status, state != nil, report.Available(), value, readable)
+	}
+	if fixture.solver.runtime == initialRuntime || fixture.solver.revision != 1 || len(fixture.solver.accepted) != 1 || fixture.solver.runtime.graph.RegionCount() == 0 {
+		t.Fatalf("selected cycle fallback same=%t revision=%d accepted=%d regions=%d", fixture.solver.runtime == initialRuntime, fixture.solver.revision, len(fixture.solver.accepted), fixture.solver.runtime.graph.RegionCount())
 	}
 }

@@ -2829,9 +2829,9 @@ func (solver *Solver) publishCompleted(epoch *executorEpoch, runtime *solverRunt
 	return true
 }
 
-// Solve executes runtime revisions iteratively. A newly admitted activation
-// aborts its open Group and all epoch-local state, then the same compiler body
-// builds a fresh runtime from Init for the merged relation set.
+// Solve executes runtime revisions iteratively. A structural-only acyclic
+// activation can extend a settled total-demand epoch in place; every other
+// activation still takes the canonical compiler path from Init.
 func (solver *Solver) Solve(ctx context.Context) (state *State, status SolveStatus) {
 	return solver.solve(ctx, nil)
 }
@@ -2883,6 +2883,7 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport) (state *St
 	}
 	solver.mu.Lock()
 	defer solver.mu.Unlock()
+runtimeRevisions:
 	for {
 		runtime := solver.runtime
 		if runtime == nil {
@@ -2903,19 +2904,21 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport) (state *St
 		}
 		epoch.report = report
 		current = epoch
-		ran := epoch.run()
-		if !ran {
-			epoch.incomplete()
-			epoch.discard()
-			if ctx.Err() != nil {
-				return nil, SolveCanceled
+		for {
+			if !epoch.run() {
+				epoch.incomplete()
+				epoch.discard()
+				if ctx.Err() != nil {
+					return nil, SolveCanceled
+				}
+				if report != nil {
+					report.record(SolveFailureReasonExecution, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+				}
+				return nil, SolveIncomplete
 			}
-			if report != nil {
-				report.record(SolveFailureReasonExecution, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+			if !epoch.activationPending {
+				break
 			}
-			return nil, SolveIncomplete
-		}
-		if epoch.activationPending {
 			frontier, canonical := canonicalizeAcceptedActivations(runtime.topology, epoch.activations)
 			if !canonical {
 				epoch.incomplete()
@@ -2935,57 +2938,77 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport) (state *St
 				return nil, SolveIncomplete
 			}
 			epoch.activations = nil
-			epoch.activationPending = len(delta) != 0
+			epoch.activationPending = false
 			if len(delta) == 0 {
 				// Every observed Member and premise is already represented by the
 				// committed relation. Keep this completed epoch for publication.
-			} else {
+				break
+			}
+			accepted, merged := mergeAcceptedActivations(runtime.topology, solver.accepted, delta)
+			if !merged || sameAcceptedActivations(solver.accepted, accepted) {
 				epoch.incomplete()
 				epoch.discard()
-				current = nil
-				if ctx.Err() != nil {
-					return nil, SolveCanceled
+				if report != nil {
+					report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
 				}
-				accepted, merged := mergeAcceptedActivations(runtime.topology, solver.accepted, delta)
-				if !merged || sameAcceptedActivations(solver.accepted, accepted) {
-					if report != nil {
-						report.record(SolveFailureReasonActivationMerge, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
-					}
-					return nil, SolveIncomplete
-				}
-				rebuilt, phase, built := solver.compiler.compile(accepted)
-				if !built || rebuilt == nil {
-					if report != nil {
-						report.record(SolveFailureReasonActivationCompile, phase, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
-					}
-					return nil, SolveIncomplete
-				}
-				if ctx.Err() != nil {
-					rebuilt = nil
-					return nil, SolveCanceled
-				}
-				if solver.revision == ^uint64(0) {
-					if report != nil {
-						report.record(SolveFailureReasonActivationRevisionOverflow, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
-					}
-					return nil, SolveIncomplete
-				}
-				runtime.completed = nil
-				if runtime.retained != nil && !runtime.retained.Close() {
-					if report != nil {
-						report.record(SolveFailureReasonActivationRetainedClose, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
-					}
-					return nil, SolveIncomplete
-				}
-				runtime.retained = nil
-				solver.accepted = accepted
-				solver.runtime = rebuilt
-				solver.revision++
-				if ctx.Err() != nil {
-					return nil, SolveCanceled
-				}
-				continue
+				return nil, SolveIncomplete
 			}
+			// The live path is deliberately narrower than activation validity: it
+			// must prove total demand, no recurrence, structural-only FactorEdges,
+			// and an acyclic combined dependency relation. A false result is not a
+			// weakened solve; it selects the unchanged cold compiler below.
+			if solver.revision != ^uint64(0) {
+				overlay, preparedOverlay := runtime.prepareSelectedFactorOverlay(delta)
+				if preparedOverlay && overlay != nil && epoch.installSelectedFactorOverlay(overlay) {
+					solver.accepted = accepted
+					solver.revision++
+					if ctx.Err() != nil {
+						epoch.incomplete()
+						epoch.discard()
+						current = nil
+						return nil, SolveCanceled
+					}
+					continue
+				}
+			}
+
+			epoch.incomplete()
+			epoch.discard()
+			current = nil
+			if ctx.Err() != nil {
+				return nil, SolveCanceled
+			}
+			rebuilt, phase, built := solver.compiler.compile(accepted)
+			if !built || rebuilt == nil {
+				if report != nil {
+					report.record(SolveFailureReasonActivationCompile, phase, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+				}
+				return nil, SolveIncomplete
+			}
+			if ctx.Err() != nil {
+				return nil, SolveCanceled
+			}
+			if solver.revision == ^uint64(0) {
+				if report != nil {
+					report.record(SolveFailureReasonActivationRevisionOverflow, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+				}
+				return nil, SolveIncomplete
+			}
+			runtime.completed = nil
+			if runtime.retained != nil && !runtime.retained.Close() {
+				if report != nil {
+					report.record(SolveFailureReasonActivationRetainedClose, SolveFailurePhaseNone, SemanticKey{}, SemanticKey{}, SemanticKey{}, SemanticKey{})
+				}
+				return nil, SolveIncomplete
+			}
+			runtime.retained = nil
+			solver.accepted = accepted
+			solver.runtime = rebuilt
+			solver.revision++
+			if ctx.Err() != nil {
+				return nil, SolveCanceled
+			}
+			continue runtimeRevisions
 		}
 		results := make([]*queryResult, len(runtime.queries))
 		for index, query := range runtime.queries {
