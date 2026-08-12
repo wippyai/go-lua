@@ -67,6 +67,17 @@ type SlotOperation interface {
 	NewWork() (SlotWork, bool)
 }
 
+// RuntimeRecurrenceOperation is the optional late immutable selection seam
+// used when a structural activation turns an already-sealed acyclic graph into
+// a feedback region. It may only resolve existing Target capabilities into a
+// slot-private key set; it has no authority to add keys, targets, domains, or
+// typed facts. Production fact bindings implement it. Structural test doubles
+// that never accept live feedback overlays may omit it.
+type RuntimeRecurrenceOperation interface {
+	PrepareRuntimeWidening([]Target) (uint64, bool)
+	PrepareRuntimeNarrowing([]Target) (uint64, bool)
+}
+
 // SlotWork is one operation's evaluator-local state. Its concrete
 // implementation remains typed beside the Binding, where it may retain typed
 // traversal storage without teaching carrier any payload vocabulary.
@@ -765,23 +776,34 @@ func (composition *Composition) AllMergeScope() MergeScope {
 // An empty target set is a valid factor-free recurrence selection. The
 // resulting MergeScope performs no Target/key work on the hot merge path.
 func (composition *Composition) SealWidening(targets []Target) (MergeScope, bool) {
-	return composition.sealRecurrence(Widen, targets)
+	return composition.sealRecurrence(Widen, targets, false)
 }
 
 // SealNarrowing prepares exact authored Target scopes for one key-local
 // carrier Narrow. Narrow has no factor-wide form: every selected key must be
 // covered by an attached Factor target and its typed descent measure.
 func (composition *Composition) SealNarrowing(targets []Target) (MergeScope, bool) {
-	return composition.sealRecurrence(Narrow, targets)
+	return composition.sealRecurrence(Narrow, targets, false)
 }
 
-func (composition *Composition) sealRecurrence(kind MergeKind, targets []Target) (MergeScope, bool) {
+// SealRuntimeWidening and SealRuntimeNarrowing are the post-Work counterparts
+// used by a settled selected-edge overlay. They retain the same opaque
+// MergeScope representation and differ only in lifecycle admission.
+func (composition *Composition) SealRuntimeWidening(targets []Target) (MergeScope, bool) {
+	return composition.sealRecurrence(Widen, targets, true)
+}
+
+func (composition *Composition) SealRuntimeNarrowing(targets []Target) (MergeScope, bool) {
+	return composition.sealRecurrence(Narrow, targets, true)
+}
+
+func (composition *Composition) sealRecurrence(kind MergeKind, targets []Target, runtime bool) (MergeScope, bool) {
 	if composition == nil || composition.shape == nil || (kind != Widen && kind != Narrow) {
 		return MergeScope{}, false
 	}
 	composition.scopeMu.Lock()
 	defer composition.scopeMu.Unlock()
-	if composition.workOpened {
+	if composition.workOpened != runtime {
 		return MergeScope{}, false
 	}
 	ordered := append([]Target(nil), targets...)
@@ -819,7 +841,17 @@ func (composition *Composition) sealRecurrence(kind MergeKind, targets []Target)
 		}
 		var scope uint64
 		var valid bool
-		if kind == Widen {
+		if runtime {
+			operation, supported := composition.operations[int(slot)].(RuntimeRecurrenceOperation)
+			if !supported {
+				return MergeScope{}, false
+			}
+			if kind == Widen {
+				scope, valid = operation.PrepareRuntimeWidening(ordered[begin:end])
+			} else {
+				scope, valid = operation.PrepareRuntimeNarrowing(ordered[begin:end])
+			}
+		} else if kind == Widen {
 			scope, valid = composition.operations[int(slot)].PrepareWidening(ordered[begin:end])
 		} else {
 			scope, valid = composition.operations[int(slot)].PrepareNarrowing(ordered[begin:end])

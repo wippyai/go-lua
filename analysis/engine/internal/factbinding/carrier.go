@@ -166,23 +166,31 @@ func (binding *Binding[K, V]) TargetNotifications(target carrier.Target) ([]carr
 // returned opaque ordinal in MergeScope; the hot merge path never scans Target
 // capabilities or allocates key unions.
 func (binding *Binding[K, V]) PrepareWidening(targets []carrier.Target) (uint64, bool) {
-	return binding.prepareRecurrenceScope(carrier.Widen, targets)
+	return binding.prepareRecurrenceScope(carrier.Widen, targets, false)
 }
 
 // PrepareNarrowing is the key-local counterpart of PrepareWidening. A Narrow
 // selection is never widened to an entire Factor: only its declared target
 // keys receive the typed descent operation.
 func (binding *Binding[K, V]) PrepareNarrowing(targets []carrier.Target) (uint64, bool) {
-	return binding.prepareRecurrenceScope(carrier.Narrow, targets)
+	return binding.prepareRecurrenceScope(carrier.Narrow, targets, false)
 }
 
-func (binding *Binding[K, V]) prepareRecurrenceScope(kind carrier.MergeKind, targets []carrier.Target) (uint64, bool) {
+func (binding *Binding[K, V]) PrepareRuntimeWidening(targets []carrier.Target) (uint64, bool) {
+	return binding.prepareRecurrenceScope(carrier.Widen, targets, true)
+}
+
+func (binding *Binding[K, V]) PrepareRuntimeNarrowing(targets []carrier.Target) (uint64, bool) {
+	return binding.prepareRecurrenceScope(carrier.Narrow, targets, true)
+}
+
+func (binding *Binding[K, V]) prepareRecurrenceScope(kind carrier.MergeKind, targets []carrier.Target, runtime bool) (uint64, bool) {
 	if binding == nil || len(targets) == 0 || (kind != carrier.Widen && kind != carrier.Narrow) {
 		return 0, false
 	}
 	binding.lifecycle.Lock()
 	defer binding.lifecycle.Unlock()
-	if binding.scopeFrozen || !binding.live() || !binding.Supports(kind) {
+	if binding.scopeFrozen != runtime || !binding.live() || !binding.Supports(kind) {
 		return 0, false
 	}
 	for index, target := range targets {

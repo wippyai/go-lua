@@ -163,15 +163,13 @@ type executorEpoch struct {
 	ctx     context.Context
 	// report is a call-scoped first-failure sink. It is nil on the ordinary
 	// Solve path, so the hot path does not allocate or retain diagnostics.
-	report       *SolveReport
-	work         *carrier.Work
-	demand       *demand.Epoch
-	points       []carrier.PointState
-	versions     []uint64
-	changes      [][]carrier.ChangeSet
-	publications [][]pointPublication
-	producers    []producerEpoch
-	regions      []regionEpoch
+	report    *SolveReport
+	work      *carrier.Work
+	demand    *demand.Epoch
+	points    []carrier.PointState
+	versions  []uint64
+	producers []producerEpoch
+	regions   []regionEpoch
 	// candidatesPending is one dense counter per active Region. It counts the
 	// producer Groups in that Region's complete event-point interval (and thus
 	// in every nested descendant) whose latest wake generation has not yet
@@ -261,7 +259,7 @@ func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember,
 	// cardinalities. A mismatch is structural corruption, not an empty solve.
 	pointCount := runtime.graph.PointCount()
 	groupCount := runtime.graph.GroupCount()
-	regionCount := runtime.graph.RegionCount()
+	regionCount := len(runtime.regions)
 	if len(runtime.producers) != groupCount ||
 		len(runtime.activePoints) != pointCount ||
 		len(runtime.pointInitials) != pointCount ||
@@ -303,8 +301,6 @@ func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember,
 		demand:            demandEpoch,
 		points:            make([]carrier.PointState, runtime.graph.PointCount()),
 		versions:          make([]uint64, runtime.graph.PointCount()),
-		changes:           make([][]carrier.ChangeSet, runtime.graph.PointCount()),
-		publications:      make([][]pointPublication, runtime.graph.PointCount()),
 		producers:         make([]producerEpoch, runtime.graph.GroupCount()),
 		regions:           make([]regionEpoch, len(runtime.regions)),
 		candidatesPending: make([]uint64, len(runtime.regions)),
@@ -317,9 +313,9 @@ func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember,
 		},
 		postfixDirty:   make([]bool, runtime.graph.PointCount()),
 		postfixPending: make([]int, 0, runtime.graph.PointCount()),
-		frames:         make([]pointWTOFrame, 0, runtime.graph.Schedule().RegionCount()),
-		nested:         make([]int, runtime.graph.RegionCount()),
-		regionScratch:  make([]int, 0, runtime.graph.RegionCount()),
+		frames:         make([]pointWTOFrame, 0, regionCount),
+		nested:         make([]int, regionCount),
+		regionScratch:  make([]int, 0, regionCount),
 	}
 	epoch.terminal.Store(epochRunning)
 	if !work.SetCheckpoint(func() bool { return !epoch.canceled() }) {
@@ -431,6 +427,47 @@ func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember,
 	}
 	opened = true
 	return epoch, true
+}
+
+func (runtime *solverRuntime) executionEventCount() int {
+	if runtime == nil {
+		return 0
+	}
+	if runtime.executionDemand != nil {
+		return runtime.executionDemand.EventCount()
+	}
+	if runtime.points == nil {
+		return 0
+	}
+	return runtime.points.EventCount()
+}
+
+func (runtime *solverRuntime) executionEventAt(index int) (schedule.Event, bool) {
+	if runtime == nil {
+		return schedule.Event{}, false
+	}
+	if runtime.executionDemand != nil {
+		event, _, ok := runtime.executionDemand.EventAt(index)
+		return event, ok
+	}
+	if runtime.points == nil {
+		return schedule.Event{}, false
+	}
+	event, _, ok := runtime.points.EventAt(index)
+	return event, ok
+}
+
+func (runtime *solverRuntime) executionRegionAt(index int) (schedule.Region, bool) {
+	if runtime == nil {
+		return schedule.Region{}, false
+	}
+	if runtime.execution != nil {
+		return runtime.execution.RegionAt(index)
+	}
+	if runtime.graph == nil || runtime.graph.Schedule() == nil {
+		return schedule.Region{}, false
+	}
+	return runtime.graph.Schedule().RegionAt(index)
 }
 
 func (epoch *executorEpoch) discard() {
@@ -773,6 +810,19 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	for _, row := range overlay.outgoingRows {
 		runtime.overlay.factorOutgoing[row.point] = row.edges
 	}
+	if overlay.execution != nil && overlay.execution.RegionCount() != 0 {
+		runtime.execution = overlay.execution
+		runtime.executionDemand = overlay.executionDemand
+		runtime.regions = overlay.regions
+		runtime.regionChildren = overlay.regionChildren
+		runtime.pointRegion = overlay.pointRegion
+		runtime.activeRegions = overlay.activeRegions
+		epoch.regions = prepared.regions
+		epoch.candidatesPending = prepared.candidatesPending
+		epoch.nested = prepared.nested
+		epoch.frames = prepared.frames
+		epoch.regionScratch = prepared.regionScratch
+	}
 	if overlay.dependencyChanged {
 		runtime.overlay.dependencyEdges = overlay.dependencyEdges
 		runtime.overlay.dependencyAt = overlay.dependencyAt
@@ -785,12 +835,14 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	}
 	for _, target := range overlay.targets {
 		epoch.structuralDirty[target] = true
-		epoch.postfixDirty[target] = true
-		epoch.queue.ready[target] = true
+	}
+	for _, point := range prepared.wakePoints {
+		epoch.postfixDirty[point] = true
+		epoch.queue.ready[point] = true
 	}
 	epoch.postfixPending = prepared.postfixPending
 	epoch.postfixHead = 0
-	epoch.queue.count = len(overlay.targets)
+	epoch.queue.count = len(prepared.wakePoints)
 	runtime.overlay.generation++
 	return true
 }
@@ -813,14 +865,20 @@ func (overlay *preparedSelectedFactorOverlay) matches(runtime *solverRuntime) bo
 		return false
 	}
 	nextEdgeCount := overlay.previousEdgeCount + len(overlay.additions)
-	return overlay.previousEdgeCount == len(runtime.factorEdges) && nextEdgeCount >= overlay.previousEdgeCount && len(overlay.targets) != 0 &&
+	return overlay.previousEdgeCount == len(runtime.factorEdges) && nextEdgeCount >= overlay.previousEdgeCount && (len(overlay.additions) != 0 || len(overlay.replacements) != 0) &&
 		validPreparedFactorCSRRows(overlay.incomingRows, runtime.graph.PointCount(), nextEdgeCount) &&
 		validPreparedFactorCSRRows(overlay.outgoingRows, runtime.graph.PointCount(), nextEdgeCount)
 }
 
 type preparedSelectedFactorEpoch struct {
-	grownFactors   []structuralInputEpoch
-	postfixPending []int
+	grownFactors      []structuralInputEpoch
+	postfixPending    []int
+	wakePoints        []int
+	regions           []regionEpoch
+	candidatesPending []uint64
+	nested            []int
+	frames            []pointWTOFrame
+	regionScratch     []int
 }
 
 func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelectedFactorOverlay) (preparedSelectedFactorEpoch, bool) {
@@ -834,16 +892,68 @@ func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelected
 	}
 	for _, addition := range overlay.additions {
 		edge := addition.edge
-		if edge.index < overlay.previousEdgeCount || edge.index >= overlay.previousEdgeCount+len(overlay.additions) || edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || !epoch.work.OwnsPointState(epoch.points[edge.source]) {
+		if edge.index < overlay.previousEdgeCount || edge.index >= overlay.previousEdgeCount+len(overlay.additions) || edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || epoch.runtime.activePoints[edge.target] && !epoch.work.OwnsPointState(epoch.points[edge.source]) {
 			return preparedSelectedFactorEpoch{}, false
 		}
 	}
 	for _, replacement := range overlay.replacements {
-		if replacement.index < 0 || replacement.index >= overlay.previousEdgeCount || replacement.edge.index != replacement.index || replacement.edge.source < 0 || replacement.edge.source >= len(epoch.points) || replacement.edge.target < 0 || replacement.edge.target >= len(epoch.points) || !epoch.work.OwnsPointState(epoch.points[replacement.edge.source]) {
+		if replacement.index < 0 || replacement.index >= overlay.previousEdgeCount || replacement.edge.index != replacement.index || replacement.edge.source < 0 || replacement.edge.source >= len(epoch.points) || replacement.edge.target < 0 || replacement.edge.target >= len(epoch.points) || epoch.runtime.activePoints[replacement.edge.target] && !epoch.work.OwnsPointState(epoch.points[replacement.edge.source]) {
 			return preparedSelectedFactorEpoch{}, false
 		}
 	}
-	result := preparedSelectedFactorEpoch{postfixPending: append([]int(nil), overlay.targets...)}
+	wakePoints := append([]int(nil), overlay.targets...)
+	if overlay.execution != nil && overlay.execution.RegionCount() != 0 {
+		if len(epoch.regions) != 0 || len(epoch.runtime.regions) != 0 || epoch.runtime.execution != nil || epoch.runtime.executionDemand != nil || overlay.executionDemand == nil || len(overlay.regions) != overlay.execution.RegionCount() || len(overlay.activeRegions) != len(overlay.regions) {
+			return preparedSelectedFactorEpoch{}, false
+		}
+		for index, region := range overlay.regions {
+			if !overlay.activeRegions[index] {
+				if region.active {
+					return preparedSelectedFactorEpoch{}, false
+				}
+				continue
+			}
+			if !region.active || region.head < 0 || region.head >= len(epoch.points) {
+				return preparedSelectedFactorEpoch{}, false
+			}
+			wakePoints = append(wakePoints, region.head)
+		}
+	}
+	sort.Ints(wakePoints)
+	unique := wakePoints[:0]
+	for _, point := range wakePoints {
+		if len(unique) == 0 || unique[len(unique)-1] != point {
+			unique = append(unique, point)
+		}
+	}
+	wakePoints = unique
+	for _, point := range wakePoints {
+		if point < 0 || point >= len(epoch.points) || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] || epoch.structuralDirty[point] || epoch.postfixDirty[point] || epoch.queue.ready[point] {
+			return preparedSelectedFactorEpoch{}, false
+		}
+	}
+	result := preparedSelectedFactorEpoch{postfixPending: append([]int(nil), wakePoints...), wakePoints: wakePoints}
+	if overlay.execution != nil && overlay.execution.RegionCount() != 0 {
+		result.regions = make([]regionEpoch, len(overlay.regions))
+		result.candidatesPending = make([]uint64, len(overlay.regions))
+		result.nested = make([]int, len(overlay.regions))
+		result.frames = make([]pointWTOFrame, 0, len(overlay.regions))
+		result.regionScratch = make([]int, 0, len(overlay.regions))
+		for index, region := range overlay.regions {
+			episode := &result.regions[index]
+			episode.phase = phaseAscent
+			episode.episode = 1
+			episode.invalid = true
+			episode.interfaces = make([]uint64, len(region.faces))
+			episode.ingress = make([]uint64, len(region.external))
+			episode.backIngress = make([]uint64, len(region.back))
+			episode.environmentIngress = make([]uint64, len(region.environmentExternal))
+			episode.environmentBackIngress = make([]uint64, len(region.environmentBack))
+			episode.factorIngress = make([]uint64, len(region.factorExternal))
+			episode.factorBackIngress = make([]uint64, len(region.factorBack))
+			episode.snapshot = make([]uint64, len(region.points))
+		}
+	}
 	nextCount := overlay.previousEdgeCount + len(overlay.additions)
 	if nextCount < overlay.previousEdgeCount {
 		return preparedSelectedFactorEpoch{}, false
@@ -1962,13 +2072,6 @@ func (epoch *executorEpoch) publish(point int, current, next carrier.PointState,
 		if epoch.versions[point] == 0 {
 			return false, false
 		}
-		if point >= len(epoch.changes) || point >= len(epoch.publications) ||
-			uint64(len(epoch.changes[point])) != epoch.versions[point]-1 ||
-			uint64(len(epoch.publications[point])) != epoch.versions[point]-1 {
-			return false, false
-		}
-		epoch.changes[point] = append(epoch.changes[point], changes)
-		epoch.publications[point] = append(epoch.publications[point], order)
 		if order == publicationMayDescend {
 			epoch.structural.pointDescents[point]++
 			if epoch.structural.pointDescents[point] == 0 {
@@ -2012,6 +2115,72 @@ func (epoch *executorEpoch) publish(point int, current, next carrier.PointState,
 		}
 	}
 	return changed, true
+}
+
+// publishAcyclicExact installs one already-complete PointRHS without deriving
+// an old-to-new typed ChangeSet. Acyclic scheduling already owns the exact
+// static consumer incidence: conservatively waking that row is semantically
+// equivalent to routing every changed Unit, while avoiding a second FDD
+// zipper solely for invalidation evidence. This changes scheduling precision,
+// never abstract-state precision. Recurrence publication retains the exact
+// ChangeSet path above for its phase/order proofs.
+func (epoch *executorEpoch) publishAcyclicExact(point int, current, next carrier.PointState, order pointPublication) (bool, bool) {
+	if epoch == nil || epoch.canceled() || point < 0 || point >= len(epoch.points) || point >= len(epoch.structural.pointDescents) ||
+		!epoch.work.OwnsPointState(current) || !epoch.work.OwnsPointState(next) || order != publicationAscending && order != publicationMayDescend {
+		return false, false
+	}
+	changed := !epoch.work.EqualPointState(current, next)
+	// Install the exact RHS representation even when it is observationally
+	// equal under current support. Replace has the same law: a later support
+	// growth must see the newly recomputed latent representation, not the old
+	// PointState's hidden branch.
+	epoch.points[point] = next
+	if !changed {
+		return false, true
+	}
+	epoch.versions[point]++
+	if epoch.versions[point] == 0 {
+		return false, false
+	}
+	if order == publicationMayDescend {
+		epoch.structural.pointDescents[point]++
+		if epoch.structural.pointDescents[point] == 0 {
+			return false, false
+		}
+	}
+	if !epoch.markPostfixDirty(point) || !epoch.invalidatePostfixAncestors(point) {
+		return false, false
+	}
+	sourcePoint, sourceOK := epoch.runtime.graph.PointAt(schedule.Node(point))
+	if !sourceOK || !epoch.markStructuralSuccessors(sourcePoint) {
+		return false, false
+	}
+	// Every exact or dynamic typed read of this Point belongs to one ordinary
+	// graph consumer. Waking the canonical consumer row subsumes unit/factor
+	// routing without inventing a parallel dependency graph.
+	for index := 0; index < epoch.runtime.graph.ConsumerCount(sourcePoint); index++ {
+		group, ok := epoch.runtime.graph.ConsumerAt(sourcePoint, index)
+		groupIndex, indexed := epoch.runtime.graph.GroupIndex(group)
+		outputIndex, outputIndexed := epoch.runtime.graph.PointIndex(group.Output())
+		if !ok || !indexed || !outputIndexed || groupIndex < 0 || groupIndex >= len(epoch.runtime.producers) || outputIndex < 0 || outputIndex >= len(epoch.runtime.activePoints) {
+			return false, false
+		}
+		if !epoch.runtime.activePoints[outputIndex] {
+			continue
+		}
+		if !epoch.markDirty(groupIndex) {
+			return false, false
+		}
+	}
+	return true, true
+}
+
+func (epoch *executorEpoch) acyclicCoarseWakeSafe(source equation.Point) bool {
+	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || !source.Available() {
+		return false
+	}
+	_, indexed := epoch.runtime.graph.PointIndex(source)
+	return indexed
 }
 
 // refreshPoint performs the only candidate replacement and sole Point
@@ -2127,6 +2296,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	if regionIndex == schedule.NoRegion {
 		rhs := appended
 		order := publicationAscending
+		coarse := epoch.acyclicCoarseWakeSafe(point)
 		if structuralChanged {
 			base, ok := epoch.pointBase(point, pointIndex)
 			if !ok {
@@ -2140,12 +2310,21 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 				order = publicationMayDescend
 			}
 		}
-		published, changes, publishedOK := epoch.work.ReplacePointWithRHS(current, rhs)
-		if !publishedOK || epoch.canceled() {
-			return false, false
-		}
 		selfVersion, selfDescents := epoch.versions[pointIndex], epoch.structural.pointDescents[pointIndex]
-		changed, publishedOK := epoch.publish(pointIndex, current, published, changes, order)
+		var changed, publishedOK bool
+		if coarse {
+			published, ok := epoch.work.PublishPointRHS(rhs)
+			if !ok || epoch.canceled() {
+				return false, false
+			}
+			changed, publishedOK = epoch.publishAcyclicExact(pointIndex, current, published, order)
+		} else {
+			published, changes, ok := epoch.work.ReplacePointWithRHS(current, rhs)
+			if !ok || epoch.canceled() {
+				return false, false
+			}
+			changed, publishedOK = epoch.publish(pointIndex, current, published, changes, order)
+		}
 		if !publishedOK || !epoch.settlePostfix(pointIndex) {
 			return false, false
 		}
@@ -2524,17 +2703,17 @@ func (epoch *executorEpoch) visitPoints() (visited bool, ok bool) {
 	}
 	frames := epoch.frames[:0]
 	defer func() { epoch.frames = frames[:0] }()
-	for index := 0; index < epoch.runtime.points.EventCount(); index++ {
+	for index := 0; index < epoch.runtime.executionEventCount(); index++ {
 		if epoch.canceled() {
 			return false, false
 		}
-		event, _, eventOK := epoch.runtime.points.EventAt(index)
+		event, eventOK := epoch.runtime.executionEventAt(index)
 		if !eventOK {
 			return false, false
 		}
 		switch event.Kind {
 		case schedule.EventEnter:
-			region, regionOK := epoch.runtime.graph.Schedule().RegionAt(event.Region)
+			region, regionOK := epoch.runtime.executionRegionAt(event.Region)
 			parent := schedule.NoRegion
 			if len(frames) != 0 {
 				parent = frames[len(frames)-1].region
@@ -2550,7 +2729,7 @@ func (epoch *executorEpoch) visitPoints() (visited bool, ok bool) {
 			if len(frames) == 0 || frames[len(frames)-1].region != event.Region {
 				return false, false
 			}
-			region, regionOK := epoch.runtime.graph.Schedule().RegionAt(event.Region)
+			region, regionOK := epoch.runtime.executionRegionAt(event.Region)
 			if !regionOK || !epoch.activeRegion(event.Region) || region.Head != event.Node {
 				return false, false
 			}
@@ -2806,8 +2985,9 @@ runtimeRevisions:
 			// and an acyclic combined dependency relation. A false result is not a
 			// weakened solve; it selects the unchanged cold compiler below.
 			if solver.revision != ^uint64(0) {
-				overlay, preparedOverlay := runtime.prepareSelectedFactorOverlay(delta)
-				if preparedOverlay && overlay != nil && epoch.installSelectedFactorOverlay(overlay) {
+				overlay, preparedOverlay := runtime.prepareSelectedFactorOverlay(delta, accepted)
+				installedOverlay := preparedOverlay && overlay != nil && epoch.installSelectedFactorOverlay(overlay)
+				if installedOverlay {
 					solver.accepted = accepted
 					solver.revision++
 					if ctx.Err() != nil {

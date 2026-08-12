@@ -338,15 +338,20 @@ type runtimeRegion struct {
 }
 
 type solverRuntime struct {
-	composition  *Composition
-	topology     *equation.Topology
-	carrier      *carrier.Composition
-	graph        *equation.Graph
-	factors      []runtimeFactor // concrete bound operations; cold surface catalogs are released
-	points       *equation.Demand
-	producers    []runtimeProducer
-	environments []runtimeEnvironment
-	factorEdges  []runtimeFactorEdge
+	composition *Composition
+	topology    *equation.Topology
+	carrier     *carrier.Composition
+	graph       *equation.Graph
+	// execution overrides the graph-owned demanded event stream only after a
+	// selected overlay introduces feedback over the same already-demanded Point
+	// set. It contains no semantic facts; the live carrier remains unchanged.
+	execution       *schedule.Schedule
+	executionDemand *equation.Demand
+	factors         []runtimeFactor // concrete bound operations; cold surface catalogs are released
+	points          *equation.Demand
+	producers       []runtimeProducer
+	environments    []runtimeEnvironment
+	factorEdges     []runtimeFactorEdge
 	// Incoming structural rows are canonical dense edge indices, assembled
 	// once from the sealed Graph. Hot Point folding never resolves an edge by
 	// semantic key or scans the global edge table.
@@ -409,7 +414,6 @@ type runtimeStructuralOverlay struct {
 	dependencyAt    map[[2]int]struct{}
 	reindexes       runtimeReindexes
 	latePlans       map[composition.Key]carrier.ReindexPlan
-	totalDemand     bool // cached cold proof: every graph Point has an epoch row
 	generation      uint64
 }
 
@@ -434,7 +438,6 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 		return nil, false
 	}
 	activePoints, activeRegions, activeOK := runtimeDemandMembership(graph, points)
-	totalDemand := activeOK && runtimeHasTotalDemand(graph, points, activePoints)
 	if !activeOK {
 		return nil, false
 	}
@@ -791,7 +794,7 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 	if !dependencyOK {
 		return nil, false
 	}
-	assembled := &solverRuntime{composition: cold, carrier: runtime, graph: graph, factors: nil, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{factorByKey: factorByKey, staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), totalDemand: totalDemand, generation: 1}, demand: demandPlan, queries: append([]runtimeQuery(nil), queries...), pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
+	assembled := &solverRuntime{composition: cold, carrier: runtime, graph: graph, factors: nil, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{factorByKey: factorByKey, staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, queries: append([]runtimeQuery(nil), queries...), pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
 	return assembled, true
 }
 
@@ -889,8 +892,27 @@ func runtimeStaticDependencyEdges(graph *equation.Graph) ([]schedule.Edge, map[[
 // Solve: it receives neither scopes nor an episode, so an unranked unrelated
 // cycle cannot poison a demanded query.  Every active Region still binds its
 // complete static M_K footprint before Work opens.
+type runtimeRegionEdgeResolver struct {
+	environment func(equation.EnvironmentEdgeNode) (int, bool)
+	factor      func(equation.FactorEdgeNode) (int, bool)
+	runtime     bool
+}
+
 func bindRuntimeRegions(graph *equation.Graph, active []bool, runtime *carrier.Composition, producers []runtimeProducer) ([]runtimeRegion, [][]int, bool) {
+	if graph == nil {
+		return nil, nil, false
+	}
+	return bindRuntimeRegionsWithEdges(graph, active, runtime, producers, runtimeRegionEdgeResolver{
+		environment: graph.EnvironmentEdgeIndex,
+		factor:      graph.FactorEdgeIndex,
+	})
+}
+
+func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *carrier.Composition, producers []runtimeProducer, edges runtimeRegionEdgeResolver) ([]runtimeRegion, [][]int, bool) {
 	if graph == nil || runtime == nil || len(active) != graph.RegionCount() || len(producers) != graph.GroupCount() {
+		return nil, nil, false
+	}
+	if edges.environment == nil || edges.factor == nil {
 		return nil, nil, false
 	}
 	regions := make([]runtimeRegion, graph.RegionCount())
@@ -955,7 +977,7 @@ func bindRuntimeRegions(graph *equation.Graph, active []bool, runtime *carrier.C
 			if !edgeOK {
 				return nil, nil, false
 			}
-			edgeIndex, edgeIndexed := graph.EnvironmentEdgeIndex(edge)
+			edgeIndex, edgeIndexed := edges.environment(edge)
 			if !edgeIndexed {
 				return nil, nil, false
 			}
@@ -966,7 +988,7 @@ func bindRuntimeRegions(graph *equation.Graph, active []bool, runtime *carrier.C
 			if !edgeOK {
 				return nil, nil, false
 			}
-			edgeIndex, edgeIndexed := graph.EnvironmentEdgeIndex(edge)
+			edgeIndex, edgeIndexed := edges.environment(edge)
 			if !edgeIndexed {
 				return nil, nil, false
 			}
@@ -980,7 +1002,7 @@ func bindRuntimeRegions(graph *equation.Graph, active []bool, runtime *carrier.C
 			if !edgeOK {
 				return nil, nil, false
 			}
-			edgeIndex, edgeIndexed := graph.FactorEdgeIndex(edge)
+			edgeIndex, edgeIndexed := edges.factor(edge)
 			if !edgeIndexed {
 				return nil, nil, false
 			}
@@ -991,7 +1013,7 @@ func bindRuntimeRegions(graph *equation.Graph, active []bool, runtime *carrier.C
 			if !edgeOK {
 				return nil, nil, false
 			}
-			edgeIndex, edgeIndexed := graph.FactorEdgeIndex(edge)
+			edgeIndex, edgeIndexed := edges.factor(edge)
 			if !edgeIndexed {
 				return nil, nil, false
 			}
@@ -1111,8 +1133,15 @@ func bindRuntimeRegions(graph *equation.Graph, active []bool, runtime *carrier.C
 		}
 		targets = compactRuntimeTargets(targets)
 		narrowTargets = compactRuntimeTargets(narrowTargets)
-		widen, widenOK := runtime.SealWidening(targets)
-		narrow, narrowOK := runtime.SealNarrowing(narrowTargets)
+		var widen, narrow carrier.MergeScope
+		var widenOK, narrowOK bool
+		if edges.runtime {
+			widen, widenOK = runtime.SealRuntimeWidening(targets)
+			narrow, narrowOK = runtime.SealRuntimeNarrowing(narrowTargets)
+		} else {
+			widen, widenOK = runtime.SealWidening(targets)
+			narrow, narrowOK = runtime.SealNarrowing(narrowTargets)
+		}
 		if !widenOK || !narrowOK {
 			return nil, nil, false
 		}
@@ -1233,30 +1262,6 @@ func runtimeDemandMembership(graph *equation.Graph, points *equation.Demand) ([]
 		}
 	}
 	return activePoints, activeRegions, true
-}
-
-// runtimeHasTotalDemand is the cold witness required by the selected-edge
-// fast path. It is deliberately computed once during assembly rather than
-// rescanning every Point on each activation frontier.
-func runtimeHasTotalDemand(graph *equation.Graph, points *equation.Demand, active []bool) bool {
-	if graph == nil || points == nil || points.PointCount() != graph.PointCount() || len(active) != graph.PointCount() {
-		return false
-	}
-	seen := make([]bool, graph.PointCount())
-	for index := 0; index < points.PointCount(); index++ {
-		point, pointOK := points.PointAt(index)
-		pointIndex, indexed := graph.PointIndex(point)
-		if !pointOK || !indexed || pointIndex < 0 || pointIndex >= len(active) || !active[pointIndex] || seen[pointIndex] {
-			return false
-		}
-		seen[pointIndex] = true
-	}
-	for _, demanded := range seen {
-		if !demanded {
-			return false
-		}
-	}
-	return true
 }
 
 func runtimeContainsTarget(targets []carrier.Target, want carrier.Target) bool {

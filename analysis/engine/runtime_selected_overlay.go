@@ -42,6 +42,15 @@ type preparedSelectedFactorOverlay struct {
 	latePlans  map[composition.Key]carrier.ReindexPlan
 	newOrigins map[runtimeFactorOrigin]int
 	targets    []int
+	// execution is non-nil only when this selected delta introduces the first
+	// feedback region over the same demanded Point set. Region rows are bound
+	// to the existing carrier; no typed root is migrated.
+	execution       *schedule.Schedule
+	executionDemand *equation.Demand
+	regions         []runtimeRegion
+	regionChildren  [][]int
+	pointRegion     []int
+	activeRegions   []bool
 }
 
 // preparedFactorCSRRow is one replacement for an existing runtime CSR row.
@@ -76,15 +85,18 @@ type boundSelectedFactorEdge struct {
 // acyclic. A selected origin may widen its precondition in place exactly when
 // old.pre entails new.pre; that replaces, rather than duplicates, the bound
 // transport and forces an exact target fold.
-func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta []equation.AcceptedMember) (*preparedSelectedFactorOverlay, bool) {
-	if !runtimeSelectedOverlayEligible(runtime) || len(delta) == 0 || !canonicalAcceptedActivations(delta) || !validAcceptedActivations(runtime.topology, delta) {
+func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta, accepted []equation.AcceptedMember) (*preparedSelectedFactorOverlay, bool) {
+	if !runtimeSelectedOverlayEligible(runtime) {
+		return nil, false
+	}
+	if len(delta) == 0 || !canonicalAcceptedActivations(delta) || !validAcceptedActivations(runtime.topology, delta) || !validAcceptedActivations(runtime.topology, accepted) {
 		return nil, false
 	}
 	selected, materialized := runtime.topology.SelectedStructuralFactorEdges(runtime.graph, delta)
 	if !materialized || len(selected) == 0 {
 		return nil, false
 	}
-	descriptors, dependencyEdges, dependencyAt, dependencyChanged, valid := runtime.prevalidateSelectedFactorEdges(selected)
+	descriptors, dependencyEdges, dependencyAt, dependencyChanged, execution, valid := runtime.prevalidateSelectedFactorEdges(selected)
 	if !valid {
 		return nil, false
 	}
@@ -96,6 +108,7 @@ func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta []equation.Acce
 		dependencyEdges:   dependencyEdges,
 		dependencyAt:      dependencyAt,
 		dependencyChanged: dependencyChanged,
+		execution:         execution,
 		latePlans:         make(map[composition.Key]carrier.ReindexPlan),
 		newOrigins:        make(map[runtimeFactorOrigin]int),
 	}
@@ -136,6 +149,9 @@ func (runtime *solverRuntime) prepareSelectedFactorOverlay(delta []equation.Acce
 	if !prepared.finalize(runtime) {
 		return nil, false
 	}
+	if prepared.execution != nil && prepared.execution.RegionCount() != 0 && !prepared.bindFeedbackRuntime(runtime, accepted) {
+		return nil, false
+	}
 	return prepared, true
 }
 
@@ -172,15 +188,15 @@ type selectedFactorDescriptor struct {
 	target int
 }
 
-func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation.SelectedStructuralFactorEdge) ([]selectedFactorDescriptor, []schedule.Edge, map[[2]int]struct{}, bool, bool) {
+func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation.SelectedStructuralFactorEdge) ([]selectedFactorDescriptor, []schedule.Edge, map[[2]int]struct{}, bool, *schedule.Schedule, bool) {
 	if runtime == nil || runtime.graph == nil || len(selected) == 0 {
-		return nil, nil, nil, false, false
+		return nil, nil, nil, false, nil, false
 	}
 	result := make([]selectedFactorDescriptor, 0, len(selected))
 	seen := make(map[composition.Key]struct{}, len(selected))
 	for _, edge := range selected {
 		if !edge.Available() || !runtime.graph.OwnsPoint(edge.Source()) || !runtime.graph.OwnsPoint(edge.Target()) || edge.Input().Point().Key() != edge.Source().Key() {
-			return nil, nil, nil, false, false
+			return nil, nil, nil, false, nil, false
 		}
 		source, sourceOK := runtime.graph.PointIndex(edge.Source())
 		target, targetOK := runtime.graph.PointIndex(edge.Target())
@@ -190,27 +206,27 @@ func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation
 			slot, slotOK = factor.runtimeSlot()
 		}
 		if !sourceOK || !targetOK || !factorOK || factor == nil || factor.semantic().compositionKey() != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.carrier.Count() || source < 0 || target < 0 || source >= runtime.graph.PointCount() || target >= runtime.graph.PointCount() {
-			return nil, nil, nil, false, false
+			return nil, nil, nil, false, nil, false
 		}
 		if _, duplicate := seen[edge.Key()]; duplicate {
-			return nil, nil, nil, false, false
+			return nil, nil, nil, false, nil, false
 		}
 		seen[edge.Key()] = struct{}{}
 		result = append(result, selectedFactorDescriptor{edge: edge, source: source, target: target})
 	}
-	dependencies, dependencyAt, changed, acyclic := runtime.combinedSelectedDependencyEdges(result)
-	if !acyclic {
-		return nil, nil, nil, false, false
+	dependencies, dependencyAt, changed, execution, scheduled := runtime.combinedSelectedDependencyEdges(result)
+	if !scheduled {
+		return nil, nil, nil, false, nil, false
 	}
-	return result, dependencies, dependencyAt, changed, true
+	return result, dependencies, dependencyAt, changed, execution, true
 }
 
 // combinedSelectedDependencyEdges performs one batched WTO construction. If
 // every candidate endpoint relation already exists, the earlier acyclicity
 // proof remains valid and no relation slice is copied.
-func (runtime *solverRuntime) combinedSelectedDependencyEdges(selected []selectedFactorDescriptor) ([]schedule.Edge, map[[2]int]struct{}, bool, bool) {
+func (runtime *solverRuntime) combinedSelectedDependencyEdges(selected []selectedFactorDescriptor) ([]schedule.Edge, map[[2]int]struct{}, bool, *schedule.Schedule, bool) {
 	if runtime == nil || runtime.graph == nil || runtime.overlay.dependencyAt == nil {
-		return nil, nil, false, false
+		return nil, nil, false, nil, false
 	}
 	newEdges := make([]schedule.Edge, 0, len(selected))
 	newAt := make(map[[2]int]struct{}, len(selected))
@@ -226,7 +242,7 @@ func (runtime *solverRuntime) combinedSelectedDependencyEdges(selected []selecte
 		newEdges = append(newEdges, schedule.Edge{From: schedule.Node(descriptor.source), To: schedule.Node(descriptor.target)})
 	}
 	if len(newEdges) == 0 {
-		return runtime.overlay.dependencyEdges, nil, false, true
+		return runtime.overlay.dependencyEdges, nil, false, runtime.graph.Schedule(), true
 	}
 	// A genuinely new endpoint pair needs a fresh combined acyclicity proof.
 	// Clone the cold membership cache only on that path; replacements and
@@ -248,10 +264,10 @@ func (runtime *solverRuntime) combinedSelectedDependencyEdges(selected []selecte
 		return edges[left].To < edges[right].To
 	})
 	prepared, err := schedule.Prepare(runtime.graph.PointCount(), edges)
-	if err != nil || prepared == nil || prepared.RegionCount() != 0 {
-		return nil, nil, false, false
+	if err != nil || prepared == nil {
+		return nil, nil, false, nil, false
 	}
-	return edges, known, true, true
+	return edges, known, true, prepared, true
 }
 
 func (runtime *solverRuntime) bindSelectedFactorEdge(descriptor selectedFactorDescriptor, issued map[composition.Key]carrier.ReindexPlan) (boundSelectedFactorEdge, bool) {
@@ -304,9 +320,105 @@ func (prepared *preparedSelectedFactorOverlay) finalize(runtime *solverRuntime) 
 		}
 		replacement.edge.index = replacement.index
 	}
-	if !prepared.prepareEdgeBacking(runtime) || !prepared.prepareTouchedCSR(runtime) || !prepared.collectTargets() {
+	if !prepared.prepareEdgeBacking(runtime) || !prepared.prepareTouchedCSR(runtime) || !prepared.collectTargets(runtime.activePoints) {
 		return false
 	}
+	return true
+}
+
+// bindFeedbackRuntime uses the canonical accepted Graph only as a topology
+// oracle. Dense Point/Group identities and every typed carrier root remain
+// owned by the live runtime. The resulting recurrence scopes are sealed on
+// that existing carrier, which is the essential no-replay property of the
+// feedback overlay.
+func (prepared *preparedSelectedFactorOverlay) bindFeedbackRuntime(runtime *solverRuntime, accepted []equation.AcceptedMember) bool {
+	if prepared == nil || runtime == nil || runtime.topology == nil || runtime.graph == nil || runtime.carrier == nil || prepared.runtime != runtime || prepared.execution == nil || prepared.execution.RegionCount() == 0 {
+		return false
+	}
+	oracle, ok := runtime.topology.Graph(accepted)
+	if !ok || oracle == nil || oracle.Schedule() == nil || oracle.RegionCount() == 0 || oracle.PointCount() != runtime.graph.PointCount() || oracle.GroupCount() != runtime.graph.GroupCount() || oracle.EnvironmentEdgeTotal() != runtime.graph.EnvironmentEdgeTotal() || oracle.FactorEdgeTotal() != prepared.previousEdgeCount+len(prepared.additions) {
+		return false
+	}
+	for index := 0; index < oracle.PointCount(); index++ {
+		oldPoint, oldOK := runtime.graph.PointAt(schedule.Node(index))
+		newPoint, newOK := oracle.PointAt(schedule.Node(index))
+		if !oldOK || !newOK || oldPoint.Key() != newPoint.Key() {
+			return false
+		}
+	}
+	for index := 0; index < oracle.GroupCount(); index++ {
+		group, groupOK := oracle.HyperedgeAt(index)
+		if !groupOK || index >= len(runtime.producers) || runtime.producers[index].group.Key() != group.Key() {
+			return false
+		}
+	}
+	demanded, demandedOK := oracle.Demand()
+	activePoints, active, activeOK := runtimeDemandMembership(oracle, demanded)
+	if !demandedOK || demanded == nil || !activeOK || len(activePoints) != len(runtime.activePoints) || len(active) != oracle.RegionCount() {
+		return false
+	}
+	for index, live := range activePoints {
+		// Reordering live rows into a newly discovered WTO region is lawful.
+		// Awakening an uninitialized Point or producer family is not: that path
+		// retains the canonical cold demand/compiler transition.
+		if live != runtime.activePoints[index] {
+			return false
+		}
+	}
+	factorAt := make(map[composition.Key]int, oracle.FactorEdgeTotal())
+	for index, edge := range runtime.factorEdges {
+		factorAt[edge.key] = index
+	}
+	for _, replacement := range prepared.replacements {
+		if replacement.index < 0 || replacement.index >= prepared.previousEdgeCount {
+			return false
+		}
+		factorAt[replacement.edge.key] = replacement.index
+	}
+	for offset, addition := range prepared.additions {
+		index := prepared.previousEdgeCount + offset
+		if _, duplicate := factorAt[addition.edge.key]; duplicate {
+			return false
+		}
+		factorAt[addition.edge.key] = index
+	}
+	regions, children, bound := bindRuntimeRegionsWithEdges(oracle, active, runtime.carrier, runtime.producers, runtimeRegionEdgeResolver{
+		runtime: true,
+		environment: func(edge equation.EnvironmentEdgeNode) (int, bool) {
+			index, indexed := oracle.EnvironmentEdgeIndex(edge)
+			old, oldOK := runtime.graph.EnvironmentEdgeAtIndex(index)
+			return index, indexed && oldOK && old.Key() == edge.Key()
+		},
+		factor: func(edge equation.FactorEdgeNode) (int, bool) {
+			index, indexed := factorAt[edge.Key()]
+			return index, indexed
+		},
+	})
+	if !bound {
+		return false
+	}
+	pointRegion := make([]int, oracle.PointCount())
+	for index := range pointRegion {
+		point, pointOK := oracle.PointAt(schedule.Node(index))
+		region, regionOK := oracle.PointRegion(point)
+		if !pointOK || !regionOK || region < schedule.NoRegion || region >= len(regions) {
+			return false
+		}
+		pointRegion[index] = region
+	}
+	influenced := false
+	for _, selected := range active {
+		influenced = influenced || selected
+	}
+	if !influenced {
+		return false
+	}
+	prepared.execution = oracle.Schedule()
+	prepared.executionDemand = demanded
+	prepared.regions = regions
+	prepared.regionChildren = children
+	prepared.pointRegion = pointRegion
+	prepared.activeRegions = active
 	return true
 }
 
@@ -440,35 +552,39 @@ func validPreparedFactorCSRRows(rows []preparedFactorCSRRow, pointCount, edgeCou
 	return true
 }
 
-func (prepared *preparedSelectedFactorOverlay) collectTargets() bool {
-	if prepared == nil {
+func (prepared *preparedSelectedFactorOverlay) collectTargets(active []bool) bool {
+	if prepared == nil || len(active) == 0 {
 		return false
 	}
 	seen := make(map[int]struct{}, len(prepared.additions)+len(prepared.replacements))
 	for _, addition := range prepared.additions {
-		if addition.edge.target < 0 {
+		if addition.edge.target < 0 || addition.edge.target >= len(active) {
 			return false
 		}
-		seen[addition.edge.target] = struct{}{}
+		if active[addition.edge.target] {
+			seen[addition.edge.target] = struct{}{}
+		}
 	}
 	for _, replacement := range prepared.replacements {
-		if replacement.edge.target < 0 {
+		if replacement.edge.target < 0 || replacement.edge.target >= len(active) {
 			return false
 		}
-		seen[replacement.edge.target] = struct{}{}
+		if active[replacement.edge.target] {
+			seen[replacement.edge.target] = struct{}{}
+		}
 	}
 	prepared.targets = make([]int, 0, len(seen))
 	for target := range seen {
 		prepared.targets = append(prepared.targets, target)
 	}
 	sort.Ints(prepared.targets)
-	return len(prepared.targets) != 0
+	return true
 }
 
 func runtimeSelectedOverlayEligible(runtime *solverRuntime) bool {
 	return runtime != nil && runtime.graph != nil && runtime.carrier != nil && runtime.points != nil && runtime.topology != nil &&
 		runtime.graph.RegionCount() == 0 && runtime.graph.Schedule() != nil && runtime.graph.Schedule().RegionCount() == 0 &&
-		runtime.overlay.totalDemand && runtimeSelectedOverlayRowsValid(runtime)
+		runtimeSelectedOverlayRowsValid(runtime)
 }
 
 func runtimeSelectedOverlayRowsValid(runtime *solverRuntime) bool {

@@ -354,6 +354,13 @@ func (work *Work) overlayPointSurface(rhs PointRHS, rightState State, rightCover
 	if !work.admittedPointRHS(rhs) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(rhs.point.state, rightState) || !rightState.support.Entails(rhs.point.state.support) {
 		return PointRHS{}, false
 	}
+	// Coverage is the authoritative lifted presence plane. A contained right
+	// surface with no authored rows is therefore the exact overlay identity,
+	// even when its raw PointState retains latent payload outside support.
+	// Keep that representation-private payload out of typed work entirely.
+	if len(rightCoverage.slots) == 0 {
+		return rhs, true
+	}
 	nextCoverage, ok := work.unionCoverage(rhs.point.coverage, rightCoverage)
 	if !ok {
 		return PointRHS{}, false
@@ -374,7 +381,15 @@ func (work *Work) overlayPointSurface(rhs PointRHS, rightState State, rightCover
 			return PointRHS{}, false
 		}
 		physical := shape.Slot(position)
-		change, valid := slot.OverlayPointRHSUnder(rhs.point.state.roots[position], rightState.roots[position], rhs.point.state.support, rightState.support, coverageRows(rhs.point.coverage.slot(physical)), coverageRows(rightCoverage.slot(physical)), delta)
+		rightSlot := rightCoverage.slot(physical)
+		// Absent is the contribution join identity. Calling into a typed
+		// Binding for this slot would only resolve immutable roots and open an
+		// empty transaction before proving the same fact. Untouched slots retain
+		// their exact root handles through commit.
+		if len(rightSlot.targets) == 0 {
+			continue
+		}
+		change, valid := slot.OverlayPointRHSUnder(rhs.point.state.roots[position], rightState.roots[position], rhs.point.state.support, rightState.support, coverageRows(rhs.point.coverage.slot(physical)), coverageRows(rightSlot), delta)
 		if !valid {
 			delta.Discard()
 			dropPatches(patches)

@@ -265,6 +265,26 @@ func selectedOverlayEpoch(t *testing.T, runtime *solverRuntime, accepted []equat
 	return epoch
 }
 
+func TestSelectedFactorOverlayWakesOnlyDemandedTargetsLaw(t *testing.T) {
+	prepared := &preparedSelectedFactorOverlay{
+		additions: []preparedFactorAddition{
+			{edge: runtimeFactorEdge{target: 1}},
+			{edge: runtimeFactorEdge{target: 2}},
+		},
+		replacements: []preparedFactorReplacement{{edge: runtimeFactorEdge{target: 3}}},
+	}
+	if !prepared.collectTargets([]bool{true, false, true, false}) || len(prepared.targets) != 1 || prepared.targets[0] != 2 {
+		t.Fatalf("demanded targets = %v", prepared.targets)
+	}
+	// A structurally accepted frontier may be entirely outside the query cone.
+	// It remains part of Solver.accepted, but requires no semantic wake in the
+	// live epoch. A later demand expansion still fails the exact-demand fence
+	// and takes the canonical cold compiler.
+	if !prepared.collectTargets([]bool{true, false, false, false}) || len(prepared.targets) != 0 {
+		t.Fatalf("inactive target wake = %v", prepared.targets)
+	}
+}
+
 func TestSelectedFactorOverlayInstallsAndWakesTargetLaw(t *testing.T) {
 	fixture := newSelectedOverlayFixture(t, false, false)
 	runtime, _, compiled := fixture.solver.compiler.compile(nil)
@@ -279,7 +299,7 @@ func TestSelectedFactorOverlayInstallsAndWakesTargetLaw(t *testing.T) {
 	untouchedIncoming := runtime.factorIncoming[idle]
 	epoch := selectedOverlayEpoch(t, runtime, nil)
 	defer epoch.discard()
-	overlay, prepared := runtime.prepareSelectedFactorOverlay([]equation.AcceptedMember{fixture.narrow})
+	overlay, prepared := runtime.prepareSelectedFactorOverlay([]equation.AcceptedMember{fixture.narrow}, []equation.AcceptedMember{fixture.narrow})
 	if !prepared || overlay == nil || len(overlay.additions) != 1 || len(overlay.replacements) != 0 || !overlay.dependencyChanged {
 		t.Fatalf("selected overlay preparation additions=%d replacements=%d dependency=%t prepared=%t", len(overlay.additions), len(overlay.replacements), overlay != nil && overlay.dependencyChanged, prepared)
 	}
@@ -297,18 +317,24 @@ func TestSelectedFactorOverlayInstallsAndWakesTargetLaw(t *testing.T) {
 	}
 }
 
-func TestSelectedFactorOverlayRejectsCombinedCycleLaw(t *testing.T) {
+func TestSelectedFactorOverlayInstallsCombinedCycleOnLiveEpochLaw(t *testing.T) {
 	fixture := newSelectedOverlayFixture(t, true, true)
 	runtime, _, compiled := fixture.solver.compiler.compile(nil)
 	if !compiled || runtime == nil || !runtimeSelectedOverlayEligible(runtime) {
 		t.Fatal("selected cycle base runtime")
 	}
-	edges, generation := len(runtime.factorEdges), runtime.overlay.generation
-	if overlay, prepared := runtime.prepareSelectedFactorOverlay([]equation.AcceptedMember{fixture.narrow}); prepared || overlay != nil {
-		t.Fatal("selected cyclic delta was installed")
+	epoch := selectedOverlayEpoch(t, runtime, nil)
+	defer epoch.discard()
+	edges := len(runtime.factorEdges)
+	overlay, prepared := runtime.prepareSelectedFactorOverlay([]equation.AcceptedMember{fixture.narrow}, []equation.AcceptedMember{fixture.narrow})
+	if !prepared || overlay == nil || overlay.execution == nil || overlay.execution.RegionCount() == 0 {
+		t.Fatal("selected cyclic delta preparation")
 	}
-	if len(runtime.factorEdges) != edges || runtime.overlay.generation != generation {
-		t.Fatalf("cycle preparation mutated runtime edges=%d/%d generation=%d/%d", len(runtime.factorEdges), edges, runtime.overlay.generation, generation)
+	if !epoch.installSelectedFactorOverlay(overlay) || !epoch.run() {
+		t.Fatal("selected cyclic delta installation")
+	}
+	if runtime.execution == nil || runtime.execution.RegionCount() == 0 || len(runtime.regions) == 0 || len(runtime.factorEdges) != edges+1 {
+		t.Fatalf("cycle runtime execution=%t regions=%d edges=%d/%d", runtime.execution != nil, len(runtime.regions), len(runtime.factorEdges), edges)
 	}
 }
 
@@ -324,11 +350,11 @@ func TestSelectedFactorOverlayPremiseWideningMatchesColdCanonicalLaw(t *testing.
 	}
 	epoch := selectedOverlayEpoch(t, runtime, nil)
 	defer epoch.discard()
-	first, prepared := runtime.prepareSelectedFactorOverlay([]equation.AcceptedMember{fixture.narrow})
+	first, prepared := runtime.prepareSelectedFactorOverlay([]equation.AcceptedMember{fixture.narrow}, []equation.AcceptedMember{fixture.narrow})
 	if !prepared || first == nil || len(first.additions) != 1 || !epoch.installSelectedFactorOverlay(first) || !epoch.run() {
 		t.Fatal("selected widening first premise")
 	}
-	broadened, prepared := runtime.prepareSelectedFactorOverlay([]equation.AcceptedMember{fixture.broad})
+	broadened, prepared := runtime.prepareSelectedFactorOverlay([]equation.AcceptedMember{fixture.broad}, []equation.AcceptedMember{fixture.broad})
 	if !prepared || broadened == nil || len(broadened.additions) != 0 || len(broadened.replacements) != 1 {
 		t.Fatalf("selected widening shape additions=%d replacements=%d prepared=%t", len(broadened.additions), len(broadened.replacements), prepared)
 	}
@@ -371,15 +397,16 @@ func TestSolverResumesSettledEpochWithSelectedFactorOverlayLaw(t *testing.T) {
 	}
 }
 
-func TestSolverFallsBackToColdRevisionWhenSelectedEdgeClosesCycleLaw(t *testing.T) {
+func TestSolverInstallsSelectedFeedbackWithoutColdRevisionLaw(t *testing.T) {
 	fixture := newSelectedOverlayActivationFixture(t, true, true, true)
 	initialRuntime := fixture.solver.runtime
+	initialEdges := len(initialRuntime.factorEdges)
 	state, status, report := fixture.solver.SolveWithReport(context.Background())
 	value, readable := QueryResult(fixture.targetReceipt, state)
 	if status != SolveComplete || state == nil || report.Available() || !readable || value != 17 {
-		t.Fatalf("selected cycle fallback status=%v state=%t report=%t value=%d/%t", status, state != nil, report.Available(), value, readable)
+		t.Fatalf("selected feedback status=%v state=%t report=%t value=%d/%t", status, state != nil, report.Available(), value, readable)
 	}
-	if fixture.solver.runtime == initialRuntime || fixture.solver.revision != 1 || len(fixture.solver.accepted) != 1 || fixture.solver.runtime.graph.RegionCount() == 0 {
-		t.Fatalf("selected cycle fallback same=%t revision=%d accepted=%d regions=%d", fixture.solver.runtime == initialRuntime, fixture.solver.revision, len(fixture.solver.accepted), fixture.solver.runtime.graph.RegionCount())
+	if fixture.solver.runtime != initialRuntime || fixture.solver.revision != 1 || len(fixture.solver.accepted) != 1 || initialRuntime.graph.RegionCount() != 0 || initialRuntime.execution == nil || initialRuntime.execution.RegionCount() == 0 || len(initialRuntime.regions) == 0 || len(initialRuntime.factorEdges) != initialEdges+1 {
+		t.Fatalf("selected feedback same=%t revision=%d accepted=%d staticRegions=%d dynamicRegions=%d edges=%d/%d", fixture.solver.runtime == initialRuntime, fixture.solver.revision, len(fixture.solver.accepted), initialRuntime.graph.RegionCount(), len(initialRuntime.regions), len(initialRuntime.factorEdges), initialEdges)
 	}
 }
