@@ -269,7 +269,8 @@ func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember,
 		len(runtime.regions) != regionCount ||
 		len(runtime.regionChildren) != regionCount ||
 		len(runtime.environmentIncoming) != pointCount ||
-		len(runtime.factorIncoming) != pointCount {
+		len(runtime.factorIncoming) != pointCount ||
+		len(runtime.overlay.factorOutgoing) != pointCount {
 		return nil, false
 	}
 	work, ok := runtime.carrier.NewWork()
@@ -654,10 +655,10 @@ func (epoch *executorEpoch) markPostfixDirty(point int) bool {
 }
 
 // markStructuralPoint is the one wakeup path for structural producers. Both
-// environment and factor edges are graph-owned Point dependencies: a target
-// must retain its structural proof bit while it is queued, then refreshPoint
-// folds the complete incoming edge set before clearing that bit. Keeping this
-// admission in one helper prevents a new structural edge family from falling
+// environment and factor edges are Point dependencies: a target must retain
+// its structural proof bit while it is queued, then refreshPoint folds the
+// complete incoming edge set before clearing that bit. Selected FactorEdges
+// share this same runtime-owned incoming CSR, so no dynamic family can fall
 // through the no-candidate early return.
 func (epoch *executorEpoch) markStructuralPoint(point equation.Point) bool {
 	if epoch == nil || epoch.runtime == nil || !point.Available() || epoch.runtime.graph == nil {
@@ -673,7 +674,7 @@ func (epoch *executorEpoch) markStructuralPoint(point equation.Point) bool {
 	if !epoch.runtime.activePoints[pointIndex] {
 		return true
 	}
-	if epoch.runtime.graph.EnvironmentEdgeCount(point) == 0 && epoch.runtime.graph.FactorEdgeCount(point) == 0 {
+	if len(epoch.runtime.environmentIncoming[pointIndex]) == 0 && len(epoch.runtime.factorIncoming[pointIndex]) == 0 {
 		return true
 	}
 	epoch.structuralDirty[pointIndex] = true
@@ -681,9 +682,9 @@ func (epoch *executorEpoch) markStructuralPoint(point equation.Point) bool {
 }
 
 // markStructuralSuccessors applies the same Point wake protocol to every
-// graph-owned structural edge family.  The edge-specific folds remain in
-// foldPoint; scheduling never gets a second EnvironmentEdge or FactorEdge
-// branch with its own dirty/version lifecycle.
+// graph-owned EnvironmentEdges and runtime-owned FactorEdges. The edge-
+// specific folds remain in foldPoint; scheduling never gets a second dynamic
+// FactorEdge lifecycle.
 func (epoch *executorEpoch) markStructuralSuccessors(source equation.Point) bool {
 	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || !source.Available() {
 		return false
@@ -695,9 +696,17 @@ func (epoch *executorEpoch) markStructuralSuccessors(source equation.Point) bool
 			return false
 		}
 	}
-	for index := 0; index < graph.FactorOutgoingCount(source); index++ {
-		edge, ok := graph.FactorOutgoingAt(source, index)
-		if !ok || !epoch.markStructuralPoint(edge.Target()) {
+	sourceIndex, sourceIndexed := graph.PointIndex(source)
+	if !sourceIndexed || sourceIndex < 0 || sourceIndex >= len(epoch.runtime.overlay.factorOutgoing) {
+		return false
+	}
+	for _, edgeIndex := range epoch.runtime.overlay.factorOutgoing[sourceIndex] {
+		if edgeIndex < 0 || edgeIndex >= len(epoch.runtime.factorEdges) {
+			return false
+		}
+		edge := epoch.runtime.factorEdges[edgeIndex]
+		target, targetOK := graph.PointAt(schedule.Node(edge.target))
+		if !targetOK || !epoch.markStructuralPoint(target) {
 			return false
 		}
 	}
@@ -722,6 +731,138 @@ func (epoch *executorEpoch) markStructuralSuccessors(source equation.Point) bool
 		}
 	}
 	return true
+}
+
+// installSelectedFactorOverlay publishes one prepared acyclic selected-edge
+// delta into a settled running epoch. Every recoverable allocation and bounds
+// check occurs
+// in prepareSelectedFactorEpoch; the commit below has no fallible semantic
+// operation, only assignments, map publication, and touched-bit updates.
+func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelectedFactorOverlay) bool {
+	if !epochSelectedOverlayInstallEligible(epoch, overlay) {
+		return false
+	}
+	prepared, ok := epoch.prepareSelectedFactorEpoch(overlay)
+	if !ok {
+		return false
+	}
+	runtime := epoch.runtime
+	if prepared.grownFactors != nil {
+		epoch.structural.factors = prepared.grownFactors
+	} else if len(overlay.additions) != 0 {
+		previous := len(epoch.structural.factors)
+		epoch.structural.factors = epoch.structural.factors[:previous+len(overlay.additions)]
+		clear(epoch.structural.factors[previous:])
+	}
+	if overlay.grownFactorEdges != nil {
+		runtime.factorEdges = overlay.grownFactorEdges
+	} else if len(overlay.additions) != 0 {
+		previous := len(runtime.factorEdges)
+		runtime.factorEdges = runtime.factorEdges[:previous+len(overlay.additions)]
+		for additionIndex, addition := range overlay.additions {
+			runtime.factorEdges[previous+additionIndex] = addition.edge
+		}
+	}
+	for _, replacement := range overlay.replacements {
+		runtime.factorEdges[replacement.index] = replacement.edge
+		epoch.structural.factors[replacement.index] = structuralInputEpoch{}
+	}
+	for _, row := range overlay.incomingRows {
+		runtime.factorIncoming[row.point] = row.edges
+	}
+	for _, row := range overlay.outgoingRows {
+		runtime.overlay.factorOutgoing[row.point] = row.edges
+	}
+	if overlay.dependencyChanged {
+		runtime.overlay.dependencyEdges = overlay.dependencyEdges
+		runtime.overlay.dependencyAt = overlay.dependencyAt
+	}
+	for key, plan := range overlay.latePlans {
+		runtime.overlay.latePlans[key] = plan
+	}
+	for origin, index := range overlay.newOrigins {
+		runtime.overlay.originAt[origin] = index
+	}
+	for _, target := range overlay.targets {
+		epoch.structuralDirty[target] = true
+		epoch.postfixDirty[target] = true
+		epoch.queue.ready[target] = true
+	}
+	epoch.postfixPending = prepared.postfixPending
+	epoch.postfixHead = 0
+	epoch.queue.count = len(overlay.targets)
+	runtime.overlay.generation++
+	return true
+}
+
+func epochSelectedOverlayInstallEligible(epoch *executorEpoch, overlay *preparedSelectedFactorOverlay) bool {
+	if epoch == nil || overlay == nil || epoch.runtime == nil || epoch.work == nil || epoch.demand == nil || epoch.terminal.Load() != epochRunning || epoch.canceled() || epoch.queue.pending() || !epoch.demand.Live() || !runtimeSelectedOverlayEligible(epoch.runtime) {
+		return false
+	}
+	if len(epoch.regions) != 0 || len(epoch.runtime.regions) != 0 || len(epoch.runtime.activeRegions) != 0 || len(epoch.nested) != 0 {
+		return false
+	}
+	return overlay.matches(epoch.runtime)
+}
+
+// matches is a constant-time stale-builder fence. Generation changes after
+// every successful installation, so an old prepared delta cannot overwrite a
+// newer factor/CSR view without rescanning all prior edges.
+func (overlay *preparedSelectedFactorOverlay) matches(runtime *solverRuntime) bool {
+	if overlay == nil || runtime == nil || runtime.graph == nil || overlay.runtime != runtime || overlay.generation == 0 || overlay.generation != runtime.overlay.generation || runtime.overlay.generation == ^uint64(0) {
+		return false
+	}
+	nextEdgeCount := overlay.previousEdgeCount + len(overlay.additions)
+	return overlay.previousEdgeCount == len(runtime.factorEdges) && nextEdgeCount >= overlay.previousEdgeCount && len(overlay.targets) != 0 &&
+		validPreparedFactorCSRRows(overlay.incomingRows, runtime.graph.PointCount(), nextEdgeCount) &&
+		validPreparedFactorCSRRows(overlay.outgoingRows, runtime.graph.PointCount(), nextEdgeCount)
+}
+
+type preparedSelectedFactorEpoch struct {
+	grownFactors   []structuralInputEpoch
+	postfixPending []int
+}
+
+func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelectedFactorOverlay) (preparedSelectedFactorEpoch, bool) {
+	if epoch == nil || overlay == nil || epoch.runtime == nil || len(epoch.structural.factors) != overlay.previousEdgeCount || len(epoch.structuralDirty) != len(epoch.points) || len(epoch.postfixDirty) != len(epoch.points) || len(epoch.queue.ready) != len(epoch.points) || epoch.postfixHead != len(epoch.postfixPending) || epoch.queue.count != 0 {
+		return preparedSelectedFactorEpoch{}, false
+	}
+	for _, target := range overlay.targets {
+		if target < 0 || target >= len(epoch.points) || target >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[target] || epoch.structuralDirty[target] || epoch.postfixDirty[target] || epoch.queue.ready[target] {
+			return preparedSelectedFactorEpoch{}, false
+		}
+	}
+	for _, addition := range overlay.additions {
+		edge := addition.edge
+		if edge.index < overlay.previousEdgeCount || edge.index >= overlay.previousEdgeCount+len(overlay.additions) || edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || !epoch.work.OwnsPointState(epoch.points[edge.source]) {
+			return preparedSelectedFactorEpoch{}, false
+		}
+	}
+	for _, replacement := range overlay.replacements {
+		if replacement.index < 0 || replacement.index >= overlay.previousEdgeCount || replacement.edge.index != replacement.index || replacement.edge.source < 0 || replacement.edge.source >= len(epoch.points) || replacement.edge.target < 0 || replacement.edge.target >= len(epoch.points) || !epoch.work.OwnsPointState(epoch.points[replacement.edge.source]) {
+			return preparedSelectedFactorEpoch{}, false
+		}
+	}
+	result := preparedSelectedFactorEpoch{postfixPending: append([]int(nil), overlay.targets...)}
+	nextCount := overlay.previousEdgeCount + len(overlay.additions)
+	if nextCount < overlay.previousEdgeCount {
+		return preparedSelectedFactorEpoch{}, false
+	}
+	if !validPreparedFactorCSRRows(overlay.incomingRows, len(epoch.points), nextCount) || !validPreparedFactorCSRRows(overlay.outgoingRows, len(epoch.points), nextCount) {
+		return preparedSelectedFactorEpoch{}, false
+	}
+	if cap(epoch.structural.factors) < nextCount {
+		capacity := cap(epoch.structural.factors) * 2
+		if capacity < nextCount {
+			capacity = nextCount
+		}
+		if capacity <= 0 {
+			return preparedSelectedFactorEpoch{}, false
+		}
+		result.grownFactors = make([]structuralInputEpoch, nextCount, capacity)
+		copy(result.grownFactors, epoch.structural.factors)
+	}
+	return result, true
 }
 
 func (epoch *executorEpoch) postfixPoint() (int, bool) {

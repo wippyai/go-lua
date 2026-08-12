@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 )
 
@@ -351,6 +352,7 @@ type solverRuntime struct {
 	// semantic key or scans the global edge table.
 	environmentIncoming [][]int
 	factorIncoming      [][]int
+	overlay             runtimeStructuralOverlay
 	demand              *demand.Plan
 	queries             []runtimeQuery
 	pointScopes         []carrier.Scope
@@ -374,10 +376,51 @@ type runtimeEnvironment struct {
 
 type runtimeFactorEdge struct {
 	index  int
+	key    composition.Key
+	factor composition.Key
 	source int
 	target int
 	input  runtimeInput
 	slot   shape.Slot
+}
+
+// runtimeFactorOrigin is the stable structural identity of one selected
+// transport. Its input precondition is deliberately absent: activation
+// evidence can widen that condition monotonically while preserving every
+// other transport coordinate.
+type runtimeFactorOrigin struct {
+	source, target     int
+	factor, provenance composition.Key
+	reindex            composition.Key
+	post               guard.FormulaID
+}
+
+// runtimeStructuralOverlay owns only executable selected-edge indexing.  It
+// is not an activation relation: Solver.accepted remains the sole authority
+// for accepted Members and their premise union.  `reindexes` is likewise a
+// derived carrier binding cache over already-issued scopes and atoms, never a
+// second equation or carrier authoring surface.
+type runtimeStructuralOverlay struct {
+	factorByKey     map[composition.Key]runtimeFactor
+	staticOrigins   map[runtimeFactorOrigin]struct{}
+	originAt        map[runtimeFactorOrigin]int
+	factorOutgoing  [][]int // all static and selected factor transports
+	dependencyEdges []schedule.Edge
+	dependencyAt    map[[2]int]struct{}
+	reindexes       runtimeReindexes
+	latePlans       map[composition.Key]carrier.ReindexPlan
+	totalDemand     bool // cached cold proof: every graph Point has an epoch row
+	generation      uint64
+}
+
+func runtimeFactorEdgeOrigin(source, target int, factor, provenance, reindex composition.Key, post support.Mask) (runtimeFactorOrigin, bool) {
+	postIdentity, postOK := post.Identity()
+	origin := runtimeFactorOrigin{source: source, target: target, factor: factor, provenance: provenance, reindex: reindex, post: postIdentity}
+	return origin, source >= 0 && target >= 0 && factor.Available() && provenance.Available() && reindex.Available() && postOK && origin.available()
+}
+
+func (origin runtimeFactorOrigin) available() bool {
+	return origin.source >= 0 && origin.target >= 0 && origin.factor.Available() && origin.provenance.Available() && origin.reindex.Available() && origin.post.Available()
 }
 
 // assembleSolver attaches graph-issued members to one sealed carrier, then
@@ -391,6 +434,7 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 		return nil, false
 	}
 	activePoints, activeRegions, activeOK := runtimeDemandMembership(graph, points)
+	totalDemand := activeOK && runtimeHasTotalDemand(graph, points, activePoints)
 	if !activeOK {
 		return nil, false
 	}
@@ -445,6 +489,10 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 		environments[edgeIndex] = runtimeEnvironment{index: edgeIndex, source: sourcePoint, target: targetPoint, input: bound}
 	}
 	factorEdges := make([]runtimeFactorEdge, graph.FactorEdgeTotal())
+	// Selected-origin identity is cold overlay indexing, not part of the hot
+	// fold/wake edge header.  Keep static origins here only to reject a later
+	// selected edge that would alias an already graph-owned transport.
+	staticOrigins := make(map[runtimeFactorOrigin]struct{}, len(factorEdges))
 	for edgeIndex := 0; edgeIndex < graph.FactorEdgeTotal(); edgeIndex++ {
 		edge, edgeOK := graph.FactorEdgeAtIndex(edgeIndex)
 		sourcePoint, sourceIndexed := graph.PointIndex(edge.Input().Point())
@@ -454,7 +502,7 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 		if factorKnown && factor != nil {
 			slot, slotOK = factor.runtimeSlot()
 		}
-		if !edgeOK || !sourceIndexed || !targetIndexed || !factorKnown || factor == nil || factor.semantic().compositionKey() != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.Count() {
+		if !edgeOK || !edge.Key().Available() || !sourceIndexed || !targetIndexed || !factorKnown || factor == nil || factor.semantic().compositionKey() != edge.Factor() || !slotOK || slot < 0 || int(slot) >= runtime.Count() {
 			return nil, false
 		}
 		plan, planOK := plans.plan(edge.Input().Reindex())
@@ -469,7 +517,12 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 		if !bound.valid() {
 			return nil, false
 		}
-		factorEdges[edgeIndex] = runtimeFactorEdge{index: edgeIndex, source: sourcePoint, target: targetPoint, input: bound, slot: slot}
+		origin, originOK := runtimeFactorEdgeOrigin(sourcePoint, targetPoint, edge.Factor(), edge.Input().Provenance(), edge.Input().Reindex().Key(), bound.post)
+		if !originOK {
+			return nil, false
+		}
+		staticOrigins[origin] = struct{}{}
+		factorEdges[edgeIndex] = runtimeFactorEdge{index: edgeIndex, key: edge.Key(), factor: edge.Factor(), source: sourcePoint, target: targetPoint, input: bound, slot: slot}
 	}
 	environmentIncoming := make([][]int, graph.PointCount())
 	for edgeIndex, edge := range environments {
@@ -479,11 +532,20 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 		environmentIncoming[edge.target] = append(environmentIncoming[edge.target], edgeIndex)
 	}
 	factorIncoming := make([][]int, graph.PointCount())
+	factorOutgoing := make([][]int, graph.PointCount())
 	for edgeIndex, edge := range factorEdges {
-		if edge.target < 0 || edge.target >= len(factorIncoming) {
+		if !edge.key.Available() || !edge.factor.Available() || edge.source < 0 || edge.source >= len(factorOutgoing) || edge.target < 0 || edge.target >= len(factorIncoming) {
 			return nil, false
 		}
 		factorIncoming[edge.target] = append(factorIncoming[edge.target], edgeIndex)
+		factorOutgoing[edge.source] = append(factorOutgoing[edge.source], edgeIndex)
+	}
+	factorByKey := make(map[composition.Key]runtimeFactor, len(factors))
+	for key, factor := range factors {
+		if !key.Available() || factor == nil || factor.semantic().compositionKey() != key {
+			return nil, false
+		}
+		factorByKey[key] = factor
 	}
 	for index := 0; index < graph.GroupCount(); index++ {
 		group, groupOK := graph.HyperedgeAt(index)
@@ -725,7 +787,11 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 	if !sealedDemand || !validQueries {
 		return nil, false
 	}
-	assembled := &solverRuntime{composition: cold, carrier: runtime, graph: graph, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, demand: demandPlan, queries: append([]runtimeQuery(nil), queries...), pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
+	dependencyEdges, dependencyAt, dependencyOK := runtimeStaticDependencyEdges(graph)
+	if !dependencyOK {
+		return nil, false
+	}
+	assembled := &solverRuntime{composition: cold, carrier: runtime, graph: graph, factors: nil, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{factorByKey: factorByKey, staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), totalDemand: totalDemand, generation: 1}, demand: demandPlan, queries: append([]runtimeQuery(nil), queries...), pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
 	return assembled, true
 }
 
@@ -748,6 +814,74 @@ func validateRuntimeQueries(cold *Composition, graph *equation.Graph, rows []run
 		}
 	}
 	return true
+}
+
+// runtimeStaticDependencyEdges copies the already sealed Point influence
+// relation once into dense form.  Selected structural edges are appended to
+// this relation only while preparing an overlay; schedule.Prepare then gives
+// one batched cycle proof for static plus previously selected plus new edges.
+// Group input and designated environment input dependencies both target the
+// Group output, while direct Environment/Factor rows target their own Point.
+func runtimeStaticDependencyEdges(graph *equation.Graph) ([]schedule.Edge, map[[2]int]struct{}, bool) {
+	if graph == nil || graph.Schedule() == nil || graph.PointCount() == 0 {
+		return nil, nil, false
+	}
+	seen := make(map[[2]int]struct{})
+	edges := make([]schedule.Edge, 0, graph.EnvironmentEdgeTotal()+graph.FactorEdgeTotal()+graph.GroupCount())
+	appendEdge := func(source, target int) bool {
+		if source < 0 || target < 0 || source >= graph.PointCount() || target >= graph.PointCount() {
+			return false
+		}
+		key := [2]int{source, target}
+		if _, duplicate := seen[key]; !duplicate {
+			seen[key] = struct{}{}
+			edges = append(edges, schedule.Edge{From: schedule.Node(source), To: schedule.Node(target)})
+		}
+		return true
+	}
+	for sourceIndex := 0; sourceIndex < graph.PointCount(); sourceIndex++ {
+		source, sourceOK := graph.PointAt(schedule.Node(sourceIndex))
+		if !sourceOK || !graph.OwnsPoint(source) {
+			return nil, nil, false
+		}
+		for index := 0; index < graph.ConsumerCount(source); index++ {
+			group, groupOK := graph.ConsumerAt(source, index)
+			target, targetOK := group.Output(), graph.OwnsGroup(group)
+			targetIndex, indexed := graph.PointIndex(target)
+			if !groupOK || !targetOK || !indexed || !appendEdge(sourceIndex, targetIndex) {
+				return nil, nil, false
+			}
+		}
+		for index := 0; index < graph.EnvironmentGroupCount(source); index++ {
+			group, groupOK := graph.EnvironmentGroupAt(source, index)
+			target, targetOK := group.Output(), graph.OwnsGroup(group)
+			targetIndex, indexed := graph.PointIndex(target)
+			if !groupOK || !targetOK || !indexed || !appendEdge(sourceIndex, targetIndex) {
+				return nil, nil, false
+			}
+		}
+		for index := 0; index < graph.EnvironmentOutgoingCount(source); index++ {
+			edge, edgeOK := graph.EnvironmentOutgoingAt(source, index)
+			targetIndex, indexed := graph.PointIndex(edge.Target())
+			if !edgeOK || !indexed || !appendEdge(sourceIndex, targetIndex) {
+				return nil, nil, false
+			}
+		}
+		for index := 0; index < graph.FactorOutgoingCount(source); index++ {
+			edge, edgeOK := graph.FactorOutgoingAt(source, index)
+			targetIndex, indexed := graph.PointIndex(edge.Target())
+			if !edgeOK || !indexed || !appendEdge(sourceIndex, targetIndex) {
+				return nil, nil, false
+			}
+		}
+	}
+	sort.Slice(edges, func(left, right int) bool {
+		if edges[left].From != edges[right].From {
+			return edges[left].From < edges[right].From
+		}
+		return edges[left].To < edges[right].To
+	})
+	return edges, seen, true
 }
 
 // bindRuntimeRegions is the recurrence admission cut for the one already
@@ -1099,6 +1233,30 @@ func runtimeDemandMembership(graph *equation.Graph, points *equation.Demand) ([]
 		}
 	}
 	return activePoints, activeRegions, true
+}
+
+// runtimeHasTotalDemand is the cold witness required by the selected-edge
+// fast path. It is deliberately computed once during assembly rather than
+// rescanning every Point on each activation frontier.
+func runtimeHasTotalDemand(graph *equation.Graph, points *equation.Demand, active []bool) bool {
+	if graph == nil || points == nil || points.PointCount() != graph.PointCount() || len(active) != graph.PointCount() {
+		return false
+	}
+	seen := make([]bool, graph.PointCount())
+	for index := 0; index < points.PointCount(); index++ {
+		point, pointOK := points.PointAt(index)
+		pointIndex, indexed := graph.PointIndex(point)
+		if !pointOK || !indexed || pointIndex < 0 || pointIndex >= len(active) || !active[pointIndex] || seen[pointIndex] {
+			return false
+		}
+		seen[pointIndex] = true
+	}
+	for _, demanded := range seen {
+		if !demanded {
+			return false
+		}
+	}
+	return true
 }
 
 func runtimeContainsTarget(targets []carrier.Target, want carrier.Target) bool {

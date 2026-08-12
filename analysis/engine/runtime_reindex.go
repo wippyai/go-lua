@@ -179,6 +179,19 @@ func sealRuntimeScopes(runtime *carrier.Composition, source map[composition.Key]
 }
 
 func lowerRuntimeReindex(runtime *carrier.Composition, reindex equation.Reindex, scopes map[composition.Key]carrier.Scope, decisions map[composition.Key]guard.Atom) (carrier.ReindexPlan, bool) {
+	return lowerRuntimeReindexWith(runtime, reindex, scopes, decisions, false)
+}
+
+// lowerRuntimeReindexLate lowers a selected structural boundary after Work has
+// opened.  Its scopes and atoms were sealed by the base Graph; the runtime
+// carrier therefore admits only the immutable relation, never a new shape or
+// decision coordinate.  Keeping this separate from the cold path makes the
+// lifecycle distinction explicit at the sole equation-to-carrier cut.
+func lowerRuntimeReindexLate(runtime *carrier.Composition, reindex equation.Reindex, scopes map[composition.Key]carrier.Scope, decisions map[composition.Key]guard.Atom) (carrier.ReindexPlan, bool) {
+	return lowerRuntimeReindexWith(runtime, reindex, scopes, decisions, true)
+}
+
+func lowerRuntimeReindexWith(runtime *carrier.Composition, reindex equation.Reindex, scopes map[composition.Key]carrier.Scope, decisions map[composition.Key]guard.Atom, late bool) (carrier.ReindexPlan, bool) {
 	if runtime == nil || !reindex.Available() || reindex.Count() != reindex.Source().Count() {
 		return carrier.ReindexPlan{}, false
 	}
@@ -187,7 +200,15 @@ func lowerRuntimeReindex(runtime *carrier.Composition, reindex equation.Reindex,
 	if !sourceOK || !targetOK || !source.Valid() || !target.Valid() {
 		return carrier.ReindexPlan{}, false
 	}
-	builder, ok := runtime.NewReindex(source, target)
+	var (
+		builder *carrier.ReindexBuilder
+		ok      bool
+	)
+	if late {
+		builder, ok = runtime.NewRuntimeReindex(source, target)
+	} else {
+		builder, ok = runtime.NewReindex(source, target)
+	}
 	if !ok {
 		return carrier.ReindexPlan{}, false
 	}
