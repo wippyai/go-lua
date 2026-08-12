@@ -323,6 +323,13 @@ func (work *Work) Open() bool {
 	return work != nil && work.manager != nil && work.work != nil && work.work.Open()
 }
 
+// OwnsManager proves that this candidate transaction belongs to the exact
+// immutable guard manager. Candidate Masks cannot use Mask.Manager because
+// that accessor intentionally accepts sealed roots only.
+func (work *Work) OwnsManager(manager *guard.Manager) bool {
+	return work != nil && manager != nil && work.manager == manager && work.work != nil
+}
+
 // Valid accepts sealed regions from this manager and candidate regions built
 // by this Work.  guard.Work is the exact candidate-page authority.
 func (work *Work) Valid(mask Mask) bool {

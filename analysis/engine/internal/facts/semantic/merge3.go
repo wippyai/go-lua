@@ -51,11 +51,11 @@ func (domain *Domain[F, K, V]) JoinContributions(left, right Plane[F, K, V], scr
 }
 
 // JoinContributionChanges applies a right operand at exact authored/changed
-// key regions supplied by the Binding. The left root is patched persistently
-// once per key; unchanged key subtrees and FDDs are retained. Supplying the
-// whole right authored surface implements an ordinary closed contribution
-// join. Supplying only an ascending publication delta is lawful when the
-// caller proves left already contains the prior version of right.
+// key regions supplied by the Binding. The final sorted sparse mutations are
+// published in one persistent AVL batch; unchanged subtrees and FDDs are
+// retained. Supplying the whole right authored surface implements an ordinary
+// closed contribution join. Supplying only an ascending publication delta is
+// lawful when the caller proves left already contains the prior right version.
 func (domain *Domain[F, K, V]) JoinContributionChanges(left, right Plane[F, K, V], changes []ContributionChange[K], scratch *diagram.SoleScratch[K, V], regions *support.Work, report diagram.SoleChange[K], covers diagram.SoleRegions[K]) (Plane[F, K, V], bool) {
 	if !domain.validPlane(left) || !domain.validPlane(right) || len(changes) == 0 || scratch == nil || regions == nil || !regions.Open() || report == nil || covers == nil {
 		return Plane[F, K, V]{}, false
@@ -70,38 +70,31 @@ func (domain *Domain[F, K, V]) JoinContributionChanges(left, right Plane[F, K, V
 		builder.Discard()
 		return Plane[F, K, V]{}, false
 	}
-	root := left.root
-	for index, change := range changes {
-		if !change.Region.Valid() || change.Region.Manager() != domain.guards() || support.Empty(change.Region) || index > 0 && changes[index-1].Key >= change.Key {
-			builder.Discard()
-			return Plane[F, K, V]{}, false
+	root, ok := builder.MergeSoleFactorChanges(left.root, right.root, len(changes), scratch, regions, func(key K, first, second terminal.ID[V]) (terminal.ID[V], bool) {
+		return domain.terminalsBinary(values, domain.ops.Join, binaryJoin, key)(first, second)
+	}, func(first, second terminal.ID[V]) bool {
+		return domain.equalTerminal(values, first, second)
+	}, report, func(index int) (K, support.Mask, support.Mask, support.Mask, bool) {
+		change := changes[index]
+		if !regions.Valid(change.Region) || support.Empty(change.Region) || index > 0 && changes[index-1].Key >= change.Key {
+			return 0, support.Mask{}, support.Mask{}, support.Mask{}, false
 		}
 		leftRegion, rightRegion, referenceRegion, covered := covers(change.Key)
-		if !covered || !leftRegion.Valid() || !rightRegion.Valid() || !referenceRegion.Valid() || leftRegion.Manager() != domain.guards() || rightRegion.Manager() != domain.guards() || referenceRegion.Manager() != domain.guards() {
-			builder.Discard()
-			return Plane[F, K, V]{}, false
+		if !covered || !regions.Valid(leftRegion) || !regions.Valid(rightRegion) || !regions.Valid(referenceRegion) {
+			return 0, support.Mask{}, support.Mask{}, support.Mask{}, false
 		}
-		rightRegion, ok = support.Intersect(rightRegion, change.Region)
-		if !ok {
-			builder.Discard()
-			return Plane[F, K, V]{}, false
-		}
-		if support.Empty(rightRegion) {
-			continue
+		rightRegion, intersected := support.Intersect(rightRegion, change.Region)
+		if !intersected {
+			return 0, support.Mask{}, support.Mask{}, support.Mask{}, false
 		}
 		if support.Empty(leftRegion) {
 			leftRegion = empty
 		}
-		var changed support.Mask
-		root, changed, ok = builder.MergeSoleFactorKey(root, right.root, change.Key, leftRegion, rightRegion, referenceRegion, scratch, regions, func(key K, first, second terminal.ID[V]) (terminal.ID[V], bool) {
-			return domain.terminalsBinary(values, domain.ops.Join, binaryJoin, key)(first, second)
-		}, func(first, second terminal.ID[V]) bool {
-			return domain.equalTerminal(values, first, second)
-		})
-		if !ok || !support.Empty(changed) && !report(change.Key, changed) {
-			builder.Discard()
-			return Plane[F, K, V]{}, false
-		}
+		return change.Key, leftRegion, rightRegion, referenceRegion, true
+	})
+	if !ok {
+		builder.Discard()
+		return Plane[F, K, V]{}, false
 	}
 	root, ok = builder.Seal(root)
 	if !ok {

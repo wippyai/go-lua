@@ -30,6 +30,11 @@ type SoleChange[K scalar.Key] func(key K, region support.Mask) bool
 // concrete keys only beside their typed Binding.
 type SoleRegions[K scalar.Key] func(key K) (left, right, reference support.Mask, ok bool)
 
+// SoleChangeRegions supplies one member of a caller-owned ascending change
+// stream. The stream is borrowed for one Builder transaction; Diagram keeps
+// neither the callback nor a concrete-key relation after publication.
+type SoleChangeRegions[K scalar.Key] func(index int) (key K, left, right, reference support.Mask, ok bool)
+
 type soleMergeTriple[V any] struct {
 	left, right                                 *node[V]
 	leftSupport, rightSupport, referenceSupport support.Mask
@@ -81,8 +86,7 @@ type soleTreeFrame[K scalar.Key, V any] struct {
 // smuggling mutable scratch into a Domain or global pool.
 func (builder *Builder[F, K, V]) MergeSoleFactor(left, right Root[F, K, V], leftSupport, rightSupport, referenceSupport support.Mask, scratch *SoleScratch[K, V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V], report SoleChange[K]) (Root[F, K, V], bool) {
 	if builder == nil || !builder.open || builder.diagram == nil || !builder.diagram.Valid(left) || !builder.diagram.Valid(right) ||
-		!leftSupport.Valid() || !rightSupport.Valid() || !referenceSupport.Valid() ||
-		leftSupport.Manager() != builder.diagram.guards || rightSupport.Manager() != builder.diagram.guards || referenceSupport.Manager() != builder.diagram.guards ||
+		!validSoleSupport(builder.diagram.guards, regions, leftSupport) || !validSoleSupport(builder.diagram.guards, regions, rightSupport) || !validSoleSupport(builder.diagram.guards, regions, referenceSupport) ||
 		scratch == nil || combine == nil || report != nil && (regions == nil || !regions.Open() || equal == nil) {
 		return Root[F, K, V]{}, false
 	}
@@ -110,8 +114,7 @@ func (builder *Builder[F, K, V]) MergeSoleFactorRegions(left, right Root[F, K, V
 // retains sole ownership of FDD traversal and immutable AVL publication.
 func (builder *Builder[F, K, V]) MergeSoleFactorKey(left, right Root[F, K, V], key K, leftSupport, rightSupport, referenceSupport support.Mask, scratch *SoleScratch[K, V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V]) (Root[F, K, V], support.Mask, bool) {
 	if builder == nil || !builder.open || builder.diagram == nil || !builder.Valid(left) || !builder.Valid(right) ||
-		!leftSupport.Valid() || !rightSupport.Valid() || !referenceSupport.Valid() ||
-		leftSupport.Manager() != builder.diagram.guards || rightSupport.Manager() != builder.diagram.guards || referenceSupport.Manager() != builder.diagram.guards ||
+		!validSoleSupport(builder.diagram.guards, regions, leftSupport) || !validSoleSupport(builder.diagram.guards, regions, rightSupport) || !validSoleSupport(builder.diagram.guards, regions, referenceSupport) ||
 		scratch == nil || regions == nil || !regions.Open() || combine == nil || equal == nil {
 		return Root[F, K, V]{}, support.Mask{}, false
 	}
@@ -142,6 +145,189 @@ func (builder *Builder[F, K, V]) MergeSoleFactorKey(left, right Root[F, K, V], k
 	return root, changed, true
 }
 
+// MergeSoleFactorChanges applies an ascending set of exact key changes to the
+// immutable left root in one publication. Every changed column is still
+// computed independently from the original left and right roots by the same
+// closed contribution zipper as MergeSoleFactorKey. Only the final sparse key
+// mutations are batched, so untouched AVL subtrees remain shared and a dense
+// change does not copy the same persistent search paths once per key.
+func (builder *Builder[F, K, V]) MergeSoleFactorChanges(left, right Root[F, K, V], count int, scratch *SoleScratch[K, V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V], report SoleChange[K], covers SoleChangeRegions[K]) (Root[F, K, V], bool) {
+	if builder == nil || !builder.open || builder.diagram == nil || !builder.Valid(left) || !builder.Valid(right) ||
+		count <= 0 || scratch == nil || regions == nil || !regions.Open() || combine == nil || equal == nil || report == nil || covers == nil || !scratch.live() {
+		return Root[F, K, V]{}, false
+	}
+	factor, ok := builder.diagram.SoleFactor()
+	if !ok {
+		return Root[F, K, V]{}, false
+	}
+	rank, ok := builder.diagram.ranks[factor]
+	if !ok {
+		return Root[F, K, V]{}, false
+	}
+	scratch.Clear()
+	leftFactor, rightFactor := findFactor(left.root, rank), findFactor(right.root, rank)
+	leftKeys, rightKeys := factorKeys(leftFactor), factorKeys(rightFactor)
+	delta := 0
+	var previous K
+	for index := 0; index < count; index++ {
+		if !scratch.live() {
+			return Root[F, K, V]{}, false
+		}
+		key, leftSupport, rightSupport, referenceSupport, covered := covers(index)
+		if !covered || index > 0 && previous >= key ||
+			!validSoleSupport(builder.diagram.guards, regions, leftSupport) || !validSoleSupport(builder.diagram.guards, regions, rightSupport) || !validSoleSupport(builder.diagram.guards, regions, referenceSupport) {
+			return Root[F, K, V]{}, false
+		}
+		previous = key
+		if support.Empty(rightSupport) {
+			continue
+		}
+		leftValue, rightValue := columnValue(leftKeys, key), columnValue(rightKeys, key)
+		value, changed, merged := builder.mergeSoleColumn(key, leftValue, rightValue, leftSupport, rightSupport, referenceSupport, scratch, regions, combine, equal)
+		if !merged {
+			return Root[F, K, V]{}, false
+		}
+		view, valid := regions.Decompose(changed)
+		if !valid {
+			return Root[F, K, V]{}, false
+		}
+		if (!view.Terminal || view.Value) && !report(key, changed) {
+			return Root[F, K, V]{}, false
+		}
+		if sameSparseNode(leftValue, value) {
+			continue
+		}
+		scratch.patches = append(scratch.patches, soleOutput[K, V]{key: key, value: value})
+		switch {
+		case undefinedNode(leftValue) && !undefinedNode(value):
+			delta++
+		case !undefinedNode(leftValue) && undefinedNode(value):
+			delta--
+		}
+	}
+	if len(scratch.patches) == 0 {
+		return Root[F, K, V]{diagram: builder.diagram, root: left.root, count: left.count, lease: builder.lease}, true
+	}
+	keys, ok := applySolePatches(leftKeys, scratch.patches, scratch.live)
+	if !ok || !scratch.live() {
+		return Root[F, K, V]{}, false
+	}
+	finalCount := left.count + delta
+	if finalCount < 0 || (keys == nil) != (finalCount == 0) {
+		return Root[F, K, V]{}, false
+	}
+	var root *factorNode[F, K, V]
+	if keys != nil {
+		root = makeFactor(factor, rank, keys, nil, nil)
+	}
+	return Root[F, K, V]{diagram: builder.diagram, root: root, count: finalCount, lease: builder.lease}, true
+}
+
+// applySolePatches updates one immutable AVL from a sorted, unique mutation
+// stream. A recursive call with no mutations returns the exact old subtree.
+// Arbitrary subtree height changes are joined with joinKey3 rather than the
+// one-edit balance path used by setKey/deleteKey.
+func applySolePatches[K scalar.Key, V any](root *keyNode[K, V], patches []soleOutput[K, V], live func() bool) (*keyNode[K, V], bool) {
+	if live == nil || !live() {
+		return nil, false
+	}
+	if len(patches) == 0 {
+		return root, true
+	}
+	if root == nil {
+		for index, patch := range patches {
+			if undefinedNode(patch.value) || index > 0 && patches[index-1].key >= patch.key {
+				return nil, false
+			}
+		}
+		return buildSolePatchKeys(patches, live)
+	}
+	pivot := solePatchLowerBound(patches, root.key)
+	matched := pivot < len(patches) && patches[pivot].key == root.key
+	rightStart := pivot
+	if matched {
+		rightStart++
+	}
+	left, ok := applySolePatches(root.left, patches[:pivot], live)
+	if !ok {
+		return nil, false
+	}
+	right, ok := applySolePatches(root.right, patches[rightStart:], live)
+	if !ok {
+		return nil, false
+	}
+	if !matched {
+		if left == root.left && right == root.right {
+			return root, true
+		}
+		return joinKey3(left, root.key, root.value, right), true
+	}
+	value := patches[pivot].value
+	if undefinedNode(value) {
+		return concatKeys(left, right), true
+	}
+	return joinKey3(left, root.key, value, right), true
+}
+
+func solePatchLowerBound[K scalar.Key, V any](patches []soleOutput[K, V], key K) int {
+	low, high := 0, len(patches)
+	for low < high {
+		middle := low + (high-low)/2
+		if patches[middle].key < key {
+			low = middle + 1
+		} else {
+			high = middle
+		}
+	}
+	return low
+}
+
+func buildSolePatchKeys[K scalar.Key, V any](patches []soleOutput[K, V], live func() bool) (*keyNode[K, V], bool) {
+	if live == nil || !live() {
+		return nil, false
+	}
+	if len(patches) == 0 {
+		return nil, true
+	}
+	middle := len(patches) / 2
+	entry := patches[middle]
+	left, ok := buildSolePatchKeys(patches[:middle], live)
+	if !ok {
+		return nil, false
+	}
+	right, ok := buildSolePatchKeys(patches[middle+1:], live)
+	if !ok {
+		return nil, false
+	}
+	return makeKey(entry.key, entry.value, left, right), true
+}
+
+// joinKey3 is the height-general persistent AVL join. Unlike balanceKey it is
+// lawful when a batch replaces one child with a subtree whose height changed
+// by more than one level.
+func joinKey3[K scalar.Key, V any](left *keyNode[K, V], key K, value *node[V], right *keyNode[K, V]) *keyNode[K, V] {
+	if keyHeight(left) > keyHeight(right)+1 {
+		joined := joinKey3(left.right, key, value, right)
+		return balanceKey(makeKey(left.key, left.value, left.left, joined))
+	}
+	if keyHeight(right) > keyHeight(left)+1 {
+		joined := joinKey3(left, key, value, right.left)
+		return balanceKey(makeKey(right.key, right.value, joined, right.right))
+	}
+	return makeKey(key, value, left, right)
+}
+
+func concatKeys[K scalar.Key, V any](left, right *keyNode[K, V]) *keyNode[K, V] {
+	if left == nil {
+		return right
+	}
+	if right == nil {
+		return left
+	}
+	minimum, rest := popKeyMin(right)
+	return joinKey3(left, minimum.key, minimum.value, rest)
+}
+
 func (builder *Builder[F, K, V]) mergeSoleFactorRegions(left, right Root[F, K, V], scratch *SoleScratch[K, V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V], report SoleChange[K], covers SoleRegions[K]) (Root[F, K, V], bool) {
 	factor, ok := builder.diagram.SoleFactor()
 	if !ok {
@@ -162,7 +348,7 @@ func (builder *Builder[F, K, V]) mergeSoleFactorRegions(left, right Root[F, K, V
 			break
 		}
 		leftSupport, rightSupport, referenceSupport, covered := covers(pair.key)
-		if !covered || !leftSupport.Valid() || !rightSupport.Valid() || !referenceSupport.Valid() || leftSupport.Manager() != builder.diagram.guards || rightSupport.Manager() != builder.diagram.guards || referenceSupport.Manager() != builder.diagram.guards {
+		if !covered || !validSoleSupport(builder.diagram.guards, regions, leftSupport) || !validSoleSupport(builder.diagram.guards, regions, rightSupport) || !validSoleSupport(builder.diagram.guards, regions, referenceSupport) {
 			return Root[F, K, V]{}, false
 		}
 		value, changed, ok := builder.mergeSoleColumn(pair.key, pair.left, pair.right, leftSupport, rightSupport, referenceSupport, scratch, regions, combine, equal)
@@ -264,7 +450,7 @@ func (builder *Builder[F, K, V]) mergeSoleColumn(key K, left, right *node[V], le
 				scratch.mergeFrames = scratch.mergeFrames[:index]
 				continue
 			}
-			atom, low, high, ok := builder.mergeSoleBranches(frame.triple)
+			atom, low, high, ok := builder.mergeSoleBranches(frame.triple, regions)
 			if !ok {
 				return nil, support.Mask{}, false
 			}
@@ -308,9 +494,9 @@ func (builder *Builder[F, K, V]) mergeSoleColumn(key K, left, right *node[V], le
 // right-only Join/Widen support and removed Narrow support are reported by
 // carrier's Added/Removed masks rather than fake unit changes.
 func (builder *Builder[F, K, V]) mergeSoleLeaf(key K, triple soleMergeTriple[V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V]) (complete bool, value *node[V], changed support.Mask, ok bool) {
-	leftView, leftOK := triple.leftSupport.Decompose()
-	rightView, rightOK := triple.rightSupport.Decompose()
-	referenceView, referenceOK := triple.referenceSupport.Decompose()
+	leftView, leftOK := decomposeSoleSupport(regions, triple.leftSupport)
+	rightView, rightOK := decomposeSoleSupport(regions, triple.rightSupport)
+	referenceView, referenceOK := decomposeSoleSupport(regions, triple.referenceSupport)
 	if !leftOK || !rightOK || !referenceOK {
 		return false, nil, support.Mask{}, false
 	}
@@ -400,10 +586,10 @@ func (builder *Builder[F, K, V]) terminalAt(value *node[V]) (terminal.ID[V], boo
 	return value.value, builder.validTerminal(value.value)
 }
 
-func (builder *Builder[F, K, V]) mergeSoleBranches(triple soleMergeTriple[V]) (guard.Atom, soleMergeTriple[V], soleMergeTriple[V], bool) {
-	leftView, leftOK := triple.leftSupport.Decompose()
-	rightView, rightOK := triple.rightSupport.Decompose()
-	referenceView, referenceOK := triple.referenceSupport.Decompose()
+func (builder *Builder[F, K, V]) mergeSoleBranches(triple soleMergeTriple[V], regions *support.Work) (guard.Atom, soleMergeTriple[V], soleMergeTriple[V], bool) {
+	leftView, leftOK := decomposeSoleSupport(regions, triple.leftSupport)
+	rightView, rightOK := decomposeSoleSupport(regions, triple.rightSupport)
+	referenceView, referenceOK := decomposeSoleSupport(regions, triple.referenceSupport)
 	if !leftOK || !rightOK || !referenceOK {
 		return 0, soleMergeTriple[V]{}, soleMergeTriple[V]{}, false
 	}
@@ -456,6 +642,20 @@ func minimumMergeRank(first, second, third, fourth uint64) uint64 {
 
 func minimumMergeFive(first, second, third, fourth, fifth uint64) uint64 {
 	return minimumRank(minimumMergeRank(first, second, third, fourth), fifth, noRelationRank)
+}
+
+func validSoleSupport(manager *guard.Manager, work *support.Work, value support.Mask) bool {
+	if work != nil {
+		return work.OwnsManager(manager) && work.Valid(value)
+	}
+	return value.Valid() && value.Manager() == manager
+}
+
+func decomposeSoleSupport(work *support.Work, value support.Mask) (support.Decomposition, bool) {
+	if work != nil {
+		return work.Decompose(value)
+	}
+	return value.Decompose()
 }
 
 func undefinedNode[V any](value *node[V]) bool {
