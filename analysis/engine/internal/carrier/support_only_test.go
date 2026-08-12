@@ -99,6 +99,10 @@ func (work carryOnlyWork) MergeContributionUnder(left, _ RootHandle, _, _ suppor
 	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
 }
 
+func (work carryOnlyWork) MergeTransportedUnder(left, _ RootHandle, _, _, _, _ support.Mask, _ guard.Reindex, _, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
+}
+
 func (work carryOnlyWork) MergeSelectedUnder(_ MergeKind, _ uint64, left, _, right RootHandle, _, _ support.Split, delta *support.Work) (ChangeHandle, bool) {
 	return work.issuer.IssueChange(left, right, nil, support.Mask{}, nil, nil, delta)
 }

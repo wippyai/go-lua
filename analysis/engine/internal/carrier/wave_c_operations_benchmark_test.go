@@ -247,6 +247,10 @@ func (work waveCDeltaWork) Merge3Under(_ MergeKind, _ bool, _ uint64, left, _ Ro
 func (work waveCDeltaWork) MergeContributionUnder(left, _ RootHandle, _, _ support.Mask, _, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
 	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
 }
+
+func (work waveCDeltaWork) MergeTransportedUnder(left, _ RootHandle, _, _, _, _ support.Mask, _ guard.Reindex, _, _ SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+	return work.issuer.IssueChange(left, left, nil, support.Mask{}, nil, nil, delta)
+}
 func (work waveCDeltaWork) MergeSelectedUnder(_ MergeKind, _ uint64, left, _, right RootHandle, _, _ support.Split, delta *support.Work) (ChangeHandle, bool) {
 	return work.issuer.IssueChange(left, right, nil, support.Mask{}, nil, nil, delta)
 }

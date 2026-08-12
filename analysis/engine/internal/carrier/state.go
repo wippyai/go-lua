@@ -83,6 +83,12 @@ type SlotWork interface {
 	// into the accumulated Point slot. Coverage, not sparse root shape, decides
 	// whether a region is absent, installs explicit Default, or invokes Join.
 	MergeContributionUnder(left, right RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
+	// MergeTransportedUnder is the fused environment-edge half. The carrier
+	// supplies source support, the target support before the post filter, the
+	// final visible target support, and the sealed relation; the typed operation
+	// reindexes and joins locally, returning only the final ChangeHandle without
+	// publishing an intermediate transported root.
+	MergeTransportedUnder(left, right RootHandle, leftSupport, sourceSupport, reindexedSupport, rightSupport support.Mask, relation guard.Reindex, leftCoverage, rightCoverage SlotCoverage, delta *support.Work) (ChangeHandle, bool)
 	Merge3Under(kind MergeKind, recurrence bool, scope uint64, left, right RootHandle, split support.Split, delta *support.Work) (ChangeHandle, bool)
 	// MergeSelectedUnder is the typed half of one three-State recurrence
 	// transition. Selected target keys apply kind to current and

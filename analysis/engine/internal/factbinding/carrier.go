@@ -731,15 +731,9 @@ func (work *bindingWork[K, V]) contributionCoverage(coverage carrier.SlotCoverag
 // right cells are fold identity. Sparse zero therefore means Default exactly
 // when coverage says the producer authored that key/Guard.
 func (work *bindingWork[K, V]) MergeContributionUnder(left, right carrier.RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
-	if !work.live() || work.binding == nil || delta == nil || !delta.Open() || !leftSupport.Valid() || !rightSupport.Valid() || leftSupport.Manager() != work.binding.plane.domain.Guards() || rightSupport.Manager() != work.binding.plane.domain.Guards() {
+	if !work.live() {
 		return carrier.ChangeHandle{}, false
 	}
-	work.changes.reset()
-	defer work.changes.reset()
-	defer func() {
-		clear(work.coverageLeft)
-		clear(work.coverageRight)
-	}()
 	first, ok := work.resolve(left)
 	if !ok {
 		return carrier.ChangeHandle{}, false
@@ -748,6 +742,47 @@ func (work *bindingWork[K, V]) MergeContributionUnder(left, right carrier.RootHa
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
+	return work.mergeContributionPlanes(left, right, first, second, leftSupport, rightSupport, leftCoverage, rightCoverage, delta, true)
+}
+
+// MergeTransportedUnder is the one fused typed operation for a nonidentity
+// environment edge. The carrier has already transformed authored coverage
+// and support. This method reindexes the right plane over the full target
+// support before post, then joins it with the left plane using the visible
+// post-clipped support; no intermediate transported root is published.
+func (work *bindingWork[K, V]) MergeTransportedUnder(left, right carrier.RootHandle, leftSupport, sourceSupport, reindexedSupport, rightSupport support.Mask, relation guard.Reindex, leftCoverage, rightCoverage carrier.SlotCoverage, delta *support.Work) (carrier.ChangeHandle, bool) {
+	if !work.live() || work.binding == nil || work.binding.plane == nil || delta == nil || !delta.Open() || !leftSupport.Valid() || !sourceSupport.Valid() || !reindexedSupport.Valid() || !rightSupport.Valid() || !relation.Valid() || leftSupport.Manager() != work.binding.plane.domain.Guards() || sourceSupport.Manager() != work.binding.plane.domain.Guards() || reindexedSupport.Manager() != work.binding.plane.domain.Guards() || rightSupport.Manager() != work.binding.plane.domain.Guards() {
+		return carrier.ChangeHandle{}, false
+	}
+	first, ok := work.resolve(left)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	second, ok := work.resolve(right)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	if relation.Identity() {
+		return work.mergeContributionPlanes(left, right, first, second, leftSupport, rightSupport, leftCoverage, rightCoverage, delta, true)
+	}
+	transported, ok := work.binding.plane.domain.Reindex(second, sourceSupport, reindexedSupport, relation)
+	if !ok {
+		return carrier.ChangeHandle{}, false
+	}
+	return work.mergeContributionPlanes(left, carrier.RootHandle{}, first, transported, leftSupport, rightSupport, leftCoverage, rightCoverage, delta, false)
+}
+
+func (work *bindingWork[K, V]) mergeContributionPlanes(leftHandle, rightHandle carrier.RootHandle, first, second semantic.Plane[planeFactor, K, V], leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage carrier.SlotCoverage, delta *support.Work, reuseRight bool) (carrier.ChangeHandle, bool) {
+	if !work.live() || work.binding == nil || work.binding.plane == nil || delta == nil || !delta.Open() || !leftSupport.Valid() || !rightSupport.Valid() || leftSupport.Manager() != work.binding.plane.domain.Guards() || rightSupport.Manager() != work.binding.plane.domain.Guards() {
+		return carrier.ChangeHandle{}, false
+	}
+	work.changes.reset()
+	defer work.changes.reset()
+	defer func() {
+		clear(work.coverageLeft)
+		clear(work.coverageRight)
+	}()
+	var ok bool
 	work.coverageLeft, ok = work.contributionCoverage(leftCoverage, leftSupport, work.coverageLeft)
 	if !ok {
 		return carrier.ChangeHandle{}, false
@@ -797,16 +832,24 @@ func (work *bindingWork[K, V]) MergeContributionUnder(left, right carrier.RootHa
 		if work.changes.Count() != 0 {
 			return carrier.ChangeHandle{}, false
 		}
-		return work.prepareChange(left, left, next, false, support.Mask{}, nil, nil, delta)
+		return work.prepareChange(leftHandle, leftHandle, next, false, support.Mask{}, nil, nil, delta)
 	}
 	factor, units, regions, ok := work.binding.expandChanges(&work.changes, delta)
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
 	if work.binding.plane.domain.EqualUnder(second, next, nextSupport, &work.scratch) {
-		return work.prepareChange(left, right, next, false, factor, units, regions, delta)
+		if reuseRight {
+			return work.prepareChange(leftHandle, rightHandle, next, false, factor, units, regions, delta)
+		}
+		// A nonidentity transport cannot reuse the source RootHandle, but the
+		// transported plane is still the exact final result under the visible
+		// support. Retain that plane as the one pending final root so values
+		// outside post remain available to a later support expansion; building
+		// `next` here would mask those hidden fibers to Default.
+		return work.prepareChange(leftHandle, carrier.RootHandle{}, second, true, factor, units, regions, delta)
 	}
-	return work.prepareChange(left, carrier.RootHandle{}, next, true, factor, units, regions, delta)
+	return work.prepareChange(leftHandle, carrier.RootHandle{}, next, true, factor, units, regions, delta)
 }
 
 // BeginObservation opens one explicit projection generation for this slot.

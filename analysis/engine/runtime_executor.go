@@ -1069,11 +1069,7 @@ func (epoch *executorEpoch) foldEnvironmentEdge(base carrier.Contribution, edgeI
 	if edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || !edge.input.valid() {
 		return carrier.Contribution{}, false
 	}
-	transported, ok := epoch.work.TransportContribution(epoch.points[edge.source], edge.input.pre, edge.input.plan, edge.input.post)
-	if !ok || !epoch.work.OwnsAdmittedContribution(transported) || !transported.State().Scope().Same(base.State().Scope()) {
-		return carrier.Contribution{}, false
-	}
-	result, _, ok := epoch.work.MergeContribution(base, transported)
+	result, _, ok := epoch.work.MergeTransportedContribution(base, epoch.points[edge.source], edge.input.pre, edge.input.plan, edge.input.post)
 	if !ok || epoch.canceled() {
 		return carrier.Contribution{}, false
 	}

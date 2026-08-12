@@ -543,40 +543,9 @@ func (work *Work) TransportContribution(input Contribution, pre support.Mask, om
 	if omega.identity() && pre.IsTrue() && post.IsTrue() {
 		return work.admitDerivedContribution(input, state, input.coverage)
 	}
-	coverage := contributionCoverage{composition: work.composition, slots: make([]slotCoverage, work.composition.Count())}
-	nonempty := false
-	for position := 0; position < work.composition.Count(); position++ {
-		source := input.coverage.slot(shape.Slot(position))
-		rows := make([]TargetRegion, 0, len(source.targets))
-		for _, row := range source.targets {
-			region, valid := work.intersectSupport(row.region, pre)
-			if !valid {
-				return Contribution{}, false
-			}
-			if support.Empty(region) {
-				continue
-			}
-			region, valid = work.reindexSupport(region, omega.relation)
-			if !valid {
-				return Contribution{}, false
-			}
-			region, valid = work.intersectSupport(region, post)
-			if !valid {
-				return Contribution{}, false
-			}
-			if !support.Empty(region) {
-				rows = append(rows, TargetRegion{target: row.target, region: region})
-			}
-		}
-		canonical, valid := work.canonicalCoverage(rows, state.support)
-		if !valid {
-			return Contribution{}, false
-		}
-		coverage.slots[position] = canonical
-		nonempty = nonempty || len(canonical.targets) != 0
-	}
-	if !nonempty {
-		coverage.slots = nil
+	coverage, valid := work.transportContributionCoverage(input.coverage, pre, omega, post, state.support)
+	if !valid {
+		return Contribution{}, false
 	}
 	return work.admitDerivedContribution(input, state, coverage)
 }

@@ -115,6 +115,9 @@ func (adversarialWork) Merge3Under(MergeKind, bool, uint64, RootHandle, RootHand
 func (adversarialWork) MergeContributionUnder(RootHandle, RootHandle, support.Mask, support.Mask, SlotCoverage, SlotCoverage, *support.Work) (ChangeHandle, bool) {
 	return ChangeHandle{}, false
 }
+func (adversarialWork) MergeTransportedUnder(RootHandle, RootHandle, support.Mask, support.Mask, support.Mask, support.Mask, guard.Reindex, SlotCoverage, SlotCoverage, *support.Work) (ChangeHandle, bool) {
+	return ChangeHandle{}, false
+}
 func (adversarialWork) MergeSelectedUnder(MergeKind, uint64, RootHandle, RootHandle, RootHandle, support.Split, support.Split, *support.Work) (ChangeHandle, bool) {
 	return ChangeHandle{}, false
 }
