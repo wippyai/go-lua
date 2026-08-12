@@ -121,7 +121,7 @@ func TestWorkReuseAfterDiscardClearsFailedCandidate(t *testing.T) {
 	}
 }
 
-func TestWorkSealReuseReturnsExactPriorGuardIdentity(t *testing.T) {
+func TestWorkSealReuseReturnsEquivalentPublishedGuard(t *testing.T) {
 	manager := newTestManager(t)
 	work := manager.NewWork()
 	a := literal(t, work, testA)
@@ -137,10 +137,32 @@ func TestWorkSealReuseReturnsExactPriorGuardIdentity(t *testing.T) {
 	repeatedA := literal(t, work, testA)
 	repeatedB := literal(t, work, testB)
 	repeated := work.And(repeatedA, work.Not(repeatedB))
-	if repeatedA != a || repeatedB != b || repeated != prior {
-		t.Fatal("successful Seal did not retain exact immutable BDD identity")
+	if !work.Valid(repeatedA) || !work.Valid(repeatedB) || !work.Valid(repeated) || !work.Equivalent(repeated, prior) {
+		t.Fatal("successful Seal did not retain valid equivalent BDD results")
 	}
 	work.Seal()
+}
+
+func TestWorkSealClearsPublishedCachesButKeepsPriorRootValid(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	a := literal(t, work, testA)
+	root := work.And(a, work.Not(literal(t, work, testB)))
+	work.Seal()
+	if !manager.Valid(root) || len(work.unique) != 0 || len(work.not) != 0 || len(work.applyCache) != 0 || len(work.ite) != 0 || len(work.restrict) != 0 || len(work.exists) != 0 || len(work.hashes) != 0 {
+		t.Fatal("successful Seal retained published cache entries")
+	}
+	if !work.Begin() {
+		t.Fatal("published Work did not reopen")
+	}
+	rebuilt := work.And(literal(t, work, testA), work.Not(literal(t, work, testB)))
+	if !work.Equivalent(root, rebuilt) {
+		t.Fatal("rebuilding equivalent formula changed semantics after cache clear")
+	}
+	work.Seal()
+	if !manager.Valid(rebuilt) {
+		t.Fatal("rebuilt equivalent formula did not publish")
+	}
 }
 
 func TestWorkDiscardDoesNotPoisonLaterInterner(t *testing.T) {

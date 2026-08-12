@@ -121,8 +121,8 @@ func TestMaskSameHandleIsPhysicalNotSemanticEquality(t *testing.T) {
 	if !first.SameHandle(first) {
 		t.Fatal("same mask lost physical identity")
 	}
-	if !first.Equal(second) || first.SameHandle(second) {
-		t.Fatal("SameHandle claimed cross-generation semantic equality")
+	if !first.Equal(second) {
+		t.Fatal("cross-generation masks lost semantic equality")
 	}
 }
 
@@ -246,7 +246,7 @@ func TestIdenticalMaskOperationsAreExactAndAllocationFree(t *testing.T) {
 	}
 }
 
-func TestReusableSupportShellKeepsIdentityAndRecoversAfterDiscard(t *testing.T) {
+func TestReusableSupportShellKeepsMeaningAndRecoversAfterDiscard(t *testing.T) {
 	manager, err := guard.New([]guard.Atom{3, 7})
 	if err != nil {
 		t.Fatal(err)
@@ -266,17 +266,12 @@ func TestReusableSupportShellKeepsIdentityAndRecoversAfterDiscard(t *testing.T) 
 	if !ok || !first.Valid(manager) {
 		t.Fatal("first reusable split failed")
 	}
-	priorOverlap, priorOK := first.Overlap().Guard()
-	if !priorOK {
-		t.Fatal("first overlap lost its Guard handle")
-	}
 	second, ok := ThreeWithWork(shell, nil, left, right)
 	if !ok {
 		t.Fatal("repeated reusable split failed")
 	}
-	repeatedOverlap, repeatedOK := second.Overlap().Guard()
-	if !repeatedOK || repeatedOverlap != priorOverlap {
-		t.Fatal("successful Seal did not reuse the exact prior Guard identity")
+	if !second.Overlap().Valid() || !second.Overlap().Equal(first.Overlap()) {
+		t.Fatal("successful Seal did not preserve valid equivalent support")
 	}
 
 	if _, ok := ThreeWithWork(shell, func() bool { return false }, left, right); ok {

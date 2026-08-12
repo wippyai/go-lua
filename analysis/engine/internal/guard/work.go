@@ -1,11 +1,10 @@
 package guard
 
 // Work owns one single-writer BDD construction shell. Pages are never reused
-// or remapped. A successful Seal publishes the transaction's pages and keeps
-// immutable interning/memo entries in this owner-local epoch so a later
-// transaction can return the exact prior Guard handles. Discard clears that
-// epoch cache as well as the failed candidate; Close drops the shell's last
-// references. Manager remains history-free.
+// or remapped. Seal publishes the transaction's reachable pages, then drops
+// interning and operation-cache references so the shell does not retain every
+// prior transaction. Published Guard handles remain immutable and readable.
+// Discard additionally drops failed candidate state; Manager stays history-free.
 type Work struct {
 	manager    *Manager
 	checkpoint func() bool
@@ -17,9 +16,9 @@ type Work struct {
 	current *page
 	state   workState
 
-	// Epoch-lived immutable interner and operation memos. They may retain only
-	// sealed pages after Seal and are cleared on Discard/Close. Keeping them
-	// owner-local preserves exact page identity without a Manager cache.
+	// Transaction-derived immutable interner and operation memos. They may read
+	// sealed operands, but their entries are cleared at every terminal outcome;
+	// retaining them across Seal would pin all prior published pages.
 	unique     map[nodeFingerprint][]Guard
 	not        map[Guard]Guard
 	applyCache map[applyKey]Guard
@@ -211,8 +210,7 @@ func (w *Work) newPage() *page {
 
 // resetTransaction clears references private to the current candidate.
 // Published pages are deliberately not mutated or recycled: immutable Guard
-// handles may still point at them. Epoch interner/memo maps remain intact
-// after Seal so exact prior handles can be reused by the next transaction.
+// handles may still point at them.
 func (w *Work) resetTransaction() {
 	if w == nil {
 		return
@@ -232,8 +230,8 @@ func (w *Work) resetTransaction() {
 	w.readEpoch = 0
 }
 
-// clearEpoch drops immutable interner/memo entries. Failed candidates must
-// never leave their pages or memo results available to a later transaction.
+// clearEpoch drops immutable interner/memo entries and their backing maps.
+// Failed candidates must never leave pages or memo results available later.
 func (w *Work) clearEpoch() {
 	if w == nil {
 		return
@@ -252,6 +250,22 @@ func (w *Work) clearEpoch() {
 	w.restrict = nil
 	w.exists = nil
 	w.hashes = nil
+}
+
+// clearPublishedCaches drops transaction-derived interner and memo entries
+// after a successful publication while retaining map capacity for reuse.
+// Published Guard pages are immutable and remain reachable through handles.
+func (w *Work) clearPublishedCaches() {
+	if w == nil {
+		return
+	}
+	clear(w.unique)
+	clear(w.not)
+	clear(w.applyCache)
+	clear(w.ite)
+	clear(w.restrict)
+	clear(w.exists)
+	clear(w.hashes)
 }
 
 func (w *Work) makeNode(rank uint64, low, high Guard) Guard {
@@ -296,10 +310,9 @@ func (w *Work) Literal(atom Atom) (Guard, bool) {
 	return w.makeNode(rank, w.manager.False(), w.manager.True()), true
 }
 
-// Seal freezes every candidate page, then drops transaction-local page
-// inventory while retaining this owner's immutable interner/memo tables.
+// Seal freezes every candidate page and drops transaction cache references.
 // Published roots retain precisely the pages reachable through their node
-// edges; Manager retains none.
+// edges; Manager and the reusable Work retain none of those roots.
 func (w *Work) Seal() {
 	w.requireOpen()
 	if !w.Live() {
@@ -309,6 +322,7 @@ func (w *Work) Seal() {
 		p.sealed.Store(true)
 	}
 	w.state = workPublished
+	w.clearPublishedCaches()
 	w.resetTransaction()
 }
 
