@@ -139,13 +139,19 @@ type executorEpoch struct {
 	ctx     context.Context
 	// report is a call-scoped first-failure sink. It is nil on the ordinary
 	// Solve path, so the hot path does not allocate or retain diagnostics.
-	report            *SolveReport
-	work              *carrier.Work
-	demand            *demand.Epoch
-	points            []carrier.Contribution
-	versions          []uint64
-	producers         []producerEpoch
-	regions           []regionEpoch
+	report    *SolveReport
+	work      *carrier.Work
+	demand    *demand.Epoch
+	points    []carrier.Contribution
+	versions  []uint64
+	producers []producerEpoch
+	regions   []regionEpoch
+	// candidatesPending is one dense counter per active Region. It counts the
+	// producer Groups in that Region's complete event-point interval (and thus
+	// in every nested descendant) whose latest wake generation has not yet
+	// been evaluated. The counter is the only hot-path candidate-settled
+	// witness; Group rows remain the source of the generation/applied state.
+	candidatesPending []uint64
 	queue             pointQueue
 	structuralDirty   []bool
 	postfixDirty      []bool
@@ -262,7 +268,7 @@ func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember,
 	if !ok {
 		return nil, false
 	}
-	epoch := &executorEpoch{runtime: runtime, ctx: ctx, work: work, demand: demandEpoch, points: make([]carrier.Contribution, runtime.graph.PointCount()), versions: make([]uint64, runtime.graph.PointCount()), producers: make([]producerEpoch, runtime.graph.GroupCount()), regions: make([]regionEpoch, len(runtime.regions)), queue: newPointQueue(runtime.graph.PointCount()), structuralDirty: make([]bool, runtime.graph.PointCount()), postfixDirty: make([]bool, runtime.graph.PointCount()), postfixPending: make([]int, 0, runtime.graph.PointCount()), frames: make([]pointWTOFrame, 0, runtime.graph.Schedule().RegionCount()), nested: make([]int, runtime.graph.RegionCount()), regionScratch: make([]int, 0, runtime.graph.RegionCount())}
+	epoch := &executorEpoch{runtime: runtime, ctx: ctx, work: work, demand: demandEpoch, points: make([]carrier.Contribution, runtime.graph.PointCount()), versions: make([]uint64, runtime.graph.PointCount()), producers: make([]producerEpoch, runtime.graph.GroupCount()), regions: make([]regionEpoch, len(runtime.regions)), candidatesPending: make([]uint64, len(runtime.regions)), queue: newPointQueue(runtime.graph.PointCount()), structuralDirty: make([]bool, runtime.graph.PointCount()), postfixDirty: make([]bool, runtime.graph.PointCount()), postfixPending: make([]int, 0, runtime.graph.PointCount()), frames: make([]pointWTOFrame, 0, runtime.graph.Schedule().RegionCount()), nested: make([]int, runtime.graph.RegionCount()), regionScratch: make([]int, 0, runtime.graph.RegionCount())}
 	epoch.terminal.Store(epochRunning)
 	if !work.SetCheckpoint(func() bool { return !epoch.canceled() }) {
 		return nil, false
@@ -334,6 +340,34 @@ func newRuntimeEpoch(runtime *solverRuntime, accepted []equation.AcceptedMember,
 		if !epoch.markStructuralPoint(point) {
 			return nil, false
 		}
+	}
+	// Every producer starts with generation 1 and applied 0. Seed each active
+	// Region's counter from its immutable event-point interval; that interval
+	// includes every nested descendant point, so a Group is intentionally
+	// counted once for each active Region that encloses its output.
+	for regionIndex, region := range runtime.regions {
+		if !runtime.activeRegions[regionIndex] {
+			continue
+		}
+		if !region.active {
+			return nil, false
+		}
+		var pending uint64
+		for _, pointIndex := range region.points {
+			if pointIndex < 0 || pointIndex >= runtime.graph.PointCount() {
+				return nil, false
+			}
+			point, pointOK := runtime.graph.PointAt(schedule.Node(pointIndex))
+			if !pointOK {
+				return nil, false
+			}
+			producerCount := runtime.graph.ProducerCount(point)
+			if producerCount < 0 || uint64(producerCount) > ^uint64(0)-pending {
+				return nil, false
+			}
+			pending += uint64(producerCount)
+		}
+		epoch.candidatesPending[regionIndex] = pending
 	}
 	opened = true
 	return epoch, true
@@ -718,11 +752,58 @@ func (epoch *executorEpoch) markDirty(group int) bool {
 		return false
 	}
 	state := &epoch.producers[group]
-	state.generation++
-	if state.generation == 0 {
+	clean := state.applied == state.generation
+	if state.generation == ^uint64(0) {
 		return false
 	}
+	if clean && !epoch.updateCandidatesPending(point, 1) {
+		return false
+	}
+	state.generation++
 	return epoch.markPostfixDirty(point) && epoch.enqueuePoint(point)
+}
+
+// updateCandidatesPending applies a candidate clean<->pending transition to
+// the innermost active Region containing point and every active ancestor. The
+// validation pass completes before mutation, making counter overflow and
+// underflow fences transactional: a rejected transition cannot leave one
+// ancestor observing a different count from another.
+func (epoch *executorEpoch) updateCandidatesPending(point, delta int) bool {
+	if epoch == nil || epoch.runtime == nil || point < 0 || point >= len(epoch.runtime.pointRegion) || point >= len(epoch.runtime.activePoints) || !epoch.runtime.activePoints[point] || delta != 1 && delta != -1 || len(epoch.candidatesPending) != len(epoch.runtime.regions) {
+		return false
+	}
+	region := epoch.runtime.pointRegion[point]
+	if region == schedule.NoRegion {
+		return true
+	}
+	for region != schedule.NoRegion {
+		if !epoch.activeRegion(region) {
+			return false
+		}
+		pending := epoch.candidatesPending[region]
+		if delta > 0 {
+			if pending == ^uint64(0) {
+				return false
+			}
+		} else if pending == 0 {
+			return false
+		}
+		parent := epoch.runtime.regions[region].parent
+		if parent < schedule.NoRegion || parent >= len(epoch.runtime.regions) {
+			return false
+		}
+		region = parent
+	}
+	region = epoch.runtime.pointRegion[point]
+	for region != schedule.NoRegion {
+		if delta > 0 {
+			epoch.candidatesPending[region]++
+		} else {
+			epoch.candidatesPending[region]--
+		}
+		region = epoch.runtime.regions[region].parent
+	}
+	return true
 }
 
 func (epoch *executorEpoch) activeRegion(region int) bool {
@@ -1472,6 +1553,14 @@ func (epoch *executorEpoch) restartRegion(region int) bool {
 			if cache.generation == 0 {
 				continue
 			}
+			// Mark the old candidate pending before clearing applied.  If this
+			// Group was settled, markDirty performs the clean->pending counter
+			// transition; if it was already pending, the wake is deduplicated by
+			// the same generation/applied relation.  Clearing applied first would
+			// hide that transition and undercount every restarted ancestor.
+			if !epoch.markDirty(groupIndex) {
+				return false
+			}
 			cache.candidate = carrier.Contribution{}
 			cache.hasValue = false
 			cache.hasCandidateTokens = false
@@ -1489,9 +1578,6 @@ func (epoch *executorEpoch) restartRegion(region int) bool {
 				return false
 			}
 			cache.reads = cache.reads[:0]
-			if !epoch.markDirty(groupIndex) {
-				return false
-			}
 		}
 		if !epoch.markStructuralPoint(point) {
 			return false
@@ -1501,27 +1587,10 @@ func (epoch *executorEpoch) restartRegion(region int) bool {
 }
 
 func (epoch *executorEpoch) regionCandidatesSettled(region int) bool {
-	if epoch == nil || !epoch.activeRegion(region) {
+	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.candidatesPending) {
 		return false
 	}
-	for _, pointIndex := range epoch.runtime.regions[region].points {
-		point, pointOK := epoch.runtime.graph.PointAt(schedule.Node(pointIndex))
-		if !pointOK {
-			return false
-		}
-		for producerIndex := 0; producerIndex < epoch.runtime.graph.ProducerCount(point); producerIndex++ {
-			group, groupOK := epoch.runtime.graph.ProducerAt(point, producerIndex)
-			groupIndex, indexed := epoch.runtime.graph.GroupIndex(group)
-			if !groupOK || !indexed || groupIndex < 0 || groupIndex >= len(epoch.producers) || epoch.runtime.producers[groupIndex].group.Output() != point {
-				return false
-			}
-			cache := epoch.producers[groupIndex]
-			if cache.generation != 0 && cache.applied != cache.generation {
-				return false
-			}
-		}
-	}
-	return true
+	return epoch.candidatesPending[region] == 0
 }
 
 func (epoch *executorEpoch) publish(point int, current, next carrier.Contribution, changes carrier.ChangeSet) (bool, bool) {
@@ -1646,6 +1715,9 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			return false, false
 		}
 		changed := !state.hasValue || !epoch.work.EqualContribution(state.candidate, next)
+		if !epoch.updateCandidatesPending(pointIndex, -1) {
+			return false, false
+		}
 		state.candidate, state.hasValue, state.applied = next, true, state.generation
 		copy(state.candidateTokens, state.scratchTokens)
 		state.hasCandidateTokens = true
