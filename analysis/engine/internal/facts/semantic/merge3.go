@@ -76,18 +76,23 @@ func (domain *Domain[F, K, V]) JoinContributionChanges(left, right Plane[F, K, V
 		return domain.equalTerminal(values, first, second)
 	}, report, func(index int) (K, support.Mask, support.Mask, support.Mask, bool) {
 		change := changes[index]
-		if !regions.Valid(change.Region) || support.Empty(change.Region) || index > 0 && changes[index-1].Key >= change.Key {
+		changeView, changeValid := regions.Decompose(change.Region)
+		if !changeValid || changeView.Terminal && !changeView.Value || index > 0 && changes[index-1].Key >= change.Key {
 			return 0, support.Mask{}, support.Mask{}, support.Mask{}, false
 		}
 		leftRegion, rightRegion, referenceRegion, covered := covers(change.Key)
 		if !covered || !regions.Valid(leftRegion) || !regions.Valid(rightRegion) || !regions.Valid(referenceRegion) {
 			return 0, support.Mask{}, support.Mask{}, support.Mask{}, false
 		}
-		rightRegion, intersected := support.Intersect(rightRegion, change.Region)
+		rightRegion, intersected := regions.And(rightRegion, change.Region)
 		if !intersected {
 			return 0, support.Mask{}, support.Mask{}, support.Mask{}, false
 		}
-		if support.Empty(leftRegion) {
+		leftView, leftValid := regions.Decompose(leftRegion)
+		if !leftValid {
+			return 0, support.Mask{}, support.Mask{}, support.Mask{}, false
+		}
+		if leftView.Terminal && !leftView.Value {
 			leftRegion = empty
 		}
 		return change.Key, leftRegion, rightRegion, referenceRegion, true

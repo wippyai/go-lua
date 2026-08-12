@@ -179,7 +179,11 @@ func (builder *Builder[F, K, V]) MergeSoleFactorChanges(left, right Root[F, K, V
 			return Root[F, K, V]{}, false
 		}
 		previous = key
-		if support.Empty(rightSupport) {
+		rightView, rightValid := regions.Decompose(rightSupport)
+		if !rightValid {
+			return Root[F, K, V]{}, false
+		}
+		if rightView.Terminal && !rightView.Value {
 			continue
 		}
 		leftValue, rightValue := columnValue(leftKeys, key), columnValue(rightKeys, key)

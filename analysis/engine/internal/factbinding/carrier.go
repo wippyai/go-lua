@@ -1248,16 +1248,23 @@ func (work *bindingWork[K, V]) MergeChangedCoordinatePointUnder(left, current ca
 	}()
 	addRegion := func(key K, region support.Mask) bool {
 		// targetSupport already is post ∩ identity(pre ∩ currentSupport),
-		// so one intersection transports this source-local change region.
-		region, ok = support.Intersect(region, targetSupport)
+		// so one intersection transports this source-local change region. Keep
+		// every key in the caller's one publication transaction: opening a sealed
+		// support transaction per key defeats BDD interning and retains one page
+		// chain for every repeated region.
+		region, ok = delta.And(region, targetSupport)
 		if !ok {
 			return false
 		}
-		if support.Empty(region) {
+		view, decomposed := delta.Decompose(region)
+		if !decomposed {
+			return false
+		}
+		if view.Terminal && !view.Value {
 			return true
 		}
 		if prior, present := work.changed[key]; present {
-			region, ok = support.Union(prior, region)
+			region, ok = delta.Or(prior, region)
 			if !ok {
 				return false
 			}
