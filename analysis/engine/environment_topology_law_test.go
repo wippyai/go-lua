@@ -161,3 +161,194 @@ func TestSeparateEnvironmentInputLetsAZeroInputRuleTransformTheWholePoint(t *tes
 		t.Fatalf("environment result=%d status=%v receipt=%t readable=%t", result, status, receiptOK, readable)
 	}
 }
+
+// TestNonIdentityEnvironmentInputBackEdgeReevaluatesWithoutCandidateFailure
+// exercises the recursive EnvironmentInput path with distinct source and
+// target guard coordinates.  The two zero-input structural Groups form one
+// WTO cycle; the callbacks simply retain the transported environment support.
+// When the target publishes, the source Group is reevaluated with a changed
+// environment token but an equal candidate.  That is a valid monotone update,
+// not a candidate-order violation.
+func TestNonIdentityEnvironmentInputBackEdgeReevaluatesWithoutCandidateFailure(t *testing.T) {
+	composition := engine.NewComposition()
+	completion, completionOK := engine.DeclareSupportCompletion(composition, facadeKey(101))
+	prune, pruneOK := engine.DeclarePrune(completion, facadeKey(102))
+	runs := 0
+	rule, ruleOK := engine.DeclareSupportRule(composition, engine.SupportRuleSpec{
+		Semantic: facadeKey(103), Completion: completion, Prune: prune, Inputs: 0,
+		Admission: engine.AdmitSupportByTrustedTheorem(facadeKey(104)),
+		Run: func(value engine.Support) (engine.Support, bool) {
+			runs++
+			return value, true
+		},
+	})
+	query, queryOK := engine.DeclareSupportQuery(composition, facadeKey(105), func(observation engine.SupportObservation) bool {
+		reachable, ok := engine.SupportReachable(observation)
+		return ok && reachable
+	}, engine.FrozenResult[bool]{
+		Semantic: facadeKey(106),
+		Freeze:   func(value bool) bool { return value }, Clone: func(value bool) bool { return value },
+		Equal: func(left, right bool) bool { return left == right },
+		Fingerprint: func(value bool) uint64 {
+			if value {
+				return 1
+			}
+			return 0
+		},
+	})
+	if !completionOK || !pruneOK || !ruleOK || rule == nil || !queryOK || query == nil || !composition.Seal() {
+		t.Fatal("recursive nonidentity support declaration")
+	}
+
+	source := engine.NewSourceAssembly(composition)
+	raw, rawOK := source.Decision(facadeKey(107))
+	fresh, freshOK := source.Decision(facadeKey(108))
+	sourceScope, sourceScopeOK := source.Scope(raw)
+	targetScope, targetScopeOK := source.Scope(fresh)
+	truth, truthOK := source.TrueExpr()
+	falsity, falseOK := source.FalseExpr()
+	sourceSite, sourceSiteOK := source.Site(facadeKey(109), sourceScope, truth, true)
+	targetSite, targetSiteOK := source.Site(facadeKey(110), targetScope, falsity, false)
+	sourceOccurrence, sourceOccurrenceOK := source.Relation(sourceSite, facadeKey(111))
+	targetOccurrence, targetOccurrenceOK := source.Relation(targetSite, facadeKey(112))
+	sourceInstance, sourceInstanceOK := engine.NewSupportInstance(rule, func(*engine.StructuralBinding) bool { return true })
+	targetInstance, targetInstanceOK := engine.NewSupportInstance(rule, func(*engine.StructuralBinding) bool { return true })
+	sourcePrepared, sourcePreparedOK := source.PrepareStructural(sourceOccurrence, facadeKey(113), sourceInstance)
+	targetPrepared, targetPreparedOK := source.PrepareStructural(targetOccurrence, facadeKey(114), targetInstance)
+	rawExpr, rawExprOK := source.DecisionExpr(raw)
+	freshExpr, freshExprOK := source.DecisionExpr(fresh)
+	rawToFreshMap, rawToFreshMapOK := source.RenameMap(raw, fresh)
+	freshToRawMap, freshToRawMapOK := source.RenameMap(fresh, raw)
+	rawToFresh, rawToFreshOK := source.Reindex(sourceScope, targetScope, rawToFreshMap)
+	freshToRaw, freshToRawOK := source.Reindex(targetScope, sourceScope, freshToRawMap)
+	forward, forwardOK := source.Boundary(sourceSite, targetSite, facadeKey(115), rawExpr, rawToFresh, freshExpr)
+	back, backOK := source.Boundary(targetSite, sourceSite, facadeKey(116), freshExpr, freshToRaw, rawExpr)
+	sealed := source.Seal()
+	if !rawOK || !freshOK || !sourceScopeOK || !targetScopeOK || !truthOK || !falseOK || !sourceSiteOK || !targetSiteOK ||
+		!sourceOccurrenceOK || !targetOccurrenceOK || !sourceInstanceOK || !targetInstanceOK || !sourcePreparedOK || !targetPreparedOK ||
+		!rawExprOK || !freshExprOK || !rawToFreshMapOK || !freshToRawMapOK || !rawToFreshOK || !freshToRawOK || !forwardOK || !backOK || !sealed {
+		t.Fatal("recursive nonidentity source topology")
+	}
+
+	queryInstance, queryInstanceOK := engine.NewQueryInstance(query, func(*engine.QueryBinding[bool]) bool { return true })
+	if !queryInstanceOK || queryInstance == nil {
+		t.Fatal("recursive nonidentity query instance")
+	}
+	solver, assembled := source.Assemble(func(assembly *engine.Assembly) bool {
+		sourcePoint, sourcePointOK := assembly.Point(sourceSite)
+		targetPoint, targetPointOK := assembly.Point(targetSite)
+		sourceMember, sourceMemberOK := assembly.Member(sourcePoint, sourcePrepared)
+		targetMember, targetMemberOK := assembly.Member(targetPoint, targetPrepared)
+		sourceGroup, sourceGroupOK := assembly.Group(sourcePoint, sourceMember)
+		targetGroup, targetGroupOK := assembly.Group(targetPoint, targetMember)
+		if sourceGroupOK {
+			sourceGroupOK = assembly.EnvironmentInput(sourceGroup, back)
+		}
+		if targetGroupOK {
+			targetGroupOK = assembly.EnvironmentInput(targetGroup, forward)
+		}
+		_, observationOK := assembly.Query(targetPoint, queryInstance)
+		return sourcePointOK && targetPointOK && sourceMemberOK && targetMemberOK && sourceGroupOK && targetGroupOK && observationOK
+	})
+	if !assembled || solver == nil {
+		t.Fatalf("recursive nonidentity assembly assembled=%t solver=%p", assembled, solver)
+	}
+	state, status, report := solver.SolveWithReport(context.Background())
+	receipt, receiptOK := queryInstance.Receipt()
+	reachable, readable := engine.QueryResult(receipt, state)
+	if !assembled || solver == nil || status != engine.SolveComplete || state == nil || !receiptOK || !readable || !reachable || runs < 2 {
+		t.Fatalf("recursive nonidentity solve state=%v status=%v reason=%v phase=%v assembled=%t receipt=%t readable=%t reachable=%t runs=%d", state, status, report.Reason(), report.Phase(), assembled, receiptOK, readable, reachable, runs)
+	}
+}
+
+// TestNonIdentityEnvironmentEdgeBackEdgeBindsAndConverges proves the same
+// transport law for the control-only structural edge path.  Unlike the
+// preceding Group-environment test, neither edge is attached to a Group:
+// both directions are EnvironmentEdges and the reverse edge is a WTO back
+// edge with a non-identity guard reindex.
+func TestNonIdentityEnvironmentEdgeBackEdgeBindsAndConverges(t *testing.T) {
+	composition := engine.NewComposition()
+	completion, completionOK := engine.DeclareSupportCompletion(composition, facadeKey(121))
+	prune, pruneOK := engine.DeclarePrune(completion, facadeKey(122))
+	runs := 0
+	rule, ruleOK := engine.DeclareSupportRule(composition, engine.SupportRuleSpec{
+		Semantic: facadeKey(123), Completion: completion, Prune: prune, Inputs: 0,
+		Admission: engine.AdmitSupportByTrustedTheorem(facadeKey(124)),
+		Run: func(value engine.Support) (engine.Support, bool) {
+			runs++
+			return value, true
+		},
+	})
+	query, queryOK := engine.DeclareSupportQuery(composition, facadeKey(125), func(observation engine.SupportObservation) bool {
+		reachable, ok := engine.SupportReachable(observation)
+		return ok && reachable
+	}, engine.FrozenResult[bool]{
+		Semantic: facadeKey(126),
+		Freeze:   func(value bool) bool { return value }, Clone: func(value bool) bool { return value },
+		Equal: func(left, right bool) bool { return left == right },
+		Fingerprint: func(value bool) uint64 {
+			if value {
+				return 1
+			}
+			return 0
+		},
+	})
+	if !completionOK || !pruneOK || !ruleOK || rule == nil || !queryOK || query == nil || !composition.Seal() {
+		t.Fatal("recursive nonidentity edge declaration")
+	}
+
+	source := engine.NewSourceAssembly(composition)
+	raw, rawOK := source.Decision(facadeKey(127))
+	fresh, freshOK := source.Decision(facadeKey(128))
+	sourceScope, sourceScopeOK := source.Scope(raw)
+	targetScope, targetScopeOK := source.Scope(fresh)
+	truth, truthOK := source.TrueExpr()
+	falsity, falseOK := source.FalseExpr()
+	sourceSite, sourceSiteOK := source.Site(facadeKey(129), sourceScope, truth, true)
+	targetSite, targetSiteOK := source.Site(facadeKey(130), targetScope, falsity, false)
+	sourceOccurrence, sourceOccurrenceOK := source.Relation(sourceSite, facadeKey(131))
+	targetOccurrence, targetOccurrenceOK := source.Relation(targetSite, facadeKey(132))
+	sourceInstance, sourceInstanceOK := engine.NewSupportInstance(rule, func(*engine.StructuralBinding) bool { return true })
+	targetInstance, targetInstanceOK := engine.NewSupportInstance(rule, func(*engine.StructuralBinding) bool { return true })
+	sourcePrepared, sourcePreparedOK := source.PrepareStructural(sourceOccurrence, facadeKey(133), sourceInstance)
+	targetPrepared, targetPreparedOK := source.PrepareStructural(targetOccurrence, facadeKey(134), targetInstance)
+	rawExpr, rawExprOK := source.DecisionExpr(raw)
+	freshExpr, freshExprOK := source.DecisionExpr(fresh)
+	rawToFreshMap, rawToFreshMapOK := source.RenameMap(raw, fresh)
+	freshToRawMap, freshToRawMapOK := source.RenameMap(fresh, raw)
+	rawToFresh, rawToFreshOK := source.Reindex(sourceScope, targetScope, rawToFreshMap)
+	freshToRaw, freshToRawOK := source.Reindex(targetScope, sourceScope, freshToRawMap)
+	forward, forwardOK := source.Boundary(sourceSite, targetSite, facadeKey(135), rawExpr, rawToFresh, freshExpr)
+	back, backOK := source.Boundary(targetSite, sourceSite, facadeKey(136), freshExpr, freshToRaw, rawExpr)
+	sealed := source.Seal()
+	if !rawOK || !freshOK || !sourceScopeOK || !targetScopeOK || !truthOK || !falseOK || !sourceSiteOK || !targetSiteOK ||
+		!sourceOccurrenceOK || !targetOccurrenceOK || !sourceInstanceOK || !targetInstanceOK || !sourcePreparedOK || !targetPreparedOK ||
+		!rawExprOK || !freshExprOK || !rawToFreshMapOK || !freshToRawMapOK || !rawToFreshOK || !freshToRawOK || !forwardOK || !backOK || !sealed {
+		t.Fatal("recursive nonidentity edge source topology")
+	}
+	queryInstance, queryInstanceOK := engine.NewQueryInstance(query, func(*engine.QueryBinding[bool]) bool { return true })
+	if !queryInstanceOK || queryInstance == nil {
+		t.Fatal("recursive nonidentity edge query instance")
+	}
+	solver, assembled := source.Assemble(func(assembly *engine.Assembly) bool {
+		sourcePoint, sourcePointOK := assembly.Point(sourceSite)
+		targetPoint, targetPointOK := assembly.Point(targetSite)
+		sourceMember, sourceMemberOK := assembly.Member(sourcePoint, sourcePrepared)
+		targetMember, targetMemberOK := assembly.Member(targetPoint, targetPrepared)
+		_, sourceGroupOK := assembly.Group(sourcePoint, sourceMember)
+		_, targetGroupOK := assembly.Group(targetPoint, targetMember)
+		forwardEdgeOK := assembly.EnvironmentEdge(targetPoint, forward)
+		backEdgeOK := assembly.EnvironmentEdge(sourcePoint, back)
+		_, observationOK := assembly.Query(targetPoint, queryInstance)
+		return sourcePointOK && targetPointOK && sourceMemberOK && targetMemberOK && sourceGroupOK && targetGroupOK && forwardEdgeOK && backEdgeOK && observationOK
+	})
+	if !assembled || solver == nil {
+		t.Fatalf("recursive nonidentity edge assembly assembled=%t solver=%p", assembled, solver)
+	}
+	state, status := solver.Solve(context.Background())
+	receipt, receiptOK := queryInstance.Receipt()
+	reachable, readable := engine.QueryResult(receipt, state)
+	if status != engine.SolveComplete || state == nil || !receiptOK || !readable || !reachable || runs < 2 {
+		t.Fatalf("recursive nonidentity edge solve state=%v status=%v receipt=%t readable=%t reachable=%t runs=%d", state, status, receiptOK, readable, reachable, runs)
+	}
+}

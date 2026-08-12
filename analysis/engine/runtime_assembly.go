@@ -992,9 +992,11 @@ func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *
 			if !edgeIndexed {
 				return nil, nil, false
 			}
-			if edge.Input().IdentityTransport() == false {
-				return nil, nil, false
-			}
+			// A back edge is classified by its source/target placement in the
+			// immutable WTO region, not by whether its boundary happens to be
+			// coordinate identity.  The executor transports every environment
+			// input before folding it, so a valid non-identity boundary remains a
+			// lawful recurrence contribution here.
 			bound.environmentBack = append(bound.environmentBack, edgeIndex)
 		}
 		for index := 0; index < region.ExternalFactorEdgeCount(); index++ {
@@ -1064,20 +1066,14 @@ func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *
 				return nil, nil, false
 			}
 			if environmentInput, hasEnvironment := group.EnvironmentInput(); hasEnvironment {
-				sourcePoint, sourceIndexed := graph.PointIndex(environmentInput.Point())
+				_, sourceIndexed := graph.PointIndex(environmentInput.Point())
 				if !sourceIndexed {
 					return nil, nil, false
 				}
-				inside := false
-				for _, point := range bound.points {
-					if point == sourcePoint {
-						inside = true
-						break
-					}
-				}
-				if inside && !environmentInput.IdentityTransport() {
-					return nil, nil, false
-				}
+				// EnvironmentInput follows the same transport path as a
+				// structural EnvironmentEdge.  Membership in the region determines
+				// back-vs-external classification; transport identity is not a
+				// recurrence admission requirement.
 			}
 			for _, occurrence := range producers[groupIndex].footprint {
 				route := regionRoutes[occurrence.key]

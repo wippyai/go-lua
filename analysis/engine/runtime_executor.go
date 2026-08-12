@@ -2108,7 +2108,8 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 				candidateOrdered = epoch.work.LessOrEqRuleContribution(state.candidate, next)
 			}
 		}
-		if state.hasValue && (!candidateOrdered || state.candidateEnvironmentToken != state.scratchEnvironmentToken) {
+		environmentChanged := state.candidateEnvironmentToken != state.scratchEnvironmentToken
+		if state.hasValue && !candidateOrdered {
 			// A wake generation is not semantic evidence. A candidate decrease or
 			// incomparability is lawful only while an unchanged narrow episode is
 			// propagating its smaller exact head around an internal edge. During
@@ -2117,7 +2118,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			// Fail that Rule law closed instead of restarting the identical episode
 			// forever. A genuinely changed external interface still begins a fresh
 			// episode below.
-			if !state.hasCandidateTokens || sameCandidateTokens(state.candidateTokens, state.scratchTokens) {
+			if (!state.hasCandidateTokens || sameCandidateTokens(state.candidateTokens, state.scratchTokens)) && !environmentChanged {
 				return false, false
 			}
 			region := epoch.runtime.pointRegion[pointIndex]
