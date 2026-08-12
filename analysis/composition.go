@@ -261,32 +261,48 @@ func declareProgramQueries(
 		Semantic: semantics.valueQuery,
 		Project: func(observation engine.Observation) valueSummaryObservation {
 			result := valueSummaryObservation{}
+			rows := uint32(0)
 			complete := engine.ProjectRows(observation, func(row engine.QueryRow) bool {
-				result.rows++
-				if result.rows != 1 {
-					return false
-				}
+				rows++
 				cells, cellsOK := engine.QueryValue(row, valueRead)
 				if !cellsOK || cells.Count() == 0 {
 					return false
 				}
-				result.values = make([]valuedomain.Value, cells.Count())
-				result.present = make([]bool, cells.Count())
+				if len(result.values) == 0 {
+					result.values = make([]valuedomain.Value, cells.Count())
+					result.present = make([]bool, cells.Count())
+				} else if len(result.values) != cells.Count() {
+					return false
+				}
 				for index := range result.values {
-					var available bool
-					result.values[index], result.present[index], available = cells.At(index)
+					value, present, available := cells.At(index)
 					if !available {
 						return false
 					}
+					if !present {
+						continue
+					}
+					if !result.present[index] {
+						result.values[index], result.present[index] = value, true
+						continue
+					}
+					joined, joinedOK := valueSchema.Join(result.values[index], value)
+					if !joinedOK {
+						return false
+					}
+					result.values[index] = joined
 				}
 				return true
 			})
-			// An empty Product is a valid structural observation: the queried
-			// point is unreachable for this body/outcome and therefore has no
-			// Value row to project.  A nonempty observation still has exactly
-			// one row and a complete, nonempty cell vector; malformed one-row
-			// observations remain invalid.
-			result.valid = complete && (result.rows == 0 || result.rows == 1 && len(result.values) == len(result.present) && len(result.values) != 0)
+			// Guard rows are an internal symbolic partition. The detached body
+			// result intentionally forgets that partition by joining corresponding
+			// Value cells, while preserving Absent as the identity. Zero rows still
+			// denote an unreachable outcome; every nonempty partition normalizes to
+			// one canonical summary row.
+			if rows != 0 {
+				result.rows = 1
+			}
+			result.valid = complete && (rows == 0 || len(result.values) == len(result.present) && len(result.values) != 0)
 			return result
 		},
 		Result: engine.FrozenResult[valueSummaryObservation]{

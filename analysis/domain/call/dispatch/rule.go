@@ -153,7 +153,7 @@ func checker(
 ) engine.RuleDerivationChecker[calldomain.Value, site] {
 	return func(derivation engine.RuleDerivation[calldomain.Value, site]) (engine.RuleEvidence, bool) {
 		if values == nil || calls == nil || packs == nil || !heaps.Valid() || read == nil || derivation.Rule() != ruleSemantic ||
-			derivation.InputCount() != 1 || derivation.ReadCount() != 1 || derivation.DispositionCount() != 1 {
+			derivation.InputCount() != 1 || derivation.ReadCount() != 1 || derivation.DispositionCount() == 0 {
 			return engine.RuleEvidence{}, false
 		}
 		site, siteOK := derivation.Operand()
@@ -169,36 +169,41 @@ func checker(
 			!engine.DerivationReadMatchesRef(derivation, *read, valueRef) {
 			return engine.RuleEvidence{}, false
 		}
-		disposition, dispositionOK := derivation.DispositionAt(0)
 		input, inputOK := derivation.InputAt(0)
-		if !dispositionOK || !inputOK || disposition.Guard().Empty() || !input.Guard().Same(disposition.Guard()) {
+		if !inputOK || input.Guard().Empty() {
 			return engine.RuleEvidence{}, false
 		}
-		if _, transformed := disposition.CarryTransform(); transformed || disposition.TransformOnly() {
-			return engine.RuleEvidence{}, false
-		}
-		cells, cellsOK := engine.DerivationDispositionReadValue(derivation, disposition, *read)
-		if !cellsOK || cells.Count() != 1 {
-			return engine.RuleEvidence{}, false
-		}
-		fact, present, available := cells.At(0)
-		if !available {
-			return engine.RuleEvidence{}, false
-		}
-		if !present {
-			if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
+		for index := 0; index < derivation.DispositionCount(); index++ {
+			disposition, dispositionOK := derivation.DispositionAt(index)
+			if !dispositionOK || disposition.Guard().Empty() {
 				return engine.RuleEvidence{}, false
 			}
-			return derivation.Accept()
-		}
-		expected, expectedOK := reduce(site, fact)
-		if !expectedOK || disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 {
-			return engine.RuleEvidence{}, false
-		}
-		target, targetOK := disposition.TargetAt(0)
-		actual, actualOK := disposition.Value()
-		if !targetOK || !actualOK || !engine.TargetMatchesRef(target, callRef) || !calls.Algebra().Equal(actual, expected) {
-			return engine.RuleEvidence{}, false
+			if _, transformed := disposition.CarryTransform(); transformed || disposition.TransformOnly() {
+				return engine.RuleEvidence{}, false
+			}
+			cells, cellsOK := engine.DerivationDispositionReadValue(derivation, disposition, *read)
+			if !cellsOK || cells.Count() != 1 {
+				return engine.RuleEvidence{}, false
+			}
+			fact, present, available := cells.At(0)
+			if !available {
+				return engine.RuleEvidence{}, false
+			}
+			if !present {
+				if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
+					return engine.RuleEvidence{}, false
+				}
+				continue
+			}
+			expected, expectedOK := reduce(site, fact)
+			if !expectedOK || disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 {
+				return engine.RuleEvidence{}, false
+			}
+			target, targetOK := disposition.TargetAt(0)
+			actual, actualOK := disposition.Value()
+			if !targetOK || !actualOK || !engine.TargetMatchesRef(target, callRef) || !calls.Algebra().Equal(actual, expected) {
+				return engine.RuleEvidence{}, false
+			}
 		}
 		return derivation.Accept()
 	}

@@ -21,11 +21,10 @@ type effectObservation struct {
 
 func projectEffectObservation(algebra *effectfactor.Algebra, observation engine.Observation, read engine.QueryRead[engine.OrderedCells[effectfactor.Value]]) effectObservation {
 	result := effectObservation{}
+	rows := uint32(0)
+	joined := effectfactor.Value{}
 	complete := algebra != nil && engine.ProjectRows(observation, func(row engine.QueryRow) bool {
-		result.rows++
-		if result.rows != 1 {
-			return false
-		}
+		rows++
 		cells, ok := engine.QueryValue(row, read)
 		if !ok || cells.Count() != 1 {
 			return false
@@ -34,31 +33,43 @@ func projectEffectObservation(algebra *effectfactor.Algebra, observation engine.
 		if !available {
 			return false
 		}
-		result.present = present
 		if !present {
 			return true
 		}
-		if algebra.Equal(value, algebra.Top()) {
-			result.top = true
+		if !result.present {
+			joined, result.present = value, true
 			return true
 		}
-		for index := 0; ; index++ {
-			atom, found := algebra.AtomAt(value, index)
-			if !found {
-				break
-			}
-			id, idOK := algebra.AtomID(atom)
-			if !idOK || !id.Available() {
-				return false
-			}
-			result.atoms = append(result.atoms, id)
-		}
-		return true
+		var joinedOK bool
+		joined, joinedOK = algebra.Join(joined, value)
+		return joinedOK
 	})
-	// A zero-row Product is the exact empty/unreachable Effect observation,
-	// not a failed query.  Only a complete single row may carry Effect data;
-	// malformed one-row observations and multiplicity remain invalid.
-	result.valid = complete && (result.rows == 0 || result.rows == 1)
+	if rows != 0 {
+		result.rows = 1
+	}
+	if complete && result.present {
+		if algebra.Equal(joined, algebra.Top()) {
+			result.top = true
+		} else {
+			for index := 0; ; index++ {
+				atom, found := algebra.AtomAt(joined, index)
+				if !found {
+					break
+				}
+				id, idOK := algebra.AtomID(atom)
+				if !idOK || !id.Available() {
+					complete = false
+					break
+				}
+				result.atoms = append(result.atoms, id)
+			}
+		}
+	}
+	// Guard rows remain precise during solving and are joined only at this
+	// detached, guard-insensitive body boundary. Zero rows are the exact
+	// empty/unreachable Effect observation; any nonempty partition normalizes
+	// to one canonical summary row.
+	result.valid = complete
 	if !result.valid {
 		result.atoms = nil
 	}

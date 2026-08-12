@@ -447,7 +447,7 @@ func (rule *BodyCallRule) check(derivation engine.RuleDerivation[effectfactor.Va
 	// observation; once a body Ref is selected, the staged read contributes the
 	// second read alongside the exact Call predecessor.
 	readCount := derivation.ReadCount()
-	if rule == nil || derivation.Rule() != rule.semantic || derivation.InputCount() != 1 || (readCount != 1 && readCount != 2) || derivation.DispositionCount() > 1 {
+	if rule == nil || derivation.Rule() != rule.semantic || derivation.InputCount() != 1 || (readCount != 1 && readCount != 2) || derivation.DispositionCount() == 0 {
 		return engine.RuleEvidence{}, false
 	}
 	input, inputOK := derivation.InputAt(0)
@@ -470,52 +470,54 @@ func (rule *BodyCallRule) check(derivation engine.RuleDerivation[effectfactor.Va
 	if input.Guard().Empty() {
 		return engine.RuleEvidence{}, false
 	}
-	disposition, dispositionOK := derivation.DispositionAt(0)
-	if !dispositionOK || !disposition.Guard().Same(input.Guard()) {
-		return engine.RuleEvidence{}, false
-	}
-	if _, transformed := disposition.CarryTransform(); transformed || disposition.TransformOnly() {
-		return engine.RuleEvidence{}, false
-	}
-	callCells, callReadOK := engine.DerivationDispositionReadValue(derivation, disposition, rule.callRead)
-	if !callReadOK || callCells.Count() != 1 {
-		return engine.RuleEvidence{}, false
-	}
-	callValue, present, available := callCells.At(0)
-	if !available {
-		return engine.RuleEvidence{}, false
-	}
-	if !present {
-		selectionCount, selectionOK := engine.DerivationDispositionSelectionCount(derivation, disposition, rule.summary)
-		if !selectionOK || selectionCount != 0 {
+	for index := 0; index < derivation.DispositionCount(); index++ {
+		disposition, dispositionOK := derivation.DispositionAt(index)
+		if !dispositionOK || disposition.Guard().Empty() {
 			return engine.RuleEvidence{}, false
 		}
-		if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
+		if _, transformed := disposition.CarryTransform(); transformed || disposition.TransformOnly() {
 			return engine.RuleEvidence{}, false
 		}
-		return derivation.Accept()
-	}
-	if !rule.calls.Algebra().Admits(operand.key, callValue) {
-		return engine.RuleEvidence{}, false
-	}
-	routes, routesOK := rule.expectedRoutes(callValue)
-	if !routesOK {
-		return engine.RuleEvidence{}, false
-	}
-	expected, reduced := rule.reduceDispositionSelection(derivation, disposition, operand, callValue, routes)
-	if !reduced {
-		return engine.RuleEvidence{}, false
-	}
-	if rule.effects.Algebra().Equal(expected, rule.effects.Algebra().Bottom()) {
-		if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
+		callCells, callReadOK := engine.DerivationDispositionReadValue(derivation, disposition, rule.callRead)
+		if !callReadOK || callCells.Count() != 1 {
 			return engine.RuleEvidence{}, false
 		}
-		return derivation.Accept()
-	}
-	actual, staged := disposition.Value()
-	target, targetOK := disposition.TargetAt(0)
-	if disposition.Kind() != engine.RuleDispositionStaged || !staged || disposition.TargetCount() != 1 || !targetOK || !rule.effects.Algebra().Equal(actual, expected) || !engine.TargetMatchesRef(target, outputRef) {
-		return engine.RuleEvidence{}, false
+		callValue, present, available := callCells.At(0)
+		if !available {
+			return engine.RuleEvidence{}, false
+		}
+		if !present {
+			selectionCount, selectionOK := engine.DerivationDispositionSelectionCount(derivation, disposition, rule.summary)
+			if !selectionOK || selectionCount != 0 {
+				return engine.RuleEvidence{}, false
+			}
+			if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
+				return engine.RuleEvidence{}, false
+			}
+			continue
+		}
+		if !rule.calls.Algebra().Admits(operand.key, callValue) {
+			return engine.RuleEvidence{}, false
+		}
+		routes, routesOK := rule.expectedRoutes(callValue)
+		if !routesOK {
+			return engine.RuleEvidence{}, false
+		}
+		expected, reduced := rule.reduceDispositionSelection(derivation, disposition, operand, callValue, routes)
+		if !reduced {
+			return engine.RuleEvidence{}, false
+		}
+		if rule.effects.Algebra().Equal(expected, rule.effects.Algebra().Bottom()) {
+			if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
+				return engine.RuleEvidence{}, false
+			}
+			continue
+		}
+		actual, staged := disposition.Value()
+		target, targetOK := disposition.TargetAt(0)
+		if disposition.Kind() != engine.RuleDispositionStaged || !staged || disposition.TargetCount() != 1 || !targetOK || !rule.effects.Algebra().Equal(actual, expected) || !engine.TargetMatchesRef(target, outputRef) {
+			return engine.RuleEvidence{}, false
+		}
 	}
 	return derivation.Accept()
 }

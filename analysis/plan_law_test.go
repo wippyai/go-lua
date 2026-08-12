@@ -73,6 +73,38 @@ func TestCompiledPlanZeroRowOutcomeDoesNotMaskLiteralReturn(t *testing.T) {
 	}
 }
 
+// One fixed storage transfer may carry several symbolic rows when the source
+// coordinate was populated under distinct branch guards. The Rule occurrence
+// is singular; its derivation dispositions are the exact guarded partition
+// and every row must pass the same source/destination/value proof.
+func TestCompiledPlanAcceptsGuardPartitionedStorageTransfer(t *testing.T) {
+	contract, err := profile.Contract()
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked := mustLink(t, `
+local function move(flag: boolean)
+    local source: number | string
+    if flag then
+        source = 1
+    else
+        source = "x"
+    end
+    local destination = source
+    return destination
+end
+return move
+	`, contract)
+	result, status := Analyze(context.Background(), linked)
+	bodyCount := 0
+	if result != nil {
+		bodyCount = result.BodyCount()
+	}
+	if status != AnalyzeComplete || result == nil || bodyCount < 2 {
+		t.Fatalf("guard-partitioned storage transfer = status:%v result:%v bodies:%d", status, result != nil, bodyCount)
+	}
+}
+
 func TestCompiledPlanRepeatedSolveLaw(t *testing.T) {
 	plan, status := Compile(planLawLink(t))
 	if status != CompileComplete || plan == nil {
