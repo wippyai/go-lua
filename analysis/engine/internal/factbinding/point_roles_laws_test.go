@@ -603,6 +603,149 @@ func TestAddPointEnvironmentContainedSurfaceOverlay(t *testing.T) {
 	}
 }
 
+// TestPointRHSFoldMatchesCanonicalOrderAndClosesOnlyOnSupportGrowth is the
+// carrier-level contract for the synchronized fold. It compares the direct
+// transaction with the established environment/rule left comb, including
+// Present(Default), then exercises the representation-sensitive rule: a
+// filtered PointRHS may retain a latent root while support is unchanged, but
+// a later C-empty support expansion must physically erase that root.
+func TestPointRHSFoldMatchesCanonicalOrderAndClosesOnlyOnSupportGrowth(t *testing.T) {
+	manager := testTransportManager(t, []guard.Atom{1})
+	regions := support.New(manager)
+	on, ok := regions.Literal(1, true)
+	if !ok {
+		t.Fatal("on")
+	}
+	off, ok := regions.Literal(1, false)
+	if !ok {
+		t.Fatal("off")
+	}
+	whole := regions.True()
+	if !regions.Seal() {
+		t.Fatal("regions")
+	}
+	binding, initial, slot, composition, fixture := bindingState(t, manager, transportConfig(7), whole)
+	plan := compositionPlan(t, composition)
+	identity, ok := composition.IdentityReindex(composition.Scope())
+	if !ok {
+		t.Fatal("identity")
+	}
+	work := newWork(t, composition)
+	toRule := func(value carrier.Contribution) carrier.RuleContribution {
+		t.Helper()
+		rule, valid := work.AsRuleContribution(value)
+		if !valid {
+			t.Fatal("rule")
+		}
+		return rule
+	}
+	toPoint := func(value carrier.Contribution) carrier.PointState {
+		t.Helper()
+		point, valid := work.PointStateFromRuleContribution(toRule(value))
+		if !valid {
+			t.Fatal("point")
+		}
+		return point
+	}
+
+	emptyPoint, ok := work.EmptyPointState(initial)
+	if !ok {
+		t.Fatal("empty point")
+	}
+	base, ok := work.PointRHSFromPointState(emptyPoint)
+	if !ok {
+		t.Fatal("empty RHS")
+	}
+	lower := toRule(finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 4))
+	explicitDefault := toRule(finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), on, 7))
+	canonical, ok := work.AddRuleContribution(base, lower)
+	if !ok {
+		t.Fatal("canonical lower")
+	}
+	canonical, ok = work.AddRuleContribution(canonical, explicitDefault)
+	if !ok {
+		t.Fatal("canonical default")
+	}
+	canonicalPoint, ok := work.PublishPointRHS(canonical)
+	if !ok {
+		t.Fatal("canonical point")
+	}
+	if !work.BeginPointRHSFold(canonicalPoint, base) || !work.AddPointFoldRule(lower) || !work.AddPointFoldRule(explicitDefault) {
+		t.Fatal("direct ordered fold inputs")
+	}
+	direct, ok := work.FinishPointRHSFold()
+	if !ok || !work.EqualPointRHS(canonical, direct) {
+		t.Fatal("direct ordered fold differs from canonical left comb")
+	}
+	directRoot, ok := direct.HandleAt(slot)
+	if !ok {
+		t.Fatal("direct root")
+	}
+	canonicalRoot, ok := canonical.HandleAt(slot)
+	if !ok || directRoot != canonicalRoot {
+		t.Fatal("unchanged exact reconstruction did not retain its published root")
+	}
+	if got, present, valid := observedExactValue(binding, work, directRoot, fixture.unit(t, 0), whole, func(atom guard.Atom) bool { return atom == 1 }); !valid || present || got != 7 {
+		t.Fatalf("direct Present(Default) = %d/%t/%t, want 7/false/true", got, present, valid)
+	}
+	if got, present, valid := observedExactValue(binding, work, directRoot, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || got != 4 {
+		t.Fatalf("direct fixed-order off value = %d/%t/%t, want 4/true/true", got, present, valid)
+	}
+
+	onValue := finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), on, 4)
+	offValue := finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), off, 9)
+	source, _, ok := work.MergeContribution(onValue, offValue)
+	if !ok {
+		t.Fatal("latent source")
+	}
+	filtered, ok := work.TransportPointState(toPoint(source), whole, identity, on)
+	if !ok {
+		t.Fatal("filtered point")
+	}
+	filteredRHS, ok := work.PointRHSFromPointState(filtered)
+	if !ok {
+		t.Fatal("filtered RHS")
+	}
+	// A C-empty environment with the same support is the lifted identity. The
+	// transaction must preserve the base's physical off-support branch.
+	cEmptySource := finishContributionWithPremiseAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, off, 9)
+	cEmptyOn, ok := work.TransportPointState(toPoint(cEmptySource), whole, identity, on)
+	if !ok {
+		t.Fatal("C-empty on environment")
+	}
+	if !work.BeginPointRHSFold(filtered, filteredRHS) || !work.AddPointFoldEnvironment(cEmptyOn) {
+		t.Fatal("contained direct environment")
+	}
+	contained, ok := work.FinishPointRHSFold()
+	if !ok {
+		t.Fatal("finish contained environment")
+	}
+	containedRoot, ok := contained.HandleAt(slot)
+	if !ok {
+		t.Fatal("contained root")
+	}
+	if got, present, valid := observedExactValue(binding, work, containedRoot, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || got != 9 {
+		t.Fatalf("contained fold lost latent branch = %d/%t/%t, want 9/true/true", got, present, valid)
+	}
+
+	// The same base followed by a whole-support C-empty environment grows the
+	// semantic support. The latent off=9 branch must now become Absent.
+	if !work.BeginPointRHSFold(filtered, filteredRHS) || !work.AddPointFoldEnvironment(emptyPoint) {
+		t.Fatal("growing direct environment")
+	}
+	grown, ok := work.FinishPointRHSFold()
+	if !ok || !grown.Support().Equal(whole) {
+		t.Fatal("finish growing environment")
+	}
+	grownRoot, ok := grown.HandleAt(slot)
+	if !ok {
+		t.Fatal("grown root")
+	}
+	if got, present, valid := observedExactValue(binding, work, grownRoot, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || present || got != 7 {
+		t.Fatalf("support growth revived latent branch = %d/%t/%t, want 7/false/true", got, present, valid)
+	}
+}
+
 // TestRuleContributionPointInputsCarryCloseLatentAndDefault exercises the
 // executor bridge without letting it close a transported PointState at Begin.
 // The carried root retains its coordinate-filtered off branch only inside the
@@ -742,157 +885,6 @@ func TestRuleContributionPointInputsCarryCloseLatentAndDefault(t *testing.T) {
 	}
 	if got, present, valid := observedExactValue(binding, work, defaultRoot, fixture.unit(t, 0), whole, func(atom guard.Atom) bool { return atom == 1 }); !valid || present || got != 7 {
 		t.Fatalf("carried Present(Default) = %d/%t/%t, want 7/false/true", got, present, valid)
-	}
-}
-
-// TestChangedCoordinatePointRHSPreservesLatentRootUntilLift is the hostile
-// structural-seminaive law. A filtered PointRHS retains an off-support source
-// branch physically while a gap-free ascending on-support publication appends
-// only its owner-issued change. The later RuleContribution lift and a support
-// growing confluence prove that the retained branch was never a semantic RHS
-// operand and cannot revive as an authored fact.
-func TestChangedCoordinatePointRHSPreservesLatentRootUntilLift(t *testing.T) {
-	manager := testTransportManager(t, []guard.Atom{1})
-	regions := support.New(manager)
-	on, ok := regions.Literal(1, true)
-	if !ok {
-		t.Fatal("on")
-	}
-	off, ok := regions.Literal(1, false)
-	if !ok {
-		t.Fatal("off")
-	}
-	whole := regions.True()
-	if !regions.Seal() {
-		t.Fatal("regions")
-	}
-	binding, initial, slot, composition, fixture := bindingState(t, manager, transportConfig(0), whole)
-	writePlan := compositionPlan(t, composition)
-	identity, ok := composition.IdentityReindex(composition.Scope())
-	if !ok || !identity.CoordinateIdentity() {
-		t.Fatal("coordinate identity")
-	}
-	work := newWork(t, composition)
-
-	previousOn := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), on, 4)
-	offSource := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), off, 9)
-	previousLegacy, _, ok := work.MergeContribution(previousOn, offSource)
-	if !ok {
-		t.Fatal("previous source")
-	}
-	upwardOn := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), on, 5)
-	currentLegacy, semantic, ok := work.MergeContribution(previousLegacy, upwardOn)
-	if !ok {
-		t.Fatal("ascending source publication")
-	}
-	previousRule, ok := work.AsRuleContribution(previousLegacy)
-	if !ok {
-		t.Fatal("previous rule")
-	}
-	currentRule, ok := work.AsRuleContribution(currentLegacy)
-	if !ok {
-		t.Fatal("current rule")
-	}
-	previousPoint, ok := work.PointStateFromRuleContribution(previousRule)
-	if !ok {
-		t.Fatal("previous point")
-	}
-	currentPoint, ok := work.PointStateFromRuleContribution(currentRule)
-	if !ok {
-		t.Fatal("current point")
-	}
-	coverageBase, ok := work.EmptyPointState(initial)
-	if !ok {
-		t.Fatal("coverage base")
-	}
-	authoredCoverage, ok := work.CoverageChangesPointStates(coverageBase, currentPoint)
-	if !ok {
-		t.Fatal("point authored coverage changes")
-	}
-	wakeCoverage, ok := work.CoverageWakeChangesPointStates(coverageBase, currentPoint)
-	if !ok || wakeCoverage.TargetCount() != 0 || authoredCoverage.TargetCount() == 0 || wakeCoverage.Count() != authoredCoverage.Count() {
-		t.Fatal("point coverage wake projection")
-	}
-	for index := 0; index < authoredCoverage.Count(); index++ {
-		full, fullOK := authoredCoverage.At(index)
-		projection, projectionOK := wakeCoverage.At(index)
-		if !fullOK || !projectionOK || full.Slot() != projection.Slot() || !full.Region().Equal(projection.Region()) {
-			t.Fatal("point coverage wake changed slot/guard meaning")
-		}
-	}
-	previousFiltered, ok := work.TransportPointState(previousPoint, whole, identity, on)
-	if !ok || !previousFiltered.Support().Equal(on) {
-		t.Fatal("previous filtered point")
-	}
-	currentFiltered, ok := work.TransportPointState(currentPoint, whole, identity, on)
-	if !ok || !currentFiltered.Support().Equal(on) {
-		t.Fatal("current filtered point")
-	}
-	left, ok := work.PointRHSFromPointState(previousFiltered)
-	if !ok {
-		t.Fatal("left RHS")
-	}
-	leftRoot, ok := left.HandleAt(slot)
-	if !ok {
-		t.Fatal("left root")
-	}
-	authored, ok := work.CoverageChangesPointStates(previousFiltered, currentFiltered)
-	if !ok {
-		t.Fatal("point coverage changes")
-	}
-
-	// The executor's publication window supplies the full lifted
-	// previous<=current proof. This carrier path consumes its exact delta
-	// without rerunning that expensive proof or closing the PointRHS root.
-	appended, ok := work.MergeChangedCoordinatePointRHS(left, previousFiltered, currentFiltered, []carrier.ChangeSet{semantic}, authored, whole, identity, whole)
-	if !ok || !appended.Support().Equal(on) || !work.OwnsPointRHS(appended) {
-		t.Fatal("changed-coordinate RHS append")
-	}
-	appendedPoint, ok := work.PublishPointRHS(appended)
-	if !ok || !work.EqualPointState(appendedPoint, currentFiltered) || !work.LessOrEqPointStateRHS(previousFiltered, appended) || !work.LessOrEqPointRHSPoint(left, appendedPoint) {
-		t.Fatal("nominal lifted comparison after append")
-	}
-	appendedRoot, ok := appended.HandleAt(slot)
-	if !ok || appendedRoot == leftRoot {
-		t.Fatal("ascending on-support append did not replace root")
-	}
-	if got, present, valid := observedExactValue(binding, work, appendedRoot, fixture.unit(t, 0), whole, func(atom guard.Atom) bool { return atom == 1 }); !valid || !present || got != 5 {
-		t.Fatalf("appended on branch = %d/%t/%t, want 5/true/true", got, present, valid)
-	}
-	if got, present, valid := observedExactValue(binding, work, appendedRoot, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || !present || got != 9 {
-		t.Fatalf("append lost physical latent off branch = %d/%t/%t, want 9/true/true", got, present, valid)
-	}
-
-	lifted, ok := work.LiftRuleContribution(appendedPoint)
-	if !ok {
-		t.Fatal("lift appended RHS")
-	}
-	liftedRoot, ok := lifted.HandleAt(slot)
-	if !ok || liftedRoot == appendedRoot {
-		t.Fatal("lift did not close appended root")
-	}
-	if got, present, valid := observedExactValue(binding, work, liftedRoot, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || present || got != 0 {
-		t.Fatalf("lifted off branch = %d/%t/%t, want 0/false/true", got, present, valid)
-	}
-
-	// Support growth is not legal on the seminaive append itself. It goes
-	// through AddPointEnvironment's closed confluence, where the old physical
-	// off branch must remain Absent even though the final point support is
-	// whole again.
-	emptyPoint, ok := work.EmptyPointState(initial)
-	if !ok {
-		t.Fatal("whole empty point")
-	}
-	confluent, ok := work.AddPointEnvironment(appended, emptyPoint)
-	if !ok || !confluent.Support().Equal(whole) {
-		t.Fatal("support-growing confluence")
-	}
-	confluentRoot, ok := confluent.HandleAt(slot)
-	if !ok {
-		t.Fatal("confluent root")
-	}
-	if got, present, valid := observedExactValue(binding, work, confluentRoot, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || present || got != 0 {
-		t.Fatalf("confluent off branch revived = %d/%t/%t, want 0/false/true", got, present, valid)
 	}
 }
 

@@ -1235,7 +1235,7 @@ func (schema *Schema) Lattice() lattice.Lattice[Value] {
 	owner := schema.state.owner
 	return lattice.Lattice[Value]{
 		Bottom: func() Value { return bottomValue(owner) }, Top: func() Value { return topValue(owner) },
-		Equal: equalValue, Same: func(left, right Value) bool { return false }, LessOrEq: lessOrEqualValue,
+		Equal: equalValue, Same: sameValueRepresentation, LessOrEq: lessOrEqualValue,
 		Join: func(left, right Value) Value {
 			value, ok := joinValue(left, right)
 			if !ok {

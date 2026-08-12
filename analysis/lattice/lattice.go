@@ -40,7 +40,10 @@ package lattice
 //     fixed-point proofs.
 //   - Bottom: least element. Bottom() ⊑ x for all x.
 //   - Top: greatest element. x ⊑ Top() for all x.
-//   - Equal: reflexive, symmetric, transitive equality on the carrier.
+//   - Equal: reflexive, symmetric, transitive equality on the carrier. Every
+//     other operation is extensional under Equal: substituting an Equal input
+//     cannot change the Equal result or the truth of LessOrEq. Implementations
+//     therefore operate on equality classes, never hidden representation tags.
 //   - Same: optional representation-identity predicate. When present, it may
 //     return true only for values that are known Equal, and lets persistent
 //     domains avoid re-comparing a shared immutable representation.

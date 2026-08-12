@@ -120,8 +120,34 @@ func (work *Work) EqualRuleContribution(left, right RuleContribution) bool {
 	return work.admittedRuleContribution(left) && work.admittedRuleContribution(right) && work.equalContributionSurface(left.value.state, left.value.coverage, right.value.state, right.value.coverage)
 }
 
+// ExactSameRuleContributionRepresentation distinguishes the immutable
+// State+C header from lifted semantic equality.  A target-row alias can be
+// extensionally equal while replacing the compact authored representation;
+// an executor append cache must treat that replacement as a barrier.  This
+// exposes no roots or Target rows: it is only an ownership-checked lifecycle
+// predicate for the one canonical fold/publication flow.
+func (work *Work) ExactSameRuleContributionRepresentation(left, right RuleContribution) bool {
+	return work.admittedRuleContribution(left) && work.admittedRuleContribution(right) && work.liveFor(left.value.state, right.value.state) &&
+		exactSameStateRepresentation(left.value.state, right.value.state) && sameContributionCoverage(left.value.coverage, right.value.coverage)
+}
+
 func (work *Work) LessOrEqRuleContribution(left, right RuleContribution) bool {
 	return work.admittedRuleContribution(left) && work.admittedRuleContribution(right) && work.lessOrEqContributionSurface(left.value.state, left.value.coverage, right.value.state, right.value.coverage)
+}
+
+// CanAppendAscendingRuleContribution proves the additional representation
+// invariant required by a sparse append. Lifted order alone is extensional in
+// Target-to-key presence, so it permits replacing one alias Target row with
+// another equal row. A compact append must retain exact raw rows rather than
+// accumulating stale aliases, and therefore additionally requires old raw
+// rows to be contained by new raw rows at every physical slot.
+//
+// This is deliberately a predicate, not a second RuleContribution transport
+// path. The one future sparse consumer can require the proof without gaining
+// a parallel fact authority or retaining either operand's roots.
+func (work *Work) CanAppendAscendingRuleContribution(old, next RuleContribution) bool {
+	return work.admittedRuleContribution(old) && work.admittedRuleContribution(next) &&
+		work.LessOrEqRuleContribution(old, next) && work.rawCoverageAdditive(old.value.coverage, next.value.coverage)
 }
 
 // EqualPointRHS and LessOrEqPointRHS use the same lifted surface relation as
@@ -142,6 +168,27 @@ func (work *Work) EqualPointState(left, right PointState) bool {
 	return work.admittedPointState(left) && work.admittedPointState(right) && work.equalContributionSurface(left.state, left.coverage, right.state, right.coverage)
 }
 
+// ExactSamePointRepresentation is the point-publication counterpart to
+// ExactSameRuleContributionRepresentation. It checks the exact immutable
+// State+C header, including compact authored Target rows, rather than the
+// lifted extensional value. A false result is a structural publication event:
+// consumers must refold before a later ascent ticket can be accepted.
+func (work *Work) ExactSamePointRepresentation(left, right PointState) bool {
+	return work.admittedPointState(left) && work.admittedPointState(right) && work.liveFor(left.state, right.state) &&
+		exactSameStateRepresentation(left.state, right.state) && sameContributionCoverage(left.coverage, right.coverage)
+}
+
+// exactSameStateRepresentation is deliberately not sameState. sameState is
+// predecessor provenance and treats a different support BDD handle as a
+// different State even when it denotes the same formula. Publication barriers
+// are semantic at the outer support boundary, so harmless handle churn must
+// not version/wake an otherwise identical State+C header. Roots remain a
+// strict immutable-vector identity: independently rebuilt roots need the
+// conservative publication path even when their payloads compare equal.
+func exactSameStateRepresentation(left, right State) bool {
+	return left.authority == right.authority && left.scope.same(right.scope) && left.support.Equal(right.support) && sameRootVector(left.roots, right.roots)
+}
+
 // LessOrEqPointRHSPoint and LessOrEqPointStateRHS are explicit cross-role
 // lifecycle comparisons. Keeping their direction in the name prevents the
 // executor from silently using raw State order at a Point/RHS boundary.
@@ -151,6 +198,22 @@ func (work *Work) LessOrEqPointRHSPoint(left PointRHS, right PointState) bool {
 
 func (work *Work) LessOrEqPointStateRHS(left PointState, right PointRHS) bool {
 	return work.admittedPointState(left) && work.admittedPointRHS(right) && work.lessOrEqContributionSurface(left.state, left.coverage, right.point.state, right.point.coverage)
+}
+
+// rawCoverageAdditive is the representation-level half of an append proof.
+// It intentionally compares opaque Target rows, not their extensional typed
+// key expansion: a sparse consumer stores/merges the compact rows themselves,
+// so alias replacement would otherwise retain an obsolete weak Target row.
+func (work *Work) rawCoverageAdditive(old, next contributionCoverage) bool {
+	if work == nil || !work.live() || old.composition != work.composition || next.composition != work.composition {
+		return false
+	}
+	for position := 0; position < work.composition.Count(); position++ {
+		if !slotCoverageContains(next.slot(shape.Slot(position)), old.slot(shape.Slot(position))) {
+			return false
+		}
+	}
+	return true
 }
 
 // CoverageChangesPointStates derives the exact Target-local authored delta
@@ -408,103 +471,6 @@ func (work *Work) overlayPointSurface(rhs PointRHS, rightState State, rightCover
 	// closure proof. Any authored overlay may retain left physical branches
 	// outside support, so it deliberately clears the fast-path bit.
 	point := PointState{state: next, coverage: nextCoverage, roleSeal: work.contributionSeal, authority: next.authority, closed: rhs.point.closed && len(rightCoverage.slots) == 0}
-	if !work.admittedPointState(point) {
-		return PointRHS{}, false
-	}
-	result := PointRHS{point: point, roleSeal: work.contributionSeal}
-	return result, work.admittedPointRHS(result)
-}
-
-// MergeChangedCoordinatePointRHS is the phase-local structural seminaive
-// append for one coordinate-identical environment edge. The caller's
-// publication window certifies previous <= current, including authored
-// presence monotonicity; this hot path deliberately does not repeat the full
-// lifted order zipper. It still fences the cheap necessary support monotonicity
-// and refuses support growth at the target: a growing RHS must take the
-// closed JoinPointRHS path so a latent left root cannot become visible.
-//
-// Unlike legacy Contribution transport, this method keeps PointRHS nominal
-// throughout. ChangedPointSlotWork starts from the left physical root and
-// changes only source-owned ascending regions, so fibers outside left support
-// remain byte/root-persistent exactly as with OverlayRuleContribution. The
-// returned accumulator is deliberately marked non-closed; a later
-// LiftRuleContribution is the one durable RuleContribution boundary.
-func (work *Work) MergeChangedCoordinatePointRHS(left PointRHS, previous, current PointState, semantic []ChangeSet, authored CoverageChangeSet, pre support.Mask, omega ReindexPlan, post support.Mask) (PointRHS, bool) {
-	if !work.live() || work.reindexing || !work.admittedPointRHS(left) || !work.admittedPointState(previous) || !work.admittedPointState(current) ||
-		!work.composition.OwnsCoverageChangeSet(authored) || !omega.validFor(work.composition) || !omega.coordinateIdentity() ||
-		!left.point.state.scope.same(omega.target()) || !previous.state.scope.same(omega.source()) || !current.state.scope.same(omega.source()) ||
-		!validBoundaryMask(pre, current.state.scope) || !validBoundaryMask(post, left.point.state.scope) || !previous.state.support.Entails(current.state.support) {
-		return PointRHS{}, false
-	}
-	for index := range semantic {
-		if !work.composition.OwnsChangeSet(semantic[index]) {
-			return PointRHS{}, false
-		}
-	}
-	for _, slot := range work.slots {
-		if _, ok := slot.(ChangedPointSlotWork); !ok {
-			// There is no safe role-preserving fallback: the complete legacy
-			// path closes a Contribution and would erase the intended point
-			// root sharing. The executor must rebuild through its normal fold.
-			return PointRHS{}, false
-		}
-	}
-	work.reindexing = true
-	defer func() { work.reindexing = false }()
-
-	sourceSupport, ok := work.intersectSupport(current.state.support, pre)
-	if !ok {
-		return PointRHS{}, false
-	}
-	reindexedSupport, ok := work.reindexSupport(sourceSupport, omega.relation)
-	if !ok {
-		return PointRHS{}, false
-	}
-	targetSupport, ok := work.intersectSupport(reindexedSupport, post)
-	if !ok || !targetSupport.Entails(left.point.state.support) {
-		return PointRHS{}, false
-	}
-	targetCoverage, ok := work.transportContributionCoverage(current.coverage, pre, omega, post, targetSupport)
-	if !ok {
-		return PointRHS{}, false
-	}
-	nextCoverage, ok := work.unionCoverage(left.point.coverage, targetCoverage)
-	if !ok {
-		return PointRHS{}, false
-	}
-	empty := emptyMask(work.composition.guards)
-	if !empty.Valid() {
-		return PointRHS{}, false
-	}
-	delta := work.newSupportWork()
-	if delta == nil {
-		return PointRHS{}, false
-	}
-	patches := make([]Patch, 0, len(work.slots))
-	for position, slot := range work.slots {
-		changed, ok := slot.(ChangedPointSlotWork)
-		if !ok {
-			delta.Discard()
-			dropPatches(patches)
-			return PointRHS{}, false
-		}
-		physical := shape.Slot(position)
-		change, valid := changed.MergeChangedCoordinatePointUnder(left.point.state.roots[position], current.state.roots[position], left.point.state.support, sourceSupport, targetSupport, pre, post, coverageRows(left.point.coverage.slot(physical)), coverageRows(targetCoverage.slot(physical)), semantic, authored, delta)
-		if !valid {
-			delta.Discard()
-			dropPatches(patches)
-			return PointRHS{}, false
-		}
-		if !work.acceptInto(&patches, left.point.state, change, delta) {
-			delta.Discard()
-			return PointRHS{}, false
-		}
-	}
-	next, _, committed := work.commit(left.point.state, patches, left.point.state.support, empty, empty, delta)
-	if !committed {
-		return PointRHS{}, false
-	}
-	point := PointState{state: next, coverage: nextCoverage, roleSeal: work.contributionSeal, authority: next.authority}
 	if !work.admittedPointState(point) {
 		return PointRHS{}, false
 	}

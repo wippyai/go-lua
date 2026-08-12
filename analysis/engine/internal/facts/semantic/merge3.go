@@ -50,6 +50,141 @@ func (domain *Domain[F, K, V]) JoinContributions(left, right Plane[F, K, V], scr
 	return Plane[F, K, V]{root: root}, true
 }
 
+// JoinContributionsMany is the fixed-order lifted fold used by one point RHS
+// transaction. Diagram synchronizes all operand FDDs and authored regions;
+// this layer evaluates each completed terminal cell as a local V left-comb
+// and admits only its final value. No intermediate Join prefix receives a
+// terminal identity or survives in the sealed terminal page.
+func (domain *Domain[F, K, V]) JoinContributionsMany(reference Plane[F, K, V], inputs []Plane[F, K, V], scratch *diagram.SoleScratch[K, V], regions *support.Work, covers diagram.SoleManyRegions[K]) (Plane[F, K, V], bool) {
+	if domain == nil || !domain.validPlane(reference) || len(inputs) == 0 || scratch == nil || regions == nil || !regions.Open() || covers == nil {
+		return Plane[F, K, V]{}, false
+	}
+	roots := make([]diagram.Root[F, K, V], len(inputs))
+	for index, input := range inputs {
+		if !domain.validPlane(input) {
+			return Plane[F, K, V]{}, false
+		}
+		roots[index] = input.root
+	}
+	values := domain.terminals.Begin()
+	builder := domain.diagram.BeginWithTerminals(values)
+	if values == nil || builder == nil {
+		return Plane[F, K, V]{}, false
+	}
+	root, ok := builder.MergeSoleFactorMany(reference.root, roots, scratch, regions, domain.terminalsManyJoin(values), covers)
+	if !ok {
+		builder.Discard()
+		return Plane[F, K, V]{}, false
+	}
+	root, ok = builder.Seal(root)
+	if !ok {
+		return Plane[F, K, V]{}, false
+	}
+	return Plane[F, K, V]{root: root}, true
+}
+
+func (domain *Domain[F, K, V]) terminalsManyJoin(values *terminal.Work[V]) diagram.SoleManyCombine[K, V] {
+	// A candidate terminal page interns only against its base ancestry. Point
+	// folds can also contain sealed sibling pages, so retain one operation-local
+	// canonical spelling per semantic final value. The hash only selects a
+	// small collision bucket; Equal remains the proof. This is deliberately
+	// not a global interner and cannot influence fold presence, support, or
+	// fixed operand order.
+	var canonical map[uint64][]terminal.ID[V]
+	choose := func(value V, reference terminal.ID[V], ids []terminal.ID[V], present []bool) (terminal.ID[V], bool) {
+		fingerprint := uint64(0)
+		if domain.ops.Fingerprint != nil {
+			fingerprint = domain.ops.Fingerprint(value)
+		}
+		for _, candidate := range canonical[fingerprint] {
+			candidateValue, valid := values.Value(candidate)
+			if !valid {
+				return terminal.ID[V]{}, false
+			}
+			if domain.ops.Equal(value, candidateValue) {
+				return candidate, true
+			}
+		}
+
+		chosen := terminal.ID[V]{}
+		if reference != (terminal.ID[V]{}) {
+			referenceValue, valid := values.Value(reference)
+			if !valid {
+				return terminal.ID[V]{}, false
+			}
+			if domain.ops.Equal(value, referenceValue) {
+				chosen = reference
+			}
+		}
+		if chosen == (terminal.ID[V]{}) {
+			for index, included := range present {
+				if !included || ids[index] == (terminal.ID[V]{}) {
+					continue
+				}
+				candidateValue, valid := values.Value(ids[index])
+				if !valid {
+					return terminal.ID[V]{}, false
+				}
+				if domain.ops.Equal(value, candidateValue) {
+					chosen = ids[index]
+					break
+				}
+			}
+		}
+		if chosen == (terminal.ID[V]{}) {
+			var admitted bool
+			chosen, admitted = values.Admit(value)
+			if !admitted {
+				return terminal.ID[V]{}, false
+			}
+		}
+		if canonical == nil {
+			canonical = make(map[uint64][]terminal.ID[V])
+		}
+		canonical[fingerprint] = append(canonical[fingerprint], chosen)
+		return chosen, true
+	}
+	return func(key K, reference terminal.ID[V], ids []terminal.ID[V], present []bool) (terminal.ID[V], bool) {
+		if values == nil || len(ids) == 0 || len(ids) != len(present) {
+			return terminal.ID[V]{}, false
+		}
+		var accumulator V
+		have := false
+		for index, included := range present {
+			if !included {
+				continue
+			}
+			value := domain.ops.Default
+			if ids[index] != (terminal.ID[V]{}) {
+				var valid bool
+				value, valid = values.Value(ids[index])
+				if !valid {
+					return terminal.ID[V]{}, false
+				}
+			}
+			if !have {
+				accumulator, have = value, true
+				continue
+			}
+			output, valid := domain.joinPair(accumulator, value)
+			if !valid {
+				return terminal.ID[V]{}, false
+			}
+			accumulator = output
+		}
+		if !have {
+			return terminal.ID[V]{}, false
+		}
+		if domain.ops.Equal(accumulator, domain.ops.Default) {
+			return terminal.ID[V]{}, true
+		}
+		if !domain.joinStable(accumulator) {
+			return terminal.ID[V]{}, false
+		}
+		return choose(accumulator, reference, ids, present)
+	}
+}
+
 // JoinContributionChanges applies a right operand at exact authored/changed
 // key regions supplied by the Binding. The final sorted sparse mutations are
 // published in one persistent AVL batch; unchanged subtrees and FDDs are

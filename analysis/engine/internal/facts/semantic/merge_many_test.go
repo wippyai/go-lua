@@ -1,0 +1,461 @@
+package semantic
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/diagram"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/terminal"
+	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
+)
+
+func TestJoinContributionsManyMatchesFixedBinaryOrderAndAdmitsOnlyFinalValue(t *testing.T) {
+	manager, err := guard.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regions := support.New(manager)
+	all := regions.True()
+	if !regions.Seal() {
+		t.Fatal("support seal")
+	}
+	fingerprints := 0
+	values, ok := terminal.New(terminal.Config[uint8]{
+		Equal: func(left, right uint8) bool { return left == right },
+		Fingerprint: func(value uint8) uint64 {
+			fingerprints++
+			return uint64(value)
+		},
+	})
+	if !ok {
+		t.Fatal("terminal arena")
+	}
+	ids := make(map[uint8]terminal.ID[uint8])
+	for _, value := range []uint8{0, 1, 2, 3, 4, 8} {
+		id, admitted := values.Admit(value)
+		if !admitted {
+			t.Fatalf("admit %d", value)
+		}
+		ids[value] = id
+	}
+	if !values.Seal() {
+		t.Fatal("terminal seal")
+	}
+	facts, ok := diagram.New(diagram.Config[semanticFactor, semanticKey, uint8]{Factors: []semanticFactor{semanticColumn}, Terminals: values, Guards: manager})
+	if !ok {
+		t.Fatal("diagram")
+	}
+	join := func(left, right uint8) (uint8, bool) {
+		return left | right, true
+	}
+	domain, ok := New(facts, values, Operations[uint8]{
+		Default: 0, Equal: func(left, right uint8) bool { return left == right }, Fingerprint: func(value uint8) uint64 { return uint64(value) },
+		Join: join, Widen: join, Narrow: func(_, right uint8) (uint8, bool) { return right, true }, LessOrEq: func(left, right uint8) bool { return left&right == left },
+	})
+	if !ok {
+		t.Fatal("domain")
+	}
+	planes := make([]Plane[semanticFactor, semanticKey, uint8], 4)
+	for index, value := range []uint8{1, 2, 4, 8} {
+		builder := facts.Begin()
+		root, written := builder.Set(facts.Empty(), semanticColumn, 7, all, ids[value])
+		if !written {
+			t.Fatalf("write %d", value)
+		}
+		root, written = builder.Seal(root)
+		if !written {
+			t.Fatalf("seal root %d", value)
+		}
+		planes[index], written = domain.Plane(root)
+		if !written {
+			t.Fatalf("plane %d", value)
+		}
+	}
+
+	boolean := support.New(manager)
+	if boolean == nil {
+		t.Fatal("boolean work")
+	}
+	fingerprints = 0
+	many, ok := domain.JoinContributionsMany(planes[0], planes, diagram.NewSoleScratch[semanticKey, uint8](), boolean, func(key semanticKey, output []support.Mask) bool {
+		if key != 7 || len(output) != len(planes) {
+			return false
+		}
+		for index := range output {
+			output[index] = all
+		}
+		return true
+	})
+	if !ok {
+		t.Fatal("many fold")
+	}
+	if fingerprints != 1 {
+		t.Fatalf("candidate terminal fingerprints = %d, want exactly one final admission", fingerprints)
+	}
+
+	sequential := planes[0]
+	for index := 1; index < len(planes); index++ {
+		var joined bool
+		sequential, joined = domain.JoinContributions(sequential, planes[index], diagram.NewSoleScratch[semanticKey, uint8](), boolean, func(semanticKey, support.Mask) bool { return true }, func(key semanticKey) (support.Mask, support.Mask, support.Mask, bool) {
+			return all, all, all, key == 7
+		})
+		if !joined {
+			t.Fatalf("sequential fold %d", index)
+		}
+	}
+	if !domain.Same(many, sequential) {
+		got, gotPresent := domain.summaryAt(many, semanticColumn, 7)
+		want, wantPresent := domain.summaryAt(sequential, semanticColumn, 7)
+		t.Fatalf("many = %d/%t, sequential = %d/%t", got, gotPresent, want, wantPresent)
+	}
+}
+
+func TestJoinContributionsManyDistinguishesAbsentFromPresentDefault(t *testing.T) {
+	fixture := newSemanticFixture(t)
+	domain, ok := New(fixture.diagram, fixture.values, Operations[uint8]{
+		Default:  5,
+		Equal:    func(left, right uint8) bool { return left == right },
+		Join:     max,
+		Widen:    max,
+		Narrow:   func(_, right uint8) (uint8, bool) { return right, true },
+		LessOrEq: func(left, right uint8) bool { return left <= right },
+	})
+	if !ok {
+		t.Fatal("domain")
+	}
+	root4 := fixture.root(t, struct {
+		when  support.Mask
+		value uint8
+	}{fixture.atom, 3})
+	value, ok := domain.Plane(root4)
+	if !ok {
+		t.Fatal("value plane")
+	}
+	empty, ok := domain.Empty()
+	if !ok {
+		t.Fatal("empty plane")
+	}
+	boolean := support.New(fixture.diagram.Guards())
+	if boolean == nil {
+		t.Fatal("boolean work")
+	}
+	fold := func(defaultPresent bool) Plane[semanticFactor, semanticKey, uint8] {
+		t.Helper()
+		result, valid := domain.JoinContributionsMany(value, []Plane[semanticFactor, semanticKey, uint8]{value, empty}, diagram.NewSoleScratch[semanticKey, uint8](), boolean, func(key semanticKey, output []support.Mask) bool {
+			if key != 7 || len(output) != 2 {
+				return false
+			}
+			output[0] = fixture.atom
+			if defaultPresent {
+				output[1] = fixture.atom
+			} else {
+				output[1], _ = support.FromGuard(fixture.diagram.Guards(), fixture.diagram.Guards().False())
+			}
+			return output[1].Valid()
+		})
+		if !valid {
+			t.Fatal("many fold")
+		}
+		return result
+	}
+	withoutDefault := fold(false)
+	withDefault := fold(true)
+	if got, present := fixture.at(t, withoutDefault, true); !present || got != 3 {
+		t.Fatalf("Absent polluted Present(3): got %d/%t", got, present)
+	}
+	if got, present := fixture.at(t, withDefault, true); present || got != 0 {
+		t.Fatalf("Present(Default) result was not sparsified: got %d/%t", got, present)
+	}
+}
+
+func TestJoinContributionsManyReusesSemanticReferenceAcrossSiblingTerminals(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := support.New(manager)
+	if setup == nil {
+		t.Fatal("support setup")
+	}
+	all := setup.True()
+	on, ok := setup.Literal(1, true)
+	if !ok {
+		t.Fatal("on support")
+	}
+	off, ok := setup.Not(on)
+	if !ok || !setup.Seal() {
+		t.Fatal("off support")
+	}
+	empty, ok := support.FromGuard(manager, manager.False())
+	if !ok {
+		t.Fatal("empty support")
+	}
+
+	terminalAdmissions := 0
+	values, ok := terminal.New(terminal.Config[uint8]{
+		Equal: func(left, right uint8) bool { return left == right },
+		Fingerprint: func(value uint8) uint64 {
+			terminalAdmissions++
+			return uint64(value)
+		},
+	})
+	if !ok {
+		t.Fatal("terminal arena")
+	}
+	if _, ok := values.Admit(10); !ok || !values.Seal() {
+		t.Fatal("default terminal")
+	}
+	// Every Work starts from the same immutable base, so these equal values
+	// intentionally retain three different sibling terminal identities.
+	admitSibling := func() terminal.ID[uint8] {
+		t.Helper()
+		work := values.Begin()
+		if work == nil {
+			t.Fatal("terminal work")
+		}
+		id, admitted := work.Admit(3)
+		if !admitted {
+			t.Fatal("sibling terminal")
+		}
+		if _, sealed := work.Seal(); !sealed {
+			t.Fatal("sibling terminal seal")
+		}
+		return id
+	}
+	referenceID, lowID, highID := admitSibling(), admitSibling(), admitSibling()
+	if referenceID == lowID || referenceID == highID || lowID == highID {
+		t.Fatal("equal sibling terminals unexpectedly shared an identity")
+	}
+
+	facts, ok := diagram.New(diagram.Config[semanticFactor, semanticKey, uint8]{
+		Factors: []semanticFactor{semanticColumn}, Terminals: values, Guards: manager,
+	})
+	if !ok {
+		t.Fatal("diagram")
+	}
+	join := func(left, right uint8) (uint8, bool) {
+		if left >= right {
+			return left, true
+		}
+		return right, true
+	}
+	domain, ok := New(facts, values, Operations[uint8]{
+		Default:     10,
+		Equal:       func(left, right uint8) bool { return left == right },
+		Fingerprint: func(value uint8) uint64 { return uint64(value) },
+		Join:        join,
+		Widen:       join,
+		Narrow:      func(_, right uint8) (uint8, bool) { return right, true },
+		LessOrEq:    func(left, right uint8) bool { return left <= right },
+	})
+	if !ok {
+		t.Fatal("domain")
+	}
+	plane := func(when support.Mask, id terminal.ID[uint8]) Plane[semanticFactor, semanticKey, uint8] {
+		t.Helper()
+		builder := facts.Begin()
+		if builder == nil {
+			t.Fatal("root builder")
+		}
+		root, written := builder.Set(facts.Empty(), semanticColumn, 7, when, id)
+		if !written {
+			t.Fatal("root write")
+		}
+		root, written = builder.Seal(root)
+		if !written {
+			t.Fatal("root seal")
+		}
+		result, valid := domain.Plane(root)
+		if !valid {
+			t.Fatal("plane")
+		}
+		return result
+	}
+	reference := plane(all, referenceID)
+	low := plane(on, lowID)
+	high := plane(off, highID)
+	noValue, ok := domain.Empty()
+	if !ok {
+		t.Fatal("empty plane")
+	}
+
+	t.Run("exclusive_carries_collapse_to_reference", func(t *testing.T) {
+		regions := support.New(manager)
+		if regions == nil {
+			t.Fatal("regions")
+		}
+		terminalAdmissions = 0
+		folded, valid := domain.JoinContributionsMany(reference, []Plane[semanticFactor, semanticKey, uint8]{low, high, noValue}, diagram.NewSoleScratch[semanticKey, uint8](), regions, func(key semanticKey, output []support.Mask) bool {
+			if key != 7 || len(output) != 3 {
+				return false
+			}
+			output[0], output[1], output[2] = on, off, empty
+			return true
+		})
+		if !valid {
+			t.Fatal("many fold")
+		}
+		if folded.Root() != reference.Root() {
+			t.Fatal("semantic reference was rebuilt instead of reused")
+		}
+		if terminalAdmissions != 0 {
+			t.Fatalf("exclusive carries admitted %d candidate terminals", terminalAdmissions)
+		}
+
+		binaryRegions := support.New(manager)
+		if binaryRegions == nil {
+			t.Fatal("binary regions")
+		}
+		binary, valid := domain.JoinContributions(low, high, diagram.NewSoleScratch[semanticKey, uint8](), binaryRegions, func(semanticKey, support.Mask) bool { return true }, func(key semanticKey) (support.Mask, support.Mask, support.Mask, bool) {
+			return on, off, on, key == 7
+		})
+		at := func(want bool) func(guard.Atom) bool {
+			return func(atom guard.Atom) bool { return atom == 1 && want }
+		}
+		if !valid || !domain.EqualAt(folded, at(false), binary, at(false)) || !domain.EqualAt(folded, at(true), binary, at(true)) {
+			t.Fatal("direct fold diverged from fixed binary left fold")
+		}
+	})
+
+	t.Run("overlap_reuses_reference_before_admission", func(t *testing.T) {
+		regions := support.New(manager)
+		if regions == nil {
+			t.Fatal("regions")
+		}
+		terminalAdmissions = 0
+		left, right := plane(all, lowID), plane(all, highID)
+		folded, valid := domain.JoinContributionsMany(reference, []Plane[semanticFactor, semanticKey, uint8]{left, right}, diagram.NewSoleScratch[semanticKey, uint8](), regions, func(key semanticKey, output []support.Mask) bool {
+			if key != 7 || len(output) != 2 {
+				return false
+			}
+			output[0], output[1] = all, all
+			return true
+		})
+		if !valid {
+			t.Fatal("many fold")
+		}
+		if folded.Root() != reference.Root() {
+			t.Fatal("equal overlap did not reuse reference root")
+		}
+		if terminalAdmissions != 0 {
+			t.Fatalf("reference-equivalent aggregate admitted %d candidate terminals", terminalAdmissions)
+		}
+	})
+}
+
+func TestJoinContributionsManyCanonicalBucketsCheckFingerprintCollisions(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := support.New(manager)
+	if setup == nil {
+		t.Fatal("support setup")
+	}
+	on, ok := setup.Literal(1, true)
+	if !ok {
+		t.Fatal("on support")
+	}
+	off, ok := setup.Not(on)
+	if !ok || !setup.Seal() {
+		t.Fatal("off support")
+	}
+	values, ok := terminal.New(terminal.Config[uint8]{
+		Equal:       func(left, right uint8) bool { return left == right },
+		Fingerprint: func(uint8) uint64 { return 0 },
+	})
+	if !ok {
+		t.Fatal("terminal arena")
+	}
+	ids := make(map[uint8]terminal.ID[uint8])
+	for _, value := range []uint8{10, 3, 5} {
+		id, admitted := values.Admit(value)
+		if !admitted {
+			t.Fatalf("admit %d", value)
+		}
+		ids[value] = id
+	}
+	if !values.Seal() {
+		t.Fatal("terminal seal")
+	}
+	facts, ok := diagram.New(diagram.Config[semanticFactor, semanticKey, uint8]{
+		Factors: []semanticFactor{semanticColumn}, Terminals: values, Guards: manager,
+	})
+	if !ok {
+		t.Fatal("diagram")
+	}
+	join := func(left, right uint8) (uint8, bool) {
+		if left >= right {
+			return left, true
+		}
+		return right, true
+	}
+	domain, ok := New(facts, values, Operations[uint8]{
+		Default:     10,
+		Equal:       func(left, right uint8) bool { return left == right },
+		Fingerprint: func(uint8) uint64 { return 0 },
+		Join:        join,
+		Widen:       join,
+		Narrow:      func(_, right uint8) (uint8, bool) { return right, true },
+		LessOrEq:    func(left, right uint8) bool { return left <= right },
+	})
+	if !ok {
+		t.Fatal("domain")
+	}
+	plane := func(when support.Mask, value uint8) Plane[semanticFactor, semanticKey, uint8] {
+		t.Helper()
+		builder := facts.Begin()
+		if builder == nil {
+			t.Fatal("builder")
+		}
+		root, written := builder.Set(facts.Empty(), semanticColumn, 7, when, ids[value])
+		if !written {
+			t.Fatal("write")
+		}
+		root, written = builder.Seal(root)
+		if !written {
+			t.Fatal("seal")
+		}
+		result, valid := domain.Plane(root)
+		if !valid {
+			t.Fatal("plane")
+		}
+		return result
+	}
+	empty, ok := domain.Empty()
+	if !ok {
+		t.Fatal("empty")
+	}
+	regions := support.New(manager)
+	if regions == nil {
+		t.Fatal("regions")
+	}
+	folded, valid := domain.JoinContributionsMany(empty, []Plane[semanticFactor, semanticKey, uint8]{plane(on, 3), plane(off, 5)}, diagram.NewSoleScratch[semanticKey, uint8](), regions, func(key semanticKey, output []support.Mask) bool {
+		if key != 7 || len(output) != 2 {
+			return false
+		}
+		output[0], output[1] = on, off
+		return true
+	})
+	if !valid {
+		t.Fatal("many fold")
+	}
+	valueAt := func(want bool) uint8 {
+		t.Helper()
+		id, present, readable := facts.At(folded.Root(), semanticColumn, 7, func(atom guard.Atom) bool { return atom == 1 && want })
+		if !readable || !present {
+			t.Fatalf("result terminal %t unreadable/present: %t/%t", want, readable, present)
+		}
+		value, readable := values.Value(id)
+		if !readable {
+			t.Fatalf("result value %t unreadable", want)
+		}
+		return value
+	}
+	if got := valueAt(true); got != 3 {
+		t.Fatalf("collision bucket reused wrong terminal on branch: got %d, want 3", got)
+	}
+	if got := valueAt(false); got != 5 {
+		t.Fatalf("collision bucket reused wrong terminal off branch: got %d, want 5", got)
+	}
+}

@@ -209,7 +209,11 @@ func (work *Work[V]) Admit(value V) (ID[V], bool) {
 			}
 		}
 	}
-	return admit(work.page, work.base.equal, work.base.fingerprint, value)
+	// The exact fingerprint was already computed for the ancestry lookup.
+	// Reuse it for the candidate insertion: a semantic fold may admit millions
+	// of final cells, and hashing each new value twice provides no additional
+	// collision evidence.
+	return admitHashed(work.page, hash, value)
 }
 
 // Valid accepts IDs inherited from Work's sealed base and IDs created in this
@@ -268,6 +272,13 @@ func admit[V any](target *page[V], equal func(V, V) bool, fingerprint func(V) ui
 		if valid && equal(stored, value) {
 			return id, true
 		}
+	}
+	return admitHashed(target, hash, value)
+}
+
+func admitHashed[V any](target *page[V], hash uint64, value V) (ID[V], bool) {
+	if target == nil || len(target.values) == int(^uint32(0))-1 {
+		return ID[V]{}, false
 	}
 	target.values = append(target.values, value)
 	id := ID[V]{page: target, slot: uint32(len(target.values))}

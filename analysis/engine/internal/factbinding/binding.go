@@ -5,7 +5,6 @@
 package factbinding
 
 import (
-	"sort"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
@@ -195,16 +194,17 @@ type Binding[K scalar.Key, V any] struct {
 	// roots owns only the immutable composition-attached initial root.  Every
 	// dynamic candidate/published root belongs instead to one bindingWork's
 	// epoch-local store and is revoked with that Work.
-	roots    *rootStore[planeFactor, K, V]
-	initial  *rootReservation[planeFactor, K, V]
-	units    map[carrier.Unit]declaredUnit[K]
-	unitList []carrier.Unit
-	reverse  map[K][]carrier.Unit
-	targets  map[carrier.Target]declaredTarget[K]
+	roots      *rootStore[planeFactor, K, V]
+	initial    *rootReservation[planeFactor, K, V]
+	units      map[carrier.Unit]declaredUnit[K]
+	unitList   []carrier.Unit
+	reverse    map[K][]carrier.Unit
+	targets    map[carrier.Target]declaredTarget[K]
+	targetList []carrier.Target
 	// targetReverse is the immutable Target-incidence read index used by hot
 	// sparse root operations. It never stores Guard regions or authorship:
 	// SlotCoverage remains the sole dynamic presence authority.
-	targetReverse       map[K][]carrier.Target
+	targetReverse       map[K][]int
 	widenScopes         []widenScope[K]
 	narrowScopes        []widenScope[K]
 	selectors           map[carrier.Selector]declaredSelector
@@ -257,6 +257,7 @@ type declaredUnit[K scalar.Key] struct {
 
 type declaredTarget[K scalar.Key] struct {
 	order         targetOrder
+	position      int
 	keys          []K
 	units         []carrier.Unit
 	notifications []carrier.Unit
@@ -423,7 +424,8 @@ func (binding *Binding[K, V]) declareTarget(mode carrier.TargetMode, units []car
 	if !ok {
 		return carrier.Target{}, false
 	}
-	binding.targets[target] = declaredTarget[K]{order: targetOrder{mode: mode, id: id}, keys: keys, units: append([]carrier.Unit(nil), units...)}
+	binding.targets[target] = declaredTarget[K]{order: targetOrder{mode: mode, id: id}, position: len(binding.targetList), keys: keys, units: append([]carrier.Unit(nil), units...)}
+	binding.targetList = append(binding.targetList, target)
 	return target, true
 }
 
@@ -597,7 +599,7 @@ func (binding *Binding[K, V]) sealReverse() bool {
 		return false
 	}
 	reverse := make(map[K][]carrier.Unit)
-	targetReverse := make(map[K][]carrier.Target)
+	targetReverse := make(map[K][]int)
 	for position, unit := range binding.unitList {
 		descriptor, ok := binding.units[unit]
 		if !ok || descriptor.position != position {
@@ -607,12 +609,16 @@ func (binding *Binding[K, V]) sealReverse() bool {
 			reverse[key] = append(reverse[key], unit)
 		}
 	}
-	for target, descriptor := range binding.targets {
+	for position, target := range binding.targetList {
+		descriptor, declared := binding.targets[target]
+		if !declared || descriptor.position != position {
+			return false
+		}
 		for _, key := range descriptor.keys {
 			if len(reverse[key]) == 0 {
 				return false
 			}
-			targetReverse[key] = append(targetReverse[key], target)
+			targetReverse[key] = append(targetReverse[key], position)
 		}
 		notifications, ok := notificationUnion(reverse, descriptor.keys)
 		if !ok {
@@ -622,11 +628,8 @@ func (binding *Binding[K, V]) sealReverse() bool {
 		binding.targets[target] = descriptor
 	}
 	for key, targets := range targetReverse {
-		sort.Slice(targets, func(left, right int) bool {
-			return targetOrderLess(binding.targets[targets[left]].order, binding.targets[targets[right]].order)
-		})
 		for index := 1; index < len(targets); index++ {
-			if targets[index-1].Same(targets[index]) {
+			if targets[index-1] >= targets[index] {
 				return false
 			}
 		}

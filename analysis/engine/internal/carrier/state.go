@@ -159,13 +159,26 @@ type SlotWork interface {
 	ObserveUnder(root RootHandle, unit Unit, within support.Mask, visit func(ObservationRow) bool) bool
 }
 
-// ChangedPointSlotWork is the optional sparse ascent path implemented by the
-// production typed Binding. It consumes one exact published Point transition
-// and applies only its owner-issued semantic/authorship regions through a
-// coordinate-identity environment boundary. Structural test doubles may omit
-// it; carrier then uses the complete transport fold.
-type ChangedPointSlotWork interface {
-	MergeChangedCoordinatePointUnder(left, current RootHandle, leftSupport, currentSupport, targetSupport, pre, post support.Mask, leftCoverage, currentCoverage SlotCoverage, semantic []ChangeSet, authored CoverageChangeSet, delta *support.Work) (ChangeHandle, bool)
+// PointFoldTerm is one borrowed slot-local lifted operand in a synchronized
+// PointRHS transaction. Carrier constructs it only from an admitted
+// PointState or RuleContribution and clears the backing slice before the
+// transaction returns. It exposes no typed key/value vocabulary.
+type PointFoldTerm struct {
+	root     RootHandle
+	support  support.Mask
+	coverage slotCoverage
+}
+
+func (term PointFoldTerm) Root() RootHandle       { return term.root }
+func (term PointFoldTerm) Support() support.Mask  { return term.support }
+func (term PointFoldTerm) Coverage() SlotCoverage { return coverageRows(term.coverage) }
+
+// PointFoldSlotWork is the direct final-root operation required by the
+// canonical point fold. There is intentionally no binary fallback: a Work
+// either owns this transaction for every physical slot or the fold is
+// rejected before any pending publication opens.
+type PointFoldSlotWork interface {
+	FoldPointRHSUnder(before, base RootHandle, baseSupport, finalSupport support.Mask, baseCoverage SlotCoverage, baseClosed, carryBaseOutside bool, terms []PointFoldTerm, delta *support.Work) (ChangeHandle, bool)
 }
 
 // EpochSlotWork is the optional lifecycle half of a typed SlotWork that
@@ -283,6 +296,7 @@ type Work struct {
 	previewing      bool
 	replacing       bool
 	reindexing      bool
+	pointFold       *pointFoldTransaction
 }
 
 // RetainedWork is the sole internal ownership unit for a validated completed
@@ -546,6 +560,10 @@ func (work *Work) Close() bool {
 		work.supportWork.Close()
 		work.supportWork = nil
 	}
+	if work.pointFold != nil {
+		work.pointFold.clear()
+		work.pointFold = nil
+	}
 	closeEpochSlotWorks(work.slots)
 	clear(work.slots)
 	work.slots = nil
@@ -565,7 +583,7 @@ func (work *Work) Close() bool {
 // invalidation or eviction.  An active Work loses all evaluator authority at
 // this cut and cannot be used to publish further roots.
 func (work *Work) Retain() (*RetainedWork, bool) {
-	if work == nil || work.composition == nil || work.epoch == nil || !work.epoch.Active() || work.publishing || work.previewing || work.replacing || work.reindexing {
+	if work == nil || work.composition == nil || work.epoch == nil || !work.epoch.Active() || work.publishing || work.previewing || work.replacing || work.reindexing || work.pointFold != nil && work.pointFold.active {
 		return nil, false
 	}
 	if !work.epoch.retain() {
@@ -574,6 +592,10 @@ func (work *Work) Retain() (*RetainedWork, bool) {
 	if work.supportWork != nil {
 		work.supportWork.Close()
 		work.supportWork = nil
+	}
+	if work.pointFold != nil {
+		work.pointFold.clear()
+		work.pointFold = nil
 	}
 	retained := &RetainedWork{composition: work.composition, slots: work.slots, epoch: work.epoch}
 	work.composition = nil
@@ -622,7 +644,7 @@ func closeEpochSlotWorks(slots []SlotWork) {
 // path. SlotWork receives the same probe solely to stop private structural
 // traversals before they prepare a ChangeHandle.
 func (work *Work) SetCheckpoint(checkpoint Checkpoint) bool {
-	if work == nil || work.composition == nil || work.epoch == nil || !work.epoch.Active() || work.publishing || work.previewing || work.replacing || work.reindexing {
+	if work == nil || work.composition == nil || work.epoch == nil || !work.epoch.Active() || work.publishing || work.previewing || work.replacing || work.reindexing || work.pointFold != nil && work.pointFold.active {
 		return false
 	}
 	for _, slot := range work.slots {

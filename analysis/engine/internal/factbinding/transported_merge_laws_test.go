@@ -1,12 +1,11 @@
 package factbinding
 
 import (
-	"testing"
-
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
+	"testing"
 )
 
 // TestMergeTransportedPointContributionMatchesBaseline keeps the fused boundary
@@ -469,72 +468,6 @@ func TestMergeTransportedPointContributionMatchesBaseline(t *testing.T) {
 	})
 }
 
-// TestChangedCoordinatePointContributionMatchesCompleteGapFold proves that a
-// consumer may batch several gap-free ascending source publications without
-// changing the complete environment-edge equation. The sparse path consumes
-// exact owner-issued semantic/authorship deltas, but reads payload only from
-// the final source publication and commits one canonical target result.
-func TestChangedCoordinatePointContributionMatchesCompleteGapFold(t *testing.T) {
-	manager := testTransportManager(t, nil)
-	whole := transportWhole(t, manager)
-	binding, initial, slot, composition, fixture := bindingState(t, manager, lawInput(false), whole)
-	plan, ok := composition.IdentityReindex(composition.Scope())
-	if !ok || !plan.CoordinateIdentity() {
-		t.Fatal("coordinate identity plan")
-	}
-	writePlan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil, false)
-	if !ok {
-		t.Fatal("write contribution plan")
-	}
-	work := newWork(t, composition)
-	base, ok := work.EmptyContribution(initial)
-	if !ok {
-		t.Fatal("empty contribution")
-	}
-	previous := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 1)
-	second := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 1, carrier.StrongTarget), whole, 2)
-	middle, firstChanges, ok := work.MergeContribution(previous, second)
-	if !ok {
-		t.Fatal("first ascending source publication")
-	}
-	third := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 3)
-	current, secondChanges, ok := work.MergeContribution(middle, third)
-	if !ok {
-		t.Fatal("second ascending source publication")
-	}
-	left, _, ok := work.MergeTransportedPointContribution(base, previous, whole, plan, whole)
-	if !ok {
-		t.Fatal("install previous source leaf")
-	}
-	want, wantChanges, ok := work.MergeTransportedPointContribution(left, current, whole, plan, whole)
-	if !ok {
-		t.Fatal("complete source fold")
-	}
-	got, gotChanges, ok := work.MergeChangedCoordinatePointContribution(
-		left,
-		previous,
-		current,
-		[]carrier.ChangeSet{firstChanges, secondChanges},
-		func() carrier.CoverageChangeSet {
-			changes, changed := work.CoverageChanges(previous, current)
-			if !changed {
-				t.Fatal("combined coverage changes")
-			}
-			return changes
-		}(),
-		whole,
-		plan,
-		whole,
-	)
-	if !ok {
-		t.Fatal("changed-coordinate source fold")
-	}
-	if !work.EqualContribution(got, want) || !work.EqualUnder(got.State(), want.State()) {
-		t.Fatal("changed-coordinate result differs from complete fold")
-	}
-	assertTransportChangeSetsEqual(t, gotChanges, wantChanges)
-}
-
 func TestTransportedPointRHSAdoptsClosedOperandOverSupportBase(t *testing.T) {
 	manager := testTransportManager(t, nil)
 	whole := transportWhole(t, manager)
@@ -566,63 +499,6 @@ func TestTransportedPointRHSAdoptsClosedOperandOverSupportBase(t *testing.T) {
 	if !rightOK || !gotOK || rightRoot != gotRoot {
 		t.Fatal("RHS adoption rebuilt an immutable closed root")
 	}
-}
-
-func TestChangedCoordinatePointContributionFromInitialMatchesCompleteFold(t *testing.T) {
-	manager := testTransportManager(t, nil)
-	whole := transportWhole(t, manager)
-	binding, initial, slot, composition, fixture := bindingState(t, manager, lawInput(false), whole)
-	plan, ok := composition.IdentityReindex(composition.Scope())
-	if !ok {
-		t.Fatal("identity plan")
-	}
-	writePlan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil, false)
-	if !ok {
-		t.Fatal("write contribution plan")
-	}
-	work := newWork(t, composition)
-	versionZero, ok := work.EmptyContribution(initial)
-	if !ok {
-		t.Fatal("version-zero contribution")
-	}
-	local := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 2, carrier.StrongTarget), whole, 5)
-	first := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 1)
-	firstSource, firstChanges, ok := work.MergeContribution(versionZero, first)
-	if !ok {
-		t.Fatal("first source publication")
-	}
-	second := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 1, carrier.StrongTarget), whole, 2)
-	current, secondChanges, ok := work.MergeContribution(firstSource, second)
-	if !ok {
-		t.Fatal("second source publication")
-	}
-	want, wantChanges, ok := work.MergeTransportedPointContribution(local, current, whole, plan, whole)
-	if !ok {
-		t.Fatal("complete source fold")
-	}
-	got, gotChanges, ok := work.MergeChangedCoordinatePointContribution(
-		local,
-		versionZero,
-		current,
-		[]carrier.ChangeSet{firstChanges, secondChanges},
-		func() carrier.CoverageChangeSet {
-			changes, changed := work.CoverageChanges(versionZero, current)
-			if !changed {
-				t.Fatal("combined coverage changes")
-			}
-			return changes
-		}(),
-		whole,
-		plan,
-		whole,
-	)
-	if !ok {
-		t.Fatal("changed-coordinate source fold")
-	}
-	if !work.EqualContribution(got, want) || !work.EqualUnder(got.State(), want.State()) {
-		t.Fatal("version-zero changed-coordinate result differs from complete fold")
-	}
-	assertTransportChangeSetsEqual(t, gotChanges, wantChanges)
 }
 
 func transportConfig(defaultValue uint64) testAlgebraInput[uint64, uint64] {

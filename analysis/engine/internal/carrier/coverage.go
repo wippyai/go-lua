@@ -272,7 +272,7 @@ func sameSlotCoverage(left, right slotCoverage) bool {
 		return true
 	}
 	for index := range left.targets {
-		if !left.targets[index].target.Same(right.targets[index].target) || !left.targets[index].region.Equal(right.targets[index].region) {
+		if !left.targets[index].target.Same(right.targets[index].target) || !left.targets[index].region.SameHandle(right.targets[index].region) && !left.targets[index].region.Equal(right.targets[index].region) {
 			return false
 		}
 	}
@@ -542,7 +542,7 @@ func slotCoverageContains(super, sub slotCoverage) bool {
 		case subRow.target.Less(superRow.target):
 			return false
 		default:
-			if !subRow.region.SameHandle(superRow.region) && !subRow.region.Entails(superRow.region) {
+			if !superRow.target.Same(subRow.target) || !subRow.region.SameHandle(superRow.region) && !subRow.region.Entails(superRow.region) {
 				return false
 			}
 			superIndex++
@@ -612,6 +612,9 @@ func (work *Work) lessOrEqContributionSurface(leftState State, leftCoverage cont
 	if !work.validContributionSurface(leftState, leftCoverage) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(leftState, rightState) || !leftState.support.Entails(rightState.support) {
 		return false
 	}
+	if sameState(leftState, rightState) && sameContributionCoverage(leftCoverage, rightCoverage) {
+		return true
+	}
 	for position, slot := range work.slots {
 		if !work.live() || slot == nil {
 			return false
@@ -626,6 +629,9 @@ func (work *Work) lessOrEqContributionSurface(leftState State, leftCoverage cont
 }
 
 func (work *Work) equalContributionSurface(leftState State, leftCoverage contributionCoverage, rightState State, rightCoverage contributionCoverage) bool {
+	if work.validContributionSurface(leftState, leftCoverage) && work.validContributionSurface(rightState, rightCoverage) && work.liveFor(leftState, rightState) && sameState(leftState, rightState) && sameContributionCoverage(leftCoverage, rightCoverage) {
+		return true
+	}
 	return work.lessOrEqContributionSurface(leftState, leftCoverage, rightState, rightCoverage) && work.lessOrEqContributionSurface(rightState, rightCoverage, leftState, leftCoverage)
 }
 

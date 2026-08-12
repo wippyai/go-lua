@@ -3,6 +3,8 @@ package diagram
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/terminal"
+	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 )
 
 // SoleScratch is caller-owned reusable traversal storage for pure operations
@@ -35,6 +37,43 @@ type SoleScratch[K scalar.Key, V any] struct {
 
 	trackedFrames []trackedFrame[V]
 	tracked       map[trackedTriple[V]]trackedResult[V]
+
+	// many is the operation-local storage for one synchronized fixed-order
+	// fold.  It is deliberately embedded in the caller-owned SoleScratch:
+	// neither Diagram nor a typed Domain retains operand roots after the
+	// transaction.  Flat tuple storage avoids one slice allocation per FDD
+	// state, while the exact memo prevents shared suffixes from being expanded
+	// repeatedly.
+	manyCursors  []avlCursor[K, V]
+	manyHeads    []*keyNode[K, V]
+	manyHeap     []int
+	manyNodes    []*node[V]
+	manyWidth    int
+	manySupports []support.Mask
+	manyPresent  []bool
+	manyIDs      []terminal.ID[V]
+
+	manyLowNodes     []*node[V]
+	manyHighNodes    []*node[V]
+	manyLowSupports  []support.Mask
+	manyHighSupports []support.Mask
+	manyTupleNodes   []*node[V]
+	manyTupleSupport []support.Mask
+	manyStates       []soleManyState[V]
+	manyStack        []int
+	manyMemo         map[uint64]int
+	manyNodeIDs      map[*node[V]]uint32
+	manyMaskIDs      map[support.Mask]uint32
+}
+
+type soleManyState[V any] struct {
+	reference *node[V]
+	offset    int
+	next      int
+	low, high int
+	atom      guard.Atom
+	result    *node[V]
+	phase     uint8
 }
 
 // SetCheckpoint installs an opaque evaluator liveness probe. It is called
@@ -84,6 +123,231 @@ func (scratch *SoleScratch[K, V]) Clear() {
 	clear(scratch.trackedFrames)
 	scratch.trackedFrames = scratch.trackedFrames[:0]
 	clear(scratch.tracked)
+	for index := range scratch.manyCursors {
+		scratch.manyCursors[index].clear()
+	}
+	clear(scratch.manyCursors)
+	scratch.manyCursors = scratch.manyCursors[:0]
+	clear(scratch.manyHeads)
+	scratch.manyHeads = scratch.manyHeads[:0]
+	clear(scratch.manyHeap)
+	scratch.manyHeap = scratch.manyHeap[:0]
+	clear(scratch.manyNodes)
+	scratch.manyNodes = scratch.manyNodes[:0]
+	scratch.manyWidth = 0
+	clear(scratch.manySupports)
+	scratch.manySupports = scratch.manySupports[:0]
+	clear(scratch.manyPresent)
+	scratch.manyPresent = scratch.manyPresent[:0]
+	clear(scratch.manyIDs)
+	scratch.manyIDs = scratch.manyIDs[:0]
+	clear(scratch.manyLowNodes)
+	scratch.manyLowNodes = scratch.manyLowNodes[:0]
+	clear(scratch.manyHighNodes)
+	scratch.manyHighNodes = scratch.manyHighNodes[:0]
+	clear(scratch.manyLowSupports)
+	scratch.manyLowSupports = scratch.manyLowSupports[:0]
+	clear(scratch.manyHighSupports)
+	scratch.manyHighSupports = scratch.manyHighSupports[:0]
+	scratch.clearManyStates()
+}
+
+func (scratch *SoleScratch[K, V]) clearManyStates() {
+	if scratch == nil {
+		return
+	}
+	clear(scratch.manyTupleNodes)
+	scratch.manyTupleNodes = scratch.manyTupleNodes[:0]
+	clear(scratch.manyTupleSupport)
+	scratch.manyTupleSupport = scratch.manyTupleSupport[:0]
+	clear(scratch.manyStates)
+	scratch.manyStates = scratch.manyStates[:0]
+	clear(scratch.manyStack)
+	scratch.manyStack = scratch.manyStack[:0]
+	clear(scratch.manyMemo)
+	clear(scratch.manyNodeIDs)
+	clear(scratch.manyMaskIDs)
+}
+
+func resizeClear[T any](values []T, count int) []T {
+	clear(values)
+	if cap(values) < count {
+		return make([]T, count)
+	}
+	values = values[:count]
+	clear(values)
+	return values
+}
+
+// prepareMany opens a k-way ascending sparse-key zipper.  Each cursor owns
+// only borrowed immutable nodes.  Normal exhaustion is represented solely by
+// an empty heap; cancellation remains the caller's separate live check.
+func (scratch *SoleScratch[K, V]) prepareMany(roots []*keyNode[K, V]) bool {
+	if !scratch.live() || len(roots) == 0 {
+		return false
+	}
+	scratch.Clear()
+	count := len(roots)
+	scratch.manyCursors = resizeClear(scratch.manyCursors, count)
+	scratch.manyHeads = resizeClear(scratch.manyHeads, count)
+	scratch.manyNodes = resizeClear(scratch.manyNodes, count)
+	scratch.manySupports = resizeClear(scratch.manySupports, count)
+	scratch.manyPresent = resizeClear(scratch.manyPresent, count)
+	scratch.manyIDs = resizeClear(scratch.manyIDs, count)
+	scratch.manyLowNodes = resizeClear(scratch.manyLowNodes, count)
+	scratch.manyHighNodes = resizeClear(scratch.manyHighNodes, count)
+	scratch.manyLowSupports = resizeClear(scratch.manyLowSupports, count)
+	scratch.manyHighSupports = resizeClear(scratch.manyHighSupports, count)
+	for index, root := range roots {
+		scratch.manyCursors[index].begin(root)
+		head, present := scratch.manyCursors[index].next()
+		if !present {
+			continue
+		}
+		scratch.manyHeads[index] = head
+		scratch.manyHeapPush(index)
+	}
+	return scratch.live()
+}
+
+func (scratch *SoleScratch[K, V]) manyHeapLess(left, right int) bool {
+	leftIndex, rightIndex := scratch.manyHeap[left], scratch.manyHeap[right]
+	leftHead, rightHead := scratch.manyHeads[leftIndex], scratch.manyHeads[rightIndex]
+	return leftHead.key < rightHead.key || leftHead.key == rightHead.key && leftIndex < rightIndex
+}
+
+func (scratch *SoleScratch[K, V]) manyHeapPush(operand int) {
+	scratch.manyHeap = append(scratch.manyHeap, operand)
+	for index := len(scratch.manyHeap) - 1; index > 0; {
+		parent := (index - 1) / 2
+		if !scratch.manyHeapLess(index, parent) {
+			break
+		}
+		scratch.manyHeap[index], scratch.manyHeap[parent] = scratch.manyHeap[parent], scratch.manyHeap[index]
+		index = parent
+	}
+}
+
+func (scratch *SoleScratch[K, V]) manyHeapPop() (int, bool) {
+	if len(scratch.manyHeap) == 0 {
+		return 0, false
+	}
+	result := scratch.manyHeap[0]
+	last := len(scratch.manyHeap) - 1
+	scratch.manyHeap[0] = scratch.manyHeap[last]
+	scratch.manyHeap[last] = 0
+	scratch.manyHeap = scratch.manyHeap[:last]
+	for index := 0; ; {
+		left := index*2 + 1
+		if left >= len(scratch.manyHeap) {
+			break
+		}
+		right, smallest := left+1, left
+		if right < len(scratch.manyHeap) && scratch.manyHeapLess(right, left) {
+			smallest = right
+		}
+		if !scratch.manyHeapLess(smallest, index) {
+			break
+		}
+		scratch.manyHeap[index], scratch.manyHeap[smallest] = scratch.manyHeap[smallest], scratch.manyHeap[index]
+		index = smallest
+	}
+	return result, true
+}
+
+// nextMany returns the next key and a scratch-owned operand column vector.
+// The vector is valid only until the next call.  It deliberately performs no
+// liveness sampling so cancellation can never be mistaken for exhaustion.
+func (scratch *SoleScratch[K, V]) nextMany() (K, []*node[V], bool) {
+	var zero K
+	if scratch == nil || len(scratch.manyHeap) == 0 {
+		return zero, nil, false
+	}
+	clear(scratch.manyNodes)
+	first := scratch.manyHeap[0]
+	key := scratch.manyHeads[first].key
+	for len(scratch.manyHeap) != 0 {
+		operand := scratch.manyHeap[0]
+		head := scratch.manyHeads[operand]
+		if head == nil || head.key != key {
+			break
+		}
+		_, _ = scratch.manyHeapPop()
+		scratch.manyNodes[operand] = head.value
+		next, present := scratch.manyCursors[operand].next()
+		if present {
+			scratch.manyHeads[operand] = next
+			scratch.manyHeapPush(operand)
+		} else {
+			scratch.manyHeads[operand] = nil
+		}
+	}
+	return key, scratch.manyNodes, true
+}
+
+func (scratch *SoleScratch[K, V]) manyNodeID(value *node[V]) uint32 {
+	if value == nil {
+		return 0
+	}
+	if id := scratch.manyNodeIDs[value]; id != 0 {
+		return id
+	}
+	if scratch.manyNodeIDs == nil {
+		scratch.manyNodeIDs = make(map[*node[V]]uint32)
+	}
+	id := uint32(len(scratch.manyNodeIDs) + 1)
+	scratch.manyNodeIDs[value] = id
+	return id
+}
+
+func (scratch *SoleScratch[K, V]) manyMaskID(value support.Mask) uint32 {
+	if id := scratch.manyMaskIDs[value]; id != 0 {
+		return id
+	}
+	if scratch.manyMaskIDs == nil {
+		scratch.manyMaskIDs = make(map[support.Mask]uint32)
+	}
+	id := uint32(len(scratch.manyMaskIDs) + 1)
+	scratch.manyMaskIDs[value] = id
+	return id
+}
+
+func (scratch *SoleScratch[K, V]) manyState(reference *node[V], nodes []*node[V], supports []support.Mask) (int, bool) {
+	if scratch == nil || len(nodes) == 0 || len(nodes) != len(supports) {
+		return 0, false
+	}
+	hash := uint64(1469598103934665603)
+	hash ^= uint64(scratch.manyNodeID(reference))
+	hash *= 1099511628211
+	for index := range nodes {
+		hash ^= uint64(scratch.manyNodeID(nodes[index]))
+		hash *= 1099511628211
+		hash ^= uint64(scratch.manyMaskID(supports[index]))
+		hash *= 1099511628211
+	}
+	for link := scratch.manyMemo[hash]; link != 0; link = scratch.manyStates[link-1].next {
+		state := scratch.manyStates[link-1]
+		equal := state.reference == reference
+		for index := range nodes {
+			if scratch.manyTupleNodes[state.offset+index] != nodes[index] || scratch.manyTupleSupport[state.offset+index] != supports[index] {
+				equal = false
+				break
+			}
+		}
+		if equal {
+			return link - 1, true
+		}
+	}
+	if scratch.manyMemo == nil {
+		scratch.manyMemo = make(map[uint64]int)
+	}
+	offset := len(scratch.manyTupleNodes)
+	scratch.manyTupleNodes = append(scratch.manyTupleNodes, nodes...)
+	scratch.manyTupleSupport = append(scratch.manyTupleSupport, supports...)
+	index := len(scratch.manyStates)
+	scratch.manyStates = append(scratch.manyStates, soleManyState[V]{reference: reference, offset: offset, next: scratch.manyMemo[hash]})
+	scratch.manyMemo[hash] = index + 1
+	return index, true
 }
 
 func (scratch *SoleScratch[K, V]) prepare(left, right *keyNode[K, V]) bool {

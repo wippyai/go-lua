@@ -24,8 +24,11 @@ type Binary[V any] func(left, right V) (V, bool)
 // Operations provides the domain-owned algebra for one typed terminal family.
 // Default is the value denoted by an undefined FDD leaf *inside supported
 // state*.  It is explicit because a Factor default need not be Go's zero
-// value or lattice bottom.  The plane canonicalizes a result equal to Default
-// back to the undefined terminal, preserving sparse storage.
+// value or lattice bottom. Equal is the domain carrier equality, so Join,
+// Widen, Narrow, and LessOrEq must be extensional over its equivalence classes;
+// terminal interning may choose any Equal representative without changing an
+// operation. The plane canonicalizes a result equal to Default back to the
+// undefined terminal, preserving sparse storage.
 type Operations[V any] struct {
 	Default     V
 	Equal       func(left, right V) bool
@@ -954,7 +957,13 @@ func (domain *Domain[F, K, V]) terminalsBinary(values *terminal.Work[V], operati
 		if kind == binaryNarrow && !domain.ops.LessOrEq(rightValue, leftValue) {
 			return terminal.ID[V]{}, false
 		}
-		output, ok := operation(leftValue, rightValue)
+		var output V
+		var ok bool
+		if kind == binaryJoin {
+			output, ok = domain.joinPair(leftValue, rightValue)
+		} else {
+			output, ok = operation(leftValue, rightValue)
+		}
 		if !ok {
 			return terminal.ID[V]{}, false
 		}
@@ -967,13 +976,6 @@ func (domain *Domain[F, K, V]) terminalsBinary(values *terminal.Work[V], operati
 		}
 		switch kind {
 		case binaryJoin:
-			// Join is the least implementation-independent upper-bound
-			// contract at this layer.  The domain supplies its order, so the
-			// typed zipper must reject a faulty closure before its output
-			// terminal can publish.
-			if !domain.ops.LessOrEq(leftValue, output) || !domain.ops.LessOrEq(rightValue, output) {
-				return terminal.ID[V]{}, false
-			}
 		case binaryWiden:
 			if !domain.ops.LessOrEq(leftValue, output) || !domain.ops.LessOrEq(rightValue, output) {
 				return terminal.ID[V]{}, false
@@ -999,6 +1001,11 @@ func (domain *Domain[F, K, V]) terminalsBinary(values *terminal.Work[V], operati
 		}
 		return values.Admit(output)
 	}
+}
+
+func (domain *Domain[F, K, V]) joinPair(left, right V) (V, bool) {
+	output, ok := domain.ops.Join(left, right)
+	return output, ok && (!domain.ops.Equal(left, right) || domain.ops.Equal(output, left)) && domain.ops.LessOrEq(left, output) && domain.ops.LessOrEq(right, output) && domain.joinStable(output)
 }
 
 func (domain *Domain[F, K, V]) joinStable(value V) bool {

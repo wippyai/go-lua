@@ -34,12 +34,26 @@ func valueFromCases(relation *relation, cases []Case) (Value, bool) {
 	if !relation.valid() {
 		return Value{}, false
 	}
+	if len(cases) == 0 {
+		return bottomValue(relation.owner), true
+	}
+	copyOf := append([]Case(nil), cases...)
+	return valueFromOwnedCases(relation, copyOf, false)
+}
+
+// valueFromOwnedCases normalizes one caller-owned case buffer without
+// retaining any discarded tail. Public construction copies before entering;
+// lattice Join builds its fresh sorted union directly. Values therefore stay
+// immutable while avoiding a second and third case-array copy per join.
+func valueFromOwnedCases(relation *relation, cases []Case, sortedCases bool) (Value, bool) {
+	if !relation.valid() {
+		return Value{}, false
+	}
 	owner := relation.owner
 	if len(cases) == 0 {
 		return bottomValue(owner), true
 	}
-	copyOf := append([]Case(nil), cases...)
-	for _, value := range copyOf {
+	for _, value := range cases {
 		if !value.valid() || value.owner != owner || (!value.top && value.relation != relation) {
 			return Value{}, false
 		}
@@ -47,9 +61,11 @@ func valueFromCases(relation *relation, cases []Case) (Value, bool) {
 			return topValue(owner), true
 		}
 	}
-	sort.Slice(copyOf, func(left, right int) bool { return compareCase(copyOf[left], copyOf[right]) < 0 })
-	kept := copyOf[:0]
-	for _, candidate := range copyOf {
+	if !sortedCases {
+		sort.Slice(cases, func(left, right int) bool { return compareCase(cases[left], cases[right]) < 0 })
+	}
+	kept := cases[:0]
+	for _, candidate := range cases {
 		covered := false
 		for _, prior := range kept {
 			if caseCovers(prior, candidate) {
@@ -75,7 +91,9 @@ func valueFromCases(relation *relation, cases []Case) (Value, bool) {
 	if len(kept) == 1 && kept[0].top {
 		return topValue(owner), true
 	}
-	return finishValue(Value{owner: owner, relation: relation, cases: append([]Case(nil), kept...)}), true
+	clear(cases[len(kept):])
+	kept = kept[:len(kept):len(kept)]
+	return finishValue(Value{owner: owner, relation: relation, cases: kept}), true
 }
 
 func (value Value) valid() bool {
@@ -162,6 +180,18 @@ func equalValue(left, right Value) bool {
 	return true
 }
 
+// sameValueRepresentation is the O(1) immutable-representation predicate.
+// It may conservatively return false for equal values, but true always implies
+// Equal: finite values share the exact normalized case backing, while Bottom
+// and Top have no payload beyond their sealed owner/flags.
+func sameValueRepresentation(left, right Value) bool {
+	if left.owner == nil || left.owner != right.owner || !left.valid() || !right.valid() ||
+		left.bottom != right.bottom || left.top != right.top || left.relation != right.relation || len(left.cases) != len(right.cases) {
+		return false
+	}
+	return len(left.cases) == 0 || &left.cases[0] == &right.cases[0]
+}
+
 func lessOrEqualValue(left, right Value) bool {
 	_, ok := sameValue(left, right)
 	if !ok {
@@ -205,10 +235,25 @@ func joinValue(left, right Value) (Value, bool) {
 	if left.relation != right.relation {
 		return Value{}, false
 	}
+	// Join is idempotent. Preserve the already-normalized immutable operand
+	// instead of allocating and re-normalizing a doubled case buffer. The
+	// semantic engine validates every join result with Join(v,v), so this is a
+	// hot algebraic identity rather than a caller-specific shortcut.
+	if sameValueRepresentation(left, right) || equalValue(left, right) {
+		return left, true
+	}
 	cases := make([]Case, 0, len(left.cases)+len(right.cases))
-	cases = append(cases, left.cases...)
-	cases = append(cases, right.cases...)
-	return valueFromCases(left.relation, cases)
+	leftIndex, rightIndex := 0, 0
+	for leftIndex < len(left.cases) || rightIndex < len(right.cases) {
+		if rightIndex == len(right.cases) || leftIndex < len(left.cases) && compareCase(left.cases[leftIndex], right.cases[rightIndex]) <= 0 {
+			cases = append(cases, left.cases[leftIndex])
+			leftIndex++
+		} else {
+			cases = append(cases, right.cases[rightIndex])
+			rightIndex++
+		}
+	}
+	return valueFromOwnedCases(left.relation, cases, true)
 }
 
 // widenValue performs the one lawful recurrence widening. Acyclic transfer

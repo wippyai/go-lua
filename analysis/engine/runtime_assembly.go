@@ -529,7 +529,7 @@ func assembleRuntime(cold *Composition, graph *equation.Graph, runtime *carrier.
 	}
 	environmentIncoming := make([][]int, graph.PointCount())
 	for edgeIndex, edge := range environments {
-		if edge.target < 0 || edge.target >= len(environmentIncoming) {
+		if edge.source < 0 || edge.target < 0 || edge.target >= len(environmentIncoming) {
 			return nil, false
 		}
 		environmentIncoming[edge.target] = append(environmentIncoming[edge.target], edgeIndex)
