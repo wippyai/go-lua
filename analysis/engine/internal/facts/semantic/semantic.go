@@ -132,26 +132,14 @@ func (domain *Domain[F, K, V]) Restrict(input Plane[F, K, V], region support.Mas
 	if builder == nil {
 		return Plane[F, K, V]{}, false
 	}
-	root := domain.diagram.Empty()
-	valid := true
-	completed, traversed := domain.diagram.ForEach(input.root, func(fact diagram.Fact[F, K, V]) bool {
-		masked, ok := builder.Mask(fact.Value, region)
-		if !ok {
-			valid = false
-			return false
-		}
-		root, ok = builder.Put(root, fact.Factor, fact.Key, masked)
-		if !ok {
-			valid = false
-			return false
-		}
-		return true
+	root, ok := builder.TransformSoleFactor(input.root, func(_ K, value diagram.Value[V]) (diagram.Value[V], bool) {
+		return builder.Mask(value, region)
 	})
-	if !completed || !traversed || !valid {
+	if !ok {
 		builder.Discard()
 		return Plane[F, K, V]{}, false
 	}
-	root, ok := builder.Seal(root)
+	root, ok = builder.Seal(root)
 	if !ok {
 		return Plane[F, K, V]{}, false
 	}
@@ -178,39 +166,25 @@ func (domain *Domain[F, K, V]) CloseContribution(input Plane[F, K, V], within su
 	if builder == nil {
 		return Plane[F, K, V]{}, false
 	}
-	root := domain.diagram.Empty()
-	valid := true
-	completed, traversed := domain.diagram.ForEach(input.root, func(fact diagram.Fact[F, K, V]) bool {
-		region, present := regions(fact.Key)
+	root, ok := builder.TransformSoleFactor(input.root, func(key K, value diagram.Value[V]) (diagram.Value[V], bool) {
+		region, present := regions(key)
 		if !present {
-			return true
+			return builder.Constant(terminal.ID[V]{})
 		}
 		if !region.Valid() || region.Manager() != domain.guards() || !region.Entails(within) {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
-		masked, ok := builder.Mask(fact.Value, region)
+		masked, ok := builder.Mask(value, region)
 		if !ok {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
-		masked, ok = domain.eraseDefault(builder, masked)
-		if !ok {
-			valid = false
-			return false
-		}
-		root, ok = builder.Put(root, fact.Factor, fact.Key, masked)
-		if !ok {
-			valid = false
-			return false
-		}
-		return true
+		return domain.eraseDefault(builder, masked)
 	})
-	if !completed || !traversed || !valid {
+	if !ok {
 		builder.Discard()
 		return Plane[F, K, V]{}, false
 	}
-	root, ok := builder.Seal(root)
+	root, ok = builder.Seal(root)
 	if !ok {
 		return Plane[F, K, V]{}, false
 	}
@@ -615,22 +589,10 @@ func (domain *Domain[F, K, V]) Mu(input Plane[F, K, V], inputSupport support.Mas
 	if work == nil || builder == nil {
 		return Plane[F, K, V]{}, false
 	}
-	root := domain.diagram.Empty()
-	valid := true
-	completed, traversed := domain.diagram.ForEach(input.root, func(fact diagram.Fact[F, K, V]) bool {
-		closed, okay := domain.muColumn(builder, work, fact.Key, fact.Value, atom, regions)
-		if !okay {
-			valid = false
-			return false
-		}
-		root, okay = builder.Put(root, fact.Factor, fact.Key, closed)
-		if !okay {
-			valid = false
-			return false
-		}
-		return true
+	root, ok := builder.TransformSoleFactor(input.root, func(key K, value diagram.Value[V]) (diagram.Value[V], bool) {
+		return domain.muColumn(builder, work, key, value, atom, regions)
 	})
-	if !completed || !traversed || !valid {
+	if !ok {
 		builder.Discard()
 		return Plane[F, K, V]{}, false
 	}
@@ -666,52 +628,34 @@ func (domain *Domain[F, K, V]) Reindex(input Plane[F, K, V], source, target supp
 	if values == nil || builder == nil {
 		return Plane[F, K, V]{}, false
 	}
-	root := domain.diagram.Empty()
-	valid := true
-	completed, traversed := domain.diagram.ForEach(input.root, func(fact diagram.Fact[F, K, V]) bool {
-		actual, okay := builder.Mask(fact.Value, source)
+	root, ok := builder.TransformSoleFactor(input.root, func(key K, value diagram.Value[V]) (diagram.Value[V], bool) {
+		actual, okay := builder.Mask(value, source)
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
 		defaultValue, okay := builder.Constant(domain.defaultID)
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
 		defaults, okay := builder.Mask(defaultValue, source)
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
 		total, okay := builder.Zip(actual, defaults, sparseOverlay[V])
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
-		transported, okay := builder.Reindex(total, relation, domain.reindexFiberJoin(values, fact.Key))
+		transported, okay := builder.Reindex(total, relation, domain.reindexFiberJoin(values, key))
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
 		transported, okay = builder.Mask(transported, target)
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
-		output, okay := domain.eraseDefault(builder, transported)
-		if !okay {
-			valid = false
-			return false
-		}
-		root, okay = builder.Put(root, fact.Factor, fact.Key, output)
-		if !okay {
-			valid = false
-			return false
-		}
-		return true
+		return domain.eraseDefault(builder, transported)
 	})
-	if !completed || !traversed || !valid {
+	if !ok {
 		builder.Discard()
 		return Plane[F, K, V]{}, false
 	}
@@ -749,71 +693,51 @@ func (domain *Domain[F, K, V]) ReindexContribution(input Plane[F, K, V], source,
 	if values == nil || builder == nil {
 		return Plane[F, K, V]{}, false
 	}
-	root := domain.diagram.Empty()
-	valid := true
-	completed, traversed := domain.diagram.ForEach(input.root, func(fact diagram.Fact[F, K, V]) bool {
-		sourceRegion, sourcePresent := sourceRegions(fact.Key)
+	root, ok := builder.TransformSoleFactor(input.root, func(key K, value diagram.Value[V]) (diagram.Value[V], bool) {
+		sourceRegion, sourcePresent := sourceRegions(key)
 		if !sourcePresent {
 			// A closed input has no meaningful payload here.  Ignoring it keeps
 			// Absent as identity even if a hostile caller supplied a raw root.
-			return true
+			return builder.Constant(terminal.ID[V]{})
 		}
 		if !sourceRegion.Valid() || sourceRegion.Manager() != domain.guards() || !sourceRegion.Entails(source) {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
-		targetRegion, targetPresent := targetRegions(fact.Key)
+		targetRegion, targetPresent := targetRegions(key)
 		if !targetPresent {
 			// The post boundary killed this authored source surface.
-			return true
+			return builder.Constant(terminal.ID[V]{})
 		}
 		if !targetRegion.Valid() || targetRegion.Manager() != domain.guards() || !targetRegion.Entails(target) {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
-		actual, okay := builder.Mask(fact.Value, sourceRegion)
+		actual, okay := builder.Mask(value, sourceRegion)
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
 		defaultValue, okay := builder.Constant(domain.defaultID)
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
 		defaults, okay := builder.Mask(defaultValue, sourceRegion)
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
 		total, okay := builder.Zip(actual, defaults, sparseOverlay[V])
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
-		transported, okay := builder.Reindex(total, relation, domain.reindexFiberJoin(values, fact.Key))
+		transported, okay := builder.Reindex(total, relation, domain.reindexFiberJoin(values, key))
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
 		transported, okay = builder.Mask(transported, targetRegion)
 		if !okay {
-			valid = false
-			return false
+			return diagram.Value[V]{}, false
 		}
-		output, okay := domain.eraseDefault(builder, transported)
-		if !okay {
-			valid = false
-			return false
-		}
-		root, okay = builder.Put(root, fact.Factor, fact.Key, output)
-		if !okay {
-			valid = false
-			return false
-		}
-		return true
+		return domain.eraseDefault(builder, transported)
 	})
-	if !completed || !traversed || !valid {
+	if !ok {
 		builder.Discard()
 		return Plane[F, K, V]{}, false
 	}

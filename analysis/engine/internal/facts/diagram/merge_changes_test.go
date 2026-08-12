@@ -268,6 +268,69 @@ func TestMergeSoleFactorChangesRejectsBadOrderAndReportFailure(t *testing.T) {
 	}
 }
 
+func TestTransformSoleFactorSharesShapeAndMatchesCanonicalDeletion(t *testing.T) {
+	fixture := newSoleBatchFixture(t)
+	entries := make(map[testKey]terminal.ID[uint8], 15)
+	for key := testKey(1); key <= 15; key++ {
+		entries[key] = fixture.values[0]
+	}
+	input := soleRoot(t, fixture, entries)
+
+	noopBuilder := fixture.diagram.Begin()
+	noop, ok := noopBuilder.TransformSoleFactor(input, func(_ testKey, value Value[uint8]) (Value[uint8], bool) {
+		return value, true
+	})
+	if !ok || noop.root != input.root || noop.count != input.count || noop.lease != noopBuilder.lease {
+		t.Fatal("identity transform did not retain the exact immutable root")
+	}
+	if _, ok = noopBuilder.Seal(noop); !ok {
+		t.Fatal("identity transform candidate did not seal")
+	}
+
+	builder := fixture.diagram.Begin()
+	visited := make([]testKey, 0, 15)
+	result, ok := builder.TransformSoleFactor(input, func(key testKey, value Value[uint8]) (Value[uint8], bool) {
+		visited = append(visited, key)
+		switch {
+		case key < 8:
+			return builder.Constant(terminal.ID[uint8]{})
+		case key == 15:
+			return builder.Constant(fixture.values[1])
+		default:
+			return value, true
+		}
+	})
+	if !ok || result.count != 8 || len(visited) != 15 {
+		t.Fatalf("transform = ok:%t count:%d visited:%v", ok, result.count, visited)
+	}
+	for index, key := range visited {
+		if key != testKey(index+1) {
+			t.Fatalf("visit[%d] = %d, want ascending %d", index, key, index+1)
+		}
+	}
+	factor := findFactor(result.root, fixture.diagram.ranks[factorFirst])
+	if factor == nil {
+		t.Fatal("transform deleted the surviving factor")
+	}
+	_, count, low, high := assertKeyAVL(t, factor.keys)
+	if count != 8 || low != 8 || high != 15 {
+		t.Fatalf("survivors = count:%d [%d,%d], want 8 [8,15]", count, low, high)
+	}
+	result, ok = builder.Seal(result)
+	if !ok {
+		t.Fatal("transform seal")
+	}
+	wantEntries := make(map[testKey]terminal.ID[uint8], 8)
+	for key := testKey(8); key <= 15; key++ {
+		wantEntries[key] = fixture.values[0]
+	}
+	wantEntries[15] = fixture.values[1]
+	want := soleRoot(t, fixture, wantEntries)
+	if !fixture.diagram.Equal(result, want) {
+		t.Fatal("shape-preserving transform differs from canonical sparse root")
+	}
+}
+
 func TestMergeSoleFactorChangesPreservesUntouchedSubtreeAndCountDeltas(t *testing.T) {
 	fixture := newSoleBatchFixture(t)
 	all := soleAll(t, fixture)
