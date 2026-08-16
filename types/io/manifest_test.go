@@ -1,7 +1,10 @@
 package io
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/constraint"
@@ -237,6 +240,25 @@ func TestManifest_Encode_Decode(t *testing.T) {
 	}
 }
 
+func TestManifest_Encode_Decode_LargeValidManifest(t *testing.T) {
+	m := NewManifest(strings.Repeat("module/", 32))
+	for i := 0; i < 2048; i++ {
+		m.AddGlobal(fmt.Sprintf("global_%04d", i), typ.String)
+	}
+
+	data, err := m.Encode()
+	if err != nil {
+		t.Fatalf("Encode failed: %v", err)
+	}
+	decoded, err := DecodeManifest(data)
+	if err != nil {
+		t.Fatalf("DecodeManifest failed: %v", err)
+	}
+	if decoded.Path != m.Path || len(decoded.Globals) != len(m.Globals) {
+		t.Fatalf("decoded manifest differs: path=%q globals=%d", decoded.Path, len(decoded.Globals))
+	}
+}
+
 func TestManifest_EnrichedExport_DoesNotApplySummaryToNestedSameName(t *testing.T) {
 	m := NewManifest("test")
 
@@ -328,6 +350,21 @@ func TestDecodeManifest_InvalidMagic(t *testing.T) {
 	_, err := DecodeManifest([]byte{0, 0, 0, 0})
 	if !errors.Is(err, ErrInvalidManifest) {
 		t.Errorf("expected ErrInvalidManifest, got %v", err)
+	}
+}
+
+func TestDecodeManifest_RejectsCollectionLengthBeyondInput(t *testing.T) {
+	var buf bytes.Buffer
+	w := &manifestWriter{typeWriter: &typeWriter{w: &buf}}
+	w.writeUint32(manifestMagic)
+	w.writeByte(manifestVersion)
+	w.writeUint64(0)
+	w.writeString("test")
+	w.writeBool(false)
+	w.writeUint32(1024)
+
+	if _, err := DecodeManifest(buf.Bytes()); !errors.Is(err, ErrCorruptedData) {
+		t.Fatalf("DecodeManifest error = %v", err)
 	}
 }
 
